@@ -73,13 +73,13 @@ if ( defined( 'DB_FILE' ) ) {
 	define( 'FQDB', FQDBDIR . '.ht.sqlite' );
 }
 
-require_once ABSPATH . WPINC . '/sqlite/class-wp-pdo-sqlite-user-defined-functions.php';
-require_once ABSPATH . WPINC . '/sqlite/class-wp-pdo-engine.php';
-require_once ABSPATH . WPINC . '/sqlite/class-wp-sqlite-object-array.php';
-require_once ABSPATH . WPINC . '/sqlite/class-wp-sqlite-db.php';
-require_once ABSPATH . WPINC . '/sqlite/class-wp-pdo-sqlite-driver.php';
-require_once ABSPATH . WPINC . '/sqlite/class-wp-sqlite-create-query.php';
-require_once ABSPATH . WPINC . '/sqlite/class-wp-sqlite-alter-query.php';
+require_once __DIR__ . '/class-wp-pdo-sqlite-user-defined-functions.php';
+require_once __DIR__ . '/class-wp-pdo-engine.php';
+require_once __DIR__ . '/class-wp-sqlite-object-array.php';
+require_once __DIR__ . '/class-wp-sqlite-db.php';
+require_once __DIR__ . '/class-wp-pdo-sqlite-driver.php';
+require_once __DIR__ . '/class-wp-sqlite-create-query.php';
+require_once __DIR__ . '/class-wp-sqlite-alter-query.php';
 
 /**
  * Function to create tables according to the schemas of WordPress.
