@@ -91,23 +91,23 @@ function sqlite_plugin_filter_debug_data( $info ) {
 	);
 
 	$info['wp-database']['fields']['database_type'] = array(
-		'label' => __( 'Database type' ),
+		'label' => __( 'Database type', 'sqlite' ),
 		'value' => 'sqlite' === $database_type ? 'SQLite' : 'MySQL/MariaDB',
 	);
 
 	$info['wp-database']['fields']['database_version'] = array(
-		'label' => __( 'SQLite version' ),
+		'label' => __( 'SQLite version', 'sqlite' ),
 		'value' => class_exists( 'SQLite3' ) ? SQLite3::version()['versionString'] : null,
 	);
 
 	$info['wp-database']['fields']['database_file'] = array(
-		'label'   => __( 'Database file' ),
+		'label'   => __( 'Database file', 'sqlite' ),
 		'value'   => FQDB,
 		'private' => true,
 	);
 
 	$info['wp-database']['fields']['database_size'] = array(
-		'label' => __( 'Database size' ),
+		'label' => __( 'Database size', 'sqlite' ),
 		'value' => size_format( filesize( FQDB ) ),
 	);
 
