@@ -563,15 +563,15 @@ class WP_PDO_SQLite_Driver {
 			$indexes = $_wpdb->get_results( "SHOW INDEX FROM {$table_name}" );
 			if ( ! empty( $indexes ) ) {
 				foreach ( $indexes as $index ) {
-					if ( 0 === $index->Non_unique ) {
-						$unique_keys_for_cond[] = $index->Column_name;
-						if ( strpos( $index->Column_name, ',' ) !== false ) {
+					if ( 0 === $index->Non_unique ) { // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+						$unique_keys_for_cond[] = $index->Column_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+						if ( strpos( $index->Column_name, ',' ) !== false ) { // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 							$unique_keys_for_check = array_merge(
 								$unique_keys_for_check,
-								explode( ',', $index->Column_name )
+								explode( ',', $index->Column_name ) // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 							);
 						} else {
-							$unique_keys_for_check[] = $index->Column_name;
+							$unique_keys_for_check[] = $index->Column_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 						}
 					}
 				}
@@ -619,7 +619,7 @@ class WP_PDO_SQLite_Driver {
 				$test_query = "SELECT * FROM {$table_name} WHERE {$condition}";
 				$results    = $_wpdb->query( $test_query );
 				$_wpdb      = null;
-				if ( 0 == $results ) {
+				if ( 0 == $results ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
 					$this->_query = "INSERT INTO $table_name $insert_data";
 					return;
 				}

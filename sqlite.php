@@ -68,6 +68,7 @@ function sqlite_plugin_admin_notice() {
 	// Check if the DATABASE_TYPE constant is set.
 	if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
 		printf(
+			/* translators: %1$s: DATABASE_TYPE, %2$s: sqlite, %3$s: wp-config.php, %4$s: hat\'s all, stop editing! Happy blogging. */
 			'<div class="notice notice-error"><p>' . __( 'The %1$s constant is not defined or is not set to %2$s. The SQLite integration will not work until that constant is defined. Please edit your %3$s file and add %4$s above the line that says %5$s.', 'sqlite' ) . '</p></div>',
 			'<code>DATABASE_TYPE</code>',
 			'<code>sqlite</code>',

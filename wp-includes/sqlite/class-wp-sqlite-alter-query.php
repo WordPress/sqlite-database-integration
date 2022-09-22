@@ -400,10 +400,10 @@ class WP_SQLite_Alter_Query {
 		$_wpdb      = new WP_SQLite_DB();
 		$col_obj    = $_wpdb->get_results( "SHOW COLUMNS FROM {$tokenized_query['table_name']}" );
 		foreach ( $col_obj as $col ) {
-			if ( stripos( $col->Field, $tokenized_query['old_column'] ) !== false ) {
+			if ( stripos( $col->Field, $tokenized_query['old_column'] ) !== false ) { // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 				$col_check = true;
 			}
-			$old_fields .= $col->Field . ',';
+			$old_fields .= $col->Field . ','; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 		}
 		if ( false === $col_check ) {
 			$_wpdb = null;
