@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: WP SQLite DB
+ * Plugin Name: SQLite Integration
  * Description: SQLite database driver drop-in. (based on SQLite Integration by Kojima Toshiyasu)
  * Author: Ari Stathopoulos
  * Version: 1.0.0
@@ -29,6 +29,7 @@ function sqlite_plugin_copy_db_file() {
 		}
 	}
 }
+register_activation_hook( __FILE__, 'sqlite_plugin_copy_db_file' ); // Copy db.php file on plugin activation.
 
 /**
  * Delete the db.php file in wp-content.
@@ -44,18 +45,31 @@ function sqlite_plugin_remove_db_file() {
 		$wp_filesystem->delete( $destination );
 	}
 }
+register_deactivation_hook( __FILE__, 'sqlite_plugin_remove_db_file' ); // Remove db.php file on plugin deactivation.
 
-// Copy db.php file on plugin activation.
-register_activation_hook( __FILE__, 'sqlite_plugin_copy_db_file' );
+/**
+ * Add admin notices.
+ */
+function sqlite_plugin_admin_notice() {
 
-// Remove db.php file on plugin deactivation.
-register_deactivation_hook( __FILE__, 'sqlite_plugin_remove_db_file' );
-
-
-add_action( 'admin_notices', function() {
+	// Check if the wp-content/db.php file exists.
 	if ( ! file_exists( WP_CONTENT_DIR . '/db.php' ) ) {
-		echo '<div class="notice notice-error">';
-		echo '<p>' . __( 'The wp-content/db.php file could not be detected. The SQLite integration will not work until that file is successfully copied. To try again automatically, deactivate the SQLite plugin and activate it again.', 'sqlite' ) . '</p>';
-		echo '</div>';
+		printf(
+			'<div class="notice notice-error"><p>%s</p></div>',
+			esc_html__( 'The SQLite Integration plugin is active, but the wp-content/db.php file is missing. Please deactivate the plugin and try again.', 'sqlite' )
+		);
 	}
-} );
+
+	// Check if the DATABASE_TYPE constant is set.
+	if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
+		printf(
+			'<div class="notice notice-error"><p>' . __( 'The %1$s constant is not defined or is not set to %2$s. The SQLite integration will not work until that constant is defined. Please edit your %3$s file and add %4$s above the line that says %5$s.', 'sqlite' ) . '</p></div>',
+			'<code>DATABASE_TYPE</code>',
+			'<code>sqlite</code>',
+			'<code>wp-config.php</code>',
+			'<code>define( \'DATABASE_TYPE\', \'sqlite\' );</code>',
+			'<code>/* That\'s all, stop editing! Happy blogging. */</code>'
+		);
+	}
+}
+add_action( 'admin_notices', 'sqlite_plugin_admin_notice' ); // Add the admin notices.

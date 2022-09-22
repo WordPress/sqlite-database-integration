@@ -3,6 +3,10 @@
  * Main integration file.
  */
 
+if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
+	return;
+}
+
 function pdo_log_error( $message, $data = null ) {
 	$admin_dir = 'wp-admin/';
 	if ( strpos( $_SERVER['SCRIPT_NAME'], 'wp-admin' ) !== false ) {
