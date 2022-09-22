@@ -13,6 +13,8 @@
 
 /**
  * Add the db.php file in wp-content.
+ *
+ * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_copy_db_file() {
 	$destination = WP_CONTENT_DIR . '/db.php';
@@ -33,6 +35,8 @@ register_activation_hook( __FILE__, 'sqlite_plugin_copy_db_file' ); // Copy db.p
 
 /**
  * Delete the db.php file in wp-content.
+ *
+ * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_remove_db_file() {
 	$destination = WP_CONTENT_DIR . '/db.php';
@@ -49,6 +53,8 @@ register_deactivation_hook( __FILE__, 'sqlite_plugin_remove_db_file' ); // Remov
 
 /**
  * Add admin notices.
+ *
+ * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_admin_notice() {
 	// Check if the wp-content/db.php file exists.
@@ -75,6 +81,9 @@ add_action( 'admin_notices', 'sqlite_plugin_admin_notice' ); // Add the admin no
 
 /**
  * Filter debug data in site-health screen.
+ *
+ * When the plugin gets merged in wp-core, these should be merged in src/wp-admin/includes/class-wp-debug-data.php
+ * See https://github.com/WordPress/wordpress-develop/pull/3220/files
  *
  * @param array $info The debug data.
  */
