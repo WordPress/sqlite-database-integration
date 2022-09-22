@@ -3,7 +3,7 @@
  * Plugin Name: SQLite Integration
  * Description: SQLite database driver drop-in. (based on SQLite Integration by Kojima Toshiyasu)
  * Author: Ari Stathopoulos
- * Version: 1.0.0
+ * Version: 0.1.0
  * Requires PHP: 5.6
  * Textdomain: sqlite
  *
