@@ -589,12 +589,12 @@ class WP_PDO_Engine extends PDO {
 
 		$output  = '<div style="clear:both">&nbsp;</div>';
 		$output .= '<div class="queries" style="clear:both;margin_bottom:2px;border:red dotted thin;">';
-		$output .= '<p>' . __( 'Queries made or created this session were:', 'sqlite' ) . '</p>'
+		$output .= '<p>' . __( 'Queries made or created this session were:', 'sqlite' ) . '</p>';
 		$output .= '<ol>';
 		foreach ( $this->queries as $q ) {
 			$output .= '<li>' . $q . '</li>';
 		}
-		$output .= '</ol>'
+		$output .= '</ol>';
 		$output .= '</div>';
 		foreach ( $this->error_messages as $num => $m ) {
 			$output .= '<div style="clear:both;margin_bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">';
