@@ -22,6 +22,11 @@ if ( ! defined( 'DATABASE_TYPE' ) ) {
  * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_copy_db_file() {
+	// Bail early if the SQLite3 class does not exist.
+	if ( ! class_exists( 'SQLite3' ) ) {
+		return;
+	}
+
 	$destination = WP_CONTENT_DIR . '/db.php';
 	if ( ! file_exists( $destination ) ) {
 		global $wp_filesystem;
@@ -62,6 +67,16 @@ register_deactivation_hook( __FILE__, 'sqlite_plugin_remove_db_file' ); // Remov
  * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_admin_notice() {
+
+	// If SQLite is not detected, bail early.
+	if ( ! class_exists( 'SQLite3' ) ) {
+		printf(
+			'<div class="notice notice-error"><p>%s</p></div>',
+			esc_html__( 'The SQLite Integration plugin is active, but the SQLite3 class is missing from your server. Please make sure that SQLite is enabled in your PHP installation.', 'sqlite' )
+		);
+		return;
+	}
+
 	// Check if the wp-content/db.php file exists.
 	if ( ! file_exists( WP_CONTENT_DIR . '/db.php' ) ) {
 		printf(
