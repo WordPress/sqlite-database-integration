@@ -72,7 +72,7 @@ class WP_SQLite_DB extends wpdb {
 	 * @return string escaped
 	 */
 	function _real_escape( $string ) {
-		return addslashes( $string );
+		return SQLite3::escapeString( $string );
 	}
 
 	/**
