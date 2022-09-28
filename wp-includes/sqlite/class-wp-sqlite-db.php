@@ -158,10 +158,12 @@ class WP_SQLite_DB extends wpdb {
 			$str   = htmlspecialchars( $str, ENT_QUOTES );
 			$query = htmlspecialchars( $this->last_query, ENT_QUOTES );
 
-			print "<div id='error'>
-		<p class='wpdberror'><strong>WordPress database error:</strong> [$str]<br />
-		<code>$query</code></p>
-		</div>";
+			printf(
+				/* translators: 1: Database error message, 2: SQL query. */
+				'<div id="error"><p class="wpdberror">' . __( 'WordPress database error: [%1$s] %2$s', 'sqlite' ) . '</p></div>',
+				$str,
+				'<code>' . $query . '</code>'
+			);
 		}
 	}
 
@@ -228,11 +230,9 @@ class WP_SQLite_DB extends wpdb {
 
 		$query = apply_filters( 'query', $query );
 
-		$return_val = 0;
 		$this->flush();
 
-		$this->func_call = "\$db->query(\"$query\")";
-
+		$this->func_call  = "\$db->query(\"$query\")";
 		$this->last_query = $query;
 
 		if ( defined( 'SAVEQUERIES' ) && SAVEQUERIES ) {
@@ -247,19 +247,15 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->last_error = $this->dbh->get_error_message();
-		if ( $this->last_error ) {
-			if ( defined( 'WP_INSTALLING' ) && WP_INSTALLING ) {
-				// $this->suppress_errors();
-			} else {
-				$this->print_error( $this->last_error );
-
-				return false;
-			}
+		if ( $this->last_error && ( ! defined( 'WP_INSTALLING' ) || ! WP_INSTALLING ) ) {
+			$this->print_error( $this->last_error );
+			return false;
 		}
 
 		if ( preg_match( '/^\\s*(create|alter|truncate|drop|optimize)\\s*/i', $query ) ) {
 			return $this->dbh->get_return_value();
 		}
+
 		if ( preg_match( '/^\\s*(insert|delete|update|replace)\s/i', $query ) ) {
 			$this->rows_affected = $this->dbh->get_affected_rows();
 			if ( preg_match( '/^\s*(insert|replace)\s/i', $query ) ) {
@@ -267,6 +263,7 @@ class WP_SQLite_DB extends wpdb {
 			}
 			return $this->rows_affected;
 		}
+
 		$this->last_result = $this->dbh->get_query_results();
 		$this->num_rows    = $this->dbh->get_num_rows();
 		return $this->num_rows;
