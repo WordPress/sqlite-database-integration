@@ -3,10 +3,13 @@
  * Main integration file.
  */
 
+/**
+ * When merged in Core, this will be opt-in by defining the constant in wp-config.php.
+ * For the purposes of this plugin, activating the plugin IS opting-in so we are disabling the check.
 if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
 	return;
 }
-
+*/
 function pdo_log_error( $message, $data = null ) {
 	$admin_dir = 'wp-admin/';
 	if ( strpos( $_SERVER['SCRIPT_NAME'], 'wp-admin' ) !== false ) {

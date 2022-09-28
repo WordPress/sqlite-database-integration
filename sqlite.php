@@ -11,6 +11,11 @@
  * and the work of Evan Mattson and his WP SQLite DB plugin - See https://github.com/aaemnnosttv/wp-sqlite-db
  */
 
+// Temporary - This will be in wp-config.php once SQLite is merged in Core.
+if ( ! defined( 'DATABASE_TYPE' ) ) {
+	define( 'DATABASE_TYPE', 'sqlite' );
+}
+
 /**
  * Add the db.php file in wp-content.
  *
@@ -62,19 +67,6 @@ function sqlite_plugin_admin_notice() {
 		printf(
 			'<div class="notice notice-error"><p>%s</p></div>',
 			esc_html__( 'The SQLite Integration plugin is active, but the wp-content/db.php file is missing. Please deactivate the plugin and try again.', 'sqlite' )
-		);
-	}
-
-	// Check if the DATABASE_TYPE constant is set.
-	if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
-		printf(
-			/* translators: %1$s: DATABASE_TYPE, %2$s: sqlite, %3$s: wp-config.php, %4$s: hat\'s all, stop editing! Happy blogging. */
-			'<div class="notice notice-error"><p>' . __( 'The %1$s constant is not defined or is not set to %2$s. The SQLite integration will not work until that constant is defined. Please edit your %3$s file and add %4$s above the line that says %5$s.', 'sqlite' ) . '</p></div>',
-			'<code>DATABASE_TYPE</code>',
-			'<code>sqlite</code>',
-			'<code>wp-config.php</code>',
-			'<code>define( \'DATABASE_TYPE\', \'sqlite\' );</code>',
-			'<code>/* That\'s all, stop editing! Happy blogging. */</code>'
 		);
 	}
 }
