@@ -14,88 +14,111 @@ class WP_PDO_Engine extends PDO {
 	 * @var boolean
 	 */
 	public $is_error = false;
+
 	/**
 	 * Class variable which is used for CALC_FOUND_ROW query.
 	 *
 	 * @var unsigned integer
 	 */
 	public $found_rows_result = null;
+
 	/**
 	 * Class variable used for query with ORDER BY FIELD()
 	 *
 	 * @var array of the object
 	 */
 	public $pre_ordered_results = null;
+
 	/**
 	 * Class variable to store the rewritten queries.
 	 *
-	 * @var array
 	 * @access private
+	 *
+	 * @var array
 	 */
 	private $rewritten_query;
+
 	/**
 	 * Class variable to have what kind of query to execute.
 	 *
-	 * @var string
 	 * @access private
+	 *
+	 * @var string
 	 */
 	private $query_type;
+
 	/**
 	 * Class variable to store the result of the query.
 	 *
-	 * @var array reference to the PHP object
 	 * @access private
+	 *
+	 * @var array reference to the PHP object
 	 */
 	private $results = null;
+
 	/**
 	 * Class variable to store the results of the query.
 	 *
 	 * This is for the backward compatibility.
 	 *
-	 * @var array reference to the PHP object
 	 * @access private
+	 *
+	 * @var array reference to the PHP object
 	 */
 	private $_results = null;
+
 	/**
 	 * Class variable to reference to the PDO instance.
 	 *
-	 * @var PDO object
 	 * @access private
+	 *
+	 * @var PDO object
 	 */
 	private $pdo;
+
 	/**
 	 * Class variable to store the query string prepared to execute.
+	 *
+	 * @access private
 	 *
 	 * @var string|array
 	 */
 	private $prepared_query;
+
 	/**
 	 * Class variable to store the values in the query string.
 	 *
-	 * @var array
 	 * @access private
+	 *
+	 * @var array
 	 */
 	private $extracted_variables = array();
+
 	/**
 	 * Class variable to store the error messages.
 	 *
-	 * @var array
 	 * @access private
+	 *
+	 * @var array
 	 */
 	private $error_messages = array();
+
 	/**
 	 * Class variable to store the file name and function to cause error.
 	 *
-	 * @var array
 	 * @access private
+	 *
+	 * @var array
 	 */
 	private $errors;
+
 	/**
 	 * Class variable to store the query strings.
 	 *
 	 * @var array
 	 */
 	public $queries = array();
+
 	/**
 	 * Class variable to store the affected row id.
 	 *
@@ -103,24 +126,28 @@ class WP_PDO_Engine extends PDO {
 	 * @access private
 	 */
 	private $last_insert_id;
+
 	/**
 	 * Class variable to store the number of rows affected.
 	 *
 	 * @var unsigned integer
 	 */
 	private $affected_rows;
+
 	/**
 	 * Class variable to store the queried column info.
 	 *
 	 * @var array
 	 */
 	private $column_data;
+
 	/**
 	 * Variable to emulate MySQL affected row.
 	 *
 	 * @var integer
 	 */
 	private $num_rows;
+
 	/**
 	 * Return value from query().
 	 *
@@ -129,6 +156,7 @@ class WP_PDO_Engine extends PDO {
 	 * @var mixed
 	 */
 	private $return_value;
+
 	/**
 	 * Variable to determine which insert query to use.
 	 *
@@ -139,11 +167,13 @@ class WP_PDO_Engine extends PDO {
 	 * @var boolean
 	 */
 	private $can_insert_multiple_rows = false;
+
 	/**
 	 *
 	 * @var integer
 	 */
 	private $param_num;
+
 	/**
 	 * Varible to check if there is an active transaction.
 	 * @var boolean
@@ -170,31 +200,40 @@ class WP_PDO_Engine extends PDO {
 		$dsn = 'sqlite:' . FQDB;
 		if ( isset( $GLOBALS['@pdo'] ) ) {
 			$this->pdo = $GLOBALS['@pdo'];
-		} else {
-			$locked = false;
-			$status = 0;
-			do {
-				try {
-					$this->pdo = new PDO( $dsn, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );
-					new WP_PDO_SQLite_User_Defined_Functions( $this->pdo );
-					$GLOBALS['@pdo'] = $this->pdo;
-				} catch ( PDOException $ex ) {
-					$status = $ex->getCode();
-					if ( 5 == $status || 6 == $status ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-						$locked = true;
-					} else {
-						$err_message = $ex->getMessage();
-					}
-				}
-			} while ( $locked );
-			if ( $status > 0 ) {
-				$message = 'Database initialization error!<br />' .
-					'Code: ' . $status .
-					( isset( $err_message ) ? '<br />Error Message: ' . $err_message : '' );
-				$this->set_error( __LINE__, __FILE__, $message );
+			$this->init();
+			return;
+		}
 
-				return false;
+		$locked = false;
+		$status = 0;
+		$err_message = '';
+		do {
+			try {
+				$this->pdo = new PDO( $dsn, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );
+				new WP_PDO_SQLite_User_Defined_Functions( $this->pdo );
+				$GLOBALS['@pdo'] = $this->pdo;
+			} catch ( PDOException $ex ) {
+				$status = $ex->getCode();
+				if ( 5 === $status || 6 === $status ) {
+					$locked = true;
+				} else {
+					$err_message = $ex->getMessage();
+				}
 			}
+		} while ( $locked );
+
+		if ( $status > 0 ) {
+			$message = sprintf(
+				'<p>%s</p><p>%s</p><p>%s</p>',
+				__( 'Database initialization error!', 'sqlite' ),
+				/* translators: %d: error code */
+				sprintf( __( 'Code: %d', 'sqlite' ), $status ),
+				/* translators: %s: error message */
+				sprintf( _( 'Error Message: %s', 'sqlite' ), $err_message )
+			);
+			$this->set_error( __LINE__, __FILE__, $message );
+
+			return false;
 		}
 		$this->init();
 	}
@@ -217,12 +256,11 @@ class WP_PDO_Engine extends PDO {
 					'[%s] Memory_limit is not set in php.ini file.',
 					gmdate( 'Y-m-d H:i:s', $_SERVER['REQUEST_TIME'] )
 				);
-				file_put_contents( FQDBDIR . 'mem_debug.txt', $message, FILE_APPEND );
-
+				error_log( $message );
 				return true;
 			}
 			if ( stripos( $max, 'M' ) !== false ) {
-				$max = (int) $max * 1024 * 1024;
+				$max = (int) $max * MB_IN_BYTES;
 			}
 			$peak = memory_get_peak_usage( true );
 			$used = round( (int) $peak / (int) $max * 100, 2 );
@@ -234,11 +272,10 @@ class WP_PDO_Engine extends PDO {
 					$max,
 					$peak
 				);
-				file_put_contents( FQDBDIR . 'mem_debug.txt', $message, FILE_APPEND );
+				error_log( $message );
 			}
 		}
 
-		//$this->pdo = null;
 		return true;
 	}
 
@@ -272,20 +309,20 @@ class WP_PDO_Engine extends PDO {
 		if ( ! is_dir( FQDBDIR ) ) {
 			if ( ! @mkdir( FQDBDIR, 0704, true ) ) {
 				umask( $u );
-				$message = 'Unable to create the required directory! Please check your server settings.';
+				$message = __( 'Unable to create the required directory! Please check your server settings.', 'sqlite' );
 				wp_die( $message, 'Error!' );
 			}
 		}
 		if ( ! is_writable( FQDBDIR ) ) {
 			umask( $u );
-			$message = 'Unable to create a file in the directory! Please check your server settings.';
+			$message = __( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
 			wp_die( $message, 'Error!' );
 		}
 		if ( ! is_file( FQDBDIR . '.htaccess' ) ) {
 			$fh = fopen( FQDBDIR . '.htaccess', 'w' );
 			if ( ! $fh ) {
 				umask( $u );
-				$message = 'Unable to create a file in the directory! Please check your server settings.';
+				$message = __( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
 				echo $message;
 
 				return false;
@@ -297,7 +334,7 @@ class WP_PDO_Engine extends PDO {
 			$fh = fopen( FQDBDIR . 'index.php', 'w' );
 			if ( ! $fh ) {
 				umask( $u );
-				$message = 'Unable to create a file in the directory! Please check your server settings.';
+				$message = __( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
 				echo $message;
 
 				return false;
@@ -362,9 +399,6 @@ class WP_PDO_Engine extends PDO {
 				if ( ! is_null( $this->found_rows_result ) ) {
 					$this->num_rows          = $this->found_rows_result;
 					$_column['FOUND_ROWS()'] = $this->num_rows;
-					//foreach ($this->found_rows_result[0] as $key => $value) {
-					//$_column['FOUND_ROWS()'] = $value;
-					//}
 					$column[]                = new WP_SQLite_Object_Array( $_column );
 					$this->results           = $column;
 					$this->found_rows_result = null;
@@ -374,9 +408,9 @@ class WP_PDO_Engine extends PDO {
 			case 'insert':
 				if ( $this->can_insert_multiple_rows ) {
 					$this->execute_insert_query_new( $statement );
-				} else {
-					$this->execute_insert_query( $statement );
+					break;
 				}
+				$this->execute_insert_query( $statement );
 				break;
 
 			case 'create':
@@ -397,8 +431,7 @@ class WP_PDO_Engine extends PDO {
 
 			case 'drop_index':
 				$this->return_value = false;
-				$pattern            = '/^\\s*(DROP\\s*INDEX\\s*.*?)\\s*ON\\s*(.*)/im';
-				if ( preg_match( $pattern, $statement, $match ) ) {
+				if ( preg_match( '/^\\s*(DROP\\s*INDEX\\s*.*?)\\s*ON\\s*(.*)/im', $statement, $match ) ) {
 					$this->query_type   = 'alter';
 					$this->return_value = $this->execute_alter_query( 'ALTER TABLE ' . trim( $match[2] ) . ' ' . trim( $match[1] ) );
 				}
@@ -420,8 +453,6 @@ class WP_PDO_Engine extends PDO {
 				$this->execute_query( $prepared_query );
 				if ( ! $this->is_error ) {
 					$this->process_results( $engine );
-				} else {
-					// Error
 				}
 				break;
 		}
@@ -501,6 +532,8 @@ class WP_PDO_Engine extends PDO {
 					$data['multiple_key'] = 1;
 				}
 				$this->column_data[]  = new WP_SQLite_Object_Array( $data );
+
+				// Reset data for next iteration.
 				$data['name']         = '';
 				$data['table']        = '';
 				$data['primary_key']  = 0;
@@ -547,21 +580,31 @@ class WP_PDO_Engine extends PDO {
 		if ( count( $this->error_messages ) === 0 ) {
 			$this->is_error       = false;
 			$this->error_messages = array();
+			return '';
+		}
 
-			return '';
-		}
-		$output = '<div style="clear:both">&nbsp;</div>';
 		if ( false === $this->is_error ) {
-			//return $output;
 			return '';
 		}
-		$output .= "<div class=\"queries\" style=\"clear:both; margin_bottom:2px; border: red dotted thin;\">Queries made or created this session were<br/>\r\n\t<ol>\r\n";
+
+		$output  = '<div style="clear:both">&nbsp;</div>';
+		$output .= '<div class="queries" style="clear:both;margin_bottom:2px;border:red dotted thin;">';
+		$output .= '<p>' . __( 'Queries made or created this session were:', 'sqlite' ) . '</p>'
+		$output .= '<ol>';
 		foreach ( $this->queries as $q ) {
-			$output .= "\t\t<li>" . $q . "</li>\r\n";
+			$output .= '<li>' . $q . '</li>';
 		}
-		$output .= "\t</ol>\r\n</div>";
+		$output .= '</ol>'
+		$output .= '</div>';
 		foreach ( $this->error_messages as $num => $m ) {
-			$output .= "<div style=\"clear:both; margin_bottom:2px; border: red dotted thin;\" class=\"error_message\" style=\"border-bottom:dotted blue thin;\">Error occurred at line {$this->errors[$num]['line']} in Function {$this->errors[$num]['function']}. <br/> Error message was: $m </div>";
+			$output .= '<div style="clear:both;margin_bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">';
+			$output .= sprintf(
+				__( 'Error occurred at line %d in Function %s. Error message was: %s.', 'sqlite' ),
+				(int) $this->errors[$num]['line'],
+				'<code>' . esc_html( $this->errors[$num]['function'] ) . '</code>',
+				$m
+			);
+			$output .= '</div>';
 		}
 
 		ob_start();
@@ -644,7 +687,7 @@ class WP_PDO_Engine extends PDO {
 				$reason  = $err->getCode();
 				$message = $err->getMessage();
 			}
-		} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+		} while ( 5 === $reason || 6 === $reason );
 
 		if ( $reason > 0 ) {
 			$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
