@@ -185,8 +185,6 @@ function make_db_sqlite() {
  * Runs the required functions to set up and populate the database,
  * including primary admin user and initial options.
  *
- * @since 2.1.0
- *
  * @param string $blog_title Site title.
  * @param string $user_name User's username.
  * @param string $user_email User's email.
@@ -267,8 +265,6 @@ function wp_install( $blog_title, $user_name, $user_email, $public, $deprecated 
 
 	/**
 	 * Fires after a site is fully installed.
-	 *
-	 * @since 3.9.0
 	 *
 	 * @param WP_User $user The site owner.
 	 */

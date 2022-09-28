@@ -9,6 +9,9 @@ class WP_SQLite_DB extends wpdb {
 
 	/**
 	 * Database Handle
+	 *
+	 * @access protected
+	 *
 	 * @var WP_PDO_Engine
 	 */
 	protected $dbh;
@@ -317,8 +320,6 @@ class WP_SQLite_DB extends wpdb {
 
 	/**
 	 * Retrieves full database server information.
-	 *
-	 * @since 5.5.0
 	 *
 	 * @return string|false Server info on success, false on failure.
 	 */
