@@ -1,8 +1,13 @@
 <?php
+/**
+ * Implementation to rewrite CREATE queries.
+ *
+ * @package wp-sqlite-integration
+ * @since 1.0.0
+ */
 
 /**
  * This class provides a function to rewrite CREATE query.
- *
  */
 class WP_SQLite_Create_Query {
 
@@ -13,6 +18,7 @@ class WP_SQLite_Create_Query {
 	 * @access private
 	 */
 	private $_query = '';
+
 	/**
 	 * The array to contain CREATE INDEX queries.
 	 *
@@ -20,6 +26,7 @@ class WP_SQLite_Create_Query {
 	 * @access private
 	 */
 	private $index_queries = array();
+
 	/**
 	 * The array to contain error messages.
 	 *
@@ -27,6 +34,7 @@ class WP_SQLite_Create_Query {
 	 * @access private
 	 */
 	private $_errors = array();
+
 	/**
 	 * Variable to have the table name to be executed.
 	 *
@@ -34,6 +42,7 @@ class WP_SQLite_Create_Query {
 	 * @access private
 	 */
 	private $table_name = '';
+
 	/**
 	 * Variable to check if the query has the primary key.
 	 *
@@ -45,15 +54,14 @@ class WP_SQLite_Create_Query {
 	/**
 	 * Function to rewrite query.
 	 *
-	 * @param string $query the query being processed
-	 *
-	 * @return string|array    the processed (rewritten) query
+	 * @param string $query The query being processed.
+	 * @return string|array The processed (rewritten) query
 	 */
 	public function rewrite_query( $query ) {
 		$this->_query     = $query;
 		$this->_errors [] = '';
 		if ( preg_match( '/^CREATE\\s*(UNIQUE|FULLTEXT|)\\s*INDEX/ims', $this->_query, $match ) ) {
-			// we manipulate CREATE INDEX query in WP_PDO_Engine.class.php
+			// We manipulate CREATE INDEX query in the WP_SQLite_PDO_Engine class.
 			// FULLTEXT index creation is simply ignored.
 			if ( isset( $match[1] ) && stripos( $match[1], 'fulltext' ) !== false ) {
 				return 'SELECT 1=1';
@@ -61,8 +69,8 @@ class WP_SQLite_Create_Query {
 			return $this->_query;
 		}
 		if ( preg_match( '/^CREATE\\s*(TEMP|TEMPORARY|)\\s*TRIGGER\\s*/im', $this->_query ) ) {
-			// if WordPress comes to use foreign key constraint, trigger will be needed.
-			// we don't use it for now.
+			// If WordPress comes to use foreign key constraint, trigger will be needed.
+			// We don't use it for now.
 			return $this->_query;
 		}
 		$this->strip_backticks();
@@ -181,6 +189,7 @@ class WP_SQLite_Create_Query {
 	 * Method for stripping the engine and other stuffs.
 	 *
 	 * TYPE, ENGINE and AUTO_INCREMENT are removed here.
+	 *
 	 * @access private
 	 */
 	private function rewrite_engine_info() {
@@ -273,9 +282,9 @@ class WP_SQLite_Create_Query {
 	/**
 	 * Callback method for rewrite_unique_key.
 	 *
-	 * @param array $matches an array of matches from the Regex
-	 *
 	 * @access private
+	 *
+	 * @param array $matches An array of matches from the Regex.
 	 * @return string
 	 */
 	private function _rewrite_unique_key( $matches ) {
@@ -320,7 +329,7 @@ class WP_SQLite_Create_Query {
 	 *
 	 * @access private
 	 *
-	 * @param $matches
+	 * @param array $matches An array of matches from the Regex.
 	 *
 	 * @return string
 	 */
@@ -361,7 +370,7 @@ class WP_SQLite_Create_Query {
 	/**
 	 * Callback method for rewrite_key.
 	 *
-	 * @param array $matches an array of matches from the Regex
+	 * @param array $matches an array of matches from the Regex.
 	 *
 	 * @access private
 	 * @return string
@@ -395,7 +404,7 @@ class WP_SQLite_Create_Query {
 	 *
 	 * This method is deprecated.
 	 *
-	 * @param string $match
+	 * @param string $match The string to be removed. Not used.
 	 *
 	 * @return string whose length is zero
 	 * @access private

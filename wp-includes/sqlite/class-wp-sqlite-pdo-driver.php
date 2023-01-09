@@ -1,10 +1,15 @@
 <?php
+/**
+ * Rewrite queries (except CREATE and ALTER) for SQLite to execute.
+ *
+ * @package wp-sqlite-integration
+ * @since 1.0.0
+ */
 
 /**
  * This class is for rewriting various query string except CREATE and ALTER.
- *
  */
-class WP_PDO_SQLite_Driver {
+class WP_SQLite_PDO_Driver {
 
 	/**
 	 * Variable to indicate the query types.
@@ -12,42 +17,49 @@ class WP_PDO_SQLite_Driver {
 	 * @var string $query_type
 	 */
 	public $query_type = '';
+
 	/**
 	 * Variable to store query string.
 	 *
 	 * @var string
 	 */
 	public $_query = '';
+
 	/**
 	 * Variable to check if rewriting CALC_FOUND_ROWS is needed.
 	 *
 	 * @var boolean
 	 */
 	private $rewrite_calc_found = false;
+
 	/**
 	 * Variable to check if rewriting ON DUPLICATE KEY UPDATE is needed.
 	 *
 	 * @var boolean
 	 */
 	private $rewrite_duplicate_key = false;
+
 	/**
 	 * Variable to check if rewriting index hints is needed.
 	 *
 	 * @var boolean
 	 */
 	private $rewrite_index_hint = false;
+
 	/**
 	 * Variable to check if rewriting BETWEEN is needed.
 	 *
 	 * @var boolean
 	 */
 	private $rewrite_between = false;
+
 	/**
 	 * Variable to check how many times rewriting BETWEEN is needed.
 	 *
 	 * @var integer
 	 */
 	private $num_of_rewrite_between = 0;
+
 	/**
 	 * Variable to check order by field() with column data.
 	 *
@@ -58,8 +70,8 @@ class WP_PDO_SQLite_Driver {
 	/**
 	 * Method to rewrite a query string for SQLite to execute.
 	 *
-	 * @param strin $query
-	 * @param string $query_type
+	 * @param string $query      Query string.
+	 * @param string $query_type Query type (SELECT, INSERT, UPDATE, DELETE, TRUNCATE, ALTER, CREATE, DESCRIBE, DESC, SHOW, SHOWCOLUMNS, SHOWINDEX).
 	 *
 	 * @return string
 	 */
@@ -98,19 +110,19 @@ class WP_PDO_SQLite_Driver {
 				break;
 
 			case 'select':
-				//$this->strip_backticks();
+				// $this->strip_backticks();
 				$this->handle_sql_count();
 				$this->rewrite_date_sub();
 				$this->delete_index_hints();
 				$this->rewrite_regexp();
-				//$this->rewrite_boolean();
+				// $this->rewrite_boolean();
 				$this->fix_date_quoting();
 				$this->rewrite_between();
 				$this->handle_orderby_field();
 				break;
 
 			case 'insert':
-				//$this->safe_strip_backticks();
+				// $this->safe_strip_backticks();
 				$this->execute_duplicate_key_update();
 				$this->rewrite_insert_ignore();
 				$this->rewrite_regexp();
@@ -118,9 +130,9 @@ class WP_PDO_SQLite_Driver {
 				break;
 
 			case 'update':
-				//$this->safe_strip_backticks();
+				// $this->safe_strip_backticks();
 				$this->rewrite_update_ignore();
-				//$this->_rewrite_date_sub();
+				// $this->_rewrite_date_sub();
 				$this->rewrite_limit_usage();
 				$this->rewrite_order_by_usage();
 				$this->rewrite_regexp();
@@ -128,7 +140,7 @@ class WP_PDO_SQLite_Driver {
 				break;
 
 			case 'delete':
-				//$this->strip_backticks();
+				// $this->strip_backticks();
 				$this->rewrite_limit_usage();
 				$this->rewrite_order_by_usage();
 				$this->rewrite_date_sub();
@@ -137,7 +149,7 @@ class WP_PDO_SQLite_Driver {
 				break;
 
 			case 'replace':
-				//$this->safe_strip_backticks();
+				// $this->safe_strip_backticks();
 				$this->rewrite_date_sub();
 				$this->rewrite_regexp();
 				break;
@@ -216,7 +228,7 @@ class WP_PDO_SQLite_Driver {
 	}
 
 	/**
-	 * method to handle SHOW TABLES query.
+	 * Method to handle SHOW TABLES query.
 	 *
 	 * @access private
 	 */
@@ -249,13 +261,10 @@ class WP_PDO_SQLite_Driver {
 			return;
 		}
 		global $wpdb;
-		// first strip the code. this is the end of rewriting process
+		// First strip the code. this is the end of rewriting process.
 		$this->_query = str_ireplace( 'SQL_CALC_FOUND_ROWS', '', $this->_query );
-		// we make the data for next SELECE FOUND_ROWS() statement
-		$unlimited_query = preg_replace( '/\\bLIMIT\\s*.*/imsx', '', $this->_query );
-		//$unlimited_query = preg_replace('/\\bGROUP\\s*BY\\s*.*/imsx', '', $unlimited_query);
-		// we no longer use SELECT COUNT query
-		//$unlimited_query = $this->_transform_to_count($unlimited_query);
+		// We make the data for next SELECE FOUND_ROWS() statement.
+		$unlimited_query              = preg_replace( '/\\bLIMIT\\s*.*/imsx', '', $this->_query );
 		$_wpdb                        = new WP_SQLite_DB();
 		$result                       = $_wpdb->query( $unlimited_query );
 		$wpdb->dbh->found_rows_result = $result;
@@ -289,7 +298,7 @@ class WP_PDO_SQLite_Driver {
 	 * @access private
 	 */
 	private function rewrite_date_add() {
-		//(date,interval expression unit)
+		// (date,interval expression unit)
 		$pattern = '/\\s*date_add\\s*\(([^,]*),([^\)]*)\)/imsx';
 		if ( preg_match( $pattern, $this->_query, $matches ) ) {
 			$expression   = "'" . trim( $matches[2] ) . "'";
@@ -306,7 +315,7 @@ class WP_PDO_SQLite_Driver {
 	 * @access private
 	 */
 	private function rewrite_date_sub() {
-		//(date,interval expression unit)
+		// (date,interval expression unit)
 		$pattern = '/\\s*date_sub\\s*\(([^,]*),([^\)]*)\)/imsx';
 		if ( preg_match( $pattern, $this->_query, $matches ) ) {
 			$expression   = "'" . trim( $matches[2] ) . "'";
@@ -435,7 +444,6 @@ class WP_PDO_SQLite_Driver {
 	 *
 	 * I don't understand that...
 	 *
-	 * @return void
 	 * @access private
 	 */
 	private function rewrite_badly_formed_dates() {
@@ -446,7 +454,6 @@ class WP_PDO_SQLite_Driver {
 	/**
 	 * Method to remove INDEX HINT.
 	 *
-	 * @return void
 	 * @access private
 	 */
 	private function delete_index_hints() {
@@ -465,7 +472,6 @@ class WP_PDO_SQLite_Driver {
 	 * I use preg_replace_callback instead of 'e' option because of security reason.
 	 * cf. PHP manual (regular expression)
 	 *
-	 * @return void
 	 * @access private
 	 */
 	private function fix_date_quoting() {
@@ -476,7 +482,7 @@ class WP_PDO_SQLite_Driver {
 	/**
 	 * Call back method to rewrite date string.
 	 *
-	 * @param string $match
+	 * @param string $match The match from preg_replace_callback.
 	 *
 	 * @return string
 	 * @access private
@@ -499,7 +505,7 @@ class WP_PDO_SQLite_Driver {
 	}
 
 	/**
-	 * Method to handl SHOW COLUMN query.
+	 * Method to handle SHOW COLUMN query.
 	 *
 	 * @access private
 	 */
@@ -543,7 +549,6 @@ class WP_PDO_SQLite_Driver {
 	 *
 	 * Added the literal check since the version 1.5.1.
 	 *
-	 * @return void
 	 * @access private
 	 */
 	private function execute_duplicate_key_update() {
@@ -557,8 +562,8 @@ class WP_PDO_SQLite_Driver {
 			$table_name  = trim( $match_0[1] );
 			$insert_data = trim( $match_0[2] );
 			$update_data = trim( $match_0[3] );
-			// prepare two unique key data for the table
-			// 1. array('col1', 'col2, col3', etc) 2. array('col1', 'col2', 'col3', etc)
+			// Prepare two unique key data for the table.
+			// 1. array('col1', 'col2, col3', etc) 2. array('col1', 'col2', 'col3', etc).
 			$_wpdb   = new WP_SQLite_DB();
 			$indexes = $_wpdb->get_results( "SHOW INDEX FROM {$table_name}" );
 			if ( ! empty( $indexes ) ) {
@@ -584,7 +589,7 @@ class WP_PDO_SQLite_Driver {
 
 				return;
 			}
-			// data check
+			// Data check.
 			if ( preg_match( '/^\((.*)\)\\s*VALUES\\s*\((.*)\)$/ims', $insert_data, $match_1 ) ) {
 				$col_array      = explode( ',', $match_1[1] );
 				$ins_data_array = explode( ',', $match_1[2] );
@@ -744,7 +749,7 @@ class WP_PDO_SQLite_Driver {
 	/**
 	 * Method to avoid DELETE with JOIN statement.
 	 *
-	 * wp-admin/includes/upgrade.php contains 'DELETE ... JOIN' statement.
+	 * The wp-admin/includes/upgrade.php contains a 'DELETE ... JOIN' statement.
 	 * This query can't be replaced with regular expression or udf, so we
 	 * replace all the statement with another. But this query was used in
 	 * the very old version of WordPress when it was upgraded. So we won't
