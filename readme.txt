@@ -36,6 +36,7 @@ The SQLite plugin is a community, feature plugin. The intent is to allow testing
 = What is the purpose of this plugin? =
 
 The primary purpose of the SQLite plugin is to allow testing the use of an SQLite database, with the goal to eventually land in WordPress core.
+You can read the original proposal on the [Make blog](https://make.wordpress.org/core/2022/09/12/lets-make-wordpress-officially-support-sqlite/), as well as the [call for testing](https://make.wordpress.org/core/2022/12/20/help-us-test-the-sqlite-implementation/) for more context and useful information.
 
 = Can I use this plugin on my production site? =
 
