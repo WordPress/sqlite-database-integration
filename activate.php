@@ -38,7 +38,7 @@ function sqlite_activation() {
 	if ( isset( $_GET['confirm-install'] ) && wp_verify_nonce( $_GET['_wpnonce'], 'sqlite-install' ) ) {
 		sqlite_plugin_copy_db_file();
 		// WordPress will automatically redirect to the install screen here.
-		wp_redirect( admin_url( 'admin.php?page=sqlite-integration&install=1' ) );
+		wp_redirect( admin_url() );
 		exit;
 	}
 }
