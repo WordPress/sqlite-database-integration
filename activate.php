@@ -12,9 +12,10 @@
  * @since 1.0.0
  */
 function sqlite_plugin_activation_redirect() {
-	wp_safe_redirect( admin_url( 'admin.php?page=sqlite-integration' ) );
+	wp_redirect( admin_url( 'options-general.php?page=sqlite-integration' ) );
+	exit;
 }
-register_activation_hook( __FILE__, 'sqlite_plugin_activation_redirect' );
+// register_activation_hook( SQLITE_MAIN_FILE, 'sqlite_plugin_activation_redirect' );
 
 /**
  * Check the URL to ensure we're on the plugin page,
@@ -27,7 +28,7 @@ register_activation_hook( __FILE__, 'sqlite_plugin_activation_redirect' );
  */
 function sqlite_activation() {
 	global $current_screen;
-	if ( isset( $current_screen->base ) && 'toplevel_page_sqlite-integration' === $current_screen->base ) {
+	if ( isset( $current_screen->base ) && 'settings_page_sqlite-integration' === $current_screen->base ) {
 		return;
 	}
 	if ( isset( $_GET['confirm-install'] ) && wp_verify_nonce( $_GET['_wpnonce'], 'sqlite-install' ) ) {

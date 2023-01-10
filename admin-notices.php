@@ -15,7 +15,7 @@ function sqlite_plugin_admin_notice() {
 
 	// Don't print notices in the plugin's admin screen.
 	global $current_screen;
-	if ( isset( $current_screen->base ) && 'toplevel_page_sqlite-integration' === $current_screen->base ) {
+	if ( isset( $current_screen->base ) && 'settings_page_sqlite-integration' === $current_screen->base ) {
 		return;
 	}
 

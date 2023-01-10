@@ -13,28 +13,16 @@
  * @since 1.0.0
  */
 function sqlite_add_dummy_admin_menu() {
-	add_menu_page(
+	add_options_page(
 		__( 'SQLite integration', 'sqlite' ),
 		__( 'SQLite integration', 'sqlite' ),
 		'manage_options',
 		'sqlite-integration',
 		'sqlite_integration_pre_install_check_screen',
-		'',
-		3
 	);
 
 }
 add_action( 'admin_menu', 'sqlite_add_dummy_admin_menu' );
-
-/**
- * Remove the admin menu, leaving the page itself.
- *
- * @since 1.0.0
- */
-function sqlite_remove_dummy_admin_menu() {
-	remove_menu_page( 'sqlite-integration' );
-}
-add_action( 'admin_init', 'sqlite_remove_dummy_admin_menu' );
 
 /**
  * The admin page contents.
