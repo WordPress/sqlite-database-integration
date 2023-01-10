@@ -12,22 +12,21 @@
  *
  * @since 1.0.0
  */
-function sqlite_add_dummy_admin_menu() {
+function sqlite_add_admin_menu() {
 	add_options_page(
 		__( 'SQLite integration', 'sqlite' ),
 		__( 'SQLite integration', 'sqlite' ),
 		'manage_options',
 		'sqlite-integration',
-		'sqlite_integration_pre_install_check_screen',
+		'sqlite_integration_admin_screen',
 	);
-
 }
-add_action( 'admin_menu', 'sqlite_add_dummy_admin_menu' );
+add_action( 'admin_menu', 'sqlite_add_admin_menu' );
 
 /**
  * The admin page contents.
  */
-function sqlite_integration_pre_install_check_screen() {
+function sqlite_integration_admin_screen() {
 	?>
 	<div class="wrap">
 		<h1><?php esc_html_e( 'SQLite integration.', 'sqlite' ); ?></h1>
