@@ -45,23 +45,28 @@ function sqlite_plugin_admin_notice() {
 		);
 
 		return;
-	} elseif ( ! file_exists( WP_CONTENT_DIR . '/db.php' ) && ! wp_is_writable( WP_CONTENT_DIR ) ) {
+	}
+
+	if ( file_exists( WP_CONTENT_DIR . '/db.php' ) ) {
+		return;
+	}
+
+	if ( ! wp_is_writable( WP_CONTENT_DIR ) ) {
 		printf(
 			'<div class="notice notice-error"><p>%s</p></div>',
 			esc_html__( 'The SQLite Integration plugin is active, but the wp-content/db.php file is missing and the wp-content directory is not writable. Please ensure the wp-content folder is writable, then deactivate the plugin and try again.', 'sqlite' )
 		);
 		return;
-	} elseif ( ! file_exists( WP_CONTENT_DIR . '/db.php' ) ) {
-		// The dropin db.php is missing.
-		printf(
-			'<div class="notice notice-error"><p>%s</p></div>',
-			sprintf(
-				/* translators: 1: db.php drop-in path, 2: Admin URL to deactivate the module */
-				__( 'The SQLite Integration plugin is active, but the %1$s file is missing. Please <a href="%2$s">deactivate the plugin</a> and re-activate it to try again.', 'sqlite' ),
-				'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>',
-				esc_url( admin_url( 'plugins.php' ) )
-			)
-		);
 	}
+	// The dropin db.php is missing.
+	printf(
+		'<div class="notice notice-error"><p>%s</p></div>',
+		sprintf(
+			/* translators: 1: db.php drop-in path, 2: Admin URL to deactivate the module */
+			__( 'The SQLite Integration plugin is active, but the %1$s file is missing. Please <a href="%2$s">deactivate the plugin</a> and re-activate it to try again.', 'sqlite' ),
+			'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>',
+			esc_url( admin_url( 'plugins.php' ) )
+		)
+	);
 }
 add_action( 'admin_notices', 'sqlite_plugin_admin_notice' ); // Add the admin notices.
