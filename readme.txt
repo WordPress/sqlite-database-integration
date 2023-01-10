@@ -1,4 +1,4 @@
-=== SQLite Integration ===
+=== SQLite Database Integration ===
 
 Contributors:      wordpressdotorg, aristath
 Requires at least: 6.0

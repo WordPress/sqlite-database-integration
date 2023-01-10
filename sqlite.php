@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: SQLite
+ * Plugin Name: SQLite Database Integration
  * Description: SQLite database driver drop-in. (based on SQLite Integration by Kojima Toshiyasu)
  * Author: WordPress Performance Team
  * Version: 1.0.0
