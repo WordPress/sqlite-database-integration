@@ -28,7 +28,7 @@ require_once '{SQLITE_IMPLEMENTATION_FOLDER_PATH}/wp-includes/sqlite/db.php';
 
 // Activate the performance-lab plugin if it is not already activated.
 add_action(
-	'init',
+	'admin_footer',
 	function() {
 		if ( defined( 'SQLITE_MAIN_FILE' ) ) {
 			return;
