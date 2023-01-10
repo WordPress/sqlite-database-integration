@@ -67,7 +67,7 @@ function sqlite_plugin_copy_db_file() {
 			$file_contents = str_replace(
 				'{SQLITE_IMPLEMENTATION_FOLDER_PATH}',
 				__DIR__,
-				file_get_contents( __DIR__ . '/db.copy.php' )
+				file_get_contents( __DIR__ . '/db.copy' )
 			);
 
 			$wp_filesystem->put_contents( $destination, $file_contents );
