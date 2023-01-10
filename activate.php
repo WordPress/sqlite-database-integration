@@ -10,12 +10,16 @@
  * Redirect to the plugin's admin screen on activation.
  *
  * @since 1.0.0
+ *
+ * @param string $plugin The plugin basename.
  */
-function sqlite_plugin_activation_redirect() {
-	wp_redirect( admin_url( 'options-general.php?page=sqlite-integration' ) );
-	exit;
+function sqlite_plugin_activation_redirect( $plugin ) {
+	if ( plugin_basename( SQLITE_MAIN_FILE ) === $plugin ) {
+		wp_redirect( admin_url( 'options-general.php?page=sqlite-integration' ) );
+		exit;
+	}
 }
-// register_activation_hook( SQLITE_MAIN_FILE, 'sqlite_plugin_activation_redirect' );
+add_action( 'activated_plugin', 'sqlite_plugin_activation_redirect' );
 
 /**
  * Check the URL to ensure we're on the plugin page,
