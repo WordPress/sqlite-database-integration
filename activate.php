@@ -70,8 +70,14 @@ function sqlite_plugin_copy_db_file() {
 
 			// Get the db.copy.php file contents, replace placeholders and write it to the destination.
 			$file_contents = str_replace(
-				'{SQLITE_IMPLEMENTATION_FOLDER_PATH}',
-				__DIR__,
+				array(
+					'{SQLITE_IMPLEMENTATION_FOLDER_PATH}',
+					'{SQLITE_PLUGIN}',
+				),
+				array(
+					__DIR__,
+					str_replace( WP_PLUGIN_DIR . '/', '', SQLITE_MAIN_FILE ),
+				),
 				file_get_contents( __DIR__ . '/db.copy' )
 			);
 

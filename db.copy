@@ -25,3 +25,19 @@ if ( ! defined( 'DATABASE_TYPE' ) ) {
 
 // Require the implementation from the plugin.
 require_once '{SQLITE_IMPLEMENTATION_FOLDER_PATH}/wp-includes/sqlite/db.php';
+
+// Activate the performance-lab plugin if it is not already activated.
+add_action(
+	'init',
+	function() {
+		if ( defined( 'SQLITE_MAIN_FILE' ) ) {
+			return;
+		}
+		if ( ! function_exists( 'activate_plugin' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+		if ( is_plugin_inactive( '{SQLITE_PLUGIN}' ) ) {
+			activate_plugin( '{SQLITE_PLUGIN}' );
+		}
+	}
+);
