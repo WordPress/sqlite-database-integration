@@ -25,4 +25,4 @@ function sqlite_plugin_remove_db_file() {
 		$wp_filesystem->delete( WP_CONTENT_DIR . '/db.php' );
 	}
 }
-register_deactivation_hook( __FILE__, 'sqlite_plugin_remove_db_file' ); // Remove db.php file on plugin deactivation.
+register_deactivation_hook( SQLITE_MAIN_FILE, 'sqlite_plugin_remove_db_file' ); // Remove db.php file on plugin deactivation.
