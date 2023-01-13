@@ -29,8 +29,6 @@ The SQLite plugin is a community, feature plugin. The intent is to allow testing
 2. Visit **Plugins**.
 3. Activate the Performance Lab plugin.
 
-= After activation =
-
 == Frequently Asked Questions ==
 
 = What is the purpose of this plugin? =
