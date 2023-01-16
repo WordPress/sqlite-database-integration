@@ -328,8 +328,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		if ( ! is_dir( FQDBDIR ) ) {
 			if ( ! @mkdir( FQDBDIR, 0704, true ) ) {
 				umask( $u );
-				$message = __( 'Unable to create the required directory! Please check your server settings.', 'sqlite' );
-				wp_die( $message, 'Error!' );
+				wp_die( esc_html__( 'Unable to create the required directory! Please check your server settings.', 'sqlite' ), 'Error!' );
 			}
 		}
 		if ( ! is_writable( FQDBDIR ) ) {
@@ -341,8 +340,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$fh = fopen( FQDBDIR . '.htaccess', 'w' );
 			if ( ! $fh ) {
 				umask( $u );
-				$message = __( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
-				echo $message;
+				esc_html_e( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
 
 				return false;
 			}
@@ -353,8 +351,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$fh = fopen( FQDBDIR . 'index.php', 'w' );
 			if ( ! $fh ) {
 				umask( $u );
-				$message = __( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
-				echo $message;
+				esc_html_e( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite' );
 
 				return false;
 			}
@@ -1304,7 +1301,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private function convert_to_object() {
 		$_results = array();
 		if ( count( $this->results ) === 0 ) {
-			echo $this->get_error_message();
+			echo wp_kses_post( $this->get_error_message() );
 		} else {
 			foreach ( $this->results as $row ) {
 				$_results[] = new WP_SQLite_Object_Array( $row );
@@ -1332,7 +1329,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			'Extra'   => '',
 		);
 		if ( empty( $this->_results ) ) {
-			echo $this->get_error_message();
+			echo wp_kses_post( $this->get_error_message() );
 		} else {
 			foreach ( $this->_results as $row ) {
 				if ( ! is_object( $row ) ) {
@@ -1384,7 +1381,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			'Comment'      => '',
 		);
 		if ( 0 === count( $this->_results ) ) {
-			echo $this->get_error_message();
+			echo wp_kses_post( $this->get_error_message() );
 		} else {
 			foreach ( $this->_results as $row ) {
 				if ( 'table' === $row->type && ! stripos( $row->sql, 'primary' ) ) {
