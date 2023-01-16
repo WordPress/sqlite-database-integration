@@ -19,29 +19,29 @@ function sqlite_plugin_filter_debug_data( $info ) {
 
 	$info['wp-constants']['fields']['DATABASE_TYPE'] = array(
 		'label' => 'DATABASE_TYPE',
-		'value' => ( defined( 'DATABASE_TYPE' ) ? DATABASE_TYPE : __( 'Undefined', 'sqlite' ) ),
+		'value' => ( defined( 'DATABASE_TYPE' ) ? DATABASE_TYPE : __( 'Undefined', 'sqlite-database-integration' ) ),
 		'debug' => ( defined( 'DATABASE_TYPE' ) ? DATABASE_TYPE : 'undefined' ),
 	);
 
 	$info['wp-database']['fields']['database_type'] = array(
-		'label' => __( 'Database type', 'sqlite' ),
+		'label' => __( 'Database type', 'sqlite-database-integration' ),
 		'value' => 'sqlite' === $database_type ? 'SQLite' : 'MySQL/MariaDB',
 	);
 
 	if ( 'sqlite' === $database_type ) {
 		$info['wp-database']['fields']['database_version'] = array(
-			'label' => __( 'SQLite version', 'sqlite' ),
+			'label' => __( 'SQLite version', 'sqlite-database-integration' ),
 			'value' => class_exists( 'SQLite3' ) ? SQLite3::version()['versionString'] : null,
 		);
 
 		$info['wp-database']['fields']['database_file'] = array(
-			'label'   => __( 'Database file', 'sqlite' ),
+			'label'   => __( 'Database file', 'sqlite-database-integration' ),
 			'value'   => FQDB,
 			'private' => true,
 		);
 
 		$info['wp-database']['fields']['database_size'] = array(
-			'label' => __( 'Database size', 'sqlite' ),
+			'label' => __( 'Database size', 'sqlite-database-integration' ),
 			'value' => size_format( filesize( FQDB ) ),
 		);
 

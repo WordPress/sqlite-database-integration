@@ -162,18 +162,18 @@ function wp_install( $blog_title, $user_name, $user_email, $is_public, $deprecat
 
 	if ( ! $user_id && empty( $user_password ) ) {
 		$user_password = wp_generate_password( 12, false );
-		$message       = __( '<strong><em>Note that password</em></strong> carefully! It is a <em>random</em> password that was generated just for you.', 'sqlite' );
+		$message       = __( '<strong><em>Note that password</em></strong> carefully! It is a <em>random</em> password that was generated just for you.', 'sqlite-database-integration' );
 		$user_id       = wp_create_user( $user_name, $user_password, $user_email );
 		update_user_meta( $user_id, 'default_password_nag', true );
 		$email_password = true;
 		$user_created   = true;
 	} elseif ( ! $user_id ) {
 		// Password has been provided.
-		$message      = '<em>' . __( 'Your chosen password.', 'sqlite' ) . '</em>';
+		$message      = '<em>' . __( 'Your chosen password.', 'sqlite-database-integration' ) . '</em>';
 		$user_id      = wp_create_user( $user_name, $user_password, $user_email );
 		$user_created = true;
 	} else {
-		$message = __( 'User already exists. Password inherited.', 'sqlite' );
+		$message = __( 'User already exists. Password inherited.', 'sqlite-database-integration' );
 	}
 
 	$user = new WP_User( $user_id );
@@ -190,7 +190,7 @@ function wp_install( $blog_title, $user_name, $user_email, $is_public, $deprecat
 
 	flush_rewrite_rules();
 
-	wp_new_blog_notification( $blog_title, $guessurl, $user_id, ( $email_password ? $user_password : __( 'The password you chose during installation.', 'sqlite' ) ) );
+	wp_new_blog_notification( $blog_title, $guessurl, $user_id, ( $email_password ? $user_password : __( 'The password you chose during installation.', 'sqlite-database-integration' ) ) );
 
 	wp_cache_flush();
 

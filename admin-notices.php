@@ -23,7 +23,7 @@ function sqlite_plugin_admin_notice() {
 	if ( ! class_exists( 'SQLite3' ) ) {
 		printf(
 			'<div class="notice notice-error"><p>%s</p></div>',
-			esc_html__( 'The SQLite Integration plugin is active, but the SQLite3 class is missing from your server. Please make sure that SQLite is enabled in your PHP installation.', 'sqlite' )
+			esc_html__( 'The SQLite Integration plugin is active, but the SQLite3 class is missing from your server. Please make sure that SQLite is enabled in your PHP installation.', 'sqlite-database-integration' )
 		);
 		return;
 	}
@@ -38,7 +38,7 @@ function sqlite_plugin_admin_notice() {
 			'<div class="notice notice-error"><p>%s</p></div>',
 			sprintf(
 				/* translators: 1: SQLITE_DB_DROPIN_VERSION constant, 2: db.php drop-in path */
-				__( 'The SQLite Integration module is active, but the %1$s constant is missing. It appears you already have another %2$s file present on your site. ', 'sqlite' ),
+				__( 'The SQLite Integration module is active, but the %1$s constant is missing. It appears you already have another %2$s file present on your site. ', 'sqlite-database-integration' ),
 				'<code>SQLITE_DB_DROPIN_VERSION</code>',
 				'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
 			)
@@ -54,7 +54,7 @@ function sqlite_plugin_admin_notice() {
 	if ( ! wp_is_writable( WP_CONTENT_DIR ) ) {
 		printf(
 			'<div class="notice notice-error"><p>%s</p></div>',
-			esc_html__( 'The SQLite Integration plugin is active, but the wp-content/db.php file is missing and the wp-content directory is not writable. Please ensure the wp-content folder is writable, then deactivate the plugin and try again.', 'sqlite' )
+			esc_html__( 'The SQLite Integration plugin is active, but the wp-content/db.php file is missing and the wp-content directory is not writable. Please ensure the wp-content folder is writable, then deactivate the plugin and try again.', 'sqlite-database-integration' )
 		);
 		return;
 	}
@@ -63,7 +63,7 @@ function sqlite_plugin_admin_notice() {
 		'<div class="notice notice-error"><p>%s</p></div>',
 		sprintf(
 			/* translators: 1: db.php drop-in path, 2: Admin URL to deactivate the module */
-			__( 'The SQLite Integration plugin is active, but the %1$s file is missing. Please <a href="%2$s">deactivate the plugin</a> and re-activate it to try again.', 'sqlite' ),
+			__( 'The SQLite Integration plugin is active, but the %1$s file is missing. Please <a href="%2$s">deactivate the plugin</a> and re-activate it to try again.', 'sqlite-database-integration' ),
 			'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>',
 			esc_url( admin_url( 'plugins.php' ) )
 		)
