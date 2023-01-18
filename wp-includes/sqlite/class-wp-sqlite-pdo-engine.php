@@ -607,7 +607,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$output .= '<p>' . __( 'Queries made or created this session were:', 'sqlite-database-integration' ) . '</p>';
 		$output .= '<ol>';
 		foreach ( $this->queries as $q ) {
-			$output .= '<li>' . $q . '</li>';
+			$output .= '<li>' . esc_html( $q ) . '</li>';
 		}
 		$output .= '</ol>';
 		$output .= '</div>';
@@ -1301,7 +1301,8 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private function convert_to_object() {
 		$_results = array();
 		if ( count( $this->results ) === 0 ) {
-			echo wp_kses_post( $this->get_error_message() );
+			// These messages are properly escaped in the function.
+			echo $this->get_error_message();
 		} else {
 			foreach ( $this->results as $row ) {
 				$_results[] = new WP_SQLite_Object_Array( $row );
@@ -1329,7 +1330,8 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			'Extra'   => '',
 		);
 		if ( empty( $this->_results ) ) {
-			echo wp_kses_post( $this->get_error_message() );
+			// These messages are properly escaped in the function.
+			echo $this->get_error_message();
 		} else {
 			foreach ( $this->_results as $row ) {
 				if ( ! is_object( $row ) ) {
@@ -1381,7 +1383,8 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			'Comment'      => '',
 		);
 		if ( 0 === count( $this->_results ) ) {
-			echo wp_kses_post( $this->get_error_message() );
+			// These messages are properly escaped in the function.
+			echo $this->get_error_message();
 		} else {
 			foreach ( $this->_results as $row ) {
 				if ( 'table' === $row->type && ! stripos( $row->sql, 'primary' ) ) {
