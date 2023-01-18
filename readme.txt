@@ -15,20 +15,6 @@ SQLite-integration plugin from the WordPress Performance Team.
 
 The SQLite plugin is a community, feature plugin. The intent is to allow testing an SQLite integration with WordPress and gather feedback, with the goal of eventually landing it in WordPress core.
 
-== Installation ==
-
-= Installation from within WordPress =
-
-1. Visit **Plugins > Add New**.
-2. Search for **SQLite**.
-3. Install and activate the SQLite plugin.
-
-= Manual installation =
-
-1. Upload the entire `sqlite` folder to the `/wp-content/plugins/` directory.
-2. Visit **Plugins**.
-3. Activate the Performance Lab plugin.
-
 == Frequently Asked Questions ==
 
 = What is the purpose of this plugin? =
