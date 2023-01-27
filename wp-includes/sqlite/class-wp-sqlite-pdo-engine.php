@@ -244,11 +244,9 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		if ( $status > 0 ) {
 			$message = sprintf(
 				'<p>%s</p><p>%s</p><p>%s</p>',
-				__( 'Database initialization error!', 'sqlite-database-integration' ),
-				/* translators: %d: error code */
-				sprintf( __( 'Code: %d', 'sqlite-database-integration' ), $status ),
-				/* translators: %s: error message */
-				sprintf( __( 'Error Message: %s', 'sqlite-database-integration' ), $err_message )
+				'Database initialization error!',
+				"Code: $status",
+				"Error Message: $err_message"
 			);
 			$this->set_error( __LINE__, __FILE__, $message );
 
@@ -328,19 +326,19 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		if ( ! is_dir( FQDBDIR ) ) {
 			if ( ! @mkdir( FQDBDIR, 0704, true ) ) {
 				umask( $u );
-				wp_die( esc_html__( 'Unable to create the required directory! Please check your server settings.', 'sqlite-database-integration' ), 'Error!' );
+				wp_die( 'Unable to create the required directory! Please check your server settings.', 'Error!' );
 			}
 		}
 		if ( ! is_writable( FQDBDIR ) ) {
 			umask( $u );
-			$message = __( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite-database-integration' );
+			$message = 'Unable to create a file in the directory! Please check your server settings.';
 			wp_die( $message, 'Error!' );
 		}
 		if ( ! is_file( FQDBDIR . '.htaccess' ) ) {
 			$fh = fopen( FQDBDIR . '.htaccess', 'w' );
 			if ( ! $fh ) {
 				umask( $u );
-				esc_html_e( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite-database-integration' );
+				echo 'Unable to create a file in the directory! Please check your server settings.';
 
 				return false;
 			}
@@ -351,7 +349,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$fh = fopen( FQDBDIR . 'index.php', 'w' );
 			if ( ! $fh ) {
 				umask( $u );
-				esc_html_e( 'Unable to create a file in the directory! Please check your server settings.', 'sqlite-database-integration' );
+				echo 'Unable to create a file in the directory! Please check your server settings.';
 
 				return false;
 			}
@@ -397,8 +395,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$res             = $this->determine_query_type( $statement );
 		if ( ! $res && defined( 'PDO_DEBUG' ) && PDO_DEBUG ) {
 			$bailout_string = sprintf(
-				/* translators: %s: SQL statement */
-				'<h1>' . __( 'Unknown query type', 'sqlite-database-integration' ) . '</h1><p>' . __( 'Sorry, we cannot determine the type of query that is requested (%s).', 'sqlite-database-integration' ) . '</p>',
+				'<h1>Unknown query type</h1><p>Sorry, we cannot determine the type of query that is requested (%s).</p>',
 				$statement
 			);
 			$this->set_error( __LINE__, __FUNCTION__, $bailout_string );
@@ -604,7 +601,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 
 		$output  = '<div style="clear:both">&nbsp;</div>';
 		$output .= '<div class="queries" style="clear:both;margin_bottom:2px;border:red dotted thin;">';
-		$output .= '<p>' . __( 'Queries made or created this session were:', 'sqlite-database-integration' ) . '</p>';
+		$output .= '<p>Queries made or created this session were:</p>';
 		$output .= '<ol>';
 		foreach ( $this->queries as $q ) {
 			$output .= '<li>' . esc_html( $q ) . '</li>';
@@ -614,8 +611,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		foreach ( $this->error_messages as $num => $m ) {
 			$output .= '<div style="clear:both;margin_bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">';
 			$output .= sprintf(
-				/* translators: %1$d: line number, %2$s: function name, %3$s: error message */
-				__( 'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.', 'sqlite-database-integration' ),
+				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
 				(int) $this->errors[ $num ]['line'],
 				'<code>' . esc_html( $this->errors[ $num ]['function'] ) . '</code>',
 				$m
@@ -1463,7 +1459,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				'Table'    => '',
 				'Op'       => $is_check ? 'check' : 'analyze',
 				'Msg_type' => 'status',
-				'Msg_text' => $is_check ? __( 'OK', 'sqlite-database-integration' ) : __( 'Table is already up to date', 'sqlite-database-integration' ),
+				'Msg_text' => $is_check ? 'OK' : 'Table is already up to date',
 			)
 		);
 		$this->results = $_results;

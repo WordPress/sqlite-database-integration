@@ -133,11 +133,10 @@ class WP_SQLite_DB extends wpdb {
 		wp_load_translations_early();
 
 		$caller = $this->get_caller();
-		$caller = $caller ? $caller : __( '(unknown)', 'sqlite-database-integration' );
+		$caller = $caller ? $caller : '(unknown)';
 
 		$error_str = sprintf(
-			/* translators: 1: Database error message, 2: SQL query, 3: Caller. */
-			__( 'WordPress database error %1$s for query %2$s made by %3$s', 'sqlite-database-integration' ),
+			'WordPress database error %1$s for query %2$s made by %3$s',
 			$str,
 			$this->last_query,
 			$caller
@@ -162,8 +161,7 @@ class WP_SQLite_DB extends wpdb {
 			$query = htmlspecialchars( $this->last_query, ENT_QUOTES );
 
 			printf(
-				/* translators: 1: Database error message, 2: SQL query. */
-				'<div id="error"><p class="wpdberror">' . __( 'WordPress database error: [%1$s] %2$s', 'sqlite-database-integration' ) . '</p></div>',
+				'<div id="error"><p class="wpdberror">WordPress database error: [%1$s] %2$s</p></div>',
 				$str,
 				'<code>' . $query . '</code>'
 			);
