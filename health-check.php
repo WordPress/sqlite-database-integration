@@ -74,6 +74,7 @@ function sqlite_plugin_filter_site_status_tests( $tests ) {
 
 	if ( 'sqlite' === $database_type ) {
 		unset( $tests['direct']['utf8mb4_support'] );
+		unset( $tests['direct']['sql_server'] );
 	}
 
 	return $tests;
