@@ -60,3 +60,22 @@ function sqlite_plugin_filter_debug_data( $info ) {
 	return $info;
 }
 add_filter( 'debug_information', 'sqlite_plugin_filter_debug_data' ); // Filter debug data in site-health screen.
+
+/**
+ * Filter site_status tests in site-health screen.
+ *
+ * When the plugin gets merged in wp-core, these should be merged in src/wp-admin/includes/class-wp-site-health.php
+ *
+ * @param array $tests The tests.
+ * @return array
+ */
+function sqlite_plugin_filter_site_status_tests( $tests ) {
+	$database_type = defined( 'DATABASE_TYPE' ) && 'sqlite' === DATABASE_TYPE ? 'sqlite' : 'mysql';
+
+	if ( 'sqlite' === $database_type ) {
+		unset( $tests['direct']['utf8mb4_support'] );
+	}
+
+	return $tests;
+}
+add_filter( 'site_status_tests', 'sqlite_plugin_filter_site_status_tests' );
