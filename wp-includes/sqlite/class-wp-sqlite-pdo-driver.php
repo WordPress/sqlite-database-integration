@@ -110,19 +110,16 @@ class WP_SQLite_PDO_Driver {
 				break;
 
 			case 'select':
-				// $this->strip_backticks();
 				$this->handle_sql_count();
 				$this->rewrite_date_sub();
 				$this->delete_index_hints();
 				$this->rewrite_regexp();
-				// $this->rewrite_boolean();
 				$this->fix_date_quoting();
 				$this->rewrite_between();
 				$this->handle_orderby_field();
 				break;
 
 			case 'insert':
-				// $this->safe_strip_backticks();
 				$this->execute_duplicate_key_update();
 				$this->rewrite_insert_ignore();
 				$this->rewrite_regexp();
@@ -130,9 +127,7 @@ class WP_SQLite_PDO_Driver {
 				break;
 
 			case 'update':
-				// $this->safe_strip_backticks();
 				$this->rewrite_update_ignore();
-				// $this->_rewrite_date_sub();
 				$this->rewrite_limit_usage();
 				$this->rewrite_order_by_usage();
 				$this->rewrite_regexp();
@@ -140,7 +135,6 @@ class WP_SQLite_PDO_Driver {
 				break;
 
 			case 'delete':
-				// $this->strip_backticks();
 				$this->rewrite_limit_usage();
 				$this->rewrite_order_by_usage();
 				$this->rewrite_date_sub();
@@ -149,7 +143,6 @@ class WP_SQLite_PDO_Driver {
 				break;
 
 			case 'replace':
-				// $this->safe_strip_backticks();
 				$this->rewrite_date_sub();
 				$this->rewrite_regexp();
 				break;
