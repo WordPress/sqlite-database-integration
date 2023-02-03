@@ -112,7 +112,7 @@ class WP_SQLite_PDO_Driver {
 			case 'select':
 				$this->handle_sql_count();
 				$this->rewrite_date_sub();
-				// $this->delete_index_hints();
+				$this->delete_index_hints();
 				$this->rewrite_regexp();
 				$this->fix_date_quoting();
 				$this->rewrite_between();
