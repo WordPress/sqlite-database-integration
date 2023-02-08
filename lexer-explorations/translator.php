@@ -10,7 +10,7 @@ use PhpMyAdmin\SqlParser\Statements\CreateStatement;
 use PhpMyAdmin\SqlParser\Statements\SelectStatement;
 
 // Assumes the PhpMyAdmin Sql Parser is installed via Composer
-require_once __DIR__.'/../vendor/autoload.php';
+require_once __DIR__.'/sql-parser/vendor/autoload.php';
 
 function errHandle($errNo, $errStr, $errFile, $errLine) {
     $msg = "$errStr in $errFile on line $errLine";
@@ -117,7 +117,25 @@ $mysql_php_date_formats = [
 $sqlite = new PDO('sqlite:./testdb');
 $sqlite->query('PRAGMA encoding="UTF-8";');
 
+// $other_queries = [];
+// foreach(queries() as $k=>$query) {
+//     $first_word = strtok($query, ' ');
+//     if(
+//         $first_word !== 'SELECT'
+//     && $first_word !== 'INSERT'
+//     && $first_word !== 'UPDATE'
+//     && $first_word !== 'DELETE'
+//     && !($first_word === 'CREATE' && strtok(' ') === 'TABLE')
+//     ) {
+//         $other_queries[] = $query;
+//     }
+// }
+// file_put_contents('other-queries.sql', implode("\n", $other_queries));
+// die();
+
+$min = (int)file_get_contents('./last-select.txt') ?: 0;
 foreach(queries() as $k=>$query) {
+    break;
     $tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens($query);
 
     $token = $tokens->getNext();
@@ -189,7 +207,273 @@ foreach(queries() as $k=>$query) {
     echo '--------------------'.PHP_EOL.PHP_EOL;
 }
 
-$min = (int)file_get_contents('./last-select.txt') ?: 18350;
+class Translator {
+
+    private $tokens;
+    private $outtokens;
+    private $idx = -1;
+    private $count;
+    private $query;
+
+    public function __construct(string $query) {
+        $this->query = $query;
+        $this->tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens($query)->tokens;
+        $this->count = count($this->tokens);
+    }
+
+    function translate() {
+        $queryType = $this->consume();
+        if($queryType->value === 'ALTER') {
+            return $this->translateAlter();
+        } else if($queryType->value === 'SELECT') {
+            // Only select from information schema for now
+            // General select translation is implemented later
+            // in this file
+            if(!str_contains($this->query, 'information_schema')) {
+                throw new \Exception('Unknown query type: ' . $queryType->value);
+            }
+
+            return 'SELECT \'\' as "table", 0 as "rows", 0 as "bytes';
+        } else if(
+            $queryType->value === 'CALL'
+            || $queryType->value === 'SET'
+            || $queryType->value === 'CREATE'
+        ) {
+            // It would be lovely to support at least SET autocommit
+            // but I don't think even that is possible with SQLite
+            return 'SELECT 1=1;';
+        } else if(
+            $queryType->value === 'START' ||
+            $queryType->value === 'BEGIN' ||
+            $queryType->value === 'COMMIT' ||
+            $queryType->value === 'ROLLBACK'
+        ) {
+            return $queryType->value;
+        } else if(
+            $queryType->value === 'DROP'
+        ) {
+            $what = $this->consume()->token;
+            if($what === 'TABLE') {
+                $this->consumeAll();
+            } else if($what === 'PROCEDURE' || $what === 'DATABASE') {
+                return 'SELECT 1=1;';
+            } else {
+                throw new \Exception('Unknown drop type: ' . $what);
+            }
+        } else if(
+            $queryType->value === 'REPLACE'
+        ) {
+            array_unshift(
+                $this->outtokens,
+                new \PhpMyAdmin\SqlParser\Token('INSERT', $queryType->type, $queryType->flags),
+                new Token(' ', Token::TYPE_WHITESPACE),
+                new \PhpMyAdmin\SqlParser\Token('OR', $queryType->type, $queryType->flags),
+                new Token(' ', Token::TYPE_WHITESPACE),
+            );
+
+            $this->consumeAll();
+            // @TODO: Process the rest as INSERT
+        } else if(
+            $queryType->value === 'DESCRIBE'
+        ) {
+            $table_name = $this->consume()->token;
+            return "PRAGMA table_info($table_name);";
+        } else if(
+            $queryType->value === 'SHOW'
+        ) {
+            $what1 = $this->consume()->token;
+            $what2 = $this->consume()->token;
+            var_dump([$what1, $what2]);
+            if($what1 === 'CREATE' && $what2 === 'PROCEDURE'){
+                return 'SELECT 1=1;';
+            } else if($what1 === 'FULL' && $what2 === 'COLUMNS') {
+            } else {
+                throw new \Exception("Unknown show type: $what1 $what2");
+            }
+        } else {
+            throw new \Exception('Unknown query type: ' . $queryType->value);
+        }
+
+        $query = '';
+        foreach($this->outtokens as $idx=>$token) {
+            $query .= $token->token ;
+        }
+        return $query;
+    }
+
+    function translateAlter() {
+        $subject = strtolower($this->consume()->token);
+        if($subject !== 'table') {
+            throw new \Exception('Unknown subject: '.$subject);
+        }
+    
+        $table_name = strtolower($this->consume()->token);
+        $op_type = strtolower($this->consume()->token);
+        $op_subject = strtolower($this->consume()->token);
+        if($op_subject === 'fulltext key') {
+            echo 'Skipping fulltext'.PHP_EOL;
+            return 'SELECT 1=1;';
+        }
+    
+        if($op_type === 'add') {
+            if($op_subject === 'column') {
+                $this->consumeDataTypes();
+                $this->consumeAll();
+            } else if($op_subject === 'key' || $op_subject === 'unique key') {
+                $key_name = $this->consume()->value;
+                $index_prefix = $op_subject === 'unique key' ? 'UNIQUE' : '';
+                $this->outtokens = [
+                    new Token('CREATE', Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_RESERVED),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token("$index_prefix INDEX", Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_RESERVED),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token("\"{$table_name}__$key_name\"", Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_KEY),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token('ON', Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_RESERVED),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token('"'.$table_name.'"', Token::TYPE_STRING, Token::FLAG_STRING_DOUBLE_QUOTES),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token('(', Token::TYPE_OPERATOR),
+                ];
+
+                while($token = $this->consume()) {
+                    if($token->token === '(') {
+                        $this->dropLast();
+                        break;
+                    }
+                }
+
+                // Consume all the fields, skip the sizes like `(20)`
+                // in `varchar(20)`
+                while($this->consume(Token::TYPE_SYMBOL)) {
+                    $paren_maybe = $this->peek();
+
+                    if($paren_maybe && $paren_maybe->token === "(") {
+                        $this->skip();
+                        $this->skip();
+                        $this->skip();
+                    }
+                }
+
+                $this->consumeAll();
+            } else {
+                throw new \Exception("Unknown operation: $op_type $op_subject");
+            }
+        } else if($op_type === 'change') {
+            if($op_subject === 'column') {
+                $this->consumeDataTypes();
+                $this->consumeAll();
+            }  else {
+                throw new \Exception("Unknown operation: $op_type $op_subject");
+            }
+        } else if($op_type === 'drop') {
+            if($op_subject === 'column') {
+                $this->consumeAll();
+            } else if($op_subject === 'key') {
+                $key_name = $this->consume()->value;
+                $this->outtokens = [
+                    new Token('DROP', Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_RESERVED),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token('INDEX', Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_RESERVED),
+                    new Token(' ', Token::TYPE_WHITESPACE),
+                    new Token("\"{$table_name}__$key_name\"", Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_KEY),
+                ];
+            }
+        } else {
+            throw new \Exception('Unknown operation: '.$op_type);
+        }
+    }
+
+    private function consumeDataTypes() {
+        global $field_types_translation;
+        while($type = $this->consume(
+            Token::TYPE_KEYWORD,
+            Token::FLAG_KEYWORD_DATA_TYPE
+        )) {
+            $typelc = strtolower($type->value);
+            if(isset($field_types_translation[$typelc])) {
+                $this->dropLast();
+                $this->outtokens[] = new Token(
+                    $field_types_translation[$typelc],
+                    $type->type,
+                    $type->flags
+                );
+            }
+
+            $paren_maybe = $this->peek();
+            if($paren_maybe && $paren_maybe->token === "(") {
+                $this->skip();
+                $this->skip();
+                $this->skip();
+            }
+        }
+    }
+
+    private function peek() {
+        return isset($this->tokens[$this->idx+1]) ? $this->tokens[$this->idx+1] : null;
+    }
+
+    private function consumeAll() {
+        while($this->consume()) {}
+    }
+
+    private function consume($type=null, $flags=null) {
+        return $this->next(['consume'=>true, 'type'=>$type, 'flags'=>$flags]);
+    }
+
+    private function dropLast() {
+        return array_pop($this->outtokens);
+    }
+
+    private function skip() {
+        $this->next(['consume'=>false]);
+    }
+
+    private function next($options=[
+        'consume' => true,
+        'type' => null,
+        'flags' => null
+    ]) {
+        $type = isset($options['type']) ? $options['type'] : null;
+        $flags = isset($options['flags']) ? $options['flags'] : null;
+        while(++$this->idx < $this->count) {            
+            $token = $this->tokens[$this->idx];
+            if(isset($options['consume']) && $options['consume']) {
+                $this->outtokens[] = $token;
+            }
+            if ($type === null && $flags === null) {
+                if(
+                    $token->type !== Token::TYPE_WHITESPACE
+                    && $token->type !== Token::TYPE_COMMENT
+                )
+                {
+                    return $token;
+                }
+            } else if (
+                ($type === null || $token->type === $type)
+                && ($flags === null || $token->type === $type)
+            ) {
+                return $token;
+            }
+        }
+
+        return null;
+    }
+
+}
+
+foreach(explode("\n", file_get_contents('./other-queries2.sql')) as $k=>$query) {
+    
+    $t = new Translator($query);
+    echo $t->translate().PHP_EOL;
+
+    if($k > 50) die();
+    continue;
+    die();
+}
+
+die();
+
 foreach(queries() as $k=>$query) {
     if($k <= $min) continue;
     $tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens($query);
