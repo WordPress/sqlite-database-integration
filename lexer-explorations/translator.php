@@ -9,6 +9,7 @@ use PhpMyAdmin\SqlParser\Token;
 use PhpMyAdmin\SqlParser\Statements\CreateStatement;
 use PhpMyAdmin\SqlParser\Statements\SelectStatement;
 
+// Assumes the PhpMyAdmin Sql Parser is installed via Composer
 require_once __DIR__.'/../vendor/autoload.php';
 
 function errHandle($errNo, $errStr, $errFile, $errLine) {
