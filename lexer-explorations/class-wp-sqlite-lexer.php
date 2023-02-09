@@ -28,6 +28,7 @@ class WP_SQLite_Lexer {
 	public const KEYWORD_MAX_LENGTH = 30;
 
 	public const FLAG_KEYWORD_RESERVED = 2;
+	public const FLAG_KEYWORD_KEY      = 16;
 
 	/**
 	 * This type is used when the token is invalid or its type cannot be
@@ -132,6 +133,7 @@ class WP_SQLite_Lexer {
 	public const FLAG_NUMBER_APPROXIMATE   = 4;
 	public const FLAG_NUMBER_NEGATIVE      = 8;
 	public const FLAG_NUMBER_BINARY        = 16;
+	public const FLAG_KEYWORD_DATA_TYPE    = 8;
 	public const FLAG_KEYWORD_FUNCTION     = 32;
 	public const FLAG_STRING_SINGLE_QUOTES = 1;
 	public const FLAG_STRING_DOUBLE_QUOTES = 2;
@@ -145,6 +147,13 @@ class WP_SQLite_Lexer {
 	 *  begin_label: WHILE ... DO [statement_list] END WHILE [end_label].
 	 */
 	public const TYPE_LABEL = 10;
+
+	/**
+	 * @link https://dev.mysql.com/doc/refman/en/sql-mode.html#sqlmode_ansi_quotes
+	 * @link https://mariadb.com/kb/en/sql-mode/#ansi_quotes
+	 */
+	public const SQL_MODE_ANSI_QUOTES = 2;
+
 	/**
 	 * List of operators and their flags.
 	 *
@@ -1309,6 +1318,115 @@ class WP_SQLite_Lexer {
 		'parse_keyword',
 		'parse_label',
 		'parse_unknown',
+	);
+
+	/**
+	 * All data type options.
+	 *
+	 * @var array<string, int|array<int, int|string>>
+	 * @psalm-var array<string, (positive-int|array{positive-int, ('var'|'var='|'expr'|'expr=')})>
+	 */
+	public static $data_type_options = array(
+		'BINARY'        => 1,
+		'CHARACTER SET' => array(
+			2,
+			'var',
+		),
+		'CHARSET'       => array(
+			2,
+			'var',
+		),
+		'COLLATE'       => array(
+			3,
+			'var',
+		),
+		'UNSIGNED'      => 4,
+		'ZEROFILL'      => 5,
+	);
+
+	/**
+	 * All field options.
+	 *
+	 * @var array<string, bool|int|array<int, int|string|array<string, bool>>>
+	 * @psalm-var array<string, (bool|positive-int|array{
+	 *   0: positive-int,
+	 *   1: ('var'|'var='|'expr'|'expr='),
+	 *   2?: array<string, bool>
+	 * })>
+	 */
+	public static $field_options = array(
+		// Tells the `OptionsArray` to not sort the options.
+		// See the note below.
+		'_UNSORTED'        => true,
+
+		'NOT NULL'         => 1,
+		'NULL'             => 1,
+		'DEFAULT'          => array(
+			2,
+			'expr',
+			array( 'breakOnAlias' => true ),
+		),
+		/* Following are not according to grammar, but MySQL happily accepts
+		 * these at any location */
+		'CHARSET'          => array(
+			2,
+			'var',
+		),
+		'COLLATE'          => array(
+			3,
+			'var',
+		),
+		'AUTO_INCREMENT'   => 3,
+		'PRIMARY'          => 4,
+		'PRIMARY KEY'      => 4,
+		'UNIQUE'           => 4,
+		'UNIQUE KEY'       => 4,
+		'COMMENT'          => array(
+			5,
+			'var',
+		),
+		'COLUMN_FORMAT'    => array(
+			6,
+			'var',
+		),
+		'ON UPDATE'        => array(
+			7,
+			'expr',
+		),
+
+		// Generated columns options.
+		'GENERATED ALWAYS' => 8,
+		'AS'               => array(
+			9,
+			'expr',
+			array( 'parenthesesDelimited' => true ),
+		),
+		'VIRTUAL'          => 10,
+		'PERSISTENT'       => 11,
+		'STORED'           => 11,
+		'CHECK'            => array(
+			12,
+			'expr',
+			array( 'parenthesesDelimited' => true ),
+		),
+		'INVISIBLE'        => 13,
+		'ENFORCED'         => 14,
+		'NOT'              => 15,
+		'COMPRESSED'       => 16,
+		// Common entries.
+		//
+		// NOTE: Some of the common options are not in the same order which
+		// causes troubles when checking if the options are in the right order.
+		// I should find a way to define multiple sets of options and make the
+		// parser select the right set.
+		//
+		// 'UNIQUE'                        => 4,
+		// 'UNIQUE KEY'                    => 4,
+		// 'COMMENT'                       => [5, 'var'],
+		// 'NOT NULL'                      => 1,
+		// 'NULL'                          => 1,
+		// 'PRIMARY'                       => 4,
+		// 'PRIMARY KEY'                   => 4,
 	);
 
 	/**
