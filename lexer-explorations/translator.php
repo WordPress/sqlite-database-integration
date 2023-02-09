@@ -228,7 +228,8 @@ class Translator {
 		$query_type = $this->consume();
 		if ( 'ALTER' === $query_type->value ) {
 			return $this->translate_alter();
-		} elseif ( 'SELECT' === $query_type->value ) {
+		}
+		if ( 'SELECT' === $query_type->value ) {
 			// Only select from information schema for now
 			// General select translation is implemented later
 			// in this file
@@ -237,35 +238,24 @@ class Translator {
 			}
 
 			return 'SELECT \'\' as "table", 0 as "rows", 0 as "bytes';
-		} elseif (
-			'CALL' === $query_type->value
-			|| 'SET' === $query_type->value
-			|| 'CREATE' === $query_type->value
-		) {
+		}
+		if ( 'CALL' === $query_type->value || 'SET' === $query_type->value || 'CREATE' === $query_type->value ) {
 			// It would be lovely to support at least SET autocommit
 			// but I don't think even that is possible with SQLite
 			return 'SELECT 1=1;';
-		} elseif (
-			'START' === $query_type->value ||
-			'BEGIN' === $query_type->value ||
-			'COMMIT' === $query_type->value ||
-			'ROLLBACK' === $query_type->value
-		) {
+		}
+		if ( 'START' === $query_type->value || 'BEGIN' === $query_type->value || 'COMMIT' === $query_type->value || 'ROLLBACK' === $query_type->value ) {
 			return $query_type->value;
-		} elseif (
-			'DROP' === $query_type->value
-		) {
+		}
+		if ( 'DROP' === $query_type->value ) {
 			$what = $this->consume()->token;
 			if ( 'TABLE' === $what ) {
 				$this->consume_all();
 			} elseif ( 'PROCEDURE' === $what || 'DATABASE' === $what ) {
 				return 'SELECT 1=1;';
-			} else {
-				throw new \Exception( 'Unknown drop type: ' . $what );
 			}
-		} elseif (
-			'REPLACE' === $query_type->value
-		) {
+			throw new \Exception( 'Unknown drop type: ' . $what );
+		} elseif ( 'REPLACE' === $query_type->value ) {
 			array_unshift(
 				$this->outtokens,
 				new \PhpMyAdmin\SqlParser\Token( 'INSERT', $query_type->type, $query_type->flags ),
@@ -276,21 +266,18 @@ class Translator {
 
 			$this->consume_all();
 			// @TODO: Process the rest as INSERT
-		} elseif (
-			'DESCRIBE' === $query_type->value
-		) {
+		} elseif ( 'DESCRIBE' === $query_type->value ) {
 			$table_name = $this->consume()->token;
 			return "PRAGMA table_info($table_name);";
-		} elseif (
-			'SHOW' === $query_type->value
-		) {
+		}
+		if ( 'SHOW' === $query_type->value ) {
 			$what1 = $this->consume()->token;
 			$what2 = $this->consume()->token;
 			var_dump( array( $what1, $what2 ) );
 			if ( 'CREATE' === $what1 && 'PROCEDURE' === $what2 ) {
 				return 'SELECT 1=1;';
-			} elseif ( 'FULL' === $what1 && 'COLUMNS' === $what2 ) {
-			} else {
+			}
+			if ( 'FULL' !== $what1 || 'COLUMNS' !== $what2 ) {
 				throw new \Exception( "Unknown show type: $what1 $what2" );
 			}
 		} else {
@@ -737,7 +724,8 @@ foreach ( queries() as $k => $query ) {
 					if ( 'DATE_ADD' === $call[0] ) {
 						$interval_op = '+';
 						break;
-					} elseif ( 'DATE_SUB' === $call[0] ) {
+					}
+					if ( 'DATE_SUB' === $call[0] ) {
 						$interval_op = '-';
 						break;
 					}
