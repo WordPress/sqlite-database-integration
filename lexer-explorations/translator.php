@@ -13,16 +13,16 @@ use PhpMyAdmin\SqlParser\Statements\SelectStatement;
 require_once __DIR__ . '/sql-parser/vendor/autoload.php';
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 
-function errHandle( $errNo, $errStr, $errFile, $errLine ) {
-	$msg = "$errStr in $errFile on line $errLine";
-	if ( $errNo == E_NOTICE || $errNo == E_WARNING ) {
-		throw new ErrorException( $msg, $errNo );
+function err_handle( $err_no, $err_str, $err_file, $err_line ) {
+	$msg = "$err_str in $err_file on line $err_line";
+	if ( E_NOTICE === $err_no || E_WARNING === $err_no ) {
+		throw new ErrorException( $msg, $err_no );
 	} else {
 		echo $msg;
 	}
 }
 
-set_error_handler( 'errHandle' );
+set_error_handler( 'err_handle' );
 
 function queries() {
 	$fp = fopen( __DIR__ . '/wp-phpunit.sql', 'r' );
@@ -142,7 +142,7 @@ foreach ( queries() as $k => $query ) {
 	if ( $k > 1000 ) {
 		break;
 	}
-	if ( $token->value !== 'CREATE' ) {
+	if ( 'CREATE' !== $token->value ) {
 		continue;
 	}
 
@@ -172,23 +172,23 @@ foreach ( queries() as $k => $query ) {
 			}
 		}
 		if ( $field->key ) {
-			if ( $field->key->type === 'PRIMARY KEY' ) {
+			if ( 'PRIMARY KEY' === $field->key->type ) {
 				if ( $inline_primary_key ) {
 					unset( $stmt->fields[ $k ] );
 				}
-			} elseif ( $field->key->type === 'FULLTEXT KEY' ) {
+			} elseif ( 'FULLTEXT KEY' === $field->key->type ) {
 				unset( $stmt->fields[ $k ] );
 			} elseif (
-				$field->key->type === 'KEY' ||
-				$field->key->type === 'INDEX' ||
-				$field->key->type === 'UNIQUE KEY'
+				'KEY' === $field->key->type ||
+				'INDEX' === $field->key->type ||
+				'UNIQUE KEY' === $field->key->type
 			) {
 				$columns = array();
 				foreach ( $field->key->columns as $column ) {
 					$columns[] = $column['name'];
 				}
 				$unique = '';
-				if ( $field->key->type === 'UNIQUE KEY' ) {
+				if ( 'UNIQUE KEY' === $field->key->type ) {
 					$unique = 'UNIQUE ';
 				}
 				$extra_queries[] = 'CREATE ' . $unique . ' INDEX "' . $stmt->name . '__' . $field->key->name . '" ON "' . $stmt->name . '" ("' . implode( '", "', $columns ) . '")';
@@ -225,76 +225,76 @@ class Translator {
 	}
 
 	function translate() {
-		$queryType = $this->consume();
-		if ( $queryType->value === 'ALTER' ) {
-			return $this->translateAlter();
-		} elseif ( $queryType->value === 'SELECT' ) {
+		$query_type = $this->consume();
+		if ( 'ALTER' === $query_type->value ) {
+			return $this->translate_alter();
+		} elseif ( 'SELECT' === $query_type->value ) {
 			// Only select from information schema for now
 			// General select translation is implemented later
 			// in this file
 			if ( ! str_contains( $this->query, 'information_schema' ) ) {
-				throw new \Exception( 'Unknown query type: ' . $queryType->value );
+				throw new \Exception( 'Unknown query type: ' . $query_type->value );
 			}
 
 			return 'SELECT \'\' as "table", 0 as "rows", 0 as "bytes';
 		} elseif (
-			$queryType->value === 'CALL'
-			|| $queryType->value === 'SET'
-			|| $queryType->value === 'CREATE'
+			'CALL' === $query_type->value
+			|| 'SET' === $query_type->value
+			|| 'CREATE' === $query_type->value
 		) {
 			// It would be lovely to support at least SET autocommit
 			// but I don't think even that is possible with SQLite
 			return 'SELECT 1=1;';
 		} elseif (
-			$queryType->value === 'START' ||
-			$queryType->value === 'BEGIN' ||
-			$queryType->value === 'COMMIT' ||
-			$queryType->value === 'ROLLBACK'
+			'START' === $query_type->value ||
+			'BEGIN' === $query_type->value ||
+			'COMMIT' === $query_type->value ||
+			'ROLLBACK' === $query_type->value
 		) {
-			return $queryType->value;
+			return $query_type->value;
 		} elseif (
-			$queryType->value === 'DROP'
+			'DROP' === $query_type->value
 		) {
 			$what = $this->consume()->token;
-			if ( $what === 'TABLE' ) {
-				$this->consumeAll();
-			} elseif ( $what === 'PROCEDURE' || $what === 'DATABASE' ) {
+			if ( 'TABLE' === $what ) {
+				$this->consume_all();
+			} elseif ( 'PROCEDURE' === $what || 'DATABASE' === $what ) {
 				return 'SELECT 1=1;';
 			} else {
 				throw new \Exception( 'Unknown drop type: ' . $what );
 			}
 		} elseif (
-			$queryType->value === 'REPLACE'
+			'REPLACE' === $query_type->value
 		) {
 			array_unshift(
 				$this->outtokens,
-				new \PhpMyAdmin\SqlParser\Token( 'INSERT', $queryType->type, $queryType->flags ),
+				new \PhpMyAdmin\SqlParser\Token( 'INSERT', $query_type->type, $query_type->flags ),
 				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-				new \PhpMyAdmin\SqlParser\Token( 'OR', $queryType->type, $queryType->flags ),
+				new \PhpMyAdmin\SqlParser\Token( 'OR', $query_type->type, $query_type->flags ),
 				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
 			);
 
-			$this->consumeAll();
+			$this->consume_all();
 			// @TODO: Process the rest as INSERT
 		} elseif (
-			$queryType->value === 'DESCRIBE'
+			'DESCRIBE' === $query_type->value
 		) {
 			$table_name = $this->consume()->token;
 			return "PRAGMA table_info($table_name);";
 		} elseif (
-			$queryType->value === 'SHOW'
+			'SHOW' === $query_type->value
 		) {
 			$what1 = $this->consume()->token;
 			$what2 = $this->consume()->token;
 			var_dump( array( $what1, $what2 ) );
-			if ( $what1 === 'CREATE' && $what2 === 'PROCEDURE' ) {
+			if ( 'CREATE' === $what1 && 'PROCEDURE' === $what2 ) {
 				return 'SELECT 1=1;';
-			} elseif ( $what1 === 'FULL' && $what2 === 'COLUMNS' ) {
+			} elseif ( 'FULL' === $what1 && 'COLUMNS' === $what2 ) {
 			} else {
 				throw new \Exception( "Unknown show type: $what1 $what2" );
 			}
 		} else {
-			throw new \Exception( 'Unknown query type: ' . $queryType->value );
+			throw new \Exception( 'Unknown query type: ' . $query_type->value );
 		}
 
 		$query = '';
@@ -304,27 +304,27 @@ class Translator {
 		return $query;
 	}
 
-	function translateAlter() {
+	function translate_alter() {
 		$subject = strtolower( $this->consume()->token );
-		if ( $subject !== 'table' ) {
+		if ( 'table' !== $subject ) {
 			throw new \Exception( 'Unknown subject: ' . $subject );
 		}
 
 		$table_name = strtolower( $this->consume()->token );
 		$op_type    = strtolower( $this->consume()->token );
 		$op_subject = strtolower( $this->consume()->token );
-		if ( $op_subject === 'fulltext key' ) {
+		if ( 'fulltext key' === $op_subject ) {
 			echo 'Skipping fulltext' . PHP_EOL;
 			return 'SELECT 1=1;';
 		}
 
-		if ( $op_type === 'add' ) {
-			if ( $op_subject === 'column' ) {
-				$this->consumeDataTypes();
-				$this->consumeAll();
-			} elseif ( $op_subject === 'key' || $op_subject === 'unique key' ) {
+		if ( 'add' === $op_type ) {
+			if ( 'column' === $op_subject ) {
+				$this->consume_data_types();
+				$this->consume_all();
+			} elseif ( 'key' === $op_subject || 'unique key' === $op_subject ) {
 				$key_name        = $this->consume()->value;
-				$index_prefix    = $op_subject === 'unique key' ? 'UNIQUE' : '';
+				$index_prefix    = 'unique key' === $op_subject ? 'UNIQUE' : '';
 				$this->outtokens = array(
 					new Token( 'CREATE', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
 					new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
@@ -340,8 +340,8 @@ class Translator {
 				);
 
 				while ( $token = $this->consume() ) {
-					if ( $token->token === '(' ) {
-						$this->dropLast();
+					if ( '(' === $token->token ) {
+						$this->drop_last();
 						break;
 					}
 				}
@@ -351,28 +351,28 @@ class Translator {
 				while ( $this->consume( WP_SQLite_Lexer::TYPE_SYMBOL ) ) {
 					$paren_maybe = $this->peek();
 
-					if ( $paren_maybe && $paren_maybe->token === '(' ) {
+					if ( $paren_maybe && '(' === $paren_maybe->token ) {
 						$this->skip();
 						$this->skip();
 						$this->skip();
 					}
 				}
 
-				$this->consumeAll();
+				$this->consume_all();
 			} else {
 				throw new \Exception( "Unknown operation: $op_type $op_subject" );
 			}
-		} elseif ( $op_type === 'change' ) {
-			if ( $op_subject === 'column' ) {
-				$this->consumeDataTypes();
-				$this->consumeAll();
+		} elseif ( 'change' === $op_type ) {
+			if ( 'column' === $op_subject ) {
+				$this->consume_data_types();
+				$this->consume_all();
 			} else {
 				throw new \Exception( "Unknown operation: $op_type $op_subject" );
 			}
-		} elseif ( $op_type === 'drop' ) {
-			if ( $op_subject === 'column' ) {
-				$this->consumeAll();
-			} elseif ( $op_subject === 'key' ) {
+		} elseif ( 'drop' === $op_type ) {
+			if ( 'column' === $op_subject ) {
+				$this->consume_all();
+			} elseif ( 'key' === $op_subject ) {
 				$key_name        = $this->consume()->value;
 				$this->outtokens = array(
 					new Token( 'DROP', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
@@ -387,7 +387,7 @@ class Translator {
 		}
 	}
 
-	private function consumeDataTypes() {
+	private function consume_data_types() {
 		global $field_types_translation;
 		while ( $type = $this->consume(
 			WP_SQLite_Lexer::TYPE_KEYWORD,
@@ -395,7 +395,7 @@ class Translator {
 		) ) {
 			$typelc = strtolower( $type->value );
 			if ( isset( $field_types_translation[ $typelc ] ) ) {
-				$this->dropLast();
+				$this->drop_last();
 				$this->outtokens[] = new Token(
 					$field_types_translation[ $typelc ],
 					$type->type,
@@ -404,7 +404,7 @@ class Translator {
 			}
 
 			$paren_maybe = $this->peek();
-			if ( $paren_maybe && $paren_maybe->token === '(' ) {
+			if ( $paren_maybe && '(' === $paren_maybe->token ) {
 				$this->skip();
 				$this->skip();
 				$this->skip();
@@ -416,7 +416,7 @@ class Translator {
 		return isset( $this->tokens[ $this->idx + 1 ] ) ? $this->tokens[ $this->idx + 1 ] : null;
 	}
 
-	private function consumeAll() {
+	private function consume_all() {
 		while ( $this->consume() ) {
 		}
 	}
@@ -431,7 +431,7 @@ class Translator {
 		);
 	}
 
-	private function dropLast() {
+	private function drop_last() {
 		return array_pop( $this->outtokens );
 	}
 
@@ -451,16 +451,16 @@ class Translator {
 			if ( isset( $options['consume'] ) && $options['consume'] ) {
 				$this->outtokens[] = $token;
 			}
-			if ( $type === null && $flags === null ) {
+			if ( null === $type && null === $flags ) {
 				if (
-					$token->type !== WP_SQLite_Lexer::TYPE_WHITESPACE
-					&& $token->type !== WP_SQLite_Lexer::TYPE_COMMENT
+					WP_SQLite_Lexer::TYPE_WHITESPACE !== $token->type
+					&& WP_SQLite_Lexer::TYPE_COMMENT !== $token->type
 				) {
 					return $token;
 				}
 			} elseif (
-				( $type === null || $token->type === $type )
-				&& ( $flags === null || $token->type === $type )
+				( null === $type || $token->type === $type )
+				&& ( null === $flags || $token->type === $type )
 			) {
 				return $token;
 			}
@@ -494,10 +494,10 @@ foreach ( queries() as $k => $query ) {
 	$token      = $tokens->getNext();
 	$query_type = $token->value;
 	if (
-		$token->value !== 'SELECT' &&
-		$token->value !== 'INSERT' &&
-		$token->value !== 'UPDATE' &&
-		$token->value !== 'DELETE'
+		'SELECT' !== $token->value &&
+		'INSERT' !== $token->value &&
+		'UPDATE' !== $token->value &&
+		'DELETE' !== $token->value
 	) {
 		continue;
 	}
@@ -538,15 +538,15 @@ foreach ( queries() as $k => $query ) {
 		$current_call_stack_elem = count( $call_stack ) ? $call_stack[ count( $call_stack ) - 1 ] : null;
 
 		// Capture table name
-		if ( $query_type === 'INSERT' ) {
-			if ( ! $table_name && $token->type === WP_SQLite_Lexer::TYPE_KEYWORD && $token->value === 'INTO' ) {
+		if ( 'INSERT' === $query_type ) {
+			if ( ! $table_name && WP_SQLite_Lexer::TYPE_KEYWORD === $token->type && 'INTO' === $token->value ) {
 				// Get the next non-whitespace token and assume it's the table name
 				$j = $i + 1;
-				while ( $list[ $j ]->type === WP_SQLite_Lexer::TYPE_WHITESPACE ) {
+				while ( WP_SQLite_Lexer::TYPE_WHITESPACE === $list[ $j ]->type ) {
 					$j++;
 				}
 				$table_name = $list[ $j ]->value;
-			} elseif ( $token->type === WP_SQLite_Lexer::TYPE_KEYWORD && $token->value === 'IGNORE' ) {
+			} elseif ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type && 'IGNORE' === $token->value ) {
 				$newlist->add( new Token( 'OR', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) );
 				$newlist->add( new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
 				$newlist->add( new Token( 'IGNORE', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) );
@@ -554,7 +554,7 @@ foreach ( queries() as $k => $query ) {
 			}
 		}
 
-		if ( $token->type === WP_SQLite_Lexer::TYPE_STRING && $token->flags & WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) {
+		if ( WP_SQLite_Lexer::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) {
 			$param_name            = ':param' . count( $params );
 			$params[ $param_name ] = $token->value;
 			// Rewrite backslash-escaped single quotes to
@@ -564,7 +564,7 @@ foreach ( queries() as $k => $query ) {
 			// $newlist->add(new Token("'$sqlite_value'", WP_SQLite_Lexer::TYPE_STRING, WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES));
 			$newlist->add( new Token( $param_name, WP_SQLite_Lexer::TYPE_STRING, WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) );
 			goto process_nesting;
-		} elseif ( $token->type === WP_SQLite_Lexer::TYPE_KEYWORD ) {
+		} elseif ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
 			foreach ( array(
 				array( 'YEAR', '%Y' ),
 				array( 'MONTH', '%M' ),
@@ -586,7 +586,7 @@ foreach ( queries() as $k => $query ) {
 					$newlist->add( new Token( 'STRFTIME', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
 					$newlist->add( new Token( '(', WP_SQLite_Lexer::TYPE_OPERATOR ) );
 
-					if ( $unit === 'WEEK' ) {
+					if ( 'WEEK' === $unit ) {
 						// Peek to check the "mode" argument
 						// For now naively assume the mode is either
 						// specified after the first "," or defaults to
@@ -596,22 +596,22 @@ foreach ( queries() as $k => $query ) {
 							$peek = $list[ ++$j ];
 						} while (
 							! (
-								$peek->type === WP_SQLite_Lexer::TYPE_OPERATOR &&
+								WP_SQLite_Lexer::TYPE_OPERATOR === $peek->type &&
 								(
-									$peek->value === ')' ||
-									$peek->value === ','
+									')' === $peek->value ||
+									',' === $peek->value
 								)
 							)
 						);
-						if ( $peek->value === ',' ) {
+						if ( ',' === $peek->value ) {
 							$comma_idx = $j;
 							do {
 								$peek = $list[ ++$j ];
-							} while ( $peek->type === WP_SQLite_Lexer::TYPE_WHITESPACE );
+							} while ( WP_SQLite_Lexer::TYPE_WHITESPACE === $peek->type );
 							// Assume $peek is now a number
-							if ( $peek->value === 0 ) {
+							if ( 0 === $peek->value ) {
 								$format = '%U';
-							} elseif ( $peek->value === 1 ) {
+							} elseif ( 1 === $peek->value ) {
 								$format = '%W';
 							} else {
 								throw new Exception( 'Could not parse the WEEK() mode' );
@@ -632,26 +632,26 @@ foreach ( queries() as $k => $query ) {
 					do {
 						$peek = $list[ ++$i ];
 					} while (
-						$peek->type !== WP_SQLite_Lexer::TYPE_OPERATOR &&
-						$peek->value !== '('
+						WP_SQLite_Lexer::TYPE_OPERATOR !== $peek->type &&
+						'(' !== $peek->value
 					);
 					goto process_nesting;
 				}
 			}
-			if ( $token->keyword === 'RAND' && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) {
+			if ( 'RAND' === $token->keyword && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) {
 				$newlist->add( new Token( 'RANDOM', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
 				goto process_nesting;
 			} elseif (
 				$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION && (
-					$token->keyword === 'DATE_ADD' ||
-					$token->keyword === 'DATE_SUB'
+					'DATE_ADD' === $token->keyword ||
+					'DATE_SUB' === $token->keyword
 				)
 			) {
 				$newlist->add( new Token( 'DATE', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
 				goto process_nesting;
 			} elseif (
 				$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION &&
-				$token->keyword === 'VALUES' &&
+				'VALUES' === $token->keyword &&
 				$is_in_duplicate_section
 			) {
 				/*
@@ -667,14 +667,14 @@ foreach ( queries() as $k => $query ) {
 				$j = $i;
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_OPERATOR && $peek->value === '(' ) {
+					if ( WP_SQLite_Lexer::TYPE_OPERATOR === $peek->type && '(' === $peek->value ) {
 						unset( $list[ $j ] );
 						break;
 					}
 				}
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_OPERATOR && $peek->value === ')' ) {
+					if ( WP_SQLite_Lexer::TYPE_OPERATOR === $peek->type && ')' === $peek->value ) {
 						unset( $list[ $j ] );
 						break;
 					}
@@ -683,14 +683,14 @@ foreach ( queries() as $k => $query ) {
 				goto process_nesting;
 			} elseif (
 				$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION &&
-				$token->keyword === 'DATE_FORMAT'
+				'DATE_FORMAT' === $token->keyword
 			) {
 				$newlist->add( new Token( 'STRFTIME', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
 				$newlist->add( new Token( '(', WP_SQLite_Lexer::TYPE_OPERATOR ) );
 				$j = $i;
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_OPERATOR && $peek->value === '(' ) {
+					if ( WP_SQLite_Lexer::TYPE_OPERATOR === $peek->type && '(' === $peek->value ) {
 						unset( $list[ $j ] );
 						break;
 					}
@@ -701,7 +701,7 @@ foreach ( queries() as $k => $query ) {
 				// the first string value inside the DATE_FORMAT call
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_OPERATOR && $peek->value === ',' ) {
+					if ( 'WP_SQLite_Lexer::TYPE_OPERATOR' === $peek->type && ',' === $peek->value ) {
 						unset( $list[ $j ] );
 						break;
 					}
@@ -710,7 +710,7 @@ foreach ( queries() as $k => $query ) {
 				// Rewrite the format argument:
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_STRING ) {
+					if ( WP_SQLite_Lexer::TYPE_STRING === $peek->type ) {
 						unset( $list[ $j ] );
 						break;
 					}
@@ -722,7 +722,7 @@ foreach ( queries() as $k => $query ) {
 				$newlist->add( new Token( ',', WP_SQLite_Lexer::TYPE_OPERATOR ) );
 
 				goto process_nesting;
-			} elseif ( $token->keyword === 'INTERVAL' ) {
+			} elseif ( 'INTERVAL' === $token->keyword ) {
 				$interval_string = '';
 				$list->idx       = $i + 1;
 				$num             = $list->getNext()->value;
@@ -734,10 +734,10 @@ foreach ( queries() as $k => $query ) {
 				$interval_op = '+'; // Default to adding
 				for ( $j = count( $call_stack ) - 1;$i >= 0;$i-- ) {
 					$call = $call_stack[ $j ];
-					if ( $call[0] === 'DATE_ADD' ) {
+					if ( 'DATE_ADD' === $call[0] ) {
 						$interval_op = '+';
 						break;
-					} elseif ( $call[0] === 'DATE_SUB' ) {
+					} elseif ( 'DATE_SUB' === $call[0] ) {
 						$interval_op = '-';
 						break;
 					}
@@ -745,7 +745,7 @@ foreach ( queries() as $k => $query ) {
 
 				$newlist->add( new Token( "'{$interval_op}$num $unit'", WP_SQLite_Lexer::TYPE_STRING ) );
 				goto process_nesting;
-			} elseif ( $query_type === 'INSERT' && $token->keyword === 'DUPLICATE' ) {
+			} elseif ( 'INSERT' === $query_type && 'DUPLICATE' === $token->keyword ) {
 				/*
 				Rewrite:
 					ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)
@@ -779,14 +779,14 @@ foreach ( queries() as $k => $query ) {
 				$j = $i;
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_KEYWORD && $peek->keyword === 'KEY' ) {
+					if ( WP_SQLite_Lexer::TYPE_KEYWORD === $peek->type && 'KEY' === $peek->keyword ) {
 						unset( $list[ $j ] );
 						break;
 					}
 				}
 				while ( true ) {
 					$peek = $list[ ++$j ];
-					if ( $peek->type === WP_SQLite_Lexer::TYPE_KEYWORD && $peek->keyword === 'UPDATE' ) {
+					if ( WP_SQLite_Lexer::TYPE_KEYWORD === $peek->type && 'UPDATE' === $peek->keyword ) {
 						unset( $list[ $j ] );
 						break;
 					}
@@ -799,7 +799,7 @@ foreach ( queries() as $k => $query ) {
 		$newlist->add( $token );
 
 		process_nesting:
-		if ( $token->type === WP_SQLite_Lexer::TYPE_KEYWORD ) {
+		if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
 			if (
 				$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION
 				&& ! ( $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED )
@@ -807,15 +807,15 @@ foreach ( queries() as $k => $query ) {
 				$j = $i;
 				do {
 					$peek = $list[ ++$j ];
-				} while ( $peek->type === WP_SQLite_Lexer::TYPE_WHITESPACE );
-				if ( $peek->type === WP_SQLite_Lexer::TYPE_OPERATOR && $peek->value === '(' ) {
+				} while ( WP_SQLite_Lexer::TYPE_WHITESPACE === $peek->type );
+				if ( WP_SQLite_Lexer::TYPE_OPERATOR === $peek->type && '(' === $peek->value ) {
 					array_push( $call_stack, array( $token->value, $paren_nesting ) );
 				}
 			}
 		} elseif ( $token->type === WP_SQLite_Lexer::TYPE_OPERATOR ) {
-			if ( $token->value === '(' ) {
+			if ( '(' === $token->value ) {
 				++$paren_nesting;
-			} elseif ( $token->value === ')' ) {
+			} elseif ( ')' === $token->value ) {
 				--$paren_nesting;
 				if (
 					$current_call_stack_elem &&
