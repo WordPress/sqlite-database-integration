@@ -67,6 +67,7 @@ class SQLiteTranslationResult {
     public $has_result = false;
     public $result = null;
     public $calc_found_rows = null;
+    public $query_type = null;
 
     public function __construct( 
         $queries,
@@ -175,40 +176,58 @@ class SQLiteTranslator {
 		$query_type = $r->peek()->value;
         switch($query_type) {
             case 'ALTER':
-                return $this->translate_alter($r);
+                $result = $this->translate_alter($r);
+                break;
             case 'CREATE':
-                return $this->translate_create($r);
+                $result = $this->translate_create($r);
+                break;
             case 'REPLACE':
             case 'SELECT':
             case 'INSERT':
             case 'UPDATE':
             case 'DELETE':
-                return $this->translate_crud($r);
+                $result = $this->translate_crud($r);
+                break;
             case 'CALL':
             case 'SET':
                 // It would be lovely to support at least SET autocommit
                 // but I don't think even that is possible with SQLite
-                return new SQLiteTranslationResult([$this->noop()]);
+                $result = new SQLiteTranslationResult([$this->noop()]);
+                break;
             case 'START TRANSACTION':
+                $result = new SQLiteTranslationResult([
+                    new SQLiteQuery('BEGIN')
+                ]);
+                break;
             case 'BEGIN':
             case 'COMMIT':
             case 'ROLLBACK':
             case 'TRUNCATE':
-                return new SQLiteTranslationResult([
+                $result = new SQLiteTranslationResult([
                     new SQLiteQuery($this->query)
                 ]);
+                break;
             case 'DROP':
-                return $this->translate_drop($r);
+                $result = $this->translate_drop($r);
+                break;
             case 'DESCRIBE':
                 $table_name = $r->consume()->token;
-                return new SQLiteTranslationResult([
+                $result = new SQLiteTranslationResult([
                     new SQLiteQuery("PRAGMA table_info($table_name);")
                 ]);
+                break;
             case 'SHOW':
-                return $this->translate_show($r);
+                $result = $this->translate_show($r);
+                break;
             default:
                 throw new \Exception( 'Unknown query type: ' . $query_type );
         }
+        // The query type could have changed – let's grab the new one
+        if(count($result->queries)) {
+            $last_query = $result->queries[count($result->queries)-1];
+            $result->query_type = strtoupper(strtok($last_query->sql, ' '));
+        }
+        return $result;
 	}
 
     private function translate_create_table() {
