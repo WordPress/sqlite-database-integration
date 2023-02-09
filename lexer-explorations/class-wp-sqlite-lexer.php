@@ -27,8 +27,17 @@ class WP_SQLite_Lexer {
 	 */
 	public const KEYWORD_MAX_LENGTH = 30;
 
-	public const FLAG_KEYWORD_RESERVED = 2;
-	public const FLAG_KEYWORD_KEY      = 16;
+	/**
+	 * The maximum length of a label.
+	 *
+	 * Ref: https://dev.mysql.com/doc/refman/5.7/en/statement-labels.html
+	 */
+	public const LABEL_MAX_LENGTH = 16;
+
+	/**
+	 * The maximum length of an operator.
+	 */
+	public const OPERATOR_MAX_LENGTH = 4;
 
 	/**
 	 * This type is used when the token is invalid or its type cannot be
@@ -96,28 +105,34 @@ class WP_SQLite_Lexer {
 	public const TYPE_STRING = 7;
 
 	/**
+	 * Database, table names, variables, etc.
+	 * For example: ```SELECT `foo`, `bar` FROM `database`.`table`;```.
+	 */
+	public const TYPE_SYMBOL = 8;
+
+	/**
 	 * Delimits an unknown string.
 	 * For example: ```SELECT * FROM test;```, `test` is a delimiter.
 	 */
 	public const TYPE_DELIMITER = 9;
 
 	/**
-	 * The maximum length of a label.
-	 *
-	 * Ref: https://dev.mysql.com/doc/refman/5.7/en/statement-labels.html
+	 * Labels in LOOP statement, ITERATE statement etc.
+	 * For example (only for begin label):
+	 *  begin_label: BEGIN [statement_list] END [end_label]
+	 *  begin_label: LOOP [statement_list] END LOOP [end_label]
+	 *  begin_label: REPEAT [statement_list] ... END REPEAT [end_label]
+	 *  begin_label: WHILE ... DO [statement_list] END WHILE [end_label].
 	 */
-	public const LABEL_MAX_LENGTH = 16;
+	public const TYPE_LABEL = 10;
 
 	/**
-	 * The maximum length of an operator.
+	 * Flags.
 	 */
-	public const OPERATOR_MAX_LENGTH = 4;
-
-	/**
-	 * Database, table names, variables, etc.
-	 * For example: ```SELECT `foo`, `bar` FROM `database`.`table`;```.
-	 */
-	public const TYPE_SYMBOL               = 8;
+	public const FLAG_KEYWORD_RESERVED     = 2;
+	public const FLAG_KEYWORD_DATA_TYPE    = 8;
+	public const FLAG_KEYWORD_KEY          = 16;
+	public const FLAG_KEYWORD_FUNCTION     = 32;
 	public const FLAG_SYMBOL_VARIABLE      = 1;
 	public const FLAG_SYMBOL_BACKTICK      = 2;
 	public const FLAG_SYMBOL_USER          = 4;
@@ -133,20 +148,8 @@ class WP_SQLite_Lexer {
 	public const FLAG_NUMBER_APPROXIMATE   = 4;
 	public const FLAG_NUMBER_NEGATIVE      = 8;
 	public const FLAG_NUMBER_BINARY        = 16;
-	public const FLAG_KEYWORD_DATA_TYPE    = 8;
-	public const FLAG_KEYWORD_FUNCTION     = 32;
 	public const FLAG_STRING_SINGLE_QUOTES = 1;
 	public const FLAG_STRING_DOUBLE_QUOTES = 2;
-
-	/**
-	 * Labels in LOOP statement, ITERATE statement etc.
-	 * For example (only for begin label):
-	 *  begin_label: BEGIN [statement_list] END [end_label]
-	 *  begin_label: LOOP [statement_list] END LOOP [end_label]
-	 *  begin_label: REPEAT [statement_list] ... END REPEAT [end_label]
-	 *  begin_label: WHILE ... DO [statement_list] END WHILE [end_label].
-	 */
-	public const TYPE_LABEL = 10;
 
 	/**
 	 * @link https://dev.mysql.com/doc/refman/en/sql-mode.html#sqlmode_ansi_quotes
@@ -1446,11 +1449,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @var string[]
 	 */
-	public $keyword_name_indicators = array(
-		'FROM',
-		'SET',
-		'WHERE',
-	);
+	public $keyword_name_indicators = array( 'FROM', 'SET', 'WHERE' );
 
 	/**
 	 * A list of operators that indicate that the function keyword
@@ -1458,10 +1457,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @var string[]
 	 */
-	public $operator_name_indicators = array(
-		',',
-		'.',
-	);
+	public $operator_name_indicators = array( ',', '.' );
 
 	/**
 	 * The string to be parsed.
@@ -1771,12 +1767,8 @@ class WP_SQLite_Lexer {
 		while ( ( $keyword_token = $get_next_of_type_and_flag( static::TYPE_KEYWORD, $keyword_function ) ) !== null ) {
 			$next = $this->list->get_next();
 			if (
-				( static::TYPE_KEYWORD !== $next->type
-					|| ! in_array( $next->value, $this->keyword_name_indicators, true )
-				)
-				&& ( static::TYPE_OPERATOR !== $next->type
-					|| ! in_array( $next->value, $this->operator_name_indicators, true )
-				)
+				( static::TYPE_KEYWORD !== $next->type || ! in_array( $next->value, $this->keyword_name_indicators, true ) )
+				&& ( static::TYPE_OPERATOR !== $next->type || ! in_array( $next->value, $this->operator_name_indicators, true ) )
 				&& ( null !== $next->value )
 			) {
 				continue;
