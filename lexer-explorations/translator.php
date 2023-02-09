@@ -3,11 +3,7 @@
 // require autoload
 
 use PhpMyAdmin\SqlParser\Context;
-use PhpMyAdmin\SqlParser\Components\CreateDefinition;
-use PhpMyAdmin\SqlParser\Components\DataType;
 use PhpMyAdmin\SqlParser\Token;
-use PhpMyAdmin\SqlParser\Statements\CreateStatement;
-use PhpMyAdmin\SqlParser\Statements\SelectStatement;
 
 // Assumes the PhpMyAdmin Sql Parser is installed via Composer
 require_once __DIR__ . '/sql-parser/vendor/autoload.php';
@@ -45,74 +41,6 @@ function queries() {
 // Remove: collate / default character set
 //
 
-$field_types_translation = array(
-	'bit'        => 'integer',
-	'bool'       => 'integer',
-	'boolean'    => 'integer',
-	'tinyint'    => 'integer',
-	'smallint'   => 'integer',
-	'mediumint'  => 'integer',
-	'int'        => 'integer',
-	'integer'    => 'integer',
-	'bigint'     => 'integer',
-	'float'      => 'real',
-	'double'     => 'real',
-	'decimal'    => 'real',
-	'dec'        => 'real',
-	'numeric'    => 'real',
-	'fixed'      => 'real',
-	'date'       => 'text',
-	'datetime'   => 'text',
-	'timestamp'  => 'text',
-	'time'       => 'text',
-	'year'       => 'text',
-	'char'       => 'text',
-	'varchar'    => 'text',
-	'binary'     => 'integer',
-	'varbinary'  => 'blob',
-	'tinyblob'   => 'blob',
-	'tinytext'   => 'text',
-	'blob'       => 'blob',
-	'text'       => 'text',
-	'mediumblob' => 'blob',
-	'mediumtext' => 'text',
-	'longblob'   => 'blob',
-	'longtext'   => 'text',
-);
-
-$mysql_php_date_formats = array(
-	'%a' => '%D',
-	'%b' => '%M',
-	'%c' => '%n',
-	'%D' => '%jS',
-	'%d' => '%d',
-	'%e' => '%j',
-	'%H' => '%H',
-	'%h' => '%h',
-	'%I' => '%h',
-	'%i' => '%i',
-	'%j' => '%z',
-	'%k' => '%G',
-	'%l' => '%g',
-	'%M' => '%F',
-	'%m' => '%m',
-	'%p' => '%A',
-	'%r' => '%h:%i:%s %A',
-	'%S' => '%s',
-	'%s' => '%s',
-	'%T' => '%H:%i:%s',
-	'%U' => '%W',
-	'%u' => '%W',
-	'%V' => '%W',
-	'%v' => '%W',
-	'%W' => '%l',
-	'%w' => '%w',
-	'%X' => '%Y',
-	'%x' => '%o',
-	'%Y' => '%Y',
-	'%y' => '%y',
-);
-
 // $sqlite = new PDO('sqlite::memory:');
 $sqlite = new PDO( 'sqlite:./testdb' );
 $sqlite->query( 'PRAGMA encoding="UTF-8";' );
@@ -129,6 +57,74 @@ class Translator {
 
     // @TODO Check capability – SQLite must have a regexp function available
     private $has_regexp = false;
+
+    private $field_types_translation = array(
+        'bit'        => 'integer',
+        'bool'       => 'integer',
+        'boolean'    => 'integer',
+        'tinyint'    => 'integer',
+        'smallint'   => 'integer',
+        'mediumint'  => 'integer',
+        'int'        => 'integer',
+        'integer'    => 'integer',
+        'bigint'     => 'integer',
+        'float'      => 'real',
+        'double'     => 'real',
+        'decimal'    => 'real',
+        'dec'        => 'real',
+        'numeric'    => 'real',
+        'fixed'      => 'real',
+        'date'       => 'text',
+        'datetime'   => 'text',
+        'timestamp'  => 'text',
+        'time'       => 'text',
+        'year'       => 'text',
+        'char'       => 'text',
+        'varchar'    => 'text',
+        'binary'     => 'integer',
+        'varbinary'  => 'blob',
+        'tinyblob'   => 'blob',
+        'tinytext'   => 'text',
+        'blob'       => 'blob',
+        'text'       => 'text',
+        'mediumblob' => 'blob',
+        'mediumtext' => 'text',
+        'longblob'   => 'blob',
+        'longtext'   => 'text',
+    );
+
+    private $mysql_php_date_formats = array(
+        '%a' => '%D',
+        '%b' => '%M',
+        '%c' => '%n',
+        '%D' => '%jS',
+        '%d' => '%d',
+        '%e' => '%j',
+        '%H' => '%H',
+        '%h' => '%h',
+        '%I' => '%h',
+        '%i' => '%i',
+        '%j' => '%z',
+        '%k' => '%G',
+        '%l' => '%g',
+        '%M' => '%F',
+        '%m' => '%m',
+        '%p' => '%A',
+        '%r' => '%h:%i:%s %A',
+        '%S' => '%s',
+        '%s' => '%s',
+        '%T' => '%H:%i:%s',
+        '%U' => '%W',
+        '%u' => '%W',
+        '%V' => '%W',
+        '%v' => '%W',
+        '%W' => '%l',
+        '%w' => '%w',
+        '%X' => '%Y',
+        '%x' => '%o',
+        '%Y' => '%Y',
+        '%y' => '%y',
+    );
 
 	public function __construct( string $query ) {
 		$this->query  = $query;
@@ -236,8 +232,8 @@ class Translator {
         foreach ( $stmt->fields as $k => $field ) {
             if ( $field->type && $field->type->name ) {
                 $typelc = strtolower( $field->type->name );
-                if ( isset( $field_types_translation[ $typelc ] ) ) {
-                    $field->type->name = $field_types_translation[ $typelc ];
+                if ( isset( $this->field_types_translation[ $typelc ] ) ) {
+                    $field->type->name = $this->field_types_translation[ $typelc ];
                 }
                 $field->type->parameters = array();
                 unset( $field->type->options->options[ WP_SQLite_Lexer::$data_type_options['UNSIGNED'] ] );
@@ -536,14 +532,12 @@ ORDER BY CASE a
                         }
                     }
     
-                    $string_at  = $j;
-                    $new_format = strtr( $peek->value, $mysql_php_date_formats );
+                    $new_format = strtr( $peek->value, $this->mysql_php_date_formats );
                     $newlist->add( new Token( "'$new_format'", WP_SQLite_Lexer::TYPE_STRING ) );
                     $newlist->add( new Token( ',', WP_SQLite_Lexer::TYPE_OPERATOR ) );
     
                     goto process_nesting;
                 } elseif ( 'INTERVAL' === $token->keyword ) {
-                    $interval_string = '';
                     $list->idx       = $i + 1;
                     $num             = $list->getNext()->value;
                     $unit            = $list->getNext()->value;
@@ -801,16 +795,15 @@ ORDER BY CASE a
 	}
 
 	private function consume_data_types() {
-		global $field_types_translation;
 		while ( $type = $this->consume(
 			WP_SQLite_Lexer::TYPE_KEYWORD,
 			WP_SQLite_Lexer::FLAG_KEYWORD_DATA_TYPE
 		) ) {
 			$typelc = strtolower( $type->value );
-			if ( isset( $field_types_translation[ $typelc ] ) ) {
+			if ( isset( $this->field_types_translation[ $typelc ] ) ) {
 				$this->drop_last();
 				$this->outtokens[] = new Token(
-					$field_types_translation[ $typelc ],
+					$this->field_types_translation[ $typelc ],
 					$type->type,
 					$type->flags
 				);
