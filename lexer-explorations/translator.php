@@ -578,7 +578,9 @@ foreach ( queries() as $k => $query ) {
 				array( 'HOUR', '%H' ),
 				array( 'MINUTE', '%M' ),
 				array( 'SECOND', '%S' ),
-			) as array( $unit, $format ) ) {
+			) as $token_item ) {
+				$unit   = $token_item[0];
+				$format = $token_item[1];
 				if ( $token->value === $unit && $token->flags & Token::FLAG_KEYWORD_FUNCTION ) {
 					$newlist->add( new Token( 'STRFTIME', Token::TYPE_KEYWORD, Token::FLAG_KEYWORD_FUNCTION ) );
 					$newlist->add( new Token( '(', Token::TYPE_OPERATOR ) );
@@ -874,4 +876,3 @@ foreach ( queries() as $k => $query ) {
 	file_put_contents( './last-select.txt', $k );
 	echo '--------------------' . PHP_EOL . PHP_EOL;
 }
-
