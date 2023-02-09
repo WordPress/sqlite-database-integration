@@ -9,16 +9,19 @@ use PhpMyAdmin\SqlParser\Token;
 require_once __DIR__ . '/sql-parser/vendor/autoload.php';
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 
-function err_handle( $err_no, $err_str, $err_file, $err_line ) {
-	$msg = "$err_str in $err_file on line $err_line";
-	if ( E_NOTICE === $err_no || E_WARNING === $err_no ) {
-		throw new ErrorException( $msg, $err_no );
-	} else {
-		echo $msg;
-	}
-}
+// Throw exception on notices and warnings – handy for debugging in isolation,
+// bad for testing WordPress.
+// 
+// function err_handle( $err_no, $err_str, $err_file, $err_line ) {
+// 	$msg = "$err_str in $err_file on line $err_line";
+// 	if ( E_NOTICE === $err_no || E_WARNING === $err_no ) {
+// 		throw new ErrorException( $msg, $err_no );
+// 	} else {
+// 		echo $msg;
+// 	}
+// }
 
-set_error_handler( 'err_handle' );
+// set_error_handler( 'err_handle' );
 
 function queries() {
 	$fp = fopen( __DIR__ . '/wp-phpunit.sql', 'r' );
@@ -63,6 +66,7 @@ class SQLiteTranslationResult {
     public $queries = [];
     public $has_result = false;
     public $result = null;
+    public $calc_found_rows = null;
 
     public function __construct( 
         $queries,
@@ -80,7 +84,7 @@ class SQLiteTranslator {
     // @TODO Check capability – SQLite must have a regexp function available
     private $has_regexp = false;
     private $sqlite;
-    private $table_prefix = 'wptests_';
+    private $table_prefix;
 
     private $field_types_translation = array(
         'bit'        => 'integer',
@@ -150,35 +154,26 @@ class SQLiteTranslator {
         '%y' => '%y',
     );
 
-	public function __construct( $pdo ) {
+	public function __construct( $pdo, $table_prefix = 'wp_' ) {
         $this->sqlite = $pdo;
         $this->sqlite->query( 'PRAGMA encoding="UTF-8";' );
+        $this->table_prefix = $table_prefix;
 	}
-
-    private $last_found_rows;
-	function run(string $query) {
-        $result = $this->translate($query);
-        foreach($result->queries as $query){
-            $last_stmt = $this->sqlite->prepare($query->sql);
-            $last_stmt->execute($query->params);
-        }
-        if($result->has_result === true){
-            return $result->result;
-        }
-        return $last_stmt;
-    }
 
     // @TODO Remove this property?
     //       Is it weird to have this->query
     //       that only matters for the lifetime of translate()?
     private $query;
-	function translate(string $query) {
+    private $query_type;
+    private $last_found_rows = 0;
+	function translate(string $query, $last_found_rows=null) {
         $this->query = $query;
+        $this->last_found_rows = $last_found_rows;
 
         $tokens = (new \PhpMyAdmin\SqlParser\Lexer( $query ))->list->tokens;
         $r = new QueryRewriter($tokens);
 		$query_type = $r->peek()->value;
-        switch($query_type){
+        switch($query_type) {
             case 'ALTER':
                 return $this->translate_alter($r);
             case 'CREATE':
@@ -273,6 +268,7 @@ class SQLiteTranslator {
         foreach($extra_queries as $extra_query) {
             $queries[] = new SQLiteQuery($extra_query);
         }
+
         return new SQLiteTranslationResult(
             $queries
         );
@@ -289,38 +285,8 @@ class SQLiteTranslator {
                 )
             ]);
         }
-
-        // Again, a naive rewriting for dual-table DELETEs 
-        // MySQL Supports deleting from multiple tables in one query.
-        // In SQLite, we need to SELECT first and then DELETE with
-        // the primary keys found by the SELECT.
-        if ( str_contains( $this->query, 'DELETE a, b' ) ) {
-            $time = time();
-            $get_ids = "SELECT a.meta_id AS aid, b.meta_id AS bid FROM {$this->table_prefix}sitemeta AS a INNER JOIN {$this->table_prefix}sitemeta AS b ON a.meta_key='_site_transient_timeout_'||substr(b.meta_key, 17) WHERE b.meta_key='_site_transient_'||substr(a.meta_key, 25) AND a.meta_value < $time";
-            $rows = $this->sqlite->query($get_ids)->fetchAll();
-            foreach ($rows as $id) {
-                $ids_to_delete[] = $id->aid;
-                $ids_to_delete[] = $id->bid;
-            }
-            return new SQLiteTranslationResult(
-                [
-                    new SQLiteQuery( 
-                        "DELETE FROM {$this->table_prefix}sitemeta WHERE meta_id IN (" . implode(',', $ids_to_delete) . ")"
-                    )
-                ]
-            );
-        }
-
-        if ( str_contains( $this->query, 'DELETE ' )
-            && str_contains( $this->query, ' JOIN ' ) ) {
-            return new SQLiteTranslationResult(
-                [
-                    new SQLiteQuery( 
-                        "DELETE FROM {$this->table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$this->table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
-                    )
-                ]
-            );
-        }
+        
+        $query_type = $r->consume()->value;
 
         // Naive regexp check
         if(!$this->has_regexp && strpos( $this->query, ' REGEXP ' ) !== false) {
@@ -343,6 +309,7 @@ class SQLiteTranslator {
                 WHEN 6 THEN 2
             END
             */
+            var_dump("done");
             die($this->query);
             // Return a dummy select for now
             return 'SELECT 1=1';
@@ -353,9 +320,9 @@ class SQLiteTranslator {
         $params                  = array();
         $is_in_duplicate_section = false;
         $table_name              = null;
+        $has_SQL_CALC_FOUND_ROWS = false;
 
         // Consume the query type
-        $query_type = $r->consume()->value;
         if ( 'INSERT' === $query_type && 'IGNORE' === $r->peek()->value ) {
             $r->add( new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
             $r->add( new Token( 'OR', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) );
@@ -369,6 +336,12 @@ class SQLiteTranslator {
         }
 
         while($token = $r->consume()) {
+            if($token->value === 'SQL_CALC_FOUND_ROWS' && $token->type === WP_SQLite_Lexer::TYPE_KEYWORD) {
+                $has_SQL_CALC_FOUND_ROWS = true;
+                $r->drop_last();
+                continue;
+            }
+
             if ( WP_SQLite_Lexer::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) {
                 // Rewrite string values to bound parameters
                 $param_name            = ':param' . count( $params );
@@ -378,6 +351,19 @@ class SQLiteTranslator {
             }
             
             if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
+                if ( 'RAND' === $token->keyword && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) {
+                    $r->replace_last( new Token( 'RANDOM', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
+                    continue;
+                }
+
+                if (
+                    'CONCAT' === $token->keyword 
+                    && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION
+                ) {
+                    $r->drop_last();
+                    continue;
+                }
+
                 foreach ( array(
                     array( 'YEAR', '%Y' ),
                     array( 'MONTH', '%M' ),
@@ -440,11 +426,6 @@ class SQLiteTranslator {
                     }
                 }
 
-                if ( 'RAND' === $token->keyword && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) {
-                    $r->replace_last( new Token( 'RANDOM', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
-                    continue;
-                }
-                
                 if (
                     $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION && (
                         'DATE_ADD' === $token->keyword ||
@@ -587,31 +568,133 @@ class SQLiteTranslator {
                     continue;
                 }
             }
+
+            if($token->type === WP_SQLite_Lexer::TYPE_OPERATOR) {
+                $call_parent = $r->last_call_stack_element();
+                // Rewrite commas to || in CONCAT() calls
+                if( 
+                    $call_parent 
+                    && $call_parent[0] === 'CONCAT'
+                    && ',' === $token->value 
+                    && $token->flags & WP_SQLite_Lexer::FLAG_OPERATOR_SQL
+                ) {
+                    $r->replace_last(new Token('||', WP_SQLite_Lexer::TYPE_OPERATOR));
+                    continue;
+                }
+            }
+
         }
 
         $updated_query = $r->getUpdatedQuery();
-
         $result = new SQLiteTranslationResult([]);
 
         // Naively emulate SQL_CALC_FOUND_ROWS for now
-        if ( strpos( $updated_query, 'SQL_CALC_FOUND_ROWS' ) !== false ) {
+        if ( $has_SQL_CALC_FOUND_ROWS ) {
             // first strip the code. this is the end of rewriting process
             $query = str_ireplace('SQL_CALC_FOUND_ROWS', '', $updated_query);
-            // we make the data for next SELECE FOUND_ROWS() statement
+            // we make the data for next SELECT FOUND_ROWS() statement
             $unlimited_query = preg_replace('/\\bLIMIT\\s*.*/imsx', '', $query);
             //$unlimited_query = preg_replace('/\\bGROUP\\s*BY\\s*.*/imsx', '', $unlimited_query);
             // we no longer use SELECT COUNT query
             //$unlimited_query = $this->_transform_to_count($unlimited_query);
             $stmt = $this->sqlite->query($unlimited_query);
-            $this->last_found_rows = count($stmt->fetchAll());
+            $result->calc_found_rows = count($stmt->fetchAll());
         }
 
-        // Emulate FOUND_ROWS() by counting the rows in the result set
-        if ( strpos( $updated_query, 'FOUND_ROWS' ) !== false ) {
+        // Naively emulate FOUND_ROWS() by counting the rows in the result set
+        if ( strpos( $updated_query, 'FOUND_ROWS(' ) !== false ) {
+            $last_found_rows = ($this->last_found_rows ?: 0) . '';
             $result->queries[] = new SQLiteQuery(
-                "SELECT $this->last_found_rows AS `FOUND_ROWS()`",
+                "SELECT {$last_found_rows} AS `FOUND_ROWS()`",
             );
             return $result;
+        }
+
+        // Now that functions are rewritten to SQLite dialect,
+        // Let's translate unsupported delete queries
+        if($query_type === 'DELETE') {
+            $r = new QueryRewriter($r->output_tokens);
+            $r->consume();
+
+            $comma = $r->peek(WP_SQLite_Lexer::TYPE_OPERATOR, null, [',']);
+            $from = $r->peek(WP_SQLite_Lexer::TYPE_KEYWORD, null, ['FROM']);
+            // It's a dual delete query if the comma comes before the FROM
+            if($comma && $from && $comma->position < $from->position) {
+                $r->replace_last( new Token( 'SELECT', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) );
+
+                // Get table name. Clone $r because we need to know the table
+                // name to correctly declare the select fields and the select
+                // fields come before the FROM keyword.
+                $r2 = clone $r;
+                $r2->consume([
+                    'type' => WP_SQLite_Lexer::TYPE_KEYWORD,
+                    'value' => 'FROM'
+                ]);
+                // Assume the table name is the first token after FROM
+                $table_name = $r2->consume()->value;
+                unset($r2);
+
+                // Now, let's figure out the primary key name
+                // This assumes that all listed table names are the same.
+                $q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
+                $pk_name = $q->fetch()['name'];
+
+                // Good, we can finally create the SELECT query.
+                // Let's rewrite DELETE a, b FROM ... to SELECT a.id, b.id FROM ...
+                $alias_nb = 0;
+                while(true) {
+                    $token = $r->consume();
+                    if($token->type === WP_SQLite_Lexer::TYPE_KEYWORD && $token->value === 'FROM') {
+                        break;
+                    }
+                    // Between DELETE and FROM we only expect commas and table aliases
+                    // If it's not a comma, it must be a table alias
+                    if($token->value !== ',') {
+                        // Insert .id AS id_1 after the table alias
+                        $r->addMany([
+                            new Token( '.', WP_SQLite_Lexer::TYPE_OPERATOR, WP_SQLite_Lexer::FLAG_OPERATOR_SQL ),
+                            new Token( $pk_name, WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ),
+                            new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+                            new Token( 'AS', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
+                            new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+                            new Token( 'id_'.$alias_nb, WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ),
+                        ]);
+                    }
+                }
+                $r->consume_all();
+
+                // Select the IDs to delete
+                $select = $r->getUpdatedQuery();
+                $rows = $this->sqlite->query($select)->fetchAll();
+                $ids_to_delete = [];
+                foreach ($rows as $id) {
+                    $ids_to_delete[] = $id->id_1;
+                    $ids_to_delete[] = $id->id_2;
+                }
+                
+                $query = (
+                    count($ids_to_delete)
+                        ? "DELETE FROM {$table_name} WHERE {$pk_name} IN (" . implode(',', $ids_to_delete) . ")"
+                        : "SELECT 1=1"
+                );
+                return new SQLiteTranslationResult(
+                    [
+                        new SQLiteQuery( $query)
+                    ]
+                );
+            }
+
+            // Naive rewriting of DELETE JOIN query
+            // @TODO: Use Lexer
+            if ( str_contains( $this->query, ' JOIN ' ) ) {
+                return new SQLiteTranslationResult(
+                    [
+                        new SQLiteQuery( 
+                            "DELETE FROM {$this->table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$this->table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
+                        )
+                    ]
+                );
+            }
         }
 
         $result->queries[] = new SQLiteQuery( $updated_query, $params );
@@ -826,7 +909,7 @@ class QueryRewriter {
 	public $idx = -1;
 	public $max = -1;
     public $call_stack = array();
-    private $depth = 0;
+    public $depth = 0;
 
     public function __construct($input_tokens)
     {
@@ -866,11 +949,11 @@ class QueryRewriter {
         $this->output_tokens = $tokens;
     }
 
-	public function peek() {
+	public function peek($type=null, $flags=null, $values=null) {
         $i = $this->idx;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
-            if($this->matches($token)){
+            if($this->matches($token, $type, $flags, $values)){
                 return $token;
             }
 		}
@@ -881,7 +964,7 @@ class QueryRewriter {
 		}
 	}
 
-	public function consume( $options=[] ) {
+	public function consume( $options = [] ) {
         [$tokens, $last_matched] = $this->get_next_tokens($options);
         $count = count($tokens);
         $this->idx += $count;
@@ -896,15 +979,12 @@ class QueryRewriter {
 		return array_pop( $this->output_tokens );
 	}
 
-	public function skip( $type = null, $flags = null ) {
-		$this->skipOver([
-            'type' => $type,
-            'flags' => $flags,
-        ]);
+	public function skip( $options = [] ) {
+		$this->skipOver($options);
         return $this->current();
 	}
 
-	public function skipOver( $options=[] ) {
+	public function skipOver( $options = [] ) {
         [$tokens, $last_matched] = $this->get_next_tokens($options);
         $count = count($tokens);
         $this->idx += $count;
@@ -925,7 +1005,7 @@ class QueryRewriter {
         $i = $this->idx;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
-            $this->update_call_stack($token);
+            $this->update_call_stack($token, $i);
             $buffered[] = $token;
             if($this->matches($token, $type, $flags, $values)){
                 return [$buffered, true];
@@ -958,13 +1038,13 @@ class QueryRewriter {
         return count( $this->call_stack ) ? $this->call_stack[ count( $this->call_stack ) - 1 ] : null;
     }
 
-    private function update_call_stack($token) {
+    private function update_call_stack($token, $current_idx) {
         if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
             if (
                 $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION
-                && ! ( $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED )
+                // && ! ( $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED )
             ) {
-                $j = $this->idx;
+                $j = $current_idx;
                 do {
                     $peek = $this->input_tokens[ ++$j ];
                 } while ( WP_SQLite_Lexer::TYPE_WHITESPACE === $peek->type );
@@ -1013,6 +1093,27 @@ class QueryRewriter {
 //     a = VALUES(`b`)
 // Q);
 
-// $t = new SQLiteTranslator("SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC");
-// $t->execute();
+// $pdo = new PDO('sqlite::memory:');
+// $t = new SQLiteTranslator($pdo);
+// foreach($t->translate("
+// CREATE TABLE wp_options (
+// 	option_id bigint(20) unsigned NOT NULL auto_increment,
+// 	option_name varchar(191) NOT NULL default '',
+// 	option_value longtext NOT NULL,
+// 	autoload varchar(20) NOT NULL default 'yes',
+// 	PRIMARY KEY  (option_id),
+// 	UNIQUE KEY option_name (option_name),
+// 	KEY autoload (autoload)
+// ) ;")->queries as $q) {
+//     $pdo->prepare($q->sql)->execute($q->params);
+// }
+// $pdo->query('INSERT INTO wp_options (option_name, option_value) VALUES ("_site_transient_timeout_test", 1675966307)');
+// var_dump($pdo->lastInsertId());
+// $t->translate(
+//     "DELETE a, b FROM wp_options a, wp_options b
+//     WHERE a.option_name LIKE '_site_transient_%'
+//     AND a.option_name NOT LIKE '_site_transient_timeout_%'
+//     AND b.option_name = CONCAT( '_site_transient_timeout_', SUBSTRING( a.option_name, CONCAT( '_site_transient_timeout_', 2 ) ) )
+//     AND b.option_value < 1675966307"
+// );
 // die();

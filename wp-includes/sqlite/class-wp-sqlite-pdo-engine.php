@@ -6,6 +6,8 @@
  * @since 1.0.0
  */
 
+require_once __DIR__ .'/../../lexer-explorations/translator.php';
+
 /**
  * This class extends PDO class and does the real work.
  *
@@ -198,6 +200,10 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 */
 	protected $has_active_transaction = false;
 
+	protected $translator;
+
+	protected $last_found_rows;
+
 	/**
 	 * Constructor
 	 *
@@ -388,89 +394,79 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @return mixed according to the query type
 	 * @see PDO::query()
 	 */
-	public function query( $statement, $mode = PDO::ATTR_DEFAULT_FETCH_MODE, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
+	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
 
-		$this->queries[] = "Raw query:\n$statement";
-		$res             = $this->determine_query_type( $statement );
-		if ( ! $res && defined( 'PDO_DEBUG' ) && PDO_DEBUG ) {
-			$bailout_string = sprintf(
-				'<h1>Unknown query type</h1><p>Sorry, we cannot determine the type of query that is requested (%s).</p>',
-				$statement
+		$this->translator = new SQLiteTranslator( $this->pdo, $GLOBALS['table_prefix'] );
+		$reason = null;
+
+		try {
+			$this->beginTransaction();
+			$translation = $this->translator->translate(
+				$statement,
+				$this->found_rows_result
 			);
-			$this->set_error( __LINE__, __FUNCTION__, $bailout_string );
+			$this->commit();
+		} catch ( PDOException $err ) {
+			$reason  = $err->getCode();
+			$message = $err->getMessage();
+			$this->rollBack();
 		}
-		switch ( strtolower( $this->query_type ) ) {
-			case 'set':
-				$this->return_value = false;
-				break;
-
-			case 'foundrows':
-				$_column = array( 'FOUND_ROWS()' => '' );
-				$column  = array();
-				if ( ! is_null( $this->found_rows_result ) ) {
-					$this->num_rows          = $this->found_rows_result;
-					$_column['FOUND_ROWS()'] = $this->num_rows;
-					$column[]                = new WP_SQLite_Object_Array( $_column );
-					$this->results           = $column;
-					$this->found_rows_result = null;
+		if($reason === null) {
+			$stmt = null;
+			foreach($translation->queries as $query){
+				$this->queries[] = 'Executing: (no parameters)';
+				do {
+					try {
+						$this->beginTransaction();
+						$stmt = $this->pdo->prepare($query->sql);
+						$stmt->execute($query->params);
+						$this->commit();
+					} catch ( PDOException $err ) {
+						$reason  = $err->getCode();
+						$message = $err->getMessage();
+						$this->rollBack();
+					}
+				} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+			}
+			if ($reason === null) {
+				if($translation->calc_found_rows) {
+					$this->found_rows_result = $translation->calc_found_rows;
 				}
-				break;
-
-			case 'insert':
-				if ( $this->can_insert_multiple_rows ) {
-					$this->execute_insert_query_new( $statement );
-					break;
+				if($translation->has_result) {
+					$this->_results = $translation->result;
+				} else if($stmt) {
+					// var_dump($stmt->fetchAll($mode));
+					$this->_results = $stmt->fetchAll($mode);
 				}
-				$this->execute_insert_query( $statement );
-				break;
-
-			case 'create':
-				$this->return_value = $this->execute_create_query( $statement );
-				break;
-
-			case 'alter':
-				$this->return_value = $this->execute_alter_query( $statement );
-				break;
-
-			case 'show_variables':
-				$this->return_value = $this->show_variables_workaround( $statement );
-				break;
-
-			case 'showstatus':
-				$this->return_value = $this->show_status_workaround( $statement );
-				break;
-
-			case 'drop_index':
-				$this->return_value = false;
-				if ( preg_match( '/^\\s*(DROP\\s*INDEX\\s*.*?)\\s*ON\\s*(.*)/im', $statement, $match ) ) {
-					$this->query_type   = 'alter';
-					$this->return_value = $this->execute_alter_query( 'ALTER TABLE ' . trim( $match[2] ) . ' ' . trim( $match[1] ) );
-				}
-				break;
-
-			default:
-				$engine                = $this->prepare_engine( $this->query_type );
-				$this->rewritten_query = $engine->rewrite_query( $statement, $this->query_type );
-				if ( ! is_null( $this->pre_ordered_results ) ) {
-					$this->results             = $this->pre_ordered_results;
-					$this->num_rows            = count( $this->results );
-					$this->return_value        = $this->num_rows;
-					$this->pre_ordered_results = null;
-					break;
-				}
-				$this->queries[] = "Rewritten:\n$this->rewritten_query";
-				$this->extract_variables();
-				$prepared_query = $this->prepare_query();
-				$this->execute_query( $prepared_query );
 				if ( ! $this->is_error ) {
-					$this->process_results( $engine );
+					$this->process_results();
 				}
-				break;
+				$this->return_value = $this->results;
+				$this->num_rows = count($this->results);
+				$this->last_found_rows = count($this->results);
+				$this->last_insert_id = $this->pdo->lastInsertId();
+			}
 		}
+
 		$debug_string = $this->get_debug_info();
 		if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true && $debug_string ) {
 			error_log( $debug_string );
+		}
+
+		if ($reason > 0) {
+			$err_message = sprintf("Problem preparing the PDO SQL Statement.  Error was: %s", $message);
+			if(!str_contains($message, 'no such table')) {
+				var_dump(
+					$err_message .'<br/><br/>'.
+					$statement .'<br/><br/>'.
+					($query?$query->sql:'') .'<br/><br/>'.
+					'----------------'. '<br/><br/>'
+				);
+				throw new Exception();
+			}
+			$this->set_error(__LINE__, __FUNCTION__, $err_message);
+			return false;
 		}
 
 		return $this->return_value;
@@ -604,7 +600,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$output .= '<p>Queries made or created this session were:</p>';
 		$output .= '<ol>';
 		foreach ( $this->queries as $q ) {
-			$output .= '<li>' . esc_html( $q ) . '</li>';
+			$output .= '<li>' . ( $q ) . '</li>';
 		}
 		$output .= '</ol>';
 		$output .= '</div>';
@@ -613,7 +609,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$output .= sprintf(
 				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
 				(int) $this->errors[ $num ]['line'],
-				'<code>' . esc_html( $this->errors[ $num ]['function'] ) . '</code>',
+				'<code>' . ( $this->errors[ $num ]['function'] ) . '</code>',
 				$m
 			);
 			$output .= '</div>';
@@ -709,546 +705,11 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	}
 
 	/**
-	 * Method to execute PDO statement object.
-	 *
-	 * This function executes query and sets the variables to give back to WordPress.
-	 * The variables are class fields. So if success, no return value. If failure, it
-	 * returns void and stops.
-	 *
-	 * @param object $statement The PDO statement.
-	 *
-	 * @return boolean|void
-	 */
-	private function execute_query( $statement ) {
-		$reason  = 0;
-		$message = '';
-		if ( ! is_object( $statement ) ) {
-			return false;
-		}
-		if ( count( $this->extracted_variables ) > 0 ) {
-			$this->queries[] = "Executing:\n" . var_export( $this->extracted_variables, true );
-			do {
-				if ( 'update' === $this->query_type || 'replace' === $this->query_type ) {
-					try {
-						$this->beginTransaction();
-						$statement->execute( $this->extracted_variables );
-						$this->commit();
-					} catch ( PDOException $err ) {
-						$reason  = $err->getCode();
-						$message = $err->getMessage();
-						$this->rollBack();
-					}
-				} else {
-					try {
-						$statement->execute( $this->extracted_variables );
-					} catch ( PDOException $err ) {
-						$reason  = $err->getCode();
-						$message = $err->getMessage();
-					}
-				}
-			} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-		} else {
-			$this->queries[] = 'Executing: (no parameters)';
-			do {
-				if ( 'update' === $this->query_type || 'replace' === $this->query_type ) {
-					try {
-						$this->beginTransaction();
-						$statement->execute();
-						$this->commit();
-					} catch ( PDOException $err ) {
-						$reason  = $err->getCode();
-						$message = $err->getMessage();
-						$this->rollBack();
-					}
-				} else {
-					try {
-						$statement->execute();
-					} catch ( PDOException $err ) {
-						$reason  = $err->getCode();
-						$message = $err->getMessage();
-					}
-				}
-			} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-		}
-		if ( $reason > 0 ) {
-			$err_message = sprintf( 'Error while executing query! Error message was: %s', $message );
-			$this->set_error( __LINE__, __FUNCTION__, $err_message );
-			return false;
-		}
-		$this->_results = $statement->fetchAll( PDO::FETCH_OBJ ); // phpcs:ignore WordPress.DB.RestrictedClasses
-
-		// Generate the results that $wpdb will want to see.
-		switch ( $this->query_type ) {
-			case 'insert':
-			case 'update':
-			case 'replace':
-				$this->last_insert_id = $this->pdo->lastInsertId();
-				$this->affected_rows  = $statement->rowCount();
-				$this->return_value   = $this->affected_rows;
-				break;
-
-			case 'select':
-			case 'show':
-			case 'showcolumns':
-			case 'showindex':
-			case 'describe':
-			case 'desc':
-			case 'check':
-			case 'analyze':
-				$this->num_rows     = count( $this->_results );
-				$this->return_value = $this->num_rows;
-				break;
-
-			case 'delete':
-				$this->affected_rows = $statement->rowCount();
-				$this->return_value  = $this->affected_rows;
-				break;
-
-			case 'alter':
-			case 'drop':
-			case 'create':
-			case 'optimize':
-			case 'truncate':
-				$this->return_value = true;
-				if ( $this->is_error ) {
-					$this->return_value = false;
-				}
-				break;
-		}
-	}
-
-	/**
-	 * Method to extract field data to an array and prepare the query statement.
-	 *
-	 * If original SQL statement is CREATE query, this function does nothing.
-	 */
-	private function extract_variables() {
-		if ( 'create' === $this->query_type ) {
-			$this->prepared_query = $this->rewritten_query;
-			return;
-		}
-
-		// Long queries can really kill this.
-		$pattern = '/(?<!\\\\)([\'"])(.*?)(?<!\\\\)\\1/imsx';
-		$_limit  = ini_get( 'pcre.backtrack_limit' );
-		$limit   = $_limit;
-		// if user's setting is more than default * 10, make PHP do the job.
-		if ( $limit > 10000000 ) {
-			$query = preg_replace_callback(
-				$pattern,
-				array( $this, 'replace_variables_with_placeholders' ),
-				$this->rewritten_query
-			);
-		} else {
-			do {
-				if ( $limit > 10000000 ) {
-					$this->set_error( __LINE__, __FUNCTION__, 'The query is too big to parse properly' );
-					break; // No point in continuing execution, would get into a loop.
-				}
-				ini_set( 'pcre.backtrack_limit', $limit );
-				$query = preg_replace_callback(
-					$pattern,
-					array( $this, 'replace_variables_with_placeholders' ),
-					$this->rewritten_query
-				);
-				$limit = $limit * 10;
-			} while ( is_null( $query ) );
-
-			// Reset the pcre.backtrack_limit.
-			ini_set( 'pcre.backtrack_limit', $_limit );
-		}
-
-		if ( isset( $query ) ) {
-			$this->queries[]      = "With Placeholders:\n" . $query;
-			$this->prepared_query = $query;
-		}
-	}
-
-	/**
-	 * Call back function to replace field data with PDO parameter.
-	 *
-	 * @param string $matches Matched string.
-	 *
-	 * @return string
-	 */
-	private function replace_variables_with_placeholders( $matches ) {
-		// Remove the WordPress escaping mechanism.
-		$param = stripslashes( $matches[0] );
-
-		// Remove trailing spaces.
-		$param = trim( $param );
-
-		// Remove the quotes at the end and the beginning.
-		if ( in_array( $param[ strlen( $param ) - 1 ], array( "'", '"' ), true ) ) {
-			$param = substr( $param, 0, -1 ); // End.
-		}
-		if ( in_array( $param[0], array( "'", '"' ), true ) ) {
-			$param = substr( $param, 1 ); // Start.
-		}
-		$key                         = ':param_' . $this->param_num++;
-		$this->extracted_variables[] = $param;
-		// Return the placeholder.
-		return ' ' . $key . ' ';
-	}
-
-	/**
-	 * Method to determine which query type the argument is.
-	 *
-	 * It takes the query string ,determines the type and returns the type string.
-	 * If the query is the type that SQLite Integration can't executes, returns false.
-	 *
-	 * @param string $query The query string.
-	 *
-	 * @return boolean
-	 */
-	private function determine_query_type( $query ) {
-		$result = preg_match(
-			'/^\\s*(SET|EXPLAIN|PRAGMA|SELECT\\s*FOUND_ROWS|SELECT|INSERT|UPDATE|REPLACE|DELETE|ALTER|CREATE|DROP\\s*INDEX|DROP|SHOW\\s*\\w+\\s*\\w+\\s*|DESCRIBE|DESC|TRUNCATE|OPTIMIZE|CHECK|ANALYZE)/i',
-			$query,
-			$match
-		);
-
-		if ( ! $result ) {
-			return false;
-		}
-		$this->query_type = strtolower( $match[1] );
-		if ( stripos( $this->query_type, 'found' ) !== false ) {
-			$this->query_type = 'foundrows';
-		}
-		if ( stripos( $this->query_type, 'show' ) !== false ) {
-			if ( stripos( $this->query_type, 'show table status' ) !== false ) {
-				$this->query_type = 'showstatus';
-			} elseif (
-				stripos( $this->query_type, 'show tables' ) !== false ||
-				stripos( $this->query_type, 'show full tables' ) !== false
-			) {
-				$this->query_type = 'show';
-			} elseif (
-				stripos( $this->query_type, 'show columns' ) !== false ||
-				stripos( $this->query_type, 'show fields' ) !== false ||
-				stripos( $this->query_type, 'show full columns' ) !== false
-			) {
-				$this->query_type = 'showcolumns';
-			} elseif (
-				stripos( $this->query_type, 'show index' ) !== false ||
-				stripos( $this->query_type, 'show indexes' ) !== false ||
-				stripos( $this->query_type, 'show keys' ) !== false
-			) {
-				$this->query_type = 'showindex';
-			} elseif (
-				stripos( $this->query_type, 'show variables' ) !== false ||
-				stripos( $this->query_type, 'show global variables' ) !== false ||
-				stripos( $this->query_type, 'show session variables' ) !== false
-			) {
-				$this->query_type = 'show_variables';
-			} else {
-				return false;
-			}
-		}
-		if ( stripos( $this->query_type, 'drop index' ) !== false ) {
-			$this->query_type = 'drop_index';
-		}
-
-		return true;
-	}
-
-	/**
-	 * Method to execute INSERT query for SQLite version 3.7.11 or later.
-	 *
-	 * SQLite version 3.7.11 began to support multiple rows insert with values
-	 * clause. This is for that version or later.
-	 *
-	 * @param string $query The query string.
-	 */
-	private function execute_insert_query_new( $query ) {
-		$engine                = $this->prepare_engine( $this->query_type );
-		$this->rewritten_query = $engine->rewrite_query( $query, $this->query_type );
-		$this->queries[]       = "Rewritten:\n" . $this->rewritten_query;
-		$this->extract_variables();
-		$statement = $this->prepare_query();
-		$this->execute_query( $statement );
-	}
-
-	/**
-	 * Method to execute INSERT query for SQLite version 3.7.10 or lesser.
-	 *
-	 * It executes the INSERT query for SQLite version 3.7.10 or lesser. It is
-	 * necessary to rewrite multiple row values.
-	 *
-	 * @param string $query The query string.
-	 */
-	private function execute_insert_query( $query ) {
-		global $wpdb;
-		$multi_insert = false;
-		$statement    = null;
-		$engine       = $this->prepare_engine( $this->query_type );
-		if ( preg_match( '/(INSERT.*?VALUES\\s*)(\(.*\))/imsx', $query, $matched ) ) {
-			$query_prefix = $matched[1];
-			$values_data  = $matched[2];
-			if ( stripos( $values_data, 'ON DUPLICATE KEY' ) !== false ) {
-				$exploded_parts = $values_data;
-			} elseif ( stripos( $query_prefix, "INSERT INTO $wpdb->comments" ) !== false ) {
-				$exploded_parts = $values_data;
-			} else {
-				$exploded_parts = $this->parse_multiple_inserts( $values_data );
-			}
-			$count = count( $exploded_parts );
-			if ( $count > 1 ) {
-				$multi_insert = true;
-			}
-		}
-		if ( $multi_insert ) {
-			$first = true;
-			foreach ( $exploded_parts as $value ) {
-				$suffix = ( substr( $value, -1, 1 ) === ')' ) ? '' : ')';
-
-				$query_string              = $query_prefix . ' ' . $value . $suffix;
-				$this->rewritten_query     = $engine->rewrite_query( $query_string, $this->query_type );
-				$this->queries[]           = "Rewritten:\n" . $this->rewritten_query;
-				$this->extracted_variables = array();
-				$this->extract_variables();
-				if ( $first ) {
-					$statement = $this->prepare_query();
-					$this->execute_query( $statement );
-					$first = false;
-				} else {
-					$this->execute_query( $statement );
-				}
-			}
-		} else {
-			$this->rewritten_query = $engine->rewrite_query( $query, $this->query_type );
-			$this->queries[]       = "Rewritten:\n" . $this->rewritten_query;
-			$this->extract_variables();
-			$statement = $this->prepare_query();
-			$this->execute_query( $statement );
-		}
-	}
-
-	/**
-	 * Method to help rewriting multiple row values insert query.
-	 *
-	 * It splits the values clause into an array to execute separately.
-	 *
-	 * @param string $values The values to be split.
-	 *
-	 * @return array
-	 */
-	private function parse_multiple_inserts( $values ) {
-		$tokens         = preg_split( "/(''|(?<!\\\\)'|(?<!\()\),(?=\s*\())/s", $values, -1, PREG_SPLIT_DELIM_CAPTURE );
-		$exploded_parts = array();
-		$part           = '';
-		$literal        = false;
-		foreach ( $tokens as $token ) {
-			switch ( $token ) {
-				case '),':
-					if ( ! $literal ) {
-						$exploded_parts[] = $part;
-						$part             = '';
-					} else {
-						$part .= $token;
-					}
-					break;
-
-				case "'":
-					$literal = ! $literal;
-					$part   .= $token;
-					break;
-
-				default:
-					$part .= $token;
-					break;
-
-			}
-		}
-		if ( ! empty( $part ) ) {
-			$exploded_parts[] = $part;
-		}
-
-		return $exploded_parts;
-	}
-
-	/**
-	 * Method to execute CREATE query.
-	 *
-	 * @param string $query The query to execute.
-	 *
-	 * @return boolean
-	 */
-	private function execute_create_query( $query ) {
-		$engine          = $this->prepare_engine( $this->query_type );
-		$rewritten_query = $engine->rewrite_query( $query );
-		$reason          = 0;
-		$message         = '';
-
-		try {
-			$this->beginTransaction();
-			foreach ( (array) $rewritten_query as $single_query ) {
-				$this->queries[] = "Executing:\n" . $single_query;
-				$single_query    = trim( $single_query );
-				if ( empty( $single_query ) ) {
-					continue;
-				}
-				$this->pdo->exec( $single_query );
-			}
-			$this->commit();
-		} catch ( PDOException $err ) {
-			$reason  = $err->getCode();
-			$message = $err->getMessage();
-			if ( 5 == $reason || 6 == $reason ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-				$this->commit();
-			} else {
-				$this->rollBack();
-			}
-		}
-		if ( $reason > 0 ) {
-			$err_message = sprintf( 'Problem in creating table or index. Error was: %s', $message );
-			$this->set_error( __LINE__, __FUNCTION__, $err_message );
-
-			return false;
-		}
-
-		return true;
-	}
-
-	/**
-	 * Method to execute ALTER TABLE query.
-	 *
-	 * @param string $query The query to execute.
-	 *
-	 * @return boolean
-	 */
-	private function execute_alter_query( $query ) {
-		$engine          = $this->prepare_engine( $this->query_type );
-		$reason          = 0;
-		$message         = '';
-		$re_query        = '';
-		$rewritten_query = $engine->rewrite_query( $query, $this->query_type );
-		if ( is_array( $rewritten_query ) && array_key_exists( 'recursion', $rewritten_query ) ) {
-			$re_query = $rewritten_query['recursion'];
-			unset( $rewritten_query['recursion'] );
-		}
-		try {
-			$this->beginTransaction();
-			if ( is_array( $rewritten_query ) ) {
-				foreach ( $rewritten_query as $single_query ) {
-					$this->queries[] = "Executing:\n" . $single_query;
-					$single_query    = trim( $single_query );
-					if ( empty( $single_query ) ) {
-						continue;
-					}
-					$this->pdo->exec( $single_query );
-				}
-			} else {
-				$this->queries[] = "Executing:\n" . $rewritten_query;
-				$rewritten_query = trim( $rewritten_query );
-				$this->pdo->exec( $rewritten_query );
-			}
-			$this->commit();
-		} catch ( PDOException $err ) {
-			$reason  = $err->getCode();
-			$message = $err->getMessage();
-			if ( 5 == $reason || 6 == $reason ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-				$this->commit();
-				usleep( 10000 );
-			} else {
-				$this->rollBack();
-			}
-		}
-		if ( '' !== $re_query ) {
-			$this->query( $re_query );
-		}
-		if ( $reason > 0 ) {
-			$err_message = sprintf( 'Problem in executing alter query. Error was: %s', $message );
-			$this->set_error( __LINE__, __FUNCTION__, $err_message );
-
-			return false;
-		}
-
-		return true;
-	}
-
-	/**
-	 * Method to execute SHOW VARIABLES query
-	 *
-	 * This query is meaningless for SQLite. This function returns null data with some
-	 * exceptions and only avoids the error message.
-	 *
-	 * @param string $query The query to execute.
-	 *
-	 * @return bool
-	 */
-	private function show_variables_workaround( $query ) {
-		$dummy_data = array(
-			'Variable_name' => '',
-			'Value'         => null,
-		);
-		$pattern    = '/SHOW\\s*VARIABLES\\s*LIKE\\s*(.*)?$/im';
-		if ( preg_match( $pattern, $query, $match ) ) {
-			$value                       = str_replace( "'", '', $match[1] );
-			$dummy_data['Variable_name'] = trim( $value );
-			// This is set for Wordfence Security Plugin.
-			$dummy_data['Value'] = '';
-			if ( 'max_allowed_packet' === $value ) {
-				$dummy_data['Value'] = 1047552;
-			}
-		}
-		$_results[]         = new WP_SQLite_Object_Array( $dummy_data );
-		$this->results      = $_results;
-		$this->num_rows     = count( $this->results );
-		$this->return_value = $this->num_rows;
-
-		return true;
-	}
-
-	/**
-	 * Method to execute SHOW TABLE STATUS query.
-	 *
-	 * This query is meaningless for SQLite. This function returns dummy data.
-	 *
-	 * @param string $query The query to execute.
-	 *
-	 * @return bool
-	 */
-	private function show_status_workaround( $query ) {
-		$pattern    = '/^SHOW\\s*TABLE\\s*STATUS\\s*LIKE\\s*(.*?)$/im';
-		$table_name = '';
-		if ( preg_match( $pattern, $query, $match ) ) {
-			$table_name = str_replace( "'", '', $match[1] );
-		}
-		$dummy_data         = array(
-			'Name'            => $table_name,
-			'Engine'          => '',
-			'Version'         => '',
-			'Row_format'      => '',
-			'Rows'            => 0,
-			'Avg_row_length'  => 0,
-			'Data_length'     => 0,
-			'Max_data_length' => 0,
-			'Index_length'    => 0,
-			'Data_free'       => 0,
-			'Auto_increment'  => 0,
-			'Create_time'     => '',
-			'Update_time'     => '',
-			'Check_time'      => '',
-			'Collation'       => '',
-			'Checksum'        => '',
-			'Create_options'  => '',
-			'Comment'         => '',
-		);
-		$_results[]         = new WP_SQLite_Object_Array( $dummy_data );
-		$this->results      = $_results;
-		$this->num_rows     = count( $this->results );
-		$this->return_value = $this->num_rows;
-
-		return true;
-	}
-
-	/**
 	 * Method to format the queried data to that of MySQL.
 	 *
 	 * @param string $engine Not used.
 	 */
-	private function process_results( $engine ) {
+	private function process_results( ) {
 		if ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
 			$this->convert_to_columns_object();
 		} elseif ( 'showindex' === $this->query_type ) {

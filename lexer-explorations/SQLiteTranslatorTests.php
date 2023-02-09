@@ -10,19 +10,17 @@ class SQLiteTranslatorTests extends TestCase
     public function testSimpleQuery()
     {
         $sqlite = new PDO( 'sqlite::memory:' );
-        $t = new SQLiteTranslator($sqlite);
-        $stmt = $t->run('SELECT 1 as "b"');
         $this->assertEquals(
             [[1,'b'=>1]],
-            $stmt->fetchAll()
+            $this->runQuery($sqlite, 'SELECT 1 as "b"')[1]
         );
     }
     
     public function testCreateTableQuery()
     {
         $sqlite = new PDO( 'sqlite::memory:' );
-        $t = new SQLiteTranslator($sqlite);
-        $t->run(
+        $this->runQuery(
+            $sqlite,
             <<<'Q'
             CREATE TABLE wptests_users (
                 ID bigint(20) unsigned NOT NULL auto_increment,
@@ -42,23 +40,39 @@ class SQLiteTranslatorTests extends TestCase
             ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci
             Q
         );
-        $t->run(
+        $this->runQuery(
+            $sqlite,
             <<<'Q'
             INSERT INTO wptests_users VALUES (1,'admin','$P$B5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5','admin','admin@localhost', '', '2019-01-01 00:00:00', '', 0, 'admin');
             Q
         );
-        $rows = $t->run('SELECT * FROM wptests_users')->fetchAll();
+        $rows = $this->runQuery($sqlite, 'SELECT * FROM wptests_users')[1];
         $this->assertCount(1, $rows);
 
-        $t->run('SELECT SQL_CALC_FOUND_ROWS * FROM wptests_users');
-
+        $result = $this->runQuery($sqlite, 'SELECT SQL_CALC_FOUND_ROWS * FROM wptests_users')[0];
         $this->assertEquals(
             [[
                 0 => 1,
                 "FOUND_ROWS()" => 1,
             ]],
-            $t->run('SELECT FOUND_ROWS()')->fetchAll()
+            $this->runQuery($sqlite, 'SELECT FOUND_ROWS()', $result->calc_found_rows)[1]
         );
+    }
+
+	public function runQuery($sqlite, string $query, $last_found_rows=null) {
+        $t = new SQLiteTranslator($sqlite, 'wptests_');
+        $result = $t->translate($query, $last_found_rows);
+        foreach($result->queries as $query){
+            $last_stmt = $sqlite->prepare($query->sql);
+            $last_stmt->execute($query->params);
+        }
+        if($result->has_result === true){
+            return [$result, $result->result];
+        }
+        return [
+            $result,
+            $last_stmt->fetchAll()
+        ];
     }
 
     /**
@@ -67,7 +81,7 @@ class SQLiteTranslatorTests extends TestCase
     public function testTranslate($msg, $query, $expectedTranslation)
     {
         $sqlite = new PDO( 'sqlite::memory:' );
-        $t = new SQLiteTranslator($sqlite, $query);
+        $t = new SQLiteTranslator($sqlite, 'wptests_');
         $this->assertEquals(
             $expectedTranslation,
             $t->translate($query)->queries,
@@ -126,7 +140,21 @@ class SQLiteTranslatorTests extends TestCase
                 ]                
             ],
             [
-                "Translates SELECT queries",
+                "Translates SELECT queries (1)",
+                "SELECT * FROM wp_options",
+                [
+                    new SQLiteQuery('SELECT * FROM wp_options')
+                ]
+            ],
+            [
+                "Translates SELECT queries (2)",
+                "SELECT SQL_CALC_FOUND_ROWS * FROM wptests_users",
+                [
+                    new SQLiteQuery('SELECT * FROM wptests_users')
+                ]
+            ],
+            [
+                "Translates SELECT queries (3)",
                 "SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC",
                 [
                     new SQLiteQuery(
@@ -148,6 +176,24 @@ class SQLiteTranslatorTests extends TestCase
                         <<<'SQL'
                             UPDATE wptests_term_taxonomy SET count = 0
                         SQL,
+                        []
+                    ),
+                ]
+            ],
+            [
+                "Translates DELETE queries",
+                "DELETE a, b FROM wp_options a, wp_options b
+                    WHERE a.option_name LIKE '_transient_%'
+                    AND a.option_name NOT LIKE '_transient_timeout_%'
+                    AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
+                    AND b.option_value < 1675963967;",
+                [
+                    new SQLiteQuery(
+                        "SELECT a, b FROM wp_options a, wp_options b
+                    WHERE a.option_name LIKE '_transient_%'
+                    AND a.option_name NOT LIKE '_transient_timeout_%'
+                    AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
+                    AND b.option_value < 1675963967;",
                         []
                     ),
                 ]

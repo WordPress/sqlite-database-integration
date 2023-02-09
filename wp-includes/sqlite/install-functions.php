@@ -17,11 +17,9 @@
  */
 function sqlite_make_db_sqlite() {
 	include_once ABSPATH . 'wp-admin/includes/schema.php';
-	$index_array = array();
 
 	$table_schemas = wp_get_db_schema();
 	$queries       = explode( ';', $table_schemas );
-	$query_parser  = new WP_SQLite_Create_Query();
 	try {
 		$pdo = new PDO( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
 	} catch ( PDOException $err ) {
@@ -31,6 +29,9 @@ function sqlite_make_db_sqlite() {
 		wp_die( $message, 'Database Error!' );
 	}
 
+	$translator = new SQLiteTranslator( $pdo, $GLOBALS['table_prefix'] );
+	$query = null;
+
 	try {
 		$pdo->beginTransaction();
 		foreach ( $queries as $query ) {
@@ -38,40 +39,13 @@ function sqlite_make_db_sqlite() {
 			if ( empty( $query ) ) {
 				continue;
 			}
-			$rewritten_query = $query_parser->rewrite_query( $query );
-			if ( is_array( $rewritten_query ) ) {
-				$table_query   = array_shift( $rewritten_query );
-				$index_queries = $rewritten_query;
-				$table_query   = trim( $table_query );
-				$pdo->exec( $table_query );
-			} else {
-				$rewritten_query = trim( $rewritten_query );
-				$pdo->exec( $rewritten_query );
+			$translation = $translator->translate($query);
+			foreach($translation->queries as $query){
+				$stmt = $pdo->prepare($query->sql);
+				$stmt->execute($query->params);
 			}
 		}
 		$pdo->commit();
-		if ( $index_queries ) {
-			// $query_parser rewrites KEY to INDEX, so we don't need KEY pattern.
-			$pattern = '/CREATE\\s*(UNIQUE\\s*INDEX|INDEX)\\s*IF\\s*NOT\\s*EXISTS\\s*(\\w+)?\\s*.*/im';
-			$pdo->beginTransaction();
-			foreach ( $index_queries as $index_query ) {
-				preg_match( $pattern, $index_query, $match );
-				$index_name = trim( $match[2] );
-				if ( in_array( $index_name, $index_array, true ) ) {
-					$r           = rand( 0, 50 );
-					$replacement = $index_name . "_$r";
-					$index_query = str_ireplace(
-						'EXISTS ' . $index_name,
-						'EXISTS ' . $replacement,
-						$index_query
-					);
-				} else {
-					$index_array[] = $index_name;
-				}
-				$pdo->exec( $index_query );
-			}
-			$pdo->commit();
-		}
 	} catch ( PDOException $err ) {
 		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 		$err_code = $err_data[1];
@@ -82,14 +56,13 @@ function sqlite_make_db_sqlite() {
 			$pdo->rollBack();
 			$message  = sprintf(
 				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
-				var_export( $rewritten_query, true )
+				var_export( $query, true )
 			);
 			$message .= sprintf( 'Error message is: %s', $err_data[2] );
 			wp_die( $message, 'Database Error!' );
 		}
 	}
 
-	$query_parser = null;
 	$pdo          = null;
 
 	return true;
