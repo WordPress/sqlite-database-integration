@@ -493,10 +493,10 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				&& ! str_contains( $statement, 'BEGIN' )
 				&& ! str_contains( $statement, 'START TRANSACTION' )
 			) {
-				var_dump(
-					$err_message . '<br/><br/>' .
-					$statement . '<br/><br/>' .
-					( $query ? $query->sql : '' ) . '<br/><br/>' .
+				echo(
+					$err_message . '<br/><br/>' . PHP_EOL . PHP_EOL.
+					$statement . '<br/><br/>'  . PHP_EOL . PHP_EOL.
+					( $query ? $query->sql : '' ) . '<br/><br/>'  . PHP_EOL . PHP_EOL.
 					'----------------' . '<br/><br/>'
 				);
 				throw new Exception();

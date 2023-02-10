@@ -113,7 +113,7 @@ class WP_SQLite_Translator {
 		$this->query           = $query;
 		$this->last_found_rows = $last_found_rows;
 
-		$tokens     = ( new WP_SQLite_Lexer( $query ) )->list->tokens;
+		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
 		$r          = new WP_SQLite_Query_Rewriter( $tokens );
 		$query_type = $r->peek()->value;
 		switch ( $query_type ) {
@@ -169,10 +169,10 @@ class WP_SQLite_Translator {
 				$result = $this->translate_drop( $r );
 				break;
 			case 'DESCRIBE':
-				$table_name = $r->consume()->token;
+				$table_name = $r->consume()->value;
 				$result     = $this->get_translation_result(
 					array(
-						WP_SQLite_Translator::get_query_object( "PRAGMA table_info($table_name);" ),
+						WP_SQLite_Translator::get_query_object( "PRAGMA table_info(\"$table_name\");" ),
 					)
 				);
 				break;
@@ -258,13 +258,24 @@ class WP_SQLite_Translator {
 		// query. If so, we'll just return a dummy result.
 		// @TODO: A proper check and a better translation.
 		if ( str_contains( $this->query, 'information_schema' ) ) {
-			return $this->get_translation_result(
-				array(
-					WP_SQLite_Translator::get_query_object(
-						'SELECT \'\' as "table", 0 as "rows", 0 as "bytes'
-					),
-				)
-			);
+			// @TODO: Actually rewrite the columns
+			if( str_contains( $this->query, 'bytes' ) ) {
+				return $this->get_translation_result(
+					array(
+						WP_SQLite_Translator::get_query_object(
+							"SELECT name as table', 0 as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
+						),
+					)
+				);
+			} else {
+				return $this->get_translation_result(
+					array(
+						WP_SQLite_Translator::get_query_object(
+							"SELECT name, 'myisam' as `engine`, 0 as `data`, 0 as `index` FROM sqlite_master WHERE type='table' ORDER BY name"
+						),
+					)
+				);
+			}
 		}
 
 		$query_type = $r->consume()->value;
@@ -290,8 +301,8 @@ class WP_SQLite_Translator {
 				WHEN 6 THEN 2
 			END
 			*/
-			var_dump( 'done' );
-			die( $this->query );
+			// var_dump( 'done' );
+			// die( $this->query );
 			// Return a dummy select for now
 			return 'SELECT 1=1';
 		}
@@ -316,14 +327,19 @@ class WP_SQLite_Translator {
 			$table_name = $r->consume()->value; // table name
 		}
 
+		$last_reserved_keyword = null;
 		while ( $token = $r->consume() ) {
+			if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) {
+				$last_reserved_keyword = $token->value;
+			}
+			
 			if ( 'SQL_CALC_FOUND_ROWS' === $token->value && WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
 				$has_sql_calc_found_rows = true;
 				$r->drop_last();
 				continue;
 			}
 
-			if ( WP_SQLite_Lexer::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) {
+			if ( $last_reserved_keyword !== "AS" && WP_SQLite_Lexer::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) {
 				// Rewrite string values to bound parameters
 				$param_name            = ':param' . count( $params );
 				$params[ $param_name ] = $token->value;
@@ -514,6 +530,7 @@ class WP_SQLite_Translator {
 					$r->add( WP_SQLite_Lexer::get_token( "'{$interval_op}$num $unit'", WP_SQLite_Lexer::TYPE_STRING ) );
 					continue;
 				}
+
 				if ( 'INSERT' === $query_type && 'DUPLICATE' === $token->keyword ) {
 					/*
 					Rewrite:
@@ -537,6 +554,8 @@ class WP_SQLite_Translator {
 						$pk_name = 'option_name';
 					} elseif ( str_ends_with( $table_name, '_term_relationships' ) ) {
 						$pk_name = 'object_id, term_taxonomy_id';
+					} elseif ( str_ends_with( $table_name, 'wp_woocommerce_sessions' ) ) {
+						$pk_name = 'session_key';
 					} else {
 						$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
 						$pk_name = $q->fetch()['name'];
@@ -709,7 +728,7 @@ class WP_SQLite_Translator {
 			if ( 'column' === $op_subject ) {
 				$this->consume_data_types( $r );
 				$r->consume_all();
-			} elseif ( 'key' === $op_subject || 'unique key' === $op_subject ) {
+			} elseif ( 'key' === $op_subject || 'index' === $op_subject || 'unique key' === $op_subject ) {
 				$key_name     = $r->consume()->value;
 				$index_prefix = 'unique key' === $op_subject ? 'UNIQUE ' : '';
 				$r->replace_all(
@@ -844,6 +863,15 @@ class WP_SQLite_Translator {
 						),
 					)
 				);
+			case 'COLUMNS FROM':
+				$table_name = $r->consume()->token;
+				return $this->get_translation_result(
+					array(
+						WP_SQLite_Translator::get_query_object(
+							"PRAGMA table_info(\"$table_name\");"
+						),
+					)
+				);
 			case 'INDEX FROM':
 				$table_name = $r->consume()->token;
 				return $this->get_translation_result(
@@ -854,24 +882,35 @@ class WP_SQLite_Translator {
 					)
 				);
 			case 'TABLES LIKE':
-				// @TODO implement filtering by table name
-				$table_name = $r->consume()->token;
+				$table_expression = $r->skip();
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
-							'.tables;'
+							"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :param;",
+							array(
+								':param' => $table_expression->value,
+							)
 						),
 					)
 				);
 			default:
-				if ( 'VARIABLE' === $what1 ) {
-					return $this->get_translation_result(
-						array(
-							$this->noop(),
-						)
-					);
-				} else {
-					throw new \Exception( 'Unknown show type: ' . $what );
+				switch( $what1 ) {
+					case 'TABLES':
+						return $this->get_translation_result(
+							array(
+								WP_SQLite_Translator::get_query_object(
+									"SELECT name FROM sqlite_master WHERE type='table'"
+								),
+							)
+						);
+					case 'VARIABLE':
+						return $this->get_translation_result(
+							array(
+								$this->noop(),
+							)
+						);
+					default:
+						throw new \Exception( 'Unknown show type: ' . $what );
 				}
 		}
 	}
