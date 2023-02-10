@@ -1605,7 +1605,7 @@ class WP_SQLite_Lexer {
 
 			if ( null === $token ) {
 				// @assert($this->last === $last_idx);
-				$token = $this->get_token( $this->str[ $this->last ] );
+				$token = static::get_token( $this->str[ $this->last ] );
 				$this->error( 'Unexpected character.', $this->str[ $this->last ], $this->last );
 			} elseif (
 				null !== $last_token
@@ -1685,7 +1685,7 @@ class WP_SQLite_Lexer {
 
 				// Saving the delimiter and its token.
 				$this->delimiter_length         = strlen( $this->delimiter );
-				$token                          = $this->get_token( $this->delimiter, static::TYPE_DELIMITER );
+				$token                          = static::get_token( $this->delimiter, static::TYPE_DELIMITER );
 				$token->position                = $pos;
 				$list->tokens[ $list->count++ ] = $token;
 			}
@@ -1694,7 +1694,7 @@ class WP_SQLite_Lexer {
 		}
 
 		// Adding a final delimiter to mark the ending.
-		$list->tokens[ $list->count++ ] = $this->get_token( null, static::TYPE_DELIMITER );
+		$list->tokens[ $list->count++ ] = static::get_token( null, static::TYPE_DELIMITER );
 
 		// Saving the tokens list.
 		$this->list = $list;
@@ -1855,7 +1855,7 @@ class WP_SQLite_Lexer {
 				continue;
 			}
 
-			$ret   = $this->get_token( $token, static::TYPE_KEYWORD, $flags );
+			$ret   = static::get_token( $token, static::TYPE_KEYWORD, $flags );
 			$i_end = $this->last;
 
 			// We don't break so we find longest keyword.
@@ -1891,7 +1891,7 @@ class WP_SQLite_Lexer {
 			if ( ':' === $this->str[ $this->last ] && $j > 1 ) {
 				// End of label
 				$token .= $this->str[ $this->last ];
-				$ret    = $this->get_token( $token, static::TYPE_LABEL );
+				$ret    = static::get_token( $token, static::TYPE_LABEL );
 				$i_end  = $this->last;
 				break;
 			}
@@ -1941,7 +1941,7 @@ class WP_SQLite_Lexer {
 				continue;
 			}
 
-			$ret   = $this->get_token( $token, static::TYPE_OPERATOR, $flags );
+			$ret   = static::get_token( $token, static::TYPE_OPERATOR, $flags );
 			$i_end = $this->last;
 		}
 
@@ -1968,7 +1968,7 @@ class WP_SQLite_Lexer {
 
 		--$this->last;
 
-		return $this->get_token( $token, static::TYPE_WHITESPACE );
+		return static::get_token( $token, static::TYPE_WHITESPACE );
 	}
 
 	/**
@@ -1991,7 +1991,7 @@ class WP_SQLite_Lexer {
 				--$this->last;
 			}
 
-			return $this->get_token( $token, static::TYPE_COMMENT, static::FLAG_COMMENT_BASH );
+			return static::get_token( $token, static::TYPE_COMMENT, static::FLAG_COMMENT_BASH );
 		}
 
 		// C style comments. (/*comment*\/)
@@ -2016,7 +2016,7 @@ class WP_SQLite_Lexer {
 				// This comment already ended. It may be a part of a
 				// previous MySQL specific command.
 				if ( '*/' === $token ) {
-					return $this->get_token( $token, static::TYPE_COMMENT, $flags );
+					return static::get_token( $token, static::TYPE_COMMENT, $flags );
 				}
 
 				// Checking if this is a MySQL-specific command.
@@ -2036,7 +2036,7 @@ class WP_SQLite_Lexer {
 
 					// We split this comment and parse only its beginning
 					// here.
-					return $this->get_token( $token, static::TYPE_COMMENT, $flags );
+					return static::get_token( $token, static::TYPE_COMMENT, $flags );
 				}
 
 				// Parsing the comment.
@@ -2055,7 +2055,7 @@ class WP_SQLite_Lexer {
 					$token .= $this->str[ $this->last ];
 				}
 
-				return $this->get_token( $token, static::TYPE_COMMENT, $flags );
+				return static::get_token( $token, static::TYPE_COMMENT, $flags );
 			}
 		}
 
@@ -2081,7 +2081,7 @@ class WP_SQLite_Lexer {
 				--$this->last;
 			}
 
-			return $this->get_token( $token, static::TYPE_COMMENT, static::FLAG_COMMENT_SQL );
+			return static::get_token( $token, static::TYPE_COMMENT, static::FLAG_COMMENT_SQL );
 		}
 
 		$this->last = $i_bak;
@@ -2106,13 +2106,13 @@ class WP_SQLite_Lexer {
 		. $this->str[ ++$this->last ] . $this->str[ ++$this->last ]; // _TRUE_ or _FALS_e
 
 		if ( static::is_bool( $token ) ) {
-			return $this->get_token( $token, static::TYPE_BOOL );
+			return static::get_token( $token, static::TYPE_BOOL );
 		}
 
 		if ( ++$this->last < $this->len ) {
 			$token .= $this->str[ $this->last ]; // fals_E_
 			if ( static::is_bool( $token ) ) {
-				return $this->get_token( $token, static::TYPE_BOOL, 1 );
+				return static::get_token( $token, static::TYPE_BOOL, 1 );
 			}
 		}
 
@@ -2273,7 +2273,7 @@ class WP_SQLite_Lexer {
 		if ( 2 === $state || 3 === $state || ( '.' !== $token && 4 === $state ) || 6 === $state || 9 === $state ) {
 			--$this->last;
 
-			return $this->get_token( $token, static::TYPE_NUMBER, $flags );
+			return static::get_token( $token, static::TYPE_NUMBER, $flags );
 		}
 
 		$this->last = $i_bak;
@@ -2329,7 +2329,7 @@ class WP_SQLite_Lexer {
 			$token .= $this->str[ $this->last ];
 		}
 
-		return $this->get_token( $token, static::TYPE_STRING, $flags );
+		return static::get_token( $token, static::TYPE_STRING, $flags );
 	}
 
 	/**
@@ -2377,7 +2377,7 @@ class WP_SQLite_Lexer {
 			$token .= $str->token;
 		}
 
-		return $this->get_token( $token, static::TYPE_SYMBOL, $flags );
+		return static::get_token( $token, static::TYPE_SYMBOL, $flags );
 	}
 
 	/**
@@ -2404,7 +2404,7 @@ class WP_SQLite_Lexer {
 
 		--$this->last;
 
-		return $this->get_token( $token );
+		return static::get_token( $token );
 	}
 
 	/**
@@ -2425,7 +2425,7 @@ class WP_SQLite_Lexer {
 
 		$this->last += $this->delimiter_length - 1;
 
-		return $this->get_token( $this->delimiter, static::TYPE_DELIMITER );
+		return static::get_token( $this->delimiter, static::TYPE_DELIMITER );
 	}
 
 	/**
@@ -2655,14 +2655,14 @@ class WP_SQLite_Lexer {
 	 *
 	 * @return stdClass
 	 */
-	public function get_token( $token, $type = 0, $flags = 0 ) {
+	public static function get_token( $token, $type = 0, $flags = 0 ) {
 		$token_object = new stdClass();
 
 		$token_object->token   = $token;
 		$token_object->type    = $type;
 		$token_object->flags   = $flags;
 		$token_object->keyword = null;
-		$token_object->value   = $this->token_extract( $token_object->type, $token_object->keyword, $token_object->token, $token_object->flags );
+		$token_object->value   = static::token_extract( $token_object->type, $token_object->keyword, $token_object->token, $token_object->flags );
 
 		return $token_object;
 	}
@@ -2674,7 +2674,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @return mixed
 	 */
-	public function token_extract( $type, $keyword, $token, $flags ) {
+	public static function token_extract( $type, $keyword, $token, $flags ) {
 		switch ( $type ) {
 			case self::TYPE_KEYWORD:
 				$keyword = strtoupper( $token );

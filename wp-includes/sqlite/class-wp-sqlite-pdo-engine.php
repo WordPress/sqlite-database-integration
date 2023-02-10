@@ -6,7 +6,7 @@
  * @since 1.0.0
  */
 
-require_once __DIR__ . '/../../lexer-explorations/translator.php';
+require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlite-translator.php';
 
 /**
  * This class extends PDO class and does the real work.
@@ -397,7 +397,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
 
-		$this->translator = new SQLiteTranslator( $this->pdo, $GLOBALS['table_prefix'] );
+		$this->translator = new WP_SQLite_Translator( $this->pdo, $GLOBALS['table_prefix'] );
 		$reason           = null;
 
 		try {

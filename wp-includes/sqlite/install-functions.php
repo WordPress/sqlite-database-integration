@@ -6,6 +6,8 @@
  * @since 1.0.0
  */
 
+require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlite-translator.php';
+
 /**
  * Function to create tables according to the schemas of WordPress.
  *
@@ -29,7 +31,7 @@ function sqlite_make_db_sqlite() {
 		wp_die( $message, 'Database Error!' );
 	}
 
-	$translator = new SQLiteTranslator( $pdo, $GLOBALS['table_prefix'] );
+	$translator = new WP_SQLite_Translator( $pdo, $GLOBALS['table_prefix'] );
 	$query      = null;
 
 	try {

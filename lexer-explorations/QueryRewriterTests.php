@@ -1,23 +1,23 @@
 <?php
 
-require __DIR__ . '/translator.php';
+require __DIR__ . '/class-wp-sqlite-query-rewriter.php';
+require __DIR__ . '/class-wp-sqlite-lexer.php';
 
 use PHPUnit\Framework\TestCase;
-use PhpMyAdmin\SqlParser\Token;
 
-class QueryRewriterTests extends TestCase {
+class WP_SQLite_Query_RewriterTests extends TestCase {
 
 
 	public function testConsume() {
-		$r = new QueryRewriter(
+		$r = new WP_SQLite_Query_Rewriter(
 			array(
-				new Token( ' ', WP_SQLite_Lexer::TYPE_DELIMITER ),
-				new Token( 'int', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_DATA_TYPE ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_DELIMITER ),
-				new Token( 'DATE_ADD', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_DELIMITER ),
-				new Token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_DELIMITER ),
+				WP_SQLite_Lexer::get_token( 'int', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_DATA_TYPE ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_DELIMITER ),
+				WP_SQLite_Lexer::get_token( 'DATE_ADD', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_DELIMITER ),
+				WP_SQLite_Lexer::get_token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
 			)
 		);
 		$this->assertEquals(
@@ -40,14 +40,14 @@ class QueryRewriterTests extends TestCase {
 		);
 	}
 	public function testSkip() {
-		$r = new QueryRewriter(
+		$r = new WP_SQLite_Query_Rewriter(
 			array(
-				new Token( 'DO', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-				new Token( 'UPDATE', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-				new Token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( 'DO', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( 'UPDATE', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
 			)
 		);
 		$this->assertEquals(
@@ -61,14 +61,14 @@ class QueryRewriterTests extends TestCase {
 	}
 
 	public function skip_over() {
-		$r      = new QueryRewriter(
+		$r      = new WP_SQLite_Query_Rewriter(
 			array(
-				new Token( 'DO', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-				new Token( 'UPDATE', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-				new Token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ),
-				new Token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( 'DO', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( 'UPDATE', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
+				WP_SQLite_Lexer::get_token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ),
+				WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
 			)
 		);
 		$buffer = $r->skip_over(
