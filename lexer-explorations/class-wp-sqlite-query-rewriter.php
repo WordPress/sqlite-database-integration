@@ -9,11 +9,21 @@ class WP_SQLite_Query_Rewriter {
 	public $call_stack    = array();
 	public $depth         = 0;
 
+	/**
+	 * Constructor.
+	 *
+	 * @param stdClass[] $input_tokens Array of token objects.
+	 */
 	public function __construct( $input_tokens ) {
 		$this->input_tokens = $input_tokens;
 		$this->max          = count( $input_tokens );
 	}
 
+	/**
+	 * Returns the updated query.
+	 *
+	 * @return string
+	 */
 	public function get_updated_query() {
 		$query = '';
 		foreach ( $this->output_tokens as $token ) {
@@ -22,6 +32,11 @@ class WP_SQLite_Query_Rewriter {
 		return $query;
 	}
 
+	/**
+	 * Returns the current token.
+	 *
+	 * @return stdClass|null
+	 */
 	public function current() {
 		if ( $this->idx < 0 || $this->idx >= $this->max ) {
 			return null;
@@ -29,19 +44,39 @@ class WP_SQLite_Query_Rewriter {
 		return $this->input_tokens[ $this->idx ];
 	}
 
+	/**
+	 * Add a token to the output.
+	 *
+	 * @param stdClass $token Token object.
+	 */
 	public function add( $token ) {
 		$this->output_tokens[] = $token;
 	}
 
+	/**
+	 * Add multiple tokens to the output.
+	 *
+	 * @param stdClass[] $tokens Array of token objects.
+	 */
 	public function add_many( $tokens ) {
 		$this->output_tokens = array_merge( $this->output_tokens, $tokens );
 	}
 
+	/**
+	 * Replaces the last token.
+	 *
+	 * @param stdClass $token Token object.
+	 */
 	public function replace_last( $token ) {
 		$this->drop_last();
 		$this->output_tokens[] = $token;
 	}
 
+	/**
+	 * Replaces all tokens.
+	 *
+	 * @param stdClass[] $tokens Array of token objects.
+	 */
 	public function replace_all( $tokens ) {
 		$this->output_tokens = $tokens;
 	}
@@ -75,6 +110,9 @@ class WP_SQLite_Query_Rewriter {
 		return $last_matched ? $this->current() : null;
 	}
 
+	/**
+	 * Drop the last token.
+	 */
 	public function drop_last() {
 		return array_pop( $this->output_tokens );
 	}
@@ -169,6 +207,4 @@ class WP_SQLite_Query_Rewriter {
 			}
 		}
 	}
-
-
 }
