@@ -56,8 +56,9 @@ class WP_SQLite_Query_Rewriter {
 		}
 	}
 
-	public function consume_all() {
-		while ( $this->consume() ) {
+	public function consume_all( $options = array() ) {
+		while ( $this->consume( $options ) ) {
+			// Do nothing.
 		}
 	}
 
