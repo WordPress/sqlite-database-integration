@@ -459,6 +459,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				if (
 					$stmt && (
 						'UPDATE' === $translation->query_type
+						|| 'INSERT' === $translation->query_type
 						|| 'DELETE' === $translation->query_type
 						|| 'REPLACE' === $translation->query_type
 					)
