@@ -6,7 +6,7 @@
  * @since 1.0.0
  */
 
-require_once __DIR__ .'/../../lexer-explorations/translator.php';
+require_once __DIR__ . '/../../lexer-explorations/translator.php';
 
 /**
  * This class extends PDO class and does the real work.
@@ -398,7 +398,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$this->flush();
 
 		$this->translator = new SQLiteTranslator( $this->pdo, $GLOBALS['table_prefix'] );
-		$reason = null;
+		$reason           = null;
 
 		try {
 			// $this->beginTransaction();
@@ -413,20 +413,20 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$message = $err->getMessage();
 			// $this->rollBack();
 		}
-		if($reason === null) {
+		if ( null === $reason ) {
 			$stmt = null;
-			foreach($translation->queries as $query){
+			foreach ( $translation->queries as $query ) {
 				$this->queries[] = 'Executing: (no parameters)';
 				do {
 					try {
 						// $this->beginTransaction();
-						$stmt = $this->pdo->prepare($query->sql);
-						$stmt->execute($query->params);
+						$stmt = $this->pdo->prepare( $query->sql );
+						$stmt->execute( $query->params );
 						// $this->commit();
 					} catch ( PDOException $err ) {
 						// Unit tests fail if we don't forgive commit outside of transaction errors
 						// @TODO: Figure out what's the problem
-						if(!str_contains($err->getMessage(), 'cannot commit - no transaction')){
+						if ( ! str_contains( $err->getMessage(), 'cannot commit - no transaction' ) ) {
 							$reason  = $err->getCode();
 							$message = $err->getMessage();
 						}
@@ -434,15 +434,15 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 					}
 				} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
 			}
-			if ($reason === null) {
-				if($translation->calc_found_rows) {
+			if ( null === $reason ) {
+				if ( $translation->calc_found_rows ) {
 					$this->found_rows_result = $translation->calc_found_rows;
 				}
-				if($translation->has_result) {
+				if ( $translation->has_result ) {
 					$this->_results = $translation->result;
-				} else if($stmt) {
+				} elseif ( $stmt ) {
 					// var_dump($stmt->fetchAll($mode));
-					$this->_results = $stmt->fetchAll($mode);
+					$this->_results = $stmt->fetchAll( $mode );
 					// var_dump('numrows '.count($this->_results));
 					// var_dump($stmt->rowCount());
 					// var_dump($this->_results);
@@ -450,22 +450,22 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				if ( ! $this->is_error ) {
 					$this->process_results();
 				}
-				
-				$this->num_rows = count($this->results);
-				// var_dump('numrows2: '.$this->num_rows);
-				$this->last_found_rows = count($this->results);
-				$this->last_insert_id = $this->pdo->lastInsertId();
 
-				if(
+				$this->num_rows = count( $this->results );
+				// var_dump('numrows2: '.$this->num_rows);
+				$this->last_found_rows = count( $this->results );
+				$this->last_insert_id  = $this->pdo->lastInsertId();
+
+				if (
 					$stmt && (
-						$translation->query_type === 'UPDATE'
-						|| $translation->query_type === 'DELETE'
-						|| $translation->query_type === 'REPLACE'
+						'UPDATE' === $translation->query_type
+						|| 'DELETE' === $translation->query_type
+						|| 'REPLACE' === $translation->query_type
 					)
 				) {
 					$this->affected_rows = $stmt->rowCount();
-					$this->return_value = $this->affected_rows;
-					$this->num_rows = $this->affected_rows;
+					$this->return_value  = $this->affected_rows;
+					$this->num_rows      = $this->affected_rows;
 				} else {
 					$this->return_value = $this->results;
 				}
@@ -483,24 +483,24 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		// 	($query?$query->sql:'') .PHP_EOL.PHP_EOL.
 		// 	'----------------'.PHP_EOL
 		// );
-		if ($reason > 0) {
-			$err_message = sprintf("Problem preparing the PDO SQL Statement.  Error was: %s", $message);
-			if(
-				!str_contains($message, 'no such table') 
-				&& !str_contains($statement, 'COMMIT')
-				&& !str_contains($statement, 'ROLLBACK')
-				&& !str_contains($statement, 'BEGIN')
-				&& !str_contains($statement, 'START TRANSACTION')
+		if ( $reason > 0 ) {
+			$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
+			if (
+				! str_contains( $message, 'no such table' )
+				&& ! str_contains( $statement, 'COMMIT' )
+				&& ! str_contains( $statement, 'ROLLBACK' )
+				&& ! str_contains( $statement, 'BEGIN' )
+				&& ! str_contains( $statement, 'START TRANSACTION' )
 			) {
 				var_dump(
-					$err_message .'<br/><br/>'.
-					$statement .'<br/><br/>'.
-					($query?$query->sql:'') .'<br/><br/>'.
-					'----------------'. '<br/><br/>'
+					$err_message . '<br/><br/>' .
+					$statement . '<br/><br/>' .
+					( $query ? $query->sql : '' ) . '<br/><br/>' .
+					'----------------' . '<br/><br/>'
 				);
 				throw new Exception();
 			}
-			$this->set_error(__LINE__, __FUNCTION__, $err_message);
+			$this->set_error( __LINE__, __FUNCTION__, $err_message );
 			return false;
 		}
 
@@ -744,7 +744,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 *
 	 * @param string $engine Not used.
 	 */
-	private function process_results( ) {
+	private function process_results() {
 		if ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
 			$this->convert_to_columns_object();
 		} elseif ( 'showindex' === $this->query_type ) {

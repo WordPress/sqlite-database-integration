@@ -30,7 +30,7 @@ function sqlite_make_db_sqlite() {
 	}
 
 	$translator = new SQLiteTranslator( $pdo, $GLOBALS['table_prefix'] );
-	$query = null;
+	$query      = null;
 
 	try {
 		$pdo->beginTransaction();
@@ -39,10 +39,10 @@ function sqlite_make_db_sqlite() {
 			if ( empty( $query ) ) {
 				continue;
 			}
-			$translation = $translator->translate($query);
-			foreach($translation->queries as $query){
-				$stmt = $pdo->prepare($query->sql);
-				$stmt->execute($query->params);
+			$translation = $translator->translate( $query );
+			foreach ( $translation->queries as $query ) {
+				$stmt = $pdo->prepare( $query->sql );
+				$stmt->execute( $query->params );
 			}
 		}
 		$pdo->commit();
@@ -63,7 +63,7 @@ function sqlite_make_db_sqlite() {
 		}
 	}
 
-	$pdo          = null;
+	$pdo = null;
 
 	return true;
 }
