@@ -127,6 +127,19 @@ class WP_SQLite_Translator {
 				// but I don't think even that is possible with SQLite
 				$result = new WP_SQLite_Translation_Result( array( $this->noop() ) );
 				break;
+			case 'TRUNCATE':
+				$r->skip(); // TRUNCATE
+				$r->skip(); // TABLE
+				$r->add( WP_SQLite_Lexer::get_token( 'DELETE', WP_SQLite_Lexer::TYPE_KEYWORD ) );
+				$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
+				$r->add( WP_SQLite_Lexer::get_token( 'FROM', WP_SQLite_Lexer::TYPE_KEYWORD ) );
+				$r->consume_all();
+				$result = new WP_SQLite_Translation_Result(
+					array(
+						new WP_SQLite_Query( $r->get_updated_query() ),
+					)
+				);
+				break;
 			case 'START TRANSACTION':
 				$result = new WP_SQLite_Translation_Result(
 					array(
@@ -137,7 +150,6 @@ class WP_SQLite_Translator {
 			case 'BEGIN':
 			case 'COMMIT':
 			case 'ROLLBACK':
-			case 'TRUNCATE':
 				$result = new WP_SQLite_Translation_Result(
 					array(
 						WP_SQLite_Translator::get_query_object( $this->query ),
