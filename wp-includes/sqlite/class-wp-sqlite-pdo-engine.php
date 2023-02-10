@@ -636,7 +636,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$output .= '<p>Queries made or created this session were:</p>';
 		$output .= '<ol>';
 		foreach ( $this->queries as $q ) {
-			$output .= '<li>' . ( $q ) . '</li>';
+			$output .= '<li>' . htmlspecialchars( $q ) . '</li>';
 		}
 		$output .= '</ol>';
 		$output .= '</div>';
@@ -645,7 +645,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$output .= sprintf(
 				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
 				(int) $this->errors[ $num ]['line'],
-				'<code>' . ( $this->errors[ $num ]['function'] ) . '</code>',
+				'<code>' . htmlspecialchars( $this->errors[ $num ]['function'] ) . '</code>',
 				$m
 			);
 			$output .= '</div>';
