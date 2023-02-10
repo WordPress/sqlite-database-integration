@@ -136,7 +136,7 @@ class WP_SQLite_Translator {
 				$r->consume_all();
 				$result = new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query( $r->get_updated_query() ),
+						WP_SQLite_Translator::get_query_object( $r->get_updated_query() ),
 					)
 				);
 				break;
