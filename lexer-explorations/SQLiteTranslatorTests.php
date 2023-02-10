@@ -1,7 +1,6 @@
 <?php
 
 require __DIR__ . '/class-wp-sqlite-translator.php';
-require __DIR__ . '/class-wp-sqlite-query.php';
 
 use PHPUnit\Framework\TestCase;
 
@@ -100,28 +99,28 @@ class SQLiteTranslatorTests extends TestCase {
 				'[ALTER TABLE] Rewrites data types (INT -> integer)',
 				'ALTER TABLE `table` ADD COLUMN `column` INT;',
 				array(
-					new WP_SQLite_Query( 'ALTER TABLE `table` ADD COLUMN `column` integer;' ),
+					WP_SQLite_Translator::get_query_object( 'ALTER TABLE `table` ADD COLUMN `column` integer;' ),
 				),
 			),
 			array(
 				'[ALTER TABLE] Rewrites data types – case-insensitive (int -> integer)',
 				'ALTER TABLE `table` ADD COLUMN `column` int;',
 				array(
-					new WP_SQLite_Query( 'ALTER TABLE `table` ADD COLUMN `column` integer;' ),
+					WP_SQLite_Translator::get_query_object( 'ALTER TABLE `table` ADD COLUMN `column` integer;' ),
 				),
 			),
 			array(
 				'[ALTER TABLE] Ignores fulltext keys',
 				'ALTER TABLE wptests_dbdelta_test ADD FULLTEXT KEY `key_5` (`column_1`)',
 				array(
-					new WP_SQLite_Query( 'SELECT 1=1' ),
+					WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ),
 				),
 			),
 			array(
 				'[ALTER TABLE] Transforms ADD KEY into a CREATE INDEX query',
 				'ALTER TABLE wptests_dbdelta_test ADD KEY `key_5` (`column_1`)',
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
                     CREATE INDEX "wptests_dbdelta_test__key_5" ON "wptests_dbdelta_test" ( `column_1`)
                     SQL
@@ -132,7 +131,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'[ALTER TABLE] Transforms ADD UNIQUE KEY into a CREATE UNIQUE INDEX query',
 				'ALTER TABLE wptests_dbdelta_test ADD UNIQUE KEY `key_5` (`column_1`)',
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
                     CREATE UNIQUE INDEX "wptests_dbdelta_test__key_5" ON "wptests_dbdelta_test" ( `column_1`)
                     SQL
@@ -143,7 +142,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'[ALTER TABLE] Removes fields sizes from ADD KEY queries',
 				'ALTER TABLE wptests_dbdelta_test ADD UNIQUE KEY `key_5` (`column_1`(250),`column_2`(250))',
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
                     CREATE UNIQUE INDEX "wptests_dbdelta_test__key_5" ON "wptests_dbdelta_test" ( `column_1`,`column_2`)
                     SQL
@@ -154,21 +153,21 @@ class SQLiteTranslatorTests extends TestCase {
 				'Translates SELECT queries (1)',
 				'SELECT * FROM wp_options',
 				array(
-					new WP_SQLite_Query( 'SELECT * FROM wp_options' ),
+					WP_SQLite_Translator::get_query_object( 'SELECT * FROM wp_options' ),
 				),
 			),
 			array(
 				'Translates SELECT queries (2)',
 				'SELECT SQL_CALC_FOUND_ROWS * FROM wptests_users',
 				array(
-					new WP_SQLite_Query( 'SELECT * FROM wptests_users' ),
+					WP_SQLite_Translator::get_query_object( 'SELECT * FROM wptests_users' ),
 				),
 			),
 			array(
 				'Translates SELECT queries (3)',
 				"SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC",
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
                             SELECT STRFTIME('%Y',post_date) AS `year`, STRFTIME('%M',post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0 AND post_status = :param1 GROUP BY STRFTIME('%Y',post_date), STRFTIME('%M',post_date) ORDER BY post_date DESC
                         SQL,
@@ -183,7 +182,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'Translates UPDATE queries',
 				'UPDATE wptests_term_taxonomy SET count = 0',
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
                             UPDATE wptests_term_taxonomy SET count = 0
                         SQL,
@@ -199,7 +198,7 @@ class SQLiteTranslatorTests extends TestCase {
                     AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
                     AND b.option_value < 1675963967;",
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						"SELECT a, b FROM wp_options a, wp_options b
                     WHERE a.option_name LIKE '_transient_%'
                     AND a.option_name NOT LIKE '_transient_timeout_%'
@@ -213,7 +212,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'Translates DELETE queries',
 				'DELETE FROM wptests_usermeta WHERE user_id != 1',
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
                             DELETE FROM wptests_usermeta WHERE user_id != 1
                         SQL,
@@ -225,43 +224,43 @@ class SQLiteTranslatorTests extends TestCase {
 				'Translates START TRANSACTION queries',
 				'START TRANSACTION',
 				array(
-					new WP_SQLite_Query( 'START TRANSACTION' ),
+					WP_SQLite_Translator::get_query_object( 'START TRANSACTION' ),
 				),
 			),
 			array(
 				'Translates BEGIN queries',
 				'BEGIN',
-				array( new WP_SQLite_Query( 'BEGIN' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'BEGIN' ) ),
 			),
 			array(
 				'Translates ROLLBACK queries',
 				'ROLLBACK',
-				array( new WP_SQLite_Query( 'ROLLBACK' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'ROLLBACK' ) ),
 			),
 			array(
 				'Translates COMMIT queries',
 				'COMMIT',
-				array( new WP_SQLite_Query( 'COMMIT' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'COMMIT' ) ),
 			),
 			array(
 				'Ignores SET queries',
 				'SET autocommit = 0;',
-				array( new WP_SQLite_Query( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
 			),
 			array(
 				'Ignores CALL queries',
 				'CALL `test_mysqli_flush_sync_procedure`',
-				array( new WP_SQLite_Query( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
 			),
 			array(
 				'Ignores DROP PROCEDURE queries',
 				'DROP PROCEDURE IF EXISTS `test_mysqli_flush_sync_procedure`',
-				array( new WP_SQLite_Query( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
 			),
 			array(
 				'Ignores CREATE PROCEDURE queries',
 				'CREATE PROCEDURE `test_mysqli_flush_sync_procedure` BEGIN END',
-				array( new WP_SQLite_Query( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
 			),
 			array(
 				'Translates CREATE TABLE queries',
@@ -282,7 +281,7 @@ class SQLiteTranslatorTests extends TestCase {
                     KEY user_email (user_email)
                 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci",
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						<<<SQL
                         CREATE TABLE wptests_users (
                         "ID" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -298,9 +297,9 @@ class SQLiteTranslatorTests extends TestCase {
                       )
                       SQL
 					),
-					new WP_SQLite_Query( 'CREATE  INDEX "wptests_users__user_login_key" ON "wptests_users" ("user_login")' ),
-					new WP_SQLite_Query( 'CREATE  INDEX "wptests_users__user_nicename" ON "wptests_users" ("user_nicename")' ),
-					new WP_SQLite_Query( 'CREATE  INDEX "wptests_users__user_email" ON "wptests_users" ("user_email")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_login_key" ON "wptests_users" ("user_login")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_nicename" ON "wptests_users" ("user_nicename")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_email" ON "wptests_users" ("user_email")' ),
 				),
 			),
 		);

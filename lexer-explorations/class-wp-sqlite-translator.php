@@ -2,7 +2,6 @@
 
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/class-wp-sqlite-query.php';
 require_once __DIR__ . '/class-wp-sqlite-translation-result.php';
 require_once __DIR__ . '/Parser.php';
 
@@ -93,7 +92,15 @@ class WP_SQLite_Translator {
 	private $query;
 	private $query_type;
 	private $last_found_rows = 0;
-	function translate( string $query, $last_found_rows = null ) {
+
+	public static function get_query_object( $sql = '', $params = array() ) {
+		$sql_obj         = new stdClass();
+		$sql_obj->sql    = trim( $sql );
+		$sql_obj->params = $params;
+		return $sql_obj;
+	}
+
+	public function translate( string $query, $last_found_rows = null ) {
 		$this->query           = $query;
 		$this->last_found_rows = $last_found_rows;
 
@@ -123,7 +130,7 @@ class WP_SQLite_Translator {
 			case 'START TRANSACTION':
 				$result = new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query( 'BEGIN' ),
+						WP_SQLite_Translator::get_query_object( 'BEGIN' ),
 					)
 				);
 				break;
@@ -133,7 +140,7 @@ class WP_SQLite_Translator {
 			case 'TRUNCATE':
 				$result = new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query( $this->query ),
+						WP_SQLite_Translator::get_query_object( $this->query ),
 					)
 				);
 				break;
@@ -144,7 +151,7 @@ class WP_SQLite_Translator {
 				$table_name = $r->consume()->token;
 				$result     = new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query( "PRAGMA table_info($table_name);" ),
+						WP_SQLite_Translator::get_query_object( "PRAGMA table_info($table_name);" ),
 					)
 				);
 				break;
@@ -214,10 +221,10 @@ class WP_SQLite_Translator {
 		}
 		PhpMyAdmin\SqlParser\Context::setMode( WP_SQLite_Lexer::SQL_MODE_ANSI_QUOTES );
 		$queries = array(
-			new WP_SQLite_Query( $stmt->build() ),
+			WP_SQLite_Translator::get_query_object( $stmt->build() ),
 		);
 		foreach ( $extra_queries as $extra_query ) {
-			$queries[] = new WP_SQLite_Query( $extra_query );
+			$queries[] = WP_SQLite_Translator::get_query_object( $extra_query );
 		}
 
 		return new WP_SQLite_Translation_Result(
@@ -232,7 +239,7 @@ class WP_SQLite_Translator {
 		if ( str_contains( $this->query, 'information_schema' ) ) {
 			return new WP_SQLite_Translation_Result(
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						'SELECT \'\' as "table", 0 as "rows", 0 as "bytes'
 					),
 				)
@@ -562,7 +569,7 @@ class WP_SQLite_Translator {
 		// Naively emulate FOUND_ROWS() by counting the rows in the result set
 		if ( strpos( $updated_query, 'FOUND_ROWS(' ) !== false ) {
 			$last_found_rows   = ( $this->last_found_rows ? $this->last_found_rows : 0 ) . '';
-			$result->queries[] = new WP_SQLite_Query(
+			$result->queries[] = WP_SQLite_Translator::get_query_object(
 				"SELECT {$last_found_rows} AS `FOUND_ROWS()`",
 			);
 			return $result;
@@ -641,7 +648,7 @@ class WP_SQLite_Translator {
 				);
 				return new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query( $query ),
+						WP_SQLite_Translator::get_query_object( $query ),
 					)
 				);
 			}
@@ -651,7 +658,7 @@ class WP_SQLite_Translator {
 			if ( str_contains( $this->query, ' JOIN ' ) ) {
 				return new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query(
+						WP_SQLite_Translator::get_query_object(
 							"DELETE FROM {$this->table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$this->table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
 						),
 					)
@@ -659,7 +666,7 @@ class WP_SQLite_Translator {
 			}
 		}
 
-		$result->queries[] = new WP_SQLite_Query( $updated_query, $params );
+		$result->queries[] = WP_SQLite_Translator::get_query_object( $updated_query, $params );
 		return $result;
 	}
 
@@ -751,7 +758,7 @@ class WP_SQLite_Translator {
 
 		return new WP_SQLite_Translation_Result(
 			array(
-				new WP_SQLite_Query(
+				WP_SQLite_Translator::get_query_object(
 					$r->get_updated_query()
 				),
 			)
@@ -778,7 +785,7 @@ class WP_SQLite_Translator {
 
 			return new WP_SQLite_Translation_Result(
 				array(
-					new WP_SQLite_Query(
+					WP_SQLite_Translator::get_query_object(
 						$r->get_updated_query()
 					),
 				)
@@ -811,7 +818,7 @@ class WP_SQLite_Translator {
 				$table_name = $r->consume()->token;
 				return new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query(
+						WP_SQLite_Translator::get_query_object(
 							"PRAGMA table_info($table_name);"
 						),
 					)
@@ -820,7 +827,7 @@ class WP_SQLite_Translator {
 				$table_name = $r->consume()->token;
 				return new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query(
+						WP_SQLite_Translator::get_query_object(
 							"PRAGMA index_info($table_name);"
 						),
 					)
@@ -830,7 +837,7 @@ class WP_SQLite_Translator {
 				$table_name = $r->consume()->token;
 				return new WP_SQLite_Translation_Result(
 					array(
-						new WP_SQLite_Query(
+						WP_SQLite_Translator::get_query_object(
 							'.tables;'
 						),
 					)
@@ -849,7 +856,7 @@ class WP_SQLite_Translator {
 	}
 
 	private function noop() {
-		return new WP_SQLite_Query(
+		return WP_SQLite_Translator::get_query_object(
 			'SELECT 1=1',
 			array()
 		);
