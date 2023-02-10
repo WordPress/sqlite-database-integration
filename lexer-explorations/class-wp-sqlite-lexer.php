@@ -1765,7 +1765,8 @@ class WP_SQLite_Lexer {
 		$keyword_function          = static::TYPE_KEYWORD | static::FLAG_KEYWORD_FUNCTION;
 		$get_next_of_type_and_flag = $this->list->get_next_of_type_and_flag;
 		while ( ( $keyword_token = $get_next_of_type_and_flag( static::TYPE_KEYWORD, $keyword_function ) ) !== null ) {
-			$next = $this->list->get_next();
+			$get_next = $this->list->get_next;
+			$next     = $get_next();
 			if (
 				( static::TYPE_KEYWORD !== $next->type || ! in_array( $next->value, $this->keyword_name_indicators, true ) )
 				&& ( static::TYPE_OPERATOR !== $next->type || ! in_array( $next->value, $this->operator_name_indicators, true ) )
