@@ -2,8 +2,6 @@
 
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/class-wp-sqlite-translation-result.php';
-require_once __DIR__ . '/Parser.php';
 
 class WP_SQLite_Translator {
 
@@ -100,6 +98,17 @@ class WP_SQLite_Translator {
 		return $sql_obj;
 	}
 
+	protected function get_translation_result( $queries, $has_result = false, $result = null ) {
+		$result                  = new stdClass();
+		$result->queries         = $queries;
+		$result->has_result      = $has_result;
+		$result->result          = $result;
+		$result->calc_found_rows = null;
+		$result->query_type      = null;
+
+		return $result;
+	}
+
 	public function translate( string $query, $last_found_rows = null ) {
 		$this->query           = $query;
 		$this->last_found_rows = $last_found_rows;
@@ -125,7 +134,7 @@ class WP_SQLite_Translator {
 			case 'SET':
 				// It would be lovely to support at least SET autocommit
 				// but I don't think even that is possible with SQLite
-				$result = new WP_SQLite_Translation_Result( array( $this->noop() ) );
+				$result = $this->get_translation_result( array( $this->noop() ) );
 				break;
 			case 'TRUNCATE':
 				$r->skip(); // TRUNCATE
@@ -134,14 +143,14 @@ class WP_SQLite_Translator {
 				$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
 				$r->add( WP_SQLite_Lexer::get_token( 'FROM', WP_SQLite_Lexer::TYPE_KEYWORD ) );
 				$r->consume_all();
-				$result = new WP_SQLite_Translation_Result(
+				$result = $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( $r->get_updated_query() ),
 					)
 				);
 				break;
 			case 'START TRANSACTION':
-				$result = new WP_SQLite_Translation_Result(
+				$result = $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( 'BEGIN' ),
 					)
@@ -150,7 +159,7 @@ class WP_SQLite_Translator {
 			case 'BEGIN':
 			case 'COMMIT':
 			case 'ROLLBACK':
-				$result = new WP_SQLite_Translation_Result(
+				$result = $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( $this->query ),
 					)
@@ -161,7 +170,7 @@ class WP_SQLite_Translator {
 				break;
 			case 'DESCRIBE':
 				$table_name = $r->consume()->token;
-				$result     = new WP_SQLite_Translation_Result(
+				$result     = $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( "PRAGMA table_info($table_name);" ),
 					)
@@ -239,7 +248,7 @@ class WP_SQLite_Translator {
 			$queries[] = WP_SQLite_Translator::get_query_object( $extra_query );
 		}
 
-		return new WP_SQLite_Translation_Result(
+		return $this->get_translation_result(
 			$queries
 		);
 	}
@@ -249,7 +258,7 @@ class WP_SQLite_Translator {
 		// query. If so, we'll just return a dummy result.
 		// @TODO: A proper check and a better translation.
 		if ( str_contains( $this->query, 'information_schema' ) ) {
-			return new WP_SQLite_Translation_Result(
+			return $this->get_translation_result(
 				array(
 					WP_SQLite_Translator::get_query_object(
 						'SELECT \'\' as "table", 0 as "rows", 0 as "bytes'
@@ -263,7 +272,7 @@ class WP_SQLite_Translator {
 		// Naive regexp check
 		if ( ! $this->has_regexp && strpos( $this->query, ' REGEXP ' ) !== false ) {
 			// Bale out if we can't run the query
-			return new WP_SQLite_Translation_Result( array( $this->noop() ) );
+			return $this->get_translation_result( array( $this->noop() ) );
 		}
 
 		if (
@@ -563,7 +572,7 @@ class WP_SQLite_Translator {
 		}
 
 		$updated_query = $r->get_updated_query();
-		$result        = new WP_SQLite_Translation_Result( array() );
+		$result        = $this->get_translation_result( array() );
 
 		// Naively emulate SQL_CALC_FOUND_ROWS for now
 		if ( $has_sql_calc_found_rows ) {
@@ -658,7 +667,7 @@ class WP_SQLite_Translator {
 						? "DELETE FROM {$table_name} WHERE {$pk_name} IN (" . implode( ',', $ids_to_delete ) . ')'
 						: 'SELECT 1=1'
 				);
-				return new WP_SQLite_Translation_Result(
+				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( $query ),
 					)
@@ -668,7 +677,7 @@ class WP_SQLite_Translator {
 			// Naive rewriting of DELETE JOIN query
 			// @TODO: Use Lexer
 			if ( str_contains( $this->query, ' JOIN ' ) ) {
-				return new WP_SQLite_Translation_Result(
+				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
 							"DELETE FROM {$this->table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$this->table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
@@ -693,7 +702,7 @@ class WP_SQLite_Translator {
 		$op_type    = strtolower( $r->consume()->token );
 		$op_subject = strtolower( $r->consume()->token );
 		if ( 'fulltext key' === $op_subject ) {
-			return new WP_SQLite_Translation_Result( array( $this->noop() ) );
+			return $this->get_translation_result( array( $this->noop() ) );
 		}
 
 		if ( 'add' === $op_type ) {
@@ -768,7 +777,7 @@ class WP_SQLite_Translator {
 			throw new \Exception( 'Unknown operation: ' . $op_type );
 		}
 
-		return new WP_SQLite_Translation_Result(
+		return $this->get_translation_result(
 			array(
 				WP_SQLite_Translator::get_query_object(
 					$r->get_updated_query()
@@ -783,7 +792,7 @@ class WP_SQLite_Translator {
 		if ( 'TABLE' === $what ) {
 			return $this->translate_create_table( $r );
 		} elseif ( 'PROCEDURE' === $what || 'DATABASE' === $what ) {
-			return new WP_SQLite_Translation_Result( array( $this->noop() ) );
+			return $this->get_translation_result( array( $this->noop() ) );
 		} else {
 			throw new \Exception( 'Unknown create type: ' . $what );
 		}
@@ -795,7 +804,7 @@ class WP_SQLite_Translator {
 		if ( 'TABLE' === $what ) {
 			$r->consume_all();
 
-			return new WP_SQLite_Translation_Result(
+			return $this->get_translation_result(
 				array(
 					WP_SQLite_Translator::get_query_object(
 						$r->get_updated_query()
@@ -803,7 +812,7 @@ class WP_SQLite_Translator {
 				)
 			);
 		} elseif ( 'PROCEDURE' === $what || 'DATABASE' === $what ) {
-			return new WP_SQLite_Translation_Result(
+			return $this->get_translation_result(
 				array(
 					$this->noop(),
 				)
@@ -820,7 +829,7 @@ class WP_SQLite_Translator {
 		$what  = $what1 . ' ' . $what2;
 		switch ( $what ) {
 			case 'CREATE PROCEDURE':
-				return new WP_SQLite_Translation_Result(
+				return $this->get_translation_result(
 					array(
 						$this->noop(),
 					)
@@ -828,7 +837,7 @@ class WP_SQLite_Translator {
 			case 'FULL COLUMNS':
 				$r->consume();
 				$table_name = $r->consume()->token;
-				return new WP_SQLite_Translation_Result(
+				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
 							"PRAGMA table_info($table_name);"
@@ -837,7 +846,7 @@ class WP_SQLite_Translator {
 				);
 			case 'INDEX FROM':
 				$table_name = $r->consume()->token;
-				return new WP_SQLite_Translation_Result(
+				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
 							"PRAGMA index_info($table_name);"
@@ -847,7 +856,7 @@ class WP_SQLite_Translator {
 			case 'TABLES LIKE':
 				// @TODO implement filtering by table name
 				$table_name = $r->consume()->token;
-				return new WP_SQLite_Translation_Result(
+				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
 							'.tables;'
@@ -856,7 +865,7 @@ class WP_SQLite_Translator {
 				);
 			default:
 				if ( 'VARIABLE' === $what1 ) {
-					return new WP_SQLite_Translation_Result(
+					return $this->get_translation_result(
 						array(
 							$this->noop(),
 						)
