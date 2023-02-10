@@ -2,12 +2,12 @@
 
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
-
+require_once __DIR__ . '/sql-parser/vendor/autoload.php';
 
 class WP_SQLite_Translator {
 
 	// @TODO Check capability – SQLite must have a regexp function available
-	private $has_regexp = false;
+	private $has_regexp = true;
 	private $sqlite;
 	private $table_prefix;
 
@@ -82,14 +82,18 @@ class WP_SQLite_Translator {
 	public function __construct( $pdo, $table_prefix = 'wp_' ) {
 		$this->sqlite = $pdo;
 		$this->sqlite->query( 'PRAGMA encoding="UTF-8";' );
+		$this->sqlite->sqliteCreateFunction( 'regexp', array( $this, 'sqlite_regexp' ), 2 );
 		$this->table_prefix = $table_prefix;
+	}
+
+	public function sqlite_regexp( $pattern, $subject ) {
+		return preg_match( '/' . $pattern . '/', $subject );
 	}
 
 	// @TODO Remove this property?
 	//       Is it weird to have this->query
 	//       that only matters for the lifetime of translate()?
 	private $query;
-	private $query_type;
 	private $last_found_rows = 0;
 
 	public static function get_query_object( $sql = '', $params = array() ) {
@@ -114,9 +118,11 @@ class WP_SQLite_Translator {
 		$this->query           = $query;
 		$this->last_found_rows = $last_found_rows;
 
-		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
+		// $tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
+		$tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens( $query )->tokens;
 		$r          = new WP_SQLite_Query_Rewriter( $tokens );
 		$query_type = $r->peek()->value;
+		
 		switch ( $query_type ) {
 			case 'ALTER':
 				$result = $this->translate_alter( $r );
