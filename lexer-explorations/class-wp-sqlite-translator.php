@@ -3,6 +3,7 @@
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
 
+
 class WP_SQLite_Translator {
 
 	// @TODO Check capability – SQLite must have a regexp function available
@@ -263,7 +264,7 @@ class WP_SQLite_Translator {
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
-							"SELECT name as table', 0 as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
+							"SELECT name as `table`, 0 as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
 						),
 					)
 				);
