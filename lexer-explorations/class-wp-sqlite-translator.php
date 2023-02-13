@@ -118,11 +118,11 @@ class WP_SQLite_Translator {
 		$this->query           = $query;
 		$this->last_found_rows = $last_found_rows;
 
-		// $tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
-		$tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens( $query )->tokens;
+		// $tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens( $query )->tokens;
+		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
 		$r          = new WP_SQLite_Query_Rewriter( $tokens );
 		$query_type = $r->peek()->value;
-		
+
 		switch ( $query_type ) {
 			case 'ALTER':
 				$result = $this->translate_alter( $r );
@@ -146,9 +146,9 @@ class WP_SQLite_Translator {
 			case 'TRUNCATE':
 				$r->skip(); // TRUNCATE
 				$r->skip(); // TABLE
-				$r->add( WP_SQLite_Lexer::get_token( 'DELETE', WP_SQLite_Lexer::TYPE_KEYWORD ) );
-				$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
-				$r->add( WP_SQLite_Lexer::get_token( 'FROM', WP_SQLite_Lexer::TYPE_KEYWORD ) );
+				$r->add( new WP_SQLite_Token( 'DELETE', WP_SQLite_Token::TYPE_KEYWORD ) );
+				$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+				$r->add( new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD ) );
 				$r->consume_all();
 				$result = $this->get_translation_result(
 					array(
@@ -266,7 +266,7 @@ class WP_SQLite_Translator {
 		// @TODO: A proper check and a better translation.
 		if ( str_contains( $this->query, 'information_schema' ) ) {
 			// @TODO: Actually rewrite the columns
-			if( str_contains( $this->query, 'bytes' ) ) {
+			if ( str_contains( $this->query, 'bytes' ) ) {
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
@@ -323,8 +323,8 @@ class WP_SQLite_Translator {
 
 		// Consume the query type
 		if ( 'INSERT' === $query_type && 'IGNORE' === $r->peek()->value ) {
-			$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
-			$r->add( WP_SQLite_Lexer::get_token( 'OR', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) );
+			$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$r->add( new WP_SQLite_Token( 'OR', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
 			$r->consume(); // IGNORE
 		}
 
@@ -336,33 +336,33 @@ class WP_SQLite_Translator {
 
 		$last_reserved_keyword = null;
 		while ( $token = $r->consume() ) {
-			if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) {
+			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) {
 				$last_reserved_keyword = $token->value;
 			}
-			
-			if ( 'SQL_CALC_FOUND_ROWS' === $token->value && WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
+
+			if ( 'SQL_CALC_FOUND_ROWS' === $token->value && WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 				$has_sql_calc_found_rows = true;
 				$r->drop_last();
 				continue;
 			}
 
-			if ( $last_reserved_keyword !== "AS" && WP_SQLite_Lexer::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) {
+			if ( 'AS' !== $last_reserved_keyword && WP_SQLite_Token::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) {
 				// Rewrite string values to bound parameters
 				$param_name            = ':param' . count( $params );
 				$params[ $param_name ] = $token->value;
-				$r->replace_last( WP_SQLite_Lexer::get_token( $param_name, WP_SQLite_Lexer::TYPE_STRING, WP_SQLite_Lexer::FLAG_STRING_SINGLE_QUOTES ) );
+				$r->replace_last( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
 				continue;
 			}
 
-			if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
-				if ( 'RAND' === $token->keyword && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) {
-					$r->replace_last( WP_SQLite_Lexer::get_token( 'RANDOM', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
+			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
+				if ( 'RAND' === $token->keyword && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) {
+					$r->replace_last( new WP_SQLite_Token( 'RANDOM', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
 					continue;
 				}
 
 				if (
 					'CONCAT' === $token->keyword
-					&& $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION
+					&& $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
 				) {
 					$r->drop_last();
 					continue;
@@ -385,7 +385,7 @@ class WP_SQLite_Translator {
 				) as $token_item ) {
 					$unit   = $token_item[0];
 					$format = $token_item[1];
-					if ( $token->value === $unit && $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) {
+					if ( $token->value === $unit && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) {
 						// Drop the consumed function call:
 						$r->drop_last();
 						// Skip the opening "(":
@@ -394,7 +394,7 @@ class WP_SQLite_Translator {
 						// Skip the first argument so we can read the second one
 						$first_arg = $r->skip_over(
 							array(
-								'type'  => WP_SQLite_Lexer::TYPE_OPERATOR,
+								'type'  => WP_SQLite_Token::TYPE_OPERATOR,
 								'value' => array( ',', ')' ),
 							)
 						);
@@ -420,10 +420,10 @@ class WP_SQLite_Translator {
 							}
 						}
 
-						$r->add( WP_SQLite_Lexer::get_token( 'STRFTIME', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
-						$r->add( WP_SQLite_Lexer::get_token( '(', WP_SQLite_Lexer::TYPE_OPERATOR ) );
-						$r->add( WP_SQLite_Lexer::get_token( "'$format'", WP_SQLite_Lexer::TYPE_STRING ) );
-						$r->add( WP_SQLite_Lexer::get_token( ',', WP_SQLite_Lexer::TYPE_OPERATOR ) );
+						$r->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+						$r->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
+						$r->add( new WP_SQLite_Token( "'$format'", WP_SQLite_Token::TYPE_STRING ) );
+						$r->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
 						$r->add_many( $first_arg );
 						if ( ')' === $terminator->value ) {
 							$r->add( $terminator );
@@ -433,17 +433,17 @@ class WP_SQLite_Translator {
 				}
 
 				if (
-					$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION && (
+					$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION && (
 						'DATE_ADD' === $token->keyword ||
 						'DATE_SUB' === $token->keyword
 					)
 				) {
-					$r->replace_last( WP_SQLite_Lexer::get_token( 'DATE', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
+					$r->replace_last( new WP_SQLite_Token( 'DATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
 					continue;
 				}
 
 				if (
-					$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION &&
+					$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
 					'VALUES' === $token->keyword &&
 					$is_in_duplicate_section
 				) {
@@ -451,14 +451,14 @@ class WP_SQLite_Translator {
 					Rewrite:  VALUES(`option_name`)
 					to:       excluded.option_name
 					*/
-					$r->replace_last( WP_SQLite_Lexer::get_token( 'excluded', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ) );
-					$r->add( WP_SQLite_Lexer::get_token( '.', WP_SQLite_Lexer::TYPE_OPERATOR ) );
+					$r->replace_last( new WP_SQLite_Token( 'excluded', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+					$r->add( new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR ) );
 
 					$r->skip(); // Skip the opening (
 					// Consume the column name
 					$r->consume(
 						array(
-							'type'  => WP_SQLite_Lexer::TYPE_OPERATOR,
+							'type'  => WP_SQLite_Token::TYPE_OPERATOR,
 							'value' => ')',
 						)
 					);
@@ -467,19 +467,19 @@ class WP_SQLite_Translator {
 					continue;
 				}
 				if (
-					$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION &&
+					$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
 					'DATE_FORMAT' === $token->keyword
 				) {
 					// DATE_FORMAT( `post_date`, '%Y-%m-%d' )
 
-					$r->replace_last( WP_SQLite_Lexer::get_token( 'STRFTIME', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION ) );
+					$r->replace_last( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
 					// The opening (
 					$r->consume();
 
 					// Skip the first argument so we can read the second one
 					$first_arg = $r->skip_over(
 						array(
-							'type'  => WP_SQLite_Lexer::TYPE_OPERATOR,
+							'type'  => WP_SQLite_Token::TYPE_OPERATOR,
 							'value' => ',',
 						)
 					);
@@ -494,8 +494,8 @@ class WP_SQLite_Translator {
 					$format     = $r->skip()->value;
 					$new_format = strtr( $format, $this->mysql_php_date_formats );
 
-					$r->add( WP_SQLite_Lexer::get_token( "'$new_format'", WP_SQLite_Lexer::TYPE_STRING ) );
-					$r->add( WP_SQLite_Lexer::get_token( ',', WP_SQLite_Lexer::TYPE_OPERATOR ) );
+					$r->add( new WP_SQLite_Token( "'$new_format'", WP_SQLite_Token::TYPE_STRING ) );
+					$r->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
 
 					// Add the buffered tokens back to the stream:
 					$r->add_many( $first_arg );
@@ -534,7 +534,7 @@ class WP_SQLite_Translator {
 						}
 					}
 
-					$r->add( WP_SQLite_Lexer::get_token( "'{$interval_op}$num $unit'", WP_SQLite_Lexer::TYPE_STRING ) );
+					$r->add( new WP_SQLite_Token( "'{$interval_op}$num $unit'", WP_SQLite_Token::TYPE_STRING ) );
 					continue;
 				}
 
@@ -547,14 +547,14 @@ class WP_SQLite_Translator {
 					*/
 
 					// Replace the DUPLICATE keyword with CONFLICT
-					$r->replace_last( WP_SQLite_Lexer::get_token( 'CONFLICT', WP_SQLite_Lexer::TYPE_KEYWORD ) );
+					$r->replace_last( new WP_SQLite_Token( 'CONFLICT', WP_SQLite_Token::TYPE_KEYWORD ) );
 					// Skip overthe "KEY" and "UPDATE" keywords
 					$r->skip();
 					$r->skip();
 
 					// Add "( <primary key> ) DO UPDATE SET "
-					$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
-					$r->add( WP_SQLite_Lexer::get_token( '(', WP_SQLite_Lexer::TYPE_OPERATOR ) );
+					$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+					$r->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
 					// @TODO don't make assumptions about the names, only fetch
 					//       the correct unique key from sqlite
 					if ( str_ends_with( $table_name, '_options' ) ) {
@@ -567,31 +567,31 @@ class WP_SQLite_Translator {
 						$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
 						$pk_name = $q->fetch()['name'];
 					}
-					$r->add( WP_SQLite_Lexer::get_token( $pk_name, WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ) );
-					$r->add( WP_SQLite_Lexer::get_token( ')', WP_SQLite_Lexer::TYPE_OPERATOR ) );
-					$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
-					$r->add( WP_SQLite_Lexer::get_token( 'DO', WP_SQLite_Lexer::TYPE_KEYWORD ) );
-					$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
-					$r->add( WP_SQLite_Lexer::get_token( 'UPDATE', WP_SQLite_Lexer::TYPE_KEYWORD ) );
-					$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
-					$r->add( WP_SQLite_Lexer::get_token( 'SET', WP_SQLite_Lexer::TYPE_KEYWORD ) );
-					$r->add( WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ) );
+					$r->add( new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+					$r->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
+					$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+					$r->add( new WP_SQLite_Token( 'DO', WP_SQLite_Token::TYPE_KEYWORD ) );
+					$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+					$r->add( new WP_SQLite_Token( 'UPDATE', WP_SQLite_Token::TYPE_KEYWORD ) );
+					$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+					$r->add( new WP_SQLite_Token( 'SET', WP_SQLite_Token::TYPE_KEYWORD ) );
+					$r->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 
 					$is_in_duplicate_section = true;
 					continue;
 				}
 			}
 
-			if ( WP_SQLite_Lexer::TYPE_OPERATOR === $token->type ) {
+			if ( WP_SQLite_Token::TYPE_OPERATOR === $token->type ) {
 				$call_parent = $r->last_call_stack_element();
 				// Rewrite commas to || in CONCAT() calls
 				if (
 					$call_parent
 					&& 'CONCAT' === $call_parent[0]
 					&& ',' === $token->value
-					&& $token->flags & WP_SQLite_Lexer::FLAG_OPERATOR_SQL
+					&& $token->flags & WP_SQLite_Token::FLAG_OPERATOR_SQL
 				) {
-					$r->replace_last( WP_SQLite_Lexer::get_token( '||', WP_SQLite_Lexer::TYPE_OPERATOR ) );
+					$r->replace_last( new WP_SQLite_Token( '||', WP_SQLite_Token::TYPE_OPERATOR ) );
 					continue;
 				}
 			}
@@ -628,11 +628,11 @@ class WP_SQLite_Translator {
 			$r = new WP_SQLite_Query_Rewriter( $r->output_tokens );
 			$r->consume();
 
-			$comma = $r->peek( WP_SQLite_Lexer::TYPE_OPERATOR, null, array( ',' ) );
-			$from  = $r->peek( WP_SQLite_Lexer::TYPE_KEYWORD, null, array( 'FROM' ) );
+			$comma = $r->peek( WP_SQLite_Token::TYPE_OPERATOR, null, array( ',' ) );
+			$from  = $r->peek( WP_SQLite_Token::TYPE_KEYWORD, null, array( 'FROM' ) );
 			// It's a dual delete query if the comma comes before the FROM
 			if ( $comma && $from && $comma->position < $from->position ) {
-				$r->replace_last( WP_SQLite_Lexer::get_token( 'SELECT', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ) );
+				$r->replace_last( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
 
 				// Get table name. Clone $r because we need to know the table
 				// name to correctly declare the select fields and the select
@@ -640,7 +640,7 @@ class WP_SQLite_Translator {
 				$r2 = clone $r;
 				$r2->consume(
 					array(
-						'type'  => WP_SQLite_Lexer::TYPE_KEYWORD,
+						'type'  => WP_SQLite_Token::TYPE_KEYWORD,
 						'value' => 'FROM',
 					)
 				);
@@ -658,7 +658,7 @@ class WP_SQLite_Translator {
 				$alias_nb = 0;
 				while ( true ) {
 					$token = $r->consume();
-					if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type && 'FROM' === $token->value ) {
+					if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && 'FROM' === $token->value ) {
 						break;
 					}
 					// Between DELETE and FROM we only expect commas and table aliases
@@ -667,12 +667,12 @@ class WP_SQLite_Translator {
 						// Insert .id AS id_1 after the table alias
 						$r->add_many(
 							array(
-								WP_SQLite_Lexer::get_token( '.', WP_SQLite_Lexer::TYPE_OPERATOR, WP_SQLite_Lexer::FLAG_OPERATOR_SQL ),
-								WP_SQLite_Lexer::get_token( $pk_name, WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ),
-								WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-								WP_SQLite_Lexer::get_token( 'AS', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
-								WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-								WP_SQLite_Lexer::get_token( 'id_' . $alias_nb, WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ),
+								new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR, WP_SQLite_Token::FLAG_OPERATOR_SQL ),
+								new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+								new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+								new WP_SQLite_Token( 'AS', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+								new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+								new WP_SQLite_Token( 'id_' . $alias_nb, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
 							)
 						);
 					}
@@ -740,17 +740,17 @@ class WP_SQLite_Translator {
 				$index_prefix = 'unique key' === $op_subject ? 'UNIQUE ' : '';
 				$r->replace_all(
 					array(
-						WP_SQLite_Lexer::get_token( 'CREATE', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( "{$index_prefix}INDEX", WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( "\"{$table_name}__$key_name\"", WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( 'ON', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( '"' . $table_name . '"', WP_SQLite_Lexer::TYPE_STRING, WP_SQLite_Lexer::FLAG_STRING_DOUBLE_QUOTES ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( '(', WP_SQLite_Lexer::TYPE_OPERATOR ),
+						new WP_SQLite_Token( 'CREATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( "{$index_prefix}INDEX", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( "\"{$table_name}__$key_name\"", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( 'ON', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( '"' . $table_name . '"', WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_DOUBLE_QUOTES ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ),
 					)
 				);
 
@@ -763,7 +763,7 @@ class WP_SQLite_Translator {
 
 				// Consume all the fields, skip the sizes like `(20)`
 				// in `varchar(20)`
-				while ( $r->consume( array( 'type' => WP_SQLite_Lexer::TYPE_SYMBOL ) ) ) {
+				while ( $r->consume( array( 'type' => WP_SQLite_Token::TYPE_SYMBOL ) ) ) {
 					$paren_maybe = $r->peek();
 
 					if ( $paren_maybe && '(' === $paren_maybe->token ) {
@@ -791,11 +791,11 @@ class WP_SQLite_Translator {
 				$key_name = $r->consume()->value;
 				$r->replace_all(
 					array(
-						WP_SQLite_Lexer::get_token( 'DROP', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( 'INDEX', WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED ),
-						WP_SQLite_Lexer::get_token( ' ', WP_SQLite_Lexer::TYPE_WHITESPACE ),
-						WP_SQLite_Lexer::get_token( "\"{$table_name}__$key_name\"", WP_SQLite_Lexer::TYPE_KEYWORD, WP_SQLite_Lexer::FLAG_KEYWORD_KEY ),
+						new WP_SQLite_Token( 'DROP', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( 'INDEX', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( "\"{$table_name}__$key_name\"", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
 					)
 				);
 			}
@@ -901,7 +901,7 @@ class WP_SQLite_Translator {
 					)
 				);
 			default:
-				switch( $what1 ) {
+				switch ( $what1 ) {
 					case 'TABLES':
 						return $this->get_translation_result(
 							array(
@@ -932,15 +932,15 @@ class WP_SQLite_Translator {
 	private function consume_data_types( WP_SQLite_Query_Rewriter $r ) {
 		while ( $type = $r->consume(
 			array(
-				'type'  => WP_SQLite_Lexer::TYPE_KEYWORD,
-				'flags' => WP_SQLite_Lexer::FLAG_KEYWORD_DATA_TYPE,
+				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+				'flags' => WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE,
 			)
 		) ) {
 			$typelc = strtolower( $type->value );
 			if ( isset( $this->field_types_translation[ $typelc ] ) ) {
 				$r->drop_last();
 				$r->add(
-					WP_SQLite_Lexer::get_token(
+					new WP_SQLite_Token(
 						$this->field_types_translation[ $typelc ],
 						$type->type,
 						$type->flags

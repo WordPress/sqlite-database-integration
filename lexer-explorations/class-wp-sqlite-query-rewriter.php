@@ -158,8 +158,8 @@ class WP_SQLite_Query_Rewriter {
 	private function matches( $token, $type = null, $flags = null, $values = null ) {
 		if ( null === $type && null === $flags && null === $values ) {
 			if (
-				WP_SQLite_Lexer::TYPE_WHITESPACE !== $token->type
-				&& WP_SQLite_Lexer::TYPE_COMMENT !== $token->type
+				WP_SQLite_Token::TYPE_WHITESPACE !== $token->type
+				&& WP_SQLite_Token::TYPE_COMMENT !== $token->type
 			) {
 				return true;
 			}
@@ -179,20 +179,20 @@ class WP_SQLite_Query_Rewriter {
 	}
 
 	private function update_call_stack( $token, $current_idx ) {
-		if ( WP_SQLite_Lexer::TYPE_KEYWORD === $token->type ) {
+		if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 			if (
-				$token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_FUNCTION
-				// && ! ( $token->flags & WP_SQLite_Lexer::FLAG_KEYWORD_RESERVED )
+				$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
+				// && ! ( $token->flags & WP_SQLite_Token::FLAG_KEYWORD_RESERVED )
 			) {
 				$j = $current_idx;
 				do {
 					$peek = $this->input_tokens[ ++$j ];
-				} while ( WP_SQLite_Lexer::TYPE_WHITESPACE === $peek->type );
-				if ( WP_SQLite_Lexer::TYPE_OPERATOR === $peek->type && '(' === $peek->value ) {
+				} while ( WP_SQLite_Token::TYPE_WHITESPACE === $peek->type );
+				if ( WP_SQLite_Token::TYPE_OPERATOR === $peek->type && '(' === $peek->value ) {
 					array_push( $this->call_stack, array( $token->value, $this->depth ) );
 				}
 			}
-		} elseif ( WP_SQLite_Lexer::TYPE_OPERATOR === $token->type ) {
+		} elseif ( WP_SQLite_Token::TYPE_OPERATOR === $token->type ) {
 			if ( '(' === $token->value ) {
 				++$this->depth;
 			} elseif ( ')' === $token->value ) {

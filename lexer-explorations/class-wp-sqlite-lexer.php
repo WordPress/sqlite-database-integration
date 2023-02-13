@@ -7,6 +7,9 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/class-wp-sqlite-token.php';
+require_once __DIR__ . '/class-wp-sqlite-tokens-list.php';
+
 /**
  * Defines the lexer of the library.
  *
@@ -30,132 +33,140 @@ class WP_SQLite_Lexer {
 	/**
 	 * The maximum length of a label.
 	 *
+	 * @see static::$TOKEN_LABEL
 	 * Ref: https://dev.mysql.com/doc/refman/5.7/en/statement-labels.html
 	 */
 	public const LABEL_MAX_LENGTH = 16;
 
 	/**
 	 * The maximum length of an operator.
+	 *
+	 * @see static::$TOKEN_OPERATOR
 	 */
 	public const OPERATOR_MAX_LENGTH = 4;
 
 	/**
-	 * This type is used when the token is invalid or its type cannot be
-	 * determined because of the ambiguous context. Further analysis might be
-	 * required to detect its type.
-	 */
-	public const TYPE_NONE = 0;
-
-	/**
-	 * SQL specific keywords: SELECT, UPDATE, INSERT, etc.
-	 */
-	public const TYPE_KEYWORD = 1;
-
-	/**
-	 * Any type of legal operator.
+	 * A list of methods that are used in lexing the SQL query.
 	 *
-	 * Arithmetic operators: +, -, *, /, etc.
-	 * Logical operators: ===, <>, !==, etc.
-	 * Bitwise operators: &, |, ^, etc.
-	 * Assignment operators: =, +=, -=, etc.
-	 * SQL specific operators: . (e.g. .. WHERE database.table ..),
-	 *                         * (e.g. SELECT * FROM ..)
+	 * @var string[]
 	 */
-	public const TYPE_OPERATOR = 2;
+	public static $parser_methods = array(
+		// It is best to put the parsers in order of their complexity
+		// (ascending) and their occurrence rate (descending).
+		//
+		// Conflicts:
+		//
+		// 1. `parse_delimiter`, `parse_unknown`, `parse_keyword`, `parse_number`
+		// They fight over delimiter. The delimiter may be a keyword, a
+		// number or almost any character which makes the delimiter one of
+		// the first tokens that must be parsed.
+		//
+		// 1. `parse_number` and `parse_operator`
+		// They fight over `+` and `-`.
+		//
+		// 2. `parse_comment` and `parse_operator`
+		// They fight over `/` (as in ```/*comment*/``` or ```a / b```)
+		//
+		// 3. `parse_bool` and `parse_keyword`
+		// They fight over `TRUE` and `FALSE`.
+		//
+		// 4. `parse_keyword` and `parse_unknown`
+		// They fight over words. `parse_unknown` does not know about
+		// keywords.
+
+		'parse_delimiter',
+		'parse_whitespace',
+		'parse_number',
+		'parse_comment',
+		'parse_operator',
+		'parse_bool',
+		'parse_string',
+		'parse_symbol',
+		'parse_keyword',
+		'parse_label',
+		'parse_unknown',
+	);
+
 
 	/**
-	 * Spaces, tabs, new lines, etc.
-	 */
-	public const TYPE_WHITESPACE = 3;
-
-	/**
-	 * Any type of legal comment.
+	 * A list of keywords that indicate that the function keyword
+	 * is not used as a function
 	 *
-	 * Bash (#), C (/* *\/) or SQL (--) comments:
+	 * @var string[]
+	 */
+	public $keyword_name_indicators = array(
+		'FROM',
+		'SET',
+		'WHERE',
+	);
+
+	/**
+	 * A list of operators that indicate that the function keyword
+	 * is not used as a function
 	 *
-	 *      -- SQL-comment
+	 * @var string[]
+	 */
+	public $operator_name_indicators = array(
+		',',
+		'.',
+	);
+
+	/**
+	 * The string to be parsed.
 	 *
-	 *      #Bash-like comment
+	 * @var string
+	 */
+	public $str = '';
+
+	/**
+	 * The length of `$str`.
 	 *
-	 *      /*C-like comment*\/
+	 * By storing its length, a lot of time is saved, because parsing methods
+	 * would call `strlen` everytime.
 	 *
-	 * or:
+	 * @var int
+	 */
+	public $len = 0;
+
+	/**
+	 * The index of the last parsed character.
 	 *
-	 *      /*C-like
-	 *        comment*\/
+	 * @var int
+	 */
+	public $last = 0;
+
+	/**
+	 * Tokens extracted from given strings.
 	 *
-	 * Backslashes were added to respect PHP's comments syntax.
+	 * @var WP_SQLite_Tokens_List
 	 */
-	public const TYPE_COMMENT = 4;
+	public $list;
 
 	/**
-	 * Boolean values: true or false.
+	 * The default delimiter. This is used, by default, in all new instances.
+	 *
+	 * @var string
 	 */
-	public const TYPE_BOOL = 5;
+	public static $default_delimiter = ';';
 
 	/**
-	 * Numbers: 4, 0x8, 15.16, 23e42, etc.
+	 * Statements delimiter.
+	 * This may change during lexing.
+	 *
+	 * @var string
 	 */
-	public const TYPE_NUMBER = 6;
+	public $delimiter;
 
 	/**
-	 * Literal strings: 'string', "test".
-	 * Some of these strings are actually symbols.
+	 * The length of the delimiter.
+	 *
+	 * Because `parse_delimiter` can be called a lot, it would perform a lot of
+	 * calls to `strlen`, which might affect performance when the delimiter is
+	 * big.
+	 *
+	 * @var int
 	 */
-	public const TYPE_STRING = 7;
-
-	/**
-	 * Database, table names, variables, etc.
-	 * For example: ```SELECT `foo`, `bar` FROM `database`.`table`;```.
-	 */
-	public const TYPE_SYMBOL = 8;
-
-	/**
-	 * Delimits an unknown string.
-	 * For example: ```SELECT * FROM test;```, `test` is a delimiter.
-	 */
-	public const TYPE_DELIMITER = 9;
-
-	/**
-	 * Labels in LOOP statement, ITERATE statement etc.
-	 * For example (only for begin label):
-	 *  begin_label: BEGIN [statement_list] END [end_label]
-	 *  begin_label: LOOP [statement_list] END LOOP [end_label]
-	 *  begin_label: REPEAT [statement_list] ... END REPEAT [end_label]
-	 *  begin_label: WHILE ... DO [statement_list] END WHILE [end_label].
-	 */
-	public const TYPE_LABEL = 10;
-
-	/**
-	 * Flags.
-	 */
-	public const FLAG_KEYWORD_RESERVED     = 2;
-	public const FLAG_KEYWORD_DATA_TYPE    = 8;
-	public const FLAG_KEYWORD_KEY          = 16;
-	public const FLAG_KEYWORD_FUNCTION     = 32;
-	public const FLAG_SYMBOL_VARIABLE      = 1;
-	public const FLAG_SYMBOL_BACKTICK      = 2;
-	public const FLAG_SYMBOL_USER          = 4;
-	public const FLAG_SYMBOL_SYSTEM        = 8;
-	public const FLAG_SYMBOL_PARAMETER     = 16;
-	public const FLAG_COMMENT_BASH         = 1;
-	public const FLAG_COMMENT_C            = 2;
-	public const FLAG_COMMENT_SQL          = 4;
-	public const FLAG_COMMENT_MYSQL_CMD    = 8;
-	public const FLAG_OPERATOR_SQL         = 16;
-	public const FLAG_NUMBER_HEX           = 1;
-	public const FLAG_NUMBER_FLOAT         = 2;
-	public const FLAG_NUMBER_APPROXIMATE   = 4;
-	public const FLAG_NUMBER_NEGATIVE      = 8;
-	public const FLAG_NUMBER_BINARY        = 16;
-	public const FLAG_STRING_SINGLE_QUOTES = 1;
-	public const FLAG_STRING_DOUBLE_QUOTES = 2;
-
-	/**
-	 * @link https://dev.mysql.com/doc/refman/en/sql-mode.html#sqlmode_ansi_quotes
-	 * @link https://mariadb.com/kb/en/sql-mode/#ansi_quotes
-	 */
-	public const SQL_MODE_ANSI_QUOTES = 2;
+	public $delimiter_length;
 
 	/**
 	 * List of operators and their flags.
@@ -169,12 +180,15 @@ class WP_SQLite_Lexer {
 		//                 SELECT 2 * 3;        # arithmetic
 		//              2. SELECT * FROM table WHERE foo = 'bar';
 		//                 SET @i = 0;
+
+		// @see WP_SQLite_Token::FLAG_OPERATOR_ARITHMETIC
 		'%'   => 1,
 		'*'   => 1,
 		'+'   => 1,
 		'-'   => 1,
 		'/'   => 1,
 
+		// @see WP_SQLite_Token::FLAG_OPERATOR_LOGICAL
 		'!'   => 2,
 		'!='  => 2,
 		'&&'  => 2,
@@ -187,6 +201,7 @@ class WP_SQLite_Lexer {
 		'>='  => 2,
 		'||'  => 2,
 
+		// @see WP_SQLite_Token::FLAG_OPERATOR_BITWISE
 		'&'   => 4,
 		'<<'  => 4,
 		'>>'  => 4,
@@ -194,8 +209,10 @@ class WP_SQLite_Lexer {
 		'|'   => 4,
 		'~'   => 4,
 
+		// @see WP_SQLite_Token::FLAG_OPERATOR_ASSIGNMENT
 		':='  => 8,
 
+		// @see WP_SQLite_Token::FLAG_OPERATOR_SQL
 		'('   => 16,
 		')'   => 16,
 		'.'   => 16,
@@ -208,7 +225,12 @@ class WP_SQLite_Lexer {
 	 *
 	 * The value associated to each keyword represents its flags.
 	 *
+	 * @see WP_SQLite_Token::FLAG_KEYWORD_RESERVED WP_SQLite_Token::FLAG_KEYWORD_COMPOSED
+	 *      WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE WP_SQLite_Token::FLAG_KEYWORD_KEY
+	 *      WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
+	 *
 	 * @var array<string,int>
+	 * @phpstan-var non-empty-array<non-empty-string,WP_SQLite_Token::FLAG_KEYWORD_*|int>
 	 */
 	public static $keywords = array(
 		'AT'                                => 1,
@@ -1282,48 +1304,6 @@ class WP_SQLite_Lexer {
 	);
 
 	/**
-	 * A list of methods that are used in lexing the SQL query.
-	 *
-	 * @var string[]
-	 */
-	public static $parser_methods = array(
-		// It is best to put the parsers in order of their complexity
-		// (ascending) and their occurrence rate (descending).
-		//
-		// Conflicts:
-		//
-		// 1. `parse_delimiter`, `parse_unknown`, `parse_keyword`, `parse_number`
-		// They fight over delimiter. The delimiter may be a keyword, a
-		// number or almost any character which makes the delimiter one of
-		// the first tokens that must be parsed.
-		//
-		// 1. `parse_number` and `parse_operator`
-		// They fight over `+` and `-`.
-		//
-		// 2. `parse_comment` and `parse_operator`
-		// They fight over `/` (as in ```/*comment*/``` or ```a / b```)
-		//
-		// 3. `parse_bool` and `parse_keyword`
-		// They fight over `TRUE` and `FALSE`.
-		//
-		// 4. `parse_keyword` and `parse_unknown`
-		// They fight over words. `parse_unknown` does not know about
-		// keywords.
-
-		'parse_delimiter',
-		'parse_whitespace',
-		'parse_number',
-		'parse_comment',
-		'parse_operator',
-		'parse_bool',
-		'parse_string',
-		'parse_symbol',
-		'parse_keyword',
-		'parse_label',
-		'parse_unknown',
-	);
-
-	/**
 	 * All data type options.
 	 *
 	 * @var array<string, int|array<int, int|string>>
@@ -1433,117 +1413,40 @@ class WP_SQLite_Lexer {
 	);
 
 	/**
-	 * Whether errors should throw exceptions or just be stored.
-	 *
-	 * @see static::$errors
-	 *
-	 * @var bool
+	 * @link https://dev.mysql.com/doc/refman/en/sql-mode.html#sqlmode_ansi_quotes
+	 * @link https://mariadb.com/kb/en/sql-mode/#ansi_quotes
 	 */
-	public $strict = false;
-
-	public $errors = array();
-
-	/**
-	 * A list of keywords that indicate that the function keyword
-	 * is not used as a function
-	 *
-	 * @var string[]
-	 */
-	public $keyword_name_indicators = array( 'FROM', 'SET', 'WHERE' );
-
-	/**
-	 * A list of operators that indicate that the function keyword
-	 * is not used as a function
-	 *
-	 * @var string[]
-	 */
-	public $operator_name_indicators = array( ',', '.' );
-
-	/**
-	 * The string to be parsed.
-	 *
-	 * @var string
-	 */
-	public $str = '';
-
-	/**
-	 * The length of `$str`.
-	 *
-	 * By storing its length, a lot of time is saved, because parsing methods
-	 * would call `strlen` everytime.
-	 *
-	 * @var int
-	 */
-	public $len = 0;
-
-	/**
-	 * The index of the last parsed character.
-	 *
-	 * @var int
-	 */
-	public $last = 0;
-
-	/**
-	 * Tokens extracted from given strings.
-	 *
-	 * @var stdClass
-	 */
-	public $list;
-
-	/**
-	 * The default delimiter. This is used, by default, in all new instances.
-	 *
-	 * @var string
-	 */
-	public static $default_delimiter = ';';
-
-	/**
-	 * Statements delimiter.
-	 * This may change during lexing.
-	 *
-	 * @var string
-	 */
-	public $delimiter;
-
-	/**
-	 * The length of the delimiter.
-	 *
-	 * Because `parse_delimiter` can be called a lot, it would perform a lot of
-	 * calls to `strlen`, which might affect performance when the delimiter is
-	 * big.
-	 *
-	 * @var int
-	 */
-	public $delimiter_length;
+	public const SQL_MODE_ANSI_QUOTES = 2;
 
 	/**
 	 * Gets the tokens list parsed by a new instance of a lexer.
 	 *
-	 * @param string $str       the query to be lexed
-	 * @param bool   $strict    whether strict mode should be enabled or not.
-	 * @param string $delimiter the delimiter to be used
+	 * @param string $str       The query to be lexed.
+	 * @param string $delimiter The delimiter to be used.
 	 *
-	 * @return stdClass
+	 * @return WP_SQLite_Tokens_List
 	 */
-	public static function get_tokens( $str, $strict = false, $delimiter = null ) {
-		$lexer = new self( $str, $strict, $delimiter );
+	public static function get_tokens( $str, $delimiter = null ) {
+		$lexer = new self( $str, $delimiter );
 
 		return $lexer->list;
 	}
 
 	/**
-	 * @param string $str       the query to be lexed
-	 * @param bool             $strict    whether strict mode should be
-	 *                                    enabled or not
-	 * @param string           $delimiter the delimiter to be used
+	 * @param string $str       The query to be lexed.
+	 * @param string $delimiter The delimiter to be used.
 	 */
-	public function __construct( $str, $strict = false, $delimiter = null ) {
+	public function __construct( $str, $delimiter = null ) {
 		$this->str = $str;
 		// `strlen` is used instead of `mb_strlen` because the lexer needs to
 		// parse each byte of the input.
 		$this->len = strlen( $str );
 
-		$this->strict = $strict;
+		// For multi-byte strings.
+		$mb_len = mb_strlen( $str, 'UTF-8' );
+		if ( $mb_len !== $this->len ) {
+			$this->len = $mb_len;
+		}
 
 		// Setting the delimiter.
 		$this->set_delimiter( ! empty( $delimiter ) ? $delimiter : static::$default_delimiter );
@@ -1578,12 +1481,12 @@ class WP_SQLite_Lexer {
 		// context and compare again with `false`.
 		// Another example is `parse_comment`.
 
-		$list = $this->get_tokens_list();
+		$list = new WP_SQLite_Tokens_List();
 
 		/**
 		 * Last processed token.
 		 *
-		 * @var stdClass
+		 * @var WP_SQLite_Token
 		 */
 		$last_token = null;
 
@@ -1591,7 +1494,7 @@ class WP_SQLite_Lexer {
 			/**
 			 * The new token.
 			 *
-			 * @var stdClass
+			 * @var WP_SQLite_Token
 			 */
 			$token = null;
 
@@ -1605,32 +1508,35 @@ class WP_SQLite_Lexer {
 
 			if ( null === $token ) {
 				// @assert($this->last === $last_idx);
-				$token = static::get_token( $this->str[ $this->last ] );
+				$token = new WP_SQLite_Token( $this->str[ $this->last ] );
 				$this->error( 'Unexpected character.', $this->str[ $this->last ], $this->last );
 			} elseif (
 				null !== $last_token
-				&& static::TYPE_SYMBOL === $token->type
-				&& $token->flags & static::FLAG_SYMBOL_VARIABLE
+				&& WP_SQLite_Token::TYPE_SYMBOL === $token->type
+				&& $token->flags & WP_SQLite_Token::FLAG_SYMBOL_VARIABLE
 				&& (
-					static::TYPE_STRING === $last_token->type
-					|| ( static::TYPE_SYMBOL === $last_token->type && $last_token->flags & static::FLAG_SYMBOL_BACKTICK )
+					WP_SQLite_Token::TYPE_STRING === $last_token->type
+					|| (
+						WP_SQLite_Token::TYPE_SYMBOL === $last_token->type
+						&& $last_token->flags & WP_SQLite_Token::FLAG_SYMBOL_BACKTICK
+					)
 				)
 			) {
 				// Handles ```... FROM 'user'@'%' ...```.
 				$last_token->token .= $token->token;
-				$last_token->type   = static::TYPE_SYMBOL;
-				$last_token->flags  = static::FLAG_SYMBOL_USER;
+				$last_token->type   = WP_SQLite_Token::TYPE_SYMBOL;
+				$last_token->flags  = WP_SQLite_Token::FLAG_SYMBOL_USER;
 				$last_token->value .= '@' . $token->value;
 				continue;
 			} elseif (
 				null !== $last_token
-				&& static::TYPE_KEYWORD === $token->type
-				&& static::TYPE_OPERATOR === $last_token->type
+				&& WP_SQLite_Token::TYPE_KEYWORD === $token->type
+				&& WP_SQLite_Token::TYPE_OPERATOR === $last_token->type
 				&& '.' === $last_token->value
 			) {
 				// Handles ```... tbl.FROM ...```. In this case, FROM is not
 				// a reserved word.
-				$token->type  = static::TYPE_NONE;
+				$token->type  = WP_SQLite_Token::TYPE_NONE;
 				$token->flags = 0;
 				$token->value = $token->token;
 			}
@@ -1640,7 +1546,7 @@ class WP_SQLite_Lexer {
 			$list->tokens[ $list->count++ ] = $token;
 
 			// Handling delimiters.
-			if ( static::TYPE_NONE === $token->type && 'DELIMITER' === $token->value ) {
+			if ( WP_SQLite_Token::TYPE_NONE === $token->type && 'DELIMITER' === $token->value ) {
 				if ( $this->last + 1 >= $this->len ) {
 					$this->error( 'Expected whitespace(s) before delimiter.', '', $this->last + 1 );
 					continue;
@@ -1685,7 +1591,7 @@ class WP_SQLite_Lexer {
 
 				// Saving the delimiter and its token.
 				$this->delimiter_length         = strlen( $this->delimiter );
-				$token                          = static::get_token( $this->delimiter, static::TYPE_DELIMITER );
+				$token                          = new WP_SQLite_Token( $this->delimiter, WP_SQLite_Token::TYPE_DELIMITER );
 				$token->position                = $pos;
 				$list->tokens[ $list->count++ ] = $token;
 			}
@@ -1694,7 +1600,7 @@ class WP_SQLite_Lexer {
 		}
 
 		// Adding a final delimiter to mark the ending.
-		$list->tokens[ $list->count++ ] = static::get_token( null, static::TYPE_DELIMITER );
+		$list->tokens[ $list->count++ ] = new WP_SQLite_Token( null, WP_SQLite_Token::TYPE_DELIMITER );
 
 		// Saving the tokens list.
 		$this->list = $list;
@@ -1717,25 +1623,23 @@ class WP_SQLite_Lexer {
 	 * default flag (arithmetic) will be kept.
 	 */
 	private function solve_ambiguity_on_star_operator(): void {
-		$i_bak                      = $this->list->idx;
-		$get_next_of_type_and_value = $this->list->get_next_of_type_and_value;
-		$get_next                   = $this->list->get_next;
-		while ( ( $star_token = $get_next_of_type_and_value( static::TYPE_OPERATOR, '*' ) ) !== null ) {
-			// getNext() already gets rid of whitespaces and comments.
-			$next = $get_next();
+		$i_bak = $this->list->idx;
+		while ( ( $star_token = $this->list->get_next_of_type_and_value( WP_SQLite_Token::TYPE_OPERATOR, '*' ) ) !== null ) {
+			// get_next() already gets rid of whitespaces and comments.
+			$next = $this->list->get_next();
 
 			if ( null === $next ) {
 				continue;
 			}
 
 			if (
-				( static::TYPE_KEYWORD !== $next->type || ! in_array( $next->value, array( 'FROM', 'USING' ), true ) )
-				&& ( static::TYPE_OPERATOR !== $next->type || ! in_array( $next->value, array( ',', ')' ), true ) )
+				( WP_SQLite_Token::TYPE_KEYWORD !== $next->type || ! in_array( $next->value, array( 'FROM', 'USING' ), true ) )
+				&& ( WP_SQLite_Token::TYPE_OPERATOR !== $next->type || ! in_array( $next->value, array( ',', ')' ), true ) )
 			) {
 				continue;
 			}
 
-			$star_token->flags = static::FLAG_OPERATOR_SQL;
+			$star_token->flags = WP_SQLite_Token::FLAG_OPERATOR_SQL;
 		}
 
 		$this->list->idx = $i_bak;
@@ -1761,22 +1665,24 @@ class WP_SQLite_Lexer {
 	 * default flag (function keyword) will be kept.
 	 */
 	private function solve_ambiguity_on_function_keywords(): void {
-		$i_bak                     = $this->list->idx;
-		$keyword_function          = static::TYPE_KEYWORD | static::FLAG_KEYWORD_FUNCTION;
-		$get_next_of_type_and_flag = $this->list->get_next_of_type_and_flag;
-		while ( ( $keyword_token = $get_next_of_type_and_flag( static::TYPE_KEYWORD, $keyword_function ) ) !== null ) {
-			$get_next = $this->list->get_next;
-			$next     = $get_next();
+		$i_bak            = $this->list->idx;
+		$keyword_function = WP_SQLite_Token::TYPE_KEYWORD | WP_SQLite_Token::FLAG_KEYWORD_FUNCTION;
+		while ( ( $keyword_token = $this->list->get_next_of_type_and_flag( WP_SQLite_Token::TYPE_KEYWORD, $keyword_function ) ) !== null ) {
+			$next = $this->list->get_next();
 			if (
-				( static::TYPE_KEYWORD !== $next->type || ! in_array( $next->value, $this->keyword_name_indicators, true ) )
-				&& ( static::TYPE_OPERATOR !== $next->type || ! in_array( $next->value, $this->operator_name_indicators, true ) )
+				( WP_SQLite_Token::TYPE_KEYWORD !== $next->type
+					|| ! in_array( $next->value, $this->keyword_name_indicators, true )
+				)
+				&& ( WP_SQLite_Token::TYPE_OPERATOR !== $next->type
+					|| ! in_array( $next->value, $this->operator_name_indicators, true )
+				)
 				&& ( null !== $next->value )
 			) {
 				continue;
 			}
 
-			$keyword_token->type    = static::TYPE_NONE;
-			$keyword_token->flags   = static::TYPE_NONE;
+			$keyword_token->type    = WP_SQLite_Token::TYPE_NONE;
+			$keyword_token->flags   = WP_SQLite_Token::TYPE_NONE;
 			$keyword_token->keyword = $keyword_token->value;
 		}
 
@@ -1810,7 +1716,7 @@ class WP_SQLite_Lexer {
 	/**
 	 * Parses a keyword.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_keyword() {
 		$token = '';
@@ -1818,7 +1724,7 @@ class WP_SQLite_Lexer {
 		/**
 		 * Value to be returned.
 		 *
-		 * @var stdClass
+		 * @var WP_SQLite_Token
 		 */
 		$ret = null;
 
@@ -1855,7 +1761,7 @@ class WP_SQLite_Lexer {
 				continue;
 			}
 
-			$ret   = static::get_token( $token, static::TYPE_KEYWORD, $flags );
+			$ret   = new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_KEYWORD, $flags );
 			$i_end = $this->last;
 
 			// We don't break so we find longest keyword.
@@ -1871,7 +1777,7 @@ class WP_SQLite_Lexer {
 	/**
 	 * Parses a label.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_label() {
 		$token = '';
@@ -1879,7 +1785,7 @@ class WP_SQLite_Lexer {
 		/**
 		 * Value to be returned.
 		 *
-		 * @var stdClass
+		 * @var WP_SQLite_Token
 		 */
 		$ret = null;
 
@@ -1891,7 +1797,7 @@ class WP_SQLite_Lexer {
 			if ( ':' === $this->str[ $this->last ] && $j > 1 ) {
 				// End of label
 				$token .= $this->str[ $this->last ];
-				$ret    = static::get_token( $token, static::TYPE_LABEL );
+				$ret    = new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_LABEL );
 				$i_end  = $this->last;
 				break;
 			}
@@ -1916,7 +1822,7 @@ class WP_SQLite_Lexer {
 	/**
 	 * Parses an operator.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_operator() {
 		$token = '';
@@ -1924,7 +1830,7 @@ class WP_SQLite_Lexer {
 		/**
 		 * Value to be returned.
 		 *
-		 * @var stdClass
+		 * @var WP_SQLite_Token
 		 */
 		$ret = null;
 
@@ -1941,7 +1847,7 @@ class WP_SQLite_Lexer {
 				continue;
 			}
 
-			$ret   = static::get_token( $token, static::TYPE_OPERATOR, $flags );
+			$ret   = new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_OPERATOR, $flags );
 			$i_end = $this->last;
 		}
 
@@ -1953,7 +1859,7 @@ class WP_SQLite_Lexer {
 	/**
 	 * Parses a whitespace.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_whitespace() {
 		$token = $this->str[ $this->last ];
@@ -1968,13 +1874,13 @@ class WP_SQLite_Lexer {
 
 		--$this->last;
 
-		return static::get_token( $token, static::TYPE_WHITESPACE );
+		return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_WHITESPACE );
 	}
 
 	/**
 	 * Parses a comment.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_comment() {
 		$i_bak = $this->last;
@@ -1991,7 +1897,7 @@ class WP_SQLite_Lexer {
 				--$this->last;
 			}
 
-			return static::get_token( $token, static::TYPE_COMMENT, static::FLAG_COMMENT_BASH );
+			return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_COMMENT, WP_SQLite_Token::FLAG_COMMENT_BASH );
 		}
 
 		// C style comments. (/*comment*\/)
@@ -2011,17 +1917,17 @@ class WP_SQLite_Lexer {
 					return null;
 				}
 
-				$flags = static::FLAG_COMMENT_C;
+				$flags = WP_SQLite_Token::FLAG_COMMENT_C;
 
 				// This comment already ended. It may be a part of a
 				// previous MySQL specific command.
 				if ( '*/' === $token ) {
-					return static::get_token( $token, static::TYPE_COMMENT, $flags );
+					return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_COMMENT, $flags );
 				}
 
 				// Checking if this is a MySQL-specific command.
 				if ( $this->last + 1 < $this->len && '!' === $this->str[ $this->last + 1 ] ) {
-					$flags |= static::FLAG_COMMENT_MYSQL_CMD;
+					$flags |= WP_SQLite_Token::FLAG_COMMENT_MYSQL_CMD;
 					$token .= $this->str[ ++$this->last ];
 
 					while (
@@ -2036,7 +1942,7 @@ class WP_SQLite_Lexer {
 
 					// We split this comment and parse only its beginning
 					// here.
-					return static::get_token( $token, static::TYPE_COMMENT, $flags );
+					return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_COMMENT, $flags );
 				}
 
 				// Parsing the comment.
@@ -2055,7 +1961,7 @@ class WP_SQLite_Lexer {
 					$token .= $this->str[ $this->last ];
 				}
 
-				return static::get_token( $token, static::TYPE_COMMENT, $flags );
+				return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_COMMENT, $flags );
 			}
 		}
 
@@ -2081,7 +1987,7 @@ class WP_SQLite_Lexer {
 				--$this->last;
 			}
 
-			return static::get_token( $token, static::TYPE_COMMENT, static::FLAG_COMMENT_SQL );
+			return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_COMMENT, WP_SQLite_Token::FLAG_COMMENT_SQL );
 		}
 
 		$this->last = $i_bak;
@@ -2092,7 +1998,7 @@ class WP_SQLite_Lexer {
 	/**
 	 * Parses a boolean.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_bool() {
 		if ( $this->last + 3 >= $this->len ) {
@@ -2106,13 +2012,13 @@ class WP_SQLite_Lexer {
 		. $this->str[ ++$this->last ] . $this->str[ ++$this->last ]; // _TRUE_ or _FALS_e
 
 		if ( static::is_bool( $token ) ) {
-			return static::get_token( $token, static::TYPE_BOOL );
+			return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_BOOL );
 		}
 
 		if ( ++$this->last < $this->len ) {
 			$token .= $this->str[ $this->last ]; // fals_E_
 			if ( static::is_bool( $token ) ) {
-				return static::get_token( $token, static::TYPE_BOOL, 1 );
+				return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_BOOL, 1 );
 			}
 		}
 
@@ -2124,7 +2030,7 @@ class WP_SQLite_Lexer {
 	/**
 	 * Parses a number.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_number() {
 		// A rudimentary state machine is being used to parse numbers due to
@@ -2171,11 +2077,14 @@ class WP_SQLite_Lexer {
 		for ( ; $this->last < $this->len; ++$this->last ) {
 			if ( 1 === $state ) {
 				if ( '-' === $this->str[ $this->last ] ) {
-					$flags |= static::FLAG_NUMBER_NEGATIVE;
+					$flags |= WP_SQLite_Token::FLAG_NUMBER_NEGATIVE;
 				} elseif (
 					$this->last + 1 < $this->len
 					&& '0' === $this->str[ $this->last ]
-					&& ( 'x' === $this->str[ $this->last + 1 ] || 'X' === $this->str[ $this->last + 1 ] )
+					&& (
+						'x' === $this->str[ $this->last + 1 ]
+						|| 'X' === $this->str[ $this->last + 1 ]
+					)
 				) {
 					$token .= $this->str[ $this->last++ ];
 					$state  = 2;
@@ -2190,7 +2099,7 @@ class WP_SQLite_Lexer {
 					break;
 				}
 			} elseif ( 2 === $state ) {
-				$flags |= static::FLAG_NUMBER_HEX;
+				$flags |= WP_SQLite_Token::FLAG_NUMBER_HEX;
 				if (
 					! (
 						( $this->str[ $this->last ] >= '0' && $this->str[ $this->last ] <= '9' )
@@ -2216,7 +2125,7 @@ class WP_SQLite_Lexer {
 					break;
 				}
 			} elseif ( 4 === $state ) {
-				$flags |= static::FLAG_NUMBER_FLOAT;
+				$flags |= WP_SQLite_Token::FLAG_NUMBER_FLOAT;
 				if ( 'e' === $this->str[ $this->last ] || 'E' === $this->str[ $this->last ] ) {
 					$state = 5;
 				} elseif (
@@ -2230,7 +2139,7 @@ class WP_SQLite_Lexer {
 					break;
 				}
 			} elseif ( 5 === $state ) {
-				$flags |= static::FLAG_NUMBER_APPROXIMATE;
+				$flags |= WP_SQLite_Token::FLAG_NUMBER_APPROXIMATE;
 				if (
 					'+' === $this->str[ $this->last ] || '-' === $this->str[ $this->last ]
 					|| ( $this->str[ $this->last ] >= '0' && $this->str[ $this->last ] <= '9' )
@@ -2251,7 +2160,7 @@ class WP_SQLite_Lexer {
 					break;
 				}
 			} elseif ( 7 === $state ) {
-				$flags |= static::FLAG_NUMBER_BINARY;
+				$flags |= WP_SQLite_Token::FLAG_NUMBER_BINARY;
 				if ( '\'' !== $this->str[ $this->last ] ) {
 					break;
 				}
@@ -2273,7 +2182,7 @@ class WP_SQLite_Lexer {
 		if ( 2 === $state || 3 === $state || ( '.' !== $token && 4 === $state ) || 6 === $state || 9 === $state ) {
 			--$this->last;
 
-			return static::get_token( $token, static::TYPE_NUMBER, $flags );
+			return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_NUMBER, $flags );
 		}
 
 		$this->last = $i_bak;
@@ -2286,7 +2195,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @param string $quote additional starting symbol
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_string( $quote = '' ) {
 		$token = $this->str[ $this->last ];
@@ -2329,13 +2238,15 @@ class WP_SQLite_Lexer {
 			$token .= $this->str[ $this->last ];
 		}
 
-		return static::get_token( $token, static::TYPE_STRING, $flags );
+		return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_STRING, $flags );
 	}
 
 	/**
 	 * Parses a symbol.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
+	 *
+	 * @throws LexerException
 	 */
 	public function parse_symbol() {
 		$token = $this->str[ $this->last ];
@@ -2345,13 +2256,13 @@ class WP_SQLite_Lexer {
 			return null;
 		}
 
-		if ( $flags & static::FLAG_SYMBOL_VARIABLE ) {
+		if ( $flags & WP_SQLite_Token::FLAG_SYMBOL_VARIABLE ) {
 			if ( $this->last + 1 < $this->len && '@' === $this->str[ ++$this->last ] ) {
 				// This is a system variable (e.g. `@@hostname`).
 				$token .= $this->str[ $this->last++ ];
-				$flags |= static::FLAG_SYMBOL_SYSTEM;
+				$flags |= WP_SQLite_Token::FLAG_SYMBOL_SYSTEM;
 			}
-		} elseif ( $flags & static::FLAG_SYMBOL_PARAMETER ) {
+		} elseif ( $flags & WP_SQLite_Token::FLAG_SYMBOL_PARAMETER ) {
 			if ( '?' !== $token && $this->last + 1 < $this->len ) {
 				++$this->last;
 			}
@@ -2377,13 +2288,13 @@ class WP_SQLite_Lexer {
 			$token .= $str->token;
 		}
 
-		return static::get_token( $token, static::TYPE_SYMBOL, $flags );
+		return new WP_SQLite_Token( $token, WP_SQLite_Token::TYPE_SYMBOL, $flags );
 	}
 
 	/**
 	 * Parses unknown parts of the query.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_unknown() {
 		$token = $this->str[ $this->last ];
@@ -2404,13 +2315,13 @@ class WP_SQLite_Lexer {
 
 		--$this->last;
 
-		return static::get_token( $token );
+		return new WP_SQLite_Token( $token );
 	}
 
 	/**
 	 * Parses the delimiter of the query.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function parse_delimiter() {
 		$idx = 0;
@@ -2425,18 +2336,7 @@ class WP_SQLite_Lexer {
 
 		$this->last += $this->delimiter_length - 1;
 
-		return static::get_token( $this->delimiter, static::TYPE_DELIMITER );
-	}
-
-	/**
-	 * Checks if the given character is a whitespace.
-	 *
-	 * @param string $str string to be checked
-	 *
-	 * @return bool
-	 */
-	public static function is_whitespace( $str ) {
-		return ( ' ' === $str ) || ( "\r" === $str ) || ( "\n" === $str ) || ( "\t" === $str );
+		return new WP_SQLite_Token( $this->delimiter, WP_SQLite_Token::TYPE_DELIMITER );
 	}
 
 	/**
@@ -2451,7 +2351,7 @@ class WP_SQLite_Lexer {
 		$str = strtoupper( $str );
 
 		if ( isset( static::$keywords[ $str ] ) ) {
-			if ( $is_reserved && ! ( static::$keywords[ $str ] & static::FLAG_KEYWORD_RESERVED ) ) {
+			if ( $is_reserved && ! ( static::$keywords[ $str ] & WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) ) {
 				return null;
 			}
 
@@ -2459,24 +2359,6 @@ class WP_SQLite_Lexer {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Checks if the given character can be a separator for two lexeme.
-	 *
-	 * @param string $str string to be checked
-	 *
-	 * @return bool
-	 */
-	public static function is_separator( $str ) {
-		// NOTES:   Only non alphanumeric ASCII characters may be separators.
-		//          `~` is the last printable ASCII character.
-		return ( $str <= '~' )
-			&& ( '_' !== $str )
-			&& ( '$' !== $str )
-			&& ( ( $str < '0' ) || ( $str > '9' ) )
-			&& ( ( $str < 'a' ) || ( $str > 'z' ) )
-			&& ( ( $str < 'A' ) || ( $str > 'Z' ) );
 	}
 
 	/**
@@ -2495,6 +2377,17 @@ class WP_SQLite_Lexer {
 	}
 
 	/**
+	 * Checks if the given character is a whitespace.
+	 *
+	 * @param string $str string to be checked
+	 *
+	 * @return bool
+	 */
+	public static function is_whitespace( $str ) {
+		return ( ' ' === $str ) || ( "\r" === $str ) || ( "\n" === $str ) || ( "\t" === $str );
+	}
+
+	/**
 	 * Checks if the given string is the beginning of a whitespace.
 	 *
 	 * @param string $str string to be checked
@@ -2510,28 +2403,28 @@ class WP_SQLite_Lexer {
 
 		// If comment is Bash style (#):
 		if ( '#' === $str[0] ) {
-			return static::FLAG_COMMENT_BASH;
+			return WP_SQLite_Token::FLAG_COMMENT_BASH;
 		}
 
 		// If comment is opening C style (/*), warning, it could be a MySQL command (/*!)
 		if ( ( $len > 1 ) && ( '/' === $str[0] ) && ( '*' === $str[1] ) ) {
 			return ( $len > 2 ) && ( '!' === $str[2] ) ?
-				static::FLAG_COMMENT_MYSQL_CMD : static::FLAG_COMMENT_C;
+				WP_SQLite_Token::FLAG_COMMENT_MYSQL_CMD : WP_SQLite_Token::FLAG_COMMENT_C;
 		}
 
 		// If comment is closing C style (*/), warning, it could conflicts with wildcard and a real opening C style.
 		// It would looks like the following valid SQL statement: "SELECT */* comment */ FROM...".
 		if ( ( $len > 1 ) && ( '*' === $str[0] ) && ( '/' === $str[1] ) ) {
-			return static::FLAG_COMMENT_C;
+			return WP_SQLite_Token::FLAG_COMMENT_C;
 		}
 
 		// If comment is SQL style (--\s?):
 		if ( ( $len > 2 ) && ( '-' === $str[0] ) && ( '-' === $str[1] ) && static::is_whitespace( $str[2] ) ) {
-			return static::FLAG_COMMENT_SQL;
+			return WP_SQLite_Token::FLAG_COMMENT_SQL;
 		}
 
 		if ( ( 2 === $len ) && $end && ( '-' === $str[0] ) && ( '-' === $str[1] ) ) {
-			return static::FLAG_COMMENT_SQL;
+			return WP_SQLite_Token::FLAG_COMMENT_SQL;
 		}
 
 		return null;
@@ -2553,26 +2446,15 @@ class WP_SQLite_Lexer {
 	}
 
 	/**
-	 * Checks if the given character is the beginning of a string.
+	 * Checks if the given character can be a part of a number.
 	 *
 	 * @param string $str string to be checked
 	 *
-	 * @return int|null the appropriate flag for the string type
+	 * @return bool
 	 */
-	public static function is_string( $str ) {
-		if ( 0 === strlen( $str ) ) {
-			return null;
-		}
-
-		if ( '\'' === $str[0] ) {
-			return static::FLAG_STRING_SINGLE_QUOTES;
-		}
-
-		if ( '"' === $str[0] ) {
-			return static::FLAG_STRING_DOUBLE_QUOTES;
-		}
-
-		return null;
+	public static function is_number( $str ) {
+		return ( $str >= '0' ) && ( $str <= '9' ) || ( '.' === $str )
+			|| ( '-' === $str ) || ( '+' === $str ) || ( 'e' === $str ) || ( 'E' === $str );
 	}
 
 	/**
@@ -2589,174 +2471,58 @@ class WP_SQLite_Lexer {
 		}
 
 		if ( '@' === $str[0] ) {
-			return static::FLAG_SYMBOL_VARIABLE;
+			return WP_SQLite_Token::FLAG_SYMBOL_VARIABLE;
 		}
 
 		if ( '`' === $str[0] ) {
-			return static::FLAG_SYMBOL_BACKTICK;
+			return WP_SQLite_Token::FLAG_SYMBOL_BACKTICK;
 		}
 
 		if ( ':' === $str[0] || '?' === $str[0] ) {
-			return static::FLAG_SYMBOL_PARAMETER;
+			return WP_SQLite_Token::FLAG_SYMBOL_PARAMETER;
 		}
 
 		return null;
 	}
 
-
 	/**
-	 * @param stdClass[] $tokens The initial array of tokens
-	 * @param int        $count  The count of tokens in the initial array
+	 * Checks if the given character is the beginning of a string.
+	 *
+	 * @param string $str string to be checked
+	 *
+	 * @return int|null the appropriate flag for the string type
 	 */
-	public function get_tokens_list( $tokens = array(), $count = -1 ) {
-		$list  = new stdClass();
-		$lexer = $this;
-
-		$list->tokens                     = $tokens;
-		$list->count                      = -1 === $count ? count( $tokens ) : $count;
-		$list->idx                        = 0;
-		$list->get_next                   = function() use ( $list, $lexer ) {
-			for ( ; $list->idx < $list->count; ++$list->idx ) {
-				if ( ( $list->tokens[ $list->idx ]->type !== $lexer::TYPE_WHITESPACE ) && ( $list->tokens[ $list->idx ]->type !== $lexer::TYPE_COMMENT ) ) {
-					return $list->tokens[ $list->idx++ ];
-				}
-			}
-
+	public static function is_string( $str ) {
+		if ( strlen( $str ) === 0 ) {
 			return null;
-		};
-		$list->get_next_of_type_and_value = function( $type, $value ) use ( $list ) {
-			for ( ; $list->idx < $list->count; ++$list->idx ) {
-				if ( ( $list->tokens[ $list->idx ]->type === $type ) && ( $list->tokens[ $list->idx ]->value === $value ) ) {
-					return $list->tokens[ $list->idx++ ];
-				}
-			}
-
-			return null;
-		};
-		$list->get_next_of_type_and_flag  = function( int $type, int $flag ) use ( $list ) {
-			for ( ; $list->idx < $list->count; ++$list->idx ) {
-				if ( ( $list->tokens[ $list->idx ]->type === $type ) && ( $list->tokens[ $list->idx ]->flags === $flag ) ) {
-					return $list->tokens[ $list->idx++ ];
-				}
-			}
-
-			return null;
-		};
-
-		return $list;
-	}
-
-	/**
-	 * Get an object for the token.
-	 *
-	 * @param string $token the value of the token
-	 * @param int    $type  the type of the token
-	 * @param int    $flags the flags of the token
-	 *
-	 * @return stdClass
-	 */
-	public static function get_token( $token, $type = 0, $flags = 0 ) {
-		$token_object = new stdClass();
-
-		$token_object->token   = $token;
-		$token_object->type    = $type;
-		$token_object->flags   = $flags;
-		$token_object->keyword = null;
-		$token_object->value   = static::token_extract( $token_object->type, $token_object->keyword, $token_object->token, $token_object->flags );
-
-		return $token_object;
-	}
-
-	/**
-	 * Does little processing to the token to extract a value.
-	 *
-	 * If no processing can be done it will return the initial string.
-	 *
-	 * @return mixed
-	 */
-	public static function token_extract( $type, $keyword, $token, $flags ) {
-		switch ( $type ) {
-			case self::TYPE_KEYWORD:
-				$keyword = strtoupper( $token );
-				if ( ! ( $flags & self::FLAG_KEYWORD_RESERVED ) ) {
-					// Unreserved keywords should stay the way they are because they
-					// might represent field names.
-					return $token;
-				}
-
-				return $keyword;
-
-			case self::TYPE_WHITESPACE:
-				return ' ';
-
-			case self::TYPE_BOOL:
-				return strtoupper( $token ) === 'TRUE';
-
-			case self::TYPE_NUMBER:
-				$ret = str_replace( '--', '', $token ); // e.g. ---42 === -42
-				if ( $flags & self::FLAG_NUMBER_HEX ) {
-					if ( $flags & self::FLAG_NUMBER_NEGATIVE ) {
-						$ret = str_replace( '-', '', $token );
-						$ret = -hexdec( $ret );
-					} else {
-						$ret = hexdec( $ret );
-					}
-				} elseif ( ( $flags & self::FLAG_NUMBER_APPROXIMATE ) || ( $flags & self::FLAG_NUMBER_FLOAT ) ) {
-					$ret = (float) $ret;
-				} elseif ( ! ( $flags & self::FLAG_NUMBER_BINARY ) ) {
-					$ret = (int) $ret;
-				}
-
-				return $ret;
-
-			case self::TYPE_STRING:
-				// Trims quotes.
-				$str = $token;
-				$str = mb_substr( $str, 1, -1, 'UTF-8' );
-
-				// Removes surrounding quotes.
-				$quote = $token[0];
-				$str   = str_replace( $quote . $quote, $quote, $str );
-
-				// Finally unescapes the string.
-				//
-				// `stripcslashes` replaces escape sequences with their
-				// representation.
-				//
-				// NOTE: In MySQL, `\f` and `\v` have no representation,
-				// even they usually represent: form-feed and vertical tab.
-				$str = str_replace( '\f', 'f', $str );
-				$str = str_replace( '\v', 'v', $str );
-				$str = stripcslashes( $str );
-
-				return $str;
-
-			case self::TYPE_SYMBOL:
-				$str = $token;
-				if ( isset( $str[0] ) && ( '@' === $str[0] ) ) {
-					// `mb_strlen($str)` must be used instead of `null` because
-					// in PHP 5.3- the `null` parameter isn't handled correctly.
-					$str = mb_substr(
-						$str,
-						! empty( $str[1] ) && ( '@' === $str[1] ) ? 2 : 1,
-						mb_strlen( $str ),
-						'UTF-8'
-					);
-				}
-
-				if ( isset( $str[0] ) && ( ':' === $str[0] ) ) {
-					$str = mb_substr( $str, 1, mb_strlen( $str ), 'UTF-8' );
-				}
-
-				if ( isset( $str[0] ) && ( ( '`' === $str[0] ) || ( '"' === $str[0] ) || ( '\'' === $str[0] ) ) ) {
-					$quote = $str[0];
-					$str   = str_replace( $quote . $quote, $quote, $str );
-					$str   = mb_substr( $str, 1, -1, 'UTF-8' );
-				}
-
-				return $str;
 		}
 
-		return $token;
+		if ( '\'' === $str[0] ) {
+			return WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES;
+		}
+
+		if ( '"' === $str[0] ) {
+			return WP_SQLite_Token::FLAG_STRING_DOUBLE_QUOTES;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Checks if the given character can be a separator for two lexeme.
+	 *
+	 * @param string $str string to be checked
+	 *
+	 * @return bool
+	 */
+	public static function is_separator( $str ) {
+		// NOTES:   Only non alphanumeric ASCII characters may be separators.
+		//          `~` is the last printable ASCII character.
+		return ( $str <= '~' )
+			&& ( '_' !== $str )
+			&& ( '$' !== $str )
+			&& ( ( $str < '0' ) || ( $str > '9' ) )
+			&& ( ( $str < 'a' ) || ( $str > 'z' ) )
+			&& ( ( $str < 'A' ) || ( $str > 'Z' ) );
 	}
 }
