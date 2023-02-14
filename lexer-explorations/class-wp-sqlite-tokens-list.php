@@ -1,4 +1,10 @@
 <?php
+/**
+ * This file is a port of the Lexer class from the PHPMyAdmin/sql-parser library.
+ *
+ * @package wp-sqlite-integration
+ * @see https://github.com/phpmyadmin/sql-parser
+ */
 
 declare(strict_types=1);
 
@@ -30,9 +36,11 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 *
 	 * @var int
 	 */
-	public $idx = 0;
+	public $index = 0;
 
 	/**
+	 * Constructor.
+	 *
 	 * @param stdClass[] $tokens The initial array of tokens.
 	 * @param int        $count  The count of tokens in the initial array.
 	 */
@@ -89,12 +97,12 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 * @return stdClass|null
 	 */
 	public function get_next() {
-		for ( ; $this->idx < $this->count; ++$this->idx ) {
+		for ( ; $this->index < $this->count; ++$this->index ) {
 			if (
-				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->idx ]->type )
-				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->idx ]->type )
+				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->index ]->type )
+				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->index ]->type )
 			) {
-				return $this->tokens[ $this->idx++ ];
+				return $this->tokens[ $this->index++ ];
 			}
 		}
 
@@ -106,12 +114,12 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 * comments).
 	 */
 	public function get_previous() {
-		for ( ; $this->idx > 0; --$this->idx ) {
+		for ( ; $this->index > 0; --$this->index ) {
 			if (
-				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->idx ]->type )
-				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->idx ]->type )
+				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->index ]->type )
+				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->index ]->type )
 			) {
-				return $this->tokens[ $this->idx-- ];
+				return $this->tokens[ $this->index-- ];
 			}
 		}
 
@@ -121,14 +129,14 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	/**
 	 * Gets the next token.
 	 *
-	 * @param int $type the type
+	 * @param int $type The type.
 	 *
 	 * @return stdClass|null
 	 */
 	public function get_next_of_type( $type ) {
-		for ( ; $this->idx < $this->count; ++$this->idx ) {
-			if ( $this->tokens[ $this->idx ]->type === $type ) {
-				return $this->tokens[ $this->idx++ ];
+		for ( ; $this->index < $this->count; ++$this->index ) {
+			if ( $this->tokens[ $this->index ]->type === $type ) {
+				return $this->tokens[ $this->index++ ];
 			}
 		}
 
@@ -138,15 +146,15 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	/**
 	 * Gets the next token.
 	 *
-	 * @param int    $type  the type of the token
-	 * @param string $value the value of the token
+	 * @param int    $type  The type of the token.
+	 * @param string $value The value of the token.
 	 *
 	 * @return stdClass|null
 	 */
 	public function get_next_of_type_and_value( $type, $value ) {
-		for ( ; $this->idx < $this->count; ++$this->idx ) {
-			if ( ( $this->tokens[ $this->idx ]->type === $type ) && ( $this->tokens[ $this->idx ]->value === $value ) ) {
-				return $this->tokens[ $this->idx++ ];
+		for ( ; $this->index < $this->count; ++$this->index ) {
+			if ( ( $this->tokens[ $this->index ]->type === $type ) && ( $this->tokens[ $this->index ]->value === $value ) ) {
+				return $this->tokens[ $this->index++ ];
 			}
 		}
 
@@ -156,13 +164,13 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	/**
 	 * Gets the next token.
 	 *
-	 * @param int $type the type of the token
-	 * @param int $flag the flag of the token
+	 * @param int $type The type of the token.
+	 * @param int $flag The flag of the token.
 	 */
 	public function get_next_of_type_and_flag( int $type, int $flag ) {
-		for ( ; $this->idx < $this->count; ++$this->idx ) {
-			if ( ( $this->tokens[ $this->idx ]->type === $type ) && ( $this->tokens[ $this->idx ]->flags === $flag ) ) {
-				return $this->tokens[ $this->idx++ ];
+		for ( ; $this->index < $this->count; ++$this->index ) {
+			if ( ( $this->tokens[ $this->index ]->type === $type ) && ( $this->tokens[ $this->index ]->flags === $flag ) ) {
+				return $this->tokens[ $this->index++ ];
 			}
 		}
 
@@ -172,8 +180,8 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	/**
 	 * Sets an value inside the container.
 	 *
-	 * @param int|null $offset the offset to be set
-	 * @param stdClass    $value  the token to be saved
+	 * @param int|null $offset The offset to be set.
+	 * @param stdClass $value  The token to be saved.
 	 *
 	 * @return void
 	 */

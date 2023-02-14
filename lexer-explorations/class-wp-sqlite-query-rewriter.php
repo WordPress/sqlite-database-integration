@@ -1,18 +1,61 @@
 <?php
+/**
+ * Class WP_SQLite_Query_Rewriter
+ *
+ * @package wp-sqlite-integration
+ */
 
+/**
+ * The query rewriter class.
+ */
 class WP_SQLite_Query_Rewriter {
 
-	public $input_tokens  = array();
+	/**
+	 * An array of input token objects.
+	 *
+	 * @var WP_SQLite_Token[]
+	 */
+	public $input_tokens = array();
+
+	/**
+	 * An array of output token objects.
+	 *
+	 * @var WP_SQLite_Token[]
+	 */
 	public $output_tokens = array();
-	public $idx           = -1;
-	public $max           = -1;
-	public $call_stack    = array();
-	public $depth         = 0;
+
+	/**
+	 * The current index.
+	 *
+	 * @var int
+	 */
+	public $index = -1;
+
+	/**
+	 * The maximum index.
+	 *
+	 * @var int
+	 */
+	public $max = -1;
+
+	/**
+	 * The call stack.
+	 *
+	 * @var array
+	 */
+	public $call_stack = array();
+
+	/**
+	 * The current depth.
+	 *
+	 * @var int
+	 */
+	public $depth = 0;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param stdClass[] $input_tokens Array of token objects.
+	 * @param WP_SQLite_Token[] $input_tokens Array of token objects.
 	 */
 	public function __construct( $input_tokens ) {
 		$this->input_tokens = $input_tokens;
@@ -35,19 +78,19 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Returns the current token.
 	 *
-	 * @return stdClass|null
+	 * @return WP_SQLite_Token|null
 	 */
 	public function current() {
-		if ( $this->idx < 0 || $this->idx >= $this->max ) {
+		if ( $this->index < 0 || $this->index >= $this->max ) {
 			return null;
 		}
-		return $this->input_tokens[ $this->idx ];
+		return $this->input_tokens[ $this->index ];
 	}
 
 	/**
 	 * Add a token to the output.
 	 *
-	 * @param stdClass $token Token object.
+	 * @param WP_SQLite_Token $token Token object.
 	 */
 	public function add( $token ) {
 		$this->output_tokens[] = $token;
@@ -56,7 +99,7 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Add multiple tokens to the output.
 	 *
-	 * @param stdClass[] $tokens Array of token objects.
+	 * @param WP_SQLite_Token[] $tokens Array of token objects.
 	 */
 	public function add_many( $tokens ) {
 		$this->output_tokens = array_merge( $this->output_tokens, $tokens );
@@ -65,7 +108,7 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Replaces the last token.
 	 *
-	 * @param stdClass $token Token object.
+	 * @param WP_SQLite_Token $token Token object.
 	 */
 	public function replace_last( $token ) {
 		$this->drop_last();
@@ -75,14 +118,23 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Replaces all tokens.
 	 *
-	 * @param stdClass[] $tokens Array of token objects.
+	 * @param WP_SQLite_Token[] $tokens Array of token objects.
 	 */
 	public function replace_all( $tokens ) {
 		$this->output_tokens = $tokens;
 	}
 
+	/**
+	 * Peek at the next tokens and return one that matches the given criteria.
+	 *
+	 * @param string|null $type   Token type.
+	 * @param int|null    $flags  Token flags.
+	 * @param string|null $values Token values.
+	 *
+	 * @return WP_SQLite_Token|null
+	 */
 	public function peek( $type = null, $flags = null, $values = null ) {
-		$i = $this->idx;
+		$i = $this->index;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
 			if ( $this->matches( $token, $type, $flags, $values ) ) {
@@ -91,49 +143,86 @@ class WP_SQLite_Query_Rewriter {
 		}
 	}
 
+	/**
+	 * Consume all the tokens.
+	 *
+	 * @param array $options Options.
+	 *
+	 * @return void
+	 */
 	public function consume_all( $options = array() ) {
 		while ( $this->consume( $options ) ) {
 			// Do nothing.
 		}
 	}
 
+	/**
+	 * Consume the next tokens and return one that matches the given criteria.
+	 *
+	 * @param array $options Options.
+	 *
+	 * @return WP_SQLite_Token|null
+	 */
 	public function consume( $options = array() ) {
 		$next_tokens         = $this->get_next_tokens( $options );
 		$tokens              = $next_tokens[0];
 		$last_matched        = $next_tokens[1];
 		$count               = count( $tokens );
-		$this->idx          += $count;
+		$this->index        += $count;
 		$this->output_tokens = array_merge( $this->output_tokens, $tokens );
 		if ( ! $count ) {
-			++$this->idx;
+			++$this->index;
 		}
 		return $last_matched ? $this->current() : null;
 	}
 
 	/**
-	 * Drop the last token.
+	 * Drop the last token and return it.
+	 *
+	 * @return WP_SQLite_Token|null
 	 */
 	public function drop_last() {
 		return array_pop( $this->output_tokens );
 	}
 
+	/**
+	 * Skip over the next tokens and return one that matches the given criteria.
+	 *
+	 * @param array $options Options.
+	 *
+	 * @return WP_SQLite_Token|null
+	 */
 	public function skip( $options = array() ) {
 		$this->skip_over( $options );
 		return $this->current();
 	}
 
+	/**
+	 * Skip over the next tokens and return one that matches the given criteria.
+	 *
+	 * @param array $options Options.
+	 *
+	 * @return WP_SQLite_Token[]|null
+	 */
 	public function skip_over( $options = array() ) {
 		$next_tokens  = $this->get_next_tokens( $options );
 		$tokens       = $next_tokens[0];
 		$last_matched = $next_tokens[1];
 		$count        = count( $tokens );
-		$this->idx   += $count;
+		$this->index += $count;
 		if ( ! $count ) {
-			++$this->idx;
+			++$this->index;
 		}
 		return $last_matched ? $tokens : null;
 	}
 
+	/**
+	 * Returns the next tokens that match the given criteria.
+	 *
+	 * @param array $options Options.
+	 *
+	 * @return array
+	 */
 	private function get_next_tokens( $options = array() ) {
 		$type   = isset( $options['type'] ) ? $options['type'] : null;
 		$flags  = isset( $options['flags'] ) ? $options['flags'] : null;
@@ -142,7 +231,7 @@ class WP_SQLite_Query_Rewriter {
 			: null;
 
 		$buffered = array();
-		$i        = $this->idx;
+		$i        = $this->index;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
 			$this->update_call_stack( $token, $i );
@@ -155,6 +244,16 @@ class WP_SQLite_Query_Rewriter {
 		return array( $buffered, false );
 	}
 
+	/**
+	 * Checks if the given token matches the given criteria.
+	 *
+	 * @param WP_SQLite_Token $token  Token object.
+	 * @param string|null     $type   Token type.
+	 * @param int|null        $flags  Token flags.
+	 * @param string|null     $values Token values.
+	 *
+	 * @return bool
+	 */
 	private function matches( $token, $type = null, $flags = null, $values = null ) {
 		if ( null === $type && null === $flags && null === $values ) {
 			if (
@@ -174,10 +273,23 @@ class WP_SQLite_Query_Rewriter {
 		return false;
 	}
 
+	/**
+	 * Returns the last call stack element.
+	 *
+	 * @return WP_SQLite_Token|null
+	 */
 	public function last_call_stack_element() {
 		return count( $this->call_stack ) ? $this->call_stack[ count( $this->call_stack ) - 1 ] : null;
 	}
 
+	/**
+	 * Updates the call stack.
+	 *
+	 * @param WP_SQLite_Token $token Token.
+	 * @param int             $current_idx Current index.
+	 *
+	 * @return void
+	 */
 	private function update_call_stack( $token, $current_idx ) {
 		if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 			if (

@@ -1,4 +1,10 @@
 <?php
+/**
+ * This file is a port of the Lexer class from the PHPMyAdmin/sql-parser library.
+ *
+ * @package wp-sqlite-integration
+ * @see https://github.com/phpmyadmin/sql-parser
+ */
 
 declare(strict_types=1);
 
@@ -186,9 +192,11 @@ class WP_SQLite_Token {
 	public $position;
 
 	/**
-	 * @param string $token the value of the token
-	 * @param int    $type  the type of the token
-	 * @param int    $flags the flags of the token
+	 * Constructor.
+	 *
+	 * @param string $token The value of the token.
+	 * @param int    $type  The type of the token.
+	 * @param int    $flags The flags of the token.
 	 */
 	public function __construct( $token, $type = 0, $flags = 0 ) {
 		$this->token   = $token;
@@ -224,7 +232,7 @@ class WP_SQLite_Token {
 				return strtoupper( $this->token ) === 'TRUE';
 
 			case self::TYPE_NUMBER:
-				$ret = str_replace( '--', '', $this->token ); // e.g. ---42 === -42
+				$ret = str_replace( '--', '', $this->token ); // e.g. ---42 === -42.
 				if ( $this->flags & self::FLAG_NUMBER_HEX ) {
 					if ( $this->flags & self::FLAG_NUMBER_NEGATIVE ) {
 						$ret = str_replace( '-', '', $this->token );
