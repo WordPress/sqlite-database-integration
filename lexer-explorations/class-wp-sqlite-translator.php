@@ -8,7 +8,6 @@
 
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/sql-parser/vendor/autoload.php';
 
 /**
  * The queries translator class.
@@ -205,11 +204,14 @@ class WP_SQLite_Translator {
 	 * @return stdClass
 	 */
 	public function translate( string $query, $last_found_rows = null ) {
-		$this->query           = $query;
+		// @TODO Lexer has a bug where it does not calculate
+		// the string length correctly if utf8 characters
+		// are used. Let's pad it with spaces manually for now
+		// and fix the issue before merging
+		$this->query           = $query.'                        ';
 		$this->last_found_rows = $last_found_rows;
 
-		// $tokens = \PhpMyAdmin\SqlParser\Lexer::getTokens( $query )->tokens;
-		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
+		$tokens     = WP_SQLite_Lexer::get_tokens( $this->query )->tokens;
 		$rewriter   = new WP_SQLite_Query_Rewriter( $tokens );
 		$query_type = $rewriter->peek()->value;
 
@@ -302,67 +304,240 @@ class WP_SQLite_Translator {
 	 *
 	 * @return stdClass
 	 */
-	private function translate_create_table() {
-		$parser                       = new \PhpMyAdmin\SqlParser\Parser( $this->query );
-		$stmt                         = $parser->statements[0];
-		$stmt->entityOptions->options = array();
-
-		$inline_primary_key = false;
-		$extra_queries      = array();
-
-		foreach ( $stmt->fields as $k => $field ) {
-			if ( $field->type && $field->type->name ) {
-				$typelc = strtolower( $field->type->name );
-				if ( isset( $this->field_types_translation[ $typelc ] ) ) {
-					$field->type->name = $this->field_types_translation[ $typelc ];
-				}
-				$field->type->parameters = array();
-				unset( $field->type->options->options[ WP_SQLite_Lexer::$data_type_options['UNSIGNED'] ] );
+	private function translate_create_table(WP_SQLite_Query_Rewriter $r) {
+		$table = $this->parse_create_table(clone $r);
+		
+		$definitions = array();
+		foreach($table->fields as $field) {
+			$definition = '"' . $field->name . '" '.$field->sqlite_datatype;
+			if($field->not_null) {
+				$definition .= ' NOT NULL';
 			}
-			if ( $field->options && $field->options->options ) {
-				if ( isset( $field->options->options[ WP_SQLite_Lexer::$field_options['AUTO_INCREMENT'] ] ) ) {
-					$field->options->options[ WP_SQLite_Lexer::$field_options['AUTO_INCREMENT'] ] = 'PRIMARY KEY AUTOINCREMENT';
-					$inline_primary_key = true;
-					unset( $field->options->options[ WP_SQLite_Lexer::$field_options['PRIMARY KEY'] ] );
-				}
+			if($field->primary_key) {
+				$definition .= ' PRIMARY KEY';
 			}
-			if ( $field->key ) {
-				if ( 'PRIMARY KEY' === $field->key->type ) {
-					if ( $inline_primary_key ) {
-						unset( $stmt->fields[ $k ] );
-					}
-				} elseif ( 'FULLTEXT KEY' === $field->key->type ) {
-					unset( $stmt->fields[ $k ] );
-				} elseif (
-					'KEY' === $field->key->type ||
-					'INDEX' === $field->key->type ||
-					'UNIQUE KEY' === $field->key->type
-				) {
-					$columns = array();
-					foreach ( $field->key->columns as $column ) {
-						$columns[] = $column['name'];
-					}
-					$unique = '';
-					if ( 'UNIQUE KEY' === $field->key->type ) {
-						$unique = 'UNIQUE ';
-					}
-					$extra_queries[] = 'CREATE ' . $unique . ' INDEX "' . $stmt->name . '__' . $field->key->name . '" ON "' . $stmt->name . '" ("' . implode( '", "', $columns ) . '")';
-					unset( $stmt->fields[ $k ] );
-				}
+			if($field->auto_increment) {
+				$definition .= ' AUTOINCREMENT';
 			}
+			if($field->default !== null) {
+				$definition .= ' DEFAULT ' . $field->default;
+			}
+			$definitions[] = $definition;
 		}
-		PhpMyAdmin\SqlParser\Context::setMode( WP_SQLite_Lexer::SQL_MODE_ANSI_QUOTES );
-		$queries = array(
-			WP_SQLite_Translator::get_query_object( $stmt->build() ),
+
+		$create_table_query = WP_SQLite_Translator::get_query_object(
+			$table->create_table.
+			'"'.$table->name.'" ('."\n".
+			implode(",\n", $definitions) .
+			')'
 		);
-		foreach ( $extra_queries as $extra_query ) {
-			$queries[] = WP_SQLite_Translator::get_query_object( $extra_query );
+
+		$extra_queries = array();
+		foreach($table->constraints as $constraint) {
+			$unique = '';
+			if ( 'UNIQUE KEY' === $constraint->value ) {
+				$unique = 'UNIQUE ';
+			}
+			$extra_queries[] = WP_SQLite_Translator::get_query_object( 
+				"CREATE $unique INDEX \"{$table->name}__{$constraint->name}\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . "\")"
+			);
 		}
 
-		return $this->get_translation_result(
-			$queries
+		return $this->get_translation_result( array_merge(
+			array(
+				$create_table_query,
+			),
+			$extra_queries
+		) );
+	}
+
+	private function parse_create_table(WP_SQLite_Query_Rewriter $r) {
+		$result = new stdClass();
+		$result->create_table = null;
+		$result->name = null;
+		$result->fields = array();
+		$result->constraints = array();
+		$result->primary_key = array();
+
+		while ( $token = $r->consume() ) {
+			// We're only interested in the table name.
+			if ( WP_SQLite_Token::TYPE_KEYWORD !== $token->type ) {
+				$result->name = $token->value;
+				$r->drop_last();
+				$result->create_table = $r->get_updated_query();
+				break;
+			}
+		}
+
+		$r->consume([
+			'type' => WP_SQLite_Token::TYPE_OPERATOR,
+			'value' => '(',
+		]);
+
+		$declarations_depth = $r->depth;
+		do {
+			$r->replace_all([]);
+			$second_token = $r->peek(null,null,null,2);
+			if($second_token->is_data_type()) {
+				$result->fields[] = $this->parse_create_table_field($r);
+			} else {
+				$result->constraints[] = $this->parse_create_table_constraint($r, $result->name);
+			}
+		} while($token && $r->depth >= $declarations_depth);
+
+		foreach($result->constraints as $k => $constraint) {
+			if($constraint->value === 'PRIMARY KEY') {
+				$result->primary_key = array_merge(
+					$result->primary_key,
+					$constraint->columns
+				);
+				unset($result->constraints[$k]);
+			}
+		}
+
+		foreach($result->fields as $k => $field) {
+			if($field->primary_key) {
+				$result->primary_key[] = $field->name;
+			}
+		}
+
+		$result->primary_key = array_unique($result->primary_key);
+
+		return $result;
+	}
+
+	private function parse_create_table_field(WP_SQLite_Query_Rewriter $r) {
+		$result = new stdClass();
+		$result->name = '';
+		$result->sqlite_datatype = '';
+		$result->not_null = false;
+		$result->default = null;
+		$result->auto_increment = false;
+		$result->primary_key = false;
+
+		$field_name_token = $r->skip(); // field name
+		$r->add(new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ));
+		$result->name = trim($field_name_token->value, '`"\'');
+
+		$initial_depth = $r->depth;
+		
+		$type = $r->skip();
+		if(!$type->is_data_type()){
+			throw new Exception( 'Data type expected in MySQL query, unknown token received: ' . $type->value );
+		}
+		
+		$type_name = strtolower( $type->value );
+		if ( ! isset( $this->field_types_translation[ $type_name ] ) ) {
+			throw new Exception( 'MySQL field type cannot be translated to SQLite: ' . $type_name );
+		}
+		$result->sqlite_datatype = $this->field_types_translation[$type_name];
+
+		// Skip the length, e.g. (10) in VARCHAR(10)
+		$paren_maybe = $r->peek();
+		if ( $paren_maybe && '(' === $paren_maybe->token ) {
+			$r->skip();
+			$r->skip();
+			$r->skip();
+		}
+
+		// Look for the NOT NULL and AUTO_INCREMENT flags
+		while($token = $r->skip()) {
+			if($token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'NOT NULL' ),
+			)) {
+				$result->not_null = true;
+				continue;
+			}
+
+			if($token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'PRIMARY KEY' ),
+			)) {
+				$result->primary_key = true;
+				continue;
+			}
+
+			if($token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				null,
+				array( 'AUTO_INCREMENT' ),
+			)) {
+				$result->primary_key = true;
+				$result->auto_increment = true;
+				continue;
+			}
+
+			if($token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
+				array( 'DEFAULT' ),
+			)) {
+				$result->default = $r->consume()->token;
+				continue;
+			}
+
+			if($this->is_create_table_field_terminator($r, $token, $initial_depth)) {
+				$r->add($token);
+				break;
+			}
+		}
+		return $result;
+	}
+
+	private function parse_create_table_constraint(WP_SQLite_Query_Rewriter $r) {
+		$result = new stdClass();
+		$result->name = '';
+		$result->value = '';
+		$result->columns = array();
+
+		$initial_depth = $r->depth;
+		$constraint = $r->peek();
+		if(!$constraint->matches(WP_SQLite_Token::TYPE_KEYWORD)) {
+			// Not a constraint declaration, but we're not finished
+			// with the table declaration yet.
+			throw new Exception( 'Unexpected token in MySQL query: ' . $r->peek()->value );
+		}
+		
+		if(
+			$constraint->value === 'KEY'
+			|| $constraint->value === 'PRIMARY KEY'
+			|| $constraint->value === 'INDEX'
+			|| $constraint->value === 'UNIQUE KEY'
+		) {
+			$result->value = $constraint->value;
+
+			$r->skip(); // Constraint type
+			if($constraint->value !== 'PRIMARY KEY') {
+				$result->name = $r->skip()->value;
+			}
+
+			$constraint_depth = $r->depth;
+			$r->skip(); // (
+			do {
+				$result->columns[] = trim($r->skip()->value, '`"\'');
+				$r->skip_field_length();
+				$r->skip(); // , or )
+			} while($r->depth > $constraint_depth);
+		}
+
+		do {
+			$token = $r->skip();
+		} while(!$this->is_create_table_field_terminator($r, $token, $initial_depth));
+
+		return $result;
+	}
+
+	private function is_create_table_field_terminator($rewriter, $token, $initial_depth) {
+		return $rewriter->depth === $initial_depth - 1 || (
+			$rewriter->depth === $initial_depth && 
+			$token->type === WP_SQLite_Token::TYPE_OPERATOR &&
+			$token->value === ','
 		);
 	}
+
 
 	/**
 	 * Translator method.
@@ -1121,4 +1296,5 @@ class WP_SQLite_Translator {
 			}
 		}
 	}
+
 }

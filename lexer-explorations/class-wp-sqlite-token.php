@@ -207,6 +207,35 @@ class WP_SQLite_Token {
 	}
 
 	/**
+	 * Checks if the token matches the given parameters.
+	 *
+	 * @param int|null   $type   The type of the token.
+	 * @param int|null   $flags  The flags of the token.
+	 * @param array|null $values The values of the token.
+	 *
+	 * @return bool
+	 */
+	public function matches($type = null, $flags = null, ?array $values = null) {
+		return (
+			( null === $type || $this->type === $type )
+			&& ( null === $flags || ( $this->flags & $flags ) )
+			&& ( null === $values || in_array( strtoupper( $this->value ), $values, true ) )
+		);
+	}
+
+	public function is_whitespace() {
+		return $this->type === self::TYPE_WHITESPACE;
+	}
+
+	public function is_comment() {
+		return $this->type === self::TYPE_COMMENT;
+	}
+
+	public function is_data_type() {
+		return $this->type === self::TYPE_KEYWORD && ( $this->flags & self::FLAG_KEYWORD_DATA_TYPE );
+	}
+
+	/**
 	 * Does little processing to the token to extract a value.
 	 *
 	 * If no processing can be done it will return the initial string.

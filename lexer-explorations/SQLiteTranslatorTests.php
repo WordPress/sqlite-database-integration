@@ -25,7 +25,7 @@ class SQLiteTranslatorTests extends TestCase {
 		$this->runQuery(
 			$sqlite,
 			<<<'Q'
-            CREATE TABLE wptests_users (
+            CREATE TABLE IF NOT EXISTS wptests_users (
                 ID bigint(20) unsigned NOT NULL auto_increment,
                 user_login varchar(60) NOT NULL default '',
                 user_pass varchar(255) NOT NULL default '',
@@ -200,11 +200,15 @@ class SQLiteTranslatorTests extends TestCase {
 				array(
 					WP_SQLite_Translator::get_query_object(
 						"SELECT a, b FROM wp_options a, wp_options b
-                    WHERE a.option_name LIKE '_transient_%'
-                    AND a.option_name NOT LIKE '_transient_timeout_%'
-                    AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
+                    WHERE a.option_name LIKE :param0
+                    AND a.option_name NOT LIKE :param1
+                    AND b.option_name = ( :param2|| SUBSTRING( a.option_name, 12 ) )
                     AND b.option_value < 1675963967;",
-						array()
+						array(
+							'_transient_%',
+							'_transient_timeout_%',
+							'_transient_timeout_'
+						)
 					),
 				),
 			),
@@ -224,7 +228,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'Translates START TRANSACTION queries',
 				'START TRANSACTION',
 				array(
-					WP_SQLite_Translator::get_query_object( 'START TRANSACTION' ),
+					WP_SQLite_Translator::get_query_object( 'BEGIN' ),
 				),
 			),
 			array(
@@ -263,7 +267,21 @@ class SQLiteTranslatorTests extends TestCase {
 				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
 			),
 			array(
-				'Translates CREATE TABLE queries',
+				'Translates a complex INSERT',
+				'INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`) VALUES (\'_transient_woocommerce_admin_payment_method_promotion_specs\', \'a:1:{s:5:\"en_US\";a:1:{s:20:\"woocommerce_payments\";O:8:\"stdClass\":8:{s:2:\"id\";s:20:\"woocommerce_payments\";s:5:\"title\";s:20:\"WooCommerce Payments\";s:7:\"content\";s:369:\"Payments made simple, with no monthly fees – designed exclusively for WooCommerce stores. Accept credit cards, debit cards, and other popular payment methods.<br/><br/>By clicking “Install”, you agree to the <a href=\"https://wordpress.com/tos/\" target=\"_blank\">Terms of Service</a> and <a href=\"https://automattic.com/privacy/\" target=\"_blank\">Privacy policy</a>.\";s:5:\"image\";s:101:\"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/wcpay.svg\";s:7:\"plugins\";a:1:{i:0;s:20:\"woocommerce-payments\";}s:10:\"is_visible\";a:2:{i:0;O:8:\"stdClass\":6:{s:4:\"type\";s:6:\"option\";s:12:\"transformers\";a:2:{i:0;O:8:\"stdClass\":2:{s:3:\"use\";s:12:\"dot_notation\";s:9:\"arguments\";O:8:\"stdClass\":1:{s:4:\"path\";s:8:\"industry\";}}i:1;O:8:\"stdClass\":2:{s:3:\"use\";s:12:\"array_column\";s:9:\"arguments\";O:8:\"stdClass\":1:{s:3:\"key\";s:4:\"slug\";}}}s:11:\"option_name\";s:30:\"woocommerce_onboarding_profile\";s:9:\"operation\";s:9:\"!contains\";s:5:\"value\";s:31:\"cbd-other-hemp-derived-products\";s:7:\"default\";a:0:{}}i:1;O:8:\"stdClass\":2:{s:4:\"type\";s:2:\"or\";s:8:\"operands\";a:19:{i:0;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"US\";s:9:\"operation\";s:1:\"=\";}i:1;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"PR\";s:9:\"operation\";s:1:\"=\";}i:2;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"AU\";s:9:\"operation\";s:1:\"=\";}i:3;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"CA\";s:9:\"operation\";s:1:\"=\";}i:4;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"DE\";s:9:\"operation\";s:1:\"=\";}i:5;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"ES\";s:9:\"operation\";s:1:\"=\";}i:6;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"FR\";s:9:\"operation\";s:1:\"=\";}i:7;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"GB\";s:9:\"operation\";s:1:\"=\";}i:8;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"IE\";s:9:\"operation\";s:1:\"=\";}i:9;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"IT\";s:9:\"operation\";s:1:\"=\";}i:10;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"NZ\";s:9:\"operation\";s:1:\"=\";}i:11;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"AT\";s:9:\"operation\";s:1:\"=\";}i:12;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"BE\";s:9:\"operation\";s:1:\"=\";}i:13;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"NL\";s:9:\"operation\";s:1:\"=\";}i:14;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"PL\";s:9:\"operation\";s:1:\"=\";}i:15;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"PT\";s:9:\"operation\";s:1:\"=\";}i:16;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"CH\";s:9:\"operation\";s:1:\"=\";}i:17;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"HK\";s:9:\"operation\";s:1:\"=\";}i:18;O:8:\"stdClass\":3:{s:4:\"type\";s:21:\"base_location_country\";s:5:\"value\";s:2:\"SG\";s:9:\"operation\";s:1:\"=\";}}}}s:9:\"sub_title\";s:865:\"<img class=\"wcpay-visa-icon wcpay-icon\" src=\"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/visa.svg\" alt=\"Visa\"><img class=\"wcpay-mastercard-icon wcpay-icon\" src=\"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/mastercard.svg\" alt=\"Mastercard\"><img class=\"wcpay-amex-icon wcpay-icon\" src=\"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/amex.svg\" alt=\"Amex\"><img class=\"wcpay-googlepay-icon wcpay-icon\" src=\"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/googlepay.svg\" alt=\"Googlepay\"><img class=\"wcpay-applepay-icon wcpay-icon\" src=\"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/applepay.svg\" alt=\"Applepay\">\";s:15:\"additional_info\";O:8:\"stdClass\":1:{s:18:\"experiment_version\";s:2:\"v2\";}}}}\', \'no\') ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`), `option_value` = VALUES(`option_value`), `autoload` = VALUES(`autoload`)',
+				array( 
+					WP_SQLite_Translator::get_query_object( 
+						'INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`) VALUES (:param0, :param1, :param2) ON CONFLICT (option_name) DO UPDATE SET  `option_name` = excluded.`option_name`, `option_value` = excluded.`option_value`, `autoload` = excluded.`autoload`',
+						array(
+							':param0' => '_transient_woocommerce_admin_payment_method_promotion_specs',
+							':param1' => 'a:1:{s:5:"en_US";a:1:{s:20:"woocommerce_payments";O:8:"stdClass":8:{s:2:"id";s:20:"woocommerce_payments";s:5:"title";s:20:"WooCommerce Payments";s:7:"content";s:369:"Payments made simple, with no monthly fees – designed exclusively for WooCommerce stores. Accept credit cards, debit cards, and other popular payment methods.<br/><br/>By clicking “Install”, you agree to the <a href="https://wordpress.com/tos/" target="_blank">Terms of Service</a> and <a href="https://automattic.com/privacy/" target="_blank">Privacy policy</a>.";s:5:"image";s:101:"https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/wcpay.svg";s:7:"plugins";a:1:{i:0;s:20:"woocommerce-payments";}s:10:"is_visible";a:2:{i:0;O:8:"stdClass":6:{s:4:"type";s:6:"option";s:12:"transformers";a:2:{i:0;O:8:"stdClass":2:{s:3:"use";s:12:"dot_notation";s:9:"arguments";O:8:"stdClass":1:{s:4:"path";s:8:"industry";}}i:1;O:8:"stdClass":2:{s:3:"use";s:12:"array_column";s:9:"arguments";O:8:"stdClass":1:{s:3:"key";s:4:"slug";}}}s:11:"option_name";s:30:"woocommerce_onboarding_profile";s:9:"operation";s:9:"!contains";s:5:"value";s:31:"cbd-other-hemp-derived-products";s:7:"default";a:0:{}}i:1;O:8:"stdClass":2:{s:4:"type";s:2:"or";s:8:"operands";a:19:{i:0;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"US";s:9:"operation";s:1:"=";}i:1;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"PR";s:9:"operation";s:1:"=";}i:2;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"AU";s:9:"operation";s:1:"=";}i:3;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"CA";s:9:"operation";s:1:"=";}i:4;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"DE";s:9:"operation";s:1:"=";}i:5;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"ES";s:9:"operation";s:1:"=";}i:6;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"FR";s:9:"operation";s:1:"=";}i:7;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"GB";s:9:"operation";s:1:"=";}i:8;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"IE";s:9:"operation";s:1:"=";}i:9;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"IT";s:9:"operation";s:1:"=";}i:10;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"NZ";s:9:"operation";s:1:"=";}i:11;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"AT";s:9:"operation";s:1:"=";}i:12;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"BE";s:9:"operation";s:1:"=";}i:13;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"NL";s:9:"operation";s:1:"=";}i:14;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"PL";s:9:"operation";s:1:"=";}i:15;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"PT";s:9:"operation";s:1:"=";}i:16;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"CH";s:9:"operation";s:1:"=";}i:17;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"HK";s:9:"operation";s:1:"=";}i:18;O:8:"stdClass":3:{s:4:"type";s:21:"base_location_country";s:5:"value";s:2:"SG";s:9:"operation";s:1:"=";}}}}s:9:"sub_title";s:865:"<img class="wcpay-visa-icon wcpay-icon" src="https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/visa.svg" alt="Visa"><img class="wcpay-mastercard-icon wcpay-icon" src="https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/mastercard.svg" alt="Mastercard"><img class="wcpay-amex-icon wcpay-icon" src="https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/amex.svg" alt="Amex"><img class="wcpay-googlepay-icon wcpay-icon" src="https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/googlepay.svg" alt="Googlepay"><img class="wcpay-applepay-icon wcpay-icon" src="https://woocommerce.com/wp-content/plugins/wccom-plugins/payment-gateway-suggestions/images/icons/applepay.svg" alt="Applepay">";s:15:"additional_info";O:8:"stdClass":1:{s:18:"experiment_version";s:2:"v2";}}}}',
+							':param2' => 'no',
+						)
+					)
+				),
+			),
+			array(
+				'Translates the CREATE TABLE wptests_users query',
 				"CREATE TABLE wptests_users (
                     ID bigint(20) unsigned NOT NULL auto_increment,
                     user_login varchar(60) NOT NULL default '',
@@ -283,23 +301,101 @@ class SQLiteTranslatorTests extends TestCase {
 				array(
 					WP_SQLite_Translator::get_query_object(
 						<<<SQL
-                        CREATE TABLE wptests_users (
-                        "ID" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
-                        "user_login" text NOT NULL DEFAULT '',
-                        "user_pass" text NOT NULL DEFAULT '',
-                        "user_nicename" text NOT NULL DEFAULT '',
-                        "user_email" text NOT NULL DEFAULT '',
-                        "user_url" text NOT NULL DEFAULT '',
-                        "user_registered" text NOT NULL DEFAULT '0000-00-00 00:00:00',
-                        "user_activation_key" text NOT NULL DEFAULT '',
-                        "user_status" integer NOT NULL DEFAULT '0',
-                        "display_name" text NOT NULL DEFAULT ''
-                      )
+                      CREATE TABLE "wptests_users" (
+                      "ID" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "user_login" text NOT NULL DEFAULT '',
+                      "user_pass" text NOT NULL DEFAULT '',
+                      "user_nicename" text NOT NULL DEFAULT '',
+                      "user_email" text NOT NULL DEFAULT '',
+                      "user_url" text NOT NULL DEFAULT '',
+                      "user_registered" text NOT NULL DEFAULT '0000-00-00 00:00:00',
+                      "user_activation_key" text NOT NULL DEFAULT '',
+                      "user_status" integer NOT NULL DEFAULT '0',
+                      "display_name" text NOT NULL DEFAULT '')
                       SQL
 					),
 					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_login_key" ON "wptests_users" ("user_login")' ),
 					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_nicename" ON "wptests_users" ("user_nicename")' ),
 					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_email" ON "wptests_users" ("user_email")' ),
+				),
+			),
+			array(
+				'Translates the CREATE TABLE wp_terms query',
+				"CREATE TABLE wp_terms (
+					term_id bigint(20) unsigned NOT NULL auto_increment,
+					name varchar(200) NOT NULL default '',
+					slug varchar(200) NOT NULL default '',
+					term_group bigint(10) NOT NULL default 0,
+					PRIMARY KEY  (term_id),
+					KEY slug (slug(250)),
+					KEY name (name(250))
+				   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci",
+				array(
+					WP_SQLite_Translator::get_query_object(
+						<<<SQL
+                      CREATE TABLE "wp_terms" (
+                      "term_id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "name" text NOT NULL DEFAULT '',
+                      "slug" text NOT NULL DEFAULT '',
+                      "term_group" integer NOT NULL DEFAULT 0)
+                      SQL
+					),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_terms__slug" ON "wp_terms" ("slug")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_terms__name" ON "wp_terms" ("name")' ),
+				),
+			),
+			array(
+				'Translates the CREATE TABLE wp_term_taxonomy query',
+				"CREATE TABLE IF NOT EXISTS wp_term_taxonomy (
+					term_taxonomy_id bigint(20) unsigned NOT NULL auto_increment,
+					term_id bigint(20) unsigned NOT NULL default 0,
+					taxonomy varchar(32) NOT NULL default '',
+					description longtext NOT NULL,
+					parent bigint(20) unsigned NOT NULL default 0,
+					count bigint(20) NOT NULL default 0,
+					PRIMARY KEY  (term_taxonomy_id),
+					UNIQUE KEY term_id_taxonomy (term_id,taxonomy),
+					KEY taxonomy (taxonomy)
+				   ) ;",
+				array(
+					WP_SQLite_Translator::get_query_object(
+						<<<SQL
+                      CREATE TABLE IF NOT EXISTS "wp_term_taxonomy" (
+                      "term_taxonomy_id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "term_id" integer NOT NULL DEFAULT 0,
+                      "taxonomy" text NOT NULL DEFAULT '',
+                      "description" text NOT NULL,
+                      "parent" integer NOT NULL DEFAULT 0,
+                      "count" integer NOT NULL DEFAULT 0)
+                      SQL
+					),
+					WP_SQLite_Translator::get_query_object( 'CREATE UNIQUE  INDEX "wp_term_taxonomy__term_id_taxonomy" ON "wp_term_taxonomy" ("term_id", "taxonomy")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_term_taxonomy__taxonomy" ON "wp_term_taxonomy" ("taxonomy")' ),
+				),
+			),
+			array(
+				'Translates the CREATE TABLE wp_options query',
+				"CREATE TABLE wp_options (
+                      option_id bigint(20) unsigned NOT NULL auto_increment,
+                      option_name varchar(191) NOT NULL default '',
+                      option_value longtext NOT NULL,
+                      autoload varchar(20) NOT NULL default 'yes',
+                      PRIMARY KEY  (option_id),
+                      UNIQUE KEY option_name (option_name),
+                      KEY autoload (autoload)
+                      ) ;",
+				array(
+					WP_SQLite_Translator::get_query_object(
+						<<<SQL
+                      CREATE TABLE "wp_options" (
+                      "option_id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "option_name" text NOT NULL DEFAULT '',
+                      "option_value" text NOT NULL,
+                      "autoload" text NOT NULL DEFAULT 'yes')
+                      SQL
+					),
+					WP_SQLite_Translator::get_query_object( 'CREATE UNIQUE  INDEX "wp_options__option_name" ON "wp_options" ("option_name")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_options__autoload" ON "wp_options" ("autoload")' ),
 				),
 			),
 		);

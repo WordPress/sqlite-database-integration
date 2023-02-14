@@ -133,12 +133,15 @@ class WP_SQLite_Query_Rewriter {
 	 *
 	 * @return WP_SQLite_Token|null
 	 */
-	public function peek( $type = null, $flags = null, $values = null ) {
+	public function peek( $type = null, $flags = null, $values = null, $nth = 0 ) {
 		$i = $this->index;
+		$matches = 0;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
 			if ( $this->matches( $token, $type, $flags, $values ) ) {
-				return $token;
+				if(++$matches >= $nth) {
+					return $token;
+				}
 			}
 		}
 	}
@@ -197,6 +200,15 @@ class WP_SQLite_Query_Rewriter {
 		return $this->current();
 	}
 
+	public function skip_field_length() {
+		$paren_maybe = $this->peek();
+		if ( $paren_maybe && '(' === $paren_maybe->token ) {
+			$this->skip();
+			$this->skip();
+			$this->skip();
+		}
+	}
+
 	/**
 	 * Skip over the next tokens and return one that matches the given criteria.
 	 *
@@ -229,14 +241,18 @@ class WP_SQLite_Query_Rewriter {
 		$values = isset( $options['value'] )
 			? ( is_array( $options['value'] ) ? $options['value'] : array( $options['value'] ) )
 			: null;
-
+		$depth  = isset( $options['depth'] ) ? $options['depth'] : null;
+		
 		$buffered = array();
 		$i        = $this->index;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
 			$this->update_call_stack( $token, $i );
 			$buffered[] = $token;
-			if ( $this->matches( $token, $type, $flags, $values ) ) {
+			if (
+				( null === $depth || $this->depth === $depth )
+				&& $this->matches( $token, $type, $flags, $values ) 
+			) {
 				return array( $buffered, true );
 			}
 		}
@@ -256,21 +272,10 @@ class WP_SQLite_Query_Rewriter {
 	 */
 	private function matches( $token, $type = null, $flags = null, $values = null ) {
 		if ( null === $type && null === $flags && null === $values ) {
-			if (
-				WP_SQLite_Token::TYPE_WHITESPACE !== $token->type
-				&& WP_SQLite_Token::TYPE_COMMENT !== $token->type
-			) {
-				return true;
-			}
-		} elseif (
-			( null === $type || $token->type === $type )
-			&& ( null === $flags || ( $token->flags & $flags ) )
-			&& ( null === $values || in_array( $token->value, $values, true ) )
-		) {
-			return true;
+			return !$token->is_whitespace() && !$token->is_comment();
 		}
 
-		return false;
+		return $token->matches( $type, $flags, $values );
 	}
 
 	/**
