@@ -1277,6 +1277,7 @@ class WP_SQLite_Translator {
 						);
 
 					case 'VARIABLE':
+					case 'VARIABLES':
 						return $this->get_translation_result(
 							array(
 								$this->noop(),
