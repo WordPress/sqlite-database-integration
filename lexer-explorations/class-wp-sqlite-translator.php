@@ -6,6 +6,7 @@
  * @see https://github.com/phpmyadmin/sql-parser
  */
 
+// Require files.
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
 
@@ -208,7 +209,7 @@ class WP_SQLite_Translator {
 		// the string length correctly if utf8 characters
 		// are used. Let's pad it with spaces manually for now
 		// and fix the issue before merging
-		$this->query           = $query.'                        ';
+		$this->query           = $query . '                        ';
 		$this->last_found_rows = $last_found_rows;
 
 		$tokens     = WP_SQLite_Lexer::get_tokens( $this->query )->tokens;
@@ -302,239 +303,277 @@ class WP_SQLite_Translator {
 	/**
 	 * Translates the CREATE TABLE query.
 	 *
+	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 *
 	 * @return stdClass
 	 */
-	private function translate_create_table(WP_SQLite_Query_Rewriter $r) {
-		$table = $this->parse_create_table(clone $r);
-		
+	private function translate_create_table( WP_SQLite_Query_Rewriter $rewriter ) {
+		$table = $this->parse_create_table( clone $rewriter );
+
 		$definitions = array();
-		foreach($table->fields as $field) {
-			$definition = '"' . $field->name . '" '.$field->sqlite_datatype;
-			if($field->not_null) {
+		foreach ( $table->fields as $field ) {
+			$definition = '"' . $field->name . '" ' . $field->sqlite_datatype;
+			if ( $field->not_null ) {
 				$definition .= ' NOT NULL';
 			}
-			if($field->primary_key) {
+			if ( $field->primary_key ) {
 				$definition .= ' PRIMARY KEY';
 			}
-			if($field->auto_increment) {
+			if ( $field->auto_increment ) {
 				$definition .= ' AUTOINCREMENT';
 			}
-			if($field->default !== null) {
+			if ( null !== $field->default ) {
 				$definition .= ' DEFAULT ' . $field->default;
 			}
 			$definitions[] = $definition;
 		}
 
 		$create_table_query = WP_SQLite_Translator::get_query_object(
-			$table->create_table.
-			'"'.$table->name.'" ('."\n".
-			implode(",\n", $definitions) .
+			$table->create_table .
+			'"' . $table->name . '" (' . "\n" .
+			implode( ",\n", $definitions ) .
 			')'
 		);
 
 		$extra_queries = array();
-		foreach($table->constraints as $constraint) {
+		foreach ( $table->constraints as $constraint ) {
 			$unique = '';
 			if ( 'UNIQUE KEY' === $constraint->value ) {
 				$unique = 'UNIQUE ';
 			}
-			$extra_queries[] = WP_SQLite_Translator::get_query_object( 
-				"CREATE $unique INDEX \"{$table->name}__{$constraint->name}\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . "\")"
+			$extra_queries[] = WP_SQLite_Translator::get_query_object(
+				"CREATE $unique INDEX \"{$table->name}__{$constraint->name}\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
 			);
 		}
 
-		return $this->get_translation_result( array_merge(
-			array(
-				$create_table_query,
-			),
-			$extra_queries
-		) );
+		return $this->get_translation_result(
+			array_merge(
+				array(
+					$create_table_query,
+				),
+				$extra_queries
+			)
+		);
 	}
 
-	private function parse_create_table(WP_SQLite_Query_Rewriter $r) {
-		$result = new stdClass();
+	/**
+	 * Translates the CREATE TABLE query.
+	 *
+	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 *
+	 * @return stdClass
+	 */
+	private function parse_create_table( WP_SQLite_Query_Rewriter $rewriter ) {
+		$result               = new stdClass();
 		$result->create_table = null;
-		$result->name = null;
-		$result->fields = array();
-		$result->constraints = array();
-		$result->primary_key = array();
+		$result->name         = null;
+		$result->fields       = array();
+		$result->constraints  = array();
+		$result->primary_key  = array();
 
-		while ( $token = $r->consume() ) {
+		while ( $token = $rewriter->consume() ) {
 			// We're only interested in the table name.
 			if ( WP_SQLite_Token::TYPE_KEYWORD !== $token->type ) {
 				$result->name = $token->value;
-				$r->drop_last();
-				$result->create_table = $r->get_updated_query();
+				$rewriter->drop_last();
+				$result->create_table = $rewriter->get_updated_query();
 				break;
 			}
 		}
 
-		$r->consume([
-			'type' => WP_SQLite_Token::TYPE_OPERATOR,
-			'value' => '(',
-		]);
+		$rewriter->consume(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+				'value' => '(',
+			)
+		);
 
-		$declarations_depth = $r->depth;
+		$declarations_depth = $rewriter->depth;
 		do {
-			$r->replace_all([]);
-			$second_token = $r->peek(null,null,null,2);
-			if($second_token->is_data_type()) {
-				$result->fields[] = $this->parse_create_table_field($r);
+			$rewriter->replace_all( array() );
+			$second_token = $rewriter->peek( null, null, null, 2 );
+			if ( $second_token->is_data_type() ) {
+				$result->fields[] = $this->parse_create_table_field( $rewriter );
 			} else {
-				$result->constraints[] = $this->parse_create_table_constraint($r, $result->name);
+				$result->constraints[] = $this->parse_create_table_constraint( $rewriter, $result->name );
 			}
-		} while($token && $r->depth >= $declarations_depth);
+		} while ( $token && $rewriter->depth >= $declarations_depth );
 
-		foreach($result->constraints as $k => $constraint) {
-			if($constraint->value === 'PRIMARY KEY') {
+		foreach ( $result->constraints as $k => $constraint ) {
+			if ( 'PRIMARY KEY' === $constraint->value ) {
 				$result->primary_key = array_merge(
 					$result->primary_key,
 					$constraint->columns
 				);
-				unset($result->constraints[$k]);
+				unset( $result->constraints[ $k ] );
 			}
 		}
 
-		foreach($result->fields as $k => $field) {
-			if($field->primary_key) {
+		foreach ( $result->fields as $k => $field ) {
+			if ( $field->primary_key ) {
 				$result->primary_key[] = $field->name;
 			}
 		}
 
-		$result->primary_key = array_unique($result->primary_key);
+		$result->primary_key = array_unique( $result->primary_key );
 
 		return $result;
 	}
 
-	private function parse_create_table_field(WP_SQLite_Query_Rewriter $r) {
-		$result = new stdClass();
-		$result->name = '';
+	/**
+	 * Parses a CREATE TABLE query.
+	 *
+	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 *
+	 * @throws Exception If the query is not supported.
+	 * @return stdClass
+	 */
+	private function parse_create_table_field( WP_SQLite_Query_Rewriter $rewriter ) {
+		$result                  = new stdClass();
+		$result->name            = '';
 		$result->sqlite_datatype = '';
-		$result->not_null = false;
-		$result->default = null;
-		$result->auto_increment = false;
-		$result->primary_key = false;
+		$result->not_null        = false;
+		$result->default         = null;
+		$result->auto_increment  = false;
+		$result->primary_key     = false;
 
-		$field_name_token = $r->skip(); // field name
-		$r->add(new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ));
-		$result->name = trim($field_name_token->value, '`"\'');
+		$field_name_token = $rewriter->skip(); // Field name.
+		$rewriter->add( new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ) );
+		$result->name = trim( $field_name_token->value, '`"\'' );
 
-		$initial_depth = $r->depth;
-		
-		$type = $r->skip();
-		if(!$type->is_data_type()){
+		$initial_depth = $rewriter->depth;
+
+		$type = $rewriter->skip();
+		if ( ! $type->is_data_type() ) {
 			throw new Exception( 'Data type expected in MySQL query, unknown token received: ' . $type->value );
 		}
-		
+
 		$type_name = strtolower( $type->value );
 		if ( ! isset( $this->field_types_translation[ $type_name ] ) ) {
 			throw new Exception( 'MySQL field type cannot be translated to SQLite: ' . $type_name );
 		}
-		$result->sqlite_datatype = $this->field_types_translation[$type_name];
+		$result->sqlite_datatype = $this->field_types_translation[ $type_name ];
 
-		// Skip the length, e.g. (10) in VARCHAR(10)
-		$paren_maybe = $r->peek();
+		// Skip the length, e.g. (10) in VARCHAR(10).
+		$paren_maybe = $rewriter->peek();
 		if ( $paren_maybe && '(' === $paren_maybe->token ) {
-			$r->skip();
-			$r->skip();
-			$r->skip();
+			$rewriter->skip();
+			$rewriter->skip();
+			$rewriter->skip();
 		}
 
-		// Look for the NOT NULL and AUTO_INCREMENT flags
-		while($token = $r->skip()) {
-			if($token->matches(
+		// Look for the NOT NULL and AUTO_INCREMENT flags.
+		while ( $token = $rewriter->skip() ) {
+			if ( $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
 				array( 'NOT NULL' ),
-			)) {
+			) ) {
 				$result->not_null = true;
 				continue;
 			}
 
-			if($token->matches(
+			if ( $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
 				array( 'PRIMARY KEY' ),
-			)) {
+			) ) {
 				$result->primary_key = true;
 				continue;
 			}
 
-			if($token->matches(
+			if ( $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				null,
 				array( 'AUTO_INCREMENT' ),
-			)) {
-				$result->primary_key = true;
+			) ) {
+				$result->primary_key    = true;
 				$result->auto_increment = true;
 				continue;
 			}
 
-			if($token->matches(
+			if ( $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
 				array( 'DEFAULT' ),
-			)) {
-				$result->default = $r->consume()->token;
+			) ) {
+				$result->default = $rewriter->consume()->token;
 				continue;
 			}
 
-			if($this->is_create_table_field_terminator($r, $token, $initial_depth)) {
-				$r->add($token);
+			if ( $this->is_create_table_field_terminator( $rewriter, $token, $initial_depth ) ) {
+				$rewriter->add( $token );
 				break;
 			}
 		}
 		return $result;
 	}
 
-	private function parse_create_table_constraint(WP_SQLite_Query_Rewriter $r) {
-		$result = new stdClass();
-		$result->name = '';
-		$result->value = '';
+	/**
+	 * Parses a CREATE TABLE constraint.
+	 *
+	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 *
+	 * @throws Exception If the query is not supported.
+	 * @return stdClass
+	 */
+	private function parse_create_table_constraint( WP_SQLite_Query_Rewriter $rewriter ) {
+		$result          = new stdClass();
+		$result->name    = '';
+		$result->value   = '';
 		$result->columns = array();
 
-		$initial_depth = $r->depth;
-		$constraint = $r->peek();
-		if(!$constraint->matches(WP_SQLite_Token::TYPE_KEYWORD)) {
+		$initial_depth = $rewriter->depth;
+		$constraint    = $rewriter->peek();
+		if ( ! $constraint->matches( WP_SQLite_Token::TYPE_KEYWORD ) ) {
 			// Not a constraint declaration, but we're not finished
 			// with the table declaration yet.
-			throw new Exception( 'Unexpected token in MySQL query: ' . $r->peek()->value );
+			throw new Exception( 'Unexpected token in MySQL query: ' . $rewriter->peek()->value );
 		}
-		
-		if(
-			$constraint->value === 'KEY'
-			|| $constraint->value === 'PRIMARY KEY'
-			|| $constraint->value === 'INDEX'
-			|| $constraint->value === 'UNIQUE KEY'
+
+		if (
+			'KEY' === $constraint->value
+			|| 'PRIMARY KEY' === $constraint->value
+			|| 'INDEX' === $constraint->value
+			|| 'UNIQUE KEY' === $constraint->value
 		) {
 			$result->value = $constraint->value;
 
-			$r->skip(); // Constraint type
-			if($constraint->value !== 'PRIMARY KEY') {
-				$result->name = $r->skip()->value;
+			$rewriter->skip(); // Constraint type.
+			if ( 'PRIMARY KEY' !== $constraint->value ) {
+				$result->name = $rewriter->skip()->value;
 			}
 
-			$constraint_depth = $r->depth;
-			$r->skip(); // (
+			$constraint_depth = $rewriter->depth;
+			$rewriter->skip(); // (
 			do {
-				$result->columns[] = trim($r->skip()->value, '`"\'');
-				$r->skip_field_length();
-				$r->skip(); // , or )
-			} while($r->depth > $constraint_depth);
+				$result->columns[] = trim( $rewriter->skip()->value, '`"\'' );
+				$rewriter->skip_field_length();
+				$rewriter->skip(); // , or )
+			} while ( $rewriter->depth > $constraint_depth );
 		}
 
 		do {
-			$token = $r->skip();
-		} while(!$this->is_create_table_field_terminator($r, $token, $initial_depth));
+			$token = $rewriter->skip();
+		} while ( ! $this->is_create_table_field_terminator( $rewriter, $token, $initial_depth ) );
 
 		return $result;
 	}
 
-	private function is_create_table_field_terminator($rewriter, $token, $initial_depth) {
+	/**
+	 * Checks if the current token is the terminator of a CREATE TABLE field.
+	 *
+	 * @param WP_SQLite_Query_Rewriter $rewriter      The query rewriter.
+	 * @param WP_SQLite_Token          $token         The current token.
+	 * @param int                      $initial_depth The initial depth.
+	 *
+	 * @return bool
+	 */
+	private function is_create_table_field_terminator( $rewriter, $token, $initial_depth ) {
 		return $rewriter->depth === $initial_depth - 1 || (
-			$rewriter->depth === $initial_depth && 
-			$token->type === WP_SQLite_Token::TYPE_OPERATOR &&
-			$token->value === ','
+			$rewriter->depth === $initial_depth &&
+			WP_SQLite_Token::TYPE_OPERATOR === $token->type &&
+			',' === $token->value
 		);
 	}
 

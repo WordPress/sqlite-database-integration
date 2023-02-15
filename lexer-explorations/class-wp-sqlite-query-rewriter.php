@@ -130,16 +130,17 @@ class WP_SQLite_Query_Rewriter {
 	 * @param string|null $type   Token type.
 	 * @param int|null    $flags  Token flags.
 	 * @param string|null $values Token values.
+	 * @param int         $nth    Nth match.
 	 *
 	 * @return WP_SQLite_Token|null
 	 */
 	public function peek( $type = null, $flags = null, $values = null, $nth = 0 ) {
-		$i = $this->index;
+		$i       = $this->index;
 		$matches = 0;
 		while ( ++$i < $this->max ) {
 			$token = $this->input_tokens[ $i ];
 			if ( $this->matches( $token, $type, $flags, $values ) ) {
-				if(++$matches >= $nth) {
+				if ( ++$matches >= $nth ) {
 					return $token;
 				}
 			}
@@ -200,6 +201,11 @@ class WP_SQLite_Query_Rewriter {
 		return $this->current();
 	}
 
+	/**
+	 * Skip over the next tokens.
+	 *
+	 * @return void
+	 */
 	public function skip_field_length() {
 		$paren_maybe = $this->peek();
 		if ( $paren_maybe && '(' === $paren_maybe->token ) {
@@ -242,7 +248,7 @@ class WP_SQLite_Query_Rewriter {
 			? ( is_array( $options['value'] ) ? $options['value'] : array( $options['value'] ) )
 			: null;
 		$depth  = isset( $options['depth'] ) ? $options['depth'] : null;
-		
+
 		$buffered = array();
 		$i        = $this->index;
 		while ( ++$i < $this->max ) {
@@ -251,7 +257,7 @@ class WP_SQLite_Query_Rewriter {
 			$buffered[] = $token;
 			if (
 				( null === $depth || $this->depth === $depth )
-				&& $this->matches( $token, $type, $flags, $values ) 
+				&& $this->matches( $token, $type, $flags, $values )
 			) {
 				return array( $buffered, true );
 			}
@@ -272,7 +278,7 @@ class WP_SQLite_Query_Rewriter {
 	 */
 	private function matches( $token, $type = null, $flags = null, $values = null ) {
 		if ( null === $type && null === $flags && null === $values ) {
-			return !$token->is_whitespace() && !$token->is_comment();
+			return ! $token->is_whitespace() && ! $token->is_comment();
 		}
 
 		return $token->matches( $type, $flags, $values );

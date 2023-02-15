@@ -207,7 +207,7 @@ class WP_SQLite_Token {
 	}
 
 	/**
-	 * Checks if the token matches the given parameters.
+	 * Check if the token matches the given parameters.
 	 *
 	 * @param int|null   $type   The type of the token.
 	 * @param int|null   $flags  The flags of the token.
@@ -215,7 +215,7 @@ class WP_SQLite_Token {
 	 *
 	 * @return bool
 	 */
-	public function matches($type = null, $flags = null, ?array $values = null) {
+	public function matches( $type = null, $flags = null, ?array $values = null ) {
 		return (
 			( null === $type || $this->type === $type )
 			&& ( null === $flags || ( $this->flags & $flags ) )
@@ -223,16 +223,31 @@ class WP_SQLite_Token {
 		);
 	}
 
+	/**
+	 * Check if the token is a whitespace.
+	 *
+	 * @return bool
+	 */
 	public function is_whitespace() {
-		return $this->type === self::TYPE_WHITESPACE;
+		return self::TYPE_WHITESPACE === $this->type;
 	}
 
+	/**
+	 * Check if the token is a comment.
+	 *
+	 * @return bool
+	 */
 	public function is_comment() {
-		return $this->type === self::TYPE_COMMENT;
+		return self::TYPE_COMMENT === $this->type;
 	}
 
+	/**
+	 * Check if the token is a keyword or a data type.
+	 *
+	 * @return bool
+	 */
 	public function is_data_type() {
-		return $this->type === self::TYPE_KEYWORD && ( $this->flags & self::FLAG_KEYWORD_DATA_TYPE );
+		return self::TYPE_KEYWORD === $this->type && ( $this->flags & self::FLAG_KEYWORD_DATA_TYPE );
 	}
 
 	/**
