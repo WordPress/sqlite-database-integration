@@ -713,14 +713,15 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$this->last_found_rows = count( $this->results );
 		}
 
-		if(!$stmt) {
-			return;
-		}
-
 		switch($translation->sqlite_query_type){
+			case 'DELETE':
+				if($translation->mysql_query_type === 'TRUNCATE') {
+					$this->_results = true;
+					$this->results = true;
+					break;
+				}
 			case 'UPDATE':
 			case 'INSERT':
-			case 'DELETE':
 			case 'REPLACE':
 				/**
 				* SELECT CHANGES() is a workaround – we can't 

@@ -24,12 +24,22 @@ class WP_SQLite_Crosscheck_DB extends WP_SQLite_DB {
 	}
 			
 	public function query($query) {
+		/**
+		 * In MySQL, AUTO_INCREMENT columns don't reuse IDs assigned in rollback transactions
+		 * In SQLite, AUTOINCREMENT columns do reuse IDs assigned in rollback transactions
+		 *
+		 * Let's just commit the transaction if we're in a crosscheck mode.
+		 */
+		if(preg_match('/^\s*rollback/i', $query)) {
+			$query = 'COMMIT;';
+		}
 		$sqlite_retval = parent::query($query);
 		$this->crosscheck($query, $sqlite_retval);
 		return $sqlite_retval;
 	}
 
 	private function crosscheck($query, $sqlite_retval) {
+		// echo $query."\n\n";
 		// Be lenient on cross-checking some query types
 		if(preg_match('/^\s*SET storage_engine/i', $query)) {
 			return;
@@ -92,7 +102,7 @@ class WP_SQLite_Crosscheck_DB extends WP_SQLite_DB {
 						$test[2]
 					);
 				}
-				die();
+				throw new Exception();
 				break;
 			}
 		}

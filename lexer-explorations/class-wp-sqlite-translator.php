@@ -317,14 +317,14 @@ class WP_SQLite_Translator {
 		$definitions = array();
 		foreach ( $table->fields as $field ) {
 			$definition = '"' . $field->name . '" ' . $field->sqlite_datatype;
+			if ( $field->auto_increment ) {
+				$definition .= ' PRIMARY KEY AUTOINCREMENT';
+			}
+			else if ( $field->primary_key ) {
+				$definition .= ' PRIMARY KEY ';
+			}
 			if ( $field->not_null ) {
 				$definition .= ' NOT NULL';
-			}
-			if ( $field->primary_key ) {
-				$definition .= ' PRIMARY KEY';
-			}
-			if ( $field->auto_increment ) {
-				$definition .= ' AUTOINCREMENT';
 			}
 			if ( null !== $field->default ) {
 				$definition .= ' DEFAULT ' . $field->default;
