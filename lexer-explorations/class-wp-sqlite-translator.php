@@ -189,7 +189,8 @@ class WP_SQLite_Translator {
 		$result->has_result      = $has_result;
 		$result->result          = $result;
 		$result->calc_found_rows = null;
-		$result->query_type      = null;
+		$result->sqlite_query_type = null;
+		$result->mysql_query_type  = null;
 
 		return $result;
 	}
@@ -237,7 +238,7 @@ class WP_SQLite_Translator {
 			case 'SET':
 				// It would be lovely to support at least SET autocommit,
 				// but I don't think even that is possible with SQLite.
-				$result = $this->get_translation_result( array( $this->noop() ) );
+				$result = $this->get_translation_result( array( $this->noop( ) ) );
 				break;
 
 			case 'TRUNCATE':
@@ -277,6 +278,7 @@ class WP_SQLite_Translator {
 				break;
 
 			case 'DESCRIBE':
+				$rewriter->skip();
 				$table_name = $rewriter->consume()->value;
 				$result     = $this->get_translation_result(
 					array(
@@ -294,9 +296,11 @@ class WP_SQLite_Translator {
 		}
 		// The query type could have changed – let's grab the new one.
 		if ( count( $result->queries ) ) {
-			$last_query         = $result->queries[ count( $result->queries ) - 1 ];
-			$result->query_type = strtoupper( strtok( $last_query->sql, ' ' ) );
+			$last_query                = $result->queries[ count( $result->queries ) - 1 ];
+			$first_word = preg_match( '/^\s*(\w+)/', $last_query->sql, $matches ) ? $matches[1] : '';
+			$result->sqlite_query_type = strtoupper( $first_word );
 		}
+		$result->mysql_query_type = $query_type;
 		return $result;
 	}
 
@@ -1019,15 +1023,18 @@ class WP_SQLite_Translator {
 				}
 
 				$query = (
-				count( $ids_to_delete )
-					? "DELETE FROM {$table_name} WHERE {$pk_name} IN (" . implode( ',', $ids_to_delete ) . ')'
-					: 'SELECT 1=1'
+					count( $ids_to_delete )
+						? "DELETE FROM {$table_name} WHERE {$pk_name} IN (" . implode( ',', $ids_to_delete ) . ')'
+						: "DELETE FROM {$table_name} WHERE 0=1"
 				);
-				return $this->get_translation_result(
+				$result = $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( $query ),
-					)
+					),
+					true,
+					count( $ids_to_delete )
 				);
+				return $result;
 			}
 
 			// Naive rewriting of DELETE JOIN query.
@@ -1043,8 +1050,8 @@ class WP_SQLite_Translator {
 			}
 		}
 
-			$result->queries[] = WP_SQLite_Translator::get_query_object( $updated_query, $params );
-			return $result;
+		$result->queries[] = WP_SQLite_Translator::get_query_object( $updated_query, $params );
+		return $result;
 	}
 
 	/**
@@ -1297,7 +1304,7 @@ class WP_SQLite_Translator {
 	 */
 	private function noop() {
 		return WP_SQLite_Translator::get_query_object(
-			'SELECT 1=1',
+			'SELECT 1 WHERE 1=0;',
 			array()
 		);
 	}

@@ -41,6 +41,7 @@ function sqlite_make_db_sqlite() {
 			if ( empty( $query ) ) {
 				continue;
 			}
+
 			$translation = $translator->translate( $query );
 			foreach ( $translation->queries as $query ) {
 				$stmt = $pdo->prepare( $query->sql );
@@ -62,6 +63,43 @@ function sqlite_make_db_sqlite() {
 			);
 			$message .= sprintf( 'Error message is: %s', $err_data[2] );
 			wp_die( $message, 'Database Error!' );
+		}
+	}
+	
+	if(defined('SQLITE_DEBUG_CROSSCHECK') && SQLITE_DEBUG_CROSSCHECK) {
+		$host = DB_HOST;
+		$port = 3306;
+		if(str_contains($host, ':')) {
+			list($host, $port) = explode(':', $host);
+		}
+		$dsn =  'mysql:host='.$host.'; port='.$port.'; dbname='.DB_NAME;
+		$pdo_mysql = new PDO( $dsn, DB_USER, DB_PASSWORD, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );
+		$pdo_mysql->query('SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";');
+		$pdo_mysql->query('SET time_zone = "+00:00";');
+		foreach ( $queries as $query ) {
+			$query = trim( $query );
+			if ( empty( $query ) ) {
+				continue;
+			}
+			try {
+				$pdo_mysql->beginTransaction();
+				$pdo_mysql->query($query);
+			} catch ( PDOException $err ) {
+				$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+				$err_code = $err_data[1];
+				if ( 5 == $err_code || 6 == $err_code ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+					// If the database is locked, commit again.
+					$pdo_mysql->commit();
+				} else {
+					$pdo_mysql->rollBack();
+					$message  = sprintf(
+						'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
+						var_export( $query, true )
+					);
+					$message .= sprintf( 'Error message is: %s', $err_data[2] );
+					wp_die( $message, 'Database Error!' );
+				}
+			}
 		}
 	}
 

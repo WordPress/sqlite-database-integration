@@ -81,6 +81,31 @@ class SQLiteTranslatorTests extends TestCase {
 	}
 
 	/**
+	 * @dataProvider getQueryTypeTestCases
+	 */
+	public function testRecognizeQueryType( $query, $expected_query_type ) {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$this->assertEquals(
+			$expected_query_type,
+			$t->translate( $query )->query_type
+		);
+	}
+
+	public function getQueryTypeTestCases() {
+		return array(
+			array(
+				'ALTER TABLE `table` ADD COLUMN `column` INT;',
+				'ALTER',
+			),
+			array(
+				'DESCRIBE `table`;',
+				'PRAGMA',
+			),
+		);
+	}
+
+	/**
 	 * @dataProvider getTestCases
 	 */
 	public function testTranslate( $msg, $query, $expected_translation ) {
@@ -113,7 +138,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'[ALTER TABLE] Ignores fulltext keys',
 				'ALTER TABLE wptests_dbdelta_test ADD FULLTEXT KEY `key_5` (`column_1`)',
 				array(
-					WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ),
+					WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ),
 				),
 			),
 			array(
@@ -247,24 +272,29 @@ class SQLiteTranslatorTests extends TestCase {
 				array( WP_SQLite_Translator::get_query_object( 'COMMIT' ) ),
 			),
 			array(
+				'Translates DESCRIBE queries',
+				'DESCRIBE wp_test',
+				array( WP_SQLite_Translator::get_query_object( 'PRAGMA table_info("wp_test");' ) ),
+			),
+			array(
 				'Ignores SET queries',
 				'SET autocommit = 0;',
-				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ) ),
 			),
 			array(
 				'Ignores CALL queries',
 				'CALL `test_mysqli_flush_sync_procedure`',
-				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ) ),
 			),
 			array(
 				'Ignores DROP PROCEDURE queries',
 				'DROP PROCEDURE IF EXISTS `test_mysqli_flush_sync_procedure`',
-				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ) ),
 			),
 			array(
 				'Ignores CREATE PROCEDURE queries',
 				'CREATE PROCEDURE `test_mysqli_flush_sync_procedure` BEGIN END',
-				array( WP_SQLite_Translator::get_query_object( 'SELECT 1=1' ) ),
+				array( WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ) ),
 			),
 			array(
 				'Translates a complex INSERT',

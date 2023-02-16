@@ -249,12 +249,12 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->last_error = $this->dbh->get_error_message();
-		if ( $this->last_error && ( ! defined( 'WP_INSTALLING' ) || ! WP_INSTALLING ) ) {
+		if ( $this->last_error ) { //&& ( ! defined( 'WP_INSTALLING' ) || ! WP_INSTALLING ) ) {
 			$this->print_error( $this->last_error );
 			return false;
 		}
 
-		if ( preg_match( '/^\\s*(create|alter|truncate|drop|optimize)\\s*/i', $query ) ) {
+		if ( preg_match( '/^\\s*(set|create|alter|truncate|drop|optimize)\\s*/i', $query ) ) {
 			return $this->dbh->get_return_value();
 		}
 

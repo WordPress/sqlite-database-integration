@@ -46,6 +46,8 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 */
 	public $pre_ordered_results = null;
 
+	public $last_translation;
+
 	/**
 	 * Class variable to store the rewritten queries.
 	 *
@@ -214,7 +216,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * Constructor definition is changed since version 1.7.1.
 	 */
 	function __construct() {
-
 		// Fixes a warning in the site-health screen.
 		$this->client_info = SQLite3::version()['versionString'];
 
@@ -407,70 +408,53 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				$statement,
 				$this->found_rows_result
 			);
+			$this->last_translation = $translation;
 			// $this->commit();
 		} catch ( PDOException $err ) {
-			$reason  = $err->getCode();
-			$message = $err->getMessage();
-			// $this->rollBack();
+			return $this->handle_error( $statement, $err );
 		}
-		if ( null === $reason ) {
-			$stmt = null;
-			foreach ( $translation->queries as $query ) {
-				$this->queries[] = 'Executing: (no parameters)';
-				do {
-					try {
-						// $this->beginTransaction();
-						$stmt = $this->pdo->prepare( $query->sql );
-						$stmt->execute( $query->params );
-						// $this->commit();
-					} catch ( PDOException $err ) {
-						// Unit tests fail if we don't forgive commit outside of transaction errors
-						// @TODO: Figure out what's the problem
-						if ( ! str_contains( $err->getMessage(), 'cannot commit - no transaction' ) ) {
-							$reason  = $err->getCode();
-							$message = $err->getMessage();
-						}
-						// $this->rollBack();
+
+		$stmt = null;
+		$last_retval = null;
+		foreach ( $translation->queries as $query ) {
+			$this->queries[] = 'Executing: (no parameters)';
+			do {
+				try {
+					// $this->beginTransaction();
+					$stmt = $this->pdo->prepare( $query->sql );
+					$last_retval = $stmt->execute( $query->params );
+					// $this->commit();
+				} catch ( PDOException $err ) {
+					// Unit tests fail if we don't forgive commit outside of transaction errors
+					// @TODO: Figure out what's the problem
+					if ( ! str_contains( $err->getMessage(), 'cannot commit - no transaction' ) ) {
+						// if(str_contains($query->sql, 'SELECT option_value FROM wptests_options WHERE option_name')) {
+						// 	var_dump($err);
+						// 	die();
+						// }
+						return $this->handle_error( $statement, $err );
 					}
-				} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-			}
-			if ( null === $reason ) {
-				if ( $translation->calc_found_rows ) {
-					$this->found_rows_result = $translation->calc_found_rows;
+					// $this->rollBack();
 				}
-				if ( $translation->has_result ) {
-					$this->_results = $translation->result;
-				} elseif ( $stmt ) {
-					// var_dump($stmt->fetchAll($mode));
-					$this->_results = $stmt->fetchAll( $mode );
-					// var_dump('numrows '.count($this->_results));
-					// var_dump($stmt->rowCount());
-					// var_dump($this->_results);
-				}
-				if ( ! $this->is_error ) {
-					$this->process_results();
-				}
+			} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+		}
 
-				$this->num_rows = count( $this->results );
-				// var_dump('numrows2: '.$this->num_rows);
-				$this->last_found_rows = count( $this->results );
-				$this->last_insert_id  = $this->pdo->lastInsertId();
-
-				if (
-					$stmt && (
-						'UPDATE' === $translation->query_type
-						|| 'INSERT' === $translation->query_type
-						|| 'DELETE' === $translation->query_type
-						|| 'REPLACE' === $translation->query_type
-					)
-				) {
-					$this->affected_rows = $stmt->rowCount();
-					$this->return_value  = $this->affected_rows;
-					$this->num_rows      = $this->affected_rows;
-				} else {
-					$this->return_value = $this->results;
-				}
+		if ( $translation->calc_found_rows ) {
+			$this->found_rows_result = $translation->calc_found_rows;
+		}
+		if ( $stmt ) {
+			if ( 
+				'DESCRIBE' === $translation->mysql_query_type 
+				|| 'SELECT' === $translation->mysql_query_type
+			) {
+				$this->_results = $stmt->fetchAll( $mode );
+			} else {
+				$this->_results = $last_retval;
 			}
+		}
+
+		if ( ! $this->is_error ) {
+			$this->process_results($stmt, $translation);
 		}
 
 		$debug_string = $this->get_debug_info();
@@ -478,35 +462,34 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			error_log( $debug_string );
 		}
 
-		// var_dump(
-		// 	// $err_message .'<br/><br/>'.
-		// 	$statement .PHP_EOL.PHP_EOL.
-		// 	($query?$query->sql:'') .PHP_EOL.PHP_EOL.
-		// 	'----------------'.PHP_EOL
-		// );
-		if ( $reason > 0 ) {
-			$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
-			if (
-				! str_contains( $message, 'no such table' )
-				&& ! str_contains( $statement, 'COMMIT' )
-				&& ! str_contains( $statement, 'ROLLBACK' )
-				&& ! str_contains( $statement, 'BEGIN' )
-				&& ! str_contains( $statement, 'START TRANSACTION' )
-			) {
-				echo(
-					$err_message . '<br/><br/>' . PHP_EOL . PHP_EOL.
-					$statement . '<br/><br/>'  . PHP_EOL . PHP_EOL.
-					( $query ? $query->sql : '' ) . '<br/><br/>'  . PHP_EOL . PHP_EOL.
-					'----------------' . '<br/><br/>'
-				);
-				throw new Exception();
-			}
-			$this->set_error( __LINE__, __FUNCTION__, $err_message );
-			return false;
-		}
-
 		return $this->return_value;
 	}
+
+	private function handle_error( $statement, PDOException $err, $report=true ) {
+		$reason  = $err->getCode();
+		$message = $err->getMessage();
+		$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
+		$this->set_error( __LINE__, __FUNCTION__, $err_message );
+		$this->return_value = false;
+		
+		// if (
+		// 	$report && ! str_contains( $message, 'no such table' )
+		// 	&& ! str_contains( $statement, 'COMMIT' )
+		// 	&& ! str_contains( $statement, 'ROLLBACK' )
+		// 	&& ! str_contains( $statement, 'BEGIN' )
+		// 	&& ! str_contains( $statement, 'START TRANSACTION' )
+		// ) {
+		// 	echo(
+		// 		$err_message . '<br/><br/>' . PHP_EOL . PHP_EOL.
+		// 		$statement . '<br/><br/>'  . PHP_EOL . PHP_EOL.
+		// 		// ( $query ? $query->sql : '' ) . '<br/><br/>'  . PHP_EOL . PHP_EOL.
+		// 		'----------------' . '<br/><br/>'
+		// 	);
+		// 	throw new Exception();
+		// }
+		return false;
+	}
+
 
 	/**
 	 * Method to return inserted row id.
@@ -694,66 +677,76 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	}
 
 	/**
-	 * Method to include the apropreate class files.
-	 *
-	 * It is not a good habit to change the include files programmatically.
-	 * Needs to be fixed some other way.
-	 *
-	 * @param string $query_type The query type (create, alter, etc).
-	 *
-	 * @return object reference to apropreate driver
-	 */
-	private function prepare_engine( $query_type = null ) {
-		if ( stripos( $query_type, 'create' ) !== false ) {
-			return new WP_SQLite_Create_Query();
-		}
-		if ( stripos( $query_type, 'alter' ) !== false ) {
-			return new WP_SQLite_Alter_Query();
-		}
-		return new WP_SQLite_PDO_Driver();
-	}
-
-	/**
-	 * Method to create a PDO statement object from the query string.
-	 *
-	 * @return PDOStatement
-	 */
-	private function prepare_query() {
-		$this->queries[] = "Prepare:\n" . $this->prepared_query;
-		$reason          = 0;
-		$message         = '';
-		$statement       = null;
-		do {
-			try {
-				$statement = $this->pdo->prepare( $this->prepared_query );
-			} catch ( PDOException $err ) {
-				$reason  = $err->getCode();
-				$message = $err->getMessage();
-			}
-		} while ( 5 === $reason || 6 === $reason );
-
-		if ( $reason > 0 ) {
-			$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
-			$this->set_error( __LINE__, __FUNCTION__, $err_message );
-		}
-
-		return $statement;
-	}
-
-	/**
 	 * Method to format the queried data to that of MySQL.
 	 *
 	 * @param string $engine Not used.
 	 */
-	private function process_results() {
-		if ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
+	private function process_results($stmt, $translation) {
+		if ( 'DESCRIBE' === $translation->mysql_query_type ) {
+			if(!$this->_results) {
+				$this->handle_error( $stmt, new PDOException('Table not found'), false );
+				return;
+			}
+		}
+		
+		// @TODO: Only use $translation->mysql_query_type, not $this->query_type
+		if($translation->has_result) {
+			$this->results = $translation->result;
+		} else if ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
 			$this->convert_to_columns_object();
+		} elseif ( 'set' === $this->query_type ) {
+			$this->results = false;
 		} elseif ( 'showindex' === $this->query_type ) {
 			$this->convert_to_index_object();
 		} elseif ( in_array( $this->query_type, array( 'check', 'analyze' ), true ) ) {
 			$this->convert_result_check_or_analyze();
+		} elseif( 'SET' === $translation->mysql_query_type ) {
+			$this->_results = 0;
+			$this->results = 0;
 		} else {
 			$this->results = $this->_results;
+		}
+		$this->return_value = $this->results;
+
+		if(is_array($this->results)) {
+			$this->num_rows = count( $this->results );
+			$this->last_found_rows = count( $this->results );
+		}
+
+		if(!$stmt) {
+			return;
+		}
+
+		switch($translation->sqlite_query_type){
+			case 'UPDATE':
+			case 'INSERT':
+			case 'DELETE':
+			case 'REPLACE':
+				/**
+				* SELECT CHANGES() is a workaround – we can't 
+				* count rows using $stmt->rowCount()
+				* This method returns "0" (zero) with the SQLite driver at 
+				* all times
+				* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
+				*/
+				// $this->affected_rows = $stmt->rowCount(); // $this->pdo->query('select changes()')->fetch()[0];
+	
+				$this->affected_rows = $stmt->rowCount();
+				$this->return_value  = $this->affected_rows;
+				$this->num_rows      = $this->affected_rows;
+				$this->last_insert_id  = $this->pdo->lastInsertId();
+				if(is_numeric($this->last_insert_id)) {
+					$this->last_insert_id = (int) $this->last_insert_id;
+				}
+				break;
+			case 'BEGIN':
+			case 'COMMIT':
+			case 'ROLLBACK':
+				$this->affected_rows = 0;
+				$this->return_value  = $this->affected_rows;
+				$this->num_rows      = $this->affected_rows;
+				break;
+
 		}
 	}
 
