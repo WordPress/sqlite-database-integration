@@ -90,3 +90,34 @@ function sqlite_integration_admin_screen() {
 	</div>
 	<?php
 }
+
+/**
+ * Adds a link to the admin bar.
+ *
+ * @since n.e.x.t
+ *
+ * @global wpdb $wpdb WordPress database abstraction object.
+ *
+ * @param WP_Admin_Bar $admin_bar The admin bar object.
+ */
+function sqlite_plugin_adminbar_item( $admin_bar ) {
+	global $wpdb;
+
+	if ( defined( 'SQLITE_DB_DROPIN_VERSION' ) && defined( 'DATABASE_TYPE' ) && 'sqlite' === DATABASE_TYPE ) {
+		$title = '<span style="color:#46B450;">' . __( 'Database: SQLite', 'performance-lab' ) . '</span>';
+	} elseif ( stripos( $wpdb->db_server_info(), 'maria' ) !== false ) {
+		$title = '<span style="color:#DC3232;">' . __( 'Database: MariaDB', 'performance-lab' ) . '</span>';
+	} else {
+		$title = '<span style="color:#DC3232;">' . __( 'Database: MySQL', 'performance-lab' ) . '</span>';
+	}
+
+	$args = array(
+		'id'     => 'sqlite-db-integration',
+		'parent' => 'top-secondary',
+		'title'  => $title,
+		'href'   => esc_url( admin_url( 'options-general.php?page=sqlite-integration' ) ),
+		'meta'   => false,
+	);
+	$admin_bar->add_node( $args );
+}
+add_action( 'admin_bar_menu', 'sqlite_plugin_adminbar_item', 999 );
