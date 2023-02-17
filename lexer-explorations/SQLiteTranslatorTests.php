@@ -156,6 +156,29 @@ class SQLiteTranslatorTests extends TestCase {
 		);
 	}
 
+	public function testTranslatesUtf8Insert() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$result = $t->translate(
+			"INSERT INTO test VALUES('ąłółźćę†','ąłółźćę†','ąłółźćę†')"
+		);
+		$this->assertEquals(
+			"INSERT INTO test VALUES(:param0 ,:param1 ,:param2 )",
+			$result->queries[0]->sql
+		);
+	}
+	public function testTranslatesUtf8SELECT() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$result = $t->translate(
+			"SELECT a as 'ą' FROM test WHERE b='ąłółźćę†'AND c='ąłółźćę†'"
+		);
+		$this->assertEquals(
+			"SELECT a as 'ą' FROM test WHERE b=:param0 AND c=:param1",
+			$result->queries[0]->sql
+		);
+	}
+
 	public function testCalcFoundRows() {
 		$sqlite = new PDO( 'sqlite::memory:' );
 		$sqlite->query(

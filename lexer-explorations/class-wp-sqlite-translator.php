@@ -191,11 +191,6 @@ class WP_SQLite_Translator {
 	 * @return stdClass
 	 */
 	public function translate( string $query, $last_found_rows = null ) {
-		// @TODO Lexer has a bug where it does not calculate
-		// the string length correctly if utf8 characters
-		// are used. Let's pad it with spaces manually for now
-		// and fix the issue before merging
-		$query                 = $query . '                        ';
 		$this->last_found_rows = $last_found_rows;
 
 		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;

@@ -1434,12 +1434,6 @@ class WP_SQLite_Lexer {
 		// `strlen` is used instead of `mb_strlen` because the lexer needs to parse each byte of the input.
 		$this->string_length = strlen( $str );
 
-		// For multi-byte strings.
-		$mb_len = mb_strlen( $str, 'UTF-8' );
-		if ( $mb_len !== $this->string_length ) {
-			$this->string_length = $mb_len;
-		}
-
 		// Setting the delimiter.
 		$this->set_delimiter( ! empty( $delimiter ) ? $delimiter : static::$default_delimiter );
 
