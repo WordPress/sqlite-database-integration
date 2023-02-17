@@ -15,7 +15,7 @@ if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
 }
 
 // @TODO: Remove before merging
-define('SQLITE_DEBUG_CROSSCHECK', true);
+define('SQLITE_DEBUG_CROSSCHECK', false);
 error_reporting(E_ALL & ~E_DEPRECATED);
 
 if ( ! extension_loaded( 'pdo' ) ) {

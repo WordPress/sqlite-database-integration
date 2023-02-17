@@ -96,24 +96,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private $pdo;
 
 	/**
-	 * Class variable to store the query string prepared to execute.
-	 *
-	 * @access private
-	 *
-	 * @var string|array
-	 */
-	private $prepared_query;
-
-	/**
-	 * Class variable to store the values in the query string.
-	 *
-	 * @access private
-	 *
-	 * @var array
-	 */
-	private $extracted_variables = array();
-
-	/**
 	 * Class variable to store the error messages.
 	 *
 	 * @access private
@@ -175,17 +157,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @var mixed
 	 */
 	private $return_value;
-
-	/**
-	 * Variable to determine which insert query to use.
-	 *
-	 * Whether VALUES clause in the INSERT query can take multiple values or not
-	 * depends on the version of SQLite library. We check the version and set
-	 * this variable to true or false.
-	 *
-	 * @var boolean
-	 */
-	private $can_insert_multiple_rows = false;
 
 	/**
 	 * The parameter number.
@@ -397,44 +368,41 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
+		if(
+			preg_match('/^START TRANSACTION/i',$statement)
+			|| preg_match('/^BEGIN/i',$statement)
+		) {		
+			return $this->beginTransaction();
+		} else if(preg_match('/^COMMIT/i',$statement)) {
+			return $this->commit();
+		} else if(preg_match('/^ROLLBACK/i',$statement)) {
+			return $this->rollBack();
+		}
 
 		$this->translator = new WP_SQLite_Translator( $this->pdo, $GLOBALS['table_prefix'] );
 		$reason           = null;
 
 		try {
-			// $this->beginTransaction();
-			// @TODO: transaction breaks in the unit test suite
 			$translation = $this->translator->translate(
 				$statement,
 				$this->found_rows_result
 			);
 			$this->last_translation = $translation;
-			// $this->commit();
 		} catch ( PDOException $err ) {
-			return $this->handle_error( $statement, $err );
+			return $this->handle_error( $err );
 		}
 
 		$stmt = null;
 		$last_retval = null;
 		foreach ( $translation->queries as $query ) {
-			$this->queries[] = 'Executing: (no parameters)';
+			$params = $query->params ? 'parameters: '.implode(", ", $query->params) : '(no parameters)';
+			$this->queries[] = "Executing: $query->sql | $params";
 			do {
 				try {
-					// $this->beginTransaction();
 					$stmt = $this->pdo->prepare( $query->sql );
 					$last_retval = $stmt->execute( $query->params );
-					// $this->commit();
 				} catch ( PDOException $err ) {
-					// Unit tests fail if we don't forgive commit outside of transaction errors
-					// @TODO: Figure out what's the problem
-					if ( ! str_contains( $err->getMessage(), 'cannot commit - no transaction' ) ) {
-						// if(str_contains($query->sql, 'SELECT option_value FROM wptests_options WHERE option_name')) {
-						// 	var_dump($err);
-						// 	die();
-						// }
-						return $this->handle_error( $statement, $err );
-					}
-					// $this->rollBack();
+					return $this->handle_error( $err );
 				}
 			} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
 		}
@@ -465,28 +433,11 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		return $this->return_value;
 	}
 
-	private function handle_error( $statement, PDOException $err, $report=true ) {
-		$reason  = $err->getCode();
+	private function handle_error( PDOException $err ) {
 		$message = $err->getMessage();
 		$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
 		$this->set_error( __LINE__, __FUNCTION__, $err_message );
 		$this->return_value = false;
-		
-		// if (
-		// 	$report && ! str_contains( $message, 'no such table' )
-		// 	&& ! str_contains( $statement, 'COMMIT' )
-		// 	&& ! str_contains( $statement, 'ROLLBACK' )
-		// 	&& ! str_contains( $statement, 'BEGIN' )
-		// 	&& ! str_contains( $statement, 'START TRANSACTION' )
-		// ) {
-		// 	echo(
-		// 		$err_message . '<br/><br/>' . PHP_EOL . PHP_EOL.
-		// 		$statement . '<br/><br/>'  . PHP_EOL . PHP_EOL.
-		// 		// ( $query ? $query->sql : '' ) . '<br/><br/>'  . PHP_EOL . PHP_EOL.
-		// 		'----------------' . '<br/><br/>'
-		// 	);
-		// 	throw new Exception();
-		// }
 		return false;
 	}
 
@@ -669,7 +620,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$this->column_data         = array();
 		$this->num_rows            = null;
 		$this->return_value        = null;
-		$this->extracted_variables = array();
 		$this->error_messages      = array();
 		$this->is_error            = false;
 		$this->queries             = array();
@@ -684,7 +634,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private function process_results($stmt, $translation) {
 		if ( 'DESCRIBE' === $translation->mysql_query_type ) {
 			if(!$this->_results) {
-				$this->handle_error( $stmt, new PDOException('Table not found'), false );
+				$this->handle_error( new PDOException('Table not found') );
 				return;
 			}
 		}
@@ -730,22 +680,13 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				* all times
 				* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
 				*/
-				// $this->affected_rows = $stmt->rowCount(); // $this->pdo->query('select changes()')->fetch()[0];
-	
-				$this->affected_rows = $stmt->rowCount();
+				$this->affected_rows = $this->pdo->query('select changes()')->fetch()[0]; 
 				$this->return_value  = $this->affected_rows;
 				$this->num_rows      = $this->affected_rows;
 				$this->last_insert_id  = $this->pdo->lastInsertId();
 				if(is_numeric($this->last_insert_id)) {
 					$this->last_insert_id = (int) $this->last_insert_id;
 				}
-				break;
-			case 'BEGIN':
-			case 'COMMIT':
-			case 'ROLLBACK':
-				$this->affected_rows = 0;
-				$this->return_value  = $this->affected_rows;
-				$this->num_rows      = $this->affected_rows;
 				break;
 
 		}
@@ -775,27 +716,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			return false;
 		}
 		error_log( "Line $line, Function: $function, Message: $message" );
-	}
-
-	/**
-	 * Method to change the queried data to PHP object format.
-	 *
-	 * It takes the associative array of query results and creates a numeric
-	 * array of anonymous objects
-	 *
-	 * @access private
-	 */
-	private function convert_to_object() {
-		$_results = array();
-		if ( count( $this->results ) === 0 ) {
-			// These messages are properly escaped in the function.
-			echo $this->get_error_message();
-		} else {
-			foreach ( $this->results as $row ) {
-				$_results[] = new WP_SQLite_Object_Array( $row );
-			}
-		}
-		$this->results = $_results;
 	}
 
 	/**
@@ -957,26 +877,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	}
 
 	/**
-	 * Method to check SQLite library version.
-	 *
-	 * This is used for checking if SQLite can execute multiple rows insert.
-	 *
-	 * @return version number string or 0
-	 * @access private
-	 */
-	private function get_sqlite_version() {
-		try {
-			$statement = $this->pdo->prepare( 'SELECT sqlite_version()' );
-			$statement->execute();
-			$result = $statement->fetch( PDO::FETCH_NUM ); // phpcs:ignore WordPress.DB.RestrictedClasses
-
-			return $result[0];
-		} catch ( PDOException $err ) {
-			return '0';
-		}
-	}
-
-	/**
 	 * Method to call PDO::beginTransaction().
 	 *
 	 * @see PDO::beginTransaction()
@@ -998,8 +898,10 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @return void
 	 */
 	public function commit() {
-		$this->pdo->commit();
-		$this->has_active_transaction = false;
+		if ( $this->has_active_transaction ) {
+			$this->pdo->commit();
+			$this->has_active_transaction = false;
+		}
 	}
 
 	/**
@@ -1010,7 +912,9 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @return void
 	 */
 	public function rollBack() {
-		$this->pdo->rollBack();
-		$this->has_active_transaction = false;
+		if ( $this->has_active_transaction ) {
+			$this->pdo->rollBack();
+			$this->has_active_transaction = false;
+		}
 	}
 }

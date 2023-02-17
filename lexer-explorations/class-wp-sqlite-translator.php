@@ -109,17 +109,6 @@ class WP_SQLite_Translator {
 	);
 
 	/**
-	 * The query.
-	 *
-	 * @TODO Remove this property?
-	 * Is it weird to have this->query
-	 * that only matters for the lifetime of translate()?
-	 *
-	 * @var string
-	 */
-	private $query;
-
-	/**
 	 * The last found rows.
 	 *
 	 * @var int|string
@@ -206,10 +195,10 @@ class WP_SQLite_Translator {
 		// the string length correctly if utf8 characters
 		// are used. Let's pad it with spaces manually for now
 		// and fix the issue before merging
-		$this->query           = $query . '                        ';
+		$query                 = $query . '                        ';
 		$this->last_found_rows = $last_found_rows;
 
-		$tokens     = WP_SQLite_Lexer::get_tokens( $this->query )->tokens;
+		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
 		$this->rewriter = new WP_SQLite_Query_Rewriter( $tokens );
 		$query_type = $this->rewriter->peek()->value;
 
@@ -264,7 +253,7 @@ class WP_SQLite_Translator {
 			case 'ROLLBACK':
 				$result = $this->get_translation_result(
 					array(
-						WP_SQLite_Translator::get_query_object( $this->query ),
+						WP_SQLite_Translator::get_query_object( $query ),
 					)
 				);
 				break;
@@ -659,12 +648,13 @@ class WP_SQLite_Translator {
 			$table_name = $this->rewriter->consume()->value; // Table name.
 		}
 
-		if ( 'SELECT' === $query_type && $table_name && strtolower( $table_name ) === 'information_schema' ) {
-			return $this->translate_information_schema_query();
-		}
-
 		$last_reserved_keyword = null;
 		while ( $token = $this->rewriter->peek() ) {
+			if ( ! $table_name && $last_reserved_keyword === 'FROM' ) {
+				$table_name = $this->rewriter->consume()->value;
+				continue;
+			}
+
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) {
 				$last_reserved_keyword = $token->value;
 			}
@@ -681,6 +671,7 @@ class WP_SQLite_Translator {
 				$params[ $param_name ] = $token->value;
 				$this->rewriter->skip();
 				$this->rewriter->add( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 				continue;
 			}
 
@@ -708,9 +699,16 @@ class WP_SQLite_Translator {
 			}
 			$this->rewriter->consume();
 		}
+		$this->rewriter->consume_all();
 
 		$updated_query = $this->rewriter->get_updated_query();
 		$result        = $this->get_translation_result( array() );
+
+		if ( 'SELECT' === $query_type && $table_name && str_starts_with(strtolower( $table_name ), 'information_schema') ) {
+			return $this->translate_information_schema_query(
+				$updated_query
+			);
+		}
 
 		if (
 			// If the query contains a function that is not supported by SQLite,
@@ -758,8 +756,9 @@ class WP_SQLite_Translator {
 
 	private function postprocess_double_delete($rewritten_params) {
 		// Naive rewriting of DELETE JOIN query.
-		// @TODO: Use Lexer.
-		if ( str_contains( $this->query, ' JOIN ' ) ) {
+		// @TODO: Actually rewrite the query instead of using a hardcoded workaround.
+		$updated_query = $this->rewriter->get_updated_query();
+		if ( str_contains( $updated_query, ' JOIN ' ) ) {
 			return $this->get_translation_result(
 				array(
 					WP_SQLite_Translator::get_query_object(
@@ -788,8 +787,8 @@ class WP_SQLite_Translator {
 		$rewriter->add( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
 
 		/*
-			* Get table name.
-			*/
+		 * Get table name.
+		 */
 		$from = $rewriter->peek(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
@@ -865,9 +864,9 @@ class WP_SQLite_Translator {
 		);
 	}
 
-	private function translate_information_schema_query() {
+	private function translate_information_schema_query($query) {
 		// @TODO: Actually rewrite the columns
-		if ( str_contains( $this->query, 'bytes' ) ) {
+		if ( str_contains( $query, 'bytes' ) ) {
 			// Count rows per table
 			$tables = $this->sqlite->query("SELECT name as `table` FROM sqlite_master WHERE type='table' ORDER BY name")->fetchAll();
 			$rows = '(CASE ';
@@ -902,9 +901,9 @@ class WP_SQLite_Translator {
 			array( 'DAYOFMONTH', '%d' ),
 			array( 'DAYOFWEEK', '%w' ),
 			array( 'WEEK', '%W' ),
-			// @TODO fix
-			// %w returns 0 for Sunday and 6 for Saturday
-			// but weekday returns 1 for Monday and 7 for Sunday
+			// @TODO %w returns 0 for Sunday and 6 for Saturday
+			//       but weekday returns 1 for Monday and 7 for Sunday
+			//       Fix by delegating WEEKDAY to WP_SQLite_PDO_User_Defined_Functions
 			array( 'WEEKDAY', '%w' ),
 			array( 'HOUR', '%H' ),
 			array( 'MINUTE', '%M' ),
@@ -930,9 +929,7 @@ class WP_SQLite_Translator {
 
 				if ( 'WEEK' === $unit ) {
 					$format = '%W';
-
 					/*
-					 * @TODO
 					 * WEEK(date, mode) can mean different strftime formats
 					 * depending on the mode (default=0).
 					 * If the $skipped token is a comma, then we need to
