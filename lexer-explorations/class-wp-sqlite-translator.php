@@ -600,10 +600,19 @@ class WP_SQLite_Translator {
 		if ( str_contains( $this->query, 'information_schema' ) ) {
 			// @TODO: Actually rewrite the columns
 			if ( str_contains( $this->query, 'bytes' ) ) {
+				// Count rows per table
+				$tables = $this->sqlite->query("SELECT name as `table` FROM sqlite_master WHERE type='table' ORDER BY name")->fetchAll();
+				$rows = '(CASE ';
+				foreach($tables as $table) {
+					$table_name = $table['table'];
+					$count = $this->sqlite->query("SELECT COUNT(*) as `count` FROM $table_name")->fetch();
+					$rows .= " WHEN name = '$table_name' THEN {$count['count']} ";
+				}
+				$rows .= "ELSE 0 END) ";
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
-							"SELECT name as `table`, 0 as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
+							"SELECT name as `table`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
 						),
 					)
 				);
