@@ -216,6 +216,10 @@ class WP_SQLite_Token {
 	 * @return bool
 	 */
 	public function matches( $type = null, $flags = null, ?array $values = null ) {
+		if ( null === $type && null === $flags && ( null === $values || array() === $values ) ) {
+			return !$this->is_semantically_void();
+		}
+
 		return (
 			( null === $type || $this->type === $type )
 			&& ( null === $flags || ( $this->flags & $flags ) )
@@ -223,31 +227,8 @@ class WP_SQLite_Token {
 		);
 	}
 
-	/**
-	 * Check if the token is a whitespace.
-	 *
-	 * @return bool
-	 */
-	public function is_whitespace() {
-		return self::TYPE_WHITESPACE === $this->type;
-	}
-
-	/**
-	 * Check if the token is a comment.
-	 *
-	 * @return bool
-	 */
-	public function is_comment() {
-		return self::TYPE_COMMENT === $this->type;
-	}
-
-	/**
-	 * Check if the token is a keyword or a data type.
-	 *
-	 * @return bool
-	 */
-	public function is_data_type() {
-		return self::TYPE_KEYWORD === $this->type && ( $this->flags & self::FLAG_KEYWORD_DATA_TYPE );
+	public function is_semantically_void() {
+		return $this->matches( self::TYPE_WHITESPACE ) || $this->matches( self::TYPE_COMMENT );
 	}
 
 	/**
@@ -257,7 +238,7 @@ class WP_SQLite_Token {
 	 *
 	 * @return mixed
 	 */
-	public function extract() {
+	private function extract() {
 		switch ( $this->type ) {
 			case self::TYPE_KEYWORD:
 				$this->keyword = strtoupper( $this->token );

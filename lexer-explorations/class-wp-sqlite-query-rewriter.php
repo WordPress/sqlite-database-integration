@@ -52,6 +52,8 @@ class WP_SQLite_Query_Rewriter {
 	 */
 	public $depth = 0;
 
+	private $token;
+
 	/**
 	 * Constructor.
 	 *
@@ -76,18 +78,6 @@ class WP_SQLite_Query_Rewriter {
 	}
 
 	/**
-	 * Returns the current token.
-	 *
-	 * @return WP_SQLite_Token|null
-	 */
-	public function current() {
-		if ( $this->index < 0 || $this->index >= $this->max ) {
-			return null;
-		}
-		return $this->input_tokens[ $this->index ];
-	}
-
-	/**
 	 * Add a token to the output.
 	 *
 	 * @param WP_SQLite_Token $token Token object.
@@ -106,16 +96,6 @@ class WP_SQLite_Query_Rewriter {
 	}
 
 	/**
-	 * Replaces the last token.
-	 *
-	 * @param WP_SQLite_Token $token Token object.
-	 */
-	public function replace_last( $token ) {
-		$this->drop_last();
-		$this->output_tokens[] = $token;
-	}
-
-	/**
 	 * Replaces all tokens.
 	 *
 	 * @param WP_SQLite_Token[] $tokens Array of token objects.
@@ -127,22 +107,24 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Peek at the next tokens and return one that matches the given criteria.
 	 *
-	 * @param string|null $type   Token type.
-	 * @param int|null    $flags  Token flags.
-	 * @param string|null $values Token values.
-	 * @param int         $nth    Nth match.
+	 * @param array $query Optional. Search query.
+	 * @param string|null $query['type']   Optional. Token type.
+	 * @param int|null    $query['flags']  Optional. Token flags.
+	 * @param string|null $query['values'] Optional. Token values.
 	 *
-	 * @return WP_SQLite_Token|null
+	 * @return WP_SQLite_Token
 	 */
-	public function peek( $type = null, $flags = null, $values = null, $nth = 0 ) {
-		$i       = $this->index;
-		$matches = 0;
+	public function peek( $query = array() ) {
+		$type   = isset( $query['type'] ) ? $query['type'] : null;
+		$flags  = isset( $query['flags'] ) ? $query['flags'] : null;
+		$values = isset( $query['value'] )
+			? ( is_array( $query['value'] ) ? $query['value'] : array( $query['value'] ) )
+			: null;
+
+		$i = $this->index;
 		while ( ++$i < $this->max ) {
-			$token = $this->input_tokens[ $i ];
-			if ( $this->matches( $token, $type, $flags, $values ) ) {
-				if ( ++$matches >= $nth ) {
-					return $token;
-				}
+			if ( $this->input_tokens[ $i ]->matches( $type, $flags, $values ) ) {
+				return $this->input_tokens[ $i ];
 			}
 		}
 	}
@@ -150,12 +132,12 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Consume all the tokens.
 	 *
-	 * @param array $options Options.
+	 * @param array $query Search query.
 	 *
 	 * @return void
 	 */
-	public function consume_all( $options = array() ) {
-		while ( $this->consume( $options ) ) {
+	public function consume_all( $query = array() ) {
+		while ( $this->consume( $query ) ) {
 			// Do nothing.
 		}
 	}
@@ -163,25 +145,21 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Consume the next tokens and return one that matches the given criteria.
 	 *
-	 * @param array $options Options.
+	 * @param array $query Search query.
+	 * @param string|null $query['type']   Optional. Token type.
+	 * @param int|null    $query['flags']  Optional. Token flags.
+	 * @param string|null $query['values'] Optional. Token values.
 	 *
 	 * @return WP_SQLite_Token|null
 	 */
-	public function consume( $options = array() ) {
-		$next_tokens         = $this->get_next_tokens( $options );
-		$tokens              = $next_tokens[0];
-		$last_matched        = $next_tokens[1];
-		$count               = count( $tokens );
-		$this->index        += $count;
+	public function consume( $query = array() ) {
+		$tokens = $this->move_forward( $query );
 		$this->output_tokens = array_merge( $this->output_tokens, $tokens );
-		if ( ! $count ) {
-			++$this->index;
-		}
-		return $last_matched ? $this->current() : null;
+		return $this->token;
 	}
 
 	/**
-	 * Drop the last token and return it.
+	 * Drop the last consumed token and return it.
 	 *
 	 * @return WP_SQLite_Token|null
 	 */
@@ -192,82 +170,81 @@ class WP_SQLite_Query_Rewriter {
 	/**
 	 * Skip over the next tokens and return one that matches the given criteria.
 	 *
-	 * @param array $options Options.
+	 * @param array $query Search query.
+	 * @param string|null $query['type']   Optional. Token type.
+	 * @param int|null    $query['flags']  Optional. Token flags.
+	 * @param string|null $query['values'] Optional. Token values.
 	 *
 	 * @return WP_SQLite_Token|null
 	 */
-	public function skip( $options = array() ) {
-		$this->skip_over( $options );
-		return $this->current();
+	public function skip( $query = array() ) {
+		$this->skip_and_return_all( $query );
+		return $this->token;
 	}
 
 	/**
-	 * Skip over the next tokens and return one that matches the given criteria.
+	 * Skip over the next tokens until one matches the given criteria,
+	 * and return all the skipped tokens.
 	 *
-	 * @param array $options Options.
+	 * @param array $query Search query.
+	 * @param string|null $query['type']   Optional. Token type.
+	 * @param int|null    $query['flags']  Optional. Token flags.
+	 * @param string|null $query['values'] Optional. Token values.
 	 *
-	 * @return WP_SQLite_Token[]|null
+	 * @return WP_SQLite_Token[]
 	 */
-	public function skip_over( $options = array() ) {
-		$next_tokens  = $this->get_next_tokens( $options );
-		$tokens       = $next_tokens[0];
-		$last_matched = $next_tokens[1];
-		$count        = count( $tokens );
-		$this->index += $count;
-		if ( ! $count ) {
-			++$this->index;
+	public function skip_and_return_all( $query = array() ) {
+		$tokens = $this->move_forward( $query );
+
+		// When skipping over whitespaces, make sure to consume
+		// at least one to avoid SQL syntax errors.
+		foreach($tokens as $token) {
+			if($token->matches(WP_SQLite_Token::TYPE_WHITESPACE)){
+				$this->add($token);
+				break;
+			}
 		}
-		return $last_matched ? $tokens : null;
+
+		return $tokens;
 	}
 
 	/**
 	 * Returns the next tokens that match the given criteria.
 	 *
-	 * @param array $options Options.
+	 * @param array $query Search query.
+	 * @param string|null $query['type']   Optional. Token type.
+	 * @param int|null    $query['flags']  Optional. Token flags.
+	 * @param string|null $query['values'] Optional. Token values.
 	 *
 	 * @return array
 	 */
-	private function get_next_tokens( $options = array() ) {
-		$type   = isset( $options['type'] ) ? $options['type'] : null;
-		$flags  = isset( $options['flags'] ) ? $options['flags'] : null;
-		$values = isset( $options['value'] )
-			? ( is_array( $options['value'] ) ? $options['value'] : array( $options['value'] ) )
+	private function move_forward( $query = array() ) {
+		$type   = isset( $query['type'] ) ? $query['type'] : null;
+		$flags  = isset( $query['flags'] ) ? $query['flags'] : null;
+		$values = isset( $query['value'] )
+			? ( is_array( $query['value'] ) ? $query['value'] : array( $query['value'] ) )
 			: null;
-		$depth  = isset( $options['depth'] ) ? $options['depth'] : null;
+		$depth  = isset( $query['depth'] ) ? $query['depth'] : null;
 
 		$buffered = array();
-		$i        = $this->index;
-		while ( ++$i < $this->max ) {
-			$token = $this->input_tokens[ $i ];
-			$this->update_call_stack( $token, $i );
-			$buffered[] = $token;
+		while ( true ) {
+			if ( ++$this->index >= $this->max ) {
+				$this->token = null;
+				$this->call_stack = array();
+				break;	
+			}
+			$this->token = $this->input_tokens[ $this->index ];
+			$this->update_call_stack();
+			$buffered[] = $this->token;
 			if (
 				( null === $depth || $this->depth === $depth )
-				&& $this->matches( $token, $type, $flags, $values )
+				&& $this->token->matches( $type, $flags, $values )
 			) {
-				return array( $buffered, true );
+				break;
 			}
 		}
 
-		return array( $buffered, false );
-	}
-
-	/**
-	 * Checks if the given token matches the given criteria.
-	 *
-	 * @param WP_SQLite_Token $token  Token object.
-	 * @param string|null     $type   Token type.
-	 * @param int|null        $flags  Token flags.
-	 * @param string|null     $values Token values.
-	 *
-	 * @return bool
-	 */
-	private function matches( $token, $type = null, $flags = null, $values = null ) {
-		if ( null === $type && null === $flags && null === $values ) {
-			return ! $token->is_whitespace() && ! $token->is_comment();
-		}
-
-		return $token->matches( $type, $flags, $values );
+		return $buffered;
 	}
 
 	/**
@@ -279,6 +256,8 @@ class WP_SQLite_Query_Rewriter {
 		return count( $this->call_stack ) ? $this->call_stack[ count( $this->call_stack ) - 1 ] : null;
 	}
 
+	private $last_function_call;
+
 	/**
 	 * Updates the call stack.
 	 *
@@ -287,32 +266,36 @@ class WP_SQLite_Query_Rewriter {
 	 *
 	 * @return void
 	 */
-	private function update_call_stack( $token, $current_idx ) {
-		if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
-			if (
-				$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
-				// && ! ( $token->flags & WP_SQLite_Token::FLAG_KEYWORD_RESERVED )
-			) {
-				$j = $current_idx;
-				do {
-					$peek = $this->input_tokens[ ++$j ];
-				} while ( WP_SQLite_Token::TYPE_WHITESPACE === $peek->type );
-				if ( WP_SQLite_Token::TYPE_OPERATOR === $peek->type && '(' === $peek->value ) {
-					array_push( $this->call_stack, array( $token->value, $this->depth ) );
-				}
-			}
-		} elseif ( WP_SQLite_Token::TYPE_OPERATOR === $token->type ) {
-			if ( '(' === $token->value ) {
-				++$this->depth;
-			} elseif ( ')' === $token->value ) {
-				--$this->depth;
-				$call_parent = $this->last_call_stack_element();
-				if (
-					$call_parent &&
-					$call_parent[1] === $this->depth
-				) {
-					array_pop( $this->call_stack );
-				}
+	private function update_call_stack() {
+		if($this->token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION){
+			$this->last_function_call = $this->token->value;
+		}
+		if($this->token->type === WP_SQLite_Token::TYPE_OPERATOR){
+			switch($this->token->value) {
+				case '(':
+					++$this->depth;
+					if($this->last_function_call) {
+						array_push(
+							$this->call_stack,
+							array(
+								'function' => $this->last_function_call,
+								'depth' => $this->depth
+							)
+						);
+						$this->last_function_call = null;
+					}
+					break;
+
+				case ')':
+					--$this->depth;
+					$call_parent = $this->last_call_stack_element();
+					if (
+						$call_parent &&
+						$call_parent['depth'] === $this->depth
+					) {
+						array_pop( $this->call_stack );
+					}
+					break;
 			}
 		}
 	}

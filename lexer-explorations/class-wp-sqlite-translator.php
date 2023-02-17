@@ -9,21 +9,12 @@
 // Require files.
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
+require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
 
 /**
  * The queries translator class.
  */
 class WP_SQLite_Translator {
-	/*
-	 * @TODO Check capability – SQLite must have a regexp function available.
-	 */
-
-	/**
-	 * Whether there's a regexp function.
-	 *
-	 * @var bool
-	 */
-	private $has_regexp = true;
 
 	/**
 	 * The SQLite database.
@@ -135,6 +126,8 @@ class WP_SQLite_Translator {
 	 */
 	private $last_found_rows = 0;
 
+	private $rewriter;
+
 	/**
 	 * Constructor.
 	 *
@@ -144,7 +137,9 @@ class WP_SQLite_Translator {
 	public function __construct( $pdo, $table_prefix = 'wp_' ) {
 		$this->sqlite = $pdo;
 		$this->sqlite->query( 'PRAGMA encoding="UTF-8";' );
-		$this->sqlite->sqliteCreateFunction( 'regexp', array( $this, 'sqlite_regexp' ), 2 );
+		// @TODO Don't call this in a translator class:
+		new WP_SQLite_PDO_User_Defined_Functions($this->sqlite);
+
 		$this->table_prefix = $table_prefix;
 	}
 
@@ -191,6 +186,7 @@ class WP_SQLite_Translator {
 		$result->calc_found_rows = null;
 		$result->sqlite_query_type = null;
 		$result->mysql_query_type  = null;
+		$result->rewriter  = null;
 
 		return $result;
 	}
@@ -214,16 +210,16 @@ class WP_SQLite_Translator {
 		$this->last_found_rows = $last_found_rows;
 
 		$tokens     = WP_SQLite_Lexer::get_tokens( $this->query )->tokens;
-		$rewriter   = new WP_SQLite_Query_Rewriter( $tokens );
-		$query_type = $rewriter->peek()->value;
+		$this->rewriter = new WP_SQLite_Query_Rewriter( $tokens );
+		$query_type = $this->rewriter->peek()->value;
 
 		switch ( $query_type ) {
 			case 'ALTER':
-				$result = $this->translate_alter( $rewriter );
+				$result = $this->translate_alter();
 				break;
 
 			case 'CREATE':
-				$result = $this->translate_create( $rewriter );
+				$result = $this->translate_create();
 				break;
 
 			case 'REPLACE':
@@ -231,7 +227,7 @@ class WP_SQLite_Translator {
 			case 'INSERT':
 			case 'UPDATE':
 			case 'DELETE':
-				$result = $this->translate_crud( $rewriter );
+				$result = $this->translate_crud();
 				break;
 
 			case 'CALL':
@@ -242,15 +238,15 @@ class WP_SQLite_Translator {
 				break;
 
 			case 'TRUNCATE':
-				$rewriter->skip(); // TRUNCATE.
-				$rewriter->skip(); // TABLE.
-				$rewriter->add( new WP_SQLite_Token( 'DELETE', WP_SQLite_Token::TYPE_KEYWORD ) );
-				$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-				$rewriter->add( new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD ) );
-				$rewriter->consume_all();
+				$this->rewriter->skip(); // TRUNCATE.
+				$this->rewriter->skip(); // TABLE.
+				$this->rewriter->add( new WP_SQLite_Token( 'DELETE', WP_SQLite_Token::TYPE_KEYWORD ) );
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+				$this->rewriter->add( new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD ) );
+				$this->rewriter->consume_all();
 				$result = $this->get_translation_result(
 					array(
-						WP_SQLite_Translator::get_query_object( $rewriter->get_updated_query() ),
+						WP_SQLite_Translator::get_query_object( $this->rewriter->get_updated_query() ),
 					)
 				);
 				break;
@@ -274,12 +270,12 @@ class WP_SQLite_Translator {
 				break;
 
 			case 'DROP':
-				$result = $this->translate_drop( $rewriter );
+				$result = $this->translate_drop();
 				break;
 
 			case 'DESCRIBE':
-				$rewriter->skip();
-				$table_name = $rewriter->consume()->value;
+				$this->rewriter->skip();
+				$table_name = $this->rewriter->consume()->value;
 				$result     = $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object( "PRAGMA table_info(\"$table_name\");" ),
@@ -288,7 +284,7 @@ class WP_SQLite_Translator {
 				break;
 
 			case 'SHOW':
-				$result = $this->translate_show( $rewriter );
+				$result = $this->translate_show();
 				break;
 
 			default:
@@ -307,12 +303,12 @@ class WP_SQLite_Translator {
 	/**
 	 * Translates the CREATE TABLE query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param WP_SQLite_Query_Rewriter $this->rewriter The query rewriter.
 	 *
 	 * @return stdClass
 	 */
-	private function translate_create_table( WP_SQLite_Query_Rewriter $rewriter ) {
-		$table = $this->parse_create_table( clone $rewriter );
+	private function translate_create_table() {
+		$table = $this->parse_create_table();
 
 		$definitions = array();
 		foreach ( $table->fields as $field ) {
@@ -361,13 +357,14 @@ class WP_SQLite_Translator {
 	}
 
 	/**
-	 * Translates the CREATE TABLE query.
+	 * Parse the CREATE TABLE query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param WP_SQLite_Query_Rewriter $this->rewriter The query rewriter.
 	 *
-	 * @return stdClass
+	 * @return stdClass Structured data.
 	 */
-	private function parse_create_table( WP_SQLite_Query_Rewriter $rewriter ) {
+	private function parse_create_table() {
+		$this->rewriter = clone $this->rewriter;
 		$result               = new stdClass();
 		$result->create_table = null;
 		$result->name         = null;
@@ -375,34 +372,77 @@ class WP_SQLite_Translator {
 		$result->constraints  = array();
 		$result->primary_key  = array();
 
-		while ( $token = $rewriter->consume() ) {
-			// We're only interested in the table name.
+		// The query starts with CREATE TABLE [IF NOT EXISTS]
+		// Consume everything until the table name.
+		while ( $token = $this->rewriter->consume() ) {
+			// The table name is the first non-keyword token.
 			if ( WP_SQLite_Token::TYPE_KEYWORD !== $token->type ) {
+				// Store the table name for later
 				$result->name = $token->value;
-				$rewriter->drop_last();
-				$result->create_table = $rewriter->get_updated_query();
+
+				// Drop the table name and store the CREATE TABLE command
+				$this->rewriter->drop_last();
+				$result->create_table = $this->rewriter->get_updated_query();
 				break;
 			}
 		}
 
-		$rewriter->consume(
+		// Move to the opening parenthesis:
+		// CREATE TABLE wp_options (
+		//                         ^ here
+		$this->rewriter->skip(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_OPERATOR,
 				'value' => '(',
 			)
 		);
 
-		$declarations_depth = $rewriter->depth;
+		// We're in the table definition now.
+		// Read everything until the closing parenthesis.
+		$declarations_depth = $this->rewriter->depth;
 		do {
-			$rewriter->replace_all( array() );
-			$second_token = $rewriter->peek( null, null, null, 2 );
-			if ( $second_token->is_data_type() ) {
-				$result->fields[] = $this->parse_create_table_field( $rewriter );
-			} else {
-				$result->constraints[] = $this->parse_create_table_constraint( $rewriter, $result->name );
-			}
-		} while ( $token && $rewriter->depth >= $declarations_depth );
+			// We want to capture a rewritten line of the query.
+			// Let's clear any data we might have captured so far.
+			$this->rewriter->replace_all( array() );
 
+			/** 
+			 * Decide how to parse the current line. We expect either:
+			 * 
+			 * Field definition, e.g.:
+			 *     `my_field` varchar(255) NOT NULL DEFAULT 'foo'
+			 * Constraint definition, e.g.:
+			 *      PRIMARY KEY (`my_field`)
+			 * 
+			 * Lexer does not seem to reliably understand whether the
+			 * first token is a field name or a reserved keyword, so
+			 * instead we'll check whether the second non-whitespace 
+			 * token is a data type.
+			 */
+			$found = 0;
+			$second_token = null;
+			for($i=$this->rewriter->index + 1;$i<$this->rewriter->max;$i++) {
+				$token = $this->rewriter->input_tokens[$i];
+				if(WP_SQLite_Token::TYPE_WHITESPACE !== $token->type && 
+			       WP_SQLite_Token::TYPE_COMMENT !== $token->type ) {
+					++$found;
+				}
+				if($found == 2) {
+					$second_token = $this->rewriter->input_tokens[$i];
+					break;
+				}
+			}
+
+			$is_data_type = WP_SQLite_Token::TYPE_KEYWORD === $second_token->type && ( $second_token->flags & WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE );
+			if ( $is_data_type ) {
+				$result->fields[] = $this->parse_create_table_field();
+			} else {
+				$result->constraints[] = $this->parse_create_table_constraint(  $result->name );
+			}
+			// If we're back at the initial depth, we're done.
+		} while ( $token && $this->rewriter->depth >= $declarations_depth );
+
+		// Merge all the definitions of the primary key
+		// Constraint:
 		foreach ( $result->constraints as $k => $constraint ) {
 			if ( 'PRIMARY KEY' === $constraint->value ) {
 				$result->primary_key = array_merge(
@@ -413,12 +453,14 @@ class WP_SQLite_Translator {
 			}
 		}
 
+		// Inline primary key in a field definition:
 		foreach ( $result->fields as $k => $field ) {
 			if ( $field->primary_key ) {
 				$result->primary_key[] = $field->name;
 			}
 		}
 
+		// Remove duplicates
 		$result->primary_key = array_unique( $result->primary_key );
 
 		return $result;
@@ -427,12 +469,12 @@ class WP_SQLite_Translator {
 	/**
 	 * Parses a CREATE TABLE query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param WP_SQLite_Query_Rewriter $this->rewriter The query rewriter.
 	 *
 	 * @throws Exception If the query is not supported.
 	 * @return stdClass
 	 */
-	private function parse_create_table_field( WP_SQLite_Query_Rewriter $rewriter ) {
+	private function parse_create_table_field() {
 		$result                  = new stdClass();
 		$result->name            = '';
 		$result->sqlite_datatype = '';
@@ -441,14 +483,15 @@ class WP_SQLite_Translator {
 		$result->auto_increment  = false;
 		$result->primary_key     = false;
 
-		$field_name_token = $rewriter->skip(); // Field name.
-		$rewriter->add( new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ) );
+		$field_name_token = $this->rewriter->skip(); // Field name.
+		$this->rewriter->add( new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$result->name = trim( $field_name_token->value, '`"\'' );
 
-		$initial_depth = $rewriter->depth;
+		$initial_depth = $this->rewriter->depth;
 
-		$type = $rewriter->skip();
-		if ( ! $type->is_data_type() ) {
+		$type = $this->rewriter->skip();
+		$is_data_type = WP_SQLite_Token::TYPE_KEYWORD === $type->type && ( $type->flags & WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE );
+		if ( ! $is_data_type ) {
 			throw new Exception( 'Data type expected in MySQL query, unknown token received: ' . $type->value );
 		}
 
@@ -459,15 +502,15 @@ class WP_SQLite_Translator {
 		$result->sqlite_datatype = $this->field_types_translation[ $type_name ];
 
 		// Skip the length, e.g. (10) in VARCHAR(10).
-		$paren_maybe = $rewriter->peek();
+		$paren_maybe = $this->rewriter->peek();
 		if ( $paren_maybe && '(' === $paren_maybe->token ) {
-			$rewriter->skip();
-			$rewriter->skip();
-			$rewriter->skip();
+			$this->rewriter->skip();
+			$this->rewriter->skip();
+			$this->rewriter->skip();
 		}
 
 		// Look for the NOT NULL and AUTO_INCREMENT flags.
-		while ( $token = $rewriter->skip() ) {
+		while ( $token = $this->rewriter->skip() ) {
 			if ( $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
@@ -501,12 +544,12 @@ class WP_SQLite_Translator {
 				WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
 				array( 'DEFAULT' ),
 			) ) {
-				$result->default = $rewriter->consume()->token;
+				$result->default = $this->rewriter->consume()->token;
 				continue;
 			}
 
-			if ( $this->is_create_table_field_terminator( $rewriter, $token, $initial_depth ) ) {
-				$rewriter->add( $token );
+			if ( $this->is_create_table_field_terminator( $token, $initial_depth ) ) {
+				$this->rewriter->add( $token );
 				break;
 			}
 		}
@@ -516,23 +559,23 @@ class WP_SQLite_Translator {
 	/**
 	 * Parses a CREATE TABLE constraint.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param WP_SQLite_Query_Rewriter $this->rewriter The query rewriter.
 	 *
 	 * @throws Exception If the query is not supported.
 	 * @return stdClass
 	 */
-	private function parse_create_table_constraint( WP_SQLite_Query_Rewriter $rewriter ) {
+	private function parse_create_table_constraint() {
 		$result          = new stdClass();
 		$result->name    = '';
 		$result->value   = '';
 		$result->columns = array();
 
-		$initial_depth = $rewriter->depth;
-		$constraint    = $rewriter->peek();
+		$initial_depth = $this->rewriter->depth;
+		$constraint    = $this->rewriter->peek();
 		if ( ! $constraint->matches( WP_SQLite_Token::TYPE_KEYWORD ) ) {
 			// Not a constraint declaration, but we're not finished
 			// with the table declaration yet.
-			throw new Exception( 'Unexpected token in MySQL query: ' . $rewriter->peek()->value );
+			throw new Exception( 'Unexpected token in MySQL query: ' . $this->rewriter->peek()->value );
 		}
 
 		if (
@@ -543,28 +586,28 @@ class WP_SQLite_Translator {
 		) {
 			$result->value = $constraint->value;
 
-			$rewriter->skip(); // Constraint type.
+			$this->rewriter->skip(); // Constraint type.
 			if ( 'PRIMARY KEY' !== $constraint->value ) {
-				$result->name = $rewriter->skip()->value;
+				$result->name = $this->rewriter->skip()->value;
 			}
 
-			$constraint_depth = $rewriter->depth;
-			$rewriter->skip(); // (
+			$constraint_depth = $this->rewriter->depth;
+			$this->rewriter->skip(); // (
 			do {
-				$result->columns[] = trim( $rewriter->skip()->value, '`"\'' );
-				$paren_maybe = $rewriter->peek();
+				$result->columns[] = trim( $this->rewriter->skip()->value, '`"\'' );
+				$paren_maybe = $this->rewriter->peek();
 				if ( $paren_maybe && '(' === $paren_maybe->token ) {
-					$rewriter->skip();
-					$rewriter->skip();
-					$rewriter->skip();
+					$this->rewriter->skip();
+					$this->rewriter->skip();
+					$this->rewriter->skip();
 				}
-				$rewriter->skip(); // , or )
-			} while ( $rewriter->depth > $constraint_depth );
+				$this->rewriter->skip(); // , or )
+			} while ( $this->rewriter->depth > $constraint_depth );
 		}
 
 		do {
-			$token = $rewriter->skip();
-		} while ( ! $this->is_create_table_field_terminator( $rewriter, $token, $initial_depth ) );
+			$token = $this->rewriter->skip();
+		} while ( ! $this->is_create_table_field_terminator( $token, $initial_depth ) );
 
 		return $result;
 	}
@@ -572,15 +615,15 @@ class WP_SQLite_Translator {
 	/**
 	 * Checks if the current token is the terminator of a CREATE TABLE field.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter      The query rewriter.
+	 * @param WP_SQLite_Query_Rewriter $this->rewriter      The query rewriter.
 	 * @param WP_SQLite_Token          $token         The current token.
 	 * @param int                      $initial_depth The initial depth.
 	 *
 	 * @return bool
 	 */
-	private function is_create_table_field_terminator( $rewriter, $token, $initial_depth ) {
-		return $rewriter->depth === $initial_depth - 1 || (
-			$rewriter->depth === $initial_depth &&
+	private function is_create_table_field_terminator( $token, $initial_depth ) {
+		return $this->rewriter->depth === $initial_depth - 1 || (
+			$this->rewriter->depth === $initial_depth &&
 			WP_SQLite_Token::TYPE_OPERATOR === $token->type &&
 			',' === $token->value
 		);
@@ -595,68 +638,8 @@ class WP_SQLite_Translator {
 	 * @throws Exception If the query type is unknown.
 	 * @return stdClass
 	 */
-	private function translate_crud( WP_SQLite_Query_Rewriter $rewriter ) {
-		/*
-		 * Very naive check to see if we're dealing with an information_schema query.
-		 * If so, we'll just return a dummy result.
-		 *
-		 * @TODO: A proper check and a better translation.
-		 */
-		if ( str_contains( $this->query, 'information_schema' ) ) {
-			// @TODO: Actually rewrite the columns
-			if ( str_contains( $this->query, 'bytes' ) ) {
-				// Count rows per table
-				$tables = $this->sqlite->query("SELECT name as `table` FROM sqlite_master WHERE type='table' ORDER BY name")->fetchAll();
-				$rows = '(CASE ';
-				foreach($tables as $table) {
-					$table_name = $table['table'];
-					$count = $this->sqlite->query("SELECT COUNT(*) as `count` FROM $table_name")->fetch();
-					$rows .= " WHEN name = '$table_name' THEN {$count['count']} ";
-				}
-				$rows .= "ELSE 0 END) ";
-				return $this->get_translation_result(
-					array(
-						WP_SQLite_Translator::get_query_object(
-							"SELECT name as `table`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
-						),
-					)
-				);
-			}
-			return $this->get_translation_result(
-				array(
-					WP_SQLite_Translator::get_query_object(
-						"SELECT name, 'myisam' as `engine`, 0 as `data`, 0 as `index` FROM sqlite_master WHERE type='table' ORDER BY name"
-					),
-				)
-			);
-		}
-
-		$query_type = $rewriter->consume()->value;
-
-		// Naive regexp check.
-		if ( ! $this->has_regexp && strpos( $this->query, ' REGEXP ' ) !== false ) {
-			// Bail out if we can't run the query.
-			return $this->get_translation_result( array( $this->noop() ) );
-		}
-
-		if (
-			// @TODO: Add handling for the following cases:
-			strpos( $this->query, 'ORDER BY FIELD' ) !== false
-			|| strpos( $this->query, '@@SESSION.sql_mode' ) !== false
-			// `CONVERT( field USING charset )` is not supported.
-			|| strpos( $this->query, 'CONVERT( ' ) !== false
-		) {
-			/*
-			 * @TODO rewrite ORDER BY FIELD(a, 1,4,6) as
-			 * ORDER BY CASE a
-			 * 		WHEN 1 THEN 0
-			 * 		WHEN 4 THEN 1
-			 * 		WHEN 6 THEN 2
-			 * END
-			*/
-			// Return a dummy select for now.
-			return 'SELECT 1=1';
-		}
+	private function translate_crud() {
+		$query_type = $this->rewriter->consume()->value;
 
 		$params                  = array();
 		$is_in_duplicate_section = false;
@@ -664,27 +647,31 @@ class WP_SQLite_Translator {
 		$has_sql_calc_found_rows = false;
 
 		// Consume the query type.
-		if ( 'INSERT' === $query_type && 'IGNORE' === $rewriter->peek()->value ) {
-			$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$rewriter->add( new WP_SQLite_Token( 'OR', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
-			$rewriter->consume(); // IGNORE.
+		if ( 'INSERT' === $query_type && 'IGNORE' === $this->rewriter->peek()->value ) {
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'OR', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+			$this->rewriter->consume(); // IGNORE.
 		}
 
 		// Consume and record the table name.
 		if ( 'INSERT' === $query_type || 'REPLACE' === $query_type ) {
-			$rewriter->consume(); // INTO.
-			$table_name = $rewriter->consume()->value; // Table name.
+			$this->rewriter->consume(); // INTO.
+			$table_name = $this->rewriter->consume()->value; // Table name.
+		}
+
+		if ( 'SELECT' === $query_type && $table_name && strtolower( $table_name ) === 'information_schema' ) {
+			return $this->translate_information_schema_query();
 		}
 
 		$last_reserved_keyword = null;
-		while ( $token = $rewriter->consume() ) {
+		while ( $token = $this->rewriter->peek() ) {
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) {
 				$last_reserved_keyword = $token->value;
 			}
 
 			if ( 'SQL_CALC_FOUND_ROWS' === $token->value && WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 				$has_sql_calc_found_rows = true;
-				$rewriter->drop_last();
+				$this->rewriter->skip();
 				continue;
 			}
 
@@ -692,273 +679,62 @@ class WP_SQLite_Translator {
 				// Rewrite string values to bound parameters.
 				$param_name            = ':param' . count( $params );
 				$params[ $param_name ] = $token->value;
-				$rewriter->replace_last( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
+				$this->rewriter->skip();
+				$this->rewriter->add( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
 				continue;
 			}
 
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
-				if ( 'RAND' === $token->keyword && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) {
-					$rewriter->replace_last( new WP_SQLite_Token( 'RANDOM', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-					continue;
-				}
-
-				if (
-					'CONCAT' === $token->keyword
-					&& $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
+				if(
+					$this->translate_concat_function($token)
+					|| $this->translate_date_function($token)
+					|| $this->translate_date_add_sub($token)
+					|| $this->translate_values_function($token, $is_in_duplicate_section)
+					|| $this->translate_date_format($token)
+					|| $this->translate_interval($token)
 				) {
-					$rewriter->drop_last();
-					continue;
-				}
-
-				foreach ( array(
-					array( 'YEAR', '%Y' ),
-					array( 'MONTH', '%M' ),
-					array( 'DAY', '%D' ),
-					array( 'DAYOFMONTH', '%d' ),
-					array( 'DAYOFWEEK', '%w' ),
-					array( 'WEEK', '%W' ),
-					// @TODO fix
-					// %w returns 0 for Sunday and 6 for Saturday
-					// but weekday returns 1 for Monday and 7 for Sunday
-					array( 'WEEKDAY', '%w' ),
-					array( 'HOUR', '%H' ),
-					array( 'MINUTE', '%M' ),
-					array( 'SECOND', '%S' ),
-				) as $token_item ) {
-					$unit   = $token_item[0];
-					$format = $token_item[1];
-					if ( $token->value === $unit && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) {
-						// Drop the consumed function call.
-						$rewriter->drop_last();
-						// Skip the opening "(".
-						$rewriter->skip();
-
-						// Skip the first argument so we can read the second one.
-						$first_arg = $rewriter->skip_over(
-							array(
-								'type'  => WP_SQLite_Token::TYPE_OPERATOR,
-								'value' => array( ',', ')' ),
-							)
-						);
-
-						$terminator = array_pop( $first_arg );
-
-						if ( 'WEEK' === $unit ) {
-							$format = '%W';
-
-							/*
-							 * @TODO
-							 * WEEK(date, mode) can mean different strftime formats
-							 * depending on the mode (default=0).
-							 * If the $skipped token is a comma, then we need to
-							 * read the mode argument.
-							 */
-							if ( ',' === $terminator->value ) {
-								$mode = $rewriter->skip();
-								// Assume $mode is now a number.
-								if ( 0 === $mode->value ) {
-									$format = '%U';
-								} elseif ( 1 === $mode->value ) {
-									$format = '%W';
-								} else {
-									throw new Exception( 'Could not parse the WEEK() mode' );
-								}
-							}
-						}
-
-						$rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-						$rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-						$rewriter->add( new WP_SQLite_Token( "'$format'", WP_SQLite_Token::TYPE_STRING ) );
-						$rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
-						$rewriter->add_many( $first_arg );
-						if ( ')' === $terminator->value ) {
-							$rewriter->add( $terminator );
-						}
-						continue 2;
-					}
-				}
-
-				if (
-					$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION && (
-						'DATE_ADD' === $token->keyword ||
-						'DATE_SUB' === $token->keyword
-					)
-				) {
-					$rewriter->replace_last( new WP_SQLite_Token( 'DATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-					continue;
-				}
-
-				if (
-					$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
-					'VALUES' === $token->keyword &&
-					$is_in_duplicate_section
-				) {
-					/*
-					Rewrite:  VALUES(`option_name`)
-					to:       excluded.option_name
-					*/
-					$rewriter->replace_last( new WP_SQLite_Token( 'excluded', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
-					$rewriter->add( new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR ) );
-
-					$rewriter->skip(); // Skip the opening `(`.
-					// Consume the column name.
-					$rewriter->consume(
-						array(
-							'type'  => WP_SQLite_Token::TYPE_OPERATOR,
-							'value' => ')',
-						)
-					);
-					// Drop the consumed ')' token.
-					$rewriter->drop_last();
-					continue;
-				}
-				if (
-					$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
-					'DATE_FORMAT' === $token->keyword
-				) {
-					// DATE_FORMAT( `post_date`, '%Y-%m-%d' ).
-
-					$rewriter->replace_last( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-					// The opening `(`.
-					$rewriter->consume();
-
-					// Skip the first argument so we can read the second one.
-					$first_arg = $rewriter->skip_over(
-						array(
-							'type'  => WP_SQLite_Token::TYPE_OPERATOR,
-							'value' => ',',
-						)
-					);
-
-					// Make sure we actually found the comma.
-					$comma = array_pop( $first_arg );
-					if ( ',' !== $comma->value ) {
-						throw new Exception( 'Could not parse the DATE_FORMAT() call' );
-					}
-
-					// Skip the second argument but capture the token.
-					$format     = $rewriter->skip()->value;
-					$new_format = strtr( $format, $this->mysql_php_date_formats );
-
-					$rewriter->add( new WP_SQLite_Token( "'$new_format'", WP_SQLite_Token::TYPE_STRING ) );
-					$rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
-
-					// Add the buffered tokens back to the stream.
-					$rewriter->add_many( $first_arg );
-
-					continue;
-				}
-				if ( 'INTERVAL' === $token->keyword ) {
-					// Remove the INTERVAL keyword from the output stream.
-					$rewriter->drop_last();
-
-					$num  = $rewriter->skip()->value;
-					$unit = $rewriter->skip()->value;
-
-					/*
-					 * In MySQL, we say:
-					 *		DATE_ADD(d, INTERVAL 1 YEAR)
-					 *		DATE_SUB(d, INTERVAL 1 YEAR)
-					 *
-					 * In SQLite, we say:
-					 *		DATE(d, '+1 YEAR')
-					 *		DATE(d, '-1 YEAR')
-					 *
-					 * The sign of the interval is determined by the date_* function
-					 * that is closest in the call stack.
-					 *
-					 * Let's find it.
-					 */
-					$interval_op = '+'; // Default to adding.
-					for ( $j = count( $rewriter->call_stack ) - 1; $j >= 0; $j-- ) {
-						$call = $rewriter->call_stack[ $j ];
-						if ( 'DATE_ADD' === $call[0] ) {
-							$interval_op = '+';
-							break;
-						}
-						if ( 'DATE_SUB' === $call[0] ) {
-							$interval_op = '-';
-							break;
-						}
-					}
-
-					$rewriter->add( new WP_SQLite_Token( "'{$interval_op}$num $unit'", WP_SQLite_Token::TYPE_STRING ) );
 					continue;
 				}
 
 				if ( 'INSERT' === $query_type && 'DUPLICATE' === $token->keyword ) {
-					/*
-					 * Rewrite:
-					 * 		ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)
-					 * to:
-					 * 		ON CONFLICT(ip) DO UPDATE SET option_name = excluded.option_name
-					 */
-
-					// Replace the DUPLICATE keyword with CONFLICT.
-					$rewriter->replace_last( new WP_SQLite_Token( 'CONFLICT', WP_SQLite_Token::TYPE_KEYWORD ) );
-					// Skip overthe "KEY" and "UPDATE" keywords.
-					$rewriter->skip();
-					$rewriter->skip();
-
-					// Add "( <primary key> ) DO UPDATE SET ".
-					$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-					$rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-					// @TODO don't make assumptions about the names, only fetch
-					// the correct unique key from sqlite
-					if ( str_ends_with( $table_name, '_options' ) ) {
-						$pk_name = 'option_name';
-					} elseif ( str_ends_with( $table_name, '_term_relationships' ) ) {
-						$pk_name = 'object_id, term_taxonomy_id';
-					} elseif ( str_ends_with( $table_name, 'wp_woocommerce_sessions' ) ) {
-						$pk_name = 'session_key';
-					} else {
-						$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
-						$pk_name = $q->fetch()['name'];
-					}
-					$rewriter->add( new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
-					$rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
-					$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-					$rewriter->add( new WP_SQLite_Token( 'DO', WP_SQLite_Token::TYPE_KEYWORD ) );
-					$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-					$rewriter->add( new WP_SQLite_Token( 'UPDATE', WP_SQLite_Token::TYPE_KEYWORD ) );
-					$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-					$rewriter->add( new WP_SQLite_Token( 'SET', WP_SQLite_Token::TYPE_KEYWORD ) );
-					$rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-
 					$is_in_duplicate_section = true;
+					$this->translate_on_duplicate_key($table_name);
 					continue;
 				}
 			}
 
-			if ( WP_SQLite_Token::TYPE_OPERATOR === $token->type ) {
-				$call_parent = $rewriter->last_call_stack_element();
-				// Rewrite commas to || in CONCAT() calls.
-				if (
-					$call_parent
-					&& 'CONCAT' === $call_parent[0]
-					&& ',' === $token->value
-					&& $token->flags & WP_SQLite_Token::FLAG_OPERATOR_SQL
-				) {
-					$rewriter->replace_last( new WP_SQLite_Token( '||', WP_SQLite_Token::TYPE_OPERATOR ) );
-					continue;
-				}
+			if($this->translate_concat_comma_to_pipes($token)) {
+				continue;
 			}
+			$this->rewriter->consume();
 		}
 
-		$updated_query = $rewriter->get_updated_query();
+		$updated_query = $this->rewriter->get_updated_query();
 		$result        = $this->get_translation_result( array() );
 
-		// Naively emulate SQL_CALC_FOUND_ROWS for now.
+		if (
+			// If the query contains a function that is not supported by SQLite,
+			// return a dummy select. This check must be done after the query
+			// has been rewritten to use parameters to avoid false positives
+			// on queries such as `SELECT * FROM table WHERE field='CONVERT('`.
+			strpos( $updated_query, '@@SESSION.sql_mode' ) !== false
+			|| strpos( $updated_query, 'CONVERT( ' ) !== false
+		) {
+			$updated_query = 'SELECT 1=0';
+			$params 	   = array();
+		}
+
+		// Emulate SQL_CALC_FOUND_ROWS for now.
 		if ( $has_sql_calc_found_rows ) {
-			// First strip the code. this is the end of rewriting process.
-			$query = str_ireplace( 'SQL_CALC_FOUND_ROWS', '', $updated_query );
+			$query = $updated_query;
 			// We make the data for next SELECT FOUND_ROWS() statement.
 			$unlimited_query         = preg_replace( '/\\bLIMIT\\s*.*/imsx', '', $query );
-			$stmt                    = $this->sqlite->query( $unlimited_query );
+			$stmt                    = $this->sqlite->prepare( $unlimited_query );
+			$stmt->execute( $params );
 			$result->calc_found_rows = count( $stmt->fetchAll() );
 		}
 
-		// Naively emulate FOUND_ROWS() by counting the rows in the result set.
+		// Emulate FOUND_ROWS() by counting the rows in the result set.
 		if ( strpos( $updated_query, 'FOUND_ROWS(' ) !== false ) {
 			$last_found_rows   = ( $this->last_found_rows ? $this->last_found_rows : 0 ) . '';
 			$result->queries[] = WP_SQLite_Translator::get_query_object(
@@ -970,100 +746,9 @@ class WP_SQLite_Translator {
 		// Now that functions are rewritten to SQLite dialect,
 		// let's translate unsupported delete queries.
 		if ( 'DELETE' === $query_type ) {
-			$rewriter = new WP_SQLite_Query_Rewriter( $rewriter->output_tokens );
-			$rewriter->consume();
-
-			$comma = $rewriter->peek( WP_SQLite_Token::TYPE_OPERATOR, null, array( ',' ) );
-			$from  = $rewriter->peek( WP_SQLite_Token::TYPE_KEYWORD, null, array( 'FROM' ) );
-			// It's a dual delete query if the comma comes before the FROM.
-			if ( $comma && $from && $comma->position < $from->position ) {
-				$rewriter->replace_last( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
-
-				/*
-				 * Get table name.
-				 * Clone $rewriter because we need to know the table name
-				 * to correctly declare the select fields,
-				 * and the select fields come before the FROM keyword.
-				 */
-				$rewriter_clone = clone $rewriter;
-				$rewriter_clone->consume(
-					array(
-						'type'  => WP_SQLite_Token::TYPE_KEYWORD,
-						'value' => 'FROM',
-					)
-				);
-				// Assume the table name is the first token after FROM.
-				$table_name = $rewriter_clone->consume()->value;
-				unset( $rewriter_clone );
-
-				// Now, let's figure out the primary key name.
-				// This assumes that all listed table names are the same.
-				$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
-				$pk_name = $q->fetch()['name'];
-
-				// Good, we can finally create the SELECT query.
-				// Let's rewrite DELETE a, b FROM ... to SELECT a.id, b.id FROM ...
-				$alias_nb = 0;
-				while ( true ) {
-					$token = $rewriter->consume();
-					if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && 'FROM' === $token->value ) {
-						break;
-					}
-					// Between DELETE and FROM we only expect commas and table aliases
-					// If it's not a comma, it must be a table alias.
-					if ( ',' !== $token->value ) {
-						// Insert .id AS id_1 after the table alias.
-						$rewriter->add_many(
-							array(
-								new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR, WP_SQLite_Token::FLAG_OPERATOR_SQL ),
-								new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
-								new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-								new WP_SQLite_Token( 'AS', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
-								new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-								new WP_SQLite_Token( 'id_' . $alias_nb, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
-							)
-						);
-						++$alias_nb;
-					}
-				}
-				$rewriter->consume_all();
-
-				// Select the IDs to delete.
-				$select = $rewriter->get_updated_query();
-				$stmt = $this->sqlite->prepare( $select );
-				$stmt->execute($params);
-				$rows = $stmt->fetchAll();
-				$ids_to_delete = array();
-				foreach ( $rows as $id ) {
-					$ids_to_delete[] = $id['id_0'];
-					$ids_to_delete[] = $id['id_1'];
-				}
-
-				$query = (
-					count( $ids_to_delete )
-						? "DELETE FROM {$table_name} WHERE {$pk_name} IN (" . implode( ',', $ids_to_delete ) . ')'
-						: "DELETE FROM {$table_name} WHERE 0=1"
-				);
-				$result = $this->get_translation_result(
-					array(
-						WP_SQLite_Translator::get_query_object( $query ),
-					),
-					true,
-					count( $ids_to_delete )
-				);
-				return $result;
-			}
-
-			// Naive rewriting of DELETE JOIN query.
-			// @TODO: Use Lexer.
-			if ( str_contains( $this->query, ' JOIN ' ) ) {
-				return $this->get_translation_result(
-					array(
-						WP_SQLite_Translator::get_query_object(
-							"DELETE FROM {$this->table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$this->table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
-						),
-					)
-				);
+			$delete_result = $this->postprocess_double_delete($params);
+			if($delete_result) {
+				return $delete_result;
 			}
 		}
 
@@ -1071,36 +756,435 @@ class WP_SQLite_Translator {
 		return $result;
 	}
 
+	private function postprocess_double_delete($rewritten_params) {
+		// Naive rewriting of DELETE JOIN query.
+		// @TODO: Use Lexer.
+		if ( str_contains( $this->query, ' JOIN ' ) ) {
+			return $this->get_translation_result(
+				array(
+					WP_SQLite_Translator::get_query_object(
+						"DELETE FROM {$this->table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$this->table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
+					),
+				)
+			);
+		}
+
+		$rewriter = new WP_SQLite_Query_Rewriter( $this->rewriter->output_tokens );
+
+		$comma = $rewriter->peek( array(
+			'type' => WP_SQLite_Token::TYPE_OPERATOR,
+			'value' => ',',
+		) );
+		$from = $rewriter->peek( array(
+			'type' => WP_SQLite_Token::TYPE_KEYWORD,
+			'value' => 'FROM',
+		) );
+		// It's a dual delete query if the comma comes before the FROM.
+		if ( !$comma || !$from || $comma->position >= $from->position ) {
+			return;
+		}
+	
+		$table_name = $rewriter->skip()->value;
+		$rewriter->add( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+
+		/*
+			* Get table name.
+			*/
+		$from = $rewriter->peek(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+				'value' => 'FROM',
+			)
+		);
+		$index = array_search( $from, $rewriter->input_tokens, true );
+		for($i=$index+1; $i<$rewriter->max; $i++) {
+			// Assume the table name is the first token after FROM
+			if(!$rewriter->input_tokens[$i]->is_semantically_void()) {
+				$table_name = $rewriter->input_tokens[$i]->value;
+				break;
+			}
+		}
+		if(!$table_name) {
+			throw new Exception('Could not find table name for dual delete query.');
+		}
+
+		// Now, let's figure out the primary key name.
+		// This assumes that all listed table names are the same.
+		$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
+		$pk_name = $q->fetch()['name'];
+
+		// Good, we can finally create the SELECT query.
+		// Let's rewrite DELETE a, b FROM ... to SELECT a.id, b.id FROM ...
+		$alias_nb = 0;
+		while ( true ) {
+			$token = $rewriter->consume();
+			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && 'FROM' === $token->value ) {
+				break;
+			}
+			// Between DELETE and FROM we only expect commas and table aliases
+			// If it's not a comma, it must be a table alias.
+			if ( ',' !== $token->value ) {
+				// Insert .id AS id_1 after the table alias.
+				$rewriter->add_many(
+					array(
+						new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR, WP_SQLite_Token::FLAG_OPERATOR_SQL ),
+						new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( 'AS', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+						new WP_SQLite_Token( 'id_' . $alias_nb, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+					)
+				);
+				++$alias_nb;
+			}
+		}
+		$rewriter->consume_all();
+
+		// Select the IDs to delete.
+		$select = $rewriter->get_updated_query();
+		$stmt = $this->sqlite->prepare( $select );
+		$stmt->execute($rewritten_params);
+		$rows = $stmt->fetchAll();
+		$ids_to_delete = array();
+		foreach ( $rows as $id ) {
+			$ids_to_delete[] = $id['id_0'];
+			$ids_to_delete[] = $id['id_1'];
+		}
+
+		$query = (
+			count( $ids_to_delete )
+				? "DELETE FROM {$table_name} WHERE {$pk_name} IN (" . implode( ',', $ids_to_delete ) . ')'
+				: "DELETE FROM {$table_name} WHERE 0=1"
+		);
+		return $this->get_translation_result(
+			array(
+				WP_SQLite_Translator::get_query_object( $query ),
+			),
+			true,
+			count( $ids_to_delete )
+		);
+	}
+
+	private function translate_information_schema_query() {
+		// @TODO: Actually rewrite the columns
+		if ( str_contains( $this->query, 'bytes' ) ) {
+			// Count rows per table
+			$tables = $this->sqlite->query("SELECT name as `table` FROM sqlite_master WHERE type='table' ORDER BY name")->fetchAll();
+			$rows = '(CASE ';
+			foreach($tables as $table) {
+				$table_name = $table['table'];
+				$count = $this->sqlite->query("SELECT COUNT(*) as `count` FROM $table_name")->fetch();
+				$rows .= " WHEN name = '$table_name' THEN {$count['count']} ";
+			}
+			$rows .= "ELSE 0 END) ";
+			return $this->get_translation_result(
+				array(
+					WP_SQLite_Translator::get_query_object(
+						"SELECT name as `table`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
+					),
+				)
+			);
+		}
+		return $this->get_translation_result(
+			array(
+				WP_SQLite_Translator::get_query_object(
+					"SELECT name, 'myisam' as `engine`, 0 as `data`, 0 as `index` FROM sqlite_master WHERE type='table' ORDER BY name"
+				),
+			)
+		);
+	}
+
+	private function translate_date_function( $token ) {		
+		foreach ( array(
+			array( 'YEAR', '%Y' ),
+			array( 'MONTH', '%M' ),
+			array( 'DAY', '%D' ),
+			array( 'DAYOFMONTH', '%d' ),
+			array( 'DAYOFWEEK', '%w' ),
+			array( 'WEEK', '%W' ),
+			// @TODO fix
+			// %w returns 0 for Sunday and 6 for Saturday
+			// but weekday returns 1 for Monday and 7 for Sunday
+			array( 'WEEKDAY', '%w' ),
+			array( 'HOUR', '%H' ),
+			array( 'MINUTE', '%M' ),
+			array( 'SECOND', '%S' ),
+		) as $token_item ) {
+			$unit   = $token_item[0];
+			$format = $token_item[1];
+			if ( $token->value === $unit && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) {
+				// Skip the consumed function call.
+				$this->rewriter->skip();
+				// Skip the opening "(".
+				$this->rewriter->skip();
+
+				// Skip the first argument so we can read the second one.
+				$first_arg = $this->rewriter->skip_and_return_all(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+						'value' => array( ',', ')' ),
+					)
+				);
+
+				$terminator = array_pop( $first_arg );
+
+				if ( 'WEEK' === $unit ) {
+					$format = '%W';
+
+					/*
+					 * @TODO
+					 * WEEK(date, mode) can mean different strftime formats
+					 * depending on the mode (default=0).
+					 * If the $skipped token is a comma, then we need to
+					 * read the mode argument.
+					 */
+					if ( ',' === $terminator->value ) {
+						$mode = $this->rewriter->skip();
+						// Assume $mode is now a number.
+						if ( 0 === $mode->value ) {
+							$format = '%U';
+						} elseif ( 1 === $mode->value ) {
+							$format = '%W';
+						} else {
+							throw new Exception( 'Could not parse the WEEK() mode' );
+						}
+					}
+				}
+
+				$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+				$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
+				$this->rewriter->add( new WP_SQLite_Token( "'$format'", WP_SQLite_Token::TYPE_STRING ) );
+				$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
+				$this->rewriter->add_many( $first_arg );
+				if ( ')' === $terminator->value ) {
+					$this->rewriter->add( $terminator );
+				}
+				return true;
+			}
+		}
+	}
+
+	private function translate_concat_function($token) {
+		/**
+		 * Skip the CONCAT function but leave the parentheses.
+		 * There is another code block below that replaces the 
+		 * , operators between the CONCAT arguments with ||.
+		 */
+		if (
+			'CONCAT' === $token->keyword
+			&& $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
+		) {
+			$this->rewriter->skip();
+			return true;
+		}
+	}
+
+	private function translate_concat_comma_to_pipes($token) {
+		if ( WP_SQLite_Token::TYPE_OPERATOR === $token->type ) {
+			$call_parent = $this->rewriter->last_call_stack_element();
+			// Rewrite commas to || in CONCAT() calls.
+			if (
+				$call_parent
+				&& 'CONCAT' === $call_parent['function']
+				&& ',' === $token->value
+				&& $token->flags & WP_SQLite_Token::FLAG_OPERATOR_SQL
+			) {
+				$this->rewriter->skip();
+				$this->rewriter->add( new WP_SQLite_Token( '||', WP_SQLite_Token::TYPE_OPERATOR ) );
+				return true;
+			}
+		}
+	}
+
+	private function translate_date_add_sub( $token) {
+		if (
+			$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION && (
+				'DATE_ADD' === $token->keyword ||
+				'DATE_SUB' === $token->keyword
+			)
+		) {
+			$this->rewriter->skip();
+			$this->rewriter->add( new WP_SQLite_Token( 'DATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+			return true;
+		}
+	}
+
+	private function translate_values_function( $token, $is_in_duplicate_section ) {
+		if (
+			$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
+			'VALUES' === $token->keyword &&
+			$is_in_duplicate_section
+		) {
+			/*
+			Rewrite:  VALUES(`option_name`)
+			to:       excluded.option_name
+			*/
+			$this->rewriter->skip();
+			$this->rewriter->add( new WP_SQLite_Token( 'excluded', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+			$this->rewriter->add( new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR ) );
+
+			$this->rewriter->skip(); // Skip the opening `(`.
+			// Consume the column name.
+			$this->rewriter->consume(
+				array(
+					'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+					'value' => ')',
+				)
+			);
+			// Drop the consumed ')' token.
+			$this->rewriter->drop_last();
+			return true;
+		}
+	}
+
+	private function translate_date_format($token) {
+		if (
+			$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
+			'DATE_FORMAT' === $token->keyword
+		) {
+			// DATE_FORMAT( `post_date`, '%Y-%m-%d' ).
+			$this->rewriter->skip();
+			$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+			// The opening `(`.
+			$this->rewriter->consume();
+
+			// Skip the first argument so we can read the second one.
+			$first_arg = $this->rewriter->skip_and_return_all(
+				array(
+					'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+					'value' => ',',
+				)
+			);
+
+			// Make sure we actually found the comma.
+			$comma = array_pop( $first_arg );
+			if ( ',' !== $comma->value ) {
+				throw new Exception( 'Could not parse the DATE_FORMAT() call' );
+			}
+
+			// Skip the second argument but capture the token.
+			$format     = $this->rewriter->skip()->value;
+			$new_format = strtr( $format, $this->mysql_php_date_formats );
+
+			$this->rewriter->add( new WP_SQLite_Token( "'$new_format'", WP_SQLite_Token::TYPE_STRING ) );
+			$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
+
+			// Add the buffered tokens back to the stream.
+			$this->rewriter->add_many( $first_arg );
+
+			return true;
+		}
+	}
+
+	private function translate_interval($token) {
+		if ( 'INTERVAL' === $token->keyword ) {
+			// Skip the INTERVAL keyword from the output stream.
+			$this->rewriter->skip();
+
+			$num  = $this->rewriter->skip()->value;
+			$unit = $this->rewriter->skip()->value;
+
+			/*
+			 * In MySQL, we say:
+			 *		DATE_ADD(d, INTERVAL 1 YEAR)
+			 *		DATE_SUB(d, INTERVAL 1 YEAR)
+			 *
+			 * In SQLite, we say:
+			 *		DATE(d, '+1 YEAR')
+			 *		DATE(d, '-1 YEAR')
+			 *
+			 * The sign of the interval is determined by the date_* function
+			 * that is closest in the call stack.
+			 *
+			 * Let's find it.
+			 */
+			$interval_op = '+'; // Default to adding.
+			for ( $j = count( $this->rewriter->call_stack ) - 1; $j >= 0; $j-- ) {
+				$call = $this->rewriter->call_stack[ $j ];
+				if ( 'DATE_ADD' === $call[0] ) {
+					$interval_op = '+';
+					break;
+				}
+				if ( 'DATE_SUB' === $call[0] ) {
+					$interval_op = '-';
+					break;
+				}
+			}
+
+			$this->rewriter->add( new WP_SQLite_Token( "'{$interval_op}$num $unit'", WP_SQLite_Token::TYPE_STRING ) );
+			return true;
+		}
+	}
+
+	private function translate_on_duplicate_key($table_name) {
+		/*
+			* Rewrite:
+			* 		ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)
+			* to:
+			* 		ON CONFLICT(ip) DO UPDATE SET option_name = excluded.option_name
+			*/
+
+		$this->rewriter->skip();
+		// Replace the DUPLICATE keyword with CONFLICT.
+		$this->rewriter->add( new WP_SQLite_Token( 'CONFLICT', WP_SQLite_Token::TYPE_KEYWORD ) );
+		// Skip overthe "KEY" and "UPDATE" keywords.
+		$this->rewriter->skip();
+		$this->rewriter->skip();
+
+		// Add "( <primary key> ) DO UPDATE SET ".
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+		$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
+		// @TODO don't make assumptions about the names, only fetch
+		// the correct unique key from sqlite
+		if ( str_ends_with( $table_name, '_options' ) ) {
+			$pk_name = 'option_name';
+		} elseif ( str_ends_with( $table_name, '_term_relationships' ) ) {
+			$pk_name = 'object_id, term_taxonomy_id';
+		} elseif ( str_ends_with( $table_name, 'wp_woocommerce_sessions' ) ) {
+			$pk_name = 'session_key';
+		} else {
+			$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
+			$pk_name = $q->fetch()['name'];
+		}
+		$this->rewriter->add( new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+		$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+		$this->rewriter->add( new WP_SQLite_Token( 'DO', WP_SQLite_Token::TYPE_KEYWORD ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+		$this->rewriter->add( new WP_SQLite_Token( 'UPDATE', WP_SQLite_Token::TYPE_KEYWORD ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+		$this->rewriter->add( new WP_SQLite_Token( 'SET', WP_SQLite_Token::TYPE_KEYWORD ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+	}
+
 	/**
 	 * Translate ALTER query.
-	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter Query rewriter.
 	 *
 	 * @throws Exception If the subject is not 'table', or we're performing an unknown operation.
 	 * @return stdClass
 	 */
-	private function translate_alter( WP_SQLite_Query_Rewriter $rewriter ) {
-		$rewriter->consume();
-		$subject = strtolower( $rewriter->consume()->token );
+	private function translate_alter() {
+		$this->rewriter->consume();
+		$subject = strtolower( $this->rewriter->consume()->token );
 		if ( 'table' !== $subject ) {
 			throw new Exception( 'Unknown subject: ' . $subject );
 		}
 
-		$table_name = strtolower( $rewriter->consume()->token );
-		$op_type    = strtolower( $rewriter->consume()->token );
-		$op_subject = strtolower( $rewriter->consume()->token );
+		$table_name = strtolower( $this->rewriter->consume()->token );
+		$op_type    = strtolower( $this->rewriter->consume()->token );
+		$op_subject = strtolower( $this->rewriter->consume()->token );
 		if ( 'fulltext key' === $op_subject ) {
 			return $this->get_translation_result( array( $this->noop() ) );
 		}
 
 		if ( 'add' === $op_type ) {
 			if ( 'column' === $op_subject ) {
-				$this->consume_data_types( $rewriter );
-				$rewriter->consume_all();
+				$this->consume_data_types();
+				$this->rewriter->consume_all();
 			} elseif ( 'key' === $op_subject || 'index' === $op_subject || 'unique key' === $op_subject ) {
-				$key_name     = $rewriter->consume()->value;
+				$key_name     = $this->rewriter->consume()->value;
 				$index_prefix = 'unique key' === $op_subject ? 'UNIQUE ' : '';
-				$rewriter->replace_all(
+				$this->rewriter->replace_all(
 					array(
 						new WP_SQLite_Token( 'CREATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
 						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
@@ -1116,41 +1200,41 @@ class WP_SQLite_Translator {
 					)
 				);
 
-				while ( $token = $rewriter->consume() ) {
+				while ( $token = $this->rewriter->consume() ) {
 					if ( '(' === $token->token ) {
-						$rewriter->drop_last();
+						$this->rewriter->drop_last();
 						break;
 					}
 				}
 
 				// Consume all the fields, skip the sizes like `(20)` in `varchar(20)`.
-				while ( $rewriter->consume( array( 'type' => WP_SQLite_Token::TYPE_SYMBOL ) ) ) {
-					$paren_maybe = $rewriter->peek();
+				while ( $this->rewriter->consume( array( 'type' => WP_SQLite_Token::TYPE_SYMBOL ) ) ) {
+					$paren_maybe = $this->rewriter->peek();
 
 					if ( $paren_maybe && '(' === $paren_maybe->token ) {
-						$rewriter->skip();
-						$rewriter->skip();
-						$rewriter->skip();
+						$this->rewriter->skip();
+						$this->rewriter->skip();
+						$this->rewriter->skip();
 					}
 				}
 
-				$rewriter->consume_all();
+				$this->rewriter->consume_all();
 			} else {
 				throw new Exception( "Unknown operation: $op_type $op_subject" );
 			}
 		} elseif ( 'change' === $op_type ) {
 			if ( 'column' === $op_subject ) {
-				$this->consume_data_types( $rewriter );
-				$rewriter->consume_all();
+				$this->consume_data_types();
+				$this->rewriter->consume_all();
 			} else {
 				throw new Exception( "Unknown operation: $op_type $op_subject" );
 			}
 		} elseif ( 'drop' === $op_type ) {
 			if ( 'column' === $op_subject ) {
-				$rewriter->consume_all();
+				$this->rewriter->consume_all();
 			} elseif ( 'key' === $op_subject ) {
-				$key_name = $rewriter->consume()->value;
-				$rewriter->replace_all(
+				$key_name = $this->rewriter->consume()->value;
+				$this->rewriter->replace_all(
 					array(
 						new WP_SQLite_Token( 'DROP', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
 						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
@@ -1167,7 +1251,7 @@ class WP_SQLite_Translator {
 		return $this->get_translation_result(
 			array(
 				WP_SQLite_Translator::get_query_object(
-					$rewriter->get_updated_query()
+					$this->rewriter->get_updated_query()
 				),
 			)
 		);
@@ -1176,18 +1260,18 @@ class WP_SQLite_Translator {
 	/**
 	 * Translates a CREATE query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param The query rewriter.
 	 *
 	 * @throws Exception If the query is an unknown create type.
 	 * @return stdClass The translation result.
 	 */
-	private function translate_create( WP_SQLite_Query_Rewriter $rewriter ) {
-		$rewriter->consume();
-		$what = $rewriter->consume()->token;
+	private function translate_create( ) {
+		$this->rewriter->consume();
+		$what = $this->rewriter->consume()->token;
 
 		switch ( $what ) {
 			case 'TABLE':
-				return $this->translate_create_table( $rewriter );
+				return $this->translate_create_table();
 
 			case 'PROCEDURE':
 			case 'DATABASE':
@@ -1201,19 +1285,19 @@ class WP_SQLite_Translator {
 	/**
 	 * Translates a DROP query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param The query rewriter.
 	 *
 	 * @throws Exception If the query is an unknown drop type.
 	 * @return stdClass The translation result.
 	 */
-	private function translate_drop( WP_SQLite_Query_Rewriter $rewriter ) {
-		$rewriter->consume();
-		$what = $rewriter->consume()->token;
+	private function translate_drop( ) {
+		$this->rewriter->consume();
+		$what = $this->rewriter->consume()->token;
 
 		switch ( $what ) {
 			case 'TABLE':
-				$rewriter->consume_all();
-				return $this->get_translation_result( array( WP_SQLite_Translator::get_query_object( $rewriter->get_updated_query() ) ) );
+				$this->rewriter->consume_all();
+				return $this->get_translation_result( array( WP_SQLite_Translator::get_query_object( $this->rewriter->get_updated_query() ) ) );
 
 			case 'PROCEDURE':
 			case 'DATABASE':
@@ -1227,15 +1311,15 @@ class WP_SQLite_Translator {
 	/**
 	 * Translates a SHOW query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param The query rewriter.
 	 *
 	 * @throws Exception If the query is an unknown show type.
 	 * @return stdClass The translation result.
 	 */
-	private function translate_show( WP_SQLite_Query_Rewriter $rewriter ) {
-		$rewriter->skip();
-		$what1 = $rewriter->consume()->token;
-		$what2 = $rewriter->consume()->token;
+	private function translate_show( ) {
+		$this->rewriter->skip();
+		$what1 = $this->rewriter->consume()->token;
+		$what2 = $this->rewriter->consume()->token;
 		$what  = $what1 . ' ' . $what2;
 		switch ( $what ) {
 			case 'CREATE PROCEDURE':
@@ -1246,8 +1330,8 @@ class WP_SQLite_Translator {
 				);
 
 			case 'FULL COLUMNS':
-				$rewriter->consume();
-				$table_name = $rewriter->consume()->token;
+				$this->rewriter->consume();
+				$table_name = $this->rewriter->consume()->token;
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
@@ -1257,7 +1341,7 @@ class WP_SQLite_Translator {
 				);
 
 			case 'COLUMNS FROM':
-				$table_name = $rewriter->consume()->token;
+				$table_name = $this->rewriter->consume()->token;
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
@@ -1267,7 +1351,7 @@ class WP_SQLite_Translator {
 				);
 
 			case 'INDEX FROM':
-				$table_name = $rewriter->consume()->token;
+				$table_name = $this->rewriter->consume()->token;
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
@@ -1277,7 +1361,7 @@ class WP_SQLite_Translator {
 				);
 
 			case 'TABLES LIKE':
-				$table_expression = $rewriter->skip();
+				$table_expression = $this->rewriter->skip();
 				return $this->get_translation_result(
 					array(
 						WP_SQLite_Translator::get_query_object(
@@ -1329,12 +1413,12 @@ class WP_SQLite_Translator {
 	/**
 	 * Consumes data types from the query.
 	 *
-	 * @param WP_SQLite_Query_Rewriter $rewriter The query rewriter.
+	 * @param The query rewriter.
 	 *
 	 * @return void
 	 */
-	private function consume_data_types( WP_SQLite_Query_Rewriter $rewriter ) {
-		while ( $type = $rewriter->consume(
+	private function consume_data_types( ) {
+		while ( $type = $this->rewriter->consume(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
 				'flags' => WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE,
@@ -1342,8 +1426,8 @@ class WP_SQLite_Translator {
 		) ) {
 			$typelc = strtolower( $type->value );
 			if ( isset( $this->field_types_translation[ $typelc ] ) ) {
-				$rewriter->drop_last();
-				$rewriter->add(
+				$this->rewriter->drop_last();
+				$this->rewriter->add(
 					new WP_SQLite_Token(
 						$this->field_types_translation[ $typelc ],
 						$type->type,
@@ -1352,11 +1436,11 @@ class WP_SQLite_Translator {
 				);
 			}
 
-			$paren_maybe = $rewriter->peek();
+			$paren_maybe = $this->rewriter->peek();
 			if ( $paren_maybe && '(' === $paren_maybe->token ) {
-				$rewriter->skip();
-				$rewriter->skip();
-				$rewriter->skip();
+				$this->rewriter->skip();
+				$this->rewriter->skip();
+				$this->rewriter->skip();
 			}
 		}
 	}
