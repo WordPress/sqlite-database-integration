@@ -552,7 +552,12 @@ class WP_SQLite_Translator {
 			$rewriter->skip(); // (
 			do {
 				$result->columns[] = trim( $rewriter->skip()->value, '`"\'' );
-				$rewriter->skip_field_length();
+				$paren_maybe = $rewriter->peek();
+				if ( $paren_maybe && '(' === $paren_maybe->token ) {
+					$rewriter->skip();
+					$rewriter->skip();
+					$rewriter->skip();
+				}
 				$rewriter->skip(); // , or )
 			} while ( $rewriter->depth > $constraint_depth );
 		}
@@ -1018,17 +1023,20 @@ class WP_SQLite_Translator {
 								new WP_SQLite_Token( 'id_' . $alias_nb, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
 							)
 						);
+						++$alias_nb;
 					}
 				}
 				$rewriter->consume_all();
 
 				// Select the IDs to delete.
-				$select        = $rewriter->get_updated_query();
-				$rows          = $this->sqlite->query( $select )->fetchAll();
+				$select = $rewriter->get_updated_query();
+				$stmt = $this->sqlite->prepare( $select );
+				$stmt->execute($params);
+				$rows = $stmt->fetchAll();
 				$ids_to_delete = array();
 				foreach ( $rows as $id ) {
-					$ids_to_delete[] = $id->id_1;
-					$ids_to_delete[] = $id->id_2;
+					$ids_to_delete[] = $id['id_0'];
+					$ids_to_delete[] = $id['id_1'];
 				}
 
 				$query = (

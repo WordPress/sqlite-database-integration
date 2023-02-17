@@ -202,20 +202,6 @@ class WP_SQLite_Query_Rewriter {
 	}
 
 	/**
-	 * Skip over the next tokens.
-	 *
-	 * @return void
-	 */
-	public function skip_field_length() {
-		$paren_maybe = $this->peek();
-		if ( $paren_maybe && '(' === $paren_maybe->token ) {
-			$this->skip();
-			$this->skip();
-			$this->skip();
-		}
-	}
-
-	/**
 	 * Skip over the next tokens and return one that matches the given criteria.
 	 *
 	 * @param array $options Options.

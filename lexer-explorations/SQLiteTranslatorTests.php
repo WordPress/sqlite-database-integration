@@ -81,18 +81,18 @@ class SQLiteTranslatorTests extends TestCase {
 	}
 
 	/**
-	 * @dataProvider getQueryTypeTestCases
+	 * @dataProvider getSqliteQueryTypeTestCases
 	 */
-	public function testRecognizeQueryType( $query, $expected_query_type ) {
+	public function testRecognizeSqliteQueryType( $query, $expected_sqlite_query_type ) {
 		$sqlite = new PDO( 'sqlite::memory:' );
 		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$this->assertEquals(
-			$expected_query_type,
-			$t->translate( $query )->query_type
+			$expected_sqlite_query_type,
+			$t->translate( $query )->sqlite_query_type
 		);
 	}
 
-	public function getQueryTypeTestCases() {
+	public function getSqliteQueryTypeTestCases() {
 		return array(
 			array(
 				'ALTER TABLE `table` ADD COLUMN `column` INT;',
@@ -102,6 +102,56 @@ class SQLiteTranslatorTests extends TestCase {
 				'DESCRIBE `table`;',
 				'PRAGMA',
 			),
+		);
+	}
+
+	public function testTranslateComplexDelete() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$sqlite->query(
+			"CREATE TABLE wptests_dummy (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				user_login TEXT NOT NULL default '',
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$sqlite->query(
+			"INSERT INTO wptests_dummy (user_login, option_name, option_value) VALUES ('admin', '_transient_timeout_test', '1675963960');"
+		);
+		$sqlite->query(
+			"INSERT INTO wptests_dummy (user_login, option_name, option_value) VALUES ('admin', '_transient_test', '1675963960');"
+		);
+
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$result = $t->translate(
+			"DELETE a, b FROM wptests_dummy a, wptests_dummy b
+				WHERE a.option_name LIKE '_transient_%'
+				AND a.option_name NOT LIKE '_transient_timeout_%'
+				AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) );"
+		);
+		$this->assertEquals(
+			'DELETE FROM wptests_dummy WHERE ID IN (2,1)',
+			$result->queries[0]->sql
+		);
+	}
+
+	public function testCalcFoundRows() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$sqlite->query(
+			"CREATE TABLE wptests_dummy (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				user_login TEXT NOT NULL default '',
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$result = $t->translate(
+			"SELECT SQL_CALC_FOUND_ROWS * FROM wptests_dummy"
+		);
+		$this->assertEquals(
+			'SELECT  * FROM wptests_dummy',
+			$result->queries[0]->sql
 		);
 	}
 
@@ -182,13 +232,6 @@ class SQLiteTranslatorTests extends TestCase {
 				),
 			),
 			array(
-				'Translates SELECT queries (2)',
-				'SELECT SQL_CALC_FOUND_ROWS * FROM wptests_users',
-				array(
-					WP_SQLite_Translator::get_query_object( 'SELECT * FROM wptests_users' ),
-				),
-			),
-			array(
 				'Translates SELECT queries (3)',
 				"SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC",
 				array(
@@ -212,28 +255,6 @@ class SQLiteTranslatorTests extends TestCase {
                             UPDATE wptests_term_taxonomy SET count = 0
                         SQL,
 						array()
-					),
-				),
-			),
-			array(
-				'Translates DELETE queries',
-				"DELETE a, b FROM wp_options a, wp_options b
-                    WHERE a.option_name LIKE '_transient_%'
-                    AND a.option_name NOT LIKE '_transient_timeout_%'
-                    AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
-                    AND b.option_value < 1675963967;",
-				array(
-					WP_SQLite_Translator::get_query_object(
-						"SELECT a, b FROM wp_options a, wp_options b
-                    WHERE a.option_name LIKE :param0
-                    AND a.option_name NOT LIKE :param1
-                    AND b.option_name = ( :param2|| SUBSTRING( a.option_name, 12 ) )
-                    AND b.option_value < 1675963967;",
-						array(
-							'_transient_%',
-							'_transient_timeout_%',
-							'_transient_timeout_'
-						)
 					),
 				),
 			),
@@ -332,7 +353,7 @@ class SQLiteTranslatorTests extends TestCase {
 					WP_SQLite_Translator::get_query_object(
 						<<<SQL
                       CREATE TABLE "wptests_users" (
-                      "ID" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "ID" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
                       "user_login" text NOT NULL DEFAULT '',
                       "user_pass" text NOT NULL DEFAULT '',
                       "user_nicename" text NOT NULL DEFAULT '',
@@ -364,7 +385,7 @@ class SQLiteTranslatorTests extends TestCase {
 					WP_SQLite_Translator::get_query_object(
 						<<<SQL
                       CREATE TABLE "wp_terms" (
-                      "term_id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "term_id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
                       "name" text NOT NULL DEFAULT '',
                       "slug" text NOT NULL DEFAULT '',
                       "term_group" integer NOT NULL DEFAULT 0)
@@ -391,7 +412,7 @@ class SQLiteTranslatorTests extends TestCase {
 					WP_SQLite_Translator::get_query_object(
 						<<<SQL
                       CREATE TABLE IF NOT EXISTS "wp_term_taxonomy" (
-                      "term_taxonomy_id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "term_taxonomy_id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
                       "term_id" integer NOT NULL DEFAULT 0,
                       "taxonomy" text NOT NULL DEFAULT '',
                       "description" text NOT NULL,
@@ -418,7 +439,7 @@ class SQLiteTranslatorTests extends TestCase {
 					WP_SQLite_Translator::get_query_object(
 						<<<SQL
                       CREATE TABLE "wp_options" (
-                      "option_id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
+                      "option_id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
                       "option_name" text NOT NULL DEFAULT '',
                       "option_value" text NOT NULL,
                       "autoload" text NOT NULL DEFAULT 'yes')
