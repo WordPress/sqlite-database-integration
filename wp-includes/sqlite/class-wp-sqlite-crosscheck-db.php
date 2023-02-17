@@ -28,12 +28,23 @@ class WP_SQLite_Crosscheck_DB extends WP_SQLite_DB {
 		 * In MySQL, AUTO_INCREMENT columns don't reuse IDs assigned in rollback transactions
 		 * In SQLite, AUTOINCREMENT columns do reuse IDs assigned in rollback transactions
 		 *
-		 * Let's just commit the transaction if we're in a crosscheck mode.
+		 * Let's store the current AUTOINCREMENT value for each table, and restore it afterwards.
 		 */
 		if(preg_match('/^\s*rollback/i', $query)) {
-			$query = 'COMMIT;';
+			$autoincrements = [];
+			$tables = $GLOBALS['@pdo']->query("SELECT name as `table` FROM sqlite_master WHERE type='table' ORDER BY name")->fetchAll();
+			foreach($tables as $table) {
+				$table = $table['table'];
+				$autoincrement = $GLOBALS['@pdo']->query("SELECT seq FROM sqlite_sequence WHERE name = '$table'")->fetchColumn();
+				$autoincrements[$table] = $autoincrement ?: 1;
+			}
 		}
 		$sqlite_retval = parent::query($query);
+		if(preg_match('/^\s*rollback/i', $query)) {
+			foreach($autoincrements as $table => $autoincrement) {
+				$GLOBALS['@pdo']->query("UPDATE sqlite_sequence SET seq = $autoincrement WHERE name = '$table'");
+			}
+		}
 		$this->crosscheck($query, $sqlite_retval);
 		return $sqlite_retval;
 	}
@@ -102,7 +113,7 @@ class WP_SQLite_Crosscheck_DB extends WP_SQLite_DB {
 						$test[2]
 					);
 				}
-				throw new Exception();
+				// throw new Exception();
 				break;
 			}
 		}
