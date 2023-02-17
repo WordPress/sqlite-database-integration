@@ -57,7 +57,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'localtimestamp' => 'now',
 		'isnull'         => 'isnull',
 		'if'             => '_if',
-		'regexpp'        => 'regexp',
+		'regexp'         => 'regexp',
 		'field'          => 'field',
 		'log'            => 'log',
 		'least'          => 'least',
