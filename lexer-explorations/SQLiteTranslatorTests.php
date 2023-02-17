@@ -177,6 +177,56 @@ class SQLiteTranslatorTests extends TestCase {
 		);
 	}
 
+	public function testTranslatesComplexSelect() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$sqlite->query(
+			$t->translate(
+				"CREATE TABLE wptests_postmeta (
+					meta_id bigint(20) unsigned NOT NULL auto_increment,
+					post_id bigint(20) unsigned NOT NULL default '0',
+					meta_key varchar(255) default NULL,
+					meta_value longtext,
+					PRIMARY KEY  (meta_id),
+					KEY post_id (post_id),
+					KEY meta_key (meta_key(191))
+				) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+			)->queries[0]->sql
+		);
+		$sqlite->query(
+			$t->translate(
+				"CREATE TABLE wptests_posts (
+					ID bigint(20) unsigned NOT NULL auto_increment,
+					post_status varchar(20) NOT NULL default 'open',
+					post_type varchar(20) NOT NULL default 'post',
+					post_date varchar(20) NOT NULL default 'post',
+					PRIMARY KEY  (ID)
+				) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+			)->queries[0]->sql
+		);
+		$result = $t->translate(
+			"SELECT SQL_CALC_FOUND_ROWS  wptests_posts.ID
+				FROM wptests_posts  INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+				WHERE 1=1 
+				AND (
+					NOT EXISTS (
+						SELECT 1 FROM wptests_postmeta mt1 
+						WHERE mt1.post_ID = wptests_postmeta.post_ID 
+						LIMIT 1
+					)
+				)
+				 AND (
+					(wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish'))
+				)
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+
+		// No exception is good enough of a test for now
+		$this->assertTrue(true);
+	}	
+
 	public function testTranslatesUtf8Insert() {
 		$sqlite = new PDO( 'sqlite::memory:' );
 		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
@@ -191,6 +241,7 @@ class SQLiteTranslatorTests extends TestCase {
 	
 	public function testTranslatesRandom() {
 		$sqlite = new PDO( 'sqlite::memory:' );
+		new WP_SQLite_PDO_User_Defined_Functions($sqlite);
 		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$rand = $t->translate('SELECT RAND()')->queries[0]->sql;
 		$this->assertIsNumeric(
@@ -317,7 +368,7 @@ class SQLiteTranslatorTests extends TestCase {
 				array(
 					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
-                            SELECT STRFTIME('%Y',post_date) AS `year`, STRFTIME('%M',post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY STRFTIME('%Y',post_date), STRFTIME('%M',post_date) ORDER BY post_date DESC
+                            SELECT STRFTIME('%Y',post_date) AS `year`, STRFTIME('%M',post_date) AS `month`, ''|| count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY STRFTIME('%Y',post_date), STRFTIME('%M',post_date) ORDER BY post_date DESC
                         SQL,
 						array(
 							':param0' => 'post',
@@ -396,6 +447,11 @@ class SQLiteTranslatorTests extends TestCase {
 				'Ignores CREATE PROCEDURE queries',
 				'CREATE PROCEDURE `test_mysqli_flush_sync_procedure` BEGIN END',
 				array( WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ) ),
+			),
+			array(
+				'Stringifies COUNT(*) queries',
+				'SELECT post_author, COUNT(*) FROM wptests_posts',
+				array( WP_SQLite_Translator::get_query_object( "SELECT post_author, ''|| COUNT(*) FROM wptests_posts" ) ),
 			),
 			array(
 				'Translates a complex INSERT',

@@ -129,6 +129,19 @@ class WP_SQLite_Query_Rewriter {
 		}
 	}
 
+	public function peek_nth($nth) {
+		$found = 0;
+		for($i=$this->index + 1;$i<$this->max;$i++) {
+			$token = $this->input_tokens[$i];
+			if(!$token->is_semantically_void()) {
+				++$found;
+			}
+			if($found == $nth) {
+				return $this->input_tokens[$i];
+			}
+		}
+	}
+
 	/**
 	 * Consume all the tokens.
 	 *

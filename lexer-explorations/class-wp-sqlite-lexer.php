@@ -1690,9 +1690,10 @@ class WP_SQLite_Lexer {
 	 * @return void
 	 */
 	public function error( $msg, $str = '', $pos = 0, $code = 0 ) {
-		error_log(
+		throw new Exception(
 			print_r(
 				array(
+					'query'    => $this->str,
 					'message'  => $msg,
 					'str'      => $str,
 					'position' => $pos,

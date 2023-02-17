@@ -23,6 +23,11 @@ class WP_SQLite_DB extends wpdb {
 	protected $dbh;
 
 	/**
+	 * Required by Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property()
+	 */
+	public $allow_unsafe_unquoted_parameters = false;
+
+	/**
 	 * Constructor
 	 *
 	 * Unlike wpdb, no credentials are needed.

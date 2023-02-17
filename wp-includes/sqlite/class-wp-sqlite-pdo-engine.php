@@ -16,6 +16,9 @@ require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlit
  */
 class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 
+	const SQLITE_BUSY = 5;
+	const SQLITE_LOCKED = 6;
+
 	/**
 	 * The database version.
 	 *
@@ -339,6 +342,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		return true;
 	}
 
+
 	/**
 	 * Method to execute query().
 	 *
@@ -368,74 +372,82 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
-		if(
-			preg_match('/^START TRANSACTION/i',$statement)
-			|| preg_match('/^BEGIN/i',$statement)
-		) {		
-			return $this->beginTransaction();
-		} else if(preg_match('/^COMMIT/i',$statement)) {
-			return $this->commit();
-		} else if(preg_match('/^ROLLBACK/i',$statement)) {
-			return $this->rollBack();
-		}
-
-		$this->translator = new WP_SQLite_Translator( $this->pdo, $GLOBALS['table_prefix'] );
-		$reason           = null;
-
 		try {
-			$translation = $this->translator->translate(
-				$statement,
-				$this->found_rows_result
-			);
-			$this->last_translation = $translation;
-		} catch ( PDOException $err ) {
+			if(
+				preg_match('/^START TRANSACTION/i',$statement)
+				|| preg_match('/^BEGIN/i',$statement)
+			) {
+				return $this->beginTransaction();
+			} else if(preg_match('/^COMMIT/i',$statement)) {
+				return $this->commit();
+			} else if(preg_match('/^ROLLBACK/i',$statement)) {
+				return $this->rollBack();
+			}
+
+			$this->translator = new WP_SQLite_Translator( $this->pdo, $GLOBALS['table_prefix'] );
+
+			do {
+				$error = null;
+				try {
+					$translation = $this->translator->translate(
+						$statement,
+						$this->found_rows_result
+					);
+				} catch ( PDOException $error ) {
+					if( $error->getCode() != SELF::SQLITE_BUSY ) {
+						return $this->handle_error( $error );
+					}
+				}
+			} while ( $error ); 
+
+			$stmt = null;
+			$last_retval = null;
+			foreach ( $translation->queries as $query ) {
+				$params = $query->params ? 'parameters: '.implode(", ", $query->params) : '(no parameters)';
+				$this->queries[] = "Executing: $query->sql | $params";
+
+				do {
+					$error = null;
+					try {
+						$stmt = $this->pdo->prepare( $query->sql );
+						$last_retval = $stmt->execute( $query->params );
+					} catch ( PDOException $error ) {
+						if( $error->getCode() != SELF::SQLITE_BUSY ) {
+							return $this->handle_error( $error );
+						}
+					}
+				} while ( $error ); 
+			}
+
+			if ( $translation->calc_found_rows ) {
+				$this->found_rows_result = $translation->calc_found_rows;
+			}
+			if ( $stmt ) {
+				if ( 
+					'DESCRIBE' === $translation->mysql_query_type 
+					|| 'SELECT' === $translation->mysql_query_type
+				) {
+					$this->_results = $stmt->fetchAll( $mode );
+				} else {
+					$this->_results = $last_retval;
+				}
+			}
+
+			$this->process_results($stmt, $translation);
+			$debug_string = $this->get_debug_info();
+			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true && $debug_string ) {
+				error_log( $debug_string );
+			}
+	
+			return $this->return_value;
+		} catch ( Exception $err ) {
 			return $this->handle_error( $err );
 		}
-
-		$stmt = null;
-		$last_retval = null;
-		foreach ( $translation->queries as $query ) {
-			$params = $query->params ? 'parameters: '.implode(", ", $query->params) : '(no parameters)';
-			$this->queries[] = "Executing: $query->sql | $params";
-			do {
-				try {
-					$stmt = $this->pdo->prepare( $query->sql );
-					$last_retval = $stmt->execute( $query->params );
-				} catch ( PDOException $err ) {
-					return $this->handle_error( $err );
-				}
-			} while ( 5 == $reason || 6 == $reason ); // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-		}
-
-		if ( $translation->calc_found_rows ) {
-			$this->found_rows_result = $translation->calc_found_rows;
-		}
-		if ( $stmt ) {
-			if ( 
-				'DESCRIBE' === $translation->mysql_query_type 
-				|| 'SELECT' === $translation->mysql_query_type
-			) {
-				$this->_results = $stmt->fetchAll( $mode );
-			} else {
-				$this->_results = $last_retval;
-			}
-		}
-
-		if ( ! $this->is_error ) {
-			$this->process_results($stmt, $translation);
-		}
-
-		$debug_string = $this->get_debug_info();
-		if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true && $debug_string ) {
-			error_log( $debug_string );
-		}
-
-		return $this->return_value;
 	}
 
-	private function handle_error( PDOException $err ) {
+	private function handle_error( Exception $err ) {
 		$message = $err->getMessage();
-		$err_message = sprintf( 'Problem preparing the PDO SQL Statement.  Error was: %s', $message );
+		$err_message = sprintf( 'Problem preparing the PDO SQL Statement. Error was: %s', $message );
 		$this->set_error( __LINE__, __FUNCTION__, $err_message );
 		$this->return_value = false;
 		return false;

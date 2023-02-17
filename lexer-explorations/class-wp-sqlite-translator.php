@@ -126,8 +126,6 @@ class WP_SQLite_Translator {
 	public function __construct( $pdo, $table_prefix = 'wp_' ) {
 		$this->sqlite = $pdo;
 		$this->sqlite->query( 'PRAGMA encoding="UTF-8";' );
-		// @TODO Don't call this in a translator class:
-		new WP_SQLite_PDO_User_Defined_Functions($this->sqlite);
 
 		$this->table_prefix = $table_prefix;
 	}
@@ -402,19 +400,7 @@ class WP_SQLite_Translator {
 			 * instead we'll check whether the second non-whitespace 
 			 * token is a data type.
 			 */
-			$found = 0;
-			$second_token = null;
-			for($i=$this->rewriter->index + 1;$i<$this->rewriter->max;$i++) {
-				$token = $this->rewriter->input_tokens[$i];
-				if(WP_SQLite_Token::TYPE_WHITESPACE !== $token->type && 
-			       WP_SQLite_Token::TYPE_COMMENT !== $token->type ) {
-					++$found;
-				}
-				if($found == 2) {
-					$second_token = $this->rewriter->input_tokens[$i];
-					break;
-				}
-			}
+			$second_token = $this->rewriter->peek_nth(2);
 
 			$is_data_type = WP_SQLite_Token::TYPE_KEYWORD === $second_token->type && ( $second_token->flags & WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE );
 			if ( $is_data_type ) {
@@ -673,6 +659,7 @@ class WP_SQLite_Translator {
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 				if(
 					$this->translate_concat_function($token)
+					|| $this->translate_count_function($token)
 					|| $this->translate_date_function($token)
 					|| $this->translate_date_add_sub($token)
 					|| $this->translate_values_function($token, $is_in_duplicate_section)
@@ -721,7 +708,7 @@ class WP_SQLite_Translator {
 		if ( $has_sql_calc_found_rows ) {
 			$query = $updated_query;
 			// We make the data for next SELECT FOUND_ROWS() statement.
-			$unlimited_query         = preg_replace( '/\\bLIMIT\\s*.*/imsx', '', $query );
+			$unlimited_query         = preg_replace( '/\\bLIMIT\\s\d+(?:\s*,\s*\d+)?$/imsx', '', $query );
 			$stmt                    = $this->sqlite->prepare( $unlimited_query );
 			$stmt->execute( $params );
 			$result->calc_found_rows = count( $stmt->fetchAll() );
@@ -886,6 +873,26 @@ class WP_SQLite_Translator {
 				),
 			)
 		);
+	}
+
+	private function translate_count_function($token) {
+		/**
+		 * MySQL COUNT(*) gives us a string, SQLite gives us an integer.
+		 * Let's cast the result to a string.
+		 */
+		if (
+			'COUNT' === $token->keyword
+			&& $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
+			&& $this->rewriter->peek_nth(2)->token === '('
+		) {
+			$this->rewriter->add_many([
+				new WP_SQLite_Token(" ", WP_SQLite_Token::TYPE_WHITESPACE),
+				new WP_SQLite_Token("''", WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES),
+				new WP_SQLite_Token("||", WP_SQLite_Token::TYPE_OPERATOR),
+			]);
+			$this->rewriter->consume();
+			return true;
+		}
 	}
 
 	private function translate_date_function( $token ) {		
