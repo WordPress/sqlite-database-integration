@@ -156,6 +156,27 @@ class SQLiteTranslatorTests extends TestCase {
 		);
 	}
 
+	public function testTranslatesDoubleAlterTable() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$result = $t->translate(
+			"ALTER TABLE test DROP INDEX domain, ADD INDEX domain(domain(140),path(51)), DROP INDEX domain"
+		);
+		$this->assertCount(3, $result->queries);
+		$this->assertEquals(
+			'DROP INDEX "test__domain"',
+			$result->queries[0]->sql
+		);
+		$this->assertEquals(
+			'CREATE INDEX "test__domain" ON "test" (`domain`,`path`)',
+			$result->queries[1]->sql
+		);
+		$this->assertEquals(
+			'DROP INDEX "test__domain"',
+			$result->queries[0]->sql
+		);
+	}
+
 	public function testTranslatesUtf8Insert() {
 		$sqlite = new PDO( 'sqlite::memory:' );
 		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
@@ -167,6 +188,21 @@ class SQLiteTranslatorTests extends TestCase {
 			$result->queries[0]->sql
 		);
 	}
+	
+	public function testTranslatesRandom() {
+		$sqlite = new PDO( 'sqlite::memory:' );
+		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$rand = $t->translate('SELECT RAND()')->queries[0]->sql;
+		$this->assertIsNumeric(
+			$sqlite->query($rand)->fetchColumn()
+		);
+
+		$rand = $t->translate('SELECT RAND(5)')->queries[0]->sql;
+		$this->assertIsNumeric(
+			$sqlite->query($rand)->fetchColumn()
+		);
+	}
+	
 	public function testTranslatesUtf8SELECT() {
 		$sqlite = new PDO( 'sqlite::memory:' );
 		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );

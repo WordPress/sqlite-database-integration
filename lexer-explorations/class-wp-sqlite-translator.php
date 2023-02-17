@@ -1163,90 +1163,105 @@ class WP_SQLite_Translator {
 		}
 
 		$table_name = strtolower( $this->rewriter->consume()->token );
-		$op_type    = strtolower( $this->rewriter->consume()->token );
-		$op_subject = strtolower( $this->rewriter->consume()->token );
-		if ( 'fulltext key' === $op_subject ) {
-			return $this->get_translation_result( array( $this->noop() ) );
-		}
+		$queries = [];
+		do {
+			// This loop may be executed multiple times if there are multiple operations in the ALTER query.
+			// Let's reset the initial state on each pass.
+			$this->rewriter->replace_all([
+				new WP_SQLite_Token( 'ALTER', WP_SQLite_Token::TYPE_KEYWORD ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'TABLE', WP_SQLite_Token::TYPE_KEYWORD ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( $table_name, WP_SQLite_Token::TYPE_KEYWORD ),
+			]);
+			$op_type    = strtolower( $this->rewriter->consume()->token );
+			$op_subject = strtolower( $this->rewriter->consume()->token );
+			if ( 'fulltext key' === $op_subject ) {
+				return $this->get_translation_result( array( $this->noop() ) );
+			}
 
-		if ( 'add' === $op_type ) {
-			if ( 'column' === $op_subject ) {
-				$this->consume_data_types();
-				$this->rewriter->consume_all();
-			} elseif ( 'key' === $op_subject || 'index' === $op_subject || 'unique key' === $op_subject ) {
-				$key_name     = $this->rewriter->consume()->value;
-				$index_prefix = 'unique key' === $op_subject ? 'UNIQUE ' : '';
-				$this->rewriter->replace_all(
-					array(
-						new WP_SQLite_Token( 'CREATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( "{$index_prefix}INDEX", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( "\"{$table_name}__$key_name\"", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( 'ON', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( '"' . $table_name . '"', WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_DOUBLE_QUOTES ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ),
-					)
-				);
+			if ( 'add' === $op_type ) {
+				if ( 'column' === $op_subject ) {
+					$this->consume_data_types();
+				} elseif ( 'key' === $op_subject || 'index' === $op_subject || 'unique key' === $op_subject ) {
+					$key_name     = $this->rewriter->consume()->value;
+					$index_prefix = 'unique key' === $op_subject ? 'UNIQUE ' : '';
+					$this->rewriter->replace_all(
+						array(
+							new WP_SQLite_Token( 'CREATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( "{$index_prefix}INDEX", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( "\"{$table_name}__$key_name\"", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( 'ON', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( '"' . $table_name . '"', WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_DOUBLE_QUOTES ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ),
+						)
+					);
 
-				while ( $token = $this->rewriter->consume() ) {
-					if ( '(' === $token->token ) {
-						$this->rewriter->drop_last();
-						break;
+					while ( $token = $this->rewriter->consume() ) {
+						if ( '(' === $token->token ) {
+							$this->rewriter->drop_last();
+							break;
+						}
 					}
-				}
 
-				// Consume all the fields, skip the sizes like `(20)` in `varchar(20)`.
-				while ( $this->rewriter->consume( array( 'type' => WP_SQLite_Token::TYPE_SYMBOL ) ) ) {
-					$paren_maybe = $this->rewriter->peek();
+					// Consume all the fields, skip the sizes like `(20)` in `varchar(20)`.
+					while ( $token = $this->rewriter->consume() ) {
+						if(!$token->matches(WP_SQLite_Token::TYPE_OPERATOR)) {
+							$token->token = "`".trim( $token->token, '`"\'' )."`";
+							$token->value = "`".trim( $token->value, '`"\'' )."`";
+						}
+						$paren_maybe = $this->rewriter->peek();
 
-					if ( $paren_maybe && '(' === $paren_maybe->token ) {
-						$this->rewriter->skip();
-						$this->rewriter->skip();
-						$this->rewriter->skip();
+						if ( $paren_maybe && '(' === $paren_maybe->token ) {
+							$this->rewriter->skip();
+							$this->rewriter->skip();
+							$this->rewriter->skip();
+						}
+						if($token->value === ')') {
+							break;
+						}
 					}
+				} else {
+					throw new Exception( "Unknown operation: $op_type $op_subject" );
 				}
-
-				$this->rewriter->consume_all();
+			} elseif ( 'change' === $op_type ) {
+				if ( 'column' === $op_subject ) {
+					$this->consume_data_types();
+				} else {
+					throw new Exception( "Unknown operation: $op_type $op_subject" );
+				}
+			} elseif ( 'drop' === $op_type ) {
+				if ( 'column' === $op_subject ) {
+					$this->rewriter->consume_all();
+				} elseif ( 'key' === $op_subject ||  'index' === $op_subject ) {
+					$key_name = $this->rewriter->consume()->value;
+					$this->rewriter->replace_all(
+						array(
+							new WP_SQLite_Token( 'DROP', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( 'INDEX', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+							new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+							new WP_SQLite_Token( "\"{$table_name}__$key_name\"", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+						)
+					);
+				}
 			} else {
-				throw new Exception( "Unknown operation: $op_type $op_subject" );
+				throw new Exception( 'Unknown operation: ' . $op_type );
 			}
-		} elseif ( 'change' === $op_type ) {
-			if ( 'column' === $op_subject ) {
-				$this->consume_data_types();
-				$this->rewriter->consume_all();
-			} else {
-				throw new Exception( "Unknown operation: $op_type $op_subject" );
-			}
-		} elseif ( 'drop' === $op_type ) {
-			if ( 'column' === $op_subject ) {
-				$this->rewriter->consume_all();
-			} elseif ( 'key' === $op_subject ) {
-				$key_name = $this->rewriter->consume()->value;
-				$this->rewriter->replace_all(
-					array(
-						new WP_SQLite_Token( 'DROP', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( 'INDEX', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
-						new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-						new WP_SQLite_Token( "\"{$table_name}__$key_name\"", WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
-					)
-				);
-			}
-		} else {
-			throw new Exception( 'Unknown operation: ' . $op_type );
-		}
+			$queries[] = WP_SQLite_Translator::get_query_object(
+				$this->rewriter->get_updated_query()
+			);
+		} while ( $this->rewriter->skip(array(
+			'type' => WP_SQLite_Token::TYPE_OPERATOR,
+			'value' => ',',
+		)) );
 
-		return $this->get_translation_result(
-			array(
-				WP_SQLite_Translator::get_query_object(
-					$this->rewriter->get_updated_query()
-				),
-			)
-		);
+		return $this->get_translation_result($queries);
 	}
 
 	/**
