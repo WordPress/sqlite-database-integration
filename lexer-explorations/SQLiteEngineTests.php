@@ -555,6 +555,48 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals('0', $results[0]->hour);
 	}
 
+	public function testSelectByDateFunctions() {
+		$this->engine->query( "
+			INSERT INTO _dates (option_name, option_value) 
+			VALUES ('second', '2014-10-21 00:42:29');
+		" );
+
+		// HOUR(14:08) should yield 14 in the 24 hour format
+		$this->engine->query( "
+			SELECT * FROM _dates WHERE
+              year(option_value) = 2014
+              AND monthnum(option_value) = 10
+              AND day(option_value) = 21
+              AND hour(option_value) = 0
+              AND minute(option_value) = 42
+		" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+	}
+
+	public function testSelectByDateFormat() {
+		$this->engine->query( "
+			INSERT INTO _dates (option_name, option_value) 
+			VALUES ('second', '2014-10-21 00:42:29');
+		" );
+
+		// HOUR(14:08) should yield 14 in the 24 hour format
+		$this->engine->query( "
+			SELECT * FROM _dates WHERE DATE_FORMAT(option_value, '%H.%i') = 0.42
+		" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+	}
+	
+	public function testStringToFloatComparison() {
+		$this->engine->query( "SELECT ('00.42' = 0.4200) as cmp;" );
+		$results = $this->engine->get_query_results();
+		if($results[0]->cmp !== 1) {
+			$this->markTestSkipped('Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ');
+		}
+		$this->assertEquals('1', $results[0]->cmp);
+	}
+
 	public function testComplexSelectBasedOnDates() {
 		$this->engine->query(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"

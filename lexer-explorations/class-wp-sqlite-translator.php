@@ -74,10 +74,19 @@ class WP_SQLite_Translator {
 
 	/**
 	 * The MySQL to SQLite date formats translation.
+	 * 
+	 * Maps MySQL formats to SQLite strftime() formats.
+	 * 
+	 * For MySQL formats, see:
+	 * * https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+	 * 
+	 * For SQLite formats, see:
+	 * * https://www.sqlite.org/lang_datefunc.html
+	 * * https://strftime.org/
 	 *
 	 * @var array
 	 */
-	private $mysql_php_date_formats = array(
+	private $mysql_date_format_to_sqlite_strftime = array(
 		'%a' => '%D',
 		'%b' => '%M',
 		'%c' => '%n',
@@ -87,7 +96,7 @@ class WP_SQLite_Translator {
 		'%H' => '%H',
 		'%h' => '%h',
 		'%I' => '%h',
-		'%i' => '%i',
+		'%i' => '%M',
 		'%j' => '%z',
 		'%k' => '%G',
 		'%l' => '%g',
@@ -1062,11 +1071,12 @@ class WP_SQLite_Translator {
 			$token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION &&
 			'DATE_FORMAT' === $token->keyword
 		) {
-			// DATE_FORMAT( `post_date`, '%Y-%m-%d' ).
+			// Rewrite DATE_FORMAT( `post_date`, '%Y-%m-%d' ) to STRFTIME( '%Y-%m-%d', `post_date` )
+
+			// Skip the DATE_FORMAT function name
 			$this->rewriter->skip();
-			$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-			// The opening `(`.
-			$this->rewriter->consume();
+			// Skip the opening `(`.
+			$this->rewriter->skip();
 
 			// Skip the first argument so we can read the second one.
 			$first_arg = $this->rewriter->skip_and_return_all(
@@ -1084,13 +1094,61 @@ class WP_SQLite_Translator {
 
 			// Skip the second argument but capture the token.
 			$format     = $this->rewriter->skip()->value;
-			$new_format = strtr( $format, $this->mysql_php_date_formats );
+			$new_format = strtr( $format, $this->mysql_date_format_to_sqlite_strftime );
+			if( ! $new_format ) {
+				throw new Exception( "Could not translate a DATE_FORMAT() format to STRFTIME format ($format)" );
+			}
 
+			/**
+			 * MySQL supports comparing strings and floats, e.g.
+			 * 
+			 * > SELECT '00.42' = 0.4200
+			 * 1
+			 * 
+			 * SQLite does not support that. At the same time,
+			 * WordPress likes to filter dates by comparing numeric
+			 * outputs of DATE_FORMAT() to floats, e.g.:
+			 * 
+			 *     -- Filter by hour and minutes
+			 *     DATE_FORMAT(
+			 *         STR_TO_DATE('2014-10-21 00:42:29', '%Y-%m-%d %H:%i:%s'),
+			 *         '%H.%i'
+			 *     ) = 0.4200;
+			 * 
+			 * Let's cast the STRFTIME() output to a float if
+			 * the date format is typically used for string 
+			 * to float comparisons.
+			 * 
+			 * In the future, let's update WordPress to avoid comparing
+			 * strings and floats.
+			 */
+			$cast_to_float = '%H.%i' === $format;
+			if( $cast_to_float ) {
+				$this->rewriter->add( new WP_SQLite_Token( 'CAST', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+				$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
+			}
+
+			$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+			$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
 			$this->rewriter->add( new WP_SQLite_Token( "'$new_format'", WP_SQLite_Token::TYPE_STRING ) );
 			$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
 
 			// Add the buffered tokens back to the stream.
 			$this->rewriter->add_many( $first_arg );
+
+			// Consume the closing ')'
+			$this->rewriter->consume(array(
+				'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+				'value' => ')',
+			));
+
+			if( $cast_to_float ) {
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+				$this->rewriter->add( new WP_SQLite_Token( 'as', WP_SQLite_Token::TYPE_OPERATOR ) );
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+				$this->rewriter->add( new WP_SQLite_Token( 'FLOAT', WP_SQLite_Token::TYPE_KEYWORD ) );
+				$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
+			}
 
 			return true;
 		}
