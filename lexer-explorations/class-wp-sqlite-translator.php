@@ -658,7 +658,21 @@ class WP_SQLite_Translator {
 			if ( 'AS' !== $last_reserved_keyword && WP_SQLite_Token::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) {
 				// Rewrite string values to bound parameters.
 				$param_name            = ':param' . count( $params );
-				$params[ $param_name ] = $token->value;
+				$value = $token->value;
+				/**
+				 * The code below converts the date format from MySQL to SQLite.
+				 * 
+				 * In MySQL, the date can be formatted as   'YYYY-MM-DDTHH:MM:SSZ'
+				 * In SQLite, the date must be formatted as 'YYYY-MM-DD HH:MM:SS'
+				 * 
+				 * Caveat: It will adjust every string that matches the pattern, not just dates.
+				 * @TODO: Only adjust the data that is semantically used as a date, e.g.
+				 *        when it's inserted to a date column or when it is compared against a date column.
+				 */
+				if( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})Z$/', $token->value, $matches ) ) {
+					$value = $matches[1] . ' ' . $matches[2];
+				}
+				$params[ $param_name ] = $value;
 				$this->rewriter->skip();
 				$this->rewriter->add( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );

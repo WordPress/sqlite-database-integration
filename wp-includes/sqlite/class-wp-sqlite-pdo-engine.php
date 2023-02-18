@@ -370,6 +370,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @see PDO::query()
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
+		// echo $statement."\n";
 		$this->flush();
 		try {
 			if(

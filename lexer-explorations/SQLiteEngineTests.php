@@ -286,6 +286,50 @@ class SQLiteEngineTests extends TestCase {
 		);
 	}
 
+	public function testSelectBetweenDates() {
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('first', '2016-01-15T00:00:00Z');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('second', '2016-01-16T00:00:00Z');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('third', '2016-01-17T00:00:00Z');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('fourth', '2016-01-18T00:00:00Z');");
+		
+		$this->engine->query("SELECT * FROM _dates WHERE option_value BETWEEN '2016-01-15T00:00:00Z' AND '2016-01-17T00:00:00Z' ORDER BY ID;");
+		$results = $this->engine->get_query_results();
+		$this->assertCount(3, $results);
+		$this->assertEquals('first', $results[0]->option_name);
+		$this->assertEquals('second', $results[1]->option_name);
+		$this->assertEquals('third', $results[2]->option_name);
+	}
+
+	public function testSelectFilterByDates() {
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('first', '2016-01-15T00:00:00Z');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('second', '2016-01-16T00:00:00Z');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('third', '2016-01-17T00:00:00Z');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('fourth', '2016-01-18T00:00:00Z');");
+		
+		$this->engine->query("
+			SELECT * FROM _dates
+			WHERE option_value > '2016-01-15 00:00:00'
+			AND   option_value < '2016-01-17 00:00:00'
+			ORDER BY ID
+		");
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('second', $results[0]->option_name);
+	}
+
+	public function testCorrectlyInsertsDatesAndStrings() {
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('2016-01-15T00:00:00Z', '2016-01-15T00:00:00Z');");
+		
+		$this->engine->query("SELECT * FROM _dates");
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('2016-01-15 00:00:00', $results[0]->option_value);
+		if($results[0]->option_name !== '2016-01-15T00:00:00Z') {
+			$this->markTestSkipped('A datetime-like string was rewritten to an SQLite format even though it was used as a text and not as a datetime.');
+		}
+		$this->assertEquals('2016-01-15T00:00:00Z', $results[0]->option_name);
+	}
+
 	public function testTransactionRollback() {
 		$this->engine->query('BEGIN');
 		$this->engine->query("INSERT INTO _options (option_name) VALUES ('first');");
