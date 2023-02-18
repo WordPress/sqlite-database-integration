@@ -659,7 +659,6 @@ class WP_SQLite_Translator {
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 				if(
 					$this->translate_concat_function($token)
-					|| $this->translate_count_function($token)
 					|| $this->translate_date_function($token)
 					|| $this->translate_date_add_sub($token)
 					|| $this->translate_values_function($token, $is_in_duplicate_section)
@@ -873,26 +872,6 @@ class WP_SQLite_Translator {
 				),
 			)
 		);
-	}
-
-	private function translate_count_function($token) {
-		/**
-		 * MySQL COUNT(*) gives us a string, SQLite gives us an integer.
-		 * Let's cast the result to a string.
-		 */
-		if (
-			'COUNT' === $token->keyword
-			&& $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION
-			&& $this->rewriter->peek_nth(2)->token === '('
-		) {
-			$this->rewriter->add_many([
-				new WP_SQLite_Token(" ", WP_SQLite_Token::TYPE_WHITESPACE),
-				new WP_SQLite_Token("''", WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES),
-				new WP_SQLite_Token("||", WP_SQLite_Token::TYPE_OPERATOR),
-			]);
-			$this->rewriter->consume();
-			return true;
-		}
 	}
 
 	private function translate_date_function( $token ) {		

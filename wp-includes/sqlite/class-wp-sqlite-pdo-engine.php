@@ -213,10 +213,14 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 					"Code: $status",
 					"Error Message: $err_message"
 				);
+				$this->is_error = true;
 				$this->last_error = $message;
 
-				return new WP_Error($this->last_error);
+				return false;
 			}
+			
+			// MySQL data comes across stringified by default:
+			$pdo->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, true);
 		}
 		$this->pdo = $pdo;
 

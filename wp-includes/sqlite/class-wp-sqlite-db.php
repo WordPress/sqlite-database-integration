@@ -211,6 +211,10 @@ class WP_SQLite_DB extends wpdb {
 			$pdo = $GLOBALS['@pdo'];
 		}
 		$this->dbh = new WP_SQLite_PDO_Engine( $pdo );
+		$this->last_error = $this->dbh->get_error_message();
+		if($this->last_error) {
+			return false;
+		}
 		$GLOBALS['@pdo'] = $this->dbh->getPDO();
 		$this->ready = true;
 	}

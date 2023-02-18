@@ -23,7 +23,7 @@ class SQLiteEngineTests extends TestCase {
 		}
 	}
 
-	public function testSimpleQuery() {
+	public function testRegexp() {
 		$engine = new WP_SQLite_PDO_Engine( );
 		$engine->query(
 			"CREATE TABLE wptests_dummy (
@@ -45,6 +45,31 @@ class SQLiteEngineTests extends TestCase {
 
 		$this->assertCount(
 			1,
+			$engine->get_query_results()
+		);
+	}
+
+	public function testFetchedDataIsStringified() {
+		$engine = new WP_SQLite_PDO_Engine( );
+		$engine->query(
+			"CREATE TABLE wptests_dummy (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$engine->query(
+			"INSERT INTO wptests_dummy (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
+		);
+
+		$engine->query('SELECT ID FROM wptests_dummy');
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ID' => '1',
+				),
+			),
 			$engine->get_query_results()
 		);
 	}
