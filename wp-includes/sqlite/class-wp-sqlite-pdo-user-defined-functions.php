@@ -47,6 +47,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	private $functions = array(
 		'month' => 'month',
+		'monthnum' => 'month',
 		'year' => 'year',
 		'day' => 'day',
 		'hour' => 'hour',
@@ -299,7 +300,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function hour($time)
 	{
-		return intval(date("h", strtotime($time)));
+		return intval(date("H", strtotime($time)));
 	}
 
 	public function week($field, $mode) {

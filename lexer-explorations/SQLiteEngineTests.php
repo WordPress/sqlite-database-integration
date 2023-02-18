@@ -300,7 +300,7 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals('third', $results[2]->option_name);
 	}
 
-	public function testSelectFilterByDates() {
+	public function testSelectFilterByDatesGtLt() {
 		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('first', '2016-01-15T00:00:00Z');");
 		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('second', '2016-01-16T00:00:00Z');");
 		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('third', '2016-01-17T00:00:00Z');");
@@ -315,6 +315,23 @@ class SQLiteEngineTests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
 		$this->assertEquals('second', $results[0]->option_name);
+	}
+
+	public function testSelectFilterByDatesZeroHour() {
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('first', '2014-10-21 00:42:29');");
+		$this->engine->query("INSERT INTO _dates (option_name, option_value) VALUES ('second', '2014-10-21 01:42:29');");
+		
+		$this->engine->query("
+			SELECT * FROM _dates
+			WHERE YEAR(option_value) = 2014
+			AND   MONTHNUM(option_value) = 10
+			AND   DAY(option_value) = 21
+			AND   HOUR(option_value) = 0
+			AND   MINUTE(option_value) = 42
+		");
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('first', $results[0]->option_name);
 	}
 
 	public function testCorrectlyInsertsDatesAndStrings() {
@@ -425,7 +442,7 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals('2003-05-27 10:08:48', $results[0]->option_value);
 	}
 
-	public function testSelectDate() {
+	public function testSelectDate1() {
 		$this->engine->query(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
 		);
@@ -434,6 +451,7 @@ class SQLiteEngineTests extends TestCase {
 			YEAR( _dates.option_value ) as year,
 			MONTH( _dates.option_value ) as month,
 			DAYOFMONTH( _dates.option_value ) as dayofmonth,
+			MONTHNUM( _dates.option_value ) as monthnum,
 			HOUR( _dates.option_value ) as hour,
 			MINUTE( _dates.option_value ) as minute,
 			SECOND( _dates.option_value ) as second
@@ -444,9 +462,26 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals('2003', $results[0]->year);
 		$this->assertEquals('5', $results[0]->month);
 		$this->assertEquals('27', $results[0]->dayofmonth);
+		$this->assertEquals('5', $results[0]->monthnum);
 		$this->assertEquals('10', $results[0]->hour);
 		$this->assertEquals('8', $results[0]->minute);
 		$this->assertEquals('48', $results[0]->second);
+	}
+
+	public function testSelectDate24HourFormat() {
+		$this->engine->query( "INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:08:48');" );
+		$this->engine->query( "SELECT  HOUR( _dates.option_value ) as hour FROM _dates WHERE option_name = 'first'" );
+
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('0', $results[0]->hour);
+
+		$this->engine->query( "INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 14:08:48');" );
+		$this->engine->query( "SELECT  HOUR( _dates.option_value ) as hour FROM _dates WHERE option_name = 'second'" );
+
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('14', $results[0]->hour);
 	}
 
 	public function testComplexSelectBasedOnDates() {
