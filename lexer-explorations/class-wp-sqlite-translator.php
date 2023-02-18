@@ -118,6 +118,8 @@ class WP_SQLite_Translator {
 	private $last_found_rows = 0;
 
 	private $rewriter;
+	private $query_type;
+	private $insert_columns = array();
 
 	/**
 	 * Constructor.
@@ -176,6 +178,7 @@ class WP_SQLite_Translator {
 		$result->sqlite_query_type = null;
 		$result->mysql_query_type  = null;
 		$result->rewriter  = null;
+		$result->query_type  = null;
 
 		return $result;
 	}
@@ -195,9 +198,9 @@ class WP_SQLite_Translator {
 
 		$tokens     = WP_SQLite_Lexer::get_tokens( $query )->tokens;
 		$this->rewriter = new WP_SQLite_Query_Rewriter( $tokens );
-		$query_type = $this->rewriter->peek()->value;
+		$this->query_type = $this->rewriter->peek()->value;
 
-		switch ( $query_type ) {
+		switch ( $this->query_type ) {
 			case 'ALTER':
 				$result = $this->translate_alter();
 				break;
@@ -272,7 +275,7 @@ class WP_SQLite_Translator {
 				break;
 
 			default:
-				throw new Exception( 'Unknown query type: ' . $query_type );
+				throw new Exception( 'Unknown query type: ' . $this->query_type );
 		}
 		// The query type could have changed – let's grab the new one.
 		if ( count( $result->queries ) ) {
@@ -280,7 +283,7 @@ class WP_SQLite_Translator {
 			$first_word = preg_match( '/^\s*(\w+)/', $last_query->sql, $matches ) ? $matches[1] : '';
 			$result->sqlite_query_type = strtoupper( $first_word );
 		}
-		$result->mysql_query_type = $query_type;
+		$result->mysql_query_type = $this->query_type;
 		return $result;
 	}
 
@@ -633,9 +636,36 @@ class WP_SQLite_Translator {
 		}
 
 		// Consume and record the table name.
+		$this->insert_columns = array();
 		if ( 'INSERT' === $query_type || 'REPLACE' === $query_type ) {
 			$this->rewriter->consume(); // INTO.
 			$table_name = $this->rewriter->consume()->value; // Table name.
+			
+			// A list of columns is given if the opening parenthesis is
+			// earlier than the VALUES keyword.
+			$paren = $this->rewriter->peek( array(
+				'type' => WP_SQLite_Token::TYPE_OPERATOR,
+				'value' => '(',
+			) );
+			$values = $this->rewriter->peek( array(
+				'type' => WP_SQLite_Token::TYPE_KEYWORD,
+				'value' => 'VALUES',
+			) );
+			if ( $paren && $values && $paren->position <= $values->position ) {
+				$this->rewriter->consume( array(
+					'type' => WP_SQLite_Token::TYPE_OPERATOR,
+					'value' => '(',
+				) );
+				while(true) {
+					$token = $this->rewriter->consume();
+					if ( $token->matches(WP_SQLite_Token::TYPE_OPERATOR, null, array(')') ) ) {
+						break;
+					}
+					if ( !$token->matches( WP_SQLite_Token::TYPE_OPERATOR ) ) {
+						$this->insert_columns[] = $token->value;
+					}
+				}
+			}
 		}
 
 		$last_reserved_keyword = null;
@@ -1064,35 +1094,70 @@ class WP_SQLite_Translator {
 
 	private function translate_on_duplicate_key($table_name) {
 		/*
-			* Rewrite:
-			* 		ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)
-			* to:
-			* 		ON CONFLICT(ip) DO UPDATE SET option_name = excluded.option_name
-			*/
+		* Rewrite:
+		* 		ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)
+		* to:
+		* 		ON CONFLICT(ip) DO UPDATE SET option_name = excluded.option_name
+		*/
 
+		// Find the conflicting column:
+		// 1. Find the primary key.
+		$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
+		$pkrow   = $q->fetch();
+		$pk_name = $pkrow ? $pkrow['name'] : null;
+
+		// 2. Find all the unique columns.
+		$unique_columns = array();
+		$q       = $this->sqlite->query( 'SELECT * FROM pragma_index_list("' . $table_name . '") as l;' );
+		$indices = $q->fetchAll();
+		foreach($indices as $index) {
+			if('1' === $index['unique']) {
+				$q      = $this->sqlite->query( 'SELECT * FROM pragma_index_info("'.$index['name'].'") as l;' );
+				$row = $q->fetch();
+				$unique_columns[] = $row['name'];
+			}
+		}
+
+		// 3. Find the first unique column that is also in the INSERT statement.
+		//    Default to the primary key.
+		$conflict_column = count($unique_columns) ? $unique_columns[0] : $pk_name;
+		if($this->insert_columns && !in_array($conflict_column, $this->insert_columns)) {
+			$conflict_column = $pk_name;
+			foreach($this->insert_columns as $col) {
+				if(in_array($col, $unique_columns)) {
+					$conflict_column = $col;
+					break;
+				}
+			}
+		}
+
+		// If there is no conflict column, then we can't rewrite the statement.
+		if(!$conflict_column) {
+			// Drop the consumed "ON"
+			$this->rewriter->drop_last();
+			// Skip over "DUPLICATE", "KEY", and "UPDATE".
+			$this->rewriter->skip();
+			$this->rewriter->skip();
+			$this->rewriter->skip();
+			while($this->rewriter->skip()){
+
+			}
+			return;
+		}
+
+		// Skip over "DUPLICATE", "KEY", and "UPDATE".
 		$this->rewriter->skip();
-		// Replace the DUPLICATE keyword with CONFLICT.
+		$this->rewriter->skip();
+		$this->rewriter->skip();
+		
+		// Add the CONFLICT keyword.
 		$this->rewriter->add( new WP_SQLite_Token( 'CONFLICT', WP_SQLite_Token::TYPE_KEYWORD ) );
-		// Skip overthe "KEY" and "UPDATE" keywords.
-		$this->rewriter->skip();
-		$this->rewriter->skip();
 
 		// Add "( <primary key> ) DO UPDATE SET ".
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-		// @TODO don't make assumptions about the names, only fetch
-		// the correct unique key from sqlite
-		if ( str_ends_with( $table_name, '_options' ) ) {
-			$pk_name = 'option_name';
-		} elseif ( str_ends_with( $table_name, '_term_relationships' ) ) {
-			$pk_name = 'object_id, term_taxonomy_id';
-		} elseif ( str_ends_with( $table_name, 'wp_woocommerce_sessions' ) ) {
-			$pk_name = 'session_key';
-		} else {
-			$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
-			$pk_name = $q->fetch()['name'];
-		}
-		$this->rewriter->add( new WP_SQLite_Token( $pk_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+
+		$this->rewriter->add( new WP_SQLite_Token( '"'.$conflict_column.'"', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
 		$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$this->rewriter->add( new WP_SQLite_Token( 'DO', WP_SQLite_Token::TYPE_KEYWORD ) );

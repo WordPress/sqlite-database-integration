@@ -263,6 +263,33 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertFalse($result2);
 	}
 
+	public function testOnDuplicateUpdate() {
+		$this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default '',
+				UNIQUE KEY myname (name)
+			);"
+		);
+		$result1 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('first');");
+		$this->assertEquals(1, $result1);
+
+		$result2 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('FIRST') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);");
+		$this->assertEquals(1, $result2);
+
+		$this->engine->query("SELECT * FROM _tmp_table;");
+		$this->assertCount(1, $this->engine->get_query_results());
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name' => 'FIRST',
+					'ID' => 1
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (
