@@ -274,18 +274,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int
 	 */
 	public function field() {
-		global $wpdb;
+//		return floor(rand(0, 6));
 		$num_args = func_num_args();
 		if ( $num_args < 2 || is_null( func_get_arg( 0 ) ) ) {
 			return 0;
 		}
 		$arg_list      = func_get_args();
-		$search_string = array_shift( $arg_list );
-		$str_to_check  = substr( $search_string, 0, strpos( $search_string, '.' ) );
-		$str_to_check  = str_replace( $wpdb->prefix, '', $str_to_check );
-		if ( $str_to_check && in_array( trim( $str_to_check ), $wpdb->tables, true ) ) {
-			return 0;
-		}
+		$search_string = strtolower( array_shift( $arg_list ) );
+		// global $wpdb;
+		// $str_to_check  = substr( $search_string, 0, strpos( $search_string, '.' ) );
+		// $str_to_check  = str_replace( $wpdb->prefix, '', $str_to_check );
+		// if ( $str_to_check && in_array( trim( $str_to_check ), $wpdb->tables, true ) ) {
+		// 	return 0;
+		// }
 		for ( $i = 0; $i < $num_args - 1; $i++ ) {
 			if ( strtolower( $arg_list[ $i ] ) === $search_string ) {
 				return $i + 1;

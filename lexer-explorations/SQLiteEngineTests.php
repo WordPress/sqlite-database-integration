@@ -49,6 +49,60 @@ class SQLiteEngineTests extends TestCase {
 		);
 	}
 
+	public function testOrderByField() {
+		$engine = new WP_SQLite_PDO_Engine( );
+		$engine->query(
+			"CREATE TABLE wptests_dummy (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$engine->query(
+			"INSERT INTO wptests_dummy (option_name, option_value) VALUES ('User 0000019', 'second');"
+		);
+		$engine->query(
+			"INSERT INTO wptests_dummy (option_name, option_value) VALUES ('User 0000020', 'third');"
+		);
+		$engine->query(
+			"INSERT INTO wptests_dummy (option_name, option_value) VALUES ('User 0000018', 'first');"
+		);
+
+		$engine->query('SELECT FIELD(option_name, "User 0000018", "User 0000019", "User 0000020") as sorting_order FROM wptests_dummy ORDER BY FIELD(option_name, "User 0000018", "User 0000019", "User 0000020")');
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'sorting_order' => '1',
+				),
+				(object) array(
+					'sorting_order' => '2',
+				),
+				(object) array(
+					'sorting_order' => '3',
+				),
+			),
+			$engine->get_query_results()
+		);
+
+		$engine->query('SELECT option_value FROM wptests_dummy ORDER BY FIELD(option_name, "User 0000018", "User 0000019", "User 0000020")');
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'option_value' => 'first',
+				),
+				(object) array(
+					'option_value' => 'second',
+				),
+				(object) array(
+					'option_value' => 'third',
+				),
+			),
+			$engine->get_query_results()
+		);
+	}
+
 	public function testFetchedDataIsStringified() {
 		$engine = new WP_SQLite_PDO_Engine( );
 		$engine->query(
