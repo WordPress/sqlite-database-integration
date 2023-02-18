@@ -286,11 +286,6 @@ class WP_SQLite_Token {
 				//
 				// `stripcslashes` replaces escape sequences with their
 				// representation.
-				//
-				// NOTE: In MySQL, `\f` and `\v` have no representation,
-				// even they usually represent: form-feed and vertical tab.
-				$str = str_replace( '\f', 'f', $str );
-				$str = str_replace( '\v', 'v', $str );
 				$str = stripcslashes( $str );
 
 				return $str;
