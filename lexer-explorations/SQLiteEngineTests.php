@@ -305,6 +305,17 @@ class SQLiteEngineTests extends TestCase {
 		);
 	}
 
+	public function testTruncatesInvalidDates() {
+		$this->engine->query("INSERT INTO _dates (option_value) VALUES ('2022-01-01 14:24:12');");
+		$this->engine->query("INSERT INTO _dates (option_value) VALUES ('2022-31-01 14:24:12');");
+
+		$this->engine->query("SELECT * FROM _dates;");
+		$results = $this->engine->get_query_results();
+		$this->assertCount(2, $results);
+		$this->assertEquals('2022-01-01 14:24:12', $results[0]->option_value);
+		$this->assertEquals('0000-00-00 00:00:00', $results[1]->option_value);
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (

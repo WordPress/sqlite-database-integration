@@ -688,21 +688,7 @@ class WP_SQLite_Translator {
 			if ( 'AS' !== $last_reserved_keyword && WP_SQLite_Token::TYPE_STRING === $token->type && $token->flags & WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) {
 				// Rewrite string values to bound parameters.
 				$param_name            = ':param' . count( $params );
-				$value = $token->value;
-				/**
-				 * The code below converts the date format from MySQL to SQLite.
-				 * 
-				 * In MySQL, the date can be formatted as   'YYYY-MM-DDTHH:MM:SSZ'
-				 * In SQLite, the date must be formatted as 'YYYY-MM-DD HH:MM:SS'
-				 * 
-				 * Caveat: It will adjust every string that matches the pattern, not just dates.
-				 * @TODO: Only adjust the data that is semantically used as a date, e.g.
-				 *        when it's inserted to a date column or when it is compared against a date column.
-				 */
-				if( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})Z$/', $token->value, $matches ) ) {
-					$value = $matches[1] . ' ' . $matches[2];
-				}
-				$params[ $param_name ] = $value;
+				$params[ $param_name ] = $this->preprocess_string_literal($token->value);
 				$this->rewriter->skip();
 				$this->rewriter->add( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
@@ -787,6 +773,60 @@ class WP_SQLite_Translator {
 
 		$result->queries[] = WP_SQLite_Translator::get_query_object( $updated_query, $params );
 		return $result;
+	}
+
+	private function preprocess_string_literal($value) {
+		/**
+		 * The code below converts the date format to one preferred by SQLite.
+		 * 
+		 * MySQL accepts ISO 8601 date strings:        'YYYY-MM-DDTHH:MM:SSZ'
+		 * SQLite prefers a slightly different format: 'YYYY-MM-DD HH:MM:SS'
+		 * 
+		 * SQLite date and time functions can understand the ISO 8601 notation, but
+		 * lookups don't. To keep the lookups working, we need to store all dates
+		 * in UTC without the "T" and "Z" characters.
+		 * 
+		 * Caveat: It will adjust every string that matches the pattern, not just dates.
+		 * 
+		 * In theory, we could only adjust semantic dates, e.g. the data inserted
+		 * to a date column or compared against a date column.
+		 * 
+		 * In practice, this is hard because dates are just text – SQLite has no separate
+		 * datetime field. We'd need to cache the MySQL data type from the original 
+		 * CREATE TABLE query and then keep refreshing the cache after each ALTER TABLE query.
+		 *
+		 * That's a lot of complexity that's perhaps not worth it. Let's just convert
+		 * everything for now. The regexp assumes "Z" is always at the end of the string,
+		 * which is true in the unit test suite, but there could also be a timezone offset
+		 * like "+00:00" or "+01:00". We could add support for that later if needed.
+		 */
+		if( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})Z$/', $value, $matches ) ) {
+			$value = $matches[1] . ' ' . $matches[2];
+		}
+
+		/**
+		 * Mimic MySQL's behavior and truncate invalid dates.
+		 * 
+		 * "2020-12-41 14:15:27" becomes "0000-00-00 00:00:00"
+		 * 
+		 * WARNING: We have no idea whether the truncated value should
+		 * be treated as a date in the first place.
+		 * In SQLite dates are just strings. This could be a perfectly
+		 * valid string that just happens to contain a date-like value.
+		 * 
+		 * At the same time, WordPress seems to rely on MySQL's behavior
+		 * and even tests for it in Tests_Post_wpInsertPost::test_insert_empty_post_date.
+		 * Let's truncate the dates for now.
+		 * 
+		 * In the future, let's update WordPress to do its own date validation
+		 * and stop relying on this MySQL feature,
+		 */
+		if( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/', $value, $matches ) ) {
+			if( false === strtotime($value ) ) {
+				$value = '0000-00-00 00:00:00';
+			}
+		}
+		return $value;
 	}
 
 	private function postprocess_double_delete($rewritten_params) {
