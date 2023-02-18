@@ -230,9 +230,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function month($field)
 	{
-		$t = strtotime($field);
-
-		return intval(date('n', $t));
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * n - Numeric representation of a month, without leading zeros.
+		 * 	   1 through 12
+		 */
+		return intval(date('n', strtotime($field)));
 	}
 
 	/**
@@ -244,9 +248,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function year($field)
 	{
-		$t = strtotime($field);
-
-		return intval(date('Y', $t));
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * Y - A full numeric representation of a year, 4 digits.
+		 */
+		return intval(date('Y', strtotime($field)));
 	}
 
 	/**
@@ -258,9 +265,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function day($field)
 	{
-		$t = strtotime($field);
-
-		return intval(date('j', $t));
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * j - Day of the month without leading zeros.
+		 *     1 to 31.
+		 */
+		return intval(date('j', strtotime($field)));
 	}
 
 	/**
@@ -272,9 +283,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function second($field)
 	{
-		$t = strtotime($field);
-
-		return intval(date("s", $t));
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * s - Seconds, with leading zeros (00 to 59)
+		 */
+		return intval(date("s", strtotime($field)));
 	}
 
 	/**
@@ -286,31 +300,72 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function minute($field)
 	{
-		$t = strtotime($field);
-
-		return intval(date("i", $t));
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * i - Minutes with leading zeros.
+		 *     00 to 59.
+		 */
+		return intval(date("i", strtotime($field)));
 	}
 
 	/**
 	 * Method to emulate MySQL HOUR() function.
+	 * 
+	 * Returns the hour for time, in 24-hour format, from 0 to 23.
+	 * Importantly, midnight is 0, not 24.
 	 *
-	 * @param string representing the time formatted as '00:00:00'.
+	 * @param string representing the time formatted, like '14:08:12'.
 	 *
 	 * @return number
 	 */
 	public function hour($time)
 	{
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * H   24-hour format of an hour with leading zeros.
+		 *     00 through 23.
+		 */
 		return intval(date("H", strtotime($time)));
 	}
 
+	/**
+	 * Covers MySQL WEEK() function.
+	 * 
+	 * Always assumes $mode = 1.
+	 * @TODO: Support other modes.
+	 * 
+	 * From https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_week:
+	 * 
+	 * > Returns the week number for date. The two-argument form of WEEK() 
+	 * > enables you to specify whether the week starts on Sunday or Monday
+	 * > and whether the return value should be in the range from 0 to 53 
+	 * > or from 1 to 53. If the mode argument is omitted, the value of the
+	 * > default_week_format system variable is used.
+	 * > 
+	 * > The following table describes how the mode argument works:
+	 * >
+	 * > Mode   First day of week   Range   Week 1 is the first week …
+	 * > 0      Sunday              0-53    with a Sunday in this year
+	 * > 1      Monday              0-53    with 4 or more days this year
+	 * > 2      Sunday              1-53    with a Sunday in this year
+	 * > 3      Monday              1-53    with 4 or more days this year
+	 * > 4      Sunday              0-53    with 4 or more days this year
+	 * > 5      Monday              0-53    with a Monday in this year
+	 * > 6      Sunday              1-53    with 4 or more days this year
+	 * > 7      Monday              1-53    with a Monday in this year
+	 */
 	public function week($field, $mode) {
-		$t = strtotime($field);
-
-		if ($mode == 0) {
-			return intval(date('U', $t));
-		} else {
-			return intval(date('W', $t));
-		}
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * W - ISO-8601 week number of year, weeks starting on Monday.
+		 *     Example: 42 (the 42nd week in the year)
+		 * 
+		 * Week 1 is the first week with a Thursday in it.
+		 */
+		return intval(date('W', strtotime($field)));
 	}
 
 	/**
@@ -327,14 +382,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * * 6 for Sunday
 	 */
 	public function weekday($field) {
-		$t = strtotime($field);
-
 		/*
 		 * date('N') returns 1 (for Monday) through 7 (for Sunday)
 		 * That's one more than MySQL.
 		 * Let's subtract one to make it compatible.
 		 */
-		return intval(date('N', $t)) - 1;
+		return intval(date('N', strtotime($field))) - 1;
 	}
 
 	public function dayofmonth($field)

@@ -497,7 +497,7 @@ class SQLiteEngineTests extends TestCase {
 
 	public function testSelectDate1() {
 		$this->engine->query(
-			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2000-05-27 10:08:48');"
 		);
 
 		$this->engine->query("SELECT 
@@ -506,6 +506,7 @@ class SQLiteEngineTests extends TestCase {
 			DAYOFMONTH( _dates.option_value ) as dayofmonth,
 			MONTHNUM( _dates.option_value ) as monthnum,
 			WEEKDAY( _dates.option_value ) as weekday,
+			WEEK( _dates.option_value, 1 ) as week1,
 			HOUR( _dates.option_value ) as hour,
 			MINUTE( _dates.option_value ) as minute,
 			SECOND( _dates.option_value ) as second
@@ -513,10 +514,11 @@ class SQLiteEngineTests extends TestCase {
 
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
-		$this->assertEquals('2003', $results[0]->year);
+		$this->assertEquals('2000', $results[0]->year);
 		$this->assertEquals('5', $results[0]->month);
 		$this->assertEquals('27', $results[0]->dayofmonth);
-		$this->assertEquals('1', $results[0]->weekday);
+		$this->assertEquals('5', $results[0]->weekday);
+		$this->assertEquals('21', $results[0]->week1);
 		$this->assertEquals('5', $results[0]->monthnum);
 		$this->assertEquals('10', $results[0]->hour);
 		$this->assertEquals('8', $results[0]->minute);
@@ -524,19 +526,33 @@ class SQLiteEngineTests extends TestCase {
 	}
 
 	public function testSelectDate24HourFormat() {
-		$this->engine->query( "INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:08:48');" );
-		$this->engine->query( "SELECT  HOUR( _dates.option_value ) as hour FROM _dates WHERE option_name = 'first'" );
+		$this->engine->query( "
+			INSERT INTO _dates (option_name, option_value) 
+			VALUES 
+				('second', '2003-05-27 14:08:48'),
+				('first', '2003-05-27 00:08:48');
+		" );
 
+		// HOUR(14:08) should yield 14 in the 24 hour format
+		$this->engine->query( "SELECT  HOUR( _dates.option_value ) as hour FROM _dates WHERE option_name = 'second'" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('14', $results[0]->hour);
+
+		// HOUR(00:08) should yield 0 in the 24 hour format
+		$this->engine->query( "SELECT  HOUR( _dates.option_value ) as hour FROM _dates WHERE option_name = 'first'" );
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
 		$this->assertEquals('0', $results[0]->hour);
 
-		$this->engine->query( "INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 14:08:48');" );
-		$this->engine->query( "SELECT  HOUR( _dates.option_value ) as hour FROM _dates WHERE option_name = 'second'" );
+		// Lookup by HOUR(00:08) = 0 should yield the right record
+		$this->engine->query( 
+			"SELECT  HOUR( _dates.option_value ) as hour FROM _dates 
+			WHERE HOUR(_dates.option_value) = 0 " );
 
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
-		$this->assertEquals('14', $results[0]->hour);
+		$this->assertEquals('0', $results[0]->hour);
 	}
 
 	public function testComplexSelectBasedOnDates() {
