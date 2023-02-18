@@ -50,6 +50,11 @@ class WP_SQLite_DB extends wpdb {
 	public function set_charset( $dbh, $charset = null, $collate = null ) {
 	}
 
+	public function get_col_charset( $table, $column ) {
+		// Hardcoded for now
+		return 'utf8mb4';
+	}
+
 	/**
 	 * Method to dummy out wpdb::set_sql_mode()
 	 *
