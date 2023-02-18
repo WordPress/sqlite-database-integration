@@ -36,38 +36,40 @@ class WP_SQLite_Translator {
 	 * @var array
 	 */
 	private $field_types_translation = array(
-		'bit'        => 'integer',
-		'bool'       => 'integer',
-		'boolean'    => 'integer',
-		'tinyint'    => 'integer',
-		'smallint'   => 'integer',
-		'mediumint'  => 'integer',
-		'int'        => 'integer',
-		'integer'    => 'integer',
-		'bigint'     => 'integer',
-		'float'      => 'real',
-		'double'     => 'real',
-		'decimal'    => 'real',
-		'dec'        => 'real',
-		'numeric'    => 'real',
-		'fixed'      => 'real',
-		'date'       => 'text',
-		'datetime'   => 'text',
-		'timestamp'  => 'text',
-		'time'       => 'text',
-		'year'       => 'text',
-		'char'       => 'text',
-		'varchar'    => 'text',
-		'binary'     => 'integer',
-		'varbinary'  => 'blob',
-		'tinyblob'   => 'blob',
-		'tinytext'   => 'text',
-		'blob'       => 'blob',
-		'text'       => 'text',
-		'mediumblob' => 'blob',
-		'mediumtext' => 'text',
-		'longblob'   => 'blob',
-		'longtext'   => 'text',
+		'bit'                => 'integer',
+		'bool'               => 'integer',
+		'boolean'            => 'integer',
+		'tinyint'            => 'integer',
+		'smallint'           => 'integer',
+		'mediumint'          => 'integer',
+		'int'                => 'integer',
+		'integer'            => 'integer',
+		'bigint'             => 'integer',
+		'float'              => 'real',
+		'double'             => 'real',
+		'decimal'            => 'real',
+		'dec'                => 'real',
+		'numeric'            => 'real',
+		'fixed'              => 'real',
+		'date'               => 'text',
+		'datetime'           => 'text',
+		'timestamp'          => 'text',
+		'time'               => 'text',
+		'year'               => 'text',
+		'char'               => 'text',
+		'varchar'            => 'text',
+		'binary'             => 'integer',
+		'varbinary'          => 'blob',
+		'tinyblob'           => 'blob',
+		'tinytext'           => 'text',
+		'blob'               => 'blob',
+		'text'               => 'text',
+		'mediumblob'         => 'blob',
+		'mediumtext'         => 'text',
+		'longblob'           => 'blob',
+		'longtext'           => 'text',
+		'geomcollection'     => 'text',
+		'geometrycollection' => 'text',
 	);
 
 	/**
@@ -307,6 +309,10 @@ class WP_SQLite_Translator {
 			if ( null !== $field->default ) {
 				$definition .= ' DEFAULT ' . $field->default;
 			}
+			/*
+			 * In MySQL, text fields are case-insensitive by default.
+			 * COLLATE NOCASE emulates the same behavior in SQLite.
+			 */
 			if ( $field->sqlite_datatype === 'text' ) {
 				$definition .= ' COLLATE NOCASE';
 			}
