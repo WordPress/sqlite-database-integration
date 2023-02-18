@@ -941,6 +941,7 @@ class WP_SQLite_Translator {
 				if ( ')' === $terminator->value ) {
 					$this->rewriter->add( $terminator );
 				}
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 				$this->rewriter->add( new WP_SQLite_Token( 'as', WP_SQLite_Token::TYPE_OPERATOR ) );
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 				$this->rewriter->add( new WP_SQLite_Token( 'integer', WP_SQLite_Token::TYPE_OPERATOR ) );
@@ -990,7 +991,7 @@ class WP_SQLite_Translator {
 			)
 		) {
 			$this->rewriter->skip();
-			$this->rewriter->add( new WP_SQLite_Token( 'DATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'DATETIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
 			return true;
 		}
 	}

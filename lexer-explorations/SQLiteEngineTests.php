@@ -115,25 +115,25 @@ class SQLiteEngineTests extends TestCase {
 
 	public function testUpdateDate() {
 		$this->engine->query(
-			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
 		);
 
-		$this->engine->query("SELECT YEAR(option_value) as y FROM _dates");
+		$this->engine->query("SELECT option_value FROM _dates");
 
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
-		$this->assertEquals(date('Y'), $results[0]->y);
+		$this->assertEquals('2003-05-27 10:08:48', $results[0]->option_value);
 
 
 		$this->engine->query(
 			"UPDATE _dates SET option_value = DATE_SUB(option_value, INTERVAL '2' YEAR);"
 		);
 
-		$this->engine->query("SELECT YEAR(option_value) as y FROM _dates");
+		$this->engine->query("SELECT option_value FROM _dates");
 
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
-		$this->assertEquals(date('Y') - 2, $results[0]->y);
+		$this->assertEquals('2001-05-27 10:08:48', $results[0]->option_value);
 	}
 
 	public function testInsertDateLiteral() {

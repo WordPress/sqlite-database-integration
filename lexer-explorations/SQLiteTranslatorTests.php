@@ -366,7 +366,7 @@ class SQLiteTranslatorTests extends TestCase {
 				'Translates SELECT with DATE_ADD',
 				'SELECT DATE_ADD(post_date_gmt, INTERVAL "0" SECOND) FROM wptests_posts',
 				array(
-					WP_SQLite_Translator::get_query_object( "SELECT DATE(post_date_gmt,   '+0 SECOND') FROM wptests_posts" ),
+					WP_SQLite_Translator::get_query_object( "SELECT DATETIME(post_date_gmt,   '+0 SECOND') FROM wptests_posts" ),
 				),
 			),
 			array(
@@ -399,7 +399,7 @@ class SQLiteTranslatorTests extends TestCase {
 				array(
 					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
-                            SELECT STRFTIME('%Y',post_date) AS `year`, STRFTIME('%M',post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY STRFTIME('%Y',post_date), STRFTIME('%M',post_date) ORDER BY post_date DESC
+                            SELECT CAST(STRFTIME('%Y',post_date) as integer) AS `year`, CAST(STRFTIME('%m',post_date) as integer) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY CAST(STRFTIME('%Y',post_date) as integer), CAST(STRFTIME('%m',post_date) as integer) ORDER BY post_date DESC
                         SQL,
 						array(
 							':param0' => 'post',
