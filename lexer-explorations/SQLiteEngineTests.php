@@ -57,7 +57,10 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertCount( 1, $this->engine->get_query_results() );
 	}
 
-	public function testRlike() {
+	/**
+	 * @dataProvider regexpOperators
+	 */
+	public function testRegexps($operator, $expected_result) {
 		$this->engine->query(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
 		);
@@ -65,39 +68,34 @@ class SQLiteEngineTests extends TestCase {
 			"INSERT INTO _options (option_name, option_value) VALUES ('transient', '1');"
 		);
 
-		$this->engine->query("SELECT * FROM _options WHERE option_name RLIKE '^rss_.+$'");
+		$this->engine->query("SELECT * FROM _options WHERE option_name $operator '^rss_.+$'");
 
 		$this->assertEquals(
-			array(
-				(object) array(
-					'ID' => '1',
-					'option_name' => 'rss_0123456789abcdef0123456789abcdef',
-					'option_value' => '1',
-				),
-			),
+			array($expected_result),
 			$this->engine->get_query_results()
 		);
 	}
 
-	public function testRegexpBinary() {
-		$this->engine->query(
-			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
+	public function regexpOperators() {
+		$positive_match = (object) array(
+			'ID' => '1',
+			'option_name' => 'rss_0123456789abcdef0123456789abcdef',
+			'option_value' => '1',
 		);
-		$this->engine->query(
-			"INSERT INTO _options (option_name, option_value) VALUES ('transient', '1');"
+		$negative_match = (object) array(
+			'ID' => '2',
+			'option_name' => 'transient',
+			'option_value' => '1',
 		);
-
-		$this->engine->query("SELECT * FROM _options WHERE option_name REGEXP BINARY '^rss_.+$'");
-
-		$this->assertEquals(
-			array(
-				(object) array(
-					'ID' => '1',
-					'option_name' => 'rss_0123456789abcdef0123456789abcdef',
-					'option_value' => '1',
-				),
-			),
-			$this->engine->get_query_results()
+		return array(
+			array( 'REGEXP', $positive_match ),
+			array( 'RLIKE', $positive_match ),
+			array( 'REGEXP BINARY', $positive_match ),
+			array( 'RLIKE BINARY', $positive_match ),
+			array( 'NOT REGEXP', $negative_match ),
+			array( 'NOT RLIKE', $negative_match ),
+			array( 'NOT REGEXP BINARY', $negative_match ),
+			array( 'NOT RLIKE BINARY', $negative_match ),
 		);
 	}
 
@@ -127,6 +125,225 @@ class SQLiteEngineTests extends TestCase {
 			"DROP TEMPORARY TABLE _tmp_table;"
 		);
 		$this->assertEquals('', $this->engine->get_error_message());
+	}
+	
+	public function testCreateTable() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				user_login varchar(60) NOT NULL default '',
+				user_pass varchar(255) NOT NULL default '',
+				user_nicename varchar(50) NOT NULL default '',
+				user_email varchar(100) NOT NULL default '',
+				user_url varchar(100) NOT NULL default '',
+				user_registered datetime NOT NULL default '0000-00-00 00:00:00',
+				user_activation_key varchar(255) NOT NULL default '',
+				user_status int(11) NOT NULL default '0',
+				display_name varchar(250) NOT NULL default '',
+				PRIMARY KEY  (ID),
+				KEY user_login_key (user_login),
+				KEY user_nicename (user_nicename),
+				KEY user_email (user_email)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$this->assertEquals(1, $result);
+		$this->assertEquals('', $this->engine->get_error_message());
+
+		$this->engine->query("DESCRIBE wptests_users;");
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array (
+				0 => 
+				(object) array(
+					'cid' => '0',
+					'name' => 'ID',
+					'type' => 'INTEGER',
+					'notnull' => '1',
+					'dflt_value' => NULL,
+					'pk' => '1',
+				),
+				1 => 
+				(object) array(
+					'cid' => '1',
+					'name' => 'user_login',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+				2 => 
+				(object) array(
+					'cid' => '2',
+					'name' => 'user_pass',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+				3 => 
+				(object) array(
+					'cid' => '3',
+					'name' => 'user_nicename',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+				4 => 
+				(object) array(
+					'cid' => '4',
+					'name' => 'user_email',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+				5 => 
+				(object) array(
+					'cid' => '5',
+					'name' => 'user_url',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+				6 => 
+				(object) array(
+					'cid' => '6',
+					'name' => 'user_registered',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "'0000-00-00 00:00:00'",
+					'pk' => '0',
+				),
+				7 => 
+				(object) array(
+					'cid' => '7',
+					'name' => 'user_activation_key',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+				8 => 
+				(object) array(
+					'cid' => '8',
+					'name' => 'user_status',
+					'type' => 'INTEGER',
+					'notnull' => '1',
+					'dflt_value' => "'0'",
+					'pk' => '0',
+				),
+				9 => 
+				(object) array(
+					'cid' => '9',
+					'name' => 'display_name',
+					'type' => 'TEXT',
+					'notnull' => '1',
+					'dflt_value' => "''",
+					'pk' => '0',
+				),
+			),
+			$results
+		);
+	}
+	
+	public function testCaseInsensitiveUniqueIndex() {
+		$this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default '',
+				UNIQUE KEY name (name)
+			);"
+		);
+		$result1 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('first');");
+		$this->assertEquals(1, $result1);
+
+		$result2 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('FIRST');");
+		$this->assertFalse($result2);
+	}
+
+	public function testCaseInsensitiveSelect() {
+		$this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+		$this->engine->query(
+			"INSERT INTO _tmp_table (name) VALUES ('first');"
+		);
+		$this->engine->query("SELECT name FROM _tmp_table WHERE name = 'FIRST';");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertCount(1, $this->engine->get_query_results());
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name' => 'first',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testTransactionRollback() {
+		$this->engine->query('BEGIN');
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('first');");
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(1, $this->engine->get_query_results());
+		$this->engine->query('ROLLBACK');
+
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(0, $this->engine->get_query_results());
+	}
+
+	public function testTransactionCommit() {
+		$this->engine->query('BEGIN');
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('first');");
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(1, $this->engine->get_query_results());
+		$this->engine->query('COMMIT');
+
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(1, $this->engine->get_query_results());
+	}
+
+	public function testStartTransactionCommand() {
+		$this->engine->query('START TRANSACTION');
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('first');");
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(1, $this->engine->get_query_results());
+		$this->engine->query('ROLLBACK');
+
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(0, $this->engine->get_query_results());
+	}
+
+	public function testNestedTransactionHasNoEffect() {
+		$this->engine->query('BEGIN');
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('first');");
+		$this->engine->query('START TRANSACTION');
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('second');");
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(2, $this->engine->get_query_results());
+
+		$this->engine->query('ROLLBACK');
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(0, $this->engine->get_query_results());
+
+		$this->engine->query('COMMIT');
+		$this->engine->query("SELECT * FROM _options;");
+		$this->assertCount(0, $this->engine->get_query_results());
+	}
+
+	public function testCount() {
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('first');");
+		$this->engine->query("INSERT INTO _options (option_name) VALUES ('second');");
+		$this->engine->query("SELECT COUNT(*) as count FROM _options;");
+
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertSame('2', $results[0]->count);
 	}
 
 	public function testUpdateDate() {

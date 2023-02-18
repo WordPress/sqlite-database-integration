@@ -356,13 +356,6 @@ class SQLiteTranslatorTests extends TestCase {
 				),
 			),
 			array(
-				'Translates SELECT queries (1)',
-				'SELECT * FROM wp_options',
-				array(
-					WP_SQLite_Translator::get_query_object( 'SELECT * FROM wp_options' ),
-				),
-			),
-			array(
 				'Translates SELECT with DATE_ADD',
 				'SELECT DATE_ADD(post_date_gmt, INTERVAL "0" SECOND) FROM wptests_posts',
 				array(
@@ -370,58 +363,7 @@ class SQLiteTranslatorTests extends TestCase {
 				),
 			),
 			array(
-				'Translates REGEXP BINARY',
-				"SELECT * FROM wptests_dummy WHERE option_name REGEXP BINARY '^rss_.+$'",
-				array(
-					WP_SQLite_Translator::get_query_object(
-						"SELECT * FROM wptests_dummy WHERE option_name REGEXP  :param0",
-						array(
-							':param0' => '^rss_.+$'
-						)
-					)
-				),
-			),
-			array(
-				'Translates SELECT RLIKE',
-				"SELECT * FROM wptests_dummy WHERE option_name RLIKE '^rss_.+$'",
-				array(
-					WP_SQLite_Translator::get_query_object( 
-						"SELECT * FROM wptests_dummy WHERE option_name REGEXP :param0",
-						array(
-							':param0' => '^rss_.+$'
-						)
-					),
-				),
-			),
-			array(
-				'Translates SELECT RLIKE BINARY',
-				"SELECT * FROM wptests_dummy WHERE option_name RLIKE BINARY '^rss_.+$'",
-				array(
-					WP_SQLite_Translator::get_query_object( 
-						"SELECT * FROM wptests_dummy WHERE option_name REGEXP  :param0",
-						array(
-							':param0' => '^rss_.+$'
-						)
-					),
-				),
-			),
-			array(
-				'Translates SELECT queries (3)',
-				"SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC",
-				array(
-					WP_SQLite_Translator::get_query_object(
-						<<<'SQL'
-                            SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC
-                        SQL,
-						array(
-							':param0' => 'post',
-							':param1' => 'publish',
-						)
-					),
-				),
-			),
-			array(
-				'Translates UPDATE queries',
+				'Translates UPDATE queries with a "count" column – does not mistake it for a COUNT(*) function',
 				'UPDATE wptests_term_taxonomy SET count = 0',
 				array(
 					WP_SQLite_Translator::get_query_object(
@@ -443,28 +385,6 @@ class SQLiteTranslatorTests extends TestCase {
 						array()
 					),
 				),
-			),
-			array(
-				'Translates START TRANSACTION queries',
-				'START TRANSACTION',
-				array(
-					WP_SQLite_Translator::get_query_object( 'BEGIN' ),
-				),
-			),
-			array(
-				'Translates BEGIN queries',
-				'BEGIN',
-				array( WP_SQLite_Translator::get_query_object( 'BEGIN' ) ),
-			),
-			array(
-				'Translates ROLLBACK queries',
-				'ROLLBACK',
-				array( WP_SQLite_Translator::get_query_object( 'ROLLBACK' ) ),
-			),
-			array(
-				'Translates COMMIT queries',
-				'COMMIT',
-				array( WP_SQLite_Translator::get_query_object( 'COMMIT' ) ),
 			),
 			array(
 				'Translates DESCRIBE queries',
@@ -490,11 +410,6 @@ class SQLiteTranslatorTests extends TestCase {
 				'Ignores CREATE PROCEDURE queries',
 				'CREATE PROCEDURE `test_mysqli_flush_sync_procedure` BEGIN END',
 				array( WP_SQLite_Translator::get_query_object( 'SELECT 1 WHERE 1=0;' ) ),
-			),
-			array(
-				'Stringifies COUNT(*) queries',
-				'SELECT post_author, COUNT(*) FROM wptests_posts',
-				array( WP_SQLite_Translator::get_query_object( "SELECT post_author, COUNT(*) FROM wptests_posts" ) ),
 			),
 			array(
 				'Translates a complex INSERT',
@@ -524,7 +439,7 @@ class SQLiteTranslatorTests extends TestCase {
                     user_status int(11) NOT NULL default '0',
                     display_name varchar(250) NOT NULL default '',
                     PRIMARY KEY  (ID),
-                    KEY user_login_key (user_login),
+                    UNIQUE KEY user_login_key (user_login),
                     KEY user_nicename (user_nicename),
                     KEY user_email (user_email)
                 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci",
@@ -533,99 +448,20 @@ class SQLiteTranslatorTests extends TestCase {
 						<<<SQL
                       CREATE TABLE "wptests_users" (
                       "ID" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-                      "user_login" text NOT NULL DEFAULT '',
-                      "user_pass" text NOT NULL DEFAULT '',
-                      "user_nicename" text NOT NULL DEFAULT '',
-                      "user_email" text NOT NULL DEFAULT '',
-                      "user_url" text NOT NULL DEFAULT '',
-                      "user_registered" text NOT NULL DEFAULT '0000-00-00 00:00:00',
-                      "user_activation_key" text NOT NULL DEFAULT '',
+                      "user_login" text NOT NULL DEFAULT '' COLLATE NOCASE,
+                      "user_pass" text NOT NULL DEFAULT '' COLLATE NOCASE,
+                      "user_nicename" text NOT NULL DEFAULT '' COLLATE NOCASE,
+                      "user_email" text NOT NULL DEFAULT '' COLLATE NOCASE,
+                      "user_url" text NOT NULL DEFAULT '' COLLATE NOCASE,
+                      "user_registered" text NOT NULL DEFAULT '0000-00-00 00:00:00' COLLATE NOCASE,
+                      "user_activation_key" text NOT NULL DEFAULT '' COLLATE NOCASE,
                       "user_status" integer NOT NULL DEFAULT '0',
-                      "display_name" text NOT NULL DEFAULT '')
+                      "display_name" text NOT NULL DEFAULT '' COLLATE NOCASE)
                       SQL
 					),
-					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_login_key" ON "wptests_users" ("user_login")' ),
+					WP_SQLite_Translator::get_query_object( 'CREATE UNIQUE  INDEX "wptests_users__user_login_key" ON "wptests_users" ("user_login")' ),
 					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_nicename" ON "wptests_users" ("user_nicename")' ),
 					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wptests_users__user_email" ON "wptests_users" ("user_email")' ),
-				),
-			),
-			array(
-				'Translates the CREATE TABLE wp_terms query',
-				"CREATE TABLE wp_terms (
-					term_id bigint(20) unsigned NOT NULL auto_increment,
-					name varchar(200) NOT NULL default '',
-					slug varchar(200) NOT NULL default '',
-					term_group bigint(10) NOT NULL default 0,
-					PRIMARY KEY  (term_id),
-					KEY slug (slug(250)),
-					KEY name (name(250))
-				   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci",
-				array(
-					WP_SQLite_Translator::get_query_object(
-						<<<SQL
-                      CREATE TABLE "wp_terms" (
-                      "term_id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-                      "name" text NOT NULL DEFAULT '',
-                      "slug" text NOT NULL DEFAULT '',
-                      "term_group" integer NOT NULL DEFAULT 0)
-                      SQL
-					),
-					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_terms__slug" ON "wp_terms" ("slug")' ),
-					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_terms__name" ON "wp_terms" ("name")' ),
-				),
-			),
-			array(
-				'Translates the CREATE TABLE wp_term_taxonomy query',
-				"CREATE TABLE IF NOT EXISTS wp_term_taxonomy (
-					term_taxonomy_id bigint(20) unsigned NOT NULL auto_increment,
-					term_id bigint(20) unsigned NOT NULL default 0,
-					taxonomy varchar(32) NOT NULL default '',
-					description longtext NOT NULL,
-					parent bigint(20) unsigned NOT NULL default 0,
-					count bigint(20) NOT NULL default 0,
-					PRIMARY KEY  (term_taxonomy_id),
-					UNIQUE KEY term_id_taxonomy (term_id,taxonomy),
-					KEY taxonomy (taxonomy)
-				   ) ;",
-				array(
-					WP_SQLite_Translator::get_query_object(
-						<<<SQL
-                      CREATE TABLE IF NOT EXISTS "wp_term_taxonomy" (
-                      "term_taxonomy_id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-                      "term_id" integer NOT NULL DEFAULT 0,
-                      "taxonomy" text NOT NULL DEFAULT '',
-                      "description" text NOT NULL,
-                      "parent" integer NOT NULL DEFAULT 0,
-                      "count" integer NOT NULL DEFAULT 0)
-                      SQL
-					),
-					WP_SQLite_Translator::get_query_object( 'CREATE UNIQUE  INDEX "wp_term_taxonomy__term_id_taxonomy" ON "wp_term_taxonomy" ("term_id", "taxonomy")' ),
-					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_term_taxonomy__taxonomy" ON "wp_term_taxonomy" ("taxonomy")' ),
-				),
-			),
-			array(
-				'Translates the CREATE TABLE wp_options query',
-				"CREATE TABLE wp_options (
-                      option_id bigint(20) unsigned NOT NULL auto_increment,
-                      option_name varchar(191) NOT NULL default '',
-                      option_value longtext NOT NULL,
-                      autoload varchar(20) NOT NULL default 'yes',
-                      PRIMARY KEY  (option_id),
-                      UNIQUE KEY option_name (option_name),
-                      KEY autoload (autoload)
-                      ) ;",
-				array(
-					WP_SQLite_Translator::get_query_object(
-						<<<SQL
-                      CREATE TABLE "wp_options" (
-                      "option_id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-                      "option_name" text NOT NULL DEFAULT '',
-                      "option_value" text NOT NULL,
-                      "autoload" text NOT NULL DEFAULT 'yes')
-                      SQL
-					),
-					WP_SQLite_Translator::get_query_object( 'CREATE UNIQUE  INDEX "wp_options__option_name" ON "wp_options" ("option_name")' ),
-					WP_SQLite_Translator::get_query_object( 'CREATE  INDEX "wp_options__autoload" ON "wp_options" ("autoload")' ),
 				),
 			),
 		);

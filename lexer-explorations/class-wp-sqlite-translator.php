@@ -307,6 +307,9 @@ class WP_SQLite_Translator {
 			if ( null !== $field->default ) {
 				$definition .= ' DEFAULT ' . $field->default;
 			}
+			if ( $field->sqlite_datatype === 'text' ) {
+				$definition .= ' COLLATE NOCASE';
+			}
 			$definitions[] = $definition;
 		}
 
