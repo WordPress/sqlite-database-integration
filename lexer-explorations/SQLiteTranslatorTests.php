@@ -394,12 +394,24 @@ class SQLiteTranslatorTests extends TestCase {
 				),
 			),
 			array(
+				'Translates SELECT RLIKE BINARY',
+				"SELECT * FROM wptests_dummy WHERE option_name RLIKE BINARY '^rss_.+$'",
+				array(
+					WP_SQLite_Translator::get_query_object( 
+						"SELECT * FROM wptests_dummy WHERE option_name REGEXP  :param0",
+						array(
+							':param0' => '^rss_.+$'
+						)
+					),
+				),
+			),
+			array(
 				'Translates SELECT queries (3)',
 				"SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC",
 				array(
 					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
-                            SELECT CAST(STRFTIME('%Y',post_date) as integer) AS `year`, CAST(STRFTIME('%m',post_date) as integer) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY CAST(STRFTIME('%Y',post_date) as integer), CAST(STRFTIME('%m',post_date) as integer) ORDER BY post_date DESC
+                            SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC
                         SQL,
 						array(
 							':param0' => 'post',

@@ -659,13 +659,11 @@ class WP_SQLite_Translator {
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 				if(
 					$this->translate_concat_function($token)
-					|| $this->translate_date_function($token)
 					|| $this->translate_date_add_sub($token)
 					|| $this->translate_values_function($token, $is_in_duplicate_section)
 					|| $this->translate_date_format($token)
 					|| $this->translate_interval($token)
-					|| $this->translate_rlike($token)
-					|| $this->translate_regexp_binary($token)
+					|| $this->translate_regexp_functions($token)
 				) {
 					continue;
 				}
@@ -876,81 +874,6 @@ class WP_SQLite_Translator {
 		);
 	}
 
-	private function translate_date_function( $token ) {		
-		foreach ( array(
-			array( 'YEAR', '%Y' ),
-			array( 'MONTH', '%m' ),
-			array( 'DAY', '%D' ),
-			array( 'DAYOFMONTH', '%d' ),
-			array( 'DAYOFWEEK', '%w' ),
-			array( 'WEEK', '%W' ),
-			// @TODO %w returns 0 for Sunday and 6 for Saturday
-			//       but weekday returns 1 for Monday and 7 for Sunday
-			//       Fix by delegating WEEKDAY to WP_SQLite_PDO_User_Defined_Functions
-			array( 'WEEKDAY', '%w' ),
-			array( 'HOUR', '%H' ),
-			array( 'MINUTE', '%M' ),
-			array( 'SECOND', '%S' ),
-		) as $token_item ) {
-			$unit   = $token_item[0];
-			$format = $token_item[1];
-			if ( $token->value === $unit && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) {
-				// Skip the consumed function call.
-				$this->rewriter->skip();
-				// Skip the opening "(".
-				$this->rewriter->skip();
-
-				// Skip the first argument so we can read the second one.
-				$first_arg = $this->rewriter->skip_and_return_all(
-					array(
-						'type'  => WP_SQLite_Token::TYPE_OPERATOR,
-						'value' => array( ',', ')' ),
-					)
-				);
-
-				$terminator = array_pop( $first_arg );
-
-				if ( 'WEEK' === $unit ) {
-					$format = '%W';
-					/*
-					 * WEEK(date, mode) can mean different strftime formats
-					 * depending on the mode (default=0).
-					 * If the $skipped token is a comma, then we need to
-					 * read the mode argument.
-					 */
-					if ( ',' === $terminator->value ) {
-						$mode = $this->rewriter->skip();
-						// Assume $mode is now a number.
-						if ( 0 === $mode->value ) {
-							$format = '%U';
-						} elseif ( 1 === $mode->value ) {
-							$format = '%W';
-						} else {
-							throw new Exception( 'Could not parse the WEEK() mode' );
-						}
-					}
-				}
-
-				$this->rewriter->add( new WP_SQLite_Token( 'CAST', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-				$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-				$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
-				$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-				$this->rewriter->add( new WP_SQLite_Token( "'$format'", WP_SQLite_Token::TYPE_STRING ) );
-				$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
-				$this->rewriter->add_many( $first_arg );
-				if ( ')' === $terminator->value ) {
-					$this->rewriter->add( $terminator );
-				}
-				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-				$this->rewriter->add( new WP_SQLite_Token( 'as', WP_SQLite_Token::TYPE_OPERATOR ) );
-				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-				$this->rewriter->add( new WP_SQLite_Token( 'integer', WP_SQLite_Token::TYPE_OPERATOR ) );
-				$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
-				return true;
-			}
-		}
-	}
-
 	private function translate_concat_function($token) {
 		/**
 		 * Skip the CONCAT function but leave the parentheses.
@@ -1103,22 +1026,16 @@ class WP_SQLite_Translator {
 		}
 	}
 
-	private function translate_rlike($token) {
-		if ( 'RLIKE' === $token->keyword ) {
+	private function translate_regexp_functions($token) {
+		if ( 'REGEXP' === $token->keyword || 'RLIKE' === $token->keyword) {
 			$this->rewriter->skip();
 			$this->rewriter->add( new WP_SQLite_Token( "REGEXP", WP_SQLite_Token::TYPE_KEYWORD ) );
-			return true;
-		}
-	}
 
-	private function translate_regexp_binary($token) {
-		if ( 'REGEXP' === $token->keyword ) {
-			$next = $this->rewriter->peek_nth(2);
+			$next = $this->rewriter->peek();
 			if ( $next->matches(WP_SQLite_Token::TYPE_KEYWORD, null, array( 'BINARY' ) ) ) {
-				$this->rewriter->consume();
 				$this->rewriter->skip();
-				return true;
 			}
+			return true;
 		}
 	}
 
@@ -1290,6 +1207,17 @@ class WP_SQLite_Translator {
 		$this->rewriter->consume();
 		$what = $this->rewriter->consume()->token;
 
+		/**
+		 * Technically it is possible to support temporary tables as follows:
+		 *   ATTACH '' AS 'tempschema';
+		 *   CREATE TABLE tempschema.<name>(...)...;
+		 * However, for now, let's just ignore the TEMPORARY keyword.
+		 */
+		if('TEMPORARY' === $what) {
+			$this->rewriter->drop_last();
+			$what = $this->rewriter->consume()->token;
+		}
+
 		switch ( $what ) {
 			case 'TABLE':
 				return $this->translate_create_table();
@@ -1314,6 +1242,17 @@ class WP_SQLite_Translator {
 	private function translate_drop( ) {
 		$this->rewriter->consume();
 		$what = $this->rewriter->consume()->token;
+
+		/**
+		 * Technically it is possible to support temporary tables as follows:
+		 *   ATTACH '' AS 'tempschema';
+		 *   CREATE TABLE tempschema.<name>(...)...;
+		 * However, for now, let's just ignore the TEMPORARY keyword.
+		 */
+		if('TEMPORARY' === $what) {
+			$this->rewriter->drop_last();
+			$what = $this->rewriter->consume()->token;
+		}
 
 		switch ( $what ) {
 			case 'TABLE':

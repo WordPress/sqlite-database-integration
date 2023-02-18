@@ -46,6 +46,16 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var array
 	 */
 	private $functions = array(
+		'month' => 'month',
+		'year' => 'year',
+		'day' => 'day',
+		'hour' => 'hour',
+		'minute' => 'minute',
+		'second' => 'second',
+		'week' => 'week',
+		'weekday' => 'weekday',
+		'dayofweek' => 'dayofweek',
+		'dayofmonth' => 'dayofmonth',
 		'unix_timestamp' => 'unix_timestamp',
 		'now'            => 'now',
 		'char_length'    => 'char_length',
@@ -208,6 +218,121 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$format = strtr( $format, $mysql_php_date_formats );
 
 		return gmdate( $format, $time );
+	}
+
+	/**
+	 * Method to extract the month value from the date.
+	 *
+	 * @param string representing the date formatted as 0000-00-00.
+	 *
+	 * @return string representing the number of the month between 1 and 12.
+	 */
+	public function month($field)
+	{
+		$t = strtotime($field);
+
+		return intval(date('n', $t));
+	}
+
+	/**
+	 * Method to extract the year value from the date.
+	 *
+	 * @param string representing the date formatted as 0000-00-00.
+	 *
+	 * @return string representing the number of the year.
+	 */
+	public function year($field)
+	{
+		$t = strtotime($field);
+
+		return intval(date('Y', $t));
+	}
+
+	/**
+	 * Method to extract the day value from the date.
+	 *
+	 * @param string representing the date formatted as 0000-00-00.
+	 *
+	 * @return string representing the number of the day of the month from 1 and 31.
+	 */
+	public function day($field)
+	{
+		$t = strtotime($field);
+
+		return intval(date('j', $t));
+	}
+
+	/**
+	 * Method to emulate MySQL SECOND() function.
+	 *
+	 * @param string representing the time formatted as '00:00:00'.
+	 *
+	 * @return number of unsigned integer
+	 */
+	public function second($field)
+	{
+		$t = strtotime($field);
+
+		return intval(date("s", $t));
+	}
+
+	/**
+	 * Method to emulate MySQL MINUTE() function.
+	 *
+	 * @param string representing the time formatted as '00:00:00'.
+	 *
+	 * @return number of unsigned integer
+	 */
+	public function minute($field)
+	{
+		$t = strtotime($field);
+
+		return intval(date("i", $t));
+	}
+
+	/**
+	 * Method to emulate MySQL HOUR() function.
+	 *
+	 * @param string representing the time formatted as '00:00:00'.
+	 *
+	 * @return number
+	 */
+	public function hour($time)
+	{
+		return intval(date("h", strtotime($time)));
+	}
+
+	public function week($field, $mode) {
+		$t = strtotime($field);
+
+		if ($mode == 0) {
+			return intval(date('U', $t));
+		} else {
+			return intval(date('W', $t));
+		}
+	}
+
+	public function weekday($field) {
+		$t = strtotime($field);
+
+		return intval(date('w', $t));
+	}
+
+	public function dayofmonth($field)
+	{
+		$t = strtotime($field);
+
+		return intval(date('j', $t));
+	}
+	
+	public function dayofweek($field, $mode) {
+		$t = strtotime($field);
+
+		if ($mode == 0) {
+			return intval(date('w', $t));
+		} else {
+			return intval(date('N', $t));
+		}
 	}
 
 	/**

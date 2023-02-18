@@ -112,6 +112,22 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertCount(1, $results);
 		$this->assertEquals(date('Y'), $results[0]->y);
 	}
+	
+	public function testCreateTemporaryTable() {
+		$this->engine->query(
+			"CREATE TEMPORARY TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+
+		$this->engine->query(
+			"DROP TEMPORARY TABLE _tmp_table;"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+	}
 
 	public function testUpdateDate() {
 		$this->engine->query(
