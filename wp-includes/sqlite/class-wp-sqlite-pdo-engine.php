@@ -402,13 +402,14 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 
 			$stmt = null;
 			$last_retval = null;
+			// echo 'MySQL query:  ' . $statement . "\n";
 			foreach ( $translation->queries as $query ) {
-				$params = $query->params ? 'parameters: '.implode(", ", $query->params) : '(no parameters)';
-				$this->queries[] = "Executing: $query->sql | $params";
+				$this->queries[] = "Executing: {$query->sql} | " . ($query->params ? 'parameters: '.implode(", ", $query->params) : '(no parameters)');
 
 				do {
 					$error = null;
 					try {
+						// echo end($this->queries)."\n\n";
 						$stmt = $this->pdo->prepare( $query->sql );
 						$last_retval = $stmt->execute( $query->params );
 					} catch ( PDOException $error ) {
