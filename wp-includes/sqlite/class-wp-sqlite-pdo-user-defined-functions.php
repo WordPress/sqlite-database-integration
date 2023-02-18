@@ -384,8 +384,29 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return integer 1 if matched, 0 if not matched.
 	 */
 	public function regexp( $pattern, $field ) {
+		/*
+		 * If the original query says REGEXP BINARY
+		 * the comparison is byte-by-byte and letter casing now
+		 * matters since lower- and upper-case letters have different
+		 * byte codes.
+		 * 
+		 * The REGEXP function can't be easily made to accept two
+		 * parameters, so we'll have to use a hack to get around this.
+		 * 
+		 * If the first character of the pattern is a null byte, we'll
+		 * remove it and make the comparison case-sensitive. This should
+		 * be reasonably safe since PHP does not allow null bytes in
+		 * regular expressions anyway.
+		 */
+		if("\x00" === $pattern[0]) {
+			$pattern = substr($pattern, 1);
+			$flags = '';
+		} else {
+			// Otherwise, the search is case-insensitive
+			$flags = 'i';
+		}
 		$pattern = str_replace( '/', '\/', $pattern );
-		$pattern = '/' . $pattern . '/i';
+		$pattern = '/' . $pattern . '/' . $flags;
 
 		return preg_match( $pattern, $field );
 	}

@@ -286,7 +286,6 @@ class WP_SQLite_Query_Rewriter {
 		if($this->token->type === WP_SQLite_Token::TYPE_OPERATOR){
 			switch($this->token->value) {
 				case '(':
-					++$this->depth;
 					if($this->last_function_call) {
 						array_push(
 							$this->call_stack,
@@ -297,6 +296,7 @@ class WP_SQLite_Query_Rewriter {
 						);
 						$this->last_function_call = null;
 					}
+					++$this->depth;
 					break;
 
 				case ')':

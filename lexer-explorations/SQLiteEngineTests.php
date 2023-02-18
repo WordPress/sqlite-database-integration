@@ -5,6 +5,9 @@ use PHPUnit\Framework\TestCase;
 class SQLiteEngineTests extends TestCase {
 
 	public static function setUpBeforeClass(): void {
+		if ( ! defined( 'PDO_DEBUG' )) {
+			define( 'PDO_DEBUG', true );
+		}
 		if(!defined('FQDB')) {
 			define( 'FQDB', ':memory:' );
 			define( 'FQDBDIR', __DIR__ . '/../testdb' );
@@ -60,15 +63,15 @@ class SQLiteEngineTests extends TestCase {
 	/**
 	 * @dataProvider regexpOperators
 	 */
-	public function testRegexps($operator, $expected_result) {
+	public function testRegexps($operator, $regexp, $expected_result) {
 		$this->engine->query(
-			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
-		);
-		$this->engine->query(
-			"INSERT INTO _options (option_name, option_value) VALUES ('transient', '1');"
+			"INSERT INTO _options (option_name) VALUES ('rss_123'), ('RSS_123'), ('transient');"
 		);
 
-		$this->engine->query("SELECT * FROM _options WHERE option_name $operator '^rss_.+$'");
+		$success = $this->engine->query("SELECT ID, option_name FROM _options WHERE option_name $operator '$regexp' ORDER BY id LIMIT 1");
+		$this->assertNotFalse($success);
+		
+		$this->assertEquals('', $this->engine->get_error_message());
 
 		$this->assertEquals(
 			array($expected_result),
@@ -77,25 +80,27 @@ class SQLiteEngineTests extends TestCase {
 	}
 
 	public function regexpOperators() {
-		$positive_match = (object) array(
+		$lowercase_rss = (object) array(
 			'ID' => '1',
-			'option_name' => 'rss_0123456789abcdef0123456789abcdef',
-			'option_value' => '1',
+			'option_name' => 'rss_123',
 		);
-		$negative_match = (object) array(
+		$uppercase_RSS = (object) array(
 			'ID' => '2',
+			'option_name' => 'RSS_123',
+		);
+		$lowercase_transient = (object) array(
+			'ID' => '3',
 			'option_name' => 'transient',
-			'option_value' => '1',
 		);
 		return array(
-			array( 'REGEXP', $positive_match ),
-			array( 'RLIKE', $positive_match ),
-			array( 'REGEXP BINARY', $positive_match ),
-			array( 'RLIKE BINARY', $positive_match ),
-			array( 'NOT REGEXP', $negative_match ),
-			array( 'NOT RLIKE', $negative_match ),
-			array( 'NOT REGEXP BINARY', $negative_match ),
-			array( 'NOT RLIKE BINARY', $negative_match ),
+			array( 'REGEXP', '^RSS_.+$', $lowercase_rss ),
+			array( 'RLIKE','^RSS_.+$', $lowercase_rss ),
+			array( 'REGEXP BINARY', '^RSS_.+$', $uppercase_RSS ),
+			array( 'RLIKE BINARY', '^RSS_.+$', $uppercase_RSS ),
+			array( 'NOT REGEXP', '^RSS_.+$', $lowercase_transient ),
+			array( 'NOT RLIKE', '^RSS_.+$', $lowercase_transient ),
+			array( 'NOT REGEXP BINARY', '^RSS_.+$', $lowercase_rss ),
+			array( 'NOT RLIKE BINARY', '^RSS_.+$', $lowercase_rss ),
 		);
 	}
 
@@ -109,6 +114,16 @@ class SQLiteEngineTests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
 		$this->assertEquals(date('Y'), $results[0]->y);
+	}
+	
+	public function testCastAsBinary() {
+		$this->engine->query(
+			// Use a confusing alias to make sure it replaces only the correct token
+			"SELECT CAST('ABC' AS BINARY) as binary;" 
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertCount(1, $results);
+		$this->assertEquals('ABC', $results[0]->binary);
 	}
 	
 	public function testCreateTemporaryTable() {

@@ -712,6 +712,7 @@ class WP_SQLite_Translator {
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
 				if(
 					$this->translate_concat_function($token)
+					|| $this->translate_cast_as_binary($token)
 					|| $this->translate_date_add_sub($token)
 					|| $this->translate_values_function($token, $is_in_duplicate_section)
 					|| $this->translate_date_format($token)
@@ -927,6 +928,22 @@ class WP_SQLite_Translator {
 		);
 	}
 
+	private function translate_cast_as_binary($token) {
+		if ( $token->matches( WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE ) ) {
+			$call_parent = $this->rewriter->last_call_stack_element();
+			// Rewrite AS BINARY to AS BLOB inside CAST() calls.
+			if (
+				$call_parent
+				&& 'CAST' === $call_parent['function']
+				&& 'BINARY' === $token->value
+			) {
+				$this->rewriter->skip();
+				$this->rewriter->add( new WP_SQLite_Token( 'BLOB', $token->type, $token->flags ) );
+				return true;
+			}
+		}
+	}
+
 	private function translate_concat_function($token) {
 		/**
 		 * Skip the CONCAT function but leave the parentheses.
@@ -1085,8 +1102,35 @@ class WP_SQLite_Translator {
 			$this->rewriter->add( new WP_SQLite_Token( "REGEXP", WP_SQLite_Token::TYPE_KEYWORD ) );
 
 			$next = $this->rewriter->peek();
+			/*
+			* If the query says REGEXP BINARY, the comparison is byte-by-byte
+			* and letter casing matters – lowercase and uppercase letters are
+			* represented using different byte codes.
+			* 
+			* The REGEXP function can't be easily made to accept two
+			* parameters, so we'll have to use a hack to get around this.
+			* 
+			* If the first character of the pattern is a null byte, we'll
+			* remove it and make the comparison case-sensitive. This should
+			* be reasonably safe since PHP does not allow null bytes in
+			* regular expressions anyway.
+			*/
 			if ( $next->matches(WP_SQLite_Token::TYPE_KEYWORD, null, array( 'BINARY' ) ) ) {
+				// Skip the "BINARY" keyword.
 				$this->rewriter->skip();
+				/*
+				 * Prepend a null byte to the pattern.
+				 */
+				$this->rewriter->add_many([
+					new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+					new WP_SQLite_Token( 'char', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ),
+					new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ),
+					new WP_SQLite_Token( '0', WP_SQLite_Token::TYPE_NUMBER ),
+					new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ),
+					new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+					new WP_SQLite_Token( '||', WP_SQLite_Token::TYPE_OPERATOR ),
+					new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				]);
 			}
 			return true;
 		}

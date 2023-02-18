@@ -413,7 +413,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 						$last_retval = $stmt->execute( $query->params );
 					} catch ( PDOException $error ) {
 						if( $error->getCode() != SELF::SQLITE_BUSY ) {
-							return $this->handle_error( $error );
+							throw $error;
 						}
 					}
 				} while ( $error ); 
@@ -434,13 +434,12 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			}
 
 			$this->process_results($stmt, $translation);
-			$debug_string = $this->get_debug_info();
-			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true && $debug_string ) {
-				error_log( $debug_string );
-			}
 	
 			return $this->return_value;
 		} catch ( Exception $err ) {
+			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true ) {
+				throw $err;
+			}
 			return $this->handle_error( $err );
 		}
 	}
