@@ -691,7 +691,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				* all times
 				* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
 				*/
-				$this->affected_rows = $this->pdo->query('select changes()')->fetch()[0]; 
+				$this->affected_rows = (int)$this->pdo->query('select changes()')->fetch()[0]; 
 				$this->return_value  = $this->affected_rows;
 				$this->num_rows      = $this->affected_rows;
 				$this->last_insert_id  = $this->pdo->lastInsertId();
@@ -699,7 +699,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 					$this->last_insert_id = (int) $this->last_insert_id;
 				}
 				break;
-
 		}
 	}
 

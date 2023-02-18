@@ -187,6 +187,29 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertCount(1, $results);
 	}
 
+	public function testUpdateReturnValue() {
+		$this->engine->query(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);
+
+		$return = $this->engine->query(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48'"
+		);
+		$this->assertSame(1, $return, 'UPDATE query did not return 1 when one row was changed');
+
+		$return = $this->engine->query(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48'"
+		);
+		if($return === 1) {
+			$this->markTestIncomplete(
+				'SQLite UPDATE query returned 1 when no rows were changed. ' .
+				'This is a database compatibility issue – MySQL would return 0 '.
+				'in the same scenario.'
+			);
+		}
+		$this->assertSame(0, $return, 'UPDATE query did not return 0 when no rows were changed');
+	}
+
 	public function testOrderByField() {
 		$this->engine->query(
 			"INSERT INTO _options (option_name, option_value) VALUES ('User 0000019', 'second');"
