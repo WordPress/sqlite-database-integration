@@ -162,13 +162,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private $return_value;
 
 	/**
-	 * The parameter number.
-	 *
-	 * @var integer
-	 */
-	private $param_num;
-
-	/**
 	 * Variable to check if there is an active transaction.
 	 *
 	 * @var boolean
@@ -189,51 +182,99 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 *
 	 * Constructor definition is changed since version 1.7.1.
 	 */
-	function __construct() {
+	function __construct($pdo=null) {
+		if(!$pdo) {
+			if ( ! is_file( FQDB ) ) {
+				$this->prepare_directory();
+			}
+
+			$locked      = false;
+			$status      = 0;
+			$err_message = '';
+			do {
+				try {
+					$dsn = 'sqlite:' . FQDB;
+					$pdo = new PDO( $dsn, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
+					new WP_SQLite_PDO_User_Defined_Functions( $pdo );
+				} catch ( PDOException $ex ) {
+					$status = $ex->getCode();
+					if ( 5 === $status || 6 === $status ) {
+						$locked = true;
+					} else {
+						$err_message = $ex->getMessage();
+					}
+				}
+			} while ( $locked );
+
+			if ( $status > 0 ) {
+				$message = sprintf(
+					'<p>%s</p><p>%s</p><p>%s</p>',
+					'Database initialization error!',
+					"Code: $status",
+					"Error Message: $err_message"
+				);
+				$this->last_error = $message;
+
+				return new WP_Error($this->last_error);
+			}
+		}
+		$this->pdo = $pdo;
+
 		// Fixes a warning in the site-health screen.
 		$this->client_info = SQLite3::version()['versionString'];
 
 		register_shutdown_function( array( $this, '__destruct' ) );
-		if ( ! is_file( FQDB ) ) {
-			$this->prepare_directory();
-		}
-		$dsn = 'sqlite:' . FQDB;
-		if ( isset( $GLOBALS['@pdo'] ) ) {
-			$this->pdo = $GLOBALS['@pdo'];
-			$this->init();
-			return;
-		}
-
-		$locked      = false;
-		$status      = 0;
-		$err_message = '';
-		do {
-			try {
-				$this->pdo = new PDO( $dsn, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
-				new WP_SQLite_PDO_User_Defined_Functions( $this->pdo );
-				$GLOBALS['@pdo'] = $this->pdo;
-			} catch ( PDOException $ex ) {
-				$status = $ex->getCode();
-				if ( 5 === $status || 6 === $status ) {
-					$locked = true;
-				} else {
-					$err_message = $ex->getMessage();
-				}
-			}
-		} while ( $locked );
-
-		if ( $status > 0 ) {
-			$message = sprintf(
-				'<p>%s</p><p>%s</p><p>%s</p>',
-				'Database initialization error!',
-				"Code: $status",
-				"Error Message: $err_message"
-			);
-			$this->set_error( __LINE__, __FILE__, $message );
-
-			return false;
-		}
 		$this->init();
+	}
+
+	public function getPDO() {
+		return $this->pdo;
+	}
+
+	/**
+	 * This method makes database directory and .htaccess file.
+	 *
+	 * It is executed only once when the installation begins.
+	 */
+	private function prepare_directory() {
+		global $wpdb;
+		$u = umask( 0000 );
+		if ( ! is_dir( FQDBDIR ) ) {
+			if ( ! @mkdir( FQDBDIR, 0704, true ) ) {
+				umask( $u );
+				wp_die( 'Unable to create the required directory! Please check your server settings.', 'Error!' );
+			}
+		}
+		if ( ! is_writable( FQDBDIR ) ) {
+			umask( $u );
+			$message = 'Unable to create a file in the directory! Please check your server settings.';
+			wp_die( $message, 'Error!' );
+		}
+		if ( ! is_file( FQDBDIR . '.htaccess' ) ) {
+			$fh = fopen( FQDBDIR . '.htaccess', 'w' );
+			if ( ! $fh ) {
+				umask( $u );
+				echo 'Unable to create a file in the directory! Please check your server settings.';
+
+				return false;
+			}
+			fwrite( $fh, 'DENY FROM ALL' );
+			fclose( $fh );
+		}
+		if ( ! is_file( FQDBDIR . 'index.php' ) ) {
+			$fh = fopen( FQDBDIR . 'index.php', 'w' );
+			if ( ! $fh ) {
+				umask( $u );
+				echo 'Unable to create a file in the directory! Please check your server settings.';
+
+				return false;
+			}
+			fwrite( $fh, '<?php // Silence is gold. ?>' );
+			fclose( $fh );
+		}
+		umask( $u );
+
+		return true;
 	}
 
 	/**
@@ -294,52 +335,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		if ( $statement->fetchColumn( 0 ) == '0' ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
 			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
-	}
-
-	/**
-	 * This method makes database directory and .htaccess file.
-	 *
-	 * It is executed only once when the installation begins.
-	 */
-	private function prepare_directory() {
-		global $wpdb;
-		$u = umask( 0000 );
-		if ( ! is_dir( FQDBDIR ) ) {
-			if ( ! @mkdir( FQDBDIR, 0704, true ) ) {
-				umask( $u );
-				wp_die( 'Unable to create the required directory! Please check your server settings.', 'Error!' );
-			}
-		}
-		if ( ! is_writable( FQDBDIR ) ) {
-			umask( $u );
-			$message = 'Unable to create a file in the directory! Please check your server settings.';
-			wp_die( $message, 'Error!' );
-		}
-		if ( ! is_file( FQDBDIR . '.htaccess' ) ) {
-			$fh = fopen( FQDBDIR . '.htaccess', 'w' );
-			if ( ! $fh ) {
-				umask( $u );
-				echo 'Unable to create a file in the directory! Please check your server settings.';
-
-				return false;
-			}
-			fwrite( $fh, 'DENY FROM ALL' );
-			fclose( $fh );
-		}
-		if ( ! is_file( FQDBDIR . 'index.php' ) ) {
-			$fh = fopen( FQDBDIR . 'index.php', 'w' );
-			if ( ! $fh ) {
-				umask( $u );
-				echo 'Unable to create a file in the directory! Please check your server settings.';
-
-				return false;
-			}
-			fwrite( $fh, '<?php // Silence is gold. ?>' );
-			fclose( $fh );
-		}
-		umask( $u );
-
-		return true;
 	}
 
 
@@ -717,17 +712,12 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @return boolean|void
 	 */
 	private function set_error( $line, $function, $message ) {
-		global $wpdb;
 		$this->errors[]         = array(
 			'line'     => $line,
 			'function' => $function,
 		);
 		$this->error_messages[] = $message;
 		$this->is_error         = true;
-		if ( $wpdb->suppress_errors || ! $wpdb->show_errors ) {
-			return false;
-		}
-		error_log( "Line $line, Function: $function, Message: $message" );
 	}
 
 	/**

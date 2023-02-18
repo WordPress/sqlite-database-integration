@@ -191,6 +191,8 @@ class WP_SQLite_DB extends wpdb {
 		$this->result        = null;
 	}
 
+	private $pdo;
+
 	/**
 	 * Method to do the database connection.
 	 *
@@ -203,7 +205,13 @@ class WP_SQLite_DB extends wpdb {
 	 */
 	public function db_connect( $allow_bail = true ) {
 		$this->init_charset();
-		$this->dbh   = new WP_SQLite_PDO_Engine();
+
+		$pdo = null;
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			$pdo = $GLOBALS['@pdo'];
+		}
+		$this->dbh = new WP_SQLite_PDO_Engine( $pdo );
+		$GLOBALS['@pdo'] = $this->dbh->getPDO();
 		$this->ready = true;
 	}
 

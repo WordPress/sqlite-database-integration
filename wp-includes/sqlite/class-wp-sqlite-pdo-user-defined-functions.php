@@ -252,12 +252,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL REGEXP() function.
 	 *
-	 * @param string $field   Haystack.
 	 * @param string $pattern Regular expression to match.
+	 * @param string $field   Haystack.
 	 *
 	 * @return integer 1 if matched, 0 if not matched.
 	 */
-	public function regexp( $field, $pattern ) {
+	public function regexp( $pattern, $field ) {
 		$pattern = str_replace( '/', '\/', $pattern );
 		$pattern = '/' . $pattern . '/i';
 
