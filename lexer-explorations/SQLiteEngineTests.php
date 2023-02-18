@@ -505,6 +505,7 @@ class SQLiteEngineTests extends TestCase {
 			MONTH( _dates.option_value ) as month,
 			DAYOFMONTH( _dates.option_value ) as dayofmonth,
 			MONTHNUM( _dates.option_value ) as monthnum,
+			WEEKDAY( _dates.option_value ) as weekday,
 			HOUR( _dates.option_value ) as hour,
 			MINUTE( _dates.option_value ) as minute,
 			SECOND( _dates.option_value ) as second
@@ -515,6 +516,7 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals('2003', $results[0]->year);
 		$this->assertEquals('5', $results[0]->month);
 		$this->assertEquals('27', $results[0]->dayofmonth);
+		$this->assertEquals('1', $results[0]->weekday);
 		$this->assertEquals('5', $results[0]->monthnum);
 		$this->assertEquals('10', $results[0]->hour);
 		$this->assertEquals('8', $results[0]->minute);

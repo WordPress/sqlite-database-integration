@@ -313,10 +313,28 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 	}
 
+	/**
+	 * Simulates WEEKDAY() function in MySQL.
+	 * 
+	 * Returns the day of the week as an integer.
+	 * The days of the week are numbered 0 to 6:
+	 * * 0 for Monday
+	 * * 1 for Tuesday
+	 * * 2 for Wednesday
+	 * * 3 for Thursday
+	 * * 4 for Friday
+	 * * 5 for Saturday
+	 * * 6 for Sunday
+	 */
 	public function weekday($field) {
 		$t = strtotime($field);
 
-		return intval(date('w', $t));
+		/*
+		 * date('N') returns 1 (for Monday) through 7 (for Sunday)
+		 * That's one more than MySQL.
+		 * Let's subtract one to make it compatible.
+		 */
+		return intval(date('N', $t)) - 1;
 	}
 
 	public function dayofmonth($field)
