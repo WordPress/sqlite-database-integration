@@ -664,6 +664,8 @@ class WP_SQLite_Translator {
 					|| $this->translate_values_function($token, $is_in_duplicate_section)
 					|| $this->translate_date_format($token)
 					|| $this->translate_interval($token)
+					|| $this->translate_rlike($token)
+					|| $this->translate_regexp_binary($token)
 				) {
 					continue;
 				}
@@ -877,7 +879,7 @@ class WP_SQLite_Translator {
 	private function translate_date_function( $token ) {		
 		foreach ( array(
 			array( 'YEAR', '%Y' ),
-			array( 'MONTH', '%M' ),
+			array( 'MONTH', '%m' ),
 			array( 'DAY', '%D' ),
 			array( 'DAYOFMONTH', '%d' ),
 			array( 'DAYOFWEEK', '%w' ),
@@ -929,6 +931,8 @@ class WP_SQLite_Translator {
 					}
 				}
 
+				$this->rewriter->add( new WP_SQLite_Token( 'CAST', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+				$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
 				$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
 				$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
 				$this->rewriter->add( new WP_SQLite_Token( "'$format'", WP_SQLite_Token::TYPE_STRING ) );
@@ -937,6 +941,10 @@ class WP_SQLite_Translator {
 				if ( ')' === $terminator->value ) {
 					$this->rewriter->add( $terminator );
 				}
+				$this->rewriter->add( new WP_SQLite_Token( 'as', WP_SQLite_Token::TYPE_OPERATOR ) );
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+				$this->rewriter->add( new WP_SQLite_Token( 'integer', WP_SQLite_Token::TYPE_OPERATOR ) );
+				$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 				return true;
 			}
 		}
@@ -1079,11 +1087,11 @@ class WP_SQLite_Translator {
 			$interval_op = '+'; // Default to adding.
 			for ( $j = count( $this->rewriter->call_stack ) - 1; $j >= 0; $j-- ) {
 				$call = $this->rewriter->call_stack[ $j ];
-				if ( 'DATE_ADD' === $call[0] ) {
+				if ( 'DATE_ADD' === $call['function'] ) {
 					$interval_op = '+';
 					break;
 				}
-				if ( 'DATE_SUB' === $call[0] ) {
+				if ( 'DATE_SUB' === $call['function'] ) {
 					$interval_op = '-';
 					break;
 				}
@@ -1091,6 +1099,25 @@ class WP_SQLite_Translator {
 
 			$this->rewriter->add( new WP_SQLite_Token( "'{$interval_op}$num $unit'", WP_SQLite_Token::TYPE_STRING ) );
 			return true;
+		}
+	}
+
+	private function translate_rlike($token) {
+		if ( 'RLIKE' === $token->keyword ) {
+			$this->rewriter->skip();
+			$this->rewriter->add( new WP_SQLite_Token( "REGEXP", WP_SQLite_Token::TYPE_KEYWORD ) );
+			return true;
+		}
+	}
+
+	private function translate_regexp_binary($token) {
+		if ( 'REGEXP' === $token->keyword ) {
+			$next = $this->rewriter->peek_nth(2);
+			if ( $next->matches(WP_SQLite_Token::TYPE_KEYWORD, null, array( 'BINARY' ) ) ) {
+				$this->rewriter->consume();
+				$this->rewriter->skip();
+				return true;
+			}
 		}
 	}
 

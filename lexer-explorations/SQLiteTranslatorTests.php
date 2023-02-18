@@ -363,12 +363,43 @@ class SQLiteTranslatorTests extends TestCase {
 				),
 			),
 			array(
+				'Translates SELECT with DATE_ADD',
+				'SELECT DATE_ADD(post_date_gmt, INTERVAL "0" SECOND) FROM wptests_posts',
+				array(
+					WP_SQLite_Translator::get_query_object( "SELECT DATE(post_date_gmt,   '+0 SECOND') FROM wptests_posts" ),
+				),
+			),
+			array(
+				'Translates REGEXP BINARY',
+				"SELECT * FROM wptests_dummy WHERE option_name REGEXP BINARY '^rss_.+$'",
+				array(
+					WP_SQLite_Translator::get_query_object(
+						"SELECT * FROM wptests_dummy WHERE option_name REGEXP  :param0",
+						array(
+							':param0' => '^rss_.+$'
+						)
+					)
+				),
+			),
+			array(
+				'Translates SELECT RLIKE',
+				"SELECT * FROM wptests_dummy WHERE option_name RLIKE '^rss_.+$'",
+				array(
+					WP_SQLite_Translator::get_query_object( 
+						"SELECT * FROM wptests_dummy WHERE option_name REGEXP :param0",
+						array(
+							':param0' => '^rss_.+$'
+						)
+					),
+				),
+			),
+			array(
 				'Translates SELECT queries (3)',
 				"SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC",
 				array(
 					WP_SQLite_Translator::get_query_object(
 						<<<'SQL'
-                            SELECT STRFTIME('%Y',post_date) AS `year`, STRFTIME('%M',post_date) AS `month`, ''|| count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY STRFTIME('%Y',post_date), STRFTIME('%M',post_date) ORDER BY post_date DESC
+                            SELECT STRFTIME('%Y',post_date) AS `year`, STRFTIME('%M',post_date) AS `month`, count(ID) as posts FROM wptests_posts  WHERE post_type = :param0  AND post_status = :param1  GROUP BY STRFTIME('%Y',post_date), STRFTIME('%M',post_date) ORDER BY post_date DESC
                         SQL,
 						array(
 							':param0' => 'post',
@@ -451,7 +482,7 @@ class SQLiteTranslatorTests extends TestCase {
 			array(
 				'Stringifies COUNT(*) queries',
 				'SELECT post_author, COUNT(*) FROM wptests_posts',
-				array( WP_SQLite_Translator::get_query_object( "SELECT post_author, ''|| COUNT(*) FROM wptests_posts" ) ),
+				array( WP_SQLite_Translator::get_query_object( "SELECT post_author, COUNT(*) FROM wptests_posts" ) ),
 			),
 			array(
 				'Translates a complex INSERT',
