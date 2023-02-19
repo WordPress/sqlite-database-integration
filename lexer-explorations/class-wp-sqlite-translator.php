@@ -272,9 +272,32 @@ class WP_SQLite_Translator {
 			case 'DESCRIBE':
 				$this->rewriter->skip();
 				$table_name = $this->rewriter->consume()->value;
-				$result     = $this->get_translation_result(
+				$result = $this->get_translation_result(
 					array(
-						WP_SQLite_Translator::get_query_object( "PRAGMA table_info(\"$table_name\");" ),
+						WP_SQLite_Translator::get_query_object( "SELECT 
+							`name` as `Field`,
+							(
+								CASE `notnull`
+								WHEN 0 THEN 'YES'
+								WHEN 1 THEN 'NO'
+								END								
+							) as `Null`, 
+							(
+								CASE `type`
+								WHEN 'INTEGER' THEN 'int'
+								ELSE `type`
+								END								
+							) as `Type`, 
+							`dflt_value` as `Default`,
+							'' as Extra,
+							(
+								CASE `pk`
+								WHEN 0 THEN ''
+								ELSE 'PRI'
+								END								
+							) as `Key`
+							FROM pragma_table_info(\"$table_name\");
+						" ),
 					)
 				);
 				break;

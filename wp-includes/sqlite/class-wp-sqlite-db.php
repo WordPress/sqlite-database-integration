@@ -63,20 +63,11 @@ class WP_SQLite_DB extends wpdb {
 
 	/**
 	 * Closes the current database connection.
+	 * Noop in SQLite.
 	 *
-	 * @return bool True if the connection was successfully closed,
-	 *              false if it wasn't, or if the connection doesn't exist.
+	 * @return bool True to indicate the connection was successfully closed.
 	 */
 	public function close() {
-		if ( ! $this->dbh ) {
-			return false;
-		}
-
-		$this->dbh->close();
-		$this->dbh           = null;
-		$this->ready         = false;
-		$this->has_connected = false;
-
 		return true;
 	}
 	

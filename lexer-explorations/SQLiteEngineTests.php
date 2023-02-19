@@ -628,6 +628,104 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals(false, $result2);
 	}
 
+	public function testDescribeAccurate() {
+		$this->engine->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id bigint(20) unsigned NOT NULL default 0,
+				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
+				term_order int(11) NOT NULL default 0,
+				PRIMARY KEY  (object_id,term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$result = $this->engine->query("DESCRIBE wptests_term_relationships;");
+		$this->assertNotFalse($result);
+
+		$fields = $this->engine->get_query_results();
+		if($fields[0]->Type !== 'bigint(20) unsigned') {
+			$this->markTestSkipped(
+				'DESCRIBE queries lose the exact information about MySQL datatypes. '.
+				'This is because SQLite has less datatypes than MySQL and no COMMENT feature '.
+				'to store the original MySQL datatype.'
+			);
+		}
+		
+		$this->assertEquals(array(
+			(object) array(
+				'Field' => 'object_id',
+				'Type' => 'bigint(20) unsigned',
+				'Null' => 'NO',
+				'Key' => 'PRI',
+				'Default' => '0',
+				'Extra' => '',
+			),
+			(object) array(
+				'Field' => 'term_taxonomy_id',
+				'Type' => 'bigint(20) unsigned',
+				'Null' => 'NO',
+				'Key' => 'PRI',
+				'Default' => '0',
+				'Extra' => '',
+			),
+			(object) array(
+				'Field' => 'term_order',
+				'Type' => 'int(11)',
+				'Null' => 'NO',
+				'Key' => '',
+				'Default' => '0',
+				'Extra' => '',
+			),
+		), $fields);
+	}
+
+	/**
+	 * This is a best-effort test to ensure that the overall infomation 
+	 * given by DESCRIBE are generally accurate.
+	 * 
+	 * @TODO Delete this test once MySQL datatypes are represented accurately.
+	 *       Rely on testDescribeAccurate instead.
+	 */
+	public function testDescribeLossy() {
+		$this->engine->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id bigint(20) unsigned NOT NULL default 0,
+				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
+				term_order int(11) NOT NULL default 0,
+				PRIMARY KEY  (object_id,term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$result = $this->engine->query("DESCRIBE wptests_term_relationships;");
+		$this->assertNotFalse($result);
+
+		$this->assertEquals(array(
+			(object) array(
+				'Field' => 'object_id',
+				'Type' => 'int',
+				'Null' => 'NO',
+				'Key' => 'PRI',
+				'Default' => '0',
+				'Extra' => '',
+			),
+			(object) array(
+				'Field' => 'term_taxonomy_id',
+				'Type' => 'int',
+				'Null' => 'NO',
+				'Key' => 'PRI',
+				'Default' => '0',
+				'Extra' => '',
+			),
+			(object) array(
+				'Field' => 'term_order',
+				'Type' => 'int',
+				'Null' => 'NO',
+				'Key' => '',
+				'Default' => '0',
+				'Extra' => '',
+			),
+		), $this->engine->get_query_results());
+	}
+
 	public function testInsertOnDuplicateKeyCompositePk() {
 		$result = $this->engine->query(
 			"CREATE TABLE wptests_term_relationships (
