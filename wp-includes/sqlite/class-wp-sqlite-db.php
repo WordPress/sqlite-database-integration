@@ -23,17 +23,13 @@ class WP_SQLite_DB extends wpdb {
 	protected $dbh;
 
 	/**
-	 * Required by Tests_DB::test_prepare_should_respect_the_allow_unsafe_unquoted_parameters_property()
-	 */
-	public $allow_unsafe_unquoted_parameters = false;
-
-	/**
 	 * Constructor
 	 *
 	 * Unlike wpdb, no credentials are needed.
 	 */
 	public function __construct() {
 		parent::__construct( '', '', '', '' );
+		$this->charset = 'utf8mb4';
 	}
 
 	/**
@@ -65,6 +61,25 @@ class WP_SQLite_DB extends wpdb {
 	public function set_sql_mode( $modes = array() ) {
 	}
 
+	/**
+	 * Closes the current database connection.
+	 *
+	 * @return bool True if the connection was successfully closed,
+	 *              false if it wasn't, or if the connection doesn't exist.
+	 */
+	public function close() {
+		if ( ! $this->dbh ) {
+			return false;
+		}
+
+		$this->dbh->close();
+		$this->dbh           = null;
+		$this->ready         = false;
+		$this->has_connected = false;
+
+		return true;
+	}
+	
 	/**
 	 * Method to select the database connection.
 	 *
@@ -209,6 +224,9 @@ class WP_SQLite_DB extends wpdb {
 	 * @return void
 	 */
 	public function db_connect( $allow_bail = true ) {
+		if ( $this->dbh ) {
+			return;
+		}
 		$this->init_charset();
 
 		$pdo = null;

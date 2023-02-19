@@ -231,8 +231,22 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$this->init();
 	}
 
+	
 	public function getPDO() {
 		return $this->pdo;
+	}
+
+	/**
+	 * PDO has no explicit close() method.
+	 * 
+	 * This is because PHP may choose to reuse the same 
+	 * connection for the next request. The PHP manual 
+	 * states the PDO object can only be unset:
+	 * 
+	 * https://www.php.net/manual/en/pdo.connections.php#114822
+	 */
+	public function close() {
+		$this->pdo = null;
 	}
 
 	/**
