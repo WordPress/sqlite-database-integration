@@ -5,9 +5,9 @@ use PHPUnit\Framework\TestCase;
 class SQLiteEngineTests extends TestCase {
 
 	public static function setUpBeforeClass(): void {
-		if ( ! defined( 'PDO_DEBUG' )) {
-			define( 'PDO_DEBUG', true );
-		}
+		// if ( ! defined( 'PDO_DEBUG' )) {
+		// 	define( 'PDO_DEBUG', true );
+		// }
 		if(!defined('FQDB')) {
 			define( 'FQDB', ':memory:' );
 			define( 'FQDBDIR', __DIR__ . '/../testdb' );
@@ -161,8 +161,8 @@ class SQLiteEngineTests extends TestCase {
 				KEY user_email (user_email)
 			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
 		);
-		$this->assertEquals(1, $result);
 		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
 
 		$this->engine->query("DESCRIBE wptests_users;");
 		$results = $this->engine->get_query_results();
@@ -286,7 +286,10 @@ class SQLiteEngineTests extends TestCase {
 				UNIQUE KEY myname (name)
 			);"
 		);
+		$this->assertEquals('', $this->engine->get_error_message());
+
 		$result1 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('first');");
+		$this->assertEquals('', $this->engine->get_error_message());
 		$this->assertEquals(1, $result1);
 
 		$result2 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('FIRST') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);");
@@ -586,6 +589,69 @@ class SQLiteEngineTests extends TestCase {
 		" );
 		$results = $this->engine->get_query_results();
 		$this->assertCount(1, $results);
+	}
+	
+	public function testInsertOnDuplicateKey() {
+		$this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default '',
+				UNIQUE KEY name (name)
+			);"
+		);
+		$result1 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('first');");
+		$this->assertEquals(1, $result1);
+
+		$result2 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('FIRST') ON DUPLICATE KEY SET name=VALUES(`name`);");
+		$this->assertEquals(1, $result2);
+
+
+		$this->engine->query( "SELECT COUNT(*) as cnt FROM _tmp_table" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(1, $results[0]->cnt);
+	}
+	
+	public function testCreateTableCompositePk() {
+		$this->engine->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id bigint(20) unsigned NOT NULL default 0,
+				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
+				term_order int(11) NOT NULL default 0,
+				PRIMARY KEY  (object_id,term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$result1 = $this->engine->query("INSERT INTO wptests_term_relationships VALUES (1,2,1),(1,3,2);");
+		$this->assertEquals(2, $result1);
+
+		$result2 = $this->engine->query("INSERT INTO wptests_term_relationships VALUES (1,2,2),(1,3,1);");
+		$this->assertEquals(false, $result2);
+	}
+
+	public function testInsertOnDuplicateKeyCompositePk() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id bigint(20) unsigned NOT NULL default 0,
+				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
+				term_order int(11) NOT NULL default 0,
+				PRIMARY KEY  (object_id,term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertTrue($result);
+
+		$result1 = $this->engine->query("INSERT INTO wptests_term_relationships VALUES (1,2,1),(1,3,2);");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(2, $result1);
+
+		$result2 = $this->engine->query("INSERT INTO wptests_term_relationships VALUES (1,2,2),(1,3,1) ON DUPLICATE KEY SET term_order = VALUES(term_order);");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(2, $result2);
+
+		$this->engine->query( "SELECT COUNT(*) as cnt FROM wptests_term_relationships" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(2, $results[0]->cnt);
 	}
 	
 	public function testStringToFloatComparison() {

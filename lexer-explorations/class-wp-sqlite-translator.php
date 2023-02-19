@@ -311,8 +311,11 @@ class WP_SQLite_Translator {
 			$definition = '"' . $field->name . '" ' . $field->sqlite_datatype;
 			if ( $field->auto_increment ) {
 				$definition .= ' PRIMARY KEY AUTOINCREMENT';
+				if(count($table->primary_key) > 1) {
+					throw new Exception( 'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite' );
+				}
 			}
-			else if ( $field->primary_key ) {
+			else if ( $field->primary_key && count($table->primary_key) === 1 ) {
 				$definition .= ' PRIMARY KEY ';
 			}
 			if ( $field->not_null ) {
@@ -329,6 +332,10 @@ class WP_SQLite_Translator {
 				$definition .= ' COLLATE NOCASE';
 			}
 			$definitions[] = $definition;
+		}
+
+		if(count($table->primary_key) > 1) {
+			$definitions[] = 'PRIMARY KEY ("' . implode( '", "', $table->primary_key ) . '")';
 		}
 
 		$create_table_query = WP_SQLite_Translator::get_query_object(
@@ -448,6 +455,8 @@ class WP_SQLite_Translator {
 		foreach ( $result->fields as $k => $field ) {
 			if ( $field->primary_key ) {
 				$result->primary_key[] = $field->name;
+			} else if( in_array( $field->name, $result->primary_key, true ) ) {
+				$field->primary_key = true;
 			}
 		}
 
@@ -1244,9 +1253,12 @@ class WP_SQLite_Translator {
 
 		// Find the conflicting column:
 		// 1. Find the primary key.
-		$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
-		$pkrow   = $q->fetch();
-		$pk_name = $pkrow ? $pkrow['name'] : null;
+		$q       = $this->sqlite->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk > 0;' );
+		$pkrows  = $q->fetchAll(0);
+		$pk_columns = array();
+		foreach($pkrows as $pkrow) {
+			$pk_columns[] = $pkrow['name'];
+		}
 
 		// 2. Find all the unique columns.
 		$unique_columns = array();
@@ -1262,19 +1274,27 @@ class WP_SQLite_Translator {
 
 		// 3. Find the first unique column that is also in the INSERT statement.
 		//    Default to the primary key.
-		$conflict_column = count($unique_columns) ? $unique_columns[0] : $pk_name;
-		if($this->insert_columns && !in_array($conflict_column, $this->insert_columns)) {
-			$conflict_column = $pk_name;
+		$conflict_columns = array();
+		if($this->insert_columns) {
 			foreach($this->insert_columns as $col) {
-				if(in_array($col, $unique_columns)) {
-					$conflict_column = $col;
-					break;
+				if(
+					in_array($col, $unique_columns)
+					|| in_array($col, $pk_columns)
+				) {
+					$conflict_columns[] = $col;
 				}
 			}
+		} else if(count($pk_columns) > 1) {
+			$conflict_columns = $pk_columns;
+		} else if(count($unique_columns) > 0) {
+			$conflict_columns = array($unique_columns[0]);
+		}
+		if(!$conflict_columns){
+			$conflict_columns = $pk_columns;
 		}
 
 		// If there is no conflict column, then we can't rewrite the statement.
-		if(!$conflict_column) {
+		if(!$conflict_columns) {
 			// Drop the consumed "ON"
 			$this->rewriter->drop_last();
 			// Skip over "DUPLICATE", "KEY", and "UPDATE".
@@ -1299,7 +1319,14 @@ class WP_SQLite_Translator {
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
 
-		$this->rewriter->add( new WP_SQLite_Token( '"'.$conflict_column.'"', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+		$max = count($conflict_columns);
+		foreach($conflict_columns as $i => $conflict_column) {
+			$this->rewriter->add( new WP_SQLite_Token( '"'.$conflict_column.'"', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+			if($i !== $max - 1) {
+				$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			}
+		}
 		$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$this->rewriter->add( new WP_SQLite_Token( 'DO', WP_SQLite_Token::TYPE_KEYWORD ) );
