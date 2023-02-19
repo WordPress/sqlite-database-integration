@@ -591,30 +591,32 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			return '';
 		}
 
-		$output  = '<div style="clear:both">&nbsp;</div>';
-		$output .= '<div class="queries" style="clear:both;margin_bottom:2px;border:red dotted thin;">';
-		$output .= '<p>Queries made or created this session were:</p>';
-		$output .= '<ol>';
+		$output  = '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
+		$output .= '<div class="queries" style="clear:both;margin_bottom:2px;border:red dotted thin;">' . PHP_EOL;
+		$output .= '<p>Queries made or created this session were:</p>' . PHP_EOL;
+		$output .= '<ol>' . PHP_EOL;
 		foreach ( $this->queries as $q ) {
-			$output .= '<li>' . htmlspecialchars( $q ) . '</li>';
+			$output .= '<li>' . htmlspecialchars( $q ) . '</li>' . PHP_EOL;
 		}
-		$output .= '</ol>';
-		$output .= '</div>';
+		$output .= '</ol>' . PHP_EOL;
+		$output .= '</div>' . PHP_EOL;
 		foreach ( $this->error_messages as $num => $m ) {
-			$output .= '<div style="clear:both;margin_bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">';
+			$output .= '<div style="clear:both;margin_bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">' . PHP_EOL;
 			$output .= sprintf(
 				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
 				(int) $this->errors[ $num ]['line'],
 				'<code>' . htmlspecialchars( $this->errors[ $num ]['function'] ) . '</code>',
 				$m
-			);
-			$output .= '</div>';
+			) . PHP_EOL;
+			$output .= '</div>' . PHP_EOL;
 		}
 
-		ob_start();
-		debug_print_backtrace();
-		$output .= '<pre>' . ob_get_contents() . '</pre>';
-		ob_end_clean();
+		try {
+			throw new Exception();
+		} catch( Exception $e ) {
+			$output .= '<p>Backtrace:</p>' . PHP_EOL;
+			$output .= '<pre>' . htmlspecialchars( $e->getTraceAsString() ) . '</pre>' . PHP_EOL;
+		}
 
 		return $output;
 	}
