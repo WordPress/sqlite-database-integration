@@ -392,19 +392,25 @@ class WP_SQLite_PDO_User_Defined_Functions {
 
 	public function dayofmonth($field)
 	{
-		$t = strtotime($field);
-
-		return intval(date('j', $t));
+		return intval(date('j', strtotime($field)));
 	}
 	
-	public function dayofweek($field, $mode) {
-		$t = strtotime($field);
-
-		if ($mode == 0) {
-			return intval(date('w', $t));
-		} else {
-			return intval(date('N', $t));
-		}
+	/**
+	 * Method to emulate MySQL DAYOFWEEK() function.
+	 * 
+	 * From https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_dayofweek:
+	 * 
+	 * > Returns the weekday index for date (1 = Sunday, 2 = Monday, …, 7 = Saturday).
+	 * > These index values correspond to the ODBC standard. Returns NULL if date is NULL.
+	 */
+	public function dayofweek($field) {
+		/**
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 * 
+		 * w – Numeric representation of the day of the week	
+		 *     0 (for Sunday) through 6 (for Saturday)
+		 */
+		return intval(date('w', strtotime($field))) + 1;
 	}
 
 	/**
