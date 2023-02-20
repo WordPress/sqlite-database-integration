@@ -221,6 +221,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			
 			// MySQL data comes across stringified by default:
 			$pdo->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, true);
+			$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
 		}
 		$this->pdo = $pdo;
 
@@ -423,7 +424,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				do {
 					$error = null;
 					try {
-						// echo end($this->queries)."\n\n";
+						// echo $query->sql."\n\n";
 						$stmt = $this->pdo->prepare( $query->sql );
 						$last_retval = $stmt->execute( $query->params );
 					} catch ( PDOException $error ) {
@@ -441,6 +442,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				if ( 
 					'DESCRIBE' === $translation->mysql_query_type 
 					|| 'SELECT' === $translation->mysql_query_type
+					|| 'SHOW' === $translation->mysql_query_type
 				) {
 					$this->_results = $stmt->fetchAll( $mode );
 				} else {
@@ -669,6 +671,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		
 		// @TODO: Only use $translation->mysql_query_type, not $this->query_type
 		if($translation->has_result) {
+			$this->_results = $translation->result;
 			$this->results = $translation->result;
 		} else if ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
 			$this->convert_to_columns_object();

@@ -33,14 +33,14 @@ class SQLiteEngineTests extends TestCase {
 		$this->engine = new WP_SQLite_PDO_Engine( );
 		$this->engine->query(
 			"CREATE TABLE _options (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				option_name TEXT NOT NULL default '',
 				option_value TEXT NOT NULL default ''
 			);"
 		);
 		$this->engine->query(
 			"CREATE TABLE _dates (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				option_name TEXT NOT NULL default '',
 				option_value DATE NOT NULL
 			);"
@@ -129,7 +129,7 @@ class SQLiteEngineTests extends TestCase {
 	public function testCreateTemporaryTable() {
 		$this->engine->query(
 			"CREATE TEMPORARY TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				option_name TEXT NOT NULL default '',
 				option_value TEXT NOT NULL default ''
 			);"
@@ -140,6 +140,34 @@ class SQLiteEngineTests extends TestCase {
 			"DROP TEMPORARY TABLE _tmp_table;"
 		);
 		$this->assertEquals('', $this->engine->get_error_message());
+	}
+
+	public function testShowTablesLike() {
+		$this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$this->engine->query(
+			"CREATE TABLE _tmp_table_2 (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+
+		$this->engine->query(
+			"SHOW TABLES LIKE '_tmp_table';"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(array(
+			(object) array(
+				'Tables_in_db' => '_tmp_table',
+			),
+		), $this->engine->get_query_results());
 	}
 	
 	public function testCreateTable() {
@@ -167,113 +195,266 @@ class SQLiteEngineTests extends TestCase {
 		$this->engine->query("DESCRIBE wptests_users;");
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			array (
-				0 => 
+			array(
 				(object) array(
-					'cid' => '0',
-					'name' => 'ID',
-					'type' => 'INTEGER',
-					'notnull' => '1',
-					'dflt_value' => NULL,
-					'pk' => '1',
+					'Field' => 'ID',
+					'Type' => 'bigint(20) unsigned',
+					'Null' => 'NO',
+					'Key' => 'PRI',
+					'Default' => null,
+					'Extra' => '',
 				),
-				1 => 
 				(object) array(
-					'cid' => '1',
-					'name' => 'user_login',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'user_login',
+					'Type' => 'varchar(60)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
-				2 => 
 				(object) array(
-					'cid' => '2',
-					'name' => 'user_pass',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'user_pass',
+					'Type' => 'varchar(255)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
-				3 => 
 				(object) array(
-					'cid' => '3',
-					'name' => 'user_nicename',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'user_nicename',
+					'Type' => 'varchar(50)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
-				4 => 
 				(object) array(
-					'cid' => '4',
-					'name' => 'user_email',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'user_email',
+					'Type' => 'varchar(100)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
-				5 => 
 				(object) array(
-					'cid' => '5',
-					'name' => 'user_url',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'user_url',
+					'Type' => 'varchar(100)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
-				6 => 
 				(object) array(
-					'cid' => '6',
-					'name' => 'user_registered',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "'0000-00-00 00:00:00'",
-					'pk' => '0',
+					'Field' => 'user_registered',
+					'Type' => 'datetime',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '0000-00-00 00:00:00',
+					'Extra' => '',
 				),
-				7 => 
 				(object) array(
-					'cid' => '7',
-					'name' => 'user_activation_key',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'user_activation_key',
+					'Type' => 'varchar(255)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
-				8 => 
 				(object) array(
-					'cid' => '8',
-					'name' => 'user_status',
-					'type' => 'INTEGER',
-					'notnull' => '1',
-					'dflt_value' => "'0'",
-					'pk' => '0',
+					'Field' => 'user_status',
+					'Type' => 'int(11)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '0',
+					'Extra' => '',
 				),
-				9 => 
 				(object) array(
-					'cid' => '9',
-					'name' => 'display_name',
-					'type' => 'TEXT',
-					'notnull' => '1',
-					'dflt_value' => "''",
-					'pk' => '0',
+					'Field' => 'display_name',
+					'Type' => 'varchar(250)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
 				),
 			),
 			$results
 		);
 	}
 	
-	public function testCaseInsensitiveUniqueIndex() {
+	public function testCreateTableWithTrailingComma() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				PRIMARY KEY  (ID),
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+	}
+	
+	public function testCreateTableSpatialIndex() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				UNIQUE KEY (ID),
+			)"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+	}
+	
+	public function testAlterTableModifyColumn() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				name varchar(20) NOT NULL default '',
+				lastname varchar(20) NOT NULL default '',
+				KEY composite (name, lastname),
 				UNIQUE KEY name (name)
 			);"
 		);
+		// Insert a record
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, name, lastname) VALUES (1, 'Johnny', 'Appleseed');");
+		$this->assertEquals(1, $result);
+
+		// Primary key violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, name, lastname) VALUES (1, 'Mike', 'Pearseed');");
+		$this->assertEquals(false, $result);
+
+		// Unique constraint violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, name, lastname) VALUES (2, 'Johnny', 'Appleseed');");
+		$this->assertEquals(false, $result);
+
+		// Rename the "name" field to "firstname":
+		$result = $this->engine->query("ALTER TABLE _tmp_table CHANGE column name firstname varchar(50) NOT NULL default 'mark';");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		// Confirm the original data is still there:
+		$result = $this->engine->query("SELECT * FROM _tmp_table;");
+		$this->assertCount(1, $result);
+		$this->assertEquals(1, $result[0]->ID);
+		$this->assertEquals('Johnny', $result[0]->firstname);
+		$this->assertEquals('Appleseed', $result[0]->lastname);
+
+		// Confirm the primary key is intact:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, firstname, lastname) VALUES (1, 'Mike', 'Pearseed');");
+		$this->assertEquals(false, $result);
+
+		// Confirm the unique key is intact:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, firstname, lastname) VALUES (2, 'Johnny', 'Appleseed');");
+		$this->assertEquals(false, $result);
+
+		// Confirm the autoincrement still works:
+		$result = $this->engine->query("INSERT INTO _tmp_table (firstname, lastname) VALUES ('John', 'Doe');");
+		$this->assertEquals(true, $result);
+		$result = $this->engine->query("SELECT * FROM _tmp_table WHERE firstname='John';");
+		$this->assertCount(1, $result);
+		$this->assertEquals(2, $result[0]->ID);
+	}
+
+	public function testAlterTableModifyColumnComplexChange() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER NOT NULL,
+				name varchar(20) NOT NULL default '',
+				lastname varchar(20) default '',
+				date_as_string varchar(20) default '',
+				PRIMARY KEY (ID, name)
+			);"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		// Add a unique index
+		$result = $this->engine->query(
+			'ALTER TABLE _tmp_table ADD UNIQUE INDEX "test_unique_composite" (name, lastname);'
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		// Add a regular index
+		$result = $this->engine->query(
+			'ALTER TABLE _tmp_table ADD INDEX "test_regular" (lastname);'
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		// Confirm the table is well-behaved so far:
+
+		// Insert a few records
+		$result = $this->engine->query("
+			INSERT INTO _tmp_table (ID, name, lastname, date_as_string) 
+			VALUES 
+				(1, 'Johnny', 'Appleseed', '2002-01-01 12:53:13'),
+				(2, 'Mike', 'Foo', '2003-01-01 12:53:13'),
+				(3, 'Kate', 'Bar', '2004-01-01 12:53:13'),
+				(4, 'Anna', 'Pear', '2005-01-01 12:53:13')
+			;");
+		$this->assertEquals(4, $result);
+
+		// Primary key violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, name) VALUES (1, 'Johnny');");
+		$this->assertEquals(false, $result);
+
+		// Unique constraint violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, name, lastname) VALUES (5, 'Kate', 'Bar');");
+		$this->assertEquals(false, $result);
+
+		// No constraint violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, name, lastname) VALUES (5, 'Joanna', 'Bar');");
+		$this->assertEquals(1, $result);
+
+		// Now – let's change a few columns:
+		$result = $this->engine->query("ALTER TABLE _tmp_table CHANGE COLUMN name firstname varchar(20)");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		$result = $this->engine->query("ALTER TABLE _tmp_table CHANGE COLUMN date_as_string datetime datetime NOT NULL");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		// Finally, let's confirm our data is intact and the table is still well-behaved:
+		$result = $this->engine->query("SELECT * FROM _tmp_table ORDER BY ID;");
+		$this->assertCount(5, $result);
+		$this->assertEquals(1, $result[0]->ID);
+		$this->assertEquals('Johnny', $result[0]->firstname);
+		$this->assertEquals('Appleseed', $result[0]->lastname);
+		$this->assertEquals('2002-01-01 12:53:13', $result[0]->datetime);
+
+		// Primary key violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, firstname, datetime) VALUES (1, 'Johnny', '2010-01-01 12:53:13');");
+		$this->assertEquals(false, $result);
+
+		// Unique constraint violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, firstname, lastname, datetime) VALUES (6, 'Kate', 'Bar', '2010-01-01 12:53:13');");
+		$this->assertEquals(false, $result);
+
+		// No constraint violation:
+		$result = $this->engine->query("INSERT INTO _tmp_table (ID, firstname, lastname, datetime) VALUES (6, 'Sophie', 'Bar', '2010-01-01 12:53:13');");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+	}
+
+	public function testCaseInsensitiveUniqueIndex() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				name varchar(20) NOT NULL default '',
+				lastname varchar(20) NOT NULL default '',
+				KEY name (name),
+				UNIQUE KEY uname (name),
+				UNIQUE KEY last (lastname)
+			);"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
 		$result1 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('first');");
 		$this->assertEquals(1, $result1);
 
+		// Unique keys should be case-insensitive:
 		$result2 = $this->engine->query("INSERT INTO _tmp_table (name) VALUES ('FIRST');");
 		$this->assertFalse($result2);
 	}
@@ -281,7 +462,7 @@ class SQLiteEngineTests extends TestCase {
 	public function testOnDuplicateUpdate() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				name varchar(20) NOT NULL default '',
 				UNIQUE KEY myname (name)
 			);"
@@ -322,7 +503,7 @@ class SQLiteEngineTests extends TestCase {
 	public function testCaseInsensitiveSelect() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				name varchar(20) NOT NULL default ''
 			);"
 		);
@@ -594,7 +775,7 @@ class SQLiteEngineTests extends TestCase {
 	public function testInsertOnDuplicateKey() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				name varchar(20) NOT NULL default '',
 				UNIQUE KEY name (name)
 			);"
@@ -629,26 +810,25 @@ class SQLiteEngineTests extends TestCase {
 	}
 
 	public function testDescribeAccurate() {
-		$this->engine->query(
+		$result = $this->engine->query(
 			"CREATE TABLE wptests_term_relationships (
 				object_id bigint(20) unsigned NOT NULL default 0,
 				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
-				term_order int(11) NOT NULL default 0,
+				term_name varchar(11) NOT NULL default 0,
 				PRIMARY KEY  (object_id,term_taxonomy_id),
-				KEY term_taxonomy_id (term_taxonomy_id)
+				KEY term_taxonomy_id (term_taxonomy_id),
+				KEY compound_key (object_id(20),term_taxonomy_id(20)),
+				FULLTEXT KEY term_name (term_name)
 			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
 		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertNotFalse($result);
+
 		$result = $this->engine->query("DESCRIBE wptests_term_relationships;");
+		$this->assertEquals('', $this->engine->get_error_message());
 		$this->assertNotFalse($result);
 
 		$fields = $this->engine->get_query_results();
-		if($fields[0]->Type !== 'bigint(20) unsigned') {
-			$this->markTestSkipped(
-				'DESCRIBE queries lose the exact information about MySQL datatypes. '.
-				'This is because SQLite has less datatypes than MySQL and no COMMENT feature '.
-				'to store the original MySQL datatype.'
-			);
-		}
 		
 		$this->assertEquals(array(
 			(object) array(
@@ -668,8 +848,8 @@ class SQLiteEngineTests extends TestCase {
 				'Extra' => '',
 			),
 			(object) array(
-				'Field' => 'term_order',
-				'Type' => 'int(11)',
+				'Field' => 'term_name',
+				'Type' => 'varchar(11)',
 				'Null' => 'NO',
 				'Key' => '',
 				'Default' => '0',
@@ -678,50 +858,214 @@ class SQLiteEngineTests extends TestCase {
 		), $fields);
 	}
 
-	/**
-	 * This is a best-effort test to ensure that the overall infomation 
-	 * given by DESCRIBE are generally accurate.
-	 * 
-	 * @TODO Delete this test once MySQL datatypes are represented accurately.
-	 *       Rely on testDescribeAccurate instead.
-	 */
-	public function testDescribeLossy() {
-		$this->engine->query(
-			"CREATE TABLE wptests_term_relationships (
-				object_id bigint(20) unsigned NOT NULL default 0,
-				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
-				term_order int(11) NOT NULL default 0,
-				PRIMARY KEY  (object_id,term_taxonomy_id),
-				KEY term_taxonomy_id (term_taxonomy_id)
-			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+	public function testAlterTableAddColumnChangesMySQLDataType() {
+		$result = $this->engine->query(
+			"CREATE TABLE _test (
+				object_id bigint(20) unsigned NOT NULL default 0
+			)"
 		);
-		$result = $this->engine->query("DESCRIBE wptests_term_relationships;");
+		$this->assertEquals('', $this->engine->get_error_message());
 		$this->assertNotFalse($result);
 
+		$result = $this->engine->query("ALTER TABLE `_test` ADD COLUMN object_name varchar(255) NOT NULL DEFAULT 'adb';");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertNotFalse($result);
+
+		$result = $this->engine->query("DESCRIBE _test;");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertNotFalse($result);
+		$fields = $this->engine->get_query_results();
+		
 		$this->assertEquals(array(
 			(object) array(
 				'Field' => 'object_id',
-				'Type' => 'int',
-				'Null' => 'NO',
-				'Key' => 'PRI',
-				'Default' => '0',
-				'Extra' => '',
-			),
-			(object) array(
-				'Field' => 'term_taxonomy_id',
-				'Type' => 'int',
-				'Null' => 'NO',
-				'Key' => 'PRI',
-				'Default' => '0',
-				'Extra' => '',
-			),
-			(object) array(
-				'Field' => 'term_order',
-				'Type' => 'int',
+				'Type' => 'bigint(20) unsigned',
 				'Null' => 'NO',
 				'Key' => '',
 				'Default' => '0',
 				'Extra' => '',
+			),
+			(object) array(
+				'Field' => 'object_name',
+				'Type' => 'varchar(255)',
+				'Null' => 'NO',
+				'Key' => '',
+				'Default' => 'adb',
+				'Extra' => '',
+			),
+		), $fields);
+	}
+
+	public function testShowIndex() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id bigint(20) unsigned NOT NULL default 0,
+				term_taxonomy_id bigint(20) unsigned NOT NULL default 0,
+				term_name varchar(11) NOT NULL default 0,
+				FULLTEXT KEY term_name_fulltext (term_name),
+				FULLTEXT INDEX term_name_fulltext2 (`term_name`),
+				SPATIAL KEY term_name_spatial (term_name),
+				PRIMARY KEY  (object_id,term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id),
+				KEY compound_key (object_id(20),term_taxonomy_id(20))
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertNotFalse($result);
+
+		$result = $this->engine->query("SHOW INDEX FROM wptests_term_relationships;");
+		$this->assertNotFalse($result);
+
+		$this->assertEquals(array(
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '0',
+				'Key_name' => 'PRIMARY',
+				'Seq_in_index' => '0',
+				'Column_name' => 'object_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '0',
+				'Key_name' => 'PRIMARY',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_taxonomy_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '1',
+				'Key_name' => 'compound_key',
+				'Seq_in_index' => '0',
+				'Column_name' => 'object_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '1',
+				'Key_name' => 'compound_key',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_taxonomy_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '1',
+				'Key_name' => 'term_taxonomy_id',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_taxonomy_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '1',
+				'Key_name' => 'term_name_spatial',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_name',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'SPATIAL',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '1',
+				'Key_name' => 'term_name_fulltext2',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_name',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'FULLTEXT',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '1',
+				'Key_name' => 'term_name_fulltext',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_name',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'FULLTEXT',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '0',
+				'Key_name' => 'wptests_term_relationships',
+				'Seq_in_index' => '0',
+				'Column_name' => 'object_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
+			),
+			(object) array(
+				'Table' => 'wptests_term_relationships',
+				'Non_unique' => '0',
+				'Key_name' => 'wptests_term_relationships',
+				'Seq_in_index' => '0',
+				'Column_name' => 'term_taxonomy_id',
+				'Collation' => 'A',
+				'Cardinality' => '0',
+				'Sub_part' => null,
+				'Packed' => null,
+				'Null' => '',
+				'Index_type' => 'BTREE',
+				'Comment' => '',
+				'Index_comment' => '',
 			),
 		), $this->engine->get_query_results());
 	}
@@ -737,7 +1081,7 @@ class SQLiteEngineTests extends TestCase {
 			   ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
 		);
 		$this->assertEquals('', $this->engine->get_error_message());
-		$this->assertTrue($result);
+		$this->assertNotFalse($result);
 
 		$result1 = $this->engine->query("INSERT INTO wptests_term_relationships VALUES (1,2,1),(1,3,2);");
 		$this->assertEquals('', $this->engine->get_error_message());
