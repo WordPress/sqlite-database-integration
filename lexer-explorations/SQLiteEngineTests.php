@@ -126,6 +126,22 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals( 'ABC', $results[0]->binary );
 	}
 
+	public function testSelectFromDual() {
+		$result = $this->engine->query(
+			'SELECT 1 as output FROM DUAL'
+		);
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result[0]->output );
+	}
+
+	public function testInsertSelectFromDual() {
+		$result = $this->engine->query(
+			'INSERT INTO _options (option_name, option_value) SELECT "A", "b" FROM DUAL WHERE ( SELECT NULL FROM DUAL ) IS NULL'
+		);
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+	}
+
 	public function testCreateTemporaryTable() {
 		$this->engine->query(
 			"CREATE TEMPORARY TABLE _tmp_table (

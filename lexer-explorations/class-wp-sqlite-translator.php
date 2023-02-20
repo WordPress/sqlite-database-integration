@@ -801,13 +801,20 @@ class WP_SQLite_Translator {
 			if ( ! $token ) {
 				break;
 			}
-			if ( ! $table_name && 'FROM' === $last_reserved_keyword ) {
-				$table_name = $this->rewriter->consume()->value;
-				continue;
-			}
 
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && $token->flags & WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) {
 				$last_reserved_keyword = $token->value;
+				if ( 'FROM' === $last_reserved_keyword ) {
+					$from_table = $this->rewriter->peek_nth(2)->value;
+					if( 'DUAL' === strtoupper( $from_table ) ) {
+						// FROM DUAL is a MySQLism that means "no tables".
+						$this->rewriter->skip();
+						$this->rewriter->skip();
+						continue;
+					} else if( ! $table_name ) {
+						$table_name = $from_table;
+					}
+				}
 			}
 
 			if ( 'SQL_CALC_FOUND_ROWS' === $token->value && WP_SQLite_Token::TYPE_KEYWORD === $token->type ) {
