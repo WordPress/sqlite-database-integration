@@ -303,6 +303,184 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals(1, $result);
 	}
 	
+	public function testAlterTableAddColumn() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		$result = $this->engine->query("ALTER TABLE _tmp_table ADD COLUMN `column` int;");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		$this->engine->query("DESCRIBE _tmp_table;");
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field' => 'name',
+					'Type' => 'varchar(20)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
+				),
+				(object) array(
+					'Field' => 'column',
+					'Type' => 'int',
+					'Null' => 'YES',
+					'Key' => '',
+					'Default' => null,
+					'Extra' => '',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testAlterTableAddNotNullVarcharColumn() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		$result = $this->engine->query("ALTER TABLE _tmp_table ADD COLUMN `column` VARCHAR(20) NOT NULL DEFAULT 'foo';");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		$this->engine->query("DESCRIBE _tmp_table;");
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field' => 'name',
+					'Type' => 'varchar(20)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => '',
+					'Extra' => '',
+				),
+				(object) array(
+					'Field' => 'column',
+					'Type' => 'varchar(20)',
+					'Null' => 'NO',
+					'Key' => '',
+					'Default' => 'foo',
+					'Extra' => '',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testAlterTableAddIndex() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		$result = $this->engine->query("ALTER TABLE _tmp_table ADD INDEX name (name);");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+		
+		$this->engine->query("SHOW INDEX FROM _tmp_table;");
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table' => '_tmp_table',
+					'Non_unique' => '1',
+					'Key_name' => 'name',
+					'Seq_in_index' => '0',
+					'Column_name' => 'name',
+					'Collation' => 'A',
+					'Cardinality' => '0',
+					'Sub_part' => null,
+					'Packed' => null,
+					'Null' => '',
+					'Index_type' => 'BTREE',
+					'Comment' => '',
+					'Index_comment' => '',
+				),
+			),
+			$results
+		);
+	}
+	
+	public function testAlterTableAddUniqueIndex() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		$result = $this->engine->query("ALTER TABLE _tmp_table ADD UNIQUE INDEX name (name(20));");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+		
+		$this->engine->query("SHOW INDEX FROM _tmp_table;");
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table' => '_tmp_table',
+					'Non_unique' => '0',
+					'Key_name' => 'name',
+					'Seq_in_index' => '0',
+					'Column_name' => 'name',
+					'Collation' => 'A',
+					'Cardinality' => '0',
+					'Sub_part' => null,
+					'Packed' => null,
+					'Null' => '',
+					'Index_type' => 'BTREE',
+					'Comment' => '',
+					'Index_comment' => '',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testAlterTableAddFulltextIndex() {
+		$result = $this->engine->query(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		$result = $this->engine->query("ALTER TABLE _tmp_table ADD FULLTEXT INDEX name (name);");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+		
+		$this->engine->query("SHOW INDEX FROM _tmp_table;");
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table' => '_tmp_table',
+					'Non_unique' => '1',
+					'Key_name' => 'name',
+					'Seq_in_index' => '0',
+					'Column_name' => 'name',
+					'Collation' => 'A',
+					'Cardinality' => '0',
+					'Sub_part' => null,
+					'Packed' => null,
+					'Null' => '',
+					'Index_type' => 'FULLTEXT',
+					'Comment' => '',
+					'Index_comment' => '',
+				),
+			),
+			$results
+		);
+	}
+
+	
 	public function testAlterTableModifyColumn() {
 		$this->engine->query(
 			"CREATE TABLE _tmp_table (
@@ -1137,6 +1315,30 @@ class SQLiteEngineTests extends TestCase {
 			$this->markTestSkipped('Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ');
 		}
 		$this->assertEquals('1', $results[0]->cmp);
+	}
+
+	public function testCalcFoundRows() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_dummy (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				user_login TEXT NOT NULL default ''
+			);"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertNotFalse($result);
+
+		$result = $this->engine->query(
+			"INSERT INTO wptests_dummy (user_login) VALUES ('test');"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		$result = $this->engine->query(
+			"SELECT SQL_CALC_FOUND_ROWS * FROM wptests_dummy"
+		);
+		$this->assertNotFalse($result);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals('test', $result[0]->user_login);
 	}
 
 	public function testComplexSelectBasedOnDates() {
