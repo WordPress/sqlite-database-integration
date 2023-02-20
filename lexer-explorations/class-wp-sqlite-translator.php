@@ -538,7 +538,7 @@ class WP_SQLite_Translator {
 		$this->rewriter->add( new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$result->name = $this->normalize_column_name( $field_name_token->value );
 
-		$initial_depth = $this->rewriter->depth;
+		$definition_depth = $this->rewriter->depth;
 
 		list( 
 			$result->sqlite_data_type,
@@ -584,7 +584,7 @@ class WP_SQLite_Translator {
 				continue;
 			}
 
-			if ( $this->is_create_table_field_terminator( $token, $initial_depth ) ) {
+			if ( $this->is_create_table_field_terminator( $token, $definition_depth ) ) {
 				$this->rewriter->add( $token );
 				break;
 			}
@@ -631,7 +631,7 @@ class WP_SQLite_Translator {
 		$result->value   = '';
 		$result->columns = array();
 
-		$initial_depth = $this->rewriter->depth;
+		$definition_depth = $this->rewriter->depth;
 		$constraint    = $this->rewriter->peek();
 		if ( ! $constraint->matches( WP_SQLite_Token::TYPE_KEYWORD ) ) {
 			// Not a constraint declaration, but we're not finished
@@ -662,7 +662,7 @@ class WP_SQLite_Translator {
 
 		do {
 			$token = $this->rewriter->skip();
-		} while ( ! $this->is_create_table_field_terminator( $token, $initial_depth ) );
+		} while ( ! $this->is_create_table_field_terminator( $token, $definition_depth ) );
 
 		return $result;
 	}
@@ -672,21 +672,27 @@ class WP_SQLite_Translator {
 	 *
 	 * @param WP_SQLite_Query_Rewriter $this->rewriter      The query rewriter.
 	 * @param WP_SQLite_Token          $token         The current token.
-	 * @param int                      $initial_depth The initial depth.
+	 * @param int                      $definition_depth The initial depth.
 	 *
 	 * @return bool
 	 */
-	private function is_create_table_field_terminator( $token, $initial_depth ) {
+	private function is_create_table_field_terminator( $token, $definition_depth, $current_depth=null ) {
+		if ( null === $current_depth ) {
+			$current_depth = $this->rewriter->depth;
+		}
 		return (
-			// The definitions-terminating ")"
-			$this->rewriter->depth === $initial_depth - 1 
+			// Reached the end of the query
+			NULL === $token
 
 			// The field-terminating ","
 			|| (
-				$this->rewriter->depth === $initial_depth &&
+				$current_depth === $definition_depth &&
 				WP_SQLite_Token::TYPE_OPERATOR === $token->type &&
 				',' === $token->value 
 			)
+
+			// The definitions-terminating ")"
+			|| $current_depth === $definition_depth - 1
 
 			// The query-terminating ";"
 			|| (
@@ -1528,7 +1534,7 @@ class WP_SQLite_Translator {
 				// First, tokenize the old schema:
 				$tokens = WP_SQLite_Lexer::get_tokens( $old_schema )->tokens;
 				$create_table = new WP_SQLite_Query_Rewriter( $tokens );
-				
+
 				// Now, replace every reference to the old column name with the new column name
 				while($token = $create_table->consume()) {
 					if(WP_SQLite_Token::TYPE_STRING !== $token->type
@@ -1546,9 +1552,16 @@ class WP_SQLite_Translator {
 					);
 					if ( $is_column_definition ) {
 						// Skip the old field definition
+						$field_depth = $create_table->depth;
 						do {
 							$field_terminator = $create_table->skip();
-						} while(!$this->is_create_table_field_terminator($field_terminator, 0));
+						} while(
+							!$this->is_create_table_field_terminator(
+								$field_terminator, 
+								$field_depth,
+								$create_table->depth
+							)
+						);
 
 						// Add an updated field definition
 						$definition = $this->make_sqlite_field_definition($new_field);
@@ -1567,7 +1580,6 @@ class WP_SQLite_Translator {
 						));
 					}
 				}
-
 
 				// 3. Copy the data out of the old table
 				$cache_table_name = "_tmp__{$table_name}_".rand(10000000, 99999999);

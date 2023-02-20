@@ -83,7 +83,9 @@ class WP_SQLite_Query_Rewriter {
 	 * @param WP_SQLite_Token $token Token object.
 	 */
 	public function add( $token ) {
-		$this->output_tokens[] = $token;
+		if ( $token ) {
+			$this->output_tokens[] = $token;
+		}
 	}
 
 	/**

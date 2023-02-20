@@ -463,7 +463,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 
 	private function handle_error( Exception $err ) {
 		$message = $err->getMessage();
-		$err_message = sprintf( 'Problem preparing the PDO SQL Statement. Error was: %s', $message );
+		$err_message = sprintf( 'Problem preparing the PDO SQL Statement. Error was: %s. trace: %s', $message, $err->getTraceAsString() );
 		$this->set_error( __LINE__, __FUNCTION__, $err_message );
 		$this->return_value = false;
 		return false;

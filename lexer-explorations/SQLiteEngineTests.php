@@ -353,6 +353,40 @@ class SQLiteEngineTests extends TestCase {
 		$this->assertEquals(2, $result[0]->ID);
 	}
 
+	public function testAlterTableModifyColumnWithHyphens() {
+		$result = $this->engine->query(
+			"CREATE TABLE wptests_dbdelta_test2 (
+				`foo-bar` varchar(255) DEFAULT NULL
+			)"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+		$result = $this->engine->query(
+			"ALTER TABLE wptests_dbdelta_test2 CHANGE COLUMN `foo-bar` `foo-bar` text DEFAULT NULL"
+		);
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals(1, $result);
+
+
+		$result = $this->engine->query("DESCRIBE wptests_dbdelta_test2;");
+		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertNotFalse($result);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field' => 'foo-bar',
+					'Type' => 'text',
+					'Null' => 'YES',
+					'Key' => '',
+					'Default' => 'NULL',
+					'Extra' => '',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testAlterTableModifyColumnComplexChange() {
 		$result = $this->engine->query(
 			"CREATE TABLE _tmp_table (
