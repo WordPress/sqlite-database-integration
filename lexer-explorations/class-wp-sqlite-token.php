@@ -217,7 +217,7 @@ class WP_SQLite_Token {
 	 */
 	public function matches( $type = null, $flags = null, ?array $values = null ) {
 		if ( null === $type && null === $flags && ( null === $values || array() === $values ) ) {
-			return !$this->is_semantically_void();
+			return ! $this->is_semantically_void();
 		}
 
 		return (
@@ -227,6 +227,11 @@ class WP_SQLite_Token {
 		);
 	}
 
+	/**
+	 * Check if the token is semantically void (i.e. whitespace or comment).
+	 *
+	 * @return bool
+	 */
 	public function is_semantically_void() {
 		return $this->matches( self::TYPE_WHITESPACE ) || $this->matches( self::TYPE_COMMENT );
 	}

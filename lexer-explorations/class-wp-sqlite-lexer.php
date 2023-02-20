@@ -1612,7 +1612,11 @@ class WP_SQLite_Lexer {
 	 */
 	private function solve_ambiguity_on_star_operator() {
 		$i_bak = $this->list->index;
-		while ( ( $star_token = $this->list->get_next_of_type_and_value( WP_SQLite_Token::TYPE_OPERATOR, '*' ) ) !== null ) {
+		while ( true ) {
+			$star_token = $this->list->get_next_of_type_and_value( WP_SQLite_Token::TYPE_OPERATOR, '*' );
+			if ( null === $star_token ) {
+				break;
+			}
 			// get_next() already gets rid of whitespaces and comments.
 			$next = $this->list->get_next();
 
@@ -1657,7 +1661,11 @@ class WP_SQLite_Lexer {
 	private function solve_ambiguity_on_function_keywords() {
 		$i_bak            = $this->list->index;
 		$keyword_function = WP_SQLite_Token::TYPE_KEYWORD | WP_SQLite_Token::FLAG_KEYWORD_FUNCTION;
-		while ( ( $keyword_token = $this->list->get_next_of_type_and_flag( WP_SQLite_Token::TYPE_KEYWORD, $keyword_function ) ) !== null ) {
+		while ( true ) {
+			$keyword_token = $this->list->get_next_of_type_and_flag( WP_SQLite_Token::TYPE_KEYWORD, $keyword_function );
+			if ( null === $keyword_token ) {
+				break;
+			}
 			$next = $this->list->get_next();
 			if (
 				( WP_SQLite_Token::TYPE_KEYWORD !== $next->type
@@ -1687,6 +1695,7 @@ class WP_SQLite_Lexer {
 	 * @param int    $pos  The position of the character.
 	 * @param int    $code The code of the error.
 	 *
+	 * @throws Exception The error log.
 	 * @return void
 	 */
 	public function error( $msg, $str = '', $pos = 0, $code = 0 ) {

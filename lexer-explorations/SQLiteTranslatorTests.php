@@ -122,7 +122,7 @@ class SQLiteTranslatorTests extends TestCase {
 			"INSERT INTO wptests_dummy (user_login, option_name, option_value) VALUES ('admin', '_transient_test', '1675963960');"
 		);
 
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$result = $t->translate(
 			"DELETE a, b FROM wptests_dummy a, wptests_dummy b
 				WHERE a.option_name LIKE '_transient_%'
@@ -146,7 +146,7 @@ class SQLiteTranslatorTests extends TestCase {
 			);"
 		);
 
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$result = $t->translate(
 			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) as 'bytes' FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'abc' AND TABLE_NAME IN ('wptests_dummy') GROUP BY TABLE_NAME;"
 		);
@@ -158,11 +158,11 @@ class SQLiteTranslatorTests extends TestCase {
 
 	public function testTranslatesDoubleAlterTable() {
 		$sqlite = new PDO( 'sqlite::memory:' );
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$result = $t->translate(
-			"ALTER TABLE test DROP INDEX domain, ADD INDEX domain(domain(140),path(51)), DROP INDEX domain"
+			'ALTER TABLE test DROP INDEX domain, ADD INDEX domain(domain(140),path(51)), DROP INDEX domain'
 		);
-		$this->assertCount(3, $result->queries);
+		$this->assertCount( 3, $result->queries );
 		$this->assertEquals(
 			'DROP INDEX "test__domain"',
 			$result->queries[0]->sql
@@ -179,7 +179,7 @@ class SQLiteTranslatorTests extends TestCase {
 
 	public function testTranslatesComplexSelect() {
 		$sqlite = new PDO( 'sqlite::memory:' );
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$sqlite->query(
 			$t->translate(
 				"CREATE TABLE wptests_postmeta (
@@ -207,11 +207,11 @@ class SQLiteTranslatorTests extends TestCase {
 		$result = $t->translate(
 			"SELECT SQL_CALC_FOUND_ROWS  wptests_posts.ID
 				FROM wptests_posts  INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
-				WHERE 1=1 
+				WHERE 1=1
 				AND (
 					NOT EXISTS (
-						SELECT 1 FROM wptests_postmeta mt1 
-						WHERE mt1.post_ID = wptests_postmeta.post_ID 
+						SELECT 1 FROM wptests_postmeta mt1
+						WHERE mt1.post_ID = wptests_postmeta.post_ID
 						LIMIT 1
 					)
 				)
@@ -224,39 +224,39 @@ class SQLiteTranslatorTests extends TestCase {
 		);
 
 		// No exception is good enough of a test for now
-		$this->assertTrue(true);
-	}	
+		$this->assertTrue( true );
+	}
 
 	public function testTranslatesUtf8Insert() {
 		$sqlite = new PDO( 'sqlite::memory:' );
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$result = $t->translate(
 			"INSERT INTO test VALUES('ąłółźćę†','ąłółźćę†','ąłółźćę†')"
 		);
 		$this->assertEquals(
-			"INSERT INTO test VALUES(:param0 ,:param1 ,:param2 )",
+			'INSERT INTO test VALUES(:param0 ,:param1 ,:param2 )',
 			$result->queries[0]->sql
 		);
 	}
-	
+
 	public function testTranslatesRandom() {
 		$sqlite = new PDO( 'sqlite::memory:' );
-		new WP_SQLite_PDO_User_Defined_Functions($sqlite);
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
-		$rand = $t->translate('SELECT RAND()')->queries[0]->sql;
+		new WP_SQLite_PDO_User_Defined_Functions( $sqlite );
+		$t    = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$rand = $t->translate( 'SELECT RAND()' )->queries[0]->sql;
 		$this->assertIsNumeric(
-			$sqlite->query($rand)->fetchColumn()
+			$sqlite->query( $rand )->fetchColumn()
 		);
 
-		$rand = $t->translate('SELECT RAND(5)')->queries[0]->sql;
+		$rand = $t->translate( 'SELECT RAND(5)' )->queries[0]->sql;
 		$this->assertIsNumeric(
-			$sqlite->query($rand)->fetchColumn()
+			$sqlite->query( $rand )->fetchColumn()
 		);
 	}
-	
+
 	public function testTranslatesUtf8SELECT() {
 		$sqlite = new PDO( 'sqlite::memory:' );
-		$t = new WP_SQLite_Translator( $sqlite, 'wptests_' );
+		$t      = new WP_SQLite_Translator( $sqlite, 'wptests_' );
 		$result = $t->translate(
 			"SELECT a as 'ą' FROM test WHERE b='ąłółźćę†'AND c='ąłółźćę†'"
 		);
