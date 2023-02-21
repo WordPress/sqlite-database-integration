@@ -7,7 +7,7 @@
  */
 
 // Require the translator.
-require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlite-translator.php';
+require_once __DIR__ . '/class-wp-sqlite-translator.php';
 
 /**
  * Function to create tables according to the schemas of WordPress.
