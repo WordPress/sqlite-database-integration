@@ -64,15 +64,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private $rewritten_query;
 
 	/**
-	 * Class variable to have what kind of query to execute.
-	 *
-	 * @access private
-	 *
-	 * @var string
-	 */
-	private $query_type;
-
-	/**
 	 * Class variable to store the result of the query.
 	 *
 	 * @access private
@@ -80,17 +71,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @var array reference to the PHP object
 	 */
 	private $results = null;
-
-	/**
-	 * Class variable to store the results of the query.
-	 *
-	 * This is for the backward compatibility.
-	 *
-	 * @access private
-	 *
-	 * @var array reference to the PHP object
-	 */
-	private $_results = null;
 
 	/**
 	 * Class variable to reference to the PDO instance.
@@ -441,7 +421,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$last_retval = null;
 			foreach ( $translation->queries as $query ) {
 				$this->queries[] = "Executing: {$query->sql} | " . ( $query->params ? 'parameters: ' . implode( ', ', $query->params ) : '(no parameters)' );
-
 				do {
 					$error = null;
 					try {
@@ -455,21 +434,66 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				} while ( $error );
 			}
 
-			if ( $translation->calc_found_rows ) {
-				$this->found_rows_result = $translation->calc_found_rows;
-			}
-			if ( $stmt ) {
-				if ( 'DESCRIBE' === $translation->mysql_query_type
-					|| 'SELECT' === $translation->mysql_query_type
-					|| 'SHOW' === $translation->mysql_query_type
-				) {
-					$this->_results = $stmt->fetchAll( $mode );
-				} else {
-					$this->_results = $last_retval;
+			if ( $translation->has_result ) {
+				$this->results = $translation->result;
+			} else {
+				switch($translation->mysql_query_type) {
+					case 'DESCRIBE':
+						$this->results = $stmt->fetchAll( $mode );
+						if ( ! $this->results ) {
+							$this->handle_error( new PDOException( 'Table not found' ) );
+							return;
+						}
+						break;
+					case 'SELECT':
+					case 'SHOW':
+						$this->results = $stmt->fetchAll( $mode );
+						break;
+					case 'TRUNCATE':
+						$this->results = true;
+						$this->return_value = true;
+						return $this->return_value;
+					case 'SET':
+						$this->results = 0;
+						break;
+					default:
+						$this->results = $last_retval;
+						break;
 				}
 			}
 
-			$this->process_results( $stmt, $translation );
+			if ( $translation->calc_found_rows ) {
+				$this->found_rows_result = $translation->calc_found_rows;
+			}
+			
+			if ( is_array( $this->results ) ) {
+				$this->num_rows        = count( $this->results );
+				$this->last_found_rows = count( $this->results );
+			}
+	
+			switch ( $translation->sqlite_query_type ) {
+				case 'DELETE':
+				case 'UPDATE':
+				case 'INSERT':
+				case 'REPLACE':
+					/**
+					* SELECT CHANGES() is a workaround for the fact that
+					* $stmt->rowCount() returns "0" (zero) with the
+					* SQLite driver at all times.
+					* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
+					*/
+					$this->affected_rows  = (int) $this->pdo->query( 'select changes()' )->fetch()[0];
+					$this->return_value   = $this->affected_rows;
+					$this->num_rows       = $this->affected_rows;
+					$this->last_insert_id = $this->pdo->lastInsertId();
+					if ( is_numeric( $this->last_insert_id ) ) {
+						$this->last_insert_id = (int) $this->last_insert_id;
+					}
+					break;
+				default:
+					$this->return_value = $this->results;
+					break;
+			}
 
 			return $this->return_value;
 		} catch ( Exception $err ) {
@@ -652,27 +676,11 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	}
 
 	/**
-	 * Method to return information about query string for debugging.
-	 *
-	 * @return string
-	 */
-	private function get_debug_info() {
-		$output = '';
-		foreach ( $this->queries as $q ) {
-			$output .= $q . "\n";
-		}
-
-		return $output;
-	}
-
-	/**
 	 * Method to clear previous data.
 	 */
 	private function flush() {
 		$this->rewritten_query = '';
-		$this->query_type      = '';
 		$this->results         = null;
-		$this->_results        = null;
 		$this->last_insert_id  = null;
 		$this->affected_rows   = null;
 		$this->column_data     = array();
@@ -682,73 +690,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$this->is_error        = false;
 		$this->queries         = array();
 		$this->param_num       = 0;
-	}
-
-	/**
-	 * Method to format the queried data to that of MySQL.
-	 *
-	 * @param stdClass $stmt         Prepared statement object.
-	 * @param stdClass $translation  Translation object.
-	 */
-	private function process_results( $stmt, $translation ) {
-		if ( 'DESCRIBE' === $translation->mysql_query_type ) {
-			if ( ! $this->_results ) {
-				$this->handle_error( new PDOException( 'Table not found' ) );
-				return;
-			}
-		}
-
-		// @TODO: Only use $translation->mysql_query_type, not $this->query_type
-		if ( $translation->has_result ) {
-			$this->_results = $translation->result;
-			$this->results  = $translation->result;
-		} elseif ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
-			$this->convert_to_columns_object();
-		} elseif ( 'set' === $this->query_type ) {
-			$this->results = false;
-		} elseif ( 'showindex' === $this->query_type ) {
-			$this->convert_to_index_object();
-		} elseif ( in_array( $this->query_type, array( 'check', 'analyze' ), true ) ) {
-			$this->convert_result_check_or_analyze();
-		} elseif ( 'SET' === $translation->mysql_query_type ) {
-			$this->_results = 0;
-			$this->results  = 0;
-		} else {
-			$this->results = $this->_results;
-		}
-		$this->return_value = $this->results;
-
-		if ( is_array( $this->results ) ) {
-			$this->num_rows        = count( $this->results );
-			$this->last_found_rows = count( $this->results );
-		}
-
-		switch ( $translation->sqlite_query_type ) {
-			case 'DELETE':
-				if ( 'TRUNCATE' === $translation->mysql_query_type ) {
-					$this->_results = true;
-					$this->results  = true;
-					break;
-				}
-			case 'UPDATE':
-			case 'INSERT':
-			case 'REPLACE':
-				/**
-				* SELECT CHANGES() is a workaround – we can't
-				* count rows using $stmt->rowCount()
-				* This method returns "0" (zero) with the SQLite driver at
-				* all times
-				* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
-				*/
-				$this->affected_rows  = (int) $this->pdo->query( 'select changes()' )->fetch()[0];
-				$this->return_value   = $this->affected_rows;
-				$this->num_rows       = $this->affected_rows;
-				$this->last_insert_id = $this->pdo->lastInsertId();
-				if ( is_numeric( $this->last_insert_id ) ) {
-					$this->last_insert_id = (int) $this->last_insert_id;
-				}
-				break;
-		}
 	}
 
 	/**
@@ -770,164 +711,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		);
 		$this->error_messages[] = $message;
 		$this->is_error         = true;
-	}
-
-	/**
-	 * Method to convert the SHOW COLUMNS query data to an object.
-	 *
-	 * It rewrites pragma results to mysql compatible array
-	 * when query_type is describe, we use sqlite pragma function.
-	 *
-	 * @access private
-	 */
-	private function convert_to_columns_object() {
-		$_results = array();
-		$_columns = array( // Field names MySQL SHOW COLUMNS returns.
-			'Field'   => '',
-			'Type'    => '',
-			'Null'    => '',
-			'Key'     => '',
-			'Default' => '',
-			'Extra'   => '',
-		);
-		if ( empty( $this->_results ) ) {
-			// These messages are properly escaped in the function.
-			echo $this->get_error_message();
-		} else {
-			foreach ( $this->_results as $row ) {
-				if ( ! is_object( $row ) ) {
-					continue;
-				}
-				if ( property_exists( $row, 'name' ) ) {
-					$_columns['Field'] = $row->name;
-				}
-				if ( property_exists( $row, 'type' ) ) {
-					$_columns['Type'] = $row->type;
-				}
-				if ( property_exists( $row, 'notnull' ) ) {
-					$_columns['Null'] = $row->notnull ? 'NO' : 'YES';
-				}
-				if ( property_exists( $row, 'pk' ) ) {
-					$_columns['Key'] = $row->pk ? 'PRI' : '';
-				}
-				if ( property_exists( $row, 'dflt_value' ) ) {
-					$_columns['Default'] = $row->dflt_value;
-				}
-				$_results[] = new WP_SQLite_Object_Array( $_columns );
-			}
-		}
-		$this->results = $_results;
-	}
-
-	/**
-	 * Method to convert SHOW INDEX query data to PHP object.
-	 *
-	 * It rewrites the result of SHOW INDEX to the Object compatible with MySQL
-	 * added the WHERE clause manipulation (ver 1.3.1)
-	 *
-	 * @access private
-	 */
-	private function convert_to_index_object() {
-		$_results = array();
-		$_columns = array(
-			'Table'        => '',
-			'Non_unique'   => '', // Unique -> 0, not unique -> 1.
-			'Key_name'     => '', // The name of the index.
-			'Seq_in_index' => '', // Column sequence number in the index. begins at 1.
-			'Column_name'  => '',
-			'Collation'    => '', // A(scend) or NULL.
-			'Cardinality'  => '',
-			'Sub_part'     => '', // Set to NULL.
-			'Packed'       => '', // How to pack key or else NULL.
-			'Null'         => '', // If column contains null, YES. If not, NO.
-			'Index_type'   => '', // BTREE, FULLTEXT, HASH, RTREE.
-			'Comment'      => '',
-		);
-		if ( 0 === count( $this->_results ) ) {
-			// These messages are properly escaped in the function.
-			echo $this->get_error_message();
-		} else {
-			foreach ( $this->_results as $row ) {
-				if ( 'table' === $row->type && ! stripos( $row->sql, 'primary' ) ) {
-					continue;
-				}
-				if ( 'index' === $row->type && stripos( $row->name, 'sqlite_autoindex' ) !== false ) {
-					continue;
-				}
-				switch ( $row->type ) {
-					case 'table':
-						$pattern1 = '/^\\s*PRIMARY.*\((.*)\)/im';
-						$pattern2 = '/^\\s*(\\w+)?\\s*.*PRIMARY.*(?!\()/im';
-						if ( preg_match( $pattern1, $row->sql, $match ) ) {
-							$col_name                = trim( $match[1] );
-							$_columns['Key_name']    = 'PRIMARY';
-							$_columns['Non_unique']  = 0;
-							$_columns['Column_name'] = $col_name;
-						} elseif ( preg_match( $pattern2, $row->sql, $match ) ) {
-							$col_name                = trim( $match[1] );
-							$_columns['Key_name']    = 'PRIMARY';
-							$_columns['Non_unique']  = 0;
-							$_columns['Column_name'] = $col_name;
-						}
-						break;
-
-					case 'index':
-						$_columns['Non_unique'] = 1;
-						if ( stripos( $row->sql, 'unique' ) !== false ) {
-							$_columns['Non_unique'] = 0;
-						}
-						if ( preg_match( '/^.*\((.*)\)/i', $row->sql, $match ) ) {
-							$col_name                = str_replace( "'", '', $match[1] );
-							$_columns['Column_name'] = trim( $col_name );
-						}
-						$_columns['Key_name'] = $row->name;
-						break;
-
-				}
-				$_columns['Table']       = $row->tbl_name;
-				$_columns['Collation']   = null;
-				$_columns['Cardinality'] = 0;
-				$_columns['Sub_part']    = null;
-				$_columns['Packed']      = null;
-				$_columns['Null']        = 'NO';
-				$_columns['Index_type']  = 'BTREE';
-				$_columns['Comment']     = '';
-				$_results[]              = new WP_SQLite_Object_Array( $_columns );
-			}
-			if ( stripos( $this->queries[0], 'WHERE' ) !== false ) {
-				preg_match( '/WHERE\\s*(.*)$/im', $this->queries[0], $match );
-				$match_parts = explode( '=', $match[1] );
-				$key         = trim( $match_parts[0] );
-				$value       = trim( preg_replace( "/[\';]/", '', $match_parts[1] ) );
-				foreach ( $_results as $result ) {
-					if ( ! empty( $result->$key ) && is_scalar( $result->$key ) && stripos( $value, $result->$key ) !== false ) {
-						unset( $_results );
-						$_results[] = $result;
-						break;
-					}
-				}
-			}
-		}
-
-		$this->results = $_results;
-	}
-
-	/**
-	 * Method to the CHECK query data to an object.
-	 *
-	 * @access private
-	 */
-	private function convert_result_check_or_analyze() {
-		$is_check      = 'check' === $this->query_type;
-		$_results[]    = new WP_SQLite_Object_Array(
-			array(
-				'Table'    => '',
-				'Op'       => $is_check ? 'check' : 'analyze',
-				'Msg_type' => 'status',
-				'Msg_text' => $is_check ? 'OK' : 'Table is already up to date',
-			)
-		);
-		$this->results = $_results;
 	}
 
 	/**
