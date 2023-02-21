@@ -15,7 +15,7 @@ declare(strict_types=1);
  *
  * @implements ArrayAccess<int, stdClass>
  */
-class WP_SQLite_Tokens_List implements ArrayAccess {
+class WP_SQLite_Tokens_List {
 
 	/**
 	 * The array of tokens.
@@ -104,64 +104,5 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Sets an value inside the container.
-	 *
-	 * @param int|null $offset The offset to be set.
-	 * @param stdClass $value  The token to be saved.
-	 *
-	 * @return void
-	 */
-	#[\ReturnTypeWillChange]
-	public function offsetSet( $offset, $value ) { // phpcs:ignore Squiz.Commenting.FunctionComment
-		if ( null === $offset ) {
-			$this->tokens[ $this->count++ ] = $value;
-		} else {
-			$this->tokens[ $offset ] = $value;
-		}
-	}
-
-	/**
-	 * Gets a value from the container.
-	 *
-	 * @param int $offset the offset to be returned
-	 *
-	 * @return stdClass|null
-	 */
-	#[\ReturnTypeWillChange]
-	public function offsetGet( $offset ) { // phpcs:ignore Squiz.Commenting.FunctionComment
-		return $offset < $this->count ? $this->tokens[ $offset ] : null;
-	}
-
-	/**
-	 * Checks if an offset was previously set.
-	 *
-	 * @param int $offset the offset to be checked
-	 *
-	 * @return bool
-	 */
-	#[\ReturnTypeWillChange]
-	public function offsetExists( $offset ) { // phpcs:ignore Squiz.Commenting.FunctionComment
-		return $offset < $this->count;
-	}
-
-	/**
-	 * Unsets the value of an offset.
-	 *
-	 * @param int $offset the offset to be unset
-	 *
-	 * @return void
-	 */
-	#[\ReturnTypeWillChange]
-	public function offsetUnset( $offset ) { // phpcs:ignore Squiz.Commenting.FunctionComment
-		unset( $this->tokens[ $offset ] );
-		--$this->count;
-		for ( $i = $offset; $i < $this->count; ++$i ) {
-			$this->tokens[ $i ] = $this->tokens[ $i + 1 ];
-		}
-
-		unset( $this->tokens[ $this->count ] );
 	}
 }
