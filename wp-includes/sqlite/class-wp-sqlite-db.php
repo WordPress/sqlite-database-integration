@@ -46,8 +46,17 @@ class WP_SQLite_DB extends wpdb {
 	public function set_charset( $dbh, $charset = null, $collate = null ) {
 	}
 
+	/**
+	 * Method to get the character set for the database.
+	 * Hardcoded to utf8mb4 for now.
+	 *
+	 * @param string $table  The table name.
+	 * @param string $column The column name.
+	 *
+	 * @return string The character set.
+	 */
 	public function get_col_charset( $table, $column ) {
-		// Hardcoded for now
+		// Hardcoded for now.
 		return 'utf8mb4';
 	}
 
@@ -70,7 +79,7 @@ class WP_SQLite_DB extends wpdb {
 	public function close() {
 		return true;
 	}
-	
+
 	/**
 	 * Method to select the database connection.
 	 *
@@ -202,8 +211,6 @@ class WP_SQLite_DB extends wpdb {
 		$this->result        = null;
 	}
 
-	private $pdo;
-
 	/**
 	 * Method to do the database connection.
 	 *
@@ -224,13 +231,13 @@ class WP_SQLite_DB extends wpdb {
 		if ( isset( $GLOBALS['@pdo'] ) ) {
 			$pdo = $GLOBALS['@pdo'];
 		}
-		$this->dbh = new WP_SQLite_PDO_Engine( $pdo );
+		$this->dbh        = new WP_SQLite_PDO_Engine( $pdo );
 		$this->last_error = $this->dbh->get_error_message();
-		if($this->last_error) {
+		if ( $this->last_error ) {
 			return false;
 		}
-		$GLOBALS['@pdo'] = $this->dbh->getPDO();
-		$this->ready = true;
+		$GLOBALS['@pdo'] = $this->dbh->get_pdo();
+		$this->ready     = true;
 	}
 
 	/**
@@ -280,7 +287,7 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->last_error = $this->dbh->get_error_message();
-		if ( $this->last_error ) { //&& ( ! defined( 'WP_INSTALLING' ) || ! WP_INSTALLING ) ) {
+		if ( $this->last_error ) { // && ( ! defined( 'WP_INSTALLING' ) || ! WP_INSTALLING ) ) {
 			$this->print_error( $this->last_error );
 			return false;
 		}

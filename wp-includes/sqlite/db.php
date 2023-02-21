@@ -15,8 +15,8 @@ if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
 }
 
 // @TODO: Remove before merging
-define('SQLITE_DEBUG_CROSSCHECK', false);
-error_reporting(E_ALL & ~E_DEPRECATED);
+define( 'SQLITE_DEBUG_CROSSCHECK', false );
+error_reporting( E_ALL & ~E_DEPRECATED );
 
 if ( ! extension_loaded( 'pdo' ) ) {
 	wp_die(
@@ -54,7 +54,7 @@ require_once __DIR__ . '/class-wp-sqlite-crosscheck-db.php';
 require_once __DIR__ . '/class-wp-sqlite-pdo-driver.php';
 require_once __DIR__ . '/install-functions.php';
 
-if(defined('SQLITE_DEBUG_CROSSCHECK') && SQLITE_DEBUG_CROSSCHECK) {
+if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK ) {
 	$GLOBALS['wpdb'] = new WP_SQLite_Crosscheck_DB();
 } else {
 	$GLOBALS['wpdb'] = new WP_SQLite_DB();

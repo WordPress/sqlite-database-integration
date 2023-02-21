@@ -6,6 +6,7 @@
  * @since 1.0.0
  */
 
+// Require the translator class.
 require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlite-translator.php';
 
 /**
@@ -16,7 +17,7 @@ require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlit
  */
 class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 
-	const SQLITE_BUSY = 5;
+	const SQLITE_BUSY   = 5;
 	const SQLITE_LOCKED = 6;
 
 	/**
@@ -49,6 +50,11 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 */
 	public $pre_ordered_results = null;
 
+	/**
+	 * Class variable to store the last query.
+	 *
+	 * @var string
+	 */
 	public $last_translation;
 
 	/**
@@ -169,8 +175,18 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 */
 	protected $has_active_transaction = false;
 
+	/**
+	 * The translator object.
+	 *
+	 * @var WP_SQLite_Translator
+	 */
 	protected $translator;
 
+	/**
+	 * An array of the last found rows.
+	 *
+	 * @var array
+	 */
 	protected $last_found_rows;
 
 	/**
@@ -180,10 +196,10 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * Don't use parent::__construct() because this class does not only returns
 	 * PDO instance but many others jobs.
 	 *
-	 * Constructor definition is changed since version 1.7.1.
+	 * @param PDO $pdo The PDO object.
 	 */
-	function __construct($pdo=null) {
-		if(!$pdo) {
+	function __construct( $pdo = null ) {
+		if ( ! $pdo ) {
 			if ( ! is_file( FQDB ) ) {
 				$this->prepare_directory();
 			}
@@ -207,20 +223,20 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			} while ( $locked );
 
 			if ( $status > 0 ) {
-				$message = sprintf(
+				$message          = sprintf(
 					'<p>%s</p><p>%s</p><p>%s</p>',
 					'Database initialization error!',
 					"Code: $status",
 					"Error Message: $err_message"
 				);
-				$this->is_error = true;
+				$this->is_error   = true;
 				$this->last_error = $message;
 
 				return false;
 			}
-			
-			// MySQL data comes across stringified by default:
-			$pdo->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, true);
+
+			// MySQL data comes across stringified by default.
+			$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 			$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
 		}
 		$this->pdo = $pdo;
@@ -232,18 +248,22 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		$this->init();
 	}
 
-	
-	public function getPDO() {
+	/**
+	 * Get the PDO object.
+	 *
+	 * @return PDO
+	 */
+	public function get_pdo() {
 		return $this->pdo;
 	}
 
 	/**
 	 * PDO has no explicit close() method.
-	 * 
-	 * This is because PHP may choose to reuse the same 
-	 * connection for the next request. The PHP manual 
+	 *
+	 * This is because PHP may choose to reuse the same
+	 * connection for the next request. The PHP manual
 	 * states the PDO object can only be unset:
-	 * 
+	 *
 	 * https://www.php.net/manual/en/pdo.connections.php#114822
 	 */
 	public function close() {
@@ -381,21 +401,26 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * @param int    $mode               Not used.
 	 * @param array  ...$fetch_mode_args Not used.
 	 *
-	 * @return mixed according to the query type
 	 * @see PDO::query()
+	 *
+	 * @throws Exception    If the query could not run.
+	 * @throws PDOException If the translated query could not run.
+	 *
+	 * @return mixed according to the query type
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
-		// echo $statement."\n";
 		$this->flush();
 		try {
-			if(
-				preg_match('/^START TRANSACTION/i',$statement)
-				|| preg_match('/^BEGIN/i',$statement)
+			if (
+				preg_match( '/^START TRANSACTION/i', $statement )
+				|| preg_match( '/^BEGIN/i', $statement )
 			) {
 				return $this->beginTransaction();
-			} else if(preg_match('/^COMMIT/i',$statement)) {
+			}
+			if ( preg_match( '/^COMMIT/i', $statement ) ) {
 				return $this->commit();
-			} else if(preg_match('/^ROLLBACK/i',$statement)) {
+			}
+			if ( preg_match( '/^ROLLBACK/i', $statement ) ) {
 				return $this->rollBack();
 			}
 
@@ -409,38 +434,35 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 						$this->found_rows_result
 					);
 				} catch ( PDOException $error ) {
-					if( $error->getCode() != SELF::SQLITE_BUSY ) {
+					if ( $error->getCode() !== self::SQLITE_BUSY ) {
 						return $this->handle_error( $error );
 					}
 				}
-			} while ( $error ); 
+			} while ( $error );
 
-			$stmt = null;
+			$stmt        = null;
 			$last_retval = null;
-			// echo 'MySQL query:  ' . $statement . "\n";
 			foreach ( $translation->queries as $query ) {
-				$this->queries[] = "Executing: {$query->sql} | " . ($query->params ? 'parameters: '.implode(", ", $query->params) : '(no parameters)');
+				$this->queries[] = "Executing: {$query->sql} | " . ( $query->params ? 'parameters: ' . implode( ', ', $query->params ) : '(no parameters)' );
 
 				do {
 					$error = null;
 					try {
-						// echo $query->sql."\n\n";
-						$stmt = $this->pdo->prepare( $query->sql );
+						$stmt        = $this->pdo->prepare( $query->sql );
 						$last_retval = $stmt->execute( $query->params );
 					} catch ( PDOException $error ) {
-						if( $error->getCode() != SELF::SQLITE_BUSY ) {
+						if ( $error->getCode() !== self::SQLITE_BUSY ) {
 							throw $error;
 						}
 					}
-				} while ( $error ); 
+				} while ( $error );
 			}
 
 			if ( $translation->calc_found_rows ) {
 				$this->found_rows_result = $translation->calc_found_rows;
 			}
 			if ( $stmt ) {
-				if ( 
-					'DESCRIBE' === $translation->mysql_query_type 
+				if ( 'DESCRIBE' === $translation->mysql_query_type
 					|| 'SELECT' === $translation->mysql_query_type
 					|| 'SHOW' === $translation->mysql_query_type
 				) {
@@ -450,8 +472,8 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				}
 			}
 
-			$this->process_results($stmt, $translation);
-	
+			$this->process_results( $stmt, $translation );
+
 			return $this->return_value;
 		} catch ( Exception $err ) {
 			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true ) {
@@ -461,8 +483,15 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 		}
 	}
 
+	/**
+	 * Error handler.
+	 *
+	 * @param Exception $err Exception object.
+	 *
+	 * @return bool Always false.
+	 */
 	private function handle_error( Exception $err ) {
-		$message = $err->getMessage();
+		$message     = $err->getMessage();
 		$err_message = sprintf( 'Problem preparing the PDO SQL Statement. Error was: %s. trace: %s', $message, $err->getTraceAsString() );
 		$this->set_error( __LINE__, __FUNCTION__, $err_message );
 		$this->return_value = false;
@@ -580,6 +609,8 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	/**
 	 * Method to return error messages.
 	 *
+	 * @throws Exception If error is found.
+	 *
 	 * @return string
 	 */
 	public function get_error_message() {
@@ -615,7 +646,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 
 		try {
 			throw new Exception();
-		} catch( Exception $e ) {
+		} catch ( Exception $e ) {
 			$output .= '<p>Backtrace:</p>' . PHP_EOL;
 			$output .= '<pre>' . htmlspecialchars( $e->getTraceAsString() ) . '</pre>' . PHP_EOL;
 		}
@@ -641,39 +672,40 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	 * Method to clear previous data.
 	 */
 	private function flush() {
-		$this->rewritten_query     = '';
-		$this->query_type          = '';
-		$this->results             = null;
-		$this->_results            = null;
-		$this->last_insert_id      = null;
-		$this->affected_rows       = null;
-		$this->column_data         = array();
-		$this->num_rows            = null;
-		$this->return_value        = null;
-		$this->error_messages      = array();
-		$this->is_error            = false;
-		$this->queries             = array();
-		$this->param_num           = 0;
+		$this->rewritten_query = '';
+		$this->query_type      = '';
+		$this->results         = null;
+		$this->_results        = null;
+		$this->last_insert_id  = null;
+		$this->affected_rows   = null;
+		$this->column_data     = array();
+		$this->num_rows        = null;
+		$this->return_value    = null;
+		$this->error_messages  = array();
+		$this->is_error        = false;
+		$this->queries         = array();
+		$this->param_num       = 0;
 	}
 
 	/**
 	 * Method to format the queried data to that of MySQL.
 	 *
-	 * @param string $engine Not used.
+	 * @param stdClass $stmt         Prepared statement object.
+	 * @param stdClass $translation  Translation object.
 	 */
-	private function process_results($stmt, $translation) {
+	private function process_results( $stmt, $translation ) {
 		if ( 'DESCRIBE' === $translation->mysql_query_type ) {
-			if(!$this->_results) {
-				$this->handle_error( new PDOException('Table not found') );
+			if ( ! $this->_results ) {
+				$this->handle_error( new PDOException( 'Table not found' ) );
 				return;
 			}
 		}
-		
+
 		// @TODO: Only use $translation->mysql_query_type, not $this->query_type
-		if($translation->has_result) {
+		if ( $translation->has_result ) {
 			$this->_results = $translation->result;
-			$this->results = $translation->result;
-		} else if ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
+			$this->results  = $translation->result;
+		} elseif ( in_array( $this->query_type, array( 'describe', 'desc', 'showcolumns' ), true ) ) {
 			$this->convert_to_columns_object();
 		} elseif ( 'set' === $this->query_type ) {
 			$this->results = false;
@@ -681,41 +713,41 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			$this->convert_to_index_object();
 		} elseif ( in_array( $this->query_type, array( 'check', 'analyze' ), true ) ) {
 			$this->convert_result_check_or_analyze();
-		} elseif( 'SET' === $translation->mysql_query_type ) {
+		} elseif ( 'SET' === $translation->mysql_query_type ) {
 			$this->_results = 0;
-			$this->results = 0;
+			$this->results  = 0;
 		} else {
 			$this->results = $this->_results;
 		}
 		$this->return_value = $this->results;
 
-		if(is_array($this->results)) {
-			$this->num_rows = count( $this->results );
+		if ( is_array( $this->results ) ) {
+			$this->num_rows        = count( $this->results );
 			$this->last_found_rows = count( $this->results );
 		}
 
-		switch($translation->sqlite_query_type){
+		switch ( $translation->sqlite_query_type ) {
 			case 'DELETE':
-				if($translation->mysql_query_type === 'TRUNCATE') {
+				if ( 'TRUNCATE' === $translation->mysql_query_type ) {
 					$this->_results = true;
-					$this->results = true;
+					$this->results  = true;
 					break;
 				}
 			case 'UPDATE':
 			case 'INSERT':
 			case 'REPLACE':
 				/**
-				* SELECT CHANGES() is a workaround – we can't 
+				* SELECT CHANGES() is a workaround – we can't
 				* count rows using $stmt->rowCount()
-				* This method returns "0" (zero) with the SQLite driver at 
+				* This method returns "0" (zero) with the SQLite driver at
 				* all times
 				* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
 				*/
-				$this->affected_rows = (int)$this->pdo->query('select changes()')->fetch()[0]; 
-				$this->return_value  = $this->affected_rows;
-				$this->num_rows      = $this->affected_rows;
-				$this->last_insert_id  = $this->pdo->lastInsertId();
-				if(is_numeric($this->last_insert_id)) {
+				$this->affected_rows  = (int) $this->pdo->query( 'select changes()' )->fetch()[0];
+				$this->return_value   = $this->affected_rows;
+				$this->num_rows       = $this->affected_rows;
+				$this->last_insert_id = $this->pdo->lastInsertId();
+				if ( is_numeric( $this->last_insert_id ) ) {
 					$this->last_insert_id = (int) $this->last_insert_id;
 				}
 				break;

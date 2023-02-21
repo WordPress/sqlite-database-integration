@@ -6,6 +6,7 @@
  * @since 1.0.0
  */
 
+// Require the translator.
 require_once dirname( dirname( __DIR__ ) ) . '/lexer-explorations/class-wp-sqlite-translator.php';
 
 /**
@@ -65,17 +66,17 @@ function sqlite_make_db_sqlite() {
 			wp_die( $message, 'Database Error!' );
 		}
 	}
-	
-	if(defined('SQLITE_DEBUG_CROSSCHECK') && SQLITE_DEBUG_CROSSCHECK) {
+
+	if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK ) {
 		$host = DB_HOST;
 		$port = 3306;
-		if(str_contains($host, ':')) {
-			list($host, $port) = explode(':', $host);
+		if ( str_contains( $host, ':' ) ) {
+			list($host, $port) = explode( ':', $host );
 		}
-		$dsn =  'mysql:host='.$host.'; port='.$port.'; dbname='.DB_NAME;
+		$dsn       = 'mysql:host=' . $host . '; port=' . $port . '; dbname=' . DB_NAME;
 		$pdo_mysql = new PDO( $dsn, DB_USER, DB_PASSWORD, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );
-		$pdo_mysql->query('SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";');
-		$pdo_mysql->query('SET time_zone = "+00:00";');
+		$pdo_mysql->query( 'SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";' );
+		$pdo_mysql->query( 'SET time_zone = "+00:00";' );
 		foreach ( $queries as $query ) {
 			$query = trim( $query );
 			if ( empty( $query ) ) {
@@ -83,7 +84,7 @@ function sqlite_make_db_sqlite() {
 			}
 			try {
 				$pdo_mysql->beginTransaction();
-				$pdo_mysql->query($query);
+				$pdo_mysql->query( $query );
 			} catch ( PDOException $err ) {
 				$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 				$err_code = $err_data[1];

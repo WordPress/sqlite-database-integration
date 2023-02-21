@@ -46,17 +46,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var array
 	 */
 	private $functions = array(
-		'month' => 'month',
-		'monthnum' => 'month',
-		'year' => 'year',
-		'day' => 'day',
-		'hour' => 'hour',
-		'minute' => 'minute',
-		'second' => 'second',
-		'week' => 'week',
-		'weekday' => 'weekday',
-		'dayofweek' => 'dayofweek',
-		'dayofmonth' => 'dayofmonth',
+		'month'          => 'month',
+		'monthnum'       => 'month',
+		'year'           => 'year',
+		'day'            => 'day',
+		'hour'           => 'hour',
+		'minute'         => 'minute',
+		'second'         => 'second',
+		'week'           => 'week',
+		'weekday'        => 'weekday',
+		'dayofweek'      => 'dayofweek',
+		'dayofmonth'     => 'dayofmonth',
 		'unix_timestamp' => 'unix_timestamp',
 		'now'            => 'now',
 		'char_length'    => 'char_length',
@@ -105,10 +105,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL FROM_UNIXTIME() function.
 	 *
-	 * @param integer $field The unix timestamp.
-	 * @param string  $format Indicate the way of formatting(optional).
+	 * @param int    $field The unix timestamp.
+	 * @param string $format Indicate the way of formatting(optional).
 	 *
-	 * @return string formatted as '0000-00-00 00:00:00'.
+	 * @return string
 	 */
 	public function from_unixtime( $field, $format = null ) {
 		// Convert to ISO time.
@@ -224,126 +224,99 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to extract the month value from the date.
 	 *
-	 * @param string representing the date formatted as 0000-00-00.
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
-	 * @return string representing the number of the month between 1 and 12.
+	 * @param string $field Representing the date formatted as 0000-00-00.
+	 *
+	 * @return string Representing the number of the month between 1 and 12.
 	 */
-	public function month($field)
-	{
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * n - Numeric representation of a month, without leading zeros.
-		 * 	   1 through 12
-		 */
-		return intval(date('n', strtotime($field)));
+	public function month( $field ) {
+		return intval( gmdate( 'n', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to extract the year value from the date.
 	 *
-	 * @param string representing the date formatted as 0000-00-00.
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
-	 * @return string representing the number of the year.
+	 * @param string $field Representing the date formatted as 0000-00-00.
+	 *
+	 * @return string Representing the number of the year.
 	 */
-	public function year($field)
-	{
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * Y - A full numeric representation of a year, 4 digits.
-		 */
-		return intval(date('Y', strtotime($field)));
+	public function year( $field ) {
+		return intval( gmdate( 'Y', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to extract the day value from the date.
 	 *
-	 * @param string representing the date formatted as 0000-00-00.
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
-	 * @return string representing the number of the day of the month from 1 and 31.
+	 * @param string $field Representing the date formatted as 0000-00-00.
+	 *
+	 * @return string Representing the number of the day of the month from 1 and 31.
 	 */
-	public function day($field)
-	{
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * j - Day of the month without leading zeros.
-		 *     1 to 31.
-		 */
-		return intval(date('j', strtotime($field)));
+	public function day( $field ) {
+		return intval( gmdate( 'j', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to emulate MySQL SECOND() function.
 	 *
-	 * @param string representing the time formatted as '00:00:00'.
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
-	 * @return number of unsigned integer
+	 * @param string $field Representing the time formatted as '00:00:00'.
+	 *
+	 * @return number Unsigned integer
 	 */
-	public function second($field)
-	{
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * s - Seconds, with leading zeros (00 to 59)
-		 */
-		return intval(date("s", strtotime($field)));
+	public function second( $field ) {
+		return intval( gmdate( 's', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to emulate MySQL MINUTE() function.
 	 *
-	 * @param string representing the time formatted as '00:00:00'.
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
-	 * @return number of unsigned integer
+	 * @param string $field Representing the time formatted as '00:00:00'.
+	 *
+	 * @return int
 	 */
-	public function minute($field)
-	{
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * i - Minutes with leading zeros.
-		 *     00 to 59.
-		 */
-		return intval(date("i", strtotime($field)));
+	public function minute( $field ) {
+		return intval( gmdate( 'i', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to emulate MySQL HOUR() function.
-	 * 
+	 *
 	 * Returns the hour for time, in 24-hour format, from 0 to 23.
 	 * Importantly, midnight is 0, not 24.
 	 *
-	 * @param string representing the time formatted, like '14:08:12'.
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
-	 * @return number
+	 * @param string $time Representing the time formatted, like '14:08:12'.
+	 *
+	 * @return int
 	 */
-	public function hour($time)
-	{
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * H   24-hour format of an hour with leading zeros.
-		 *     00 through 23.
-		 */
-		return intval(date("H", strtotime($time)));
+	public function hour( $time ) {
+		return intval( gmdate( 'H', strtotime( $time ) ) );
 	}
 
 	/**
 	 * Covers MySQL WEEK() function.
-	 * 
+	 *
 	 * Always assumes $mode = 1.
+	 *
 	 * @TODO: Support other modes.
-	 * 
+	 *
 	 * From https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_week:
-	 * 
-	 * > Returns the week number for date. The two-argument form of WEEK() 
+	 *
+	 * > Returns the week number for date. The two-argument form of WEEK()
 	 * > enables you to specify whether the week starts on Sunday or Monday
-	 * > and whether the return value should be in the range from 0 to 53 
+	 * > and whether the return value should be in the range from 0 to 53
 	 * > or from 1 to 53. If the mode argument is omitted, the value of the
 	 * > default_week_format system variable is used.
-	 * > 
+	 * >
 	 * > The following table describes how the mode argument works:
 	 * >
 	 * > Mode   First day of week   Range   Week 1 is the first week …
@@ -355,22 +328,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * > 5      Monday              0-53    with a Monday in this year
 	 * > 6      Sunday              1-53    with 4 or more days this year
 	 * > 7      Monday              1-53    with a Monday in this year
+	 *
+	 * @see https://www.php.net/manual/en/datetime.format.php
+	 *
+	 * @param string $field Representing the date.
+	 * @param int    $mode  The mode argument.
 	 */
-	public function week($field, $mode) {
-		/*
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * W - ISO-8601 week number of year, weeks starting on Monday.
-		 *     Example: 42 (the 42nd week in the year)
-		 * 
-		 * Week 1 is the first week with a Thursday in it.
-		 */
-		return intval(date('W', strtotime($field)));
+	public function week( $field, $mode ) {
+		return intval( gmdate( 'W', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Simulates WEEKDAY() function in MySQL.
-	 * 
+	 *
 	 * Returns the day of the week as an integer.
 	 * The days of the week are numbered 0 to 6:
 	 * * 0 for Monday
@@ -380,41 +350,51 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * * 4 for Friday
 	 * * 5 for Saturday
 	 * * 6 for Sunday
+	 *
+	 * @see https://www.php.net/manual/en/datetime.format.php
+	 *
+	 * @param string $field Representing the date.
+	 *
+	 * @return int
 	 */
-	public function weekday($field) {
-		/*
-		 * date('N') returns 1 (for Monday) through 7 (for Sunday)
-		 * That's one more than MySQL.
-		 * Let's subtract one to make it compatible.
-		 */
-		return intval(date('N', strtotime($field))) - 1;
+	public function weekday( $field ) {
+		return intval( gmdate( 'N', strtotime( $field ) ) ) - 1;
 	}
 
-	public function dayofmonth($field)
-	{
-		return intval(date('j', strtotime($field)));
+	/**
+	 * Method to emulate MySQL DAYOFMONTH() function.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_dayofmonth
+	 *
+	 * @param string $field Representing the date.
+	 *
+	 * @return int Returns the day of the month for date as a number in the range 1 to 31.
+	 */
+	public function dayofmonth( $field ) {
+		return intval( gmdate( 'j', strtotime( $field ) ) );
 	}
-	
+
 	/**
 	 * Method to emulate MySQL DAYOFWEEK() function.
-	 * 
-	 * From https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_dayofweek:
-	 * 
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_dayofweek
+	 * @see https://www.php.net/manual/en/datetime.format.php
+	 *
 	 * > Returns the weekday index for date (1 = Sunday, 2 = Monday, …, 7 = Saturday).
 	 * > These index values correspond to the ODBC standard. Returns NULL if date is NULL.
+	 *
+	 * @param string $field Representing the date.
+	 *
+	 * @return int Returns the weekday index for date (1 = Sunday, 2 = Monday, …, 7 = Saturday).
 	 */
-	public function dayofweek($field) {
-		/**
-		 * From https://www.php.net/manual/en/datetime.format.php:
-		 * 
-		 * w – Numeric representation of the day of the week	
-		 *     0 (for Sunday) through 6 (for Saturday)
-		 */
-		return intval(date('w', strtotime($field))) + 1;
+	public function dayofweek( $field ) {
+		return intval( gmdate( 'w', strtotime( $field ) ) ) + 1;
 	}
 
 	/**
 	 * Method to emulate MySQL DATE() function.
+	 *
+	 * @see https://www.php.net/manual/en/datetime.format.php
 	 *
 	 * @param string $date formatted as unix time.
 	 *
@@ -466,20 +446,20 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * the comparison is byte-by-byte and letter casing now
 		 * matters since lower- and upper-case letters have different
 		 * byte codes.
-		 * 
+		 *
 		 * The REGEXP function can't be easily made to accept two
 		 * parameters, so we'll have to use a hack to get around this.
-		 * 
+		 *
 		 * If the first character of the pattern is a null byte, we'll
 		 * remove it and make the comparison case-sensitive. This should
 		 * be reasonably safe since PHP does not allow null bytes in
 		 * regular expressions anyway.
 		 */
-		if("\x00" === $pattern[0]) {
-			$pattern = substr($pattern, 1);
-			$flags = '';
+		if ( "\x00" === $pattern[0] ) {
+			$pattern = substr( $pattern, 1 );
+			$flags   = '';
 		} else {
-			// Otherwise, the search is case-insensitive
+			// Otherwise, the search is case-insensitive.
 			$flags = 'i';
 		}
 		$pattern = str_replace( '/', '\/', $pattern );
@@ -498,19 +478,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int
 	 */
 	public function field() {
-//		return floor(rand(0, 6));
 		$num_args = func_num_args();
 		if ( $num_args < 2 || is_null( func_get_arg( 0 ) ) ) {
 			return 0;
 		}
 		$arg_list      = func_get_args();
 		$search_string = strtolower( array_shift( $arg_list ) );
-		// global $wpdb;
-		// $str_to_check  = substr( $search_string, 0, strpos( $search_string, '.' ) );
-		// $str_to_check  = str_replace( $wpdb->prefix, '', $str_to_check );
-		// if ( $str_to_check && in_array( trim( $str_to_check ), $wpdb->tables, true ) ) {
-		// 	return 0;
-		// }
+
 		for ( $i = 0; $i < $num_args - 1; $i++ ) {
 			if ( strtolower( $arg_list[ $i ] ) === $search_string ) {
 				return $i + 1;
