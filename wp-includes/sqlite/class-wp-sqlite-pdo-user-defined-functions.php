@@ -224,39 +224,50 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to extract the month value from the date.
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $field Representing the date formatted as 0000-00-00.
 	 *
 	 * @return string Representing the number of the month between 1 and 12.
 	 */
 	public function month( $field ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * n - Numeric representation of a month, without leading zeros.
+		 * 	   1 through 12
+		 */
 		return intval( gmdate( 'n', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to extract the year value from the date.
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $field Representing the date formatted as 0000-00-00.
 	 *
 	 * @return string Representing the number of the year.
 	 */
 	public function year( $field ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * Y - A full numeric representation of a year, 4 digits.
+		 */
 		return intval( gmdate( 'Y', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to extract the day value from the date.
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $field Representing the date formatted as 0000-00-00.
 	 *
 	 * @return string Representing the number of the day of the month from 1 and 31.
 	 */
 	public function day( $field ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * j - Day of the month without leading zeros.
+		 *     1 to 31.
+		 */
 		return intval( gmdate( 'j', strtotime( $field ) ) );
 	}
 
@@ -270,19 +281,28 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return number Unsigned integer
 	 */
 	public function second( $field ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * s - Seconds, with leading zeros (00 to 59)
+		 */
 		return intval( gmdate( 's', strtotime( $field ) ) );
 	}
 
 	/**
 	 * Method to emulate MySQL MINUTE() function.
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $field Representing the time formatted as '00:00:00'.
 	 *
 	 * @return int
 	 */
 	public function minute( $field ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * i - Minutes with leading zeros.
+		 *     00 to 59.
+		 */
 		return intval( gmdate( 'i', strtotime( $field ) ) );
 	}
 
@@ -292,13 +312,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * Returns the hour for time, in 24-hour format, from 0 to 23.
 	 * Importantly, midnight is 0, not 24.
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $time Representing the time formatted, like '14:08:12'.
 	 *
 	 * @return int
 	 */
 	public function hour( $time ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * H   24-hour format of an hour with leading zeros.
+		 *     00 through 23.
+		 */
 		return intval( gmdate( 'H', strtotime( $time ) ) );
 	}
 
@@ -329,12 +353,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * > 6      Sunday              1-53    with 4 or more days this year
 	 * > 7      Monday              1-53    with a Monday in this year
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $field Representing the date.
 	 * @param int    $mode  The mode argument.
 	 */
 	public function week( $field, $mode ) {
+		/*
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * W - ISO-8601 week number of year, weeks starting on Monday.
+		 *     Example: 42 (the 42nd week in the year)
+		 *
+		 * Week 1 is the first week with a Thursday in it.
+		 */
 		return intval( gmdate( 'W', strtotime( $field ) ) );
 	}
 
@@ -351,13 +381,16 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * * 5 for Saturday
 	 * * 6 for Sunday
 	 *
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * @param string $field Representing the date.
 	 *
 	 * @return int
 	 */
 	public function weekday( $field ) {
+		/*
+		 * date('N') returns 1 (for Monday) through 7 (for Sunday)
+		 * That's one more than MySQL.
+		 * Let's subtract one to make it compatible.
+		 */
 		return intval( gmdate( 'N', strtotime( $field ) ) ) - 1;
 	}
 
@@ -377,9 +410,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL DAYOFWEEK() function.
 	 *
-	 * @see https://dev.mysql.com/doc/refman/8.0/en/date-and-time-functions.html#function_dayofweek
-	 * @see https://www.php.net/manual/en/datetime.format.php
-	 *
 	 * > Returns the weekday index for date (1 = Sunday, 2 = Monday, …, 7 = Saturday).
 	 * > These index values correspond to the ODBC standard. Returns NULL if date is NULL.
 	 *
@@ -388,6 +418,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int Returns the weekday index for date (1 = Sunday, 2 = Monday, …, 7 = Saturday).
 	 */
 	public function dayofweek( $field ) {
+		/**
+		 * From https://www.php.net/manual/en/datetime.format.php:
+		 *
+		 * `w` – Numeric representation of the day of the week
+		 *     0 (for Sunday) through 6 (for Saturday)
+		 */
 		return intval( gmdate( 'w', strtotime( $field ) ) ) + 1;
 	}
 
