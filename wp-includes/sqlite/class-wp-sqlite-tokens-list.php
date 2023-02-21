@@ -54,43 +54,6 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	}
 
 	/**
-	 * Builds an array of tokens by merging their raw value.
-	 *
-	 * @param string|stdClass[]|TokensList $list The tokens to be built.
-	 *
-	 * @return string
-	 */
-	public static function build( $list ) {
-		if ( is_string( $list ) ) {
-			return $list;
-		}
-
-		if ( $list instanceof self ) {
-			$list = $list->tokens;
-		}
-
-		$ret = '';
-		if ( is_array( $list ) ) {
-			foreach ( $list as $tok ) {
-				$ret .= $tok->token;
-			}
-		}
-
-		return $ret;
-	}
-
-	/**
-	 * Adds a new token.
-	 *
-	 * @param stdClass $token Token to be added in list.
-	 *
-	 * @return void
-	 */
-	public function add( $token ) {
-		$this->tokens[ $this->count++ ] = $token;
-	}
-
-	/**
 	 * Gets the next token. Skips any irrelevant token (whitespaces and
 	 * comments).
 	 *
@@ -102,40 +65,6 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->index ]->type )
 				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->index ]->type )
 			) {
-				return $this->tokens[ $this->index++ ];
-			}
-		}
-
-		return null;
-	}
-
-	/**
-	 * Gets the previous token. Skips any irrelevant token (whitespaces and
-	 * comments).
-	 */
-	public function get_previous() {
-		for ( ; $this->index > 0; --$this->index ) {
-			if (
-				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->index ]->type )
-				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->index ]->type )
-			) {
-				return $this->tokens[ $this->index-- ];
-			}
-		}
-
-		return null;
-	}
-
-	/**
-	 * Gets the next token.
-	 *
-	 * @param int $type The type.
-	 *
-	 * @return stdClass|null
-	 */
-	public function get_next_of_type( $type ) {
-		for ( ; $this->index < $this->count; ++$this->index ) {
-			if ( $this->tokens[ $this->index ]->type === $type ) {
 				return $this->tokens[ $this->index++ ];
 			}
 		}
