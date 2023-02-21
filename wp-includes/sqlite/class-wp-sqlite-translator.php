@@ -1582,15 +1582,15 @@ class WP_SQLite_Translator {
 	 * @return array
 	 */
 	private function get_keys( $table_name, $only_unique = false ) {
-		$q       = $this->sqlite->query( 'SELECT * FROM pragma_index_list("' . $table_name . '") as l;' );
-		$indices = $q->fetchAll();
+		$query   = $this->sqlite->query( 'SELECT * FROM pragma_index_list("' . $table_name . '") as l;' );
+		$indices = $query->fetchAll();
 		$results = array();
 		foreach ( $indices as $index ) {
 			if ( ! $only_unique || '1' === $index['unique'] ) {
-				$q         = $this->sqlite->query( 'SELECT * FROM pragma_index_info("' . $index['name'] . '") as l;' );
+				$query     = $this->sqlite->query( 'SELECT * FROM pragma_index_info("' . $index['name'] . '") as l;' );
 				$results[] = array(
 					'index'   => $index,
-					'columns' => $q->fetchAll(),
+					'columns' => $query->fetchAll(),
 				);
 			}
 		}
@@ -1956,7 +1956,7 @@ class WP_SQLite_Translator {
 		$this->rewriter->consume();
 		$what = $this->rewriter->consume()->token;
 
-		/**
+		/*
 		 * Technically it is possible to support temporary tables as follows:
 		 *   ATTACH '' AS 'tempschema';
 		 *   CREATE TABLE tempschema.<name>(...)...;
@@ -2042,7 +2042,8 @@ class WP_SQLite_Translator {
 				for ( $i = 0;$i < count( $results );$i++ ) {
 					$sqlite_key_name = $results[ $i ]['Key_name'];
 					$mysql_key_name  = $sqlite_key_name;
-					/**
+
+					/*
 					 * SQLite automatically assigns names to some indexes.
 					 * However, dbDelta in WordPress expects the name to be
 					 * the same as in the original CREATE TABLE. Let's
@@ -2067,9 +2068,10 @@ class WP_SQLite_Translator {
 							'Seq_in_index'  => 0,
 							'Key_name'      => $mysql_key_name,
 							'Index_type'    => $mysql_type,
-							/**
-							 * Many of these details are not available in SQLite, so we
-							 * just shim them with dummy values.
+
+							/*
+							 * Many of these details are not available in SQLite,
+							 * so we just shim them with dummy values.
 							 */
 							'Collation'     => 'A',
 							'Cardinality'   => '0',
@@ -2291,5 +2293,4 @@ class WP_SQLite_Translator {
 		}
 		return 'INDEX';
 	}
-
 }
