@@ -8,9 +8,6 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/class-wp-sqlite-token.php';
-require_once __DIR__ . '/class-wp-sqlite-tokens-list.php';
-
 /**
  * Performs lexical analysis over a SQL statement and splits it in multiple tokens.
  */

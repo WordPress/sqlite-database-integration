@@ -6,11 +6,6 @@
  * @see https://github.com/phpmyadmin/sql-parser
  */
 
-// Require files.
-require_once __DIR__ . '/class-wp-sqlite-lexer.php';
-require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
-
 /**
  * The queries translator class.
  */

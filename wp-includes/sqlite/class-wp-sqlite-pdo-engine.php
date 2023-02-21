@@ -6,9 +6,6 @@
  * @since 1.0.0
  */
 
-// Require the translator class.
-require_once __DIR__ . '/class-wp-sqlite-translator.php';
-
 /**
  * This class extends PDO class and does the real work.
  *

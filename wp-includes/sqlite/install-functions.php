@@ -6,9 +6,6 @@
  * @since 1.0.0
  */
 
-// Require the translator.
-require_once __DIR__ . '/class-wp-sqlite-translator.php';
-
 /**
  * Function to create tables according to the schemas of WordPress.
  *
