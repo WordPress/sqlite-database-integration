@@ -186,7 +186,7 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 * @return void
 	 */
 	#[\ReturnTypeWillChange]
-	public function offsetSet( $offset, $value ) {
+	public function offsetSet( $offset, $value ) { // phpcs:ignore Squiz.Commenting.FunctionComment
 		if ( null === $offset ) {
 			$this->tokens[ $this->count++ ] = $value;
 		} else {
@@ -202,7 +202,7 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 * @return stdClass|null
 	 */
 	#[\ReturnTypeWillChange]
-	public function offsetGet( $offset ) {
+	public function offsetGet( $offset ) { // phpcs:ignore Squiz.Commenting.FunctionComment
 		return $offset < $this->count ? $this->tokens[ $offset ] : null;
 	}
 
@@ -214,7 +214,7 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 * @return bool
 	 */
 	#[\ReturnTypeWillChange]
-	public function offsetExists( $offset ) {
+	public function offsetExists( $offset ) { // phpcs:ignore Squiz.Commenting.FunctionComment
 		return $offset < $this->count;
 	}
 
@@ -226,7 +226,7 @@ class WP_SQLite_Tokens_List implements ArrayAccess {
 	 * @return void
 	 */
 	#[\ReturnTypeWillChange]
-	public function offsetUnset( $offset ) {
+	public function offsetUnset( $offset ) { // phpcs:ignore Squiz.Commenting.FunctionComment
 		unset( $this->tokens[ $offset ] );
 		--$this->count;
 		for ( $i = $offset; $i < $this->count; ++$i ) {
