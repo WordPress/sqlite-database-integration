@@ -183,9 +183,9 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	protected $translator;
 
 	/**
-	 * An array of the last found rows.
+	 * The number of rows found by the last SELECT query.
 	 *
-	 * @var array
+	 * @var int
 	 */
 	protected $last_found_rows;
 
