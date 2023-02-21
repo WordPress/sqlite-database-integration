@@ -437,7 +437,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			if ( $translation->has_result ) {
 				$this->results = $translation->result;
 			} else {
-				switch($translation->mysql_query_type) {
+				switch ( $translation->mysql_query_type ) {
 					case 'DESCRIBE':
 						$this->results = $stmt->fetchAll( $mode );
 						if ( ! $this->results ) {
@@ -450,7 +450,7 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 						$this->results = $stmt->fetchAll( $mode );
 						break;
 					case 'TRUNCATE':
-						$this->results = true;
+						$this->results      = true;
 						$this->return_value = true;
 						return $this->return_value;
 					case 'SET':
@@ -465,12 +465,12 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			if ( $translation->calc_found_rows ) {
 				$this->found_rows_result = $translation->calc_found_rows;
 			}
-			
+
 			if ( is_array( $this->results ) ) {
 				$this->num_rows        = count( $this->results );
 				$this->last_found_rows = count( $this->results );
 			}
-	
+
 			switch ( $translation->sqlite_query_type ) {
 				case 'DELETE':
 				case 'UPDATE':
