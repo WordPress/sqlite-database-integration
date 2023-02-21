@@ -899,9 +899,9 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 			}
 			if ( stripos( $this->queries[0], 'WHERE' ) !== false ) {
 				preg_match( '/WHERE\\s*(.*)$/im', $this->queries[0], $match );
-				list($key, $value) = explode( '=', $match[1] );
-				$key               = trim( $key );
-				$value             = trim( preg_replace( "/[\';]/", '', $value ) );
+				$match_parts = explode( '=', $match[1] );
+				$key         = trim( $match_parts[0] );
+				$value       = trim( preg_replace( "/[\';]/", '', $match_parts[1] ) );
 				foreach ( $_results as $result ) {
 					if ( ! empty( $result->$key ) && is_scalar( $result->$key ) && stripos( $value, $result->$key ) !== false ) {
 						unset( $_results );

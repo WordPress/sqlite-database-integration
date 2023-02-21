@@ -71,7 +71,9 @@ function sqlite_make_db_sqlite() {
 		$host = DB_HOST;
 		$port = 3306;
 		if ( str_contains( $host, ':' ) ) {
-			list($host, $port) = explode( ':', $host );
+			$host_parts = explode( ':', $host );
+			$host       = $host_parts[0];
+			$port       = $host_parts[1];
 		}
 		$dsn       = 'mysql:host=' . $host . '; port=' . $port . '; dbname=' . DB_NAME;
 		$pdo_mysql = new PDO( $dsn, DB_USER, DB_PASSWORD, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );

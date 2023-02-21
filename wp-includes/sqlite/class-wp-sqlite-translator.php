@@ -550,10 +550,9 @@ class WP_SQLite_Translator {
 
 		$definition_depth = $this->rewriter->depth;
 
-		list(
-			$result->sqlite_data_type,
-			$result->mysql_data_type
-		) = $this->skip_mysql_data_type();
+		$skip_mysql_data_type_parts = $this->skip_mysql_data_type();
+		$result->sqlite_data_type   = $skip_mysql_data_type_parts[0];
+		$result->mysql_data_type    = $skip_mysql_data_type_parts[1];
 
 		// Look for the NOT NULL and AUTO_INCREMENT flags.
 		while ( true ) {
@@ -1637,8 +1636,12 @@ class WP_SQLite_Translator {
 			$is_index_op      = ! ! $mysql_index_type;
 
 			if ( 'ADD' === $op_type && 'COLUMN' === $op_subject ) {
-				$column_name                              = $this->rewriter->consume()->value;
-				list($sqlite_data_type, $mysql_data_type) = $this->skip_mysql_data_type();
+				$column_name = $this->rewriter->consume()->value;
+
+				$skip_mysql_data_type_parts = $this->skip_mysql_data_type();
+				$sqlite_data_type           = $skip_mysql_data_type_parts[0];
+				$mysql_data_type            = $skip_mysql_data_type_parts[1];
+
 				$this->rewriter->add(
 					new WP_SQLite_Token(
 						$sqlite_data_type,
