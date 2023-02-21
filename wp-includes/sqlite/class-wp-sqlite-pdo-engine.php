@@ -76,17 +76,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private $results = null;
 
 	/**
-	 * Class variable to store the results of the query.
-	 *
-	 * This is for the backward compatibility.
-	 *
-	 * @access private
-	 *
-	 * @var array reference to the PHP object
-	 */
-	private $_results = null;
-
-	/**
 	 * Class variable to reference to the PDO instance.
 	 *
 	 * @access private
@@ -448,43 +437,42 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				} while ( $error );
 			}
 
-			switch($translation->mysql_query_type) {
-				case 'DESCRIBE':
-					$this->_results = $stmt->fetchAll( $mode );
-					if ( ! $this->_results ) {
-						$this->handle_error( new PDOException( 'Table not found' ) );
-						return;
-					}
-					break;
-				case 'SELECT':
-				case 'SHOW':
-					$this->_results = $stmt->fetchAll( $mode );
-					break;
-				case 'TRUNCATE':
-					$this->_results = true;
-					break;
-				case 'SET':
-					$this->_results = 0;
-					break;
-				default:
-					$this->_results = $last_retval;
-					break;
+			if ( $translation->has_result ) {
+				$this->results = $translation->result;
+			} else {
+				switch($translation->mysql_query_type) {
+					case 'DESCRIBE':
+						$this->results = $stmt->fetchAll( $mode );
+						if ( ! $this->results ) {
+							$this->handle_error( new PDOException( 'Table not found' ) );
+							return;
+						}
+						break;
+					case 'SELECT':
+					case 'SHOW':
+						$this->results = $stmt->fetchAll( $mode );
+						break;
+					case 'TRUNCATE':
+						$this->results = true;
+						$this->return_value = true;
+						return $this->return_value;
+					case 'SET':
+						$this->results = 0;
+						break;
+					default:
+						$this->results = $last_retval;
+						break;
+				}
 			}
 
-			if ( $translation->has_result ) {
-				$this->_results = $translation->result;
-			}
-	
 			if ( $translation->calc_found_rows ) {
 				$this->found_rows_result = $translation->calc_found_rows;
 			}
 			
-			$this->results = $this->_results;
 			if ( is_array( $this->results ) ) {
 				$this->num_rows        = count( $this->results );
 				$this->last_found_rows = count( $this->results );
 			}
-			$this->return_value = $this->results;
 	
 			switch ( $translation->sqlite_query_type ) {
 				case 'DELETE':
@@ -492,10 +480,9 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 				case 'INSERT':
 				case 'REPLACE':
 					/**
-					* SELECT CHANGES() is a workaround – we can't
-					* count rows using $stmt->rowCount()
-					* This method returns "0" (zero) with the SQLite driver at
-					* all times
+					* SELECT CHANGES() is a workaround for the fact that
+					* $stmt->rowCount() returns "0" (zero) with the
+					* SQLite driver at all times.
 					* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
 					*/
 					$this->affected_rows  = (int) $this->pdo->query( 'select changes()' )->fetch()[0];
@@ -505,6 +492,9 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 					if ( is_numeric( $this->last_insert_id ) ) {
 						$this->last_insert_id = (int) $this->last_insert_id;
 					}
+					break;
+				default:
+					$this->return_value = $this->results;
 					break;
 			}
 
@@ -694,7 +684,6 @@ class WP_SQLite_PDO_Engine extends PDO { // phpcs:ignore
 	private function flush() {
 		$this->rewritten_query = '';
 		$this->results         = null;
-		$this->_results        = null;
 		$this->last_insert_id  = null;
 		$this->affected_rows   = null;
 		$this->column_data     = array();
