@@ -170,17 +170,6 @@ class WP_SQLite_Translator {
 	}
 
 	/**
-	 * The regexp function for SQLite.
-	 *
-	 * @param string $pattern  The pattern.
-	 * @param string $subject  The subject.
-	 * @return bool
-	 */
-	public function sqlite_regexp( $pattern, $subject ) {
-		return preg_match( '/' . $pattern . '/', $subject );
-	}
-
-	/**
 	 * Gets the query object.
 	 *
 	 * @param string $sql    The SQL query.
