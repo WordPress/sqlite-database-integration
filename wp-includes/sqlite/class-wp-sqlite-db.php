@@ -18,7 +18,7 @@ class WP_SQLite_DB extends wpdb {
 	 *
 	 * @access protected
 	 *
-	 * @var WP_SQLite_PDO_Engine
+	 * @var WP_SQLite_Translator
 	 */
 	protected $dbh;
 
@@ -231,7 +231,7 @@ class WP_SQLite_DB extends wpdb {
 		if ( isset( $GLOBALS['@pdo'] ) ) {
 			$pdo = $GLOBALS['@pdo'];
 		}
-		$this->dbh        = new WP_SQLite_PDO_Engine( $pdo );
+		$this->dbh        = new WP_SQLite_Translator( $pdo );
 		$this->last_error = $this->dbh->get_error_message();
 		if ( $this->last_error ) {
 			return false;

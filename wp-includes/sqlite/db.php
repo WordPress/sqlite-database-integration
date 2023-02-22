@@ -52,7 +52,6 @@ require_once __DIR__ . '/class-wp-sqlite-translator.php';
 require_once __DIR__ . '/class-wp-sqlite-token.php';
 require_once __DIR__ . '/class-wp-sqlite-tokens-list.php';
 require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
-require_once __DIR__ . '/class-wp-sqlite-pdo-engine.php';
 require_once __DIR__ . '/class-wp-sqlite-object-array.php';
 require_once __DIR__ . '/class-wp-sqlite-db.php';
 require_once __DIR__ . '/install-functions.php';
