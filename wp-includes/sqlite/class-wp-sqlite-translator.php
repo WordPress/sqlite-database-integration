@@ -781,7 +781,7 @@ class WP_SQLite_Translator extends PDO {
 	public function translate( string $query, $last_found_rows = null ) {
 		$this->last_found_rows = $last_found_rows;
 
-		$tokens           = WP_SQLite_Lexer::get_tokens( $query )->tokens;
+		$tokens           = ( new WP_SQLite_Lexer( $query ) )->tokens;
 		$this->rewriter   = new WP_SQLite_Query_Rewriter( $tokens );
 		$this->query_type = $this->rewriter->peek()->value;
 
@@ -2289,7 +2289,7 @@ class WP_SQLite_Translator extends PDO {
 				// 2. Adjust the column definition.
 
 				// First, tokenize the old schema.
-				$tokens       = WP_SQLite_Lexer::get_tokens( $old_schema )->tokens;
+				$tokens       = ( new WP_SQLite_Lexer( $old_schema ) )->tokens;
 				$create_table = new WP_SQLite_Query_Rewriter( $tokens );
 
 				// Now, replace every reference to the old column name with the new column name.

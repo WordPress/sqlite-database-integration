@@ -1,6 +1,6 @@
 <?php
 /**
- * This file is a port of the Lexer class from the PHPMyAdmin/sql-parser library.
+ * This file is a port of the Lexer & Tokens_List classes from the PHPMyAdmin/sql-parser library.
  *
  * @package wp-sqlite-integration
  * @see https://github.com/phpmyadmin/sql-parser
@@ -119,13 +119,6 @@ class WP_SQLite_Lexer {
 	 * @var int
 	 */
 	public $last = 0;
-
-	/**
-	 * Tokens extracted from given strings.
-	 *
-	 * @var WP_SQLite_Tokens_List
-	 */
-	public $list;
 
 	/**
 	 * The default delimiter. This is used, by default, in all new instances.
@@ -1410,18 +1403,25 @@ class WP_SQLite_Lexer {
 	public const SQL_MODE_ANSI_QUOTES = 2;
 
 	/**
-	 * Gets the tokens list parsed by a new instance of a lexer.
+	 * The array of tokens.
 	 *
-	 * @param string $str       The query to be lexed.
-	 * @param string $delimiter The delimiter to be used.
-	 *
-	 * @return WP_SQLite_Tokens_List
+	 * @var stdClass[]
 	 */
-	public static function get_tokens( $str, $delimiter = null ) {
-		$lexer = new self( $str, $delimiter );
+	public $tokens = array();
 
-		return $lexer->list;
-	}
+	/**
+	 * The count of tokens.
+	 *
+	 * @var int
+	 */
+	public $tokens_count = 0;
+
+	/**
+	 * The index of the next token to be returned.
+	 *
+	 * @var int
+	 */
+	public $tokens_index = 0;
 
 	/**
 	 * The object constructor.
@@ -1468,8 +1468,6 @@ class WP_SQLite_Lexer {
 		 * context and compare again with `false`.
 		 * Another example is `parse_comment`.
 		 */
-
-		$list = new WP_SQLite_Tokens_List();
 
 		/**
 		 * Last processed token.
@@ -1529,7 +1527,7 @@ class WP_SQLite_Lexer {
 
 			$token->position = $last_idx;
 
-			$list->tokens[ $list->count++ ] = $token;
+			$this->tokens[ $this->tokens_count++ ] = $token;
 
 			// Handling delimiters.
 			if ( WP_SQLite_Token::TYPE_NONE === $token->type && 'DELIMITER' === $token->value ) {
@@ -1546,8 +1544,8 @@ class WP_SQLite_Lexer {
 				$token = $this->parse_whitespace();
 
 				if ( null !== $token ) {
-					$token->position                = $pos;
-					$list->tokens[ $list->count++ ] = $token;
+					$token->position                       = $pos;
+					$this->tokens[ $this->tokens_count++ ] = $token;
 				}
 
 				// Preparing the token that holds the new delimiter.
@@ -1578,20 +1576,17 @@ class WP_SQLite_Lexer {
 				--$this->last;
 
 				// Saving the delimiter and its token.
-				$this->delimiter_length         = strlen( $this->delimiter );
-				$token                          = new WP_SQLite_Token( $this->delimiter, WP_SQLite_Token::TYPE_DELIMITER );
-				$token->position                = $pos;
-				$list->tokens[ $list->count++ ] = $token;
+				$this->delimiter_length                = strlen( $this->delimiter );
+				$token                                 = new WP_SQLite_Token( $this->delimiter, WP_SQLite_Token::TYPE_DELIMITER );
+				$token->position                       = $pos;
+				$this->tokens[ $this->tokens_count++ ] = $token;
 			}
 
 			$last_token = $token;
 		}
 
 		// Adding a final delimiter to mark the ending.
-		$list->tokens[ $list->count++ ] = new WP_SQLite_Token( null, WP_SQLite_Token::TYPE_DELIMITER );
-
-		// Saving the tokens list.
-		$this->list = $list;
+		$this->tokens[ $this->tokens_count++ ] = new WP_SQLite_Token( null, WP_SQLite_Token::TYPE_DELIMITER );
 
 		$this->solve_ambiguity_on_star_operator();
 		$this->solve_ambiguity_on_function_keywords();
@@ -1613,14 +1608,14 @@ class WP_SQLite_Lexer {
 	 * @return void
 	 */
 	private function solve_ambiguity_on_star_operator() {
-		$i_bak = $this->list->index;
+		$i_bak = $this->tokens_index;
 		while ( true ) {
-			$star_token = $this->list->get_next_of_type_and_value( WP_SQLite_Token::TYPE_OPERATOR, '*' );
+			$star_token = $this->tokens_get_next_of_type_and_value( WP_SQLite_Token::TYPE_OPERATOR, '*' );
 			if ( null === $star_token ) {
 				break;
 			}
-			// get_next() already gets rid of whitespaces and comments.
-			$next = $this->list->get_next();
+			// tokens_get_next() already gets rid of whitespaces and comments.
+			$next = $this->tokens_get_next();
 
 			if ( null === $next ) {
 				continue;
@@ -1636,7 +1631,7 @@ class WP_SQLite_Lexer {
 			$star_token->flags = WP_SQLite_Token::FLAG_OPERATOR_SQL;
 		}
 
-		$this->list->index = $i_bak;
+		$this->tokens_index = $i_bak;
 	}
 
 	/**
@@ -1661,14 +1656,14 @@ class WP_SQLite_Lexer {
 	 * @return void
 	 */
 	private function solve_ambiguity_on_function_keywords() {
-		$i_bak            = $this->list->index;
+		$i_bak            = $this->tokens_index;
 		$keyword_function = WP_SQLite_Token::TYPE_KEYWORD | WP_SQLite_Token::FLAG_KEYWORD_FUNCTION;
 		while ( true ) {
-			$keyword_token = $this->list->get_next_of_type_and_flag( WP_SQLite_Token::TYPE_KEYWORD, $keyword_function );
+			$keyword_token = $this->tokens_get_next_of_type_and_flag( WP_SQLite_Token::TYPE_KEYWORD, $keyword_function );
 			if ( null === $keyword_token ) {
 				break;
 			}
-			$next = $this->list->get_next();
+			$next = $this->tokens_get_next();
 			if (
 				( WP_SQLite_Token::TYPE_KEYWORD !== $next->type
 					|| ! in_array( $next->value, $this->keyword_name_indicators, true )
@@ -1686,7 +1681,7 @@ class WP_SQLite_Lexer {
 			$keyword_token->keyword = $keyword_token->value;
 		}
 
-		$this->list->index = $i_bak;
+		$this->tokens_index = $i_bak;
 	}
 
 	/**
@@ -2511,5 +2506,73 @@ class WP_SQLite_Lexer {
 			&& ( ( $str < '0' ) || ( $str > '9' ) )
 			&& ( ( $str < 'a' ) || ( $str > 'z' ) )
 			&& ( ( $str < 'A' ) || ( $str > 'Z' ) );
+	}
+
+	/**
+	 * Constructor.
+	 *
+	 * @param stdClass[] $tokens The initial array of tokens.
+	 * @param int        $count  The count of tokens in the initial array.
+	 */
+	public function tokens( array $tokens = array(), $count = -1 ) {
+		if ( empty( $tokens ) ) {
+			return;
+		}
+
+		$this->tokens       = $tokens;
+		$this->tokens_count = -1 === $count ? count( $tokens ) : $count;
+	}
+
+	/**
+	 * Gets the next token.
+	 *
+	 * @param int $type The type of the token.
+	 * @param int $flag The flag of the token.
+	 */
+	public function tokens_get_next_of_type_and_flag( int $type, int $flag ) {
+		for ( ; $this->tokens_index < $this->tokens_count; ++$this->tokens_index ) {
+			if ( ( $this->tokens[ $this->tokens_index ]->type === $type ) && ( $this->tokens[ $this->tokens_index ]->flags === $flag ) ) {
+				return $this->tokens[ $this->tokens_index++ ];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Gets the next token.
+	 *
+	 * @param int    $type  The type of the token.
+	 * @param string $value The value of the token.
+	 *
+	 * @return stdClass|null
+	 */
+	public function tokens_get_next_of_type_and_value( $type, $value ) {
+		for ( ; $this->tokens_index < $this->tokens_count; ++$this->tokens_index ) {
+			if ( ( $this->tokens[ $this->tokens_index ]->type === $type ) && ( $this->tokens[ $this->tokens_index ]->value === $value ) ) {
+				return $this->tokens[ $this->tokens_index++ ];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Gets the next token. Skips any irrelevant token (whitespaces and
+	 * comments).
+	 *
+	 * @return stdClass|null
+	 */
+	public function tokens_get_next() {
+		for ( ; $this->tokens_index < $this->tokens_count; ++$this->tokens_index ) {
+			if (
+				( WP_SQLite_Token::TYPE_WHITESPACE !== $this->tokens[ $this->tokens_index ]->type )
+				&& ( WP_SQLite_Token::TYPE_COMMENT !== $this->tokens[ $this->tokens_index ]->type )
+			) {
+				return $this->tokens[ $this->tokens_index++ ];
+			}
+		}
+
+		return null;
 	}
 }
