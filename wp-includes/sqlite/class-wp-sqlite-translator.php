@@ -2087,7 +2087,7 @@ class WP_SQLite_Translator extends PDO {
 		// Add the CONFLICT keyword.
 		$this->rewriter->add( new WP_SQLite_Token( 'CONFLICT', WP_SQLite_Token::TYPE_KEYWORD ) );
 
-		// Add "( <primary key> ) DO UPDATE SET ".
+		// Add "( <columns list> ) DO UPDATE SET ".
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
 
