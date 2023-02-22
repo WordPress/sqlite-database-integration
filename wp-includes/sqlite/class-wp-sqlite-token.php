@@ -1,6 +1,6 @@
 <?php
 /**
- * This file is a port of the Lexer class from the PHPMyAdmin/sql-parser library.
+ * This file is a port of the Token class from the PHPMyAdmin/sql-parser library.
  *
  * @package wp-sqlite-integration
  * @see https://github.com/phpmyadmin/sql-parser
