@@ -4,3 +4,5 @@
 .gitignore export-ignore
 composer.json export-ignore
 phpcs.xml.dist export-ignore
+lexer-explorations/*.php export-ignore
+wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php export-ignore

@@ -55,10 +55,10 @@ require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
 require_once __DIR__ . '/class-wp-sqlite-pdo-engine.php';
 require_once __DIR__ . '/class-wp-sqlite-object-array.php';
 require_once __DIR__ . '/class-wp-sqlite-db.php';
-require_once __DIR__ . '/class-wp-sqlite-crosscheck-db.php';
 require_once __DIR__ . '/install-functions.php';
 
-if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK ) {
+if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exists( __DIR__ . '/class-wp-sqlite-crosscheck-db.php' ) ) {
+	require_once __DIR__ . '/class-wp-sqlite-crosscheck-db.php';
 	$GLOBALS['wpdb'] = new WP_SQLite_Crosscheck_DB();
 } else {
 	$GLOBALS['wpdb'] = new WP_SQLite_DB();
