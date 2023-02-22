@@ -609,12 +609,12 @@ class WP_SQLite_Translator extends PDO {
 				case 'UPDATE':
 				case 'INSERT':
 				case 'REPLACE':
-					/**
-					* SELECT CHANGES() is a workaround for the fact that
-					* $stmt->rowCount() returns "0" (zero) with the
-					* SQLite driver at all times.
-					* Source: https://www.php.net/manual/en/pdostatement.rowcount.php
-					*/
+					/*
+					 * SELECT CHANGES() is a workaround for the fact that
+					 * $stmt->rowCount() returns "0" (zero) with the
+					 * SQLite driver at all times.
+					 * Source: https://www.php.net/manual/en/pdostatement.rowcount.php
+					 */
 					$this->affected_rows  = (int) $this->pdo->query( 'select changes()' )->fetch()[0];
 					$this->return_value   = $this->affected_rows;
 					$this->num_rows       = $this->affected_rows;
@@ -804,8 +804,10 @@ class WP_SQLite_Translator extends PDO {
 
 			case 'CALL':
 			case 'SET':
-				// It would be lovely to support at least SET autocommit,
-				// but I don't think even that is possible with SQLite.
+				/*
+				 * It would be lovely to support at least SET autocommit,
+				 * but I don't think that is even possible with SQLite.
+				 */
 				$result = $this->get_translation_result( array( $this->noop() ) );
 				break;
 
@@ -991,8 +993,10 @@ class WP_SQLite_Translator extends PDO {
 		$result->constraints  = array();
 		$result->primary_key  = array();
 
-		// The query starts with CREATE TABLE [IF NOT EXISTS]
-		// Consume everything until the table name.
+		/*
+		 * The query starts with CREATE TABLE [IF NOT EXISTS].
+		 * Consume everything until the table name.
+		 */
 		while ( true ) {
 			$token = $this->rewriter->consume();
 			if ( ! $token ) {
@@ -1010,9 +1014,11 @@ class WP_SQLite_Translator extends PDO {
 			}
 		}
 
-		// Move to the opening parenthesis:
-		// CREATE TABLE wp_options (
-		// ^ here.
+		/*
+		 * Move to the opening parenthesis:
+		 * CREATE TABLE wp_options (
+		 *   ^ here.
+		 */
 		$this->rewriter->skip(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_OPERATOR,
@@ -1020,12 +1026,16 @@ class WP_SQLite_Translator extends PDO {
 			)
 		);
 
-		// We're in the table definition now.
-		// Read everything until the closing parenthesis.
+		/*
+		 * We're in the table definition now.
+		 * Read everything until the closing parenthesis.
+		 */
 		$declarations_depth = $this->rewriter->depth;
 		do {
-			// We want to capture a rewritten line of the query.
-			// Let's clear any data we might have captured so far.
+			/*
+			 * We want to capture a rewritten line of the query.
+			 * Let's clear any data we might have captured so far.
+			 */
 			$this->rewriter->replace_all( array() );
 
 			/*
@@ -1214,8 +1224,10 @@ class WP_SQLite_Translator extends PDO {
 		$definition_depth = $this->rewriter->depth;
 		$constraint       = $this->rewriter->peek();
 		if ( ! $constraint->matches( WP_SQLite_Token::TYPE_KEYWORD ) ) {
-			// Not a constraint declaration, but we're not finished
-			// with the table declaration yet.
+			/*
+			 * Not a constraint declaration, but we're not finished
+			 * with the table declaration yet.
+			 */
 			throw new Exception( 'Unexpected token in MySQL query: ' . $this->rewriter->peek()->value );
 		}
 
@@ -1227,7 +1239,7 @@ class WP_SQLite_Translator extends PDO {
 			}
 
 			$constraint_depth = $this->rewriter->depth;
-			$this->rewriter->skip(); // (
+			$this->rewriter->skip(); // `(`
 			do {
 				$result->columns[] = $this->normalize_column_name( $this->rewriter->skip()->value );
 				$paren_maybe       = $this->rewriter->peek();
@@ -1236,7 +1248,7 @@ class WP_SQLite_Translator extends PDO {
 					$this->rewriter->skip();
 					$this->rewriter->skip();
 				}
-				$this->rewriter->skip(); // , or )
+				$this->rewriter->skip(); // `,` or `)`
 			} while ( $this->rewriter->depth > $constraint_depth );
 		}
 
@@ -1311,8 +1323,10 @@ class WP_SQLite_Translator extends PDO {
 			$this->rewriter->consume(); // INTO.
 			$table_name = $this->rewriter->consume()->value; // Table name.
 
-			// A list of columns is given if the opening parenthesis is
-			// earlier than the VALUES keyword.
+			/*
+			 * A list of columns is given if the opening parenthesis
+			 * is earlier than the VALUES keyword.
+			 */
 			$paren  = $this->rewriter->peek(
 				array(
 					'type'  => WP_SQLite_Token::TYPE_OPERATOR,
@@ -1451,8 +1465,10 @@ class WP_SQLite_Translator extends PDO {
 			return $result;
 		}
 
-		// Now that functions are rewritten to SQLite dialect,
-		// let's translate unsupported delete queries.
+		/*
+		 * Now that functions are rewritten to SQLite dialect,
+		 * let's translate unsupported delete queries.
+		 */
 		if ( 'DELETE' === $query_type ) {
 			$delete_result = $this->postprocess_double_delete( $params );
 			if ( $delete_result ) {
@@ -1591,21 +1607,28 @@ class WP_SQLite_Translator extends PDO {
 			throw new Exception( 'Could not find table name for dual delete query.' );
 		}
 
-		// Now, let's figure out the primary key name.
-		// This assumes that all listed table names are the same.
+		/*
+		 * Now, let's figure out the primary key name.
+		 * This assumes that all listed table names are the same.
+		 */
 		$q       = $this->pdo->query( 'SELECT l.name FROM pragma_table_info("' . $table_name . '") as l WHERE l.pk = 1;' );
 		$pk_name = $q->fetch()['name'];
 
-		// Good, we can finally create the SELECT query.
-		// Let's rewrite DELETE a, b FROM ... to SELECT a.id, b.id FROM ...
+		/*
+		 * Good, we can finally create the SELECT query.
+		 * Let's rewrite DELETE a, b FROM ... to SELECT a.id, b.id FROM ...
+		 */
 		$alias_nb = 0;
 		while ( true ) {
 			$token = $rewriter->consume();
 			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && 'FROM' === $token->value ) {
 				break;
 			}
-			// Between DELETE and FROM we only expect commas and table aliases
-			// If it's not a comma, it must be a table alias.
+
+			/*
+			 * Between DELETE and FROM we only expect commas and table aliases.
+			 * If it's not a comma, it must be a table alias.
+			 */
 			if ( ',' !== $token->value ) {
 				// Insert .id AS id_1 after the table alias.
 				$rewriter->add_many(
@@ -1716,7 +1739,7 @@ class WP_SQLite_Translator extends PDO {
 	 * @return bool
 	 */
 	private function translate_concat_function( $token ) {
-		/**
+		/*
 		 * Skip the CONCAT function but leave the parentheses.
 		 * There is another code block below that replaces the
 		 * , operators between the CONCAT arguments with ||.
@@ -1792,9 +1815,9 @@ class WP_SQLite_Translator extends PDO {
 			$is_in_duplicate_section
 		) {
 			/*
-			Rewrite:  VALUES(`option_name`)
-			to:       excluded.option_name
-			*/
+			 * Rewrite:  VALUES(`option_name`)
+			 * to:       excluded.option_name
+			 */
 			$this->rewriter->skip();
 			$this->rewriter->add( new WP_SQLite_Token( 'excluded', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
 			$this->rewriter->add( new WP_SQLite_Token( '.', WP_SQLite_Token::TYPE_OPERATOR ) );
@@ -2059,7 +2082,7 @@ class WP_SQLite_Translator extends PDO {
 			$conflict_columns = $pk_columns;
 		}
 
-		/**
+		/*
 		 * If we still haven't found any conflict column, we
 		 * can't rewrite the ON DUPLICATE KEY statement.
 		 * Let's default to a regular INSERT to mimic MySQL
@@ -2180,8 +2203,10 @@ class WP_SQLite_Translator extends PDO {
 		$table_name = $this->normalize_column_name( $this->rewriter->consume()->token );
 		$queries    = array();
 		do {
-			// This loop may be executed multiple times if there are multiple operations in the ALTER query.
-			// Let's reset the initial state on each pass.
+			/*
+			 * This loop may be executed multiple times if there are multiple operations in the ALTER query.
+			 * Let's reset the initial state on each pass.
+			 */
 			$this->rewriter->replace_all(
 				array(
 					new WP_SQLite_Token( 'ALTER', WP_SQLite_Token::TYPE_KEYWORD ),
@@ -2344,8 +2369,10 @@ class WP_SQLite_Translator extends PDO {
 
 				// 8. Restore any indexes that were dropped in step 4
 				foreach ( $old_indexes as $row ) {
-					// Skip indexes prefixed with sqlite_autoindex_
-					// (these are automatically created by SQLite).
+					/*
+					 * Skip indexes prefixed with sqlite_autoindex_
+					 * (these are automatically created by SQLite).
+					 */
 					if ( str_starts_with( $row['index']['name'], 'sqlite_autoindex_' ) ) {
 						continue;
 					}
@@ -2369,7 +2396,10 @@ class WP_SQLite_Translator extends PDO {
 				}
 
 				if ( ',' === $alter_terminator->token ) {
-					// If the terminator was a comma, we need to continue processing the rest of the ALTER query.
+					/*
+					 * If the terminator was a comma,
+					 * we need to continue processing the rest of the ALTER query.
+					 */
 					$comma = true;
 					continue;
 				}
@@ -2476,8 +2506,8 @@ class WP_SQLite_Translator extends PDO {
 
 		/**
 		 * Technically it is possible to support temporary tables as follows:
-		 *   ATTACH '' AS 'tempschema';
-		 *   CREATE TABLE tempschema.<name>(...)...;
+		 *    ATTACH '' AS 'tempschema';
+		 *    CREATE TABLE tempschema.<name>(...)...;
 		 * However, for now, let's just ignore the TEMPORARY keyword.
 		 */
 		if ( 'TEMPORARY' === $what ) {

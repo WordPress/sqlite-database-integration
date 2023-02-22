@@ -17,8 +17,6 @@ declare(strict_types=1);
  */
 class WP_SQLite_Token {
 
-	// Types of tokens (a vague description of a token's purpose).
-
 	/**
 	 * This type is used when the token is invalid or its type cannot be
 	 * determined because of the ambiguous context. Further analysis might be
@@ -248,8 +246,10 @@ class WP_SQLite_Token {
 			case self::TYPE_KEYWORD:
 				$this->keyword = strtoupper( $this->token );
 				if ( ! ( $this->flags & self::FLAG_KEYWORD_RESERVED ) ) {
-					// Unreserved keywords should stay the way they are because they
-					// might represent field names.
+					/*
+					 * Unreserved keywords should stay the way they are
+					 * because they might represent field names.
+					 */
 					return $this->token;
 				}
 
@@ -287,10 +287,12 @@ class WP_SQLite_Token {
 				$quote = $this->token[0];
 				$str   = str_replace( $quote . $quote, $quote, $str );
 
-				// Finally unescapes the string.
-				//
-				// `stripcslashes` replaces escape sequences with their
-				// representation.
+				/*
+				 * Finally unescapes the string.
+				 *
+				 * `stripcslashes` replaces escape sequences with their
+				 * representation.
+				 */
 				$str = stripcslashes( $str );
 
 				return $str;
@@ -298,8 +300,10 @@ class WP_SQLite_Token {
 			case self::TYPE_SYMBOL:
 				$str = $this->token;
 				if ( isset( $str[0] ) && ( '@' === $str[0] ) ) {
-					// `mb_strlen($str)` must be used instead of `null` because
-					// in PHP 5.3- the `null` parameter isn't handled correctly.
+					/*
+					 * `mb_strlen($str)` must be used instead of `null` because
+					 * in PHP 5.3- the `null` parameter isn't handled correctly.
+					 */
 					$str = mb_substr(
 						$str,
 						! empty( $str[1] ) && ( '@' === $str[1] ) ? 2 : 1,

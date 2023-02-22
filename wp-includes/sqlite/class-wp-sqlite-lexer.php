@@ -1321,8 +1321,11 @@ class WP_SQLite_Lexer {
 	 * @var array<string, bool|int|array<int, int|string|array<string, bool>>>
 	 */
 	public static $field_options = array(
-		// Tells the `OptionsArray` to not sort the options.
-		// See the note below.
+
+		/*
+		 * Tells the `OptionsArray` to not sort the options.
+		 * See the note below.
+		 */
 		'_UNSORTED'        => true,
 
 		'NOT NULL'         => 1,
@@ -1535,8 +1538,10 @@ class WP_SQLite_Lexer {
 					continue;
 				}
 
-				// Skipping last R (from `delimiteR`) and whitespaces between
-				// the keyword `DELIMITER` and the actual delimiter.
+				/*
+				 * Skipping last R (from `delimiteR`) and whitespaces between
+				 * the keyword `DELIMITER` and the actual delimiter.
+				 */
 				$pos   = ++$this->last;
 				$token = $this->parse_whitespace();
 
@@ -1725,16 +1730,10 @@ class WP_SQLite_Lexer {
 		 */
 		$ret = null;
 
-		/**
-		 * The value of `$this->last` where `$token` ends in `$this->str`.
-		 */
+		// The value of `$this->last` where `$token` ends in `$this->str`.
 		$i_end = $this->last;
 
-		/**
-		 * Whether last parsed character is a whitespace.
-		 *
-		 * @var bool
-		 */
+		// Whether last parsed character is a whitespace.
 		$last_space = false;
 
 		for ( $j = 1; $j < static::KEYWORD_MAX_LENGTH && $this->last < $this->string_length; ++$j, ++$this->last ) {
@@ -1786,9 +1785,7 @@ class WP_SQLite_Lexer {
 		 */
 		$ret = null;
 
-		/**
-		 * The value of `$this->last` where `$token` ends in `$this->str`.
-		 */
+		// The value of `$this->last` where `$token` ends in `$this->str`.
 		$i_end = $this->last;
 		for ( $j = 1; $j < static::LABEL_MAX_LENGTH && $this->last < $this->string_length; ++$j, ++$this->last ) {
 			if ( ':' === $this->str[ $this->last ] && $j > 1 ) {
@@ -1800,8 +1797,10 @@ class WP_SQLite_Lexer {
 			}
 
 			if ( static::is_whitespace( $this->str[ $this->last ] ) && $j > 1 ) {
-				// Whitespace between label and `:`.
-				// The size of the keyword didn't increase.
+				/*
+				 * Whitespace between label and `:`.
+				 * The size of the keyword didn't increase.
+				 */
 				--$j;
 			} elseif ( static::is_separator( $this->str[ $this->last ] ) ) {
 				// Any other separator.
@@ -1831,9 +1830,7 @@ class WP_SQLite_Lexer {
 		 */
 		$ret = null;
 
-		/**
-		 * The value of `$this->last` where `$token` ends in `$this->str`.
-		 */
+		// The value of `$this->last` where `$token` ends in `$this->str`.
 		$i_end = $this->last;
 
 		for ( $j = 1; $j < static::OPERATOR_MAX_LENGTH && $this->last < $this->string_length; ++$j, ++$this->last ) {
@@ -2504,8 +2501,10 @@ class WP_SQLite_Lexer {
 	 * @return bool
 	 */
 	public static function is_separator( $str ) {
-		// NOTES:   Only non alphanumeric ASCII characters may be separators.
-		// `~` is the last printable ASCII character.
+		/*
+		 * NOTES:   Only non alphanumeric ASCII characters may be separators.
+		 * `~` is the last printable ASCII character.
+		 */
 		return ( $str <= '~' )
 			&& ( '_' !== $str )
 			&& ( '$' !== $str )

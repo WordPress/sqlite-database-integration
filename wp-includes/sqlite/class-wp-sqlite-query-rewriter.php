@@ -238,8 +238,10 @@ class WP_SQLite_Query_Rewriter {
 	public function skip_and_return_all( $query = array() ) {
 		$tokens = $this->move_forward( $query );
 
-		// When skipping over whitespaces, make sure to consume
-		// at least one to avoid SQL syntax errors.
+		/*
+		 * When skipping over whitespaces, make sure to consume
+		 * at least one to avoid SQL syntax errors.
+		 */
 		foreach ( $tokens as $token ) {
 			if ( $token->matches( WP_SQLite_Token::TYPE_WHITESPACE ) ) {
 				$this->add( $token );
