@@ -2,6 +2,12 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
+require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-lexer.php';
+require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-token.php';
+require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
+require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-translator.php';
+
 class SQLiteEngineTests extends TestCase {
 
 	public static function setUpBeforeClass(): void {
@@ -12,10 +18,7 @@ class SQLiteEngineTests extends TestCase {
 			define( 'FQDB', ':memory:' );
 			define( 'FQDBDIR', __DIR__ . '/../testdb' );
 		}
-		if ( ! class_exists( 'WP_SQLite_PDO_Engine' ) ) {
-			error_reporting( E_ALL & ~E_DEPRECATED );
-			require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-engine.php';
-		}
+		error_reporting( E_ALL & ~E_DEPRECATED );
 		if ( ! isset( $GLOBALS['table_prefix'] ) ) {
 			$GLOBALS['table_prefix'] = 'wptests_';
 		}
@@ -30,7 +33,7 @@ class SQLiteEngineTests extends TestCase {
 
 	// Before each test, we create a new database
 	public function setUp(): void {
-		$this->engine = new WP_SQLite_PDO_Engine();
+		$this->engine = new WP_SQLite_Translator();
 		$this->engine->query(
 			"CREATE TABLE _options (
 				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,

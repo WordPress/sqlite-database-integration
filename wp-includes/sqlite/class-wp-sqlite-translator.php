@@ -9,8 +9,7 @@
 /**
  * The queries translator class.
  */
-class WP_SQLite_Translator extends PDO {
-
+class WP_SQLite_Translator {
 
 	const SQLITE_BUSY   = 5;
 	const SQLITE_LOCKED = 6;
@@ -357,7 +356,7 @@ class WP_SQLite_Translator extends PDO {
 
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
 
-		$this->table_prefix = $GLOBALS['table_prefix'];
+		$this->table_prefix = isset($GLOBALS['table_prefix']) ? $GLOBALS['table_prefix'] : 'wp_';
 	}
 
 	/**
