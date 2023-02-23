@@ -599,18 +599,6 @@ class WP_SQLite_Translator {
 				}
 			}
 
-			// Commit the nested transaction.
-			$this->commit();
-		} catch ( Exception $err ) {
-			// Rollback the nested transaction.
-			$this->rollBack();
-			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true ) {
-				throw $err;
-			}
-			return $this->handle_error( $err );
-		}
-
-		try {
 			if ( $translation->calc_found_rows ) {
 				$this->found_rows_result = $translation->calc_found_rows;
 			}
@@ -644,6 +632,8 @@ class WP_SQLite_Translator {
 					break;
 			}
 
+			// Commit the nested transaction.
+			$this->commit();
 			return $this->return_value;
 		} catch ( Exception $err ) {
 			// Rollback the nested transaction.
