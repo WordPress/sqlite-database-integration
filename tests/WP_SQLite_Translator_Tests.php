@@ -851,21 +851,80 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertCount( 0, $this->engine->get_query_results() );
 	}
 
-	public function testNestedTransactionHasNoEffect() {
+	public function testNestedTransactionWork() {
 		$this->engine->query( 'BEGIN' );
 		$this->engine->query( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$this->engine->query( 'START TRANSACTION' );
 		$this->engine->query( "INSERT INTO _options (option_name) VALUES ('second');" );
+		$this->engine->query( 'START TRANSACTION' );
+		$this->engine->query( "INSERT INTO _options (option_name) VALUES ('third');" );
+		$this->engine->query( 'SELECT * FROM _options;' );
+		$this->assertCount( 3, $this->engine->get_query_results() );
+
+		$this->engine->query( 'ROLLBACK' );
 		$this->engine->query( 'SELECT * FROM _options;' );
 		$this->assertCount( 2, $this->engine->get_query_results() );
 
 		$this->engine->query( 'ROLLBACK' );
 		$this->engine->query( 'SELECT * FROM _options;' );
-		$this->assertCount( 0, $this->engine->get_query_results() );
+		$this->assertCount( 1, $this->engine->get_query_results() );
 
 		$this->engine->query( 'COMMIT' );
 		$this->engine->query( 'SELECT * FROM _options;' );
-		$this->assertCount( 0, $this->engine->get_query_results() );
+		$this->assertCount( 1, $this->engine->get_query_results() );
+	}
+
+	public function testNestedTransactionWorkComplexModify() {
+		$this->engine->query( 'BEGIN' );
+		// Create a complex ALTER Table query where the first
+		// column is added successfully, but the second fails.
+		// Behind the scenes, this single MySQL query is split
+		// into multiple SQLite queries – some of them will
+		// succeed, some will fail.
+		$success = $this->engine->query( "
+		ALTER TABLE _options 
+			ADD COLUMN test varchar(20),
+			ADD COLUMN test varchar(20)
+		" );
+		$this->assertFalse($success);
+		// Commit the transaction.
+		$this->engine->query( 'COMMIT' );
+
+		// Confirm the entire query failed atomically and no column was
+		// added to the table.
+		$this->engine->query( 'DESCRIBE _options;' );
+		$fields = $this->engine->get_query_results();
+
+		$this->assertEquals(
+			$fields,
+			array(
+				(object) array(
+					'Field'   => 'ID',
+					'Type'    => 'integer',
+					'Null'    => 'NO',
+					'Key'     => 'PRI',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'option_name',
+					'Type'    => 'text',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'option_value',
+					'Type'    => 'text',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				)
+			)
+		);
+
 	}
 
 	public function testCount() {
