@@ -4,3 +4,4 @@
 .gitignore export-ignore
 composer.json export-ignore
 phpcs.xml.dist export-ignore
+tests/*.php export-ignore

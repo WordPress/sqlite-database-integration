@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath
 Requires at least: 6.0
 Tested up to:      6.1
 Requires PHP:      5.6
-Stable tag:        1.0.3
+Stable tag:        2.0
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -15,11 +15,16 @@ SQLite-integration plugin from the WordPress Performance Team.
 
 The SQLite plugin is a community, feature plugin. The intent is to allow testing an SQLite integration with WordPress and gather feedback, with the goal of eventually landing it in WordPress core.
 
+This project is based on the original work of Kojima Toshiyasu and his SQLite Integration plugin, and the work of Evan Mattson and his WP SQLite DB plugin - See https://github.com/aaemnnosttv/wp-sqlite-db.
+
+It also includes code from the PHPMyAdmin project (specifically parts of the PHPMyAdmin/sql-parser library), licensed under the GPL v2 or later. More info on the PHPMyAdmin/sql-parser library can be found on [GitHub](https://github.com/phpmyadmin/sql-parser).
+
 == Frequently Asked Questions ==
 
 = What is the purpose of this plugin? =
 
 The primary purpose of the SQLite plugin is to allow testing the use of an SQLite database, with the goal to eventually land in WordPress core.
+
 You can read the original proposal on the [Make blog](https://make.wordpress.org/core/2022/09/12/lets-make-wordpress-officially-support-sqlite/), as well as the [call for testing](https://make.wordpress.org/core/2022/12/20/help-us-test-the-sqlite-implementation/) for more context and useful information.
 
 = Can I use this plugin on my production site? =

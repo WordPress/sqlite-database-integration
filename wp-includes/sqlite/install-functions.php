@@ -17,11 +17,9 @@
  */
 function sqlite_make_db_sqlite() {
 	include_once ABSPATH . 'wp-admin/includes/schema.php';
-	$index_array = array();
 
 	$table_schemas = wp_get_db_schema();
 	$queries       = explode( ';', $table_schemas );
-	$query_parser  = new WP_SQLite_Create_Query();
 	try {
 		$pdo = new PDO( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
 	} catch ( PDOException $err ) {
@@ -31,6 +29,9 @@ function sqlite_make_db_sqlite() {
 		wp_die( $message, 'Database Error!' );
 	}
 
+	$translator = new WP_SQLite_Translator( $pdo, $GLOBALS['table_prefix'] );
+	$query      = null;
+
 	try {
 		$pdo->beginTransaction();
 		foreach ( $queries as $query ) {
@@ -38,40 +39,14 @@ function sqlite_make_db_sqlite() {
 			if ( empty( $query ) ) {
 				continue;
 			}
-			$rewritten_query = $query_parser->rewrite_query( $query );
-			if ( is_array( $rewritten_query ) ) {
-				$table_query   = array_shift( $rewritten_query );
-				$index_queries = $rewritten_query;
-				$table_query   = trim( $table_query );
-				$pdo->exec( $table_query );
-			} else {
-				$rewritten_query = trim( $rewritten_query );
-				$pdo->exec( $rewritten_query );
+
+			$translation = $translator->translate( $query );
+			foreach ( $translation->queries as $query ) {
+				$stmt = $pdo->prepare( $query->sql );
+				$stmt->execute( $query->params );
 			}
 		}
 		$pdo->commit();
-		if ( $index_queries ) {
-			// $query_parser rewrites KEY to INDEX, so we don't need KEY pattern.
-			$pattern = '/CREATE\\s*(UNIQUE\\s*INDEX|INDEX)\\s*IF\\s*NOT\\s*EXISTS\\s*(\\w+)?\\s*.*/im';
-			$pdo->beginTransaction();
-			foreach ( $index_queries as $index_query ) {
-				preg_match( $pattern, $index_query, $match );
-				$index_name = trim( $match[2] );
-				if ( in_array( $index_name, $index_array, true ) ) {
-					$r           = rand( 0, 50 );
-					$replacement = $index_name . "_$r";
-					$index_query = str_ireplace(
-						'EXISTS ' . $index_name,
-						'EXISTS ' . $replacement,
-						$index_query
-					);
-				} else {
-					$index_array[] = $index_name;
-				}
-				$pdo->exec( $index_query );
-			}
-			$pdo->commit();
-		}
 	} catch ( PDOException $err ) {
 		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 		$err_code = $err_data[1];
@@ -82,15 +57,59 @@ function sqlite_make_db_sqlite() {
 			$pdo->rollBack();
 			$message  = sprintf(
 				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
-				var_export( $rewritten_query, true )
+				var_export( $query, true )
 			);
 			$message .= sprintf( 'Error message is: %s', $err_data[2] );
 			wp_die( $message, 'Database Error!' );
 		}
 	}
 
-	$query_parser = null;
-	$pdo          = null;
+	/*
+	 * Debug: Cross-check with MySQL.
+	 * This is for debugging purpose only and requires files
+	 * that are present in the GitHub repository
+	 * but not the plugin published on WordPress.org.
+	 */
+	if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK ) {
+		$host = DB_HOST;
+		$port = 3306;
+		if ( str_contains( $host, ':' ) ) {
+			$host_parts = explode( ':', $host );
+			$host       = $host_parts[0];
+			$port       = $host_parts[1];
+		}
+		$dsn       = 'mysql:host=' . $host . '; port=' . $port . '; dbname=' . DB_NAME;
+		$pdo_mysql = new PDO( $dsn, DB_USER, DB_PASSWORD, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );
+		$pdo_mysql->query( 'SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";' );
+		$pdo_mysql->query( 'SET time_zone = "+00:00";' );
+		foreach ( $queries as $query ) {
+			$query = trim( $query );
+			if ( empty( $query ) ) {
+				continue;
+			}
+			try {
+				$pdo_mysql->beginTransaction();
+				$pdo_mysql->query( $query );
+			} catch ( PDOException $err ) {
+				$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+				$err_code = $err_data[1];
+				if ( 5 == $err_code || 6 == $err_code ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+					// If the database is locked, commit again.
+					$pdo_mysql->commit();
+				} else {
+					$pdo_mysql->rollBack();
+					$message  = sprintf(
+						'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
+						var_export( $query, true )
+					);
+					$message .= sprintf( 'Error message is: %s', $err_data[2] );
+					wp_die( $message, 'Database Error!' );
+				}
+			}
+		}
+	}
+
+	$pdo = null;
 
 	return true;
 }

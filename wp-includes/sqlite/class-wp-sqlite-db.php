@@ -18,7 +18,7 @@ class WP_SQLite_DB extends wpdb {
 	 *
 	 * @access protected
 	 *
-	 * @var WP_SQLite_PDO_Engine
+	 * @var WP_SQLite_Translator
 	 */
 	protected $dbh;
 
@@ -29,6 +29,7 @@ class WP_SQLite_DB extends wpdb {
 	 */
 	public function __construct() {
 		parent::__construct( '', '', '', '' );
+		$this->charset = 'utf8mb4';
 	}
 
 	/**
@@ -46,6 +47,20 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
+	 * Method to get the character set for the database.
+	 * Hardcoded to utf8mb4 for now.
+	 *
+	 * @param string $table  The table name.
+	 * @param string $column The column name.
+	 *
+	 * @return string The character set.
+	 */
+	public function get_col_charset( $table, $column ) {
+		// Hardcoded for now.
+		return 'utf8mb4';
+	}
+
+	/**
 	 * Method to dummy out wpdb::set_sql_mode()
 	 *
 	 * @see wpdb::set_sql_mode()
@@ -53,6 +68,16 @@ class WP_SQLite_DB extends wpdb {
 	 * @param array $modes Optional. A list of SQL modes to set.
 	 */
 	public function set_sql_mode( $modes = array() ) {
+	}
+
+	/**
+	 * Closes the current database connection.
+	 * Noop in SQLite.
+	 *
+	 * @return bool True to indicate the connection was successfully closed.
+	 */
+	public function close() {
+		return true;
 	}
 
 	/**
@@ -197,9 +222,22 @@ class WP_SQLite_DB extends wpdb {
 	 * @return void
 	 */
 	public function db_connect( $allow_bail = true ) {
+		if ( $this->dbh ) {
+			return;
+		}
 		$this->init_charset();
-		$this->dbh   = new WP_SQLite_PDO_Engine();
-		$this->ready = true;
+
+		$pdo = null;
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			$pdo = $GLOBALS['@pdo'];
+		}
+		$this->dbh        = new WP_SQLite_Translator( $pdo );
+		$this->last_error = $this->dbh->get_error_message();
+		if ( $this->last_error ) {
+			return false;
+		}
+		$GLOBALS['@pdo'] = $this->dbh->get_pdo();
+		$this->ready     = true;
 	}
 
 	/**
@@ -249,12 +287,12 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->last_error = $this->dbh->get_error_message();
-		if ( $this->last_error && ( ! defined( 'WP_INSTALLING' ) || ! WP_INSTALLING ) ) {
+		if ( $this->last_error ) {
 			$this->print_error( $this->last_error );
 			return false;
 		}
 
-		if ( preg_match( '/^\\s*(create|alter|truncate|drop|optimize)\\s*/i', $query ) ) {
+		if ( preg_match( '/^\\s*(set|create|alter|truncate|drop|optimize)\\s*/i', $query ) ) {
 			return $this->dbh->get_return_value();
 		}
 
