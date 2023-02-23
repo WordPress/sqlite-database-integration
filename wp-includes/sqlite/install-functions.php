@@ -64,6 +64,12 @@ function sqlite_make_db_sqlite() {
 		}
 	}
 
+	/*
+	 * Debug: Cross-check with MySQL.
+	 * This is for debugging purpose only and requires files
+	 * that are present in the GitHub repository
+	 * but not the plugin published on WordPress.org.
+	 */
 	if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK ) {
 		$host = DB_HOST;
 		$port = 3306;
