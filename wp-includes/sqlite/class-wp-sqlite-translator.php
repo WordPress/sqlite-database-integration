@@ -728,7 +728,7 @@ class WP_SQLite_Translator extends PDO {
 				} else {
 					$data['multiple_key'] = 1;
 				}
-				$this->column_data[] = new WP_SQLite_Object_Array( $data );
+				$this->column_data[] = json_decode( json_encode( $data ) );
 
 				// Reset data for next iteration.
 				$data['name']         = '';
