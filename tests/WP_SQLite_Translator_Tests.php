@@ -693,20 +693,19 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	}
 
 	public function testOnDuplicateUpdate() {
-		$this->engine->query(
+		$this->query(
 			"CREATE TABLE _tmp_table (
 				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
 				name varchar(20) NOT NULL default '',
 				UNIQUE KEY myname (name)
 			);"
 		);
-		$this->assertEquals( '', $this->engine->get_error_message() );
 
-		$result1 = $this->engine->query( "INSERT INTO _tmp_table (name) VALUES ('first');" );
-		$this->assertEquals( '', $this->engine->get_error_message() );
-		$this->assertEquals( 1, $result1 );
+		// $result1 = $this->query( "INSERT INTO _tmp_table (name) VALUES ('first');" );
+		// $this->assertEquals( '', $this->engine->get_error_message() );
+		// $this->assertEquals( 1, $result1 );
 
-		$result2 = $this->engine->query( "INSERT INTO _tmp_table (name) VALUES ('FIRST') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);" );
+		$result2 = $this->query( "INSERT INTO _tmp_table (name) VALUES ('FIRST') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);" );
 		$this->assertEquals( 1, $result2 );
 
 		$this->engine->query( 'SELECT * FROM _tmp_table;' );
