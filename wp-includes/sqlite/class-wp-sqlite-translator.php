@@ -1284,14 +1284,11 @@ class WP_SQLite_Translator {
 					$rows      .= " WHEN name = '$table_name' THEN {$count['count']} ";
 				}
 				$rows         .= 'ELSE 0 END) ';
-				$updated_query = $this->execute_sqlite_query(
-					"SELECT name as `table`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name"
-				);
+				$updated_query = "SELECT name as `table`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name";
 			} else {
-				$updated_query = $this->execute_sqlite_query(
-					"SELECT name, 'myisam' as `engine`, 0 as `data`, 0 as `index` FROM sqlite_master WHERE type='table' ORDER BY name"
-				);
+				$updated_query = "SELECT name, 'myisam' as `engine`, 0 as `data`, 0 as `index` FROM sqlite_master WHERE type='table' ORDER BY name";
 			}
+			$params = array();
 		} elseif (
 			strpos( $updated_query, '@@SESSION.sql_mode' ) !== false
 			|| strpos( $updated_query, 'CONVERT( ' ) !== false
