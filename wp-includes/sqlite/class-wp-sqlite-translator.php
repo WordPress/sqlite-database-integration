@@ -140,7 +140,7 @@ class WP_SQLite_Translator {
 	/**
 	 * Number of rows found by the last SQL_CALC_FOUND_ROW query.
 	 *
-	 * @var unsigned integer
+	 * @var int integer
 	 */
 	private $last_sql_calc_found_rows = null;
 
@@ -209,7 +209,7 @@ class WP_SQLite_Translator {
 	/**
 	 * Class variable to store the affected row id.
 	 *
-	 * @var unsigned integer
+	 * @var int integer
 	 * @access private
 	 */
 	private $last_insert_id;
@@ -217,7 +217,7 @@ class WP_SQLite_Translator {
 	/**
 	 * Class variable to store the number of rows affected.
 	 *
-	 * @var unsigned integer
+	 * @var int integer
 	 */
 	private $affected_rows;
 
@@ -324,8 +324,11 @@ class WP_SQLite_Translator {
 		$this->client_info = SQLite3::version()['versionString'];
 
 		register_shutdown_function( array( $this, '__destruct' ) );
-		$this->init();
-
+		
+		$statement = $this->pdo->query( 'PRAGMA foreign_keys' );
+		if ( $statement->fetchColumn( 0 ) == '0' ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
+		}
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
 	}
 
@@ -363,25 +366,6 @@ class WP_SQLite_Translator {
 				);
 				error_log( $message );
 			}
-		}
-	}
-
-	/**
-	 * Method to initialize database, executed in the constructor.
-	 *
-	 * It checks if WordPress is in the installing process and does the required
-	 * jobs. SQLite library version specific settings are also in this function.
-	 *
-	 * Some developers use WP_INSTALLING constant for other purposes, if so, this
-	 * function will do no harms.
-	 */
-	private function init() {
-		if ( version_compare( SQLite3::version()['versionString'], '3.7.11', '>=' ) ) {
-			$this->can_insert_multiple_rows = true;
-		}
-		$statement = $this->pdo->query( 'PRAGMA foreign_keys' );
-		if ( $statement->fetchColumn( 0 ) == '0' ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
 	}
 
@@ -538,7 +522,7 @@ class WP_SQLite_Translator {
 	 * These data are meaningless for SQLite. So they are dummy emulating
 	 * MySQL columns data.
 	 *
-	 * @return array of the object
+	 * @return array|null of the object
 	 */
 	public function get_columns() {
 		if ( ! empty( $this->results ) ) {
@@ -568,7 +552,7 @@ class WP_SQLite_Translator {
 				'numeric'      => 0,  // 1 if column has numeric value.
 				'blob'         => 0,  // 1 if column is blob.
 				'type'         => '', // Type of the column.
-				'unsigned'     => 0,  // 1 if column is unsigned integer.
+				'int'     => 0,  // 1 if column is int integer.
 				'zerofill'     => 0,  // 1 if column is zero-filled.
 			);
 			$table_name  = '';
@@ -636,8 +620,6 @@ class WP_SQLite_Translator {
 	 * @param string $query The query.
 	 *
 	 * @throws Exception If the query is not supported.
-	 *
-	 * @return stdClass
 	 */
 	private function execute_mysql_query( $query ) {
 		$tokens           = ( new WP_SQLite_Lexer( $query ) )->tokens;
@@ -711,7 +693,6 @@ class WP_SQLite_Translator {
 			default:
 				throw new Exception( 'Unknown query type: ' . $query_type );
 		}
-		return $this->last_exec_returned;
 	}
 
 	/**
@@ -855,7 +836,7 @@ class WP_SQLite_Translator {
 			) ) {
 				$result->fields[] = $this->parse_mysql_create_table_field();
 			} else {
-				$result->constraints[] = $this->parse_mysql_create_table_constraint( $result->name );
+				$result->constraints[] = $this->parse_mysql_create_table_constraint();
 			}
 
 			/*
@@ -2203,7 +2184,6 @@ class WP_SQLite_Translator {
 	 *
 	 * @throws Exception If the subject is not 'table', or we're performing an unknown operation.
 	 *
-	 * @return stdClass
 	 */
 	private function execute_alter() {
 		$this->rewriter->consume();
@@ -2479,6 +2459,7 @@ class WP_SQLite_Translator {
 				$this->rewriter->get_updated_query()
 			);
 		} while ( $comma );
+
 		$this->results = 1;
 		$this->return_value = $this->results;
 	}
@@ -2718,9 +2699,9 @@ class WP_SQLite_Translator {
 			$mysql_data_type .= $this->rewriter->skip()->token;
 		}
 
-		// Skip the unsigned keyword.
-		$unsigned_maybe = $this->rewriter->peek();
-		if ( $unsigned_maybe && $unsigned_maybe->matches(
+		// Skip the int keyword.
+		$int_maybe = $this->rewriter->peek();
+		if ( $int_maybe && $int_maybe->matches(
 			WP_SQLite_Token::TYPE_KEYWORD,
 			null,
 			array( 'UNSIGNED' )
