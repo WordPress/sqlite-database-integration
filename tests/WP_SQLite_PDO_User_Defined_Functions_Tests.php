@@ -2,8 +2,6 @@
 
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
-
 class WP_SQLite_PDO_User_Defined_Functions_Tests extends TestCase {
 
 	/**

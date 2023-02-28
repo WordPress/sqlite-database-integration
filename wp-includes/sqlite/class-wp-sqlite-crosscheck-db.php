@@ -1,6 +1,6 @@
 <?php
 
-class WP_SQLite_Crosscheck_DB extends WP_SQLite_DB {
+class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 
 	public function __construct() {
 		parent::__construct();

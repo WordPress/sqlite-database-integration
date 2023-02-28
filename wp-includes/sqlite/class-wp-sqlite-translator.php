@@ -9,8 +9,7 @@
 /**
  * The queries translator class.
  */
-class WP_SQLite_Translator extends PDO {
-
+class WP_SQLite_Translator {
 
 	const SQLITE_BUSY   = 5;
 	const SQLITE_LOCKED = 6;
@@ -319,7 +318,6 @@ class WP_SQLite_Translator extends PDO {
 				try {
 					$dsn = 'sqlite:' . FQDB;
 					$pdo = new PDO( $dsn, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
-					new WP_SQLite_PDO_User_Defined_Functions( $pdo );
 				} catch ( PDOException $ex ) {
 					$status = $ex->getCode();
 					if ( 5 === $status || 6 === $status ) {
@@ -342,11 +340,14 @@ class WP_SQLite_Translator extends PDO {
 
 				return false;
 			}
-
-			// MySQL data comes across stringified by default.
-			$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
-			$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
 		}
+		
+		new WP_SQLite_PDO_User_Defined_Functions( $pdo );
+
+		// MySQL data comes across stringified by default.
+		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
+
 		$this->pdo = $pdo;
 
 		// Fixes a warning in the site-health screen.
@@ -357,7 +358,7 @@ class WP_SQLite_Translator extends PDO {
 
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
 
-		$this->table_prefix = $GLOBALS['table_prefix'];
+		$this->table_prefix = isset($GLOBALS['table_prefix']) ? $GLOBALS['table_prefix'] : 'wp_';
 	}
 
 	/**
