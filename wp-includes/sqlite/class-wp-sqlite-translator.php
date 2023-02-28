@@ -289,12 +289,12 @@ class WP_SQLite_Translator {
 	private $return_value;
 
 	/**
-	 * Variable to check if there is an active transaction.
+	 * Variable to keep track of nested transactions level.
 	 *
-	 * @var boolean
+	 * @var number
 	 * @access protected
 	 */
-	protected $has_active_transaction = false;
+	protected $transaction_level = 0;
 
 	/**
 	 * Constructor.
@@ -341,7 +341,7 @@ class WP_SQLite_Translator {
 				return false;
 			}
 		}
-		
+
 		new WP_SQLite_PDO_User_Defined_Functions( $pdo );
 
 		// MySQL data comes across stringified by default.
@@ -523,19 +523,22 @@ class WP_SQLite_Translator {
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
+		if (
+			preg_match( '/^\s*START TRANSACTION/i', $statement )
+			|| preg_match( '/^\s*BEGIN/i', $statement )
+		) {
+			return $this->beginTransaction();
+		}
+		if ( preg_match( '/^\s*COMMIT/i', $statement ) ) {
+			return $this->commit();
+		}
+		if ( preg_match( '/^\s*ROLLBACK/i', $statement ) ) {
+			return $this->rollBack();
+		}
+
 		try {
-			if (
-				preg_match( '/^START TRANSACTION/i', $statement )
-				|| preg_match( '/^BEGIN/i', $statement )
-			) {
-				return $this->beginTransaction();
-			}
-			if ( preg_match( '/^COMMIT/i', $statement ) ) {
-				return $this->commit();
-			}
-			if ( preg_match( '/^ROLLBACK/i', $statement ) ) {
-				return $this->rollBack();
-			}
+			// Perform all the queries in a nested transaction.
+			$this->beginTransaction();
 
 			do {
 				$error = null;
@@ -629,8 +632,12 @@ class WP_SQLite_Translator {
 					break;
 			}
 
+			// Commit the nested transaction.
+			$this->commit();
 			return $this->return_value;
 		} catch ( Exception $err ) {
+			// Rollback the nested transaction.
+			$this->rollBack();
 			if ( defined( 'PDO_DEBUG' ) && PDO_DEBUG === true ) {
 				throw $err;
 			}
@@ -2999,11 +3006,19 @@ class WP_SQLite_Translator {
 	 * @return boolean
 	 */
 	public function beginTransaction() {
-		if ( $this->has_active_transaction ) {
-			return false;
+		$success = false;
+		try {
+			if (0 === $this->transaction_level) {
+				$success = $this->pdo->beginTransaction();
+			} else {
+				$success = $this->pdo->query('SAVEPOINT LEVEL' . $this->transaction_level);
+			}
+		} finally {
+			if ($success) {
+				++$this->transaction_level;
+			}
 		}
-		$this->has_active_transaction = $this->pdo->beginTransaction();
-		return $this->has_active_transaction;
+		return $success;
 	}
 
 	/**
@@ -3011,12 +3026,18 @@ class WP_SQLite_Translator {
 	 *
 	 * @see PDO::commit()
 	 *
-	 * @return void
+	 * @return boolean True on success, false on failure.
 	 */
 	public function commit() {
-		if ( $this->has_active_transaction ) {
-			$this->pdo->commit();
-			$this->has_active_transaction = false;
+		if ( $this->transaction_level === 0 ) {
+			return false;
+		}
+
+		--$this->transaction_level;
+		if ( 0 === $this->transaction_level ) {
+			return $this->pdo->commit();
+		} else {
+			return (bool) $this->pdo->query( 'RELEASE SAVEPOINT LEVEL' . $this->transaction_level );
 		}
 	}
 
@@ -3025,12 +3046,18 @@ class WP_SQLite_Translator {
 	 *
 	 * @see PDO::rollBack()
 	 *
-	 * @return void
+	 * @return boolean True on success, false on failure.
 	 */
 	public function rollBack() {
-		if ( $this->has_active_transaction ) {
-			$this->pdo->rollBack();
-			$this->has_active_transaction = false;
+		if ( $this->transaction_level === 0 ) {
+			return false;
+		}
+
+		--$this->transaction_level;
+		if ( 0 === $this->transaction_level ) {
+			return $this->pdo->rollBack();
+		} else {
+			return (bool) $this->pdo->query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
 		}
 	}
 }
