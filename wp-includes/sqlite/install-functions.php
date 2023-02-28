@@ -33,35 +33,29 @@ function sqlite_make_db_sqlite() {
 	$query      = null;
 
 	try {
-		$pdo->beginTransaction();
+		$translator->begin_transaction();
 		foreach ( $queries as $query ) {
 			$query = trim( $query );
 			if ( empty( $query ) ) {
 				continue;
 			}
 
-			$translation = $translator->translate( $query );
-			foreach ( $translation->queries as $query ) {
-				$stmt = $pdo->prepare( $query->sql );
-				$stmt->execute( $query->params );
+			$result = $translator->query($query);
+			if( false === $result ) {
+				throw new PDOException($translator->get_error_message());
 			}
 		}
-		$pdo->commit();
+		$translator->commit();
 	} catch ( PDOException $err ) {
 		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 		$err_code = $err_data[1];
-		if ( 5 == $err_code || 6 == $err_code ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
-			// If the database is locked, commit again.
-			$pdo->commit();
-		} else {
-			$pdo->rollBack();
-			$message  = sprintf(
-				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
-				var_export( $query, true )
-			);
-			$message .= sprintf( 'Error message is: %s', $err_data[2] );
-			wp_die( $message, 'Database Error!' );
-		}
+		$translator->rollback();
+		$message  = sprintf(
+			'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
+			var_export( $query, true )
+		);
+		$message .= sprintf( 'Error message is: %s', $err_data[2] );
+		wp_die( $message, 'Database Error!' );
 	}
 
 	/*
