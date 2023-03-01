@@ -44,6 +44,17 @@ function sqlite_activation() {
 }
 add_action( 'admin_init', 'sqlite_activation' );
 
+// Flush the cache at the last moment before the redirect.
+add_filter(
+	'x_redirect_by',
+	function ( $result ) {
+		wp_cache_flush();
+		return $result;
+	},
+	PHP_INT_MAX,
+	1
+);
+
 /**
  * Add the db.php file in wp-content.
  *
