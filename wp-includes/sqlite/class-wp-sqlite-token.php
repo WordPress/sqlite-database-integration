@@ -6,8 +6,6 @@
  * @see https://github.com/phpmyadmin/sql-parser
  */
 
-declare(strict_types=1);
-
 /**
  * Defines a token along with a set of types and flags and utility functions.
  *
@@ -213,7 +211,7 @@ class WP_SQLite_Token {
 	 *
 	 * @return bool
 	 */
-	public function matches( $type = null, $flags = null, ?array $values = null ) {
+	public function matches( $type = null, $flags = null, $values = null ) {
 		if ( null === $type && null === $flags && ( null === $values || array() === $values ) ) {
 			return ! $this->is_semantically_void();
 		}
