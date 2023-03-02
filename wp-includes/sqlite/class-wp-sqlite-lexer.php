@@ -6,8 +6,6 @@
  * @see https://github.com/phpmyadmin/sql-parser
  */
 
-declare(strict_types=1);
-
 /**
  * Performs lexical analysis over a SQL statement and splits it in multiple tokens.
  */
@@ -2533,7 +2531,7 @@ class WP_SQLite_Lexer {
 	 * @param int $type The type of the token.
 	 * @param int $flag The flag of the token.
 	 */
-	public function tokens_get_next_of_type_and_flag( int $type, int $flag ) {
+	public function tokens_get_next_of_type_and_flag( $type, $flag ) {
 		for ( ; $this->tokens_index < $this->tokens_count; ++$this->tokens_index ) {
 			if ( ( $this->tokens[ $this->tokens_index ]->type === $type ) && ( $this->tokens[ $this->tokens_index ]->flags === $flag ) ) {
 				return $this->tokens[ $this->tokens_index++ ];
