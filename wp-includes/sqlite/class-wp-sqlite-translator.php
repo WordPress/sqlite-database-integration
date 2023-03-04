@@ -272,6 +272,12 @@ class WP_SQLite_Translator {
 	 */
 	private $last_reserved_keyword;
 
+	/*
+	 * True if a VACUUM operation should be done on shutdown, to handle OPTIMIZE TABLE and similar operations.
+	 *
+	 * @var bool
+	 */
+	private $vacuum_requested = false;
 	/**
 	 * Constructor.
 	 *
@@ -476,6 +482,35 @@ class WP_SQLite_Translator {
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
+
+		/**
+		 * Filters queries before they are translated and run.
+		 *
+		 * Return a non-null value to cause query() to return early with that result.
+		 * Use this filter to intercept queries that don't work correctly in SQLite.
+		 *
+		 * From within the filter you can do
+		 *  function filter_sql ($result, $translator, $statement, $mode, $fetch_mode_args) {
+		 *     if ( intercepting this query  ) {
+		 *       return $translator->exec_sqlite_query( $statement );
+	     *     }
+		 *     return $result;
+		 *   }
+		 *
+		 * @param null|array $result  Default null to continue with the query.
+		 * @param object $translator The translator object. You can call $translator->execute_sqlite_query().
+		 * @param string $statement The statement passed.
+		 * @param int $mode Fetch mode: PDO::FETCH_OBJ, PDO::FETCH_CLASS, etc.
+		 * @param array $fetch_mode_args Variable arguments passed to query.
+		 *
+		 * @returns null|array Null to proceed, or an array containing a resultset.
+		 * @since 2.1.0
+		 *
+		 */
+		$pre = apply_filters( 'pre_query_sqlite_db', null, $this, $statement, $mode, $fetch_mode_args );
+		if ( null !== $pre ) {
+			return $pre;
+		}
 		$this->pdo_fetch_mode = $mode;
 		$this->mysql_query    = $statement;
 		if (
@@ -693,6 +728,14 @@ class WP_SQLite_Translator {
 
 			case 'DESCRIBE':
 				$this->execute_describe();
+				break;
+
+			case 'CHECK':
+				$this->execute_check();
+				break;
+
+			case 'OPTIMIZE':
+				$this->execute_optimize();
 				break;
 
 			default:
@@ -1112,7 +1155,7 @@ class WP_SQLite_Translator {
 		if ( str_contains( $updated_query, ' JOIN ' ) ) {
 			$table_prefix = isset( $GLOBALS['table_prefix'] ) ? $GLOBALS['table_prefix'] : 'wp_';
 			$this->execute_sqlite_query(
-				"DELETE FROM {$table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$table_prefix}options GROUP BY option_name HAVING COUNT(*) > 1)"
+				"DELETE FROM {$table_prefix}options WHERE option_id IN (SELECT MIN(option_id) FROM {$table_prefix}options GROUP BY option_name HAVING COUNT(1) > 1)"
 			);
 			$this->set_result_from_affected_rows();
 			return;
@@ -1273,22 +1316,8 @@ class WP_SQLite_Translator {
 		$updated_query = $this->rewriter->get_updated_query();
 
 		if ( $table_name && str_starts_with( strtolower( $table_name ), 'information_schema' ) ) {
-			// @TODO: Actually rewrite the columns.
-			if ( str_contains( $updated_query, 'bytes' ) ) {
-				// Count rows per table.
-				$tables = $this->execute_sqlite_query( "SELECT name as `table` FROM sqlite_master WHERE type='table' ORDER BY name" )->fetchAll();
-				$rows   = '(CASE ';
-				foreach ( $tables as $table ) {
-					$table_name = $table['table'];
-					$count      = $this->execute_sqlite_query( "SELECT COUNT(*) as `count` FROM $table_name" )->fetch();
-					$rows      .= " WHEN name = '$table_name' THEN {$count['count']} ";
-				}
-				$rows         .= 'ELSE 0 END) ';
-				$updated_query = "SELECT name as `table`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name";
-			} else {
-				$updated_query = "SELECT name, 'myisam' as `engine`, 0 as `data`, 0 as `index` FROM sqlite_master WHERE type='table' ORDER BY name";
-			}
-			$params = array();
+			$updated_query = $this->get_information_schema_query( $updated_query );
+			$params        = array();
 		} elseif (
 			strpos( $updated_query, '@@SESSION.sql_mode' ) !== false
 			|| strpos( $updated_query, 'CONVERT( ' ) !== false
@@ -1318,9 +1347,17 @@ class WP_SQLite_Translator {
 		}
 
 		$stmt = $this->execute_sqlite_query( $updated_query, $params );
-		$this->set_results_from_fetched_data(
-			$stmt->fetchAll( $this->pdo_fetch_mode )
-		);
+		if ( $table_name && str_starts_with( strtolower( $table_name ), 'information_schema' ) ) {
+			$this->set_results_from_fetched_data(
+				$this->strip_sqlite_system_tables(
+					$stmt->fetchAll( $this->pdo_fetch_mode)
+				)
+			);
+		} else {
+			$this->set_results_from_fetched_data(
+				$stmt->fetchAll( $this->pdo_fetch_mode )
+			);
+		}
 	}
 
 	/**
@@ -1386,6 +1423,39 @@ class WP_SQLite_Translator {
 		if ( ! $this->results ) {
 			throw new PDOException( 'Table not found' );
 		}
+	}
+
+	/**
+	 * Executes a CHECK statement.
+	 */
+	private function execute_check() {
+		$this->rewriter->skip();
+		$table_name = $this->rewriter->consume()->value;
+		$this->set_results_from_fetched_data( array ((object)
+		[
+			'Table'    => $table_name,
+			'Op'       => 'check',
+			'Msg_type' => 'status',
+			'Msg_text' => 'OK'
+		] ));
+	}
+
+	/**
+	 * Handle an OPTIMIZE TABLE statement, by using VACUUM just once.
+	 */
+	private function execute_optimize() { // OPTIMIZE TABLE tablename
+		$this->rewriter->skip();
+
+		if ( ! $this->vacuum_requested ) {
+			$this->vacuum_requested = true;
+			add_action(
+				'shutdown',
+				function () {
+					$this->execute_sqlite_query( 'VACUUM' );
+				}
+			);
+		}
+		$this->set_results_from_fetched_data( array () );
 	}
 
 	/**
@@ -2684,6 +2754,26 @@ class WP_SQLite_Translator {
 				);
 				return;
 
+			case 'TABLE STATUS':  // FROM `database`.
+				$this->rewriter->skip();
+				$database_expression = $this->rewriter->skip();
+				$stmt             = $this->execute_sqlite_query(
+					"SELECT name as `Name`, 'myisam' as `Engine`, 0 as `Data_length`, 0 as `Index_length`, 0 as `Data_free` FROM sqlite_master WHERE type='table' ORDER BY name"
+				);
+
+				$tables = $this->strip_sqlite_system_tables( $stmt->fetchAll( $this->pdo_fetch_mode ) );
+				foreach ($tables as $table) {
+					$tableName = $table->Name;
+					$stmt = $this->execute_sqlite_query ("SELECT COUNT(1) as `Rows` FROM $tableName" );
+					$rows = $stmt->fetchall ( $this->pdo_fetch_mode );
+					$table->Rows = $rows[0]->Rows;
+				}
+
+				$this->set_results_from_fetched_data(
+					$this->strip_sqlite_system_tables( $tables)
+				);
+				return;
+
 			case 'TABLES LIKE':
 				$table_expression = $this->rewriter->skip();
 				$stmt             = $this->execute_sqlite_query(
@@ -3097,5 +3187,57 @@ class WP_SQLite_Translator {
 			$this->execute_sqlite_query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
 		}
 		return $this->last_exec_returned;
+	}
+
+	/**
+	 * Rewrite a query from the MySQL information_schema.
+	 *
+	 * @param string $updated_query The query to rewrite
+	 *
+	 * @return string The query for use by SQLite
+	 */
+	private function get_information_schema_query( $updated_query ) {
+// @TODO: Actually rewrite the columns.
+		if ( str_contains( $updated_query, 'bytes' ) ) {
+			// Count rows per table.
+			$tables =
+				$this->execute_sqlite_query( "SELECT name as `table_name` FROM sqlite_master WHERE type='table' ORDER BY name" )->fetchAll();
+			$tables = $this->strip_sqlite_system_tables( $tables );
+
+			$rows = '(CASE ';
+			foreach ( $tables as $table ) {
+				$table_name = $table['table_name'];
+				$count      = $this->execute_sqlite_query( "SELECT COUNT(1) as `count` FROM $table_name" )->fetch();
+				$rows       .= " WHEN name = '$table_name' THEN {$count['count']} ";
+			}
+			$rows          .= 'ELSE 0 END) ';
+			$updated_query =
+				"SELECT name as `table_name`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name";
+		} else {
+			$updated_query =
+				"SELECT name as `table_name`, 'myisam' as `engine`, 0 as `data_length`, 0 as `index_length`, 0 as `data_free` FROM sqlite_master WHERE type='table' ORDER BY name";
+		}
+
+		return $updated_query;
+	}
+
+	/**
+	 * Remove system table rows from resultsets of information_schema tables.
+	 *
+	 * @param array $tables The result set.
+	 *
+	 * @return array The filtered result set.
+	 */
+	private function strip_sqlite_system_tables( $tables ) {
+		return array_filter( $tables, function ( $table ) {
+			$table_name = property_exists ($table, 'Name') ? $table->Name : $table->table_name;
+			switch ($table_name) {
+				case 'sqlite_sequence':
+				case '_mysql_data_types_cache':
+					return false;
+				default:
+					return true;
+			}
+		}, ARRAY_FILTER_USE_BOTH );
 	}
 }
