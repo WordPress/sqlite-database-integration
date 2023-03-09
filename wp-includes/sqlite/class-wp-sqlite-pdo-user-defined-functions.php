@@ -85,6 +85,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_time'       => 'utc_time',
 		'utc_timestamp'  => 'utc_timestamp',
 		'version'        => 'version',
+		'substring'      => 'substring',
 	);
 
 	/**
@@ -458,11 +459,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * As 'IF' is a reserved word for PHP, function name must be changed.
 	 *
-	 * @param unknonw $expression the statement to be evaluated as true or false.
-	 * @param unknown $true statement or value returned if $expression is true.
-	 * @param unknown $false statement or value returned if $expression is false.
+	 * @param mixed $expression the statement to be evaluated as true or false.
+	 * @param mixed $true statement or value returned if $expression is true.
+	 * @param mixed $false statement or value returned if $expression is false.
 	 *
-	 * @return unknown
+	 * @return mixed
 	 */
 	public function _if( $expression, $true, $false ) {
 		return ( true === $expression ) ? $true : $false;
@@ -755,4 +756,34 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	public function version() {
 		return '5.5';
 	}
+	/**
+	 * Method to emulate MySQL SUBSTRING() function.
+	 *
+	 * This function returns a substring. If the mbstring extension is loaded, the mb_substr() function is
+	 * used.
+	 *
+	 * @param string  $string  Haystack.
+	 * @param integer $pos     Position.
+	 * @param integer $len     Length.
+	 *
+	 * @return string
+	 */
+	public function substring( $string, $pos, $len = null ) {
+		if ( null !== $len && $len < 1 ) {
+			return '';
+		}
+		if ( ! extension_loaded( 'mbstring' ) ) {
+			if ( null === $len ) {
+				return substr( $string, $pos );
+			} else {
+				return substr( $string, $pos, $len );
+			}
+		}
+		if ( null === $len ) {
+			return mb_substr( $string, $pos );
+		} else {
+			return mb_substr( $string, $pos, $len );
+		}
+	}
+
 }
