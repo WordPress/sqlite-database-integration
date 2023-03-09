@@ -40,9 +40,9 @@ function sqlite_make_db_sqlite() {
 				continue;
 			}
 
-			$result = $translator->query($query);
-			if( false === $result ) {
-				throw new PDOException($translator->get_error_message());
+			$result = $translator->query( $query );
+			if ( false === $result ) {
+				throw new PDOException( $translator->get_error_message() );
 			}
 		}
 		$translator->commit();

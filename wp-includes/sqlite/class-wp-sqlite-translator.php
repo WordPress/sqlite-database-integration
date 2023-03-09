@@ -145,6 +145,20 @@ class WP_SQLite_Translator {
 	private $last_sql_calc_found_rows = null;
 
 	/**
+	 * Most recent SQLite statement.
+	 *
+	 * @var string|null
+	 */
+    private $last_sqlite_statement = null;
+
+	/**
+	 * Most recent SQLite error message.
+	 *
+	 * @var string|null
+	 */
+	private $last_sqlite_error = null;
+
+	/**
 	 * The query rewriter.
 	 *
 	 * @var WP_SQLite_Query_Rewriter
@@ -278,6 +292,13 @@ class WP_SQLite_Translator {
 	 * @var bool
 	 */
 	private $vacuum_requested = false;
+
+	/**
+	 * True if the present query is metadata
+	 *
+	 * @var bool
+	 */
+	private $is_information_schema_query = false;
 	/**
 	 * Constructor.
 	 *
@@ -336,6 +357,7 @@ class WP_SQLite_Translator {
 
 		register_shutdown_function( array( $this, '__destruct' ) );
 
+		// WordPress happends to use no foreign keys.
 		$statement = $this->pdo->query( 'PRAGMA foreign_keys' );
 		if ( $statement->fetchColumn( 0 ) == '0' ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
 			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
@@ -483,33 +505,35 @@ class WP_SQLite_Translator {
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
 		$this->flush();
 
-		/**
-		 * Filters queries before they are translated and run.
-		 *
-		 * Return a non-null value to cause query() to return early with that result.
-		 * Use this filter to intercept queries that don't work correctly in SQLite.
-		 *
-		 * From within the filter you can do
-		 *  function filter_sql ($result, $translator, $statement, $mode, $fetch_mode_args) {
-		 *     if ( intercepting this query  ) {
-		 *       return $translator->exec_sqlite_query( $statement );
-	     *     }
-		 *     return $result;
-		 *   }
-		 *
-		 * @param null|array $result  Default null to continue with the query.
-		 * @param object $translator The translator object. You can call $translator->execute_sqlite_query().
-		 * @param string $statement The statement passed.
-		 * @param int $mode Fetch mode: PDO::FETCH_OBJ, PDO::FETCH_CLASS, etc.
-		 * @param array $fetch_mode_args Variable arguments passed to query.
-		 *
-		 * @returns null|array Null to proceed, or an array containing a resultset.
-		 * @since 2.1.0
-		 *
-		 */
-		$pre = apply_filters( 'pre_query_sqlite_db', null, $this, $statement, $mode, $fetch_mode_args );
-		if ( null !== $pre ) {
-			return $pre;
+		if (function_exists('apply_filters')) {
+			/**
+			 * Filters queries before they are translated and run.
+			 *
+			 * Return a non-null value to cause query() to return early with that result.
+			 * Use this filter to intercept queries that don't work correctly in SQLite.
+			 *
+			 * From within the filter you can do
+			 *  function filter_sql ($result, $translator, $statement, $mode, $fetch_mode_args) {
+			 *     if ( intercepting this query  ) {
+			 *       return $translator->execute_sqlite_query( $statement );
+			 *     }
+			 *     return $result;
+			 *   }
+			 *
+			 * @param null|array $result  Default null to continue with the query.
+			 * @param object $translator The translator object. You can call $translator->execute_sqlite_query().
+			 * @param string $statement The statement passed.
+			 * @param int $mode Fetch mode: PDO::FETCH_OBJ, PDO::FETCH_CLASS, etc.
+			 * @param array $fetch_mode_args Variable arguments passed to query.
+			 *
+			 * @returns null|array Null to proceed, or an array containing a resultset.
+			 * @since 2.1.0
+			 *
+			 */
+			$pre = apply_filters( 'pre_query_sqlite_db', null, $this, $statement, $mode, $fetch_mode_args );
+			if ( null !== $pre ) {
+				return $pre;
+			}
 		}
 		$this->pdo_fetch_mode = $mode;
 		$this->mysql_query    = $statement;
@@ -735,7 +759,9 @@ class WP_SQLite_Translator {
 				break;
 
 			case 'OPTIMIZE':
-				$this->execute_optimize();
+			case 'REPAIR':
+			case 'ANALYZE':
+				$this->execute_optimize( $query_type );
 				break;
 
 			default:
@@ -1316,6 +1342,7 @@ class WP_SQLite_Translator {
 		$updated_query = $this->rewriter->get_updated_query();
 
 		if ( $table_name && str_starts_with( strtolower( $table_name ), 'information_schema' ) ) {
+			$this->is_information_schema_query = true;
 			$updated_query = $this->get_information_schema_query( $updated_query );
 			$params        = array();
 		} elseif (
@@ -1347,7 +1374,7 @@ class WP_SQLite_Translator {
 		}
 
 		$stmt = $this->execute_sqlite_query( $updated_query, $params );
-		if ( $table_name && str_starts_with( strtolower( $table_name ), 'information_schema' ) ) {
+		if ( $this->is_information_schema_query ) {
 			$this->set_results_from_fetched_data(
 				$this->strip_sqlite_system_tables(
 					$stmt->fetchAll( $this->pdo_fetch_mode)
@@ -1429,33 +1456,86 @@ class WP_SQLite_Translator {
 	 * Executes a CHECK statement.
 	 */
 	private function execute_check() {
-		$this->rewriter->skip();
-		$table_name = $this->rewriter->consume()->value;
-		$this->set_results_from_fetched_data( array ((object)
-		[
-			'Table'    => $table_name,
-			'Op'       => 'check',
-			'Msg_type' => 'status',
-			'Msg_text' => 'OK'
-		] ));
+		$this->rewriter->skip();  // CHECK
+		$this->rewriter->skip();  // TABLE
+		$table_name = $this->rewriter->consume()->value;  // table_name
+
+		$tables =
+			$this->execute_sqlite_query(
+				"SELECT name as `table_name` FROM sqlite_master WHERE type='table' AND name = :table_name ORDER BY name",
+				array ($table_name)
+			)->fetchAll();
+
+		if (is_array($tables) && 1 === count( $tables ) && $table_name === $tables[0]['table_name'] ) {
+
+			$this->set_results_from_fetched_data( array (
+				(object)
+				array(
+					'Table'    => $table_name,
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK'
+				)
+			) );
+		} else {
+
+			$this->set_results_from_fetched_data( array(
+				(object) array(
+					'Table'    => $table_name,
+					'Op'       => 'check',
+					'Msg_type' => 'Error',
+					'Msg_text' => "Table '$table_name' doesn't exist",
+				),
+				(object) array(
+					'Table'    => $table_name,
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+		));
+		}
 	}
 
 	/**
-	 * Handle an OPTIMIZE TABLE statement, by using VACUUM just once.
+	 * Handle an OPTIMIZE / REPAIR / ANALYZE TABLE statement, by using VACUUM just once, at shutdown.
+	 *
+	 * @param string $query type
 	 */
-	private function execute_optimize() { // OPTIMIZE TABLE tablename
+	private function execute_optimize( $query_type ) { // OPTIMIZE TABLE tablename
 		$this->rewriter->skip();
+		$this->rewriter->skip();
+		$table_name = $this->rewriter->skip()->value;
 
 		if ( ! $this->vacuum_requested ) {
 			$this->vacuum_requested = true;
-			add_action(
-				'shutdown',
-				function () {
-					$this->execute_sqlite_query( 'VACUUM' );
-				}
-			);
+			if (function_exists( 'add_action') ) {
+				add_action(
+					'shutdown',
+					function () {
+						$this->execute_sqlite_query( 'VACUUM' );
+					}
+				);
+			} else {
+				/* add_action isn't available in the unit test environment. */
+				$this->execute_sqlite_query( 'VACUUM' );
+			}
 		}
-		$this->set_results_from_fetched_data( array () );
+		$resultset = array(
+			array(
+				"Table"    => $table_name,
+				"Op"       => strtolower( $query_type ),
+				"Msg_type" => "note",
+				"Msg_text" => "SQLite does not support $query_type, doing VACUUM instead",
+			),
+			array(
+				"Table"    => $table_name,
+				"Op"       => strtolower( $query_type ),
+				"Msg_type" => "status",
+				"Msg_text" => "OK",
+			),
+		);
+
+		$this->set_results_from_fetched_data( $resultset );
 	}
 
 	/**
@@ -2967,8 +3047,7 @@ class WP_SQLite_Translator {
 	 */
 	private function handle_error( Exception $err ) {
 		$message     = $err->getMessage();
-		$err_message = sprintf( 'Problem preparing the PDO SQL Statement. Error was: %s. trace: %s', $message, $err->getTraceAsString() );
-		$this->set_error( __LINE__, __FUNCTION__, $err_message );
+		$this->set_error( __LINE__, __FUNCTION__, $message );
 		$this->return_value = false;
 		return false;
 	}
@@ -3025,10 +3104,25 @@ class WP_SQLite_Translator {
 			return '';
 		}
 
-		$output  = '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
+		$msgs = array();
+		foreach ( $this->error_messages as $num => $m ) {
+			$msgs [] = $m;
+		}
+
+		$msg = implode ('; ', $msgs);
+		$output = implode( ' ', array(
+				'<!--',
+				htmlspecialchars( $msg ),
+				'Original: ',
+				htmlspecialchars( $this->mysql_query ),
+				'-->'
+			) ) . PHP_EOL;
+		$output .= '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
 		$output .= '<div class="queries" style="clear:both;margin_bottom:2px;border:red dotted thin;">' . PHP_EOL;
 		$output .= '<p>MySQL query:</p>' . PHP_EOL;
-		$output .= '<p>' . $this->mysql_query . '</p>' . PHP_EOL;
+		$output .= '<p>' . htmlspecialchars( $this->mysql_query ) . '</p>' . PHP_EOL;
+		$output .= '<p>Error</p>' . PHP_EOL;
+		$output .= '<p>' . htmlspecialchars( $msg ) . '</p>' . PHP_EOL;
 		$output .= '<p>Queries made or created this session were:</p>' . PHP_EOL;
 		$output .= '<ol>' . PHP_EOL;
 		foreach ( $this->executed_sqlite_queries as $q ) {
@@ -3053,14 +3147,14 @@ class WP_SQLite_Translator {
 			throw new Exception();
 		} catch ( Exception $e ) {
 			$output .= '<p>Backtrace:</p>' . PHP_EOL;
-			$output .= '<pre>' . htmlspecialchars( $e->getTraceAsString() ) . '</pre>' . PHP_EOL;
+			$output .= '<pre>' . $e->getTraceAsString() . '</pre>' . PHP_EOL;
 		}
 
 		return $output;
 	}
 
 	/**
-	 * Executes a query in SQLite – for internal use only.
+	 * Executes a query in SQLite.
 	 *
 	 * @param mixed $sql The query to execute.
 	 * @param mixed $params The parameters to bind to the query.
@@ -3072,14 +3166,28 @@ class WP_SQLite_Translator {
 	 *     @type * $result The value returned by $stmt.
 	 * }
 	 */
-	private function execute_sqlite_query( $sql, $params = array() ) {
+	public function execute_sqlite_query( $sql, $params = array() ) {
 		$this->executed_sqlite_queries[] = array(
 			'sql'    => $sql,
 			'params' => $params,
 		);
 
-		$stmt                     = $this->pdo->prepare( $sql );
-		$this->last_exec_returned = $stmt->execute( $params );
+		$stmt = $this->pdo->prepare( $sql );
+		if ( false === $stmt || null === $stmt ) {
+			$this->last_exec_returned = null;
+			$info = $this->pdo->errorInfo();
+			$this->last_sqlite_error = $info[0] . ' ' . $info[2];
+			throw new PDOException( implode( ' ', array('Error:',  $info[0], $info[2], 'SQLite:', $sql ) ), $info[1] );
+		}
+		$returned = $stmt->execute( $params );
+		$this->last_exec_returned = $returned;
+		if ( ! $returned ) {
+			$info = $stmt->errorInfo();
+			$this->last_sqlite_error = $info[0] . ' ' . $info[2];
+			throw new PDOException( implode( ' ', array('Error:',  $info[0], $info[2], 'SQLite:', $sql ) ), $info[1] );
+
+		}
+
 		return $stmt;
 	}
 
@@ -3229,15 +3337,17 @@ class WP_SQLite_Translator {
 	 * @return array The filtered result set.
 	 */
 	private function strip_sqlite_system_tables( $tables ) {
-		return array_filter( $tables, function ( $table ) {
-			$table_name = property_exists ($table, 'Name') ? $table->Name : $table->table_name;
-			switch ($table_name) {
-				case 'sqlite_sequence':
-				case '_mysql_data_types_cache':
-					return false;
-				default:
-					return true;
-			}
-		}, ARRAY_FILTER_USE_BOTH );
+		return array_values(
+			array_filter( $tables, function ( $table ) {
+				$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name;
+				switch ( $table_name ) {
+					case 'sqlite_sequence':
+					case '_mysql_data_types_cache':
+						return false;
+					default:
+						return true;
+				}
+			}, ARRAY_FILTER_USE_BOTH )
+		);
 	}
 }
