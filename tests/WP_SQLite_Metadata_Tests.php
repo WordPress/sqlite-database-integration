@@ -194,8 +194,10 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		$actual = $this->engine->get_query_results();
 
 		array_map(
-			function ( $row ) {
-				$this->assertIsArray( $row );
+			function ( $r ) {
+				$this->assertIsObject( $r );
+				$row = $r;
+				$row = (array) $row;
 				$this->assertIsString( $row['Table'] );
 				$this->assertIsString( $row['Op'] );
 				$this->assertIsString( $row['Msg_type'] );
@@ -207,7 +209,7 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		$ok = array_filter(
 			$actual,
 			function ( $row ) {
-				return strtolower( $row['Msg_type'] ) === 'status' && strtolower( $row['Msg_text'] ) === 'ok';
+				return strtolower( $row->Msg_type ) === 'status' && strtolower( $row->Msg_text ) === 'ok';
 			}
 		);
 		$this->assertIsArray( $ok );

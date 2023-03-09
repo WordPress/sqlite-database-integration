@@ -1509,6 +1509,7 @@ class WP_SQLite_Translator {
 		if ( ! $this->vacuum_requested ) {
 			$this->vacuum_requested = true;
 			if (function_exists( 'add_action') ) {
+				$status = "SQLite does not support $query_type, doing VACUUM instead";
 				add_action(
 					'shutdown',
 					function () {
@@ -1516,18 +1517,18 @@ class WP_SQLite_Translator {
 					}
 				);
 			} else {
-				/* add_action isn't available in the unit test environment. */
-				$this->execute_sqlite_query( 'VACUUM' );
+				/* add_action isn't available in the unit test environment, and we're deep in a transaction. */
+				$status = "SQLite unit testing does not support $query_type.";
 			}
 		}
 		$resultset = array(
-			array(
+			(object) array(
 				"Table"    => $table_name,
 				"Op"       => strtolower( $query_type ),
 				"Msg_type" => "note",
-				"Msg_text" => "SQLite does not support $query_type, doing VACUUM instead",
+				"Msg_text" => $status,
 			),
-			array(
+			(object) array(
 				"Table"    => $table_name,
 				"Op"       => strtolower( $query_type ),
 				"Msg_type" => "status",

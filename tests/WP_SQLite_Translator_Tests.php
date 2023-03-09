@@ -1459,6 +1459,23 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$this->markTestSkipped( 'Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ' );
 		}
 		$this->assertEquals( '1', $results[0]->cmp );
+
+		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( '1', $results[0]->cmp );
+
+	}
+
+	public function testZeroPlusStringToFloatComparison() {
+
+		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( '1', $results[0]->cmp );
+
+		$this->assertQuery( "SELECT 0+'1234abcd' = 1234 as cmp;" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( '1', $results[0]->cmp );
+
 	}
 
 	public function testCalcFoundRows() {
@@ -1758,7 +1775,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 
 		$this->assertEquals(
-			array( (object) array( 'ą'  => 'ąłółźćę†' )),
+			array( (object) array( 'ą' => 'ąłółźćę†' )),
 			$this->engine->get_query_results()
 		);
 
@@ -1767,7 +1784,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 
 		$this->assertEquals(
-			array( (object) array( 'ą'  => 'ąłółźćę†' )),
+			array( (object) array( 'ą' => 'ąłółźćę†' )),
 			$this->engine->get_query_results()
 		);
 
