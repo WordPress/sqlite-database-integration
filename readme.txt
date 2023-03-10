@@ -33,7 +33,7 @@ Per the primary purpose of the plugin (see above), it can mostly be considered a
 
 = Where can I submit my plugin feedback? =
 
-Feedback is encouraged and much appreciated, especially since this plugin is a future WordPress core feature. If you need help with troubleshooting or have a question, suggestions, or requests, you can [submit them as an issue in the SQLite GitHub repository](https://github.com/aristath/sqlite/issues/new).
+Feedback is encouraged and much appreciated, especially since this plugin is a future WordPress core feature. If you need help with troubleshooting or have a question, suggestions, or requests, you can [submit them as an issue in the SQLite GitHub repository](https://github.com/wordpress/sqlite-database-integration/issues/new).
 
 = How can I contribute to the plugin? =
 
