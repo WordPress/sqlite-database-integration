@@ -7,11 +7,14 @@
  */
 
 // Temporary - This will be in wp-config.php once SQLite is merged in Core.
-if ( ! defined( 'DATABASE_TYPE' ) ) {
+if ( ! defined( 'DB_ENGINE' ) ) {
 	if ( defined( 'SQLITE_DB_DROPIN_VERSION' ) ) {
-		define( 'DATABASE_TYPE', 'sqlite' );
+		define( 'DB_ENGINE', 'sqlite' );
+	} elseif ( defined( 'DATABASE_ENGINE' ) ) {
+		// backwards compatibility with previous versions of the plugin.
+		define( 'DB_ENGINE', DATABASE_ENGINE );
 	} else {
-		define( 'DATABASE_TYPE', 'mysql' );
+		define( 'DB_ENGINE', 'mysql' );
 	}
 }
 

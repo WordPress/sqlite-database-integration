@@ -9,8 +9,8 @@
 // Require the constants file.
 require_once dirname( dirname( __DIR__ ) ) . '/constants.php';
 
-// Bail early if DATABASE_TYPE is not defined as sqlite.
-if ( ! defined( 'DATABASE_TYPE' ) || 'sqlite' !== DATABASE_TYPE ) {
+// Bail early if DB_ENGINE is not defined as sqlite.
+if ( ! defined( 'DB_ENGINE' ) || 'sqlite' !== DB_ENGINE ) {
 	return;
 }
 
