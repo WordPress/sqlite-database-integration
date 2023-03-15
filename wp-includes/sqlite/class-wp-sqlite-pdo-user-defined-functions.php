@@ -59,7 +59,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'dayofmonth'     => 'dayofmonth',
 		'unix_timestamp' => 'unix_timestamp',
 		'now'            => 'now',
-		'char_length'    => 'char_length',
 		'md5'            => 'md5',
 		'curdate'        => 'curdate',
 		'rand'           => 'rand',
@@ -85,7 +84,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_time'       => 'utc_time',
 		'utc_timestamp'  => 'utc_timestamp',
 		'version'        => 'version',
-		'substring'      => 'substring',
 	);
 
 	/**
@@ -134,17 +132,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function curdate() {
 		return gmdate( 'Y-m-d' );
-	}
-
-	/**
-	 * Method to emulate MySQL CHAR_LENGTH() function.
-	 *
-	 * @param string $field The string to be measured.
-	 *
-	 * @return int unsigned integer for the length of the argument.
-	 */
-	public function char_length( $field ) {
-		return strlen( $field );
 	}
 
 	/**
@@ -575,7 +562,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	public function least() {
 		$arg_list = func_get_args();
 
-		return "min($arg_list)";
+		return min( $arg_list );
 	}
 
 	/**
@@ -588,7 +575,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	public function greatest() {
 		$arg_list = func_get_args();
 
-		return "max($arg_list)";
+		return max( $arg_list );
 	}
 
 	/**
@@ -755,35 +742,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function version() {
 		return '5.5';
-	}
-	/**
-	 * Method to emulate MySQL SUBSTRING() function.
-	 *
-	 * This function returns a substring. If the mbstring extension is loaded, the mb_substr() function is
-	 * used.
-	 *
-	 * @param string  $string  Haystack.
-	 * @param integer $pos     Position.
-	 * @param integer $len     Length.
-	 *
-	 * @return string
-	 */
-	public function substring( $string, $pos, $len = null ) {
-		if ( null !== $len && $len < 1 ) {
-			return '';
-		}
-		if ( ! extension_loaded( 'mbstring' ) ) {
-			if ( null === $len ) {
-				return substr( $string, $pos );
-			} else {
-				return substr( $string, $pos, $len );
-			}
-		}
-		if ( null === $len ) {
-			return mb_substr( $string, $pos );
-		} else {
-			return mb_substr( $string, $pos, $len );
-		}
 	}
 
 }

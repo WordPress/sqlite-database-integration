@@ -125,6 +125,26 @@ class WP_SQLite_Query_Tests extends TestCase {
 		return $retval;
 	}
 
+	public function testGreatestLeast () {
+		$q = <<<'QUERY'
+SELECT GREATEST('a', 'b') letter;
+QUERY;
+
+		$result = $this->assertQuery( $q );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(1, count( $actual ));
+		$this->assertEquals('b', $actual[0]->letter);
+
+		$q = <<<'QUERY'
+SELECT LEAST('a', 'b') letter;
+QUERY;
+
+		$result = $this->assertQuery( $q );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals(1, count( $actual ));
+		$this->assertEquals('a', $actual[0]->letter);
+	}
+
 	public function testLikeEscapingSimpleNoSemicolon() {
 		$q = <<<'QUERY'
 SELECT DISTINCT meta_key FROM wp_postmeta WHERE meta_key LIKE '\_%'
