@@ -162,7 +162,8 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 
 		array_map(
 			function ( $row ) {
-				$this->assertIsArray( $row );
+				$this->assertIsObject( $row );
+				$row = (array) $row;
 				$this->assertIsString( $row['Table'] );
 				$this->assertIsString( $row['Op'] );
 				$this->assertIsString( $row['Msg_type'] );
@@ -174,12 +175,13 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		$ok = array_filter(
 			$actual,
 			function ( $row ) {
+				$row = (array) $row;
+
 				return strtolower( $row['Msg_type'] ) === 'status' && strtolower( $row['Msg_text'] ) === 'ok';
 			}
 		);
 		$this->assertIsArray( $ok );
 		$this->assertGreaterThan( 0, count( $ok ) );
-
 	}
 
 	public function testRepairTable() {
@@ -214,7 +216,6 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		);
 		$this->assertIsArray( $ok );
 		$this->assertGreaterThan( 0, count( $ok ) );
-
 	}
 
 	// this tests for successful rejection of a bad query
@@ -230,7 +231,6 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		);
 
 		$this->assertTableEmpty( 'wp_comments', false );
-
 
 		$this->assertQuery(
 			'SHOW TABLE STATUS FROM wp;'
@@ -248,16 +248,31 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		$rows = array_values(
 			array_filter(
 				$actual,
-				function( $row ) {
+				function ( $row ) {
 					$this->assertIsObject( $row );
 					$this->assertIsString( $row->Name );
 					$this->assertIsNumeric( $row->Rows );
+
 					return str_ends_with( $row->Name, 'comments' );
 				}
 			)
 		);
 		$this->assertEquals( 'wp_comments', $rows[0]->Name );
 		$this->assertEquals( 4, $rows[0]->Rows );
+	}
+
+	private function assertTableEmpty( $table_name, $empty ) {
+
+		$this->assertQuery(
+			"SELECT COUNT(*) num FROM $table_name"
+		);
+
+		$actual = $this->engine->get_query_results();
+		if ( $empty ) {
+			$this->assertEquals( 0, $actual[0]->num, "$table_name is not empty" );
+		} else {
+			$this->assertGreaterThan( 0, $actual[0]->num, "$table_name is empty" );
+		}
 	}
 
 	public function testTruncateTable() {
@@ -281,20 +296,6 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 			$actual
 		);
 		$this->assertTableEmpty( 'wp_comments', true );
-	}
-
-	private function assertTableEmpty( $table_name, $empty ) {
-
-		$this->assertQuery(
-			"SELECT COUNT(*) num FROM $table_name"
-		);
-
-		$actual = $this->engine->get_query_results();
-		if ( $empty ) {
-			$this->assertEquals( 0, $actual[0]->num, "$table_name is not empty" );
-		} else {
-			$this->assertGreaterThan( 0, $actual[0]->num, "$table_name is empty" );
-		}
 	}
 
 	public function testBogusQuery() {
