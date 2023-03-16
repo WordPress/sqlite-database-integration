@@ -85,7 +85,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 		}
 
 		/* Mock up some transients for testing. Site transients. Two expired, one in the future. */
-		$time = - 15;
+		$time = - 90;
 		foreach ( array( 'tag1', 'tag2', 'tag3' ) as $tag ) {
 			$tv = '_site_transient_' . $tag;
 			$tt = '_site_transient_timeout_' . $tag;
@@ -95,10 +95,10 @@ class WP_SQLite_Query_Tests extends TestCase {
 			$this->assertQuery(
 				"INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('$tt', UNIX_TIMESTAMP() + $time, 'no');"
 			);
-			$time += 10;
+			$time += 60;
 		}
 		/* Ordinary transients. */
-		$time = - 15;
+		$time = - 90;
 		foreach ( array( 'tag4', 'tag5', 'tag6' ) as $tag ) {
 			$tv = '_transient_' . $tag;
 			$tt = '_transient_timeout_' . $tag;
@@ -108,7 +108,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 			$this->assertQuery(
 				"INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('$tt', UNIX_TIMESTAMP() + $time, 'no');"
 			);
-			$time += 10;
+			$time += 60;
 		}
 	}
 
@@ -301,7 +301,8 @@ QUERY;
 	public function testExpiredTransients() {
 		$query = <<<'QUERY'
 SELECT a.option_id, a.option_name, a.option_value as option_content, a.autoload, b.option_value as option_timeout,
-      CONCAT (
+       UNIX_TIMESTAMP() - b.option_value as age,
+       CONCAT (
 			CASE WHEN a.option_name LIKE '\_site\_transient\_%'
 				THEN '_site_transient_timeout_'
 				ELSE '_transient_timeout_'
@@ -340,5 +341,65 @@ QUERY;
 			self::assertLessThan( time(), $row->option_timeout );
 		}
 	}
+	public function testDeleteExpiredNonSiteTransients() {
 
+		$now = time();
+
+		/* option.php: delete_expired_transients is the source of this query. */
+		$query = <<<'QUERY'
+DELETE a, b FROM wp_options a, wp_options b
+WHERE a.option_name LIKE '\_transient\_%'
+AND a.option_name NOT LIKE '\_transient\_timeout_%'
+AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
+AND b.option_value < UNIX_TIMESTAMP()
+QUERY;
+		$this->assertQuery( $query );
+
+		/* are the expired transients gone? */
+		$query = <<<'QUERY'
+SELECT a.option_id, a.option_name, a.option_value as option_content,
+       a.autoload, b.option_value as option_timeout,
+       UNIX_TIMESTAMP() - b.option_value as age,
+      CONCAT (
+			CASE WHEN a.option_name LIKE '\_site\_transient\_%'
+				THEN '_site_transient_timeout_'
+				ELSE '_transient_timeout_'
+			END,
+			SUBSTRING(a.option_name, CHAR_LENGTH(
+				CASE WHEN a.option_name LIKE '\_site\_transient\_%'
+				   THEN '_site_transient_'
+				   ELSE '_transient_'
+				END
+			) + 1)) AS timeout_name
+
+
+  FROM wp_options a LEFT JOIN wp_options b ON b.option_name =
+		CONCAT(
+			CASE WHEN a.option_name LIKE '\_site\_transient\_%'
+				THEN '_site_transient_timeout_'
+				ELSE '_transient_timeout_'
+			END
+			,
+			SUBSTRING(a.option_name, CHAR_LENGTH(
+				CASE WHEN a.option_name LIKE '\_site\_transient\_%'
+				   THEN '_site_transient_'
+				   ELSE '_transient_'
+				END
+			) + 1)
+		)
+		WHERE (a.option_name LIKE '\_transient\_%' OR a.option_name LIKE '\_site\_transient\_%')
+		AND a.option_name NOT LIKE '%\_transient\_timeout\_%'
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual          = $this->engine->get_query_results();
+		$count_unexpired = 0;
+		foreach ( $actual as $row ) {
+			if ( str_starts_with( $row->option_name, '_transient' ) ) {
+				$count_unexpired++;
+				$this->assertGreaterThan( $now, $row->option_timeout );
+			}
+		}
+		$this->assertEquals( 1, $count_unexpired );
+	}
 }

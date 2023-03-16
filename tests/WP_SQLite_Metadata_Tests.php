@@ -64,6 +64,31 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		}
 	}
 
+	public function testCountTables() {
+		$this->assertQuery( "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'wpdata'" );
+
+		$actual = $this->engine->get_query_results();
+		$count  = array_values( get_object_vars( $actual[0] ) )[0];
+		self::assertIsNumeric( $count );
+	}
+
+	private function assertQuery( $sql, $error_substring = null ) {
+		$retval = $this->engine->query( $sql );
+		if ( null === $error_substring ) {
+			$this->assertEquals(
+				'',
+				$this->engine->get_error_message()
+			);
+			$this->assertNotFalse(
+				$retval
+			);
+		} else {
+			$this->assertStringContainsStringIgnoringCase( $error_substring, $this->engine->get_error_message() );
+		}
+
+		return $retval;
+	}
+
 	public function testCheckTable() {
 
 		/* a good table */
@@ -130,23 +155,6 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 			$expected_result,
 			$this->engine->get_query_results()
 		);
-	}
-
-	private function assertQuery( $sql, $error_substring = null ) {
-		$retval = $this->engine->query( $sql );
-		if ( null === $error_substring ) {
-			$this->assertEquals(
-				'',
-				$this->engine->get_error_message()
-			);
-			$this->assertNotFalse(
-				$retval
-			);
-		} else {
-			$this->assertStringContainsStringIgnoringCase( $error_substring, $this->engine->get_error_message() );
-		}
-
-		return $retval;
 	}
 
 	public function testOptimizeTable() {

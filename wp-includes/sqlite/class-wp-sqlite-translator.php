@@ -291,14 +291,21 @@ class WP_SQLite_Translator {
 	 *
 	 * @var bool
 	 */
-
 	private $has_group_by = false;
+
 	/**
 	 * 0 if no LIKE is in progress, otherwise counts nested parentheses.
 	 *
 	 * @var int
 	 */
 	private $like_expression_nesting = 0;
+
+	/**
+	 * Associative array with list of system (non-WordPress) tables.
+	 *
+	 * @var array  [tablename => tablename]
+	 */
+	private $sqlite_system_tables = array();
 
 	/**
 	 * Constructor.
@@ -347,9 +354,15 @@ class WP_SQLite_Translator {
 
 		new WP_SQLite_PDO_User_Defined_Functions( $pdo );
 
+		/* A list of system tables lets us emulate information_schema
+		 * queries without returning extra tables.
+		 */
+		$this->sqlite_system_tables ['sqlite_sequence'] = 'sqlite_sequence';
 		// MySQL data comes across stringified by default.
 		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
+
+		$this->sqlite_system_tables [self::DATA_TYPES_CACHE_TABLE] = self::DATA_TYPES_CACHE_TABLE;
 
 		$this->pdo = $pdo;
 
@@ -2278,6 +2291,7 @@ class WP_SQLite_Translator {
 				 */
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
 				$this->rewriter->add( new WP_SQLite_Token( 'ESCAPE', WP_SQLite_Token::TYPE_KEYWORD ) );
+				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
 				$this->rewriter->add( new WP_SQLite_Token( "'\'", WP_SQLite_Token::TYPE_STRING ) );
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
 				$this->like_expression_nesting = 0;
@@ -2296,7 +2310,8 @@ class WP_SQLite_Translator {
 	 */
 	private function get_information_schema_query( $updated_query ) {
 // @TODO: Actually rewrite the columns.
-		if ( str_contains( $updated_query, 'bytes' ) ) {
+		$normalized_query = preg_replace('/\s+/', ' ', strtolower( $updated_query ));
+		if ( str_contains( $normalized_query, 'bytes' ) ) {
 			// Count rows per table.
 			$tables =
 				$this->execute_sqlite_query( "SELECT name as `table_name` FROM sqlite_master WHERE type='table' ORDER BY name" )->fetchAll();
@@ -2311,6 +2326,18 @@ class WP_SQLite_Translator {
 			$rows          .= 'ELSE 0 END) ';
 			$updated_query =
 				"SELECT name as `table_name`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name";
+		} else if (str_contains( $normalized_query, 'count(*)' ) && ! str_contains ( $normalized_query, 'table_name =') ) {
+			//@TODO This is a guess that the caller wants a count of tables.
+			$list = array ();
+			foreach ( $this->sqlite_system_tables as $system_table => $name) {
+				$list [] =  "'" . $system_table . "'";
+			}
+			$list = implode (', ', $list );
+			$sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT IN ($list)";
+
+			$table_count = $this->execute_sqlite_query( $sql )->fetch();
+			$updated_query = "SELECT " . $table_count[0] . " AS num";
+			$this->is_information_schema_query = false;
 		} else {
 			$updated_query =
 				"SELECT name as `table_name`, 'myisam' as `engine`, 0 as `data_length`, 0 as `index_length`, 0 as `data_free` FROM sqlite_master WHERE type='table' ORDER BY name";
@@ -2330,13 +2357,7 @@ class WP_SQLite_Translator {
 		return array_values(
 			array_filter( $tables, function ( $table ) {
 				$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name;
-				switch ( $table_name ) {
-					case 'sqlite_sequence':
-					case '_mysql_data_types_cache':
-						return false;
-					default:
-						return true;
-				}
+				return ! array_key_exists( $table_name, $this->sqlite_system_tables);
 			}, ARRAY_FILTER_USE_BOTH )
 		);
 	}

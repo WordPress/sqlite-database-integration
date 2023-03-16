@@ -1607,7 +1607,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testCreateTableQuery() {
 		$this->assertQuery(
-			<<<'Q'
+			<<<'QUERY'
             CREATE TABLE IF NOT EXISTS wptests_users (
                 ID bigint(20) unsigned NOT NULL auto_increment,
                 user_login varchar(60) NOT NULL default '',
@@ -1624,12 +1624,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
                 KEY user_nicename (user_nicename),
                 KEY user_email (user_email)
             ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci
-            Q
+QUERY
 		);
 		$this->assertQuery(
-			<<<'Q'
+			<<<'QUERY'
             INSERT INTO wptests_users VALUES (1,'admin','$P$B5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5','admin','admin@localhost', '', '2019-01-01 00:00:00', '', 0, 'admin');
-            Q
+QUERY
 		);
 		$rows = $this->assertQuery( 'SELECT * FROM wptests_users' );
 		$this->assertCount( 1, $rows );
@@ -1664,8 +1664,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$result = $this->assertQuery(
 			"DELETE a, b FROM wptests_dummy a, wptests_dummy b
-				WHERE a.option_name LIKE '_transient_%'
-				AND a.option_name NOT LIKE '_transient_timeout_%'
+				WHERE a.option_name LIKE '\_transient\_%'
+				AND a.option_name NOT LIKE '\_transient\_timeout_%'
 				AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) );"
 		);
 		$this->assertEquals(
