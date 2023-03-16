@@ -14,6 +14,8 @@
  * @since 1.0.0
  *
  * @return boolean
+ *
+ * @throws PDOException If the database connection fails.
  */
 function sqlite_make_db_sqlite() {
 	include_once ABSPATH . 'wp-admin/includes/schema.php';
@@ -40,9 +42,9 @@ function sqlite_make_db_sqlite() {
 				continue;
 			}
 
-			$result = $translator->query($query);
-			if( false === $result ) {
-				throw new PDOException($translator->get_error_message());
+			$result = $translator->query( $query );
+			if ( false === $result ) {
+				throw new PDOException( $translator->get_error_message() );
 			}
 		}
 		$translator->commit();
@@ -73,7 +75,7 @@ function sqlite_make_db_sqlite() {
 			$port       = $host_parts[1];
 		}
 		$dsn       = 'mysql:host=' . $host . '; port=' . $port . '; dbname=' . DB_NAME;
-		$pdo_mysql = new PDO( $dsn, DB_USER, DB_PASSWORD, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) );
+		$pdo_mysql = new PDO( $dsn, DB_USER, DB_PASSWORD, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 		$pdo_mysql->query( 'SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";' );
 		$pdo_mysql->query( 'SET time_zone = "+00:00";' );
 		foreach ( $queries as $query ) {

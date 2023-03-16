@@ -320,7 +320,7 @@ class WP_SQLite_Translator {
 		new WP_SQLite_PDO_User_Defined_Functions( $pdo );
 
 		// MySQL data comes across stringified by default.
-		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
 
 		$this->pdo = $pdo;
@@ -1078,11 +1078,13 @@ class WP_SQLite_Translator {
 
 	/**
 	 * Executes a DELETE statement.
+	 *
+	 * @throws Exception If the table could not be found.
 	 */
 	private function execute_delete() {
-		$this->rewriter->consume(); // DELETE
+		$this->rewriter->consume(); // DELETE.
 
-		// Process expressions and extract bound parameters
+		// Process expressions and extract bound parameters.
 		$params = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
@@ -1105,7 +1107,7 @@ class WP_SQLite_Translator {
 
 		$updated_query = $this->rewriter->get_updated_query();
 
-		// Perform DELETE-specific translations
+		// Perform DELETE-specific translations.
 
 		// Naive rewriting of DELETE JOIN query.
 		// @TODO: Actually rewrite the query instead of using a hardcoded workaround.
@@ -1235,7 +1237,7 @@ class WP_SQLite_Translator {
 	 * Executes a SELECT statement.
 	 */
 	private function execute_select() {
-		$this->rewriter->consume(); // SELECT
+		$this->rewriter->consume(); // SELECT.
 
 		$params                  = array();
 		$table_name              = null;
@@ -1340,6 +1342,8 @@ class WP_SQLite_Translator {
 
 	/**
 	 * Executes a DESCRIBE statement.
+	 *
+	 * @throws PDOException When the table is not found.
 	 */
 	private function execute_describe() {
 		$this->rewriter->skip();
@@ -1392,7 +1396,7 @@ class WP_SQLite_Translator {
 	 * Executes an UPDATE statement.
 	 */
 	private function execute_update() {
-		$this->rewriter->consume(); // UPDATE
+		$this->rewriter->consume(); // Update.
 
 		$params = array();
 		while ( true ) {
@@ -1760,6 +1764,7 @@ class WP_SQLite_Translator {
 		) {
 			return false;
 		}
+
 		/*
 		 * Skip the CONCAT function but leave the parentheses.
 		 * There is another code block below that replaces the
@@ -1827,7 +1832,6 @@ class WP_SQLite_Translator {
 	 * Translate VALUES() function.
 	 *
 	 * @param WP_SQLite_Token $token                   The token to translate.
-	 * @param bool            $is_in_duplicate_section Whether the VALUES() function is in a duplicate section.
 	 *
 	 * @return bool
 	 */
@@ -2232,7 +2236,6 @@ class WP_SQLite_Translator {
 	 * Translate ALTER query.
 	 *
 	 * @throws Exception If the subject is not 'table', or we're performing an unknown operation.
-	 *
 	 */
 	private function execute_alter() {
 		$this->rewriter->consume();
@@ -2993,6 +2996,11 @@ class WP_SQLite_Translator {
 		return $stmt;
 	}
 
+	/**
+	 * Method to set the results from the fetched data.
+	 *
+	 * @param array $data The data to set.
+	 */
 	private function set_results_from_fetched_data( $data ) {
 		if ( null === $this->results ) {
 			$this->results = $data;
@@ -3004,6 +3012,11 @@ class WP_SQLite_Translator {
 		$this->return_value = $this->results;
 	}
 
+	/**
+	 * Method to set the results from the affected rows.
+	 *
+	 * @param int|null $override Override the affected rows.
+	 */
 	private function set_result_from_affected_rows( $override = null ) {
 		/*
 		 * SELECT CHANGES() is a workaround for the fact that
