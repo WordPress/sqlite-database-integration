@@ -327,8 +327,13 @@ class WP_SQLite_Translator {
 			$err_message = '';
 			do {
 				try {
+					$options = array (
+						PDO::ATTR_ERRMODE           => PDO::ERRMODE_EXCEPTION,
+						PDO::ATTR_STRINGIFY_FETCHES => true,
+						PDO::ATTR_TIMEOUT           => 5
+					);
 					$dsn = 'sqlite:' . FQDB;
-					$pdo = new PDO( $dsn, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
+					$pdo = new PDO( $dsn, null, null, $options ); // phpcs:ignore WordPress.DB.RestrictedClasses
 				} catch ( PDOException $ex ) {
 					$status = $ex->getCode();
 					if ( self::SQLITE_BUSY === $status || self::SQLITE_LOCKED === $status ) {
@@ -358,10 +363,7 @@ class WP_SQLite_Translator {
 		 * queries without returning extra tables.
 		 */
 		$this->sqlite_system_tables ['sqlite_sequence'] = 'sqlite_sequence';
-		// MySQL data comes across stringified by default.
-		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
-
 		$this->sqlite_system_tables [self::DATA_TYPES_CACHE_TABLE] = self::DATA_TYPES_CACHE_TABLE;
 
 		$this->pdo = $pdo;
