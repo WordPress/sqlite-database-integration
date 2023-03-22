@@ -1985,7 +1985,6 @@ class WP_SQLite_Translator {
 	 * Translate VALUES() function.
 	 *
 	 * @param WP_SQLite_Token $token The token to translate.
-	 * @param bool            $is_in_duplicate_section Whether the VALUES() function is in a duplicate section.
 	 *
 	 * @return bool
 	 */
