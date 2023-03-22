@@ -24,6 +24,11 @@ class WP_SQLite_Translator {
 	);';
 
 	/**
+	 * We use the ASCII SUB character to escape LIKE literal _ and %
+	 */
+	const LIKE_ESCAPE_CHAR = "\x1a";
+
+	/**
 	 * Class variable to reference to the PDO instance.
 	 *
 	 * @access private
@@ -301,6 +306,13 @@ class WP_SQLite_Translator {
 	private $like_expression_nesting = 0;
 
 	/**
+	 * 0 if no LIKE is in progress, otherwise counts nested parentheses.
+	 *
+	 * @var int
+	 */
+	private $like_escape_count = 0;
+
+	/**
 	 * Associative array with list of system (non-WordPress) tables.
 	 *
 	 * @var array  [tablename => tablename]
@@ -332,6 +344,7 @@ class WP_SQLite_Translator {
 						PDO::ATTR_STRINGIFY_FETCHES => true,
 						PDO::ATTR_TIMEOUT           => 5
 					);
+
 					$dsn = 'sqlite:' . FQDB;
 					$pdo = new PDO( $dsn, null, null, $options ); // phpcs:ignore WordPress.DB.RestrictedClasses
 				} catch ( PDOException $ex ) {
@@ -359,11 +372,13 @@ class WP_SQLite_Translator {
 
 		new WP_SQLite_PDO_User_Defined_Functions( $pdo );
 
+		// MySQL data comes across stringified by default.
+		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
 		/* A list of system tables lets us emulate information_schema
 		 * queries without returning extra tables.
 		 */
-		$this->sqlite_system_tables ['sqlite_sequence'] = 'sqlite_sequence';
-		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
+		$this->sqlite_system_tables ['sqlite_sequence']            = 'sqlite_sequence';
 		$this->sqlite_system_tables [self::DATA_TYPES_CACHE_TABLE] = self::DATA_TYPES_CACHE_TABLE;
 
 		$this->pdo = $pdo;
@@ -519,7 +534,6 @@ class WP_SQLite_Translator {
 	 * @return mixed according to the query type
 	 */
 	public function query( $statement, $mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) { // phpcs:ignore WordPress.DB.RestrictedClasses
-
 		$this->flush();
 		if ( function_exists( 'apply_filters' ) ) {
 			/**
@@ -1657,6 +1671,29 @@ class WP_SQLite_Translator {
 		return $value;
 	}
 
+	private function preprocess_like_expr( &$token ) {
+		/*
+		 * This code handles escaped wildcards in LIKE clauses.
+		 * If we are within a LIKE experession, we look for \_ and \%, the
+		 * escaped LIKE wildcards, the ones where we want a literal, not a
+		 * wildcard match. We change the \ escape for a ~ character,
+		 * so the \ characters won't get munged.
+		 * These \_ and \% escape sequences are in the token name, because
+		 * the lexer has already done stripcslashes on the value.
+		 */
+		if ( $this->like_expression_nesting > 0 ) {
+			/* Remove the quotes around the name. */
+			$unescaped_value = mb_substr( $token->token, 1, -1, 'UTF-8' );
+			if ( str_contains( $unescaped_value, '\_') || str_contains( $unescaped_value, '\%') ) {
+				$this->like_escape_count ++;
+				return str_replace(
+					array ( '\_', '\%' ),
+					array ( self::LIKE_ESCAPE_CHAR . '_', self::LIKE_ESCAPE_CHAR . '%' ),
+					$unescaped_value );
+			}
+		}
+		return $token->value;
+	}
 	/**
 	 * Translate CAST() function when we want to cast to BINARY.
 	 *
@@ -1814,13 +1851,15 @@ class WP_SQLite_Translator {
 				WP_SQLite_Token::TYPE_STRING,
 				WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES
 			)
-		     || 'AS' === $this->last_reserved_keyword
+		    || 'AS' === $this->last_reserved_keyword
 		) {
 			return false;
 		}
 
 		$param_name            = ':param' . count( $params );
-		$params[ $param_name ] = $this->preprocess_string_literal( $token->value );
+		$value                 = $this->preprocess_like_expr( $token );
+		$value                 = $this->preprocess_string_literal( $value );
+		$params[ $param_name ] = $value;
 		$this->rewriter->skip();
 		$this->rewriter->add( new WP_SQLite_Token( $param_name, WP_SQLite_Token::TYPE_STRING, WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES ) );
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
@@ -2281,21 +2320,24 @@ class WP_SQLite_Translator {
 				return false;
 			}
 
-			/* a keyword, a semicolon, the end of the statement, or a close parenthesis */
+			/* a keyword, a commo, a semicolon, the end of the statement, or a close parenthesis */
 			$match = $token->matches( WP_SQLite_Token::TYPE_KEYWORD )
-			         || $token->matches( WP_SQLite_Token::TYPE_DELIMITER, null, array( ';' ) )
-			         || ( WP_SQLite_Token::TYPE_DELIMITER === $token->type && null === $token->value )
-			         || $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( ')' ) );
+			        || $token->matches( WP_SQLite_Token::TYPE_DELIMITER, null, array( ';' ) ) || ( WP_SQLite_Token::TYPE_DELIMITER === $token->type && null === $token->value )
+			        || $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( ')', ',' ) );
 
 			if ( $match ) {
 				/* Here we have another keyword encountered with the LIKE in progress.
 				 * Emit the ESCAPE clause.
 				 */
+				if ( $this->like_escape_count > 0 ) {
+					/* If we need the ESCAPE clause emit it. */
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
 				$this->rewriter->add( new WP_SQLite_Token( 'ESCAPE', WP_SQLite_Token::TYPE_KEYWORD ) );
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
-				$this->rewriter->add( new WP_SQLite_Token( "'\'", WP_SQLite_Token::TYPE_STRING ) );
+					$this->rewriter->add( new WP_SQLite_Token( "'" . self::LIKE_ESCAPE_CHAR . "'", WP_SQLite_Token::TYPE_STRING ) );
 				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+				}
+				$this->like_escape_count       = 0;
 				$this->like_expression_nesting = 0;
 			}
 		}
@@ -2323,22 +2365,22 @@ class WP_SQLite_Translator {
 			foreach ( $tables as $table ) {
 				$table_name = $table['table_name'];
 				$count      = $this->execute_sqlite_query( "SELECT COUNT(1) as `count` FROM $table_name" )->fetch();
-				$rows       .= " WHEN name = '$table_name' THEN {$count['count']} ";
+				$rows      .= " WHEN name = '$table_name' THEN {$count['count']} ";
 			}
-			$rows          .= 'ELSE 0 END) ';
+			$rows         .= 'ELSE 0 END) ';
 			$updated_query =
 				"SELECT name as `table_name`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name";
-		} else if (str_contains( $normalized_query, 'count(*)' ) && ! str_contains ( $normalized_query, 'table_name =') ) {
+		} elseif (str_contains( $normalized_query, 'count(*)' ) && ! str_contains ( $normalized_query, 'table_name =') ) {
 			//@TODO This is a guess that the caller wants a count of tables.
 			$list = array ();
 			foreach ( $this->sqlite_system_tables as $system_table => $name) {
 				$list [] =  "'" . $system_table . "'";
 			}
-			$list = implode (', ', $list );
-			$sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT IN ($list)";
-
-			$table_count = $this->execute_sqlite_query( $sql )->fetch();
+			$list          = implode (', ', $list );
+			$sql           = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT IN ($list)";
+			$table_count   = $this->execute_sqlite_query( $sql )->fetch();
 			$updated_query = "SELECT " . $table_count[0] . " AS num";
+
 			$this->is_information_schema_query = false;
 		} else {
 			$updated_query =
@@ -3231,6 +3273,7 @@ class WP_SQLite_Translator {
 		$this->rewriter->skip();
 		$this->rewriter->skip();
 		$table_name = $this->rewriter->skip()->value;
+		$status     = '';
 
 		if ( ! $this->vacuum_requested ) {
 			$this->vacuum_requested = true;
@@ -3331,30 +3374,14 @@ class WP_SQLite_Translator {
 			return '';
 		}
 
-		$msgs = array();
-		foreach ( $this->error_messages as $num => $m ) {
-			$msgs [] = $m;
-		}
-
-		$msg    = implode( '; ', $msgs );
-		$output = implode( ' ', array(
-				'<!--',
-				htmlspecialchars( $msg ),
-				'Original: ',
-				htmlspecialchars( $this->mysql_query ),
-				'-->',
-			) ) . PHP_EOL;
-		$output .= '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
+		$output  = '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
 		$output .= '<div class="queries" style="clear:both;margin-bottom:2px;border:red dotted thin;">' . PHP_EOL;
 		$output .= '<p>MySQL query:</p>' . PHP_EOL;
-		$output .= '<p>' . htmlspecialchars( $this->mysql_query ) . '</p>' . PHP_EOL;
-		$output .= '<p>Error</p>' . PHP_EOL;
-		$output .= '<p>' . htmlspecialchars( $msg ) . '</p>' . PHP_EOL;
+		$output .= '<p>' . $this->mysql_query . '</p>' . PHP_EOL;
 		$output .= '<p>Queries made or created this session were:</p>' . PHP_EOL;
 		$output .= '<ol>' . PHP_EOL;
 		foreach ( $this->executed_sqlite_queries as $q ) {
-			$message =
-				"Executing: {$q['sql']} | " . ( $q['params'] ? 'parameters: ' . implode( ', ', $q['params'] ) : '(no parameters)' );
+			$message = "Executing: {$q['sql']} | " . ( $q['params'] ? 'parameters: ' . implode( ', ', $q['params'] ) : '(no parameters)' );
 
 			$output .= '<li>' . htmlspecialchars( $message ) . '</li>' . PHP_EOL;
 		}
@@ -3363,11 +3390,10 @@ class WP_SQLite_Translator {
 		foreach ( $this->error_messages as $num => $m ) {
 			$output .= '<div style="clear:both;margin-bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">' . PHP_EOL;
 			$output .= sprintf(
-				           'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
-				           (int) $this->errors[ $num ]['line'],
-				           '<code>' . htmlspecialchars( $this->errors[ $num ]['function'] ) . '</code>',
-				           $m
-			           ) . PHP_EOL;
+				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
+			    (int) $this->errors[ $num ]['line'],
+				'<code>' . htmlspecialchars( $this->errors[ $num ]['function'] ) . '</code>',
+				$m ) . PHP_EOL;
 			$output .= '</div>' . PHP_EOL;
 		}
 
@@ -3462,6 +3488,7 @@ class WP_SQLite_Translator {
 		$this->is_error                    = false;
 		$this->executed_sqlite_queries     = array();
 		$this->like_expression_nesting     = 0;
+		$this->like_escape_count           = 0;
 		$this->is_information_schema_query = false;
 		$this->has_group_by                = false;
 	}

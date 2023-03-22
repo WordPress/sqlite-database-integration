@@ -286,13 +286,13 @@ class WP_SQLite_Token {
 				$str   = str_replace( $quote . $quote, $quote, $str );
 
 				/*
-				 * Finally unescape the string.
+				 * Finally unescapes the string.
 				 *
-				 * `stripcslashes` replaces escape sequences with their representation.
-				 *  We leave \_ and \%, the escaped SQL wildcards.
+				 * `stripcslashes` replaces escape sequences with their
+				 * representation.
 				 */
-				$str = str_replace( '\_', '\\_', $str );
-				$str = str_replace( '\%', '\\%', $str );
+				$str = stripcslashes( $str );
+
 				return $str;
 
 			case self::TYPE_SYMBOL:

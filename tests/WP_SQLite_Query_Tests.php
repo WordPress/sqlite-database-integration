@@ -75,7 +75,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 		/* Mock up some metadata rows. When meta_key starts with _, the custom field isn't visible to the editor.  */
 		for ( $i = 1; $i <= 40; $i ++ ) {
 			$k1 = 'visible_meta_key_' . str_pad( $i, 2, '0', STR_PAD_LEFT );
-			$k2 = '_invisible_meta_key_' . str_pad( $i, 2, '0', STR_PAD_LEFT );
+			$k2 = '_invisible_meta_key_%_percent' . str_pad( $i, 2, '0', STR_PAD_LEFT );
 			$this->assertQuery(
 				"INSERT INTO wp_postmeta (post_id, meta_key, meta_value) VALUES (1, '$k1', '$k1-value');"
 			);
@@ -143,11 +143,40 @@ QUERY;
 		$actual = $this->engine->get_query_results();
 		$this->assertEquals(1, count( $actual ));
 		$this->assertEquals('a', $actual[0]->letter);
+
+		$q = <<<'QUERY'
+SELECT GREATEST(2, 1.5) num;
+QUERY;
+
+		$result = $this->assertQuery( $q );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals( 1, count( $actual ) );
+		$this->assertEquals( 2, $actual[0]->num );
+
+		$q = <<<'QUERY'
+SELECT LEAST(2, 1.5, 1.0) num;
+QUERY;
+
+		$result = $this->assertQuery( $q );
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals( 1, count( $actual ) );
+		$this->assertEquals( 1, $actual[0]->num );
 	}
 
 	public function testLikeEscapingSimpleNoSemicolon() {
 		$q = <<<'QUERY'
 SELECT DISTINCT meta_key FROM wp_postmeta WHERE meta_key LIKE '\_%'
+QUERY;
+
+		$result = $this->assertQuery( $q );
+
+		$actual = $this->engine->get_query_results();
+		$this->assertEquals( 40, count( $actual ) );
+	}
+
+	public function testLikeEscapingPercent() {
+		$q = <<<'QUERY'
+SELECT DISTINCT meta_key FROM wp_postmeta WHERE meta_key LIKE '%\_\%\_percent%'
 QUERY;
 
 		$result = $this->assertQuery( $q );
@@ -402,4 +431,90 @@ QUERY;
 		}
 		$this->assertEquals( 1, $count_unexpired );
 	}
+
+	public function testUserCountsByRole() {
+		/* commas appear after the LIKE term sometimes, as here. */
+		$query = <<<'QUERY'
+SELECT COUNT(NULLIF(`meta_value` LIKE '%\"administrator\"%', false)),
+       COUNT(NULLIF(`meta_value` LIKE '%\"editor\"%', false)),
+       COUNT(NULLIF(`meta_value` LIKE '%\"author\"%', false)),
+       COUNT(NULLIF(`meta_value` LIKE '%\"contributor\"%', false)),
+       COUNT(NULLIF(`meta_value` LIKE '%\"subscriber\"%', false)),
+       COUNT(NULLIF(`meta_value` = 'a:0:{}', false)),
+       COUNT(*)
+FROM wp_usermeta
+INNER JOIN wp_users ON user_id = ID
+WHERE meta_key = 'wp_capabilities'
+
+QUERY;
+		$this->assertQuery( $query );
+	}
+
+	public function testTranscendental() {
+		$this->markTestIncomplete( 'For some reason sqlite\'s transcendental functions are missing.' );
+		$this->assertQuery( 'SELECT 2.0, SQRT(2.0) sqr, SIN(0.5) s;' );
+	}
+
+	public function testRecoverSerialized() {
+
+		$obj                  = array(
+			'this' => 'that',
+			'that' => array( 'the', 'other', 'thing' ),
+			'two'  => 2,
+			2      => 'two',
+			'pi'   => pi(),
+			'moo'  => "Mrs O'Leary's cow!",
+		);
+		$option_name          = 'serialized_option';
+		$option_value         = serialize( $obj );
+		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
+		/* Note well: this is heredoc not nowdoc */
+		$insert = <<<QUERY
+		INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+		VALUES ('$option_name', $option_value_escaped, 'yes')
+		ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
+		                        `option_value` = VALUES(`option_value`),
+		                        `autoload` = VALUES(`autoload`)
+QUERY;
+
+		$this->assertQuery( $insert );
+		$get = <<<QUERY
+		SELECT * FROM wp_options WHERE option_name = '$option_name';
+QUERY;
+		$this->assertQuery( $get );
+
+		$actual           = $this->engine->get_query_results();
+		$retrieved_name   = $actual[0]->option_name;
+		$retrieved_string = $actual[0]->option_value;
+		$this->assertEquals( $option_value, $retrieved_string );
+		$unserialized = unserialize( $retrieved_string );
+		$this->assertEquals( $obj, $unserialized );
+
+		$obj ['two'] ++;
+		$obj ['pi']          *= 2;
+		$option_value         = serialize( $obj );
+		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
+		/* Note well: this is heredoc not nowdoc */
+		$insert = <<<QUERY
+		INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+		VALUES ('$option_name', $option_value_escaped, 'yes')
+		ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
+		                        `option_value` = VALUES(`option_value`),
+		                        `autoload` = VALUES(`autoload`)
+QUERY;
+
+		$this->assertQuery( $insert );
+		$get = <<<QUERY
+		SELECT * FROM wp_options WHERE option_name = '$option_name';
+QUERY;
+		$this->assertQuery( $get );
+
+		$actual           = $this->engine->get_query_results();
+		$retrieved_string = $actual[0]->option_value;
+		$this->assertEquals( $option_value, $retrieved_string );
+		$unserialized = unserialize( $retrieved_string );
+		$this->assertEquals( $obj, $unserialized );
+
+	}
+
 }

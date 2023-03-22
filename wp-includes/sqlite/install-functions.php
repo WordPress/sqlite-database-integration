@@ -41,7 +41,7 @@ function sqlite_make_db_sqlite() {
 			}
 
 			$result = $translator->query( $query );
-			if ( false === $result ) {
+			if( false === $result ) {
 				throw new PDOException( $translator->get_error_message() );
 			}
 		}
