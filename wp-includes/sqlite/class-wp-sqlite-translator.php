@@ -1984,7 +1984,7 @@ class WP_SQLite_Translator {
 	/**
 	 * Translate VALUES() function.
 	 *
-	 * @param WP_SQLite_Token $token The token to translate.
+	 * @param WP_SQLite_Token $token                   The token to translate.
 	 *
 	 * @return bool
 	 */
