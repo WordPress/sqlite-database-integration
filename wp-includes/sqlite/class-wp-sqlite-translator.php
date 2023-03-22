@@ -2937,9 +2937,35 @@ class WP_SQLite_Translator {
 				$stmt       = $this->execute_sqlite_query(
 					"PRAGMA table_info(\"$table_name\");"
 				);
-				$this->set_results_from_fetched_data(
-					$stmt->fetchAll( $this->pdo_fetch_mode )
+				/* @todo we may need to add the Extra column if anybdy needs it. 'auto_increment' is the value */
+				$name_map = array(
+					'name'       => 'Field',
+					'type'       => 'Type',
+					'dflt_value' => 'Default',
+					'cid'        => null,
+					'notnull'    => null,
+					'pk'         => null,
 				);
+				$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
+				$columns  = array_map( function ( $row ) use ( $name_map ) {
+					$new       = array();
+					$is_object = is_object( $row );
+					$row       = $is_object ? (array) $row : $row;
+					foreach ( $row as $k => $v ) {
+						$k = array_key_exists( $k, $name_map ) ? $name_map [ $k ] : $k;
+						if ( $k ) {
+							$new[ $k ] = $v;
+						}
+					}
+					if ( array_key_exists( 'notnull', $row ) ) {
+						$new['Null'] = ( '1' === $row ['notnull'] ) ? 'NO' : 'YES';
+					}
+					if ( array_key_exists( 'pk', $row ) ) {
+						$new['Key'] = ( '1' === $row ['pk'] ) ? 'PRI' : '';
+					}
+					return $is_object ? (object) $new : $new;
+				}, $columns );
+				$this->set_results_from_fetched_data( $columns );
 				return;
 
 			case 'INDEX FROM':

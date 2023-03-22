@@ -64,7 +64,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 				$err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 			$err_code = $err_data[1];
 			$translator->rollback();
-			$message  = sprintf(
+			$message = sprintf(
 				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
 				var_export( $query, true )
 			);
@@ -112,28 +112,15 @@ class WP_SQLite_Query_Tests extends TestCase {
 		}
 	}
 
-	private function assertQuery( $sql ) {
-		$retval = $this->engine->query( $sql );
-		$this->assertEquals(
-			'',
-			$this->engine->get_error_message()
-		);
-		$this->assertNotFalse(
-			$retval
-		);
-
-		return $retval;
-	}
-
-	public function testGreatestLeast () {
+	public function testGreatestLeast() {
 		$q = <<<'QUERY'
 SELECT GREATEST('a', 'b') letter;
 QUERY;
 
 		$result = $this->assertQuery( $q );
 		$actual = $this->engine->get_query_results();
-		$this->assertEquals(1, count( $actual ));
-		$this->assertEquals('b', $actual[0]->letter);
+		$this->assertEquals( 1, count( $actual ) );
+		$this->assertEquals( 'b', $actual[0]->letter );
 
 		$q = <<<'QUERY'
 SELECT LEAST('a', 'b') letter;
@@ -141,8 +128,8 @@ QUERY;
 
 		$result = $this->assertQuery( $q );
 		$actual = $this->engine->get_query_results();
-		$this->assertEquals(1, count( $actual ));
-		$this->assertEquals('a', $actual[0]->letter);
+		$this->assertEquals( 1, count( $actual ) );
+		$this->assertEquals( 'a', $actual[0]->letter );
 
 		$q = <<<'QUERY'
 SELECT GREATEST(2, 1.5) num;
@@ -224,8 +211,6 @@ QUERY;
 		$this->assertEquals( 'visible_meta_key_40', $last );
 	}
 
-	// https://github.com/WordPress/sqlite-database-integration/issues/19
-
 	public function testLikeEscapingWithConcatFunction() {
 		$q = <<<'QUERY'
 SELECT DISTINCT meta_key FROM wp_postmeta WHERE meta_key NOT BETWEEN '_' AND '_z' AND meta_key NOT LIKE CONCAT('\_', '%') ORDER BY meta_key LIMIT 30
@@ -238,6 +223,8 @@ QUERY;
 		$last = $actual[ count( $actual ) - 1 ]->meta_key;
 		$this->assertEquals( 'visible_meta_key_30', $last );
 	}
+
+	// https://github.com/WordPress/sqlite-database-integration/issues/19
 
 	public function testHavingWithoutGroupBy() {
 
@@ -370,6 +357,7 @@ QUERY;
 			self::assertLessThan( time(), $row->option_timeout );
 		}
 	}
+
 	public function testDeleteExpiredNonSiteTransients() {
 
 		$now = time();
@@ -425,7 +413,7 @@ QUERY;
 		$count_unexpired = 0;
 		foreach ( $actual as $row ) {
 			if ( str_starts_with( $row->option_name, '_transient' ) ) {
-				$count_unexpired++;
+				$count_unexpired ++;
 				$this->assertGreaterThan( $now, $row->option_timeout );
 			}
 		}
@@ -491,7 +479,7 @@ QUERY;
 		$this->assertEquals( $obj, $unserialized );
 
 		$obj ['two'] ++;
-		$obj ['pi']          *= 2;
+		$obj ['pi']           *= 2;
 		$option_value         = serialize( $obj );
 		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
 		/* Note well: this is heredoc not nowdoc */
@@ -514,7 +502,36 @@ QUERY;
 		$this->assertEquals( $option_value, $retrieved_string );
 		$unserialized = unserialize( $retrieved_string );
 		$this->assertEquals( $obj, $unserialized );
+	}
 
+	public function testShowColumns() {
+
+		$query = 'SHOW COLUMNS FROM wp_posts';
+		$this->assertQuery( $query );
+
+		$actual = $this->engine->get_query_results();
+		foreach ( $actual as $row ) {
+			$this->assertIsObject( $row );
+			$this->assertTrue( property_exists( $row, 'Field' ) );
+			$this->assertTrue( property_exists( $row, 'Type' ) );
+			$this->assertTrue( property_exists( $row, 'Null' ) );
+			$this->assertTrue( ( 'NO' === $row->Null ) || ( 'YES' === $row->Null ) );
+			$this->assertTrue( property_exists( $row, 'Key' ) );
+			$this->assertTrue( property_exists( $row, 'Default' ) );
+		}
+	}
+
+	private function assertQuery( $sql ) {
+		$retval = $this->engine->query( $sql );
+		$this->assertEquals(
+			'',
+			$this->engine->get_error_message()
+		);
+		$this->assertNotFalse(
+			$retval
+		);
+
+		return $retval;
 	}
 
 }
