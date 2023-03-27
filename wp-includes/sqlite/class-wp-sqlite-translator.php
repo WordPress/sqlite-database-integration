@@ -1574,7 +1574,12 @@ class WP_SQLite_Translator {
 		 * and stop relying on this MySQL feature,
 		 */
 		if ( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/', $value, $matches ) ) {
-			if ( false === strtotime( $value ) ) {
+			/*
+			 * Calling strtotime("0000-00-00 00:00:00") in 32-bit environments triggers
+			 * an "out of integer range" warning – let's avoid that call for the popular
+			 * case of "zero" dates.
+			 */
+			if ( $value !== "0000-00-00 00:00:00" && false === strtotime( $value ) ) {
 				$value = '0000-00-00 00:00:00';
 			}
 		}
