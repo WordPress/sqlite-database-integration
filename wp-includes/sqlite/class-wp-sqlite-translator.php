@@ -301,6 +301,7 @@ class WP_SQLite_Translator {
 	/**
 	 * 0 if no LIKE is in progress, otherwise counts nested parentheses.
 	 *
+	 * @todo A generic stack of expression would scale better. There's already a call_stack in WP_SQLite_Query_Rewriter.
 	 * @var int
 	 */
 	private $like_expression_nesting = 0;
@@ -1676,7 +1677,7 @@ class WP_SQLite_Translator {
 		 * This code handles escaped wildcards in LIKE clauses.
 		 * If we are within a LIKE experession, we look for \_ and \%, the
 		 * escaped LIKE wildcards, the ones where we want a literal, not a
-		 * wildcard match. We change the \ escape for a ~ character,
+		 * wildcard match. We change the \ escape for an ASCII \x1a (SUB) character,
 		 * so the \ characters won't get munged.
 		 * These \_ and \% escape sequences are in the token name, because
 		 * the lexer has already done stripcslashes on the value.
@@ -1956,11 +1957,12 @@ class WP_SQLite_Translator {
 	 * @todo LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters. They are in SQLite.
 	 */
 	private function translate_function_aliases( $token ) {
-		if ( ! $token->matches(
-			WP_SQLite_Token::TYPE_KEYWORD,
-			WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
-			array( 'SUBSTRING', 'CHAR_LENGTH' )
-		)
+		if ( ! $token->matches
+			(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
+				array( 'SUBSTRING', 'CHAR_LENGTH' )
+			)
 		) {
 			return false;
 		}
@@ -2236,6 +2238,8 @@ class WP_SQLite_Translator {
 	/**
 	 * Detect GROUP BY.
 	 *
+	 * @todo edgecase Fails on a statement with GROUP BY nested in an outer HAVING without GROUP BY.
+	 *
 	 * @param WP_SQLite_Token $token The token to translate.
 	 *
 	 * @return bool
@@ -2299,9 +2303,9 @@ class WP_SQLite_Translator {
 	private function translate_like_escape( $token ) {
 
 		if ( 0 === $this->like_expression_nesting ) {
-			$match = $token->matches( WP_SQLite_Token::TYPE_KEYWORD, null, array( 'LIKE' ) );
+			$is_like = $token->matches( WP_SQLite_Token::TYPE_KEYWORD, null, array( 'LIKE' ) );
 			/* is this the LIKE keyword? If so set the flag. */
-			if ( $match ) {
+			if ( $is_like ) {
 				$this->like_expression_nesting = 1;
 			}
 		} else {
@@ -2320,21 +2324,21 @@ class WP_SQLite_Translator {
 			}
 
 			/* a keyword, a commo, a semicolon, the end of the statement, or a close parenthesis */
-			$match = $token->matches( WP_SQLite_Token::TYPE_KEYWORD )
+			$is_like_finished = $token->matches( WP_SQLite_Token::TYPE_KEYWORD )
 			        || $token->matches( WP_SQLite_Token::TYPE_DELIMITER, null, array( ';' ) ) || ( WP_SQLite_Token::TYPE_DELIMITER === $token->type && null === $token->value )
 			        || $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( ')', ',' ) );
 
-			if ( $match ) {
+			if ( $is_like_finished ) {
 				/* Here we have another keyword encountered with the LIKE in progress.
 				 * Emit the ESCAPE clause.
 				 */
 				if ( $this->like_escape_count > 0 ) {
 					/* If we need the ESCAPE clause emit it. */
-				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
-				$this->rewriter->add( new WP_SQLite_Token( 'ESCAPE', WP_SQLite_Token::TYPE_KEYWORD ) );
-				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+					$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+					$this->rewriter->add( new WP_SQLite_Token( 'ESCAPE', WP_SQLite_Token::TYPE_KEYWORD ) );
+					$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
 					$this->rewriter->add( new WP_SQLite_Token( "'" . self::LIKE_ESCAPE_CHAR . "'", WP_SQLite_Token::TYPE_STRING ) );
-				$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+					$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
 				}
 				$this->like_escape_count       = 0;
 				$this->like_expression_nesting = 0;
