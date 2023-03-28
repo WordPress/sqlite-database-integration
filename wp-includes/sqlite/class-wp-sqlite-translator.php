@@ -277,8 +277,9 @@ class WP_SQLite_Translator {
 	 */
 	private $last_reserved_keyword;
 
-	/*
-	 * True if a VACUUM operation should be done on shutdown, to handle OPTIMIZE TABLE and similar operations.
+	/**
+	 * True if a VACUUM operation should be done on shutdown,
+	 * to handle OPTIMIZE TABLE and similar operations.
 	 *
 	 * @var bool
 	 */
@@ -340,10 +341,10 @@ class WP_SQLite_Translator {
 			$err_message = '';
 			do {
 				try {
-					$options = array (
+					$options = array(
 						PDO::ATTR_ERRMODE           => PDO::ERRMODE_EXCEPTION,
 						PDO::ATTR_STRINGIFY_FETCHES => true,
-						PDO::ATTR_TIMEOUT           => 5
+						PDO::ATTR_TIMEOUT           => 5,
 					);
 
 					$dsn = 'sqlite:' . FQDB;
@@ -376,11 +377,13 @@ class WP_SQLite_Translator {
 		// MySQL data comes across stringified by default.
 		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 		$pdo->query( WP_SQLite_Translator::CREATE_DATA_TYPES_CACHE_TABLE );
-		/* A list of system tables lets us emulate information_schema
+
+		/*
+		 * A list of system tables lets us emulate information_schema
 		 * queries without returning extra tables.
 		 */
-		$this->sqlite_system_tables ['sqlite_sequence']            = 'sqlite_sequence';
-		$this->sqlite_system_tables [self::DATA_TYPES_CACHE_TABLE] = self::DATA_TYPES_CACHE_TABLE;
+		$this->sqlite_system_tables ['sqlite_sequence']              = 'sqlite_sequence';
+		$this->sqlite_system_tables [ self::DATA_TYPES_CACHE_TABLE ] = self::DATA_TYPES_CACHE_TABLE;
 
 		$this->pdo = $pdo;
 
@@ -559,7 +562,6 @@ class WP_SQLite_Translator {
 			 *
 			 * @returns null|array Null to proceed, or an array containing a resultset.
 			 * @since 2.1.0
-			 *
 			 */
 			$pre = apply_filters( 'pre_query_sqlite_db', null, $this, $statement, $mode, $fetch_mode_args );
 			if ( null !== $pre ) {
@@ -1674,13 +1676,19 @@ class WP_SQLite_Translator {
 			 * an "out of integer range" warning – let's avoid that call for the popular
 			 * case of "zero" dates.
 			 */
-			if ( $value !== "0000-00-00 00:00:00" && false === strtotime( $value ) ) {
+			if ( '0000-00-00 00:00:00' !== $value && false === strtotime( $value ) ) {
 				$value = '0000-00-00 00:00:00';
 			}
 		}
 		return $value;
 	}
 
+	/**
+	 * Preprocesses a LIKE expression.
+	 *
+	 * @param WP_SQLite_Token $token The token to preprocess.
+	 * @return string
+	 */
 	private function preprocess_like_expr( &$token ) {
 		/*
 		 * This code handles escaped wildcards in LIKE clauses.
@@ -1694,12 +1702,13 @@ class WP_SQLite_Translator {
 		if ( $this->like_expression_nesting > 0 ) {
 			/* Remove the quotes around the name. */
 			$unescaped_value = mb_substr( $token->token, 1, -1, 'UTF-8' );
-			if ( str_contains( $unescaped_value, '\_') || str_contains( $unescaped_value, '\%') ) {
+			if ( str_contains( $unescaped_value, '\_' ) || str_contains( $unescaped_value, '\%' ) ) {
 				$this->like_escape_count ++;
 				return str_replace(
-					array ( '\_', '\%' ),
-					array ( self::LIKE_ESCAPE_CHAR . '_', self::LIKE_ESCAPE_CHAR . '%' ),
-					$unescaped_value );
+					array( '\_', '\%' ),
+					array( self::LIKE_ESCAPE_CHAR . '_', self::LIKE_ESCAPE_CHAR . '%' ),
+					$unescaped_value
+				);
 			}
 		}
 		return $token->value;
@@ -1858,10 +1867,10 @@ class WP_SQLite_Translator {
 	 */
 	private function extract_bound_parameter( $token, &$params ) {
 		if ( ! $token->matches(
-				WP_SQLite_Token::TYPE_STRING,
-				WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES
-			)
-		    || 'AS' === $this->last_reserved_keyword
+			WP_SQLite_Token::TYPE_STRING,
+			WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES
+		)
+			|| 'AS' === $this->last_reserved_keyword
 		) {
 			return false;
 		}
@@ -1967,12 +1976,11 @@ class WP_SQLite_Translator {
 	 * @todo LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters. They are in SQLite.
 	 */
 	private function translate_function_aliases( $token ) {
-		if ( ! $token->matches
-			(
-				WP_SQLite_Token::TYPE_KEYWORD,
-				WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
-				array( 'SUBSTRING', 'CHAR_LENGTH' )
-			)
+		if ( ! $token->matches(
+			WP_SQLite_Token::TYPE_KEYWORD,
+			WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
+			array( 'SUBSTRING', 'CHAR_LENGTH' )
+		)
 		) {
 			return false;
 		}
@@ -2335,11 +2343,12 @@ class WP_SQLite_Translator {
 
 			/* a keyword, a commo, a semicolon, the end of the statement, or a close parenthesis */
 			$is_like_finished = $token->matches( WP_SQLite_Token::TYPE_KEYWORD )
-			        || $token->matches( WP_SQLite_Token::TYPE_DELIMITER, null, array( ';' ) ) || ( WP_SQLite_Token::TYPE_DELIMITER === $token->type && null === $token->value )
-			        || $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( ')', ',' ) );
+					|| $token->matches( WP_SQLite_Token::TYPE_DELIMITER, null, array( ';' ) ) || ( WP_SQLite_Token::TYPE_DELIMITER === $token->type && null === $token->value )
+					|| $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( ')', ',' ) );
 
 			if ( $is_like_finished ) {
-				/* Here we have another keyword encountered with the LIKE in progress.
+				/*
+				 * Here we have another keyword encountered with the LIKE in progress.
 				 * Emit the ESCAPE clause.
 				 */
 				if ( $this->like_escape_count > 0 ) {
@@ -2361,13 +2370,13 @@ class WP_SQLite_Translator {
 	/**
 	 * Rewrite a query from the MySQL information_schema.
 	 *
-	 * @param string $updated_query The query to rewrite
+	 * @param string $updated_query The query to rewrite.
 	 *
 	 * @return string The query for use by SQLite
 	 */
 	private function get_information_schema_query( $updated_query ) {
-// @TODO: Actually rewrite the columns.
-		$normalized_query = preg_replace('/\s+/', ' ', strtolower( $updated_query ));
+		// @TODO: Actually rewrite the columns.
+		$normalized_query = preg_replace( '/\s+/', ' ', strtolower( $updated_query ) );
 		if ( str_contains( $normalized_query, 'bytes' ) ) {
 			// Count rows per table.
 			$tables =
@@ -2383,16 +2392,16 @@ class WP_SQLite_Translator {
 			$rows         .= 'ELSE 0 END) ';
 			$updated_query =
 				"SELECT name as `table_name`, $rows as `rows`, 0 as `bytes` FROM sqlite_master WHERE type='table' ORDER BY name";
-		} elseif (str_contains( $normalized_query, 'count(*)' ) && ! str_contains ( $normalized_query, 'table_name =') ) {
-			//@TODO This is a guess that the caller wants a count of tables.
-			$list = array ();
-			foreach ( $this->sqlite_system_tables as $system_table => $name) {
-				$list [] =  "'" . $system_table . "'";
+		} elseif ( str_contains( $normalized_query, 'count(*)' ) && ! str_contains( $normalized_query, 'table_name =' ) ) {
+			// @TODO This is a guess that the caller wants a count of tables.
+			$list = array();
+			foreach ( $this->sqlite_system_tables as $system_table => $name ) {
+				$list [] = "'" . $system_table . "'";
 			}
-			$list          = implode (', ', $list );
+			$list          = implode( ', ', $list );
 			$sql           = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT IN ($list)";
 			$table_count   = $this->execute_sqlite_query( $sql )->fetch();
-			$updated_query = "SELECT " . $table_count[0] . " AS num";
+			$updated_query = 'SELECT ' . $table_count[0] . ' AS num';
 
 			$this->is_information_schema_query = false;
 		} else {
@@ -2412,10 +2421,14 @@ class WP_SQLite_Translator {
 	 */
 	private function strip_sqlite_system_tables( $tables ) {
 		return array_values(
-			array_filter( $tables, function ( $table ) {
-				$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name;
-				return ! array_key_exists( $table_name, $this->sqlite_system_tables);
-			}, ARRAY_FILTER_USE_BOTH )
+			array_filter(
+				$tables,
+				function ( $table ) {
+					$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+					return ! array_key_exists( $table_name, $this->sqlite_system_tables );
+				},
+				ARRAY_FILTER_USE_BOTH
+			)
 		);
 	}
 
@@ -2960,24 +2973,27 @@ class WP_SQLite_Translator {
 					'pk'         => null,
 				);
 				$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
-				$columns  = array_map( function ( $row ) use ( $name_map ) {
-					$new       = array();
-					$is_object = is_object( $row );
-					$row       = $is_object ? (array) $row : $row;
-					foreach ( $row as $k => $v ) {
-						$k = array_key_exists( $k, $name_map ) ? $name_map [ $k ] : $k;
-						if ( $k ) {
-							$new[ $k ] = $v;
+				$columns  = array_map(
+					function ( $row ) use ( $name_map ) {
+						$new       = array();
+						$is_object = is_object( $row );
+						$row       = $is_object ? (array) $row : $row;
+						foreach ( $row as $k => $v ) {
+							$k = array_key_exists( $k, $name_map ) ? $name_map [ $k ] : $k;
+							if ( $k ) {
+								$new[ $k ] = $v;
+							}
 						}
-					}
-					if ( array_key_exists( 'notnull', $row ) ) {
-						$new['Null'] = ( '1' === $row ['notnull'] ) ? 'NO' : 'YES';
-					}
-					if ( array_key_exists( 'pk', $row ) ) {
-						$new['Key'] = ( '1' === $row ['pk'] ) ? 'PRI' : '';
-					}
-					return $is_object ? (object) $new : $new;
-				}, $columns );
+						if ( array_key_exists( 'notnull', $row ) ) {
+							$new['Null'] = ( '1' === $row ['notnull'] ) ? 'NO' : 'YES';
+						}
+						if ( array_key_exists( 'pk', $row ) ) {
+							$new['Key'] = ( '1' === $row ['pk'] ) ? 'PRI' : '';
+						}
+						return $is_object ? (object) $new : $new;
+					},
+					$columns
+				);
 				$this->set_results_from_fetched_data( $columns );
 				return;
 
@@ -3062,10 +3078,10 @@ class WP_SQLite_Translator {
 
 				$tables = $this->strip_sqlite_system_tables( $stmt->fetchAll( $this->pdo_fetch_mode ) );
 				foreach ( $tables as $table ) {
-					$tableName   = $table->Name;
-					$stmt        = $this->execute_sqlite_query( "SELECT COUNT(1) as `Rows` FROM $tableName" );
+					$table_name  = $table->Name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+					$stmt        = $this->execute_sqlite_query( "SELECT COUNT(1) as `Rows` FROM $table_name" );
 					$rows        = $stmt->fetchall( $this->pdo_fetch_mode );
-					$table->Rows = $rows[0]->Rows;
+					$table->Rows = $rows[0]->Rows; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 				}
 
 				$this->set_results_from_fetched_data(
@@ -3143,10 +3159,10 @@ class WP_SQLite_Translator {
 		// Skip the int keyword.
 		$int_maybe = $this->rewriter->peek();
 		if ( $int_maybe && $int_maybe->matches(
-				WP_SQLite_Token::TYPE_KEYWORD,
-				null,
-				array( 'UNSIGNED' )
-			)
+			WP_SQLite_Token::TYPE_KEYWORD,
+			null,
+			array( 'UNSIGNED' )
+		)
 		) {
 			$mysql_data_type .= ' ' . $this->rewriter->skip()->token;
 		}
@@ -3262,9 +3278,9 @@ class WP_SQLite_Translator {
 	 * Executes a CHECK statement.
 	 */
 	private function execute_check() {
-		$this->rewriter->skip();  // CHECK
-		$this->rewriter->skip();  // TABLE
-		$table_name = $this->rewriter->consume()->value;  // table_name
+		$this->rewriter->skip();  // CHECK.
+		$this->rewriter->skip();  // TABLE.
+		$table_name = $this->rewriter->consume()->value;  // Τable_name.
 
 		$tables =
 			$this->execute_sqlite_query(
@@ -3274,40 +3290,44 @@ class WP_SQLite_Translator {
 
 		if ( is_array( $tables ) && 1 === count( $tables ) && $table_name === $tables[0]['table_name'] ) {
 
-			$this->set_results_from_fetched_data( array(
-				(object)
+			$this->set_results_from_fetched_data(
 				array(
-					'Table'    => $table_name,
-					'Op'       => 'check',
-					'Msg_type' => 'status',
-					'Msg_text' => 'OK',
-				),
-			) );
+					(object) array(
+						'Table'    => $table_name,
+						'Op'       => 'check',
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				)
+			);
 		} else {
 
-			$this->set_results_from_fetched_data( array(
-				(object) array(
-					'Table'    => $table_name,
-					'Op'       => 'check',
-					'Msg_type' => 'Error',
-					'Msg_text' => "Table '$table_name' doesn't exist",
-				),
-				(object) array(
-					'Table'    => $table_name,
-					'Op'       => 'check',
-					'Msg_type' => 'status',
-					'Msg_text' => 'Operation failed',
-				),
-			) );
+			$this->set_results_from_fetched_data(
+				array(
+					(object) array(
+						'Table'    => $table_name,
+						'Op'       => 'check',
+						'Msg_type' => 'Error',
+						'Msg_text' => "Table '$table_name' doesn't exist",
+					),
+					(object) array(
+						'Table'    => $table_name,
+						'Op'       => 'check',
+						'Msg_type' => 'status',
+						'Msg_text' => 'Operation failed',
+					),
+				)
+			);
 		}
 	}
 
 	/**
 	 * Handle an OPTIMIZE / REPAIR / ANALYZE TABLE statement, by using VACUUM just once, at shutdown.
 	 *
-	 * @param string $query type
+	 * @param string $query_type The query type.
 	 */
-	private function execute_optimize( $query_type ) { // OPTIMIZE TABLE tablename
+	private function execute_optimize( $query_type ) {
+		// OPTIMIZE TABLE tablename.
 		$this->rewriter->skip();
 		$this->rewriter->skip();
 		$table_name = $this->rewriter->skip()->value;
@@ -3330,16 +3350,16 @@ class WP_SQLite_Translator {
 		}
 		$resultset = array(
 			(object) array(
-				"Table"    => $table_name,
-				"Op"       => strtolower( $query_type ),
-				"Msg_type" => "note",
-				"Msg_text" => $status,
+				'Table'    => $table_name,
+				'Op'       => strtolower( $query_type ),
+				'Msg_type' => 'note',
+				'Msg_text' => $status,
 			),
 			(object) array(
-				"Table"    => $table_name,
-				"Op"       => strtolower( $query_type ),
-				"Msg_type" => "status",
-				"Msg_text" => "OK",
+				'Table'    => $table_name,
+				'Op'       => strtolower( $query_type ),
+				'Msg_type' => 'status',
+				'Msg_text' => 'OK',
 			),
 		);
 
@@ -3429,9 +3449,10 @@ class WP_SQLite_Translator {
 			$output .= '<div style="clear:both;margin-bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">' . PHP_EOL;
 			$output .= sprintf(
 				'Error occurred at line %1$d in Function %2$s. Error message was: %3$s.',
-			    (int) $this->errors[ $num ]['line'],
+				(int) $this->errors[ $num ]['line'],
 				'<code>' . htmlspecialchars( $this->errors[ $num ]['function'] ) . '</code>',
-				$m ) . PHP_EOL;
+				$m
+			) . PHP_EOL;
 			$output .= '</div>' . PHP_EOL;
 		}
 

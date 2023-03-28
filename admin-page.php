@@ -6,7 +6,6 @@
  * @package wp-sqlite-integration
  */
 
-
 /**
  * Add an admin menu page.
  *

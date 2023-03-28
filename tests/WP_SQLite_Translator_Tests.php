@@ -691,19 +691,18 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$result1 = $this->engine->query( "INSERT INTO _tmp_table (name, lastname) VALUES ('first', 'last');" );
 		$this->assertEquals( 1, $result1 );
 
-		$result1 = $this->engine->query( "SELECT COUNT(*) num FROM _tmp_table;" );
+		$result1 = $this->engine->query( 'SELECT COUNT(*) num FROM _tmp_table;' );
 		$this->assertEquals( 1, $result1[0]->num );
 
 		// Unique keys should be case-insensitive:
-		$result2 =  $this->assertQuery(
+		$result2 = $this->assertQuery(
 			"INSERT INTO _tmp_table (name, lastname) VALUES ('FIRST', 'LAST' );",
 			'UNIQUE constraint failed'
 		);
 
 		$this->assertEquals( false, $result2 );
 
-
-		$result1 = $this->engine->query( "SELECT COUNT(*) num FROM _tmp_table;" );
+		$result1 = $this->engine->query( 'SELECT COUNT(*) num FROM _tmp_table;' );
 		$this->assertEquals( 1, $result1[0]->num );
 
 		// Unique keys should be case-insensitive:
@@ -716,20 +715,18 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$result2 = $this->engine->get_query_results();
 		$this->assertEquals( 0, $result2 );
 
-		$result1 = $this->engine->query( "SELECT COUNT(*)num FROM _tmp_table;" );
+		$result1 = $this->engine->query( 'SELECT COUNT(*)num FROM _tmp_table;' );
 		$this->assertEquals( 1, $result1[0]->num );
 
 		// Unique keys should be case-insensitive:
-		$result2 =  $this->assertQuery(
+		$result2 = $this->assertQuery(
 			"INSERT INTO _tmp_table (name, lastname) VALUES ('FIRSTname', 'LASTname' );"
 		);
 
 		$this->assertEquals( 1, $result2 );
 
-
-		$result1 = $this->engine->query( "SELECT COUNT(*) num FROM _tmp_table;" );
+		$result1 = $this->engine->query( 'SELECT COUNT(*) num FROM _tmp_table;' );
 		$this->assertEquals( 2, $result1[0]->num );
-
 
 	}
 
@@ -924,12 +921,14 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		// Behind the scenes, this single MySQL query is split
 		// into multiple SQLite queries – some of them will
 		// succeed, some will fail.
-		$success = $this->engine->query( "
+		$success = $this->engine->query(
+			'
 		ALTER TABLE _options
 			ADD COLUMN test varchar(20),
 			ADD COLUMN test varchar(20)
-		" );
-		$this->assertFalse($success);
+		'
+		);
+		$this->assertFalse( $success );
 		// Commit the transaction.
 		$this->assertQuery( 'COMMIT' );
 
@@ -964,7 +963,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
-				)
+				),
 			)
 		);
 
@@ -1635,10 +1634,10 @@ QUERY
 		$this->assertCount( 1, $rows );
 
 		$this->assertQuery( 'SELECT SQL_CALC_FOUND_ROWS * FROM wptests_users' );
-		$result = $this->assertQuery('SELECT FOUND_ROWS()');
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
 		$this->assertEquals(
 			array(
-				(object)array(
+				(object) array(
 					'FOUND_ROWS()' => '1',
 				),
 			),
@@ -1682,7 +1681,7 @@ QUERY
 				ADD INDEX test_index2(option_name(140),option_value(51))
 			'
 		);
-		$this->assertEquals('', $this->engine->get_error_message());
+		$this->assertEquals( '', $this->engine->get_error_message() );
 		$this->assertEquals(
 			1,
 			$result
@@ -1746,9 +1745,9 @@ QUERY
 		);
 		$this->assertCount(
 			1,
-			$this->assertQuery('SELECT * FROM _options')
+			$this->assertQuery( 'SELECT * FROM _options' )
 		);
-		$this->assertQuery( "DELETE FROM _options");
+		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
 	public function testTranslatesRandom() {
@@ -1767,7 +1766,7 @@ QUERY
 		);
 		$this->assertCount(
 			1,
-			$this->assertQuery('SELECT * FROM _options')
+			$this->assertQuery( 'SELECT * FROM _options' )
 		);
 
 		$this->assertQuery(
@@ -1775,7 +1774,7 @@ QUERY
 		);
 
 		$this->assertEquals(
-			array( (object) array( 'ą' => 'ąłółźćę†' )),
+			array( (object) array( 'ą' => 'ąłółźćę†' ) ),
 			$this->engine->get_query_results()
 		);
 
@@ -1784,11 +1783,11 @@ QUERY
 		);
 
 		$this->assertEquals(
-			array( (object) array( 'ą' => 'ąłółźćę†' )),
+			array( (object) array( 'ą' => 'ąłółźćę†' ) ),
 			$this->engine->get_query_results()
 		);
 
-		$this->assertQuery( "DELETE FROM _options");
+		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
 }

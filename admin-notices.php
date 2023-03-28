@@ -27,6 +27,7 @@ function sqlite_plugin_admin_notice() {
 		);
 		return;
 	}
+
 	/*
 	 * If the SQLITE_DB_DROPIN_VERSION constant is not defined
 	 * but there's a db.php file in the wp-content directory, then the module can't be activated.

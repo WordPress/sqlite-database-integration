@@ -64,7 +64,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 				$err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 			$err_code = $err_data[1];
 			$translator->rollback();
-			$message = sprintf(
+			$message  = sprintf(
 				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
 				var_export( $query, true )
 			);
@@ -479,7 +479,7 @@ QUERY;
 		$this->assertEquals( $obj, $unserialized );
 
 		$obj ['two'] ++;
-		$obj ['pi']           *= 2;
+		$obj ['pi']          *= 2;
 		$option_value         = serialize( $obj );
 		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
 		/* Note well: this is heredoc not nowdoc */
