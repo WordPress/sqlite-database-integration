@@ -47,15 +47,20 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	private function assertQuery( $sql ) {
+	private function assertQuery( $sql, $error_substring = null ) {
 		$retval = $this->engine->query( $sql );
-		$this->assertEquals(
-			'',
-			$this->engine->get_error_message()
-		);
-		$this->assertNotFalse(
-			$retval
-		);
+		if ( null === $error_substring ) {
+			$this->assertEquals(
+				'',
+				$this->engine->get_error_message()
+			);
+			$this->assertNotFalse(
+				$retval
+			);
+		} else {
+			$this->assertStringContainsStringIgnoringCase( $error_substring, $this->engine->get_error_message() );
+		}
+
 		return $retval;
 	}
 
@@ -683,12 +688,49 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$this->assertEquals( 1, $result );
 
-		$result1 = $this->engine->query( "INSERT INTO _tmp_table (name) VALUES ('first');" );
+		$result1 = $this->engine->query( "INSERT INTO _tmp_table (name, lastname) VALUES ('first', 'last');" );
 		$this->assertEquals( 1, $result1 );
 
+		$result1 = $this->engine->query( "SELECT COUNT(*) num FROM _tmp_table;" );
+		$this->assertEquals( 1, $result1[0]->num );
+
 		// Unique keys should be case-insensitive:
-		$result2 = $this->engine->query( "INSERT INTO _tmp_table (name) VALUES ('FIRST');" );
-		$this->assertFalse( $result2 );
+		$result2 =  $this->assertQuery(
+			"INSERT INTO _tmp_table (name, lastname) VALUES ('FIRST', 'LAST' );",
+			'UNIQUE constraint failed'
+		);
+
+		$this->assertEquals( false, $result2 );
+
+
+		$result1 = $this->engine->query( "SELECT COUNT(*) num FROM _tmp_table;" );
+		$this->assertEquals( 1, $result1[0]->num );
+
+		// Unique keys should be case-insensitive:
+		$result1 = $this->assertQuery(
+			"INSERT IGNORE INTO _tmp_table (name) VALUES ('FIRST');"
+		);
+
+		self::assertEquals( 0, $result1 );
+
+		$result2 = $this->engine->get_query_results();
+		$this->assertEquals( 0, $result2 );
+
+		$result1 = $this->engine->query( "SELECT COUNT(*)num FROM _tmp_table;" );
+		$this->assertEquals( 1, $result1[0]->num );
+
+		// Unique keys should be case-insensitive:
+		$result2 =  $this->assertQuery(
+			"INSERT INTO _tmp_table (name, lastname) VALUES ('FIRSTname', 'LASTname' );"
+		);
+
+		$this->assertEquals( 1, $result2 );
+
+
+		$result1 = $this->engine->query( "SELECT COUNT(*) num FROM _tmp_table;" );
+		$this->assertEquals( 2, $result1[0]->num );
+
+
 	}
 
 	public function testOnDuplicateUpdate() {
@@ -883,7 +925,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		// into multiple SQLite queries – some of them will
 		// succeed, some will fail.
 		$success = $this->engine->query( "
-		ALTER TABLE _options 
+		ALTER TABLE _options
 			ADD COLUMN test varchar(20),
 			ADD COLUMN test varchar(20)
 		" );
@@ -1417,6 +1459,23 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$this->markTestSkipped( 'Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ' );
 		}
 		$this->assertEquals( '1', $results[0]->cmp );
+
+		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( '1', $results[0]->cmp );
+
+	}
+
+	public function testZeroPlusStringToFloatComparison() {
+
+		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( '1', $results[0]->cmp );
+
+		$this->assertQuery( "SELECT 0+'1234abcd' = 1234 as cmp;" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( '1', $results[0]->cmp );
+
 	}
 
 	public function testCalcFoundRows() {
@@ -1548,7 +1607,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testCreateTableQuery() {
 		$this->assertQuery(
-			<<<'Q'
+			<<<'QUERY'
             CREATE TABLE IF NOT EXISTS wptests_users (
                 ID bigint(20) unsigned NOT NULL auto_increment,
                 user_login varchar(60) NOT NULL default '',
@@ -1565,12 +1624,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
                 KEY user_nicename (user_nicename),
                 KEY user_email (user_email)
             ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci
-            Q
+QUERY
 		);
 		$this->assertQuery(
-			<<<'Q'
+			<<<'QUERY'
             INSERT INTO wptests_users VALUES (1,'admin','$P$B5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5ZQZ5','admin','admin@localhost', '', '2019-01-01 00:00:00', '', 0, 'admin');
-            Q
+QUERY
 		);
 		$rows = $this->assertQuery( 'SELECT * FROM wptests_users' );
 		$this->assertCount( 1, $rows );
@@ -1605,8 +1664,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$result = $this->assertQuery(
 			"DELETE a, b FROM wptests_dummy a, wptests_dummy b
-				WHERE a.option_name LIKE '_transient_%'
-				AND a.option_name NOT LIKE '_transient_timeout_%'
+				WHERE a.option_name LIKE '\_transient\_%'
+				AND a.option_name NOT LIKE '\_transient\_timeout_%'
 				AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) );"
 		);
 		$this->assertEquals(
@@ -1617,7 +1676,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testTranslatesDoubleAlterTable() {
 		$result = $this->assertQuery(
-			'ALTER TABLE _options 
+			'ALTER TABLE _options
 				ADD INDEX test_index(option_name(140),option_value(51)),
 				DROP INDEX test_index,
 				ADD INDEX test_index2(option_name(140),option_value(51))
@@ -1689,6 +1748,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			1,
 			$this->assertQuery('SELECT * FROM _options')
 		);
+		$this->assertQuery( "DELETE FROM _options");
 	}
 
 	public function testTranslatesRandom() {
@@ -1702,11 +1762,33 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	}
 
 	public function testTranslatesUtf8SELECT() {
-		$this->engine->query(
-			"SELECT a as 'ą' FROM test WHERE b='ąłółźćę†'AND c='ąłółźćę†'"
+		$this->assertQuery(
+			"INSERT INTO _options VALUES(1,'ąłółźćę†','ąłółźćę†')"
 		);
-		// No exception is good enough of a test for now
-		$this->assertTrue(true);
+		$this->assertCount(
+			1,
+			$this->assertQuery('SELECT * FROM _options')
+		);
+
+		$this->assertQuery(
+			"SELECT option_name as 'ą' FROM _options WHERE option_name='ąłółźćę†' AND option_value='ąłółźćę†'"
+		);
+
+		$this->assertEquals(
+			array( (object) array( 'ą' => 'ąłółźćę†' )),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery(
+			"SELECT option_name as 'ą' FROM _options WHERE option_name LIKE '%ółźć%'"
+		);
+
+		$this->assertEquals(
+			array( (object) array( 'ą' => 'ąłółźćę†' )),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( "DELETE FROM _options");
 	}
 
 }
