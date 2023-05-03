@@ -36,6 +36,18 @@ function sqlite_activation() {
 		return;
 	}
 	if ( isset( $_GET['confirm-install'] ) && wp_verify_nonce( $_GET['_wpnonce'], 'sqlite-install' ) ) {
+
+		// Handle upgrading from the performance-lab plugin.
+		if ( isset( $_GET['upgrade-from-pl'] ) ) {
+			// Delete the previous db.php file.
+			unlink( WP_CONTENT_DIR . '/db.php' );
+			// Deactivate the performance-lab SQLite module.
+			$pl_option_name = defined( 'PERFLAB_MODULES_SETTING' ) ? PERFLAB_MODULES_SETTING : 'perflab_modules_settings';
+			$pl_option      = get_option( $pl_option_name, array() );
+			unset( $pl_option['database/sqlite'] );
+			update_option( $pl_option_name, $pl_option );
+			remove_action( 'admin_notices', 'perflab_sqlite_plugin_admin_notice' ); // Remove the PL-plugin admin notices.
+		}
 		sqlite_plugin_copy_db_file();
 		// WordPress will automatically redirect to the install screen here.
 		wp_redirect( admin_url() );
