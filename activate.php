@@ -46,7 +46,6 @@ function sqlite_activation() {
 			$pl_option      = get_option( $pl_option_name, array() );
 			unset( $pl_option['database/sqlite'] );
 			update_option( $pl_option_name, $pl_option );
-			remove_action( 'admin_notices', 'perflab_sqlite_plugin_admin_notice' ); // Remove the PL-plugin admin notices.
 		}
 		sqlite_plugin_copy_db_file();
 		// WordPress will automatically redirect to the install screen here.
