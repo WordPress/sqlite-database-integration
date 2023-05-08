@@ -51,6 +51,10 @@ function sqlite_integration_admin_screen() {
 				<div class="notice notice-error">
 					<p><?php esc_html_e( 'We detected that the SQLite3 class is missing from your server. Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
 				</div>
+			<?php elseif ( ! extension_loaded( 'pdo_sqlite' ) ) : ?>
+				<div class="notice notice-error">
+					<p><?php esc_html_e( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
+				</div>
 			<?php elseif ( file_exists( WP_CONTENT_DIR . '/db.php' ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) ) : ?>
 				<?php if ( defined( 'PERFLAB_SQLITE_DB_DROPIN_VERSION' ) ) : ?>
 					<div class="notice notice-warning">
