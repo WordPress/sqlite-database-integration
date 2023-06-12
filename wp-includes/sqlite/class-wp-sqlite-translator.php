@@ -2424,7 +2424,7 @@ class WP_SQLite_Translator {
 			array_filter(
 				$tables,
 				function ( $table ) {
-					$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+					$table_name = is_object( $table ) && property_exists( $table, 'Name' ) ? $table->Name : $table->table_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 					return ! array_key_exists( $table_name, $this->sqlite_system_tables );
 				},
 				ARRAY_FILTER_USE_BOTH
