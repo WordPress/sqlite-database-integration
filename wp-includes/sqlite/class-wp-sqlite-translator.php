@@ -2424,6 +2424,10 @@ class WP_SQLite_Translator {
 			array_filter(
 				$tables,
 				function ( $table ) {
+					// Bail early if $table is not an object.
+					if ( ! is_object( $table ) ) {
+						return true;
+					}
 					$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 					return ! array_key_exists( $table_name, $this->sqlite_system_tables );
 				},
