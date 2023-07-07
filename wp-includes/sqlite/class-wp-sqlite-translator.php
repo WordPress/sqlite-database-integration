@@ -31,8 +31,6 @@ class WP_SQLite_Translator {
 	/**
 	 * Class variable to reference to the PDO instance.
 	 *
-	 * @access private
-	 *
 	 * @var PDO object
 	 */
 	private $pdo;
@@ -180,8 +178,6 @@ class WP_SQLite_Translator {
 	/**
 	 * Class variable to store the result of the query.
 	 *
-	 * @access private
-	 *
 	 * @var array reference to the PHP object
 	 */
 	private $results = null;
@@ -196,16 +192,12 @@ class WP_SQLite_Translator {
 	/**
 	 * Class variable to store the file name and function to cause error.
 	 *
-	 * @access private
-	 *
 	 * @var array
 	 */
 	private $errors;
 
 	/**
 	 * Class variable to store the error messages.
-	 *
-	 * @access private
 	 *
 	 * @var array
 	 */
@@ -215,7 +207,6 @@ class WP_SQLite_Translator {
 	 * Class variable to store the affected row id.
 	 *
 	 * @var int integer
-	 * @access private
 	 */
 	private $last_insert_id;
 
