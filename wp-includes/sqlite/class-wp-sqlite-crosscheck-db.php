@@ -82,11 +82,11 @@ class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 					continue;
 				}
 				if ( $factor === 'rows_affected' && $mysql_retval === $mysql ) {
-					// SQLite doesn't provide the rowcount() functionallity
+					// SQLite doesn't provide the rowcount() functionality
 					continue;
 				}
 				if ( $factor === 'retval' && $GLOBALS['mysql']->rows_affected === $mysql ) {
-					// SQLite doesn't provide the rowcount() functionallity
+					// SQLite doesn't provide the rowcount() functionality
 					continue;
 				}
 				echo "======================================================\n";
