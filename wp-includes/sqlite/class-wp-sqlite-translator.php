@@ -1683,9 +1683,9 @@ class WP_SQLite_Translator {
 	private function preprocess_like_expr( &$token ) {
 		/*
 		 * This code handles escaped wildcards in LIKE clauses.
-		 * If we are within a LIKE experession, we look for \_ and \%, the
+		 * If we are within a LIKE expression, we look for \_ and \%, the
 		 * escaped LIKE wildcards, the ones where we want a literal, not a
-		 * wildcard match. We change the \ escape for an ASCII \x1a (SUB) character,
+		 * wildcard match. We change the \ escape for an ASCII \x1A (SUB) character,
 		 * so the \ characters won't get munged.
 		 * These \_ and \% escape sequences are in the token name, because
 		 * the lexer has already done stripcslashes on the value.
