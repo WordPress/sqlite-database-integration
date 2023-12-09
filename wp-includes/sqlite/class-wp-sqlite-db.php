@@ -349,7 +349,7 @@ class WP_SQLite_DB extends wpdb {
 	 * @see wpdb::db_version()
 	 */
 	public function db_version() {
-		return '5.5';
+		return '8.0';
 	}
 
 	/**
