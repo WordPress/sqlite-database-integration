@@ -633,7 +633,7 @@ class WP_SQLite_Translator {
 				$this->table_name,
 				$this->insert_columns,
 				$this->last_insert_id,
-				$this->affected_rows,
+				$this->affected_rows
 			);
 
 			// Commit the nested transaction.
