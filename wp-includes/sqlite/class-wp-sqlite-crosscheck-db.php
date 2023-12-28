@@ -1,4 +1,4 @@
-<?php
+<?php // phpcs:ignoreFile
 
 class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 
@@ -117,7 +117,6 @@ class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 				break;
 			}
 		}
-
 	}
 
 	private function report_factor( $factor, $mysql, $sqlite ) {
@@ -125,5 +124,4 @@ class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 		echo '  MySQL: ' . var_export( $mysql, true ) . "\n";
 		echo '  SQLite: ' . var_export( $sqlite, true ) . "\n\n";
 	}
-
 }

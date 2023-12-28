@@ -1,5 +1,4 @@
 <?php
-
 /**
  * WordPress schema for unit tests for the SQLite database integration project.
  *

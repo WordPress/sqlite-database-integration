@@ -672,7 +672,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$result = $this->engine->query( "INSERT INTO _tmp_table (ID, firstname, lastname, datetime) VALUES (6, 'Sophie', 'Bar', '2010-01-01 12:53:13');" );
 		$this->assertEquals( '', $this->engine->get_error_message() );
 		$this->assertEquals( 1, $result );
-
 	}
 
 	public function testCaseInsensitiveUniqueIndex() {
@@ -727,7 +726,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$result1 = $this->engine->query( 'SELECT COUNT(*) num FROM _tmp_table;' );
 		$this->assertEquals( 2, $result1[0]->num );
-
 	}
 
 	public function testOnDuplicateUpdate() {
@@ -966,7 +964,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				),
 			)
 		);
-
 	}
 
 	public function testCount() {
@@ -1462,7 +1459,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals( '1', $results[0]->cmp );
-
 	}
 
 	public function testZeroPlusStringToFloatComparison() {
@@ -1474,7 +1470,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertQuery( "SELECT 0+'1234abcd' = 1234 as cmp;" );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals( '1', $results[0]->cmp );
-
 	}
 
 	public function testCalcFoundRows() {
@@ -1789,5 +1784,4 @@ QUERY
 
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
-
 }

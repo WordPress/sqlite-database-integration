@@ -318,5 +318,4 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 			$actual
 		);
 	}
-
 }
