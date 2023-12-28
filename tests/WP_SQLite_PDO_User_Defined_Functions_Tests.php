@@ -24,5 +24,4 @@ class WP_SQLite_PDO_User_Defined_Functions_Tests extends TestCase {
 			array( 2, array( 'User 0000019', 'User 0000018', 'User 0000019', 'User 0000020' ) ),
 		);
 	}
-
 }

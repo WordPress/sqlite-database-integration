@@ -103,7 +103,7 @@ class WP_SQLite_DB extends wpdb {
 	 *
 	 * @return string escaped
 	 */
-	function _real_escape( $str ) {
+	public function _real_escape( $str ) {
 		return addslashes( $str );
 	}
 
@@ -278,7 +278,7 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->result = $this->dbh->query( $query );
-		$this->num_queries++;
+		++$this->num_queries;
 
 		if ( defined( 'SAVEQUERIES' ) && SAVEQUERIES ) {
 			$this->queries[] = array( $query, $this->timer_stop(), $this->get_caller() );

@@ -73,7 +73,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 		}
 
 		/* Mock up some metadata rows. When meta_key starts with _, the custom field isn't visible to the editor.  */
-		for ( $i = 1; $i <= 40; $i ++ ) {
+		for ( $i = 1; $i <= 40; $i++ ) {
 			$k1 = 'visible_meta_key_' . str_pad( $i, 2, '0', STR_PAD_LEFT );
 			$k2 = '_invisible_meta_key_%_percent' . str_pad( $i, 2, '0', STR_PAD_LEFT );
 			$this->assertQuery(
@@ -413,7 +413,7 @@ QUERY;
 		$count_unexpired = 0;
 		foreach ( $actual as $row ) {
 			if ( str_starts_with( $row->option_name, '_transient' ) ) {
-				$count_unexpired ++;
+				++$count_unexpired;
 				$this->assertGreaterThan( $now, $row->option_timeout );
 			}
 		}
@@ -478,7 +478,7 @@ QUERY;
 		$unserialized = unserialize( $retrieved_string );
 		$this->assertEquals( $obj, $unserialized );
 
-		$obj ['two'] ++;
+		++$obj ['two'];
 		$obj ['pi']          *= 2;
 		$option_value         = serialize( $obj );
 		$option_value_escaped = $this->engine->get_pdo()->quote( $option_value );
@@ -533,5 +533,4 @@ QUERY;
 
 		return $retval;
 	}
-
 }

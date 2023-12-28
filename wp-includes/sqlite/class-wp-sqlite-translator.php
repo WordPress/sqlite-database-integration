@@ -266,7 +266,7 @@ class WP_SQLite_Translator {
 	/**
 	 * Variable to keep track of nested transactions level.
 	 *
-	 * @var number
+	 * @var int
 	 */
 	private $transaction_level = 0;
 
@@ -334,6 +334,13 @@ class WP_SQLite_Translator {
 	 * @var array  [tablename => tablename]
 	 */
 	private $sqlite_system_tables = array();
+
+	/**
+	 * The last error message from SQLite.
+	 *
+	 * @var string
+	 */
+	private $last_sqlite_error;
 
 	/**
 	 * Constructor.
@@ -408,7 +415,8 @@ class WP_SQLite_Translator {
 
 		// WordPress happens to use no foreign keys.
 		$statement = $this->pdo->query( 'PRAGMA foreign_keys' );
-		if ( $statement->fetchColumn( 0 ) == '0' ) { // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison
+		// phpcs:ignore Universal.Operators.StrictComparisons.LooseEqual
+		if ( $statement->fetchColumn( 0 ) == '0' ) {
 			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
@@ -422,7 +430,7 @@ class WP_SQLite_Translator {
 	 *
 	 * This definition is changed since version 1.7.
 	 */
-	function __destruct() {
+	public function __destruct() {
 		if ( defined( 'SQLITE_MEM_DEBUG' ) && SQLITE_MEM_DEBUG ) {
 			$max = ini_get( 'memory_limit' );
 			if ( is_null( $max ) ) {
@@ -756,9 +764,9 @@ class WP_SQLite_Translator {
 	 * @throws Exception If the query is not supported.
 	 */
 	private function execute_mysql_query( $query ) {
-		$tokens         = ( new WP_SQLite_Lexer( $query ) )->tokens;
-		$this->rewriter = new WP_SQLite_Query_Rewriter( $tokens );
-		$this->query_type     = $this->rewriter->peek()->value;
+		$tokens           = ( new WP_SQLite_Lexer( $query ) )->tokens;
+		$this->rewriter   = new WP_SQLite_Query_Rewriter( $tokens );
+		$this->query_type = $this->rewriter->peek()->value;
 
 		switch ( $this->query_type ) {
 			case 'ALTER':
@@ -1392,7 +1400,8 @@ class WP_SQLite_Translator {
 			$this->remember_last_reserved_keyword( $token );
 
 			if ( ! $table_name ) {
-				$this->table_name = $table_name = $this->peek_table_name( $token );
+				$this->table_name = $this->peek_table_name( $token );
+				$table_name       = $this->peek_table_name( $token );
 			}
 
 			if ( $this->skip_sql_calc_found_rows( $token ) ) {
@@ -1484,7 +1493,7 @@ class WP_SQLite_Translator {
 	private function execute_describe() {
 		$this->rewriter->skip();
 		$this->table_name = $this->rewriter->consume()->value;
-		$stmt       = $this->execute_sqlite_query(
+		$stmt             = $this->execute_sqlite_query(
 			"SELECT
 				`name` as `Field`,
 				(
@@ -1541,10 +1550,10 @@ class WP_SQLite_Translator {
 				break;
 			}
 
-			// Record the table name
+			// Record the table name.
 			if (
-				!$this->table_name &&
-				!$token->matches(
+				! $this->table_name &&
+				! $token->matches(
 					WP_SQLite_Token::TYPE_KEYWORD,
 					WP_SQLite_Token::FLAG_KEYWORD_RESERVED
 				)
@@ -1664,7 +1673,7 @@ class WP_SQLite_Translator {
 		if ( is_numeric( $this->last_insert_id ) ) {
 			$this->last_insert_id = (int) $this->last_insert_id;
 		}
-		$this->last_insert_id = apply_filters('sqlite_last_insert_id', $this->last_insert_id, $this->table_name);
+		$this->last_insert_id = apply_filters( 'sqlite_last_insert_id', $this->last_insert_id, $this->table_name );
 	}
 
 	/**
@@ -1753,7 +1762,7 @@ class WP_SQLite_Translator {
 			/* Remove the quotes around the name. */
 			$unescaped_value = mb_substr( $token->token, 1, -1, 'UTF-8' );
 			if ( str_contains( $unescaped_value, '\_' ) || str_contains( $unescaped_value, '\%' ) ) {
-				$this->like_escape_count ++;
+				++$this->like_escape_count;
 				return str_replace(
 					array( '\_', '\%' ),
 					array( self::LIKE_ESCAPE_CHAR . '_', self::LIKE_ESCAPE_CHAR . '%' ),
@@ -2379,14 +2388,14 @@ class WP_SQLite_Translator {
 		} else {
 			/* open parenthesis during LIKE parameter, count it. */
 			if ( $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( '(' ) ) ) {
-				$this->like_expression_nesting ++;
+				++$this->like_expression_nesting;
 
 				return false;
 			}
 
 			/* close parenthesis matching open parenthesis during LIKE parameter, count it. */
 			if ( $this->like_expression_nesting > 1 && $token->matches( WP_SQLite_Token::TYPE_OPERATOR, null, array( ')' ) ) ) {
-				$this->like_expression_nesting --;
+				--$this->like_expression_nesting;
 
 				return false;
 			}
@@ -2664,7 +2673,7 @@ class WP_SQLite_Translator {
 			$op_type          = strtoupper( $this->rewriter->consume()->token );
 			$op_subject       = strtoupper( $this->rewriter->consume()->token );
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
-			$is_index_op      = ! ! $mysql_index_type;
+			$is_index_op      = (bool) $mysql_index_type;
 
 			if ( 'ADD' === $op_type && 'COLUMN' === $op_subject ) {
 				$column_name = $this->rewriter->consume()->value;
@@ -3436,16 +3445,16 @@ class WP_SQLite_Translator {
 	 * When $wpdb::suppress_errors is set to true or $wpdb::show_errors is set to false,
 	 * the error messages are ignored.
 	 *
-	 * @param string $line     Where the error occurred.
-	 * @param string $function Indicate the function name where the error occurred.
-	 * @param string $message  The message.
+	 * @param string $line          Where the error occurred.
+	 * @param string $function_name Indicate the function name where the error occurred.
+	 * @param string $message       The message.
 	 *
 	 * @return boolean|void
 	 */
-	private function set_error( $line, $function, $message ) {
+	private function set_error( $line, $function_name, $message ) {
 		$this->errors[]         = array(
 			'line'     => $line,
-			'function' => $function,
+			'function' => $function_name,
 		);
 		$this->error_messages[] = $message;
 		$this->is_error         = true;
@@ -3640,7 +3649,7 @@ class WP_SQLite_Translator {
 				 *
 				 * @since 0.1.0
 				 */
-				do_action( 'sqlite_transaction_query_executed', 'START TRANSACTION', !!$this->last_exec_returned, $this->transaction_level - 1 );
+				do_action( 'sqlite_transaction_query_executed', 'START TRANSACTION', (bool) $this->last_exec_returned, $this->transaction_level - 1 );
 			}
 		}
 		return $success;
@@ -3663,7 +3672,7 @@ class WP_SQLite_Translator {
 			$this->execute_sqlite_query( 'RELEASE SAVEPOINT LEVEL' . $this->transaction_level );
 		}
 
-		do_action( 'sqlite_transaction_query_executed', 'COMMIT', !!$this->last_exec_returned, $this->transaction_level );
+		do_action( 'sqlite_transaction_query_executed', 'COMMIT', (bool) $this->last_exec_returned, $this->transaction_level );
 		return $this->last_exec_returned;
 	}
 
@@ -3683,7 +3692,7 @@ class WP_SQLite_Translator {
 		} else {
 			$this->execute_sqlite_query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
 		}
-		do_action( 'sqlite_transaction_query_executed', 'ROLLBACK', !!$this->last_exec_returned, $this->transaction_level );
+		do_action( 'sqlite_transaction_query_executed', 'ROLLBACK', (bool) $this->last_exec_returned, $this->transaction_level );
 		return $this->last_exec_returned;
 	}
 }

@@ -78,5 +78,4 @@ class WP_SQLite_Query_RewriterTests extends TestCase {
 		$this->assertEquals( ' ', $buffer[1]->value );
 		$this->assertEquals( 'UPDATE', $buffer[2]->value );
 	}
-
 }
