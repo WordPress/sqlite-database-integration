@@ -2483,8 +2483,20 @@ class WP_SQLite_Translator {
 			array_filter(
 				$tables,
 				function ( $table ) {
-					$table_name = property_exists( $table, 'Name' ) ? $table->Name : $table->table_name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-					return ! array_key_exists( $table_name, $this->sqlite_system_tables );
+					$table_name = false;
+					if ( is_array( $table ) ) {
+						if ( isset( $table['Name'] ) ) {
+							$table_name = $table['Name'];
+						} elseif ( isset( $table['table_name'] ) ) {
+							$table_name = $table['table_name'];
+						}
+					} elseif ( is_object( $table ) ) {
+						$table_name = property_exists( $table, 'Name' )
+							? $table->Name // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+							: $table->table_name;
+					}
+
+					return $table_name && ! array_key_exists( $table_name, $this->sqlite_system_tables );
 				},
 				ARRAY_FILTER_USE_BOTH
 			)
