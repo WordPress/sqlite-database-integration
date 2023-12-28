@@ -176,7 +176,7 @@ class WP_SQLite_Translator {
 	 * @var array
 	 */
 	private $table_name = array();
-	
+
 	/**
 	 * The type of the executed query (SELECT, INSERT, etc).
 	 *
@@ -613,7 +613,7 @@ class WP_SQLite_Translator {
 					}
 				}
 			} while ( $error );
-			
+
 			/**
 			 * Notifies that a query has been translated and executed.
 			 *
@@ -638,7 +638,7 @@ class WP_SQLite_Translator {
 
 			// Commit the nested transaction.
 			$this->commit();
-			
+
 			return $this->return_value;
 		} catch ( Exception $err ) {
 			// Rollback the nested transaction.
@@ -1464,7 +1464,9 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_truncate() {
 		$this->rewriter->skip(); // TRUNCATE.
-		$this->rewriter->skip(); // TABLE.
+		if ( 'TABLE' === strtoupper( $this->rewriter->peek()->value ) ) {
+			$this->rewriter->skip(); // TABLE.
+		}
 		$this->rewriter->add( new WP_SQLite_Token( 'DELETE', WP_SQLite_Token::TYPE_KEYWORD ) );
 		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
 		$this->rewriter->add( new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD ) );
@@ -1549,7 +1551,7 @@ class WP_SQLite_Translator {
 			) {
 				$this->table_name = $token->value;
 			}
-			
+
 			$this->remember_last_reserved_keyword( $token );
 
 			if (
@@ -3631,7 +3633,7 @@ class WP_SQLite_Translator {
 				++$this->transaction_level;
 				/**
 				 * Notifies that a transaction-related query has been translated and executed.
-				 * 
+				 *
 				 * @param string $command       The SQL statement (one of "START TRANSACTION", "COMMIT", "ROLLBACK").
 				 * @param bool   $success       Whether the SQL statement was successful or not.
 				 * @param int    $nesting_level The nesting level of the transaction.
