@@ -33,7 +33,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @var string[]
 	 */
-	public static $parser_methods = array(
+	protected const PARSER_METHODS = array(
 		// It is best to put the parsers in order of their complexity
 		// (ascending) and their occurrence rate (descending).
 		//
@@ -77,7 +77,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @var string[]
 	 */
-	public $keyword_name_indicators = array(
+	protected const KEYWORD_NAME_INDICATORS = array(
 		'FROM',
 		'SET',
 		'WHERE',
@@ -89,7 +89,7 @@ class WP_SQLite_Lexer {
 	 *
 	 * @var string[]
 	 */
-	public $operator_name_indicators = array(
+	protected const OPERATOR_NAME_INDICATORS = array(
 		',',
 		'.',
 	);
@@ -1486,7 +1486,7 @@ class WP_SQLite_Lexer {
 			 */
 			$token = null;
 
-			foreach ( static::$parser_methods as $method ) {
+			foreach ( self::PARSER_METHODS as $method ) {
 				$token = $this->$method();
 
 				if ( $token ) {
@@ -1668,10 +1668,10 @@ class WP_SQLite_Lexer {
 			$next = $this->tokens_get_next();
 			if (
 				( WP_SQLite_Token::TYPE_KEYWORD !== $next->type
-					|| ! in_array( $next->value, $this->keyword_name_indicators, true )
+					|| ! in_array( $next->value, self::KEYWORD_NAME_INDICATORS, true )
 				)
 				&& ( WP_SQLite_Token::TYPE_OPERATOR !== $next->type
-					|| ! in_array( $next->value, $this->operator_name_indicators, true )
+					|| ! in_array( $next->value, self::OPERATOR_NAME_INDICATORS, true )
 				)
 				&& ( null !== $next->value )
 			) {
