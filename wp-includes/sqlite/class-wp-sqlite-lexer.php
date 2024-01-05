@@ -2068,7 +2068,7 @@ class WP_SQLite_Lexer {
 				} elseif (
 					$this->last + 1 < $this->string_length
 					&& '0' === $this->str[ $this->last ]
-					&& ( 'x' === $this->str[ $this->last + 1 ] || 'X' === $this->str[ $this->last + 1 ] )
+					&& 'x' === $this->str[ $this->last + 1 ]
 				) {
 					$token .= $this->str[ $this->last++ ];
 					$state  = 2;
