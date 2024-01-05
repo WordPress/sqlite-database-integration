@@ -261,8 +261,8 @@ class WP_SQLite_Token {
 			case self::TYPE_NUMBER:
 				$ret = str_replace( '--', '', $this->token ); // e.g. ---42 === -42.
 				if ( $this->flags & self::FLAG_NUMBER_HEX ) {
+					$ret = str_replace( array( '-', '+' ), '', $this->token );
 					if ( $this->flags & self::FLAG_NUMBER_NEGATIVE ) {
-						$ret = str_replace( '-', '', $this->token );
 						$ret = -hexdec( $ret );
 					} else {
 						$ret = hexdec( $ret );
