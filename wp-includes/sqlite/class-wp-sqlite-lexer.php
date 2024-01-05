@@ -2260,7 +2260,7 @@ class WP_SQLite_Lexer {
 			if ( null === $str ) {
 				$str = $this->parse_unknown();
 
-				if ( null === $str ) {
+				if ( null === $str && ! ( $flags & WP_SQLite_Token::FLAG_SYMBOL_PARAMETER ) ) {
 					$this->error( 'Variable name was expected.', $this->str[ $this->last ], $this->last );
 				}
 			}
