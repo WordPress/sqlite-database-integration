@@ -1,6 +1,6 @@
 <?php
 /**
- * This file is a port of the Lexer & Tokens_List classes from the PHPMyAdmin/sql-parser library.
+ * This file is a port of the Lexer & TokensList classes from the PHPMyAdmin/sql-parser library.
  *
  * @package wp-sqlite-integration
  * @see https://github.com/phpmyadmin/sql-parser
@@ -2514,15 +2514,10 @@ class WP_SQLite_Lexer {
 	 * Constructor.
 	 *
 	 * @param stdClass[] $tokens The initial array of tokens.
-	 * @param int        $count  The count of tokens in the initial array.
 	 */
-	public function tokens( array $tokens = array(), $count = -1 ) {
-		if ( empty( $tokens ) ) {
-			return;
-		}
-
+	public function tokens( array $tokens = array() ) {
 		$this->tokens       = $tokens;
-		$this->tokens_count = -1 === $count ? count( $tokens ) : $count;
+		$this->tokens_count = count( $tokens );
 	}
 
 	/**
