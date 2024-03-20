@@ -8,6 +8,17 @@ require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-translator.php';
 
 /**
+ * Polyfills for WordPress functions
+ */
+
+function do_action( $tag, ...$args ) {
+}
+
+function apply_filters( $tag, $value, ...$args ) {
+	return $value;
+}
+
+/**
  * Polyfills for php 8 functions
  */
 
