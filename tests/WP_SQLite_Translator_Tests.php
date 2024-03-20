@@ -296,10 +296,10 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			"SHOW TABLE STATUS LIKE '_tmp_table1';"
+			"SHOW TABLE STATUS LIKE '_tmp_table%';"
 		);
 		$this->assertCount(
-			1,
+			2,
 			$this->engine->get_query_results()
 		);
 		$this->assertEquals(
