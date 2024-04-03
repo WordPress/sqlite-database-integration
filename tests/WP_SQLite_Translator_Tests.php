@@ -1244,6 +1244,17 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$fields
 		);
 	}
+	public function testShowGrantsFor() {
+		$result = $this->assertQuery( 'SHOW GRANTS FOR current_user();' );
+		$this->assertEquals(
+			$result,
+			array(
+				(object) array(
+					'Grants for root@localhost' => 'ALL PRIVILIGES'
+				)
+			)
+		);
+	}
 
 	public function testShowIndex() {
 		$result = $this->assertQuery(

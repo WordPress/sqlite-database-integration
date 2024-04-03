@@ -3026,6 +3026,14 @@ class WP_SQLite_Translator {
 				$this->results = true;
 				return;
 
+			case 'GRANTS FOR':
+				$this->set_results_from_fetched_data( array(
+					(object) array(
+						'Grants for root@localhost' => 'ALL PRIVILIGES'
+					)
+				) );
+				return;
+
 			case 'FULL COLUMNS':
 				$this->rewriter->consume();
 				// Fall through.
