@@ -1824,6 +1824,7 @@ class WP_SQLite_Translator {
 			|| $this->capture_group_by( $token )
 			|| $this->translate_ungrouped_having( $token )
 			|| $this->translate_like_escape( $token )
+			|| $this->translate_left_function( $token )
 		);
 	}
 
@@ -2022,6 +2023,41 @@ class WP_SQLite_Translator {
 
 		$this->rewriter->skip();
 		$this->rewriter->add( new WP_SQLite_Token( 'DATETIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+		return true;
+	}
+
+	/**
+	 * Translate the LEFT() function.
+	 * 
+	 * > Returns the leftmost len characters from the string str, or NULL if any argument is NULL.
+	 * 
+	 * https://dev.mysql.com/doc/refman/8.3/en/string-functions.html#function_left
+	 *
+	 * @param WP_SQLite_Token $token The token to translate.
+	 *
+	 * @return bool
+	 */
+	private function translate_left_function( $token ) {
+		if (
+			! $token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_FUNCTION,
+				array( 'LEFT' )
+			)
+		) {
+			return false;
+		}
+
+		$this->rewriter->skip();
+		$this->rewriter->add( new WP_SQLite_Token( 'SUBSTRING', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
+		$this->rewriter->consume(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+				'value' => ',',
+			)
+		);
+		$this->rewriter->add( new WP_SQLite_Token( 1, WP_SQLite_Token::TYPE_NUMBER ) );
+		$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
 		return true;
 	}
 

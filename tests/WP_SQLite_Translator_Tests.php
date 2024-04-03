@@ -146,12 +146,41 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
+	public function testLeftFunction1Char() {
+		$result = $this->assertQuery(
+			'SELECT LEFT("abc", 1) as output'
+		);
+		$this->assertEquals( "a", $result[0]->output );		
+	}
+
+	public function testLeftFunction5Chars() {
+		$result = $this->assertQuery(
+			'SELECT LEFT("Lorem ipsum", 5) as output'
+		);
+		$this->assertEquals( "Lorem", $result[0]->output );		
+	}
+
+	public function testLeftFunctionNullString() {
+		$result = $this->assertQuery(
+			'SELECT LEFT(NULL, 5) as output'
+		);
+		$this->assertEquals( null, $result[0]->output );		
+	}
+
+	public function testLeftFunctionNullLength() {
+		$result = $this->assertQuery(
+			'SELECT LEFT("Test", NULL) as output'
+		);
+		$this->assertEquals( null, $result[0]->output );		
+	}
+
 	public function testInsertSelectFromDual() {
 		$result = $this->assertQuery(
 			'INSERT INTO _options (option_name, option_value) SELECT "A", "b" FROM DUAL WHERE ( SELECT NULL FROM DUAL ) IS NULL'
 		);
 		$this->assertEquals( 1, $result );
 	}
+
 
 	public function testCreateTemporaryTable() {
 		$this->assertQuery(
