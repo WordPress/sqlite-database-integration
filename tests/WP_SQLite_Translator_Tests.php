@@ -1250,7 +1250,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$result,
 			array(
 				(object) array(
-					'Grants for root@localhost' => 'ALL PRIVILIGES'
+					'Grants for root@localhost' => 'GRANT *.* ON % TO `root`@`localhost`'
 				)
 			)
 		);

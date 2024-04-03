@@ -3029,7 +3029,7 @@ class WP_SQLite_Translator {
 			case 'GRANTS FOR':
 				$this->set_results_from_fetched_data( array(
 					(object) array(
-						'Grants for root@localhost' => 'ALL PRIVILIGES'
+						'Grants for root@localhost' => 'GRANT *.* ON % TO `root`@`localhost`',
 					)
 				) );
 				return;
