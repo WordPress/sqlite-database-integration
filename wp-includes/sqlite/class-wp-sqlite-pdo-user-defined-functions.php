@@ -637,7 +637,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL UNHEX() function.
 	 *
-	 * or a string argument str, UNHEX(str) interprets each pair of characters
+	 * For a string argument str, UNHEX(str) interprets each pair of characters
 	 * in the argument as a hexadecimal number and converts it to the byte represented
 	 * by the number. The return value is a binary string.
 	 *
