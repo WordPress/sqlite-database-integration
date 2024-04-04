@@ -27,7 +27,7 @@
 
 	<!-- Directories and third party library exclusions. -->
 	<exclude-pattern>/vendor/*</exclude-pattern>
-	<exclude-pattern>/tests/*</exclude-pattern>
+	<!-- <exclude-pattern>/tests/*</exclude-pattern> -->
 
 	<!-- Allow the WP DB Class and related tests for usage of direct database access functions. -->
 	<rule ref="WordPress.DB.RestrictedClasses.mysql__PDO">
@@ -35,5 +35,43 @@
 	</rule>
 	<rule ref="WordPress.DB.RestrictedFunctions">
 		<exclude-pattern>/wp-includes/*.php</exclude-pattern>
+	</rule>
+
+	<!-- Disable some more checks. -->
+	<rule ref="Generic.Commenting.Todo.CommentFound">
+		<severity>0</severity>
+	</rule>
+	<rule ref="Squiz.Commenting.LongConditionClosingComment.Missing">
+		<severity>0</severity>
+	</rule>
+	<rule ref="Squiz.Commenting.PostStatementComment.Found">
+		<severity>0</severity>
+	</rule>
+
+	<!-- Disable some tests for the tests/ files. -->
+	<rule ref="Squiz.Commenting">
+		<exclude-pattern>/tests/*</exclude-pattern>
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.DB.RestrictedClasses.mysql__PDO">
+		<exclude-pattern>/tests/*</exclude-pattern>
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="Generic.Commenting">
+		<exclude-pattern>/tests/*</exclude-pattern>
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase">
+		<exclude-pattern>/tests/*</exclude-pattern>
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.Files.FileName.InvalidClassFileName">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="Universal.Operators.DisallowShortTernary.Found">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="PEAR.NamingConventions.ValidClassName.Invalid">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
 	</rule>
 </ruleset>

@@ -97,7 +97,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'ID'          => '1',
 			'option_name' => 'rss_123',
 		);
-		$uppercase_RSS       = (object) array(
+		$uppercase_rss       = (object) array(
 			'ID'          => '2',
 			'option_name' => 'RSS_123',
 		);
@@ -108,8 +108,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		return array(
 			array( 'REGEXP', '^RSS_.+$', $lowercase_rss ),
 			array( 'RLIKE', '^RSS_.+$', $lowercase_rss ),
-			array( 'REGEXP BINARY', '^RSS_.+$', $uppercase_RSS ),
-			array( 'RLIKE BINARY', '^RSS_.+$', $uppercase_RSS ),
+			array( 'REGEXP BINARY', '^RSS_.+$', $uppercase_rss ),
+			array( 'RLIKE BINARY', '^RSS_.+$', $uppercase_rss ),
 			array( 'NOT REGEXP', '^RSS_.+$', $lowercase_transient ),
 			array( 'NOT RLIKE', '^RSS_.+$', $lowercase_transient ),
 			array( 'NOT REGEXP BINARY', '^RSS_.+$', $lowercase_rss ),
@@ -126,7 +126,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$results = $this->engine->get_query_results();
 		$this->assertCount( 1, $results );
-		$this->assertEquals( date( 'Y' ), $results[0]->y );
+		$this->assertEquals( gmdate( 'Y' ), $results[0]->y );
 	}
 
 	public function testCastAsBinary() {
@@ -146,12 +146,41 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
+	public function testLeftFunction1Char() {
+		$result = $this->assertQuery(
+			'SELECT LEFT("abc", 1) as output'
+		);
+		$this->assertEquals( 'a', $result[0]->output );
+	}
+
+	public function testLeftFunction5Chars() {
+		$result = $this->assertQuery(
+			'SELECT LEFT("Lorem ipsum", 5) as output'
+		);
+		$this->assertEquals( 'Lorem', $result[0]->output );
+	}
+
+	public function testLeftFunctionNullString() {
+		$result = $this->assertQuery(
+			'SELECT LEFT(NULL, 5) as output'
+		);
+		$this->assertEquals( null, $result[0]->output );
+	}
+
+	public function testLeftFunctionNullLength() {
+		$result = $this->assertQuery(
+			'SELECT LEFT("Test", NULL) as output'
+		);
+		$this->assertEquals( null, $result[0]->output );
+	}
+
 	public function testInsertSelectFromDual() {
 		$result = $this->assertQuery(
 			'INSERT INTO _options (option_name, option_value) SELECT "A", "b" FROM DUAL WHERE ( SELECT NULL FROM DUAL ) IS NULL'
 		);
 		$this->assertEquals( 1, $result );
 	}
+
 
 	public function testCreateTemporaryTable() {
 		$this->assertQuery(
@@ -963,7 +992,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertCount( 1, $results );
 		$this->assertEquals( '2016-01-15 00:00:00', $results[0]->option_value );
-		if ( $results[0]->option_name !== '2016-01-15T00:00:00Z' ) {
+		if ( '2016-01-15T00:00:00Z' !== $results[0]->option_name ) {
 			$this->markTestSkipped( 'A datetime-like string was rewritten to an SQLite format even though it was used as a text and not as a datetime.' );
 		}
 		$this->assertEquals( '2016-01-15T00:00:00Z', $results[0]->option_name );
@@ -1357,6 +1386,17 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$fields
 		);
 	}
+	public function testShowGrantsFor() {
+		$result = $this->assertQuery( 'SHOW GRANTS FOR current_user();' );
+		$this->assertEquals(
+			$result,
+			array(
+				(object) array(
+					'Grants for root@localhost' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
+				),
+			)
+		);
+	}
 
 	public function testShowIndex() {
 		$result = $this->assertQuery(
@@ -1564,7 +1604,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	public function testStringToFloatComparison() {
 		$this->assertQuery( "SELECT ('00.42' = 0.4200) as cmp;" );
 		$results = $this->engine->get_query_results();
-		if ( $results[0]->cmp !== 1 ) {
+		if ( 1 !== $results[0]->cmp ) {
 			$this->markTestSkipped( 'Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ' );
 		}
 		$this->assertEquals( '1', $results[0]->cmp );
@@ -1639,7 +1679,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$return = $this->assertQuery(
 			"UPDATE _dates SET option_value = '2001-05-27 10:08:48'"
 		);
-		if ( $return === 1 ) {
+		if ( 1 === $return ) {
 			$this->markTestIncomplete(
 				'SQLite UPDATE query returned 1 when no rows were changed. ' .
 				'This is a database compatibility issue – MySQL would return 0 ' .

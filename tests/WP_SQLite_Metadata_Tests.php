@@ -269,14 +269,14 @@ class WP_SQLite_Metadata_Tests extends TestCase {
 		$this->assertEquals( 4, $rows[0]->Rows );
 	}
 
-	private function assertTableEmpty( $table_name, $empty ) {
+	private function assertTableEmpty( $table_name, $empty_var ) {
 
 		$this->assertQuery(
 			"SELECT COUNT(*) num FROM $table_name"
 		);
 
 		$actual = $this->engine->get_query_results();
-		if ( $empty ) {
+		if ( $empty_var ) {
 			$this->assertEquals( 0, $actual[0]->num, "$table_name is not empty" );
 		} else {
 			$this->assertGreaterThan( 0, $actual[0]->num, "$table_name is empty" );
