@@ -2028,9 +2028,9 @@ class WP_SQLite_Translator {
 
 	/**
 	 * Translate the LEFT() function.
-	 * 
+	 *
 	 * > Returns the leftmost len characters from the string str, or NULL if any argument is NULL.
-	 * 
+	 *
 	 * https://dev.mysql.com/doc/refman/8.3/en/string-functions.html#function_left
 	 *
 	 * @param WP_SQLite_Token $token The token to translate.
@@ -3063,11 +3063,13 @@ class WP_SQLite_Translator {
 				return;
 
 			case 'GRANTS FOR':
-				$this->set_results_from_fetched_data( array(
-					(object) array(
-						'Grants for root@localhost' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION'
+				$this->set_results_from_fetched_data(
+					array(
+						(object) array(
+							'Grants for root@localhost' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
+						),
 					)
-				) );
+				);
 				return;
 
 			case 'FULL COLUMNS':
