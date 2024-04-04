@@ -1,4 +1,4 @@
-<?php // phpcs:ignoreFile
+<?php
 
 class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 
@@ -74,18 +74,18 @@ class WP_SQLite_Crosscheck_DB_ extends WP_SQLite_DB {
 		foreach ( $tests as $test ) {
 			list($factor, $mysql, $sqlite) = $test;
 			if ( $mysql !== $sqlite ) {
-				if ( $factor === 'insert_id' ) {
+				if ( 'insert_id' === $factor ) {
 					// On multi-inserts MySQL returns the first inserted ID
 					// while SQLite returns the last one. The cached insert_id
 					// value stays the same for a number of subsequent queries.
 					// Let's forgive this for now.
 					continue;
 				}
-				if ( $factor === 'rows_affected' && $mysql_retval === $mysql ) {
+				if ( 'rows_affected' === $factor && $mysql_retval === $mysql ) {
 					// SQLite doesn't provide the rowcount() functionality
 					continue;
 				}
-				if ( $factor === 'retval' && $GLOBALS['mysql']->rows_affected === $mysql ) {
+				if ( 'retval' === $factor && $GLOBALS['mysql']->rows_affected === $mysql ) {
 					// SQLite doesn't provide the rowcount() functionality
 					continue;
 				}
