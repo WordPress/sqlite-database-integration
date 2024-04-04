@@ -3187,12 +3187,56 @@ class WP_SQLite_Translator {
 				return;
 
 			case 'TABLE STATUS':  // FROM `database`.
-				$this->rewriter->skip();
+				// Match the optional [{FROM | IN} db_name]
+				$database_expression = $this->rewriter->consume();
+				if ( $database_expression->token === 'FROM' || $database_expression->token === 'IN' ) {
+					$this->rewriter->consume();
+					$database_expression = $this->rewriter->consume();
+				}
+
+				$pattern = '%';
+				// [LIKE 'pattern' | WHERE expr]
+				if($database_expression->token === 'LIKE') {
+					$pattern = $this->rewriter->consume()->value;
+				} else if($database_expression->token === 'WHERE') {
+					// @TODO Support me please.
+				} else if($database_expression->token !== ';') {
+					throw new Exception( 'Syntax error: Unexpected token ' . $database_expression->token .' in query '. $this->mysql_query );
+				}
+
 				$database_expression = $this->rewriter->skip();
 				$stmt                = $this->execute_sqlite_query(
-					"SELECT name as `Name`, 'myisam' as `Engine`, 0 as `Data_length`, 0 as `Index_length`, 0 as `Data_free` FROM sqlite_master WHERE type='table' ORDER BY name"
+					<<<SQL
+					SELECT 
+						name as `Name`, 
+						'myisam' as `Engine`,
+						10 as `Version`,
+						'Fixed' as `Row_format`,
+						0 as `Rows`,
+						0 as `Avg_row_length`,
+						0 as `Data_length`,
+						0 as `Max_data_length`,
+						0 as `Index_length`,
+						0 as `Data_free` ,
+						0 as `Auto_increment`,
+						'2024-03-20 15:33:20' as `Create_time`,
+						'2024-03-20 15:33:20' as `Update_time`,
+						null as `Check_time`,
+						null as `Collation`,
+						null as `Checksum`,
+						'' as `Create_options`,
+						'' as `Comment`
+					FROM sqlite_master 
+					WHERE
+						type='table' 
+						AND name LIKE :pattern
+					ORDER BY name
+SQL,
+					
+					array(
+						':pattern' => $pattern,
+					)
 				);
-
 				$tables = $this->strip_sqlite_system_tables( $stmt->fetchAll( $this->pdo_fetch_mode ) );
 				foreach ( $tables as $table ) {
 					$table_name  = $table->Name; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase

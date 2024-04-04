@@ -224,6 +224,119 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testShowTableStatusFrom()
+	{
+		// Created in setUp() function
+		$this->assertQuery("DROP TABLE _options");
+		$this->assertQuery("DROP TABLE _dates");
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"SHOW TABLE STATUS FROM 'mydb';"
+		);
+
+		$this->assertCount(
+			1,
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testShowTableStatusIn()
+	{
+		// Created in setUp() function
+		$this->assertQuery("DROP TABLE _options");
+		$this->assertQuery("DROP TABLE _dates");
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"SHOW TABLE STATUS IN 'mydb';"
+		);
+
+		$this->assertCount(
+			1,
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testShowTableStatusInTwoTables()
+	{
+		// Created in setUp() function
+		$this->assertQuery("DROP TABLE _options");
+		$this->assertQuery("DROP TABLE _dates");
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table2 (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+		$this->assertQuery(
+			"SHOW TABLE STATUS IN 'mydb';"
+		);
+
+		$this->assertCount(
+			2,
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testShowTableStatusLike() {
+		// Created in setUp() function
+		$this->assertQuery("DROP TABLE _options");
+		$this->assertQuery("DROP TABLE _dates");
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table1 (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table2 (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"SHOW TABLE STATUS LIKE '_tmp_table%';"
+		);
+		$this->assertCount(
+			2,
+			$this->engine->get_query_results()
+		);
+		$this->assertEquals(
+			'_tmp_table1',
+			$this->engine->get_query_results()[0]->Name
+		);
+	}
+
 	public function testCreateTable() {
 		$result = $this->assertQuery(
 			"CREATE TABLE wptests_users (
