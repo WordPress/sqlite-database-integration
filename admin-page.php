@@ -146,4 +146,7 @@ function sqlite_plugin_adminbar_item( $admin_bar ) {
 	);
 	$admin_bar->add_node( $args );
 }
-add_action( 'admin_bar_menu', 'sqlite_plugin_adminbar_item', 999 );
+$show_sqlite_adminbar = apply_filters( 'sqlite_show_adminbar', '__return_true' );
+if ( $show_sqlite_adminbar ) {
+	add_action( 'admin_bar_menu', 'sqlite_plugin_adminbar_item', 999 );
+}
