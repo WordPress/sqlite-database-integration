@@ -1938,8 +1938,6 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
-
-
 	public function testOnConflictReplace()
 	{
 		$this->assertQuery(
