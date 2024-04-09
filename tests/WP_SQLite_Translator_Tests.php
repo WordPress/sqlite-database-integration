@@ -374,7 +374,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_login',
 					'Type'    => 'varchar(60)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -382,7 +382,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_pass',
 					'Type'    => 'varchar(255)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -390,7 +390,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_nicename',
 					'Type'    => 'varchar(50)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -398,7 +398,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_email',
 					'Type'    => 'varchar(100)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -406,7 +406,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_url',
 					'Type'    => 'varchar(100)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -414,7 +414,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_registered',
 					'Type'    => 'datetime',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '0000-00-00 00:00:00',
 					'Extra'   => '',
@@ -422,7 +422,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_activation_key',
 					'Type'    => 'varchar(255)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -430,7 +430,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'user_status',
 					'Type'    => 'int(11)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '0',
 					'Extra'   => '',
@@ -438,7 +438,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'display_name',
 					'Type'    => 'varchar(250)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -488,7 +488,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'name',
 					'Type'    => 'varchar(20)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -524,7 +524,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'name',
 					'Type'    => 'varchar(20)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -1091,7 +1091,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'option_name',
 					'Type'    => 'text',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -1099,7 +1099,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'option_value',
 					'Type'    => 'text',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '',
 					'Extra'   => '',
@@ -1320,7 +1320,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'object_id',
 					'Type'    => 'bigint(20) unsigned',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => 'PRI',
 					'Default' => '0',
 					'Extra'   => '',
@@ -1328,7 +1328,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'term_taxonomy_id',
 					'Type'    => 'bigint(20) unsigned',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => 'PRI',
 					'Default' => '0',
 					'Extra'   => '',
@@ -1336,7 +1336,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'term_name',
 					'Type'    => 'varchar(11)',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '0',
 					'Extra'   => '',
@@ -1369,7 +1369,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 				(object) array(
 					'Field'   => 'object_id',
 					'Type'    => 'bigint(20) unsigned',
-					'Null'    => 'YES',
+					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '0',
 					'Extra'   => '',
@@ -1938,36 +1938,24 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
-	public function testIgnoreNotNull()
+
+
+	public function testOnConflictReplace()
 	{
 		$this->assertQuery(
-			"INSERT INTO _options VALUES(1,'test', NULL)"
-		);
-		$this->assertEquals(
-			'',
-			$this->assertQuery(
-				"SELECT option_value FROM _options WHERE option_name = 'test'"
-			)[0]->option_value
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default 'default-value',
+				UNIQUE KEY name (name)
+			);"
 		);
 
 		$this->assertQuery(
-			"UPDATE _options SET option_value = '1' WHERE option_name = 'test'"
+			"INSERT INTO _tmp_table (name) VALUES (null);"
 		);
 		$this->assertEquals(
-			'1',
-			$this->assertQuery(
-				"SELECT option_value FROM _options WHERE option_name = 'test'"
-			)[0]->option_value
-		);
-
-		$this->assertQuery(
-			"UPDATE _options SET option_value = NULL WHERE option_name = 'test'"
-		);
-		$this->assertEquals(
-			'',
-			$this->assertQuery(
-				"SELECT option_value FROM _options WHERE option_name = 'test'"
-			)[0]->option_value
+			'default-value',
+			$this->assertQuery("SELECT name FROM _tmp_table")[0]->name
 		);
 	}
 }

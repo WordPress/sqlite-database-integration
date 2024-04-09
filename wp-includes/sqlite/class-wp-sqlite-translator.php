@@ -1094,12 +1094,6 @@ class WP_SQLite_Translator {
 				array( 'DEFAULT' )
 			) ) {
 				$result->default = $this->rewriter->consume()->token;
-				/**
-				 * WPDB removes the STRICT_TRANS_TABLES mode from MySQL queries.
-				 * This mode allows the use of `NULL` when NOT NULL is set on a column which falls back to DEFAULT.
-				 * SQLite does not support this behavior so we need to remove the NOT NULL constraint when DEFAULT exists.
-				 */
-				$result->not_null = false;
 				continue;
 			}
 
@@ -1128,6 +1122,14 @@ class WP_SQLite_Translator {
 		}
 		if ( $field->not_null ) {
 			$definition .= ' NOT NULL';
+		}
+		/**
+		 * WPDB removes the STRICT_TRANS_TABLES mode from MySQL queries.
+		 * This mode allows the use of `NULL` when NOT NULL is set on a column which falls back to DEFAULT.
+		 * SQLite does not support this behavior, so we need to add the `ON CONFLICT REPLACE` clause to the column definition.
+		 */
+		if (null !== $field->default && $field->not_null) {
+			$definition .= ' ON CONFLICT REPLACE';
 		}
 		if ( null !== $field->default ) {
 			$definition .= ' DEFAULT ' . $field->default;
