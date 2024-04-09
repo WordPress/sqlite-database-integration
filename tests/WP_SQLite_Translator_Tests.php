@@ -1937,4 +1937,63 @@ QUERY
 
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
+
+	public function testOnConflictReplace()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default 'default-value',
+				unique_name varchar(20) NOT NULL default 'unique-default-value',
+				inline_unique_name varchar(20) NOT NULL default 'inline-unique-default-value',
+				UNIQUE KEY unique_name (unique_name)
+			);"
+		);
+
+		$this->assertQuery(
+			"INSERT INTO _tmp_table (ID, name, unique_name, inline_unique_name) VALUES (1, null, null, null);"
+		);
+		$result = $this->assertQuery("SELECT name, unique_name, inline_unique_name FROM _tmp_table");
+
+		$result = $this->assertQuery("SELECT name, unique_name, inline_unique_name FROM _tmp_table");
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name' => 'default-value',
+					'unique_name' => 'unique-default-value',
+					'inline_unique_name' => 'inline-unique-default-value',
+				),
+			),
+			$result
+		);
+
+		$this->assertQuery(
+			"INSERT INTO _tmp_table (ID, name, unique_name, inline_unique_name) VALUES (2, '1', '2', '3');"
+		);
+		$this->assertQuery(
+			"UPDATE _tmp_table SET name = null WHERE ID = 2;"
+		);
+
+		$result = $this->assertQuery("SELECT name FROM _tmp_table WHERE ID = 2");
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name' => 'default-value',
+				),
+			),
+			$result
+		);
+
+		// This should fail because of the UNIQUE constraint
+		$this->assertQuery(
+			"UPDATE _tmp_table SET unique_name = NULL WHERE ID = 2;",
+			'UNIQUE constraint failed: _tmp_table.unique_name'
+		);
+
+		// Inline unique constraint aren't supported currently, so this should pass
+		$this->assertQuery(
+			"UPDATE _tmp_table SET inline_unique_name = NULL WHERE ID = 2;",
+			''
+		);
+	}
 }

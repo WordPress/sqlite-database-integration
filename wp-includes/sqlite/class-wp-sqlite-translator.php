@@ -1054,7 +1054,7 @@ class WP_SQLite_Translator {
 		$result->sqlite_data_type   = $skip_mysql_data_type_parts[0];
 		$result->mysql_data_type    = $skip_mysql_data_type_parts[1];
 
-		// Look for the NOT NULL and AUTO_INCREMENT flags.
+		// Look for the NOT NULL, PRIMARY KEY, DEFAULT, and AUTO_INCREMENT flags.
 		while ( true ) {
 			$token = $this->rewriter->skip();
 			if ( ! $token ) {
@@ -1122,6 +1122,14 @@ class WP_SQLite_Translator {
 		}
 		if ( $field->not_null ) {
 			$definition .= ' NOT NULL';
+		}
+		/**
+		 * WPDB removes the STRICT_TRANS_TABLES mode from MySQL queries.
+		 * This mode allows the use of `NULL` when NOT NULL is set on a column that falls back to DEFAULT.
+		 * SQLite does not support this behavior, so we need to add the `ON CONFLICT REPLACE` clause to the column definition.
+		 */
+		if (null !== $field->default && $field->not_null) {
+			$definition .= ' ON CONFLICT REPLACE';
 		}
 		if ( null !== $field->default ) {
 			$definition .= ' DEFAULT ' . $field->default;
@@ -3207,8 +3215,8 @@ class WP_SQLite_Translator {
 				$database_expression = $this->rewriter->skip();
 				$stmt                = $this->execute_sqlite_query(
 					<<<SQL
-					SELECT 
-						name as `Name`, 
+					SELECT
+						name as `Name`,
 						'myisam' as `Engine`,
 						10 as `Version`,
 						'Fixed' as `Row_format`,
@@ -3226,13 +3234,13 @@ class WP_SQLite_Translator {
 						null as `Checksum`,
 						'' as `Create_options`,
 						'' as `Comment`
-					FROM sqlite_master 
+					FROM sqlite_master
 					WHERE
-						type='table' 
+						type='table'
 						AND name LIKE :pattern
 					ORDER BY name
 SQL,
-					
+
 					array(
 						':pattern' => $pattern,
 					)
