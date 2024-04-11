@@ -1419,7 +1419,7 @@ class WP_SQLite_Translator {
 			if ( $this->skip_index_hint() ) {
 				continue;
 			}
-			
+
 			$this->rewriter->consume();
 		}
 		$this->rewriter->consume_all();
@@ -1474,32 +1474,31 @@ class WP_SQLite_Translator {
 
 	/**
 	 * Ignores the FORCE INDEX clause
-	 * 
-	 * 
+	 *
+	 *
 	 *    USE {INDEX|KEY}
-     *      [FOR {JOIN|ORDER BY|GROUP BY}] ([index_list])
-  	 *  | {IGNORE|FORCE} {INDEX|KEY}
-     *      [FOR {JOIN|ORDER BY|GROUP BY}] (index_list)
+	 *      [FOR {JOIN|ORDER BY|GROUP BY}] ([index_list])
+	 *  | {IGNORE|FORCE} {INDEX|KEY}
+	 *      [FOR {JOIN|ORDER BY|GROUP BY}] (index_list)
 	 * @see https://dev.mysql.com/doc/refman/8.3/en/index-hints.html
 	 * @return bool
 	 */
-	private function skip_index_hint()
-	{
+	private function skip_index_hint() {
 		$force = $this->rewriter->peek();
 		if ( ! $force || ! $force->matches(
-			WP_SQLite_Token::TYPE_KEYWORD,
-			WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-			array( 'USE', 'FORCE', 'IGNORE' )
-		) ) {
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'USE', 'FORCE', 'IGNORE' )
+			) ) {
 			return false;
 		}
 
-		$index = $this->rewriter->peek_nth(2);
-		if ( ! $index || !$index->matches(
-			WP_SQLite_Token::TYPE_KEYWORD,
-			WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-			array( 'INDEX', 'KEY' )
-		) ) {
+		$index = $this->rewriter->peek_nth( 2 );
+		if ( ! $index || ! $index->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'INDEX', 'KEY' )
+			) ) {
 			return false;
 		}
 
@@ -1508,18 +1507,18 @@ class WP_SQLite_Translator {
 
 		$maybe_for = $this->rewriter->peek();
 		if ( $maybe_for && $maybe_for->matches(
-			WP_SQLite_Token::TYPE_KEYWORD,
-			WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-			array( 'FOR' )
-		) ) {
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'FOR' )
+			) ) {
 			$this->rewriter->skip(); // FOR
 
 			$token = $this->rewriter->peek();
 			if ( $token && $token->matches(
-				WP_SQLite_Token::TYPE_KEYWORD,
-				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-				array( 'JOIN', 'ORDER', 'GROUP' )
-			) ) {
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+					array( 'JOIN', 'ORDER', 'GROUP' )
+				) ) {
 				$this->rewriter->skip(); // JOIN, ORDER, GROUP
 				if ( 'BY' === strtoupper( $this->rewriter->peek()->value ) ) {
 					$this->rewriter->skip(); // BY
@@ -3277,8 +3276,8 @@ class WP_SQLite_Translator {
 				$database_expression = $this->rewriter->skip();
 				$stmt                = $this->execute_sqlite_query(
 					<<<SQL
-					SELECT 
-						name as `Name`, 
+					SELECT
+						name as `Name`,
 						'myisam' as `Engine`,
 						10 as `Version`,
 						'Fixed' as `Row_format`,
@@ -3296,13 +3295,13 @@ class WP_SQLite_Translator {
 						null as `Checksum`,
 						'' as `Create_options`,
 						'' as `Comment`
-					FROM sqlite_master 
+					FROM sqlite_master
 					WHERE
-						type='table' 
+						type='table'
 						AND name LIKE :pattern
 					ORDER BY name
 SQL,
-					
+
 					array(
 						':pattern' => $pattern,
 					)
