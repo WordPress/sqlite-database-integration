@@ -129,6 +129,36 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( gmdate( 'Y' ), $results[0]->y );
 	}
 
+	public function testUpdateWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45');"
+		);
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1;"
+		);
+		$results = $this->engine->get_query_results();
+
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+
+		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
+	}
+
+	public function testUpdateWithLimitNoEndToken() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45')"
+		);
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1"
+		);
+		$results = $this->engine->get_query_results();
+
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+
+		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
+	}
+
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token

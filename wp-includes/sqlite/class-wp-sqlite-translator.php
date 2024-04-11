@@ -1550,7 +1550,7 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_update() {
 		$this->rewriter->consume(); // Update.
-		$limit = $this->rewriter->peek(
+		$limit    = $this->rewriter->peek(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
 				'value' => 'LIMIT',
@@ -1562,13 +1562,13 @@ class WP_SQLite_Translator {
 				'value' => 'ORDER BY',
 			)
 		);
-		$where = $this->rewriter->peek(
+		$where    = $this->rewriter->peek(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
 				'value' => 'WHERE',
 			)
 		);
-		$params = array();
+		$params   = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
 			if ( ! $token ) {
@@ -1579,6 +1579,10 @@ class WP_SQLite_Translator {
 				$this->remember_last_reserved_keyword( $token );
 				$this->rewriter->consume();
 				$this->prepare_update_for_limit_or_order();
+			}
+
+			if ( $token->value === ';' && ( $limit || $order_by ) ) {
+				$this->rewriter->skip();
 			}
 
 			// Record the table name.
@@ -1604,8 +1608,8 @@ class WP_SQLite_Translator {
 			$this->rewriter->consume();
 		}
 
-		if ( $where && ( $limit || $order_by )  ) {
-			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ));
+		if ( $where && ( $limit || $order_by ) ) {
+			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		}
 
 		$this->rewriter->consume_all();
