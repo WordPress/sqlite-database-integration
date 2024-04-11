@@ -1581,7 +1581,7 @@ class WP_SQLite_Translator {
 				$this->prepare_update_for_limit_or_order();
 			}
 
-			if ( $token->value === ';' && ( $limit || $order_by ) ) {
+			if ( $token->value === ';' && $token->type === WP_SQLite_Token::TYPE_DELIMITER && ( $limit || $order_by ) ) {
 				$this->rewriter->skip();
 			}
 
