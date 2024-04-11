@@ -1493,7 +1493,17 @@ class WP_SQLite_Translator {
 	private function execute_describe() {
 		$this->rewriter->skip();
 		$this->table_name = $this->rewriter->consume()->value;
-		$stmt             = $this->execute_sqlite_query(
+		$this->set_results_from_fetched_data(
+			$this->describe( $this->table_name )
+		);
+		if ( ! $this->results ) {
+			throw new PDOException( 'Table not found' );
+		}
+	}
+
+	private function describe($table_name)
+	{
+		return $this->execute_sqlite_query(
 			"SELECT
 				`name` as `Field`,
 				(
@@ -1502,7 +1512,7 @@ class WP_SQLite_Translator {
 					WHEN 1 THEN 'NO'
 					END
 				) as `Null`,
-				IFNULL(
+				COALESCE(
 					d.`mysql_type`,
 					(
 						CASE `type`
@@ -1522,19 +1532,14 @@ class WP_SQLite_Translator {
 					ELSE 'PRI'
 					END
 				) as `Key`
-				FROM pragma_table_info(\"$this->table_name\") p
+				FROM pragma_table_info(\"$table_name\") p
 				LEFT JOIN " . self::DATA_TYPES_CACHE_TABLE . " d
-				ON d.`table` = \"$this->table_name\"
+				ON d.`table` = \"$table_name\"
 				AND d.`column_or_index` = p.`name`
 				;
 			"
-		);
-		$this->set_results_from_fetched_data(
-			$stmt->fetchAll( $this->pdo_fetch_mode )
-		);
-		if ( ! $this->results ) {
-			throw new PDOException( 'Table not found' );
-		}
+		)
+		->fetchAll( $this->pdo_fetch_mode );
 	}
 
 	/**
@@ -3077,41 +3082,8 @@ class WP_SQLite_Translator {
 				// Fall through.
 			case 'COLUMNS FROM':
 				$table_name = $this->rewriter->consume()->token;
-				$stmt       = $this->execute_sqlite_query(
-					"PRAGMA table_info(\"$table_name\");"
-				);
-				/* @todo we may need to add the Extra column if anybdy needs it. 'auto_increment' is the value */
-				$name_map = array(
-					'name'       => 'Field',
-					'type'       => 'Type',
-					'dflt_value' => 'Default',
-					'cid'        => null,
-					'notnull'    => null,
-					'pk'         => null,
-				);
-				$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
-				$columns  = array_map(
-					function ( $row ) use ( $name_map ) {
-						$new       = array();
-						$is_object = is_object( $row );
-						$row       = $is_object ? (array) $row : $row;
-						foreach ( $row as $k => $v ) {
-							$k = array_key_exists( $k, $name_map ) ? $name_map [ $k ] : $k;
-							if ( $k ) {
-								$new[ $k ] = $v;
-							}
-						}
-						if ( array_key_exists( 'notnull', $row ) ) {
-							$new['Null'] = ( '1' === $row ['notnull'] ) ? 'NO' : 'YES';
-						}
-						if ( array_key_exists( 'pk', $row ) ) {
-							$new['Key'] = ( '1' === $row ['pk'] ) ? 'PRI' : '';
-						}
-						return $is_object ? (object) $new : $new;
-					},
-					$columns
-				);
-				$this->set_results_from_fetched_data( $columns );
+				
+				$this->set_results_from_fetched_data( $this->get_columns_from( $table_name ) );
 				return;
 
 			case 'INDEX FROM':
@@ -3184,6 +3156,51 @@ class WP_SQLite_Translator {
 					$results
 				);
 
+				return;
+
+			case 'CREATE TABLE':
+				$table_name = $this->rewriter->consume()->token;
+				$columns = $this->get_columns_from($table_name);
+				$keys = $this->get_keys($table_name);
+
+				foreach($columns as $column) {
+					$column = (array) $column;
+					$definition = '';
+					$definition .= '`' . $column['Field'] . '` ';
+					$definition .= $this->get_cached_mysql_data_type(
+						$table_name,
+						$column['Field']
+					) ?? $column['Type'];
+					$definition .= $column['Key'] === 'PRI' ? ' PRIMARY KEY' : '';
+					$definition .= $column['Key'] === 'PRI' && $column['Type'] === 'INTEGER' ? ' AUTO_INCREMENT' : '';
+					$definition .= $column['Null'] === 'NO' ? ' NOT NULL' : '';
+					$definition .= $column['Default'] ? ' DEFAULT ' . $column['Default'] : '';
+					$entries[] = $definition;
+				}
+				foreach($keys as $key) {
+					$key = (array) $key;
+					$definition = '';
+					$definition .= $key['index']['unique'] === '1' ? 'UNIQUE ' : '';
+					$definition .= 'KEY ';
+					$definition .= $key['index']['name'];
+					$definition .= ' (';
+					$definition .= implode(
+						', ',
+						array_column( $key['columns'], 'name' )
+					);
+					$definition .= ')';
+					$entries[] = $definition;
+				}
+				$create_table = "CREATE TABLE $table_name (\n\t";
+				$create_table .= implode(",\n\t", $entries);
+				$create_table .= "\n);";
+				$this->set_results_from_fetched_data(
+					array(
+						(object) array(
+							"Create Table" => $create_table,
+						),
+					)
+				);
 				return;
 
 			case 'TABLE STATUS':  // FROM `database`.
@@ -3284,6 +3301,45 @@ SQL,
 						throw new Exception( 'Unknown show type: ' . $what );
 				}
 		}
+	}
+
+	private function get_columns_from($table_name)
+	{
+		$stmt       = $this->execute_sqlite_query(
+			"PRAGMA table_info(\"$table_name\");"
+		);
+		/* @todo we may need to add the Extra column if anybdy needs it. 'auto_increment' is the value */
+		$name_map = array(
+			'name'       => 'Field',
+			'type'       => 'Type',
+			'dflt_value' => 'Default',
+			'cid'        => null,
+			'notnull'    => null,
+			'pk'         => null,
+		);
+		$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
+		$columns = array_map(
+			function ($row) use ($name_map) {
+				$new       = array();
+				$is_object = is_object( $row );
+				$row       = $is_object ? (array) $row : $row;
+				foreach ( $row as $k => $v ) {
+					$k = array_key_exists( $k, $name_map ) ? $name_map [ $k ] : $k;
+					if ( $k ) {
+						$new[ $k ] = $v;
+					}
+				}
+				if ( array_key_exists( 'notnull', $row ) ) {
+					$new['Null'] = ( '1' === $row ['notnull'] ) ? 'NO' : 'YES';
+				}
+				if ( array_key_exists( 'pk', $row ) ) {
+					$new['Key'] = ( '1' === $row ['pk'] ) ? 'PRI' : '';
+				}
+				return $is_object ? (object) $new : $new;
+			},
+			$columns
+		);
+		return $columns;
 	}
 
 	/**

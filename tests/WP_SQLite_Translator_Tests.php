@@ -146,6 +146,87 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
+	public function testShowCreateTable1()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name VARCHAR(255) default '',
+				option_value TEXT NOT NULL,
+				UNIQUE KEY option_name (option_name),
+				KEY composite (option_name, option_value)
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`option_name` varchar(255) DEFAULT '',
+	`option_value` text NOT NULL,
+	KEY _tmp_table__composite (option_name, option_value),
+	UNIQUE KEY _tmp_table__option_name (option_name)
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTableSimpleTable()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT NOT NULL
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint NOT NULL
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTableWithAlterAndCreateIndex()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name VARCHAR(255) default '',
+				option_value TEXT NOT NULL
+			);"
+		);
+
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table CHANGE COLUMN option_name option_name SMALLINT NOT NULL default 14'
+		);
+
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table ADD INDEX option_name (option_name);'
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`option_name` smallint NOT NULL DEFAULT 14,
+	`option_value` text NOT NULL,
+	KEY _tmp_table__option_name (option_name)
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'
