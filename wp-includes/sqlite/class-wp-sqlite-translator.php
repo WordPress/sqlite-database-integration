@@ -1550,12 +1550,35 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_update() {
 		$this->rewriter->consume(); // Update.
-
+		$limit = $this->rewriter->peek(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+				'value' => 'LIMIT',
+			)
+		);
+		$order_by = $this->rewriter->peek(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+				'value' => 'ORDER BY',
+			)
+		);
+		$where = $this->rewriter->peek(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+				'value' => 'WHERE',
+			)
+		);
 		$params = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
 			if ( ! $token ) {
 				break;
+			}
+
+			if ( $token->value === 'WHERE' && ( $limit || $order_by ) ) {
+				$this->remember_last_reserved_keyword( $token );
+				$this->rewriter->consume();
+				$this->prepare_update_for_limit_or_order();
 			}
 
 			// Record the table name.
@@ -1580,6 +1603,11 @@ class WP_SQLite_Translator {
 
 			$this->rewriter->consume();
 		}
+
+		if ( $where && ( $limit || $order_by )  ) {
+			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ));
+		}
+
 		$this->rewriter->consume_all();
 
 		$updated_query = $this->rewriter->get_updated_query();
@@ -1587,6 +1615,23 @@ class WP_SQLite_Translator {
 		$this->set_result_from_affected_rows();
 	}
 
+	private function prepare_update_for_limit_or_order() {
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'IN', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( $this->table_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+			$this->rewriter->add( new WP_SQLite_Token( 'WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+	}
 	/**
 	 * Executes a INSERT or REPLACE statement.
 	 */
