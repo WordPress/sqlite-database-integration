@@ -3214,8 +3214,7 @@ class WP_SQLite_Translator {
 
 				$database_expression = $this->rewriter->skip();
 				$stmt                = $this->execute_sqlite_query(
-					<<<SQL
-					SELECT
+					"SELECT
 						name as `Name`,
 						'myisam' as `Engine`,
 						10 as `Version`,
@@ -3238,8 +3237,7 @@ class WP_SQLite_Translator {
 					WHERE
 						type='table'
 						AND name LIKE :pattern
-					ORDER BY name
-SQL,
+					ORDER BY name",
 
 					array(
 						':pattern' => $pattern,
