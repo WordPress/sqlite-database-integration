@@ -1996,4 +1996,40 @@ QUERY
 			''
 		);
 	}
+
+	public function testDefaultNullValue()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default NULL,
+				no_default varchar(20) NOT NULL
+			);"
+		);
+
+		$result = $this->assertQuery(
+			"DESCRIBE _tmp_table;"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'NULL',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'no_default',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					// There is still a bug here if there is no default value Default should be empty of false
+					'Default' => 'NULL',
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+	}
 }
