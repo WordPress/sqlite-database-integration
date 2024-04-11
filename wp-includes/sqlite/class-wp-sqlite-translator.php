@@ -1128,10 +1128,12 @@ class WP_SQLite_Translator {
 		 * This mode allows the use of `NULL` when NOT NULL is set on a column that falls back to DEFAULT.
 		 * SQLite does not support this behavior, so we need to add the `ON CONFLICT REPLACE` clause to the column definition.
 		 */
-		if (null !== $field->default && $field->not_null) {
+		if ($field->not_null) {
 			$definition .= ' ON CONFLICT REPLACE';
 		}
-		if ( null !== $field->default ) {
+		if (null === $field->default) {
+			$definition .= ' DEFAULT NULL';
+		} else if (false !== $field->default) {
 			$definition .= ' DEFAULT ' . $field->default;
 		}
 
