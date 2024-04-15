@@ -1131,14 +1131,20 @@ class WP_SQLite_Translator {
 		if ($field->not_null) {
 			$definition .= ' ON CONFLICT REPLACE';
 		}
+		/**
+		 * The value of DEFAULT can be NULL. PHP would print this as an empty string, so we need a special case for it.
+		 */
 		if (null === $field->default) {
 			$definition .= ' DEFAULT NULL';
 		} else if (false !== $field->default) {
 			$definition .= ' DEFAULT ' . $field->default;
 		} else if ($field->not_null) {
+			/**
+			 * If the column is NOT NULL, we need to provide a default value to match WPDB behavior caused by removing the STRICT_TRANS_TABLES mode.
+			 */
 			if ('text' === $field->sqlite_data_type) {
 				$definition .= ' DEFAULT \'\'';
-			} else {
+			} else if (in_array($field->sqlite_data_type, array('integer', 'real'), true)) {
 				$definition .= ' DEFAULT 0';
 			}
 		}
