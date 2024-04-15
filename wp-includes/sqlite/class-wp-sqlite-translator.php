@@ -1040,7 +1040,7 @@ class WP_SQLite_Translator {
 		$result->name             = '';
 		$result->sqlite_data_type = '';
 		$result->not_null         = false;
-		$result->default          = null;
+		$result->default          = false;
 		$result->auto_increment   = false;
 		$result->primary_key      = false;
 
@@ -1128,11 +1128,25 @@ class WP_SQLite_Translator {
 		 * This mode allows the use of `NULL` when NOT NULL is set on a column that falls back to DEFAULT.
 		 * SQLite does not support this behavior, so we need to add the `ON CONFLICT REPLACE` clause to the column definition.
 		 */
-		if (null !== $field->default && $field->not_null) {
+		if ($field->not_null) {
 			$definition .= ' ON CONFLICT REPLACE';
 		}
-		if ( null !== $field->default ) {
+		/**
+		 * The value of DEFAULT can be NULL. PHP would print this as an empty string, so we need a special case for it.
+		 */
+		if (null === $field->default) {
+			$definition .= ' DEFAULT NULL';
+		} else if (false !== $field->default) {
 			$definition .= ' DEFAULT ' . $field->default;
+		} else if ($field->not_null) {
+			/**
+			 * If the column is NOT NULL, we need to provide a default value to match WPDB behavior caused by removing the STRICT_TRANS_TABLES mode.
+			 */
+			if ('text' === $field->sqlite_data_type) {
+				$definition .= ' DEFAULT \'\'';
+			} else if (in_array($field->sqlite_data_type, array('integer', 'real'), true)) {
+				$definition .= ' DEFAULT 0';
+			}
 		}
 
 		/*

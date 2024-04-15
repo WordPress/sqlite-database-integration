@@ -368,7 +368,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'bigint(20) unsigned',
 					'Null'    => 'NO',
 					'Key'     => 'PRI',
-					'Default' => null,
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
@@ -1085,7 +1085,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'integer',
 					'Null'    => 'NO',
 					'Key'     => 'PRI',
-					'Default' => null,
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
@@ -1946,29 +1946,30 @@ QUERY
 				name varchar(20) NOT NULL default 'default-value',
 				unique_name varchar(20) NOT NULL default 'unique-default-value',
 				inline_unique_name varchar(20) NOT NULL default 'inline-unique-default-value',
+				no_default varchar(20) NOT NULL,
 				UNIQUE KEY unique_name (unique_name)
 			);"
 		);
 
 		$this->assertQuery(
-			"INSERT INTO _tmp_table (ID, name, unique_name, inline_unique_name) VALUES (1, null, null, null);"
+			"INSERT INTO _tmp_table VALUES (1, null, null, null, '');"
 		);
-		$result = $this->assertQuery("SELECT name, unique_name, inline_unique_name FROM _tmp_table");
-
-		$result = $this->assertQuery("SELECT name, unique_name, inline_unique_name FROM _tmp_table");
+		$result = $this->assertQuery("SELECT * FROM _tmp_table WHERE ID = 1");
 		$this->assertEquals(
 			array(
 				(object) array(
+					'ID' => '1',
 					'name' => 'default-value',
 					'unique_name' => 'unique-default-value',
 					'inline_unique_name' => 'inline-unique-default-value',
+					'no_default' => '',
 				),
 			),
 			$result
 		);
 
 		$this->assertQuery(
-			"INSERT INTO _tmp_table (ID, name, unique_name, inline_unique_name) VALUES (2, '1', '2', '3');"
+			"INSERT INTO _tmp_table VALUES (2, '1', '2', '3', '4');"
 		);
 		$this->assertQuery(
 			"UPDATE _tmp_table SET name = null WHERE ID = 2;"
@@ -1994,6 +1995,61 @@ QUERY
 		$this->assertQuery(
 			"UPDATE _tmp_table SET inline_unique_name = NULL WHERE ID = 2;",
 			''
+		);
+
+		// WPDB allows for NULL values in columns that don't have a default value and a NOT NULL constraint
+		$this->assertQuery(
+			"UPDATE _tmp_table SET no_default = NULL WHERE ID = 2;",
+			''
+		);
+
+		$result = $this->assertQuery("SELECT * FROM _tmp_table WHERE ID = 2");
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ID' => '2',
+					'name' => 'default-value',
+					'unique_name' => '2',
+					'inline_unique_name' => 'inline-unique-default-value',
+					'no_default' => '',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testDefaultNullValue()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default NULL,
+				no_default varchar(20) NOT NULL
+			);"
+		);
+
+		$result = $this->assertQuery(
+			"DESCRIBE _tmp_table;"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'NULL',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'no_default',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$result
 		);
 	}
 }
