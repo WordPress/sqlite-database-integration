@@ -1598,9 +1598,9 @@ class WP_SQLite_Translator {
 				$this->prepare_update_for_limit_or_order();
 			}
 			/*
-			* In case we rewrite the query, we need to skip the semicolon.
-			* This is because the semicolon becomes part of the nested SELECT statement, and it breaks the query.
-			*/
+			 * In case we rewrite the query, we need to skip the semicolon.
+			 * This is because the semicolon becomes part of the nested SELECT statement, and it breaks the query.
+			 */
 			if ( $token->value === ';' && $token->type === WP_SQLite_Token::TYPE_DELIMITER && ( $limit || $order_by ) ) {
 				$this->rewriter->skip();
 			}
