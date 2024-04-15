@@ -368,7 +368,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'bigint(20) unsigned',
 					'Null'    => 'NO',
 					'Key'     => 'PRI',
-					'Default' => null,
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
@@ -1085,7 +1085,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'integer',
 					'Null'    => 'NO',
 					'Key'     => 'PRI',
-					'Default' => null,
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
@@ -2007,9 +2007,9 @@ QUERY
 		$this->assertEquals(
 			array(
 				(object) array(
-					'ID' => '1',
+					'ID' => '2',
 					'name' => 'default-value',
-					'unique_name' => 'unique-default-value',
+					'unique_name' => '2',
 					'inline_unique_name' => 'inline-unique-default-value',
 					'no_default' => '',
 				),

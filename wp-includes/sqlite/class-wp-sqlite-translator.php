@@ -1135,6 +1135,12 @@ class WP_SQLite_Translator {
 			$definition .= ' DEFAULT NULL';
 		} else if (false !== $field->default) {
 			$definition .= ' DEFAULT ' . $field->default;
+		} else if ($field->not_null) {
+			if ('text' === $field->sqlite_data_type) {
+				$definition .= ' DEFAULT \'\'';
+			} else {
+				$definition .= ' DEFAULT 0';
+			}
 		}
 
 		/*
