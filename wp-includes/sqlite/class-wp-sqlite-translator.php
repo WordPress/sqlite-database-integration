@@ -1584,12 +1584,23 @@ class WP_SQLite_Translator {
 				break;
 			}
 
+			/*
+			 * If the query contains a WHERE clause, and either a LIMIT or ORDER BY clause,
+			 * we need to rewrite the query to use a nested SELECT statement.
+			 * eg:
+			 * - UPDATE table SET column = value WHERE condition LIMIT 1;
+			 * will be rewritten to:
+			 * - UPDATE table SET column = value WHERE rowid IN (SELECT rowid FROM table WHERE condition LIMIT 1);
+			 */
 			if ( $token->value === 'WHERE' && ( $limit || $order_by ) ) {
 				$this->remember_last_reserved_keyword( $token );
 				$this->rewriter->consume();
 				$this->prepare_update_for_limit_or_order();
 			}
-
+			/*
+			* In case we rewrite the query, we need to skip the semicolon.
+			* This is because the semicolon becomes part of the nested SELECT statement, and it breaks the query.
+			*/
 			if ( $token->value === ';' && $token->type === WP_SQLite_Token::TYPE_DELIMITER && ( $limit || $order_by ) ) {
 				$this->rewriter->skip();
 			}
