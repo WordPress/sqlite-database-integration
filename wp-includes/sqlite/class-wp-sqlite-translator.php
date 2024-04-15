@@ -1547,6 +1547,15 @@ class WP_SQLite_Translator {
 
 	/**
 	 * Executes an UPDATE statement.
+	 * Supported syntax:
+	 *
+	 * UPDATE [LOW_PRIORITY] [IGNORE] table_reference
+	 *    SET assignment_list
+	 *    [WHERE where_condition]
+	 *    [ORDER BY ...]
+	 *    [LIMIT row_count]
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.0/en/update.html
 	 */
 	private function execute_update() {
 		$this->rewriter->consume(); // Update.
