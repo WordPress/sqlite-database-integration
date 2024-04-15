@@ -140,13 +140,26 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertQuery(
 			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1;"
 		);
-		$results = $this->engine->get_query_results();
 
 		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
 		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second';" );
 
 		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
 		$this->assertEquals( '2003-05-28 00:00:45', $result2[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:49' WHERE option_name = 'first';"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$this->assertEquals( '2001-05-27 10:08:49', $result1[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-12 10:00:40' WHERE option_name in ( SELECT option_name from _dates );"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second';" );
+		$this->assertEquals( '2001-05-12 10:00:40', $result1[0]->option_value );
+		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
 	}
 
 	public function testUpdateWithLimitNoEndToken() {
@@ -167,6 +180,20 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
 		$this->assertEquals( '2003-05-28 00:00:45', $result2[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:49' WHERE option_name = 'first'"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$this->assertEquals( '2001-05-27 10:08:49', $result1[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-12 10:00:40' WHERE option_name in ( SELECT option_name from _dates )"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( '2001-05-12 10:00:40', $result1[0]->option_value );
+		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
 	}
 
 	public function testCastAsBinary() {

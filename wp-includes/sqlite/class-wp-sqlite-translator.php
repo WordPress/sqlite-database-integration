@@ -1558,26 +1558,14 @@ class WP_SQLite_Translator {
 	 * @see https://dev.mysql.com/doc/refman/8.0/en/update.html
 	 */
 	private function execute_update() {
-		$this->rewriter->consume(); // Update.
-		$limit    = $this->rewriter->peek(
-			array(
-				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
-				'value' => 'LIMIT',
-			)
-		);
-		$order_by = $this->rewriter->peek(
-			array(
-				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
-				'value' => 'ORDER BY',
-			)
-		);
-		$where    = $this->rewriter->peek(
+		$this->rewriter->consume(); // Consume the UPDATE keyword.
+		$where  = $this->rewriter->peek(
 			array(
 				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
 				'value' => 'WHERE',
 			)
 		);
-		$params   = array();
+		$params = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
 			if ( ! $token ) {
@@ -1585,33 +1573,31 @@ class WP_SQLite_Translator {
 			}
 
 			/*
-			 * If the query contains a WHERE clause, and either a LIMIT or ORDER BY clause,
+			 * If the query contains a WHERE clause,
 			 * we need to rewrite the query to use a nested SELECT statement.
 			 * eg:
 			 * - UPDATE table SET column = value WHERE condition LIMIT 1;
 			 * will be rewritten to:
 			 * - UPDATE table SET column = value WHERE rowid IN (SELECT rowid FROM table WHERE condition LIMIT 1);
 			 */
-			if ( $token->value === 'WHERE' && ( $limit || $order_by ) ) {
+			if ( $token->value === 'WHERE' ) {
 				$this->remember_last_reserved_keyword( $token );
 				$this->rewriter->consume();
-				$this->prepare_update_for_limit_or_order();
+				$this->prepare_update_nested_query();
 			}
-			/*
-			 * In case we rewrite the query, we need to skip the semicolon.
-			 * This is because the semicolon becomes part of the nested SELECT statement, and it breaks the query.
-			 */
-			if ( $token->value === ';' && $token->type === WP_SQLite_Token::TYPE_DELIMITER && ( $limit || $order_by ) ) {
-				$this->rewriter->skip();
+
+			// Ignore the semicolon in case of rewritten query as it breaks the query.
+			if ( ';' === $this->rewriter->peek()->value && $this->rewriter->peek()->type === WP_SQLite_Token::TYPE_DELIMITER ) {
+				break;
 			}
 
 			// Record the table name.
 			if (
-				! $this->table_name &&
-				! $token->matches(
-					WP_SQLite_Token::TYPE_KEYWORD,
-					WP_SQLite_Token::FLAG_KEYWORD_RESERVED
-				)
+			! $this->table_name &&
+			! $token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED
+			)
 			) {
 				$this->table_name = $token->value;
 			}
@@ -1628,7 +1614,8 @@ class WP_SQLite_Translator {
 			$this->rewriter->consume();
 		}
 
-		if ( $where && ( $limit || $order_by ) ) {
+		// Wrap up the WHERE clause with the nested SELECT statement
+		if ( $where ) {
 			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		}
 
@@ -1639,7 +1626,7 @@ class WP_SQLite_Translator {
 		$this->set_result_from_affected_rows();
 	}
 
-	private function prepare_update_for_limit_or_order() {
+	private function prepare_update_nested_query() {
 		$this->rewriter->add_many(
 			array(
 				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
