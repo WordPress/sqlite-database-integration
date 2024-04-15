@@ -1040,7 +1040,7 @@ class WP_SQLite_Translator {
 		$result->name             = '';
 		$result->sqlite_data_type = '';
 		$result->not_null         = false;
-		$result->default          = null;
+		$result->default          = false;
 		$result->auto_increment   = false;
 		$result->primary_key      = false;
 

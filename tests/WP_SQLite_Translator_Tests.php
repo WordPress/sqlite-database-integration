@@ -2024,8 +2024,7 @@ QUERY
 					'Type'    => 'varchar(20)',
 					'Null'    => 'NO',
 					'Key'     => '',
-					// There is still a bug here if there is no default value Default should be empty of false
-					'Default' => 'NULL',
+					'Default' => null,
 					'Extra'   => '',
 				),
 			),
