@@ -1620,21 +1620,25 @@ class WP_SQLite_Translator {
 	}
 
 	private function prepare_update_for_limit_or_order() {
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( 'IN', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-			$this->rewriter->add( new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ) );
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( $this->table_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
-			$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
-			$this->rewriter->add( new WP_SQLite_Token( 'WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ) );
+		$this->rewriter->add_many(
+			array(
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'IN', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ),
+				new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( $this->table_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+			)
+		);
 	}
 	/**
 	 * Executes a INSERT or REPLACE statement.
