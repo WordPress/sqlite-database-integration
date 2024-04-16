@@ -1561,14 +1561,55 @@ class WP_SQLite_Translator {
 
 	/**
 	 * Executes an UPDATE statement.
+	 * Supported syntax:
+	 *
+	 * UPDATE [LOW_PRIORITY] [IGNORE] table_reference
+	 *    SET assignment_list
+	 *    [WHERE where_condition]
+	 *    [ORDER BY ...]
+	 *    [LIMIT row_count]
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.0/en/update.html
 	 */
 	private function execute_update() {
-		$this->rewriter->consume(); // Update.
-
+		$this->rewriter->consume(); // Consume the UPDATE keyword.
+		$has_where = false;
+		$needs_closing_parenthesis = false;
 		$params = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
 			if ( ! $token ) {
+				break;
+			}
+
+			/*
+			 * If the query contains a WHERE clause,
+			 * we need to rewrite the query to use a nested SELECT statement.
+			 * eg:
+			 * - UPDATE table SET column = value WHERE condition LIMIT 1;
+			 * will be rewritten to:
+			 * - UPDATE table SET column = value WHERE rowid IN (SELECT rowid FROM table WHERE condition LIMIT 1);
+			 */
+			if ($this->rewriter->depth === 0) {
+				if (($token->value === 'LIMIT' || $token->value === 'ORDER') && !$has_where) {
+					$this->rewriter->add(
+						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD),
+					);
+					$needs_closing_parenthesis = true;
+					$this->preface_WHERE_clause_with_a_subquery();
+				} else if ($token->value === 'WHERE') {
+					$has_where = true;
+					$needs_closing_parenthesis = true;
+					$this->rewriter->consume();
+					$this->preface_WHERE_clause_with_a_subquery();
+					$this->rewriter->add(
+						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED)
+					);
+				}
+			}
+
+			// Ignore the semicolon in case of rewritten query as it breaks the query.
+			if ( ';' === $this->rewriter->peek()->value && $this->rewriter->peek()->type === WP_SQLite_Token::TYPE_DELIMITER ) {
 				break;
 			}
 
@@ -1594,11 +1635,50 @@ class WP_SQLite_Translator {
 
 			$this->rewriter->consume();
 		}
+
+		// Wrap up the WHERE clause with the nested SELECT statement
+		if ( $needs_closing_parenthesis ) {
+			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
+		}
+
 		$this->rewriter->consume_all();
 
 		$updated_query = $this->rewriter->get_updated_query();
 		$this->execute_sqlite_query( $updated_query, $params );
 		$this->set_result_from_affected_rows();
+	}
+
+	/**
+	 * Injects `rowid IN (SELECT rowid FROM table WHERE ...` into the WHERE clause at the current
+	 * position in the query.
+	 * 
+	 * This is necessary to emulate the behavior of MySQL's UPDATE LIMIT and DELETE LIMIT statement
+	 * as SQLite does not support LIMIT in UPDATE and DELETE statements.
+	 * 
+	 * The WHERE clause is wrapped in a subquery that selects the rowid of the rows that match the original
+	 * WHERE clause. 
+	 * 
+	 * @return void
+	 */
+	private function preface_WHERE_clause_with_a_subquery() {
+		$this->rewriter->add_many(
+			array(
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'IN', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ),
+				new WP_SQLite_Token( 'SELECT', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'rowid', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_KEY ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( 'FROM', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+				new WP_SQLite_Token( $this->table_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
+				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
+			)
+		);
 	}
 
 	/**

@@ -129,6 +129,112 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( gmdate( 'Y' ), $results[0]->y );
 	}
 
+	public function testUpdateWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-28 00:00:45');"
+		);
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1;"
+		);
+
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second';" );
+
+		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-28 00:00:45', $result2[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:49' WHERE option_name = 'first';"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$this->assertEquals( '2001-05-27 10:08:49', $result1[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-12 10:00:40' WHERE option_name in ( SELECT option_name from _dates );"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second';" );
+		$this->assertEquals( '2001-05-12 10:00:40', $result1[0]->option_value );
+		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithLimitNoEndToken() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-28 00:00:45')"
+		);
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1"
+		);
+		$results = $this->engine->get_query_results();
+
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+
+		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-28 00:00:45', $result2[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:49' WHERE option_name = 'first'"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$this->assertEquals( '2001-05-27 10:08:49', $result1[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-12 10:00:40' WHERE option_name in ( SELECT option_name from _dates )"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( '2001-05-12 10:00:40', $result1[0]->option_value );
+		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithoutWhereButWithSubSelect() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('User 0000019', 'second');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);		
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
+		);
+		$return = $this->assertQuery(
+			"UPDATE _dates SET option_value = (SELECT option_value from _options WHERE option_name = 'User 0000019')"
+		);
+		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when two row were changed' );
+		
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( 'second', $result1[0]->option_value );
+		$this->assertEquals( 'second', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithoutWhereButWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);		
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
+		);
+		$return = $this->assertQuery(
+			"UPDATE _dates SET option_value = 'second' LIMIT 1"
+		);
+		$this->assertSame( 1, $return, 'UPDATE query did not return 2 when two row were changed' );
+		
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( 'second', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-27 10:08:48', $result2[0]->option_value );
+	}
+
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token
