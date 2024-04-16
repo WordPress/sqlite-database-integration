@@ -1582,12 +1582,12 @@ class WP_SQLite_Translator {
 						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD),
 					);
 					$needs_closing_parenthesis = true;
-					$this->prepare_update_nested_query();
+					$this->preface_WHERE_clause_with_a_subquery();
 				} else if ($token->value === 'WHERE') {
 					$has_where = true;
 					$needs_closing_parenthesis = true;
 					$this->rewriter->consume();
-					$this->prepare_update_nested_query();
+					$this->preface_WHERE_clause_with_a_subquery();
 					$this->rewriter->add(
 						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED)
 					);
@@ -1634,7 +1634,19 @@ class WP_SQLite_Translator {
 		$this->set_result_from_affected_rows();
 	}
 
-	private function prepare_update_nested_query() {
+	/**
+	 * Injects `rowid IN (SELECT rowid FROM table WHERE ...` into the WHERE clause at the current
+	 * position in the query.
+	 * 
+	 * This is necessary to emulate the behavior of MySQL's UPDATE LIMIT and DELETE LIMIT statement
+	 * as SQLite does not support LIMIT in UPDATE and DELETE statements.
+	 * 
+	 * The WHERE clause is wrapped in a subquery that selects the rowid of the rows that match the original
+	 * WHERE clause. 
+	 * 
+	 * @return void
+	 */
+	private function preface_WHERE_clause_with_a_subquery() {
 		$this->rewriter->add_many(
 			array(
 				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
@@ -1654,6 +1666,7 @@ class WP_SQLite_Translator {
 			)
 		);
 	}
+
 	/**
 	 * Executes a INSERT or REPLACE statement.
 	 */
