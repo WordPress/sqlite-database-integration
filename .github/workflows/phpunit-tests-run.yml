@@ -44,4 +44,4 @@ jobs:
           composer-options: "--optimize-autoloader"
 
       - name: Run PHPUnit tests
-        run: phpunit tests --testdox
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist --testdox
