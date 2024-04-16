@@ -1,0 +1,25 @@
+name: PHPUnit Tests
+
+on:
+  push:
+    branches:
+      - trunk
+  pull_request:
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    uses: ./.github/workflows/phpunit-tests-run.yml
+    permissions:
+      contents: read
+    secrets: inherit
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        php: [ '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3' ]
+
+    with:
+      os: ${{ matrix.os }}
+      php: ${{ matrix.php }}
+      phpunit-config: ${{ 'phpunit.xml.dist' }}
