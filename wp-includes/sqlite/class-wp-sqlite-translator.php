@@ -1593,7 +1593,7 @@ class WP_SQLite_Translator {
 			if ($this->rewriter->depth === 0) {
 				if (($token->value === 'LIMIT' || $token->value === 'ORDER') && !$has_where) {
 					$this->rewriter->add(
-						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD),
+						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD)
 					);
 					$needs_closing_parenthesis = true;
 					$this->preface_WHERE_clause_with_a_subquery();
