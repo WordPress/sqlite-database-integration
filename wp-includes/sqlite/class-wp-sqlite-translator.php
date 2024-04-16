@@ -1559,12 +1559,7 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_update() {
 		$this->rewriter->consume(); // Consume the UPDATE keyword.
-		$where  = $this->rewriter->peek(
-			array(
-				'type'  => WP_SQLite_Token::TYPE_KEYWORD,
-				'value' => 'WHERE',
-			)
-		);
+		$has_where = false;
 		$params = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
@@ -1580,10 +1575,23 @@ class WP_SQLite_Translator {
 			 * will be rewritten to:
 			 * - UPDATE table SET column = value WHERE rowid IN (SELECT rowid FROM table WHERE condition LIMIT 1);
 			 */
-			if ( $token->value === 'WHERE' ) {
-				$this->remember_last_reserved_keyword( $token );
-				$this->rewriter->consume();
-				$this->prepare_update_nested_query();
+			if ($this->rewriter->depth === 0) {
+				if (($token->value === 'LIMIT' || $token->value === 'ORDER') && !$has_where) {
+					$this->rewriter->add(
+						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD),
+					);
+					$has_where = true;
+					$this->remember_last_reserved_keyword($token);
+					$this->prepare_update_nested_query();
+				} else if ($token->value === 'WHERE') {
+					$has_where = true;
+					$this->remember_last_reserved_keyword($token);
+					$this->rewriter->consume();
+					$this->prepare_update_nested_query();
+					$this->rewriter->add(
+						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED)
+					);
+				}
 			}
 
 			// Ignore the semicolon in case of rewritten query as it breaks the query.
@@ -1615,7 +1623,7 @@ class WP_SQLite_Translator {
 		}
 
 		// Wrap up the WHERE clause with the nested SELECT statement
-		if ( $where ) {
+		if ( $has_where ) {
 			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		}
 
@@ -1643,7 +1651,6 @@ class WP_SQLite_Translator {
 				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
 				new WP_SQLite_Token( $this->table_name, WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
 				new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ),
-				new WP_SQLite_Token( 'WHERE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
 			)
 		);
 	}

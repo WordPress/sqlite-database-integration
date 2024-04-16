@@ -227,12 +227,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$return = $this->assertQuery(
 			"UPDATE _dates SET option_value = 'second' LIMIT 1"
 		);
-		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when two row were changed' );
+		$this->assertSame( 1, $return, 'UPDATE query did not return 2 when two row were changed' );
 		
 		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
 		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
-		$this->assertEquals( '2003-05-27 10:08:48', $result1[0]->option_value );
-		$this->assertEquals( 'second', $result2[0]->option_value );
+		$this->assertEquals( 'second', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-27 10:08:48', $result2[0]->option_value );
 	}
 
 	public function testCastAsBinary() {
