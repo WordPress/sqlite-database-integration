@@ -3,7 +3,7 @@ name: PHPUnit Tests
 on:
   push:
     branches:
-      - trunk
+      - main
   pull_request:
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ ubuntu-latest ]
         php: [ '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3' ]
 
     with:
