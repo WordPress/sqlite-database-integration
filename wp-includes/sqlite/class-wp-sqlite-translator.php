@@ -1560,6 +1560,7 @@ class WP_SQLite_Translator {
 	private function execute_update() {
 		$this->rewriter->consume(); // Consume the UPDATE keyword.
 		$has_where = false;
+		$needs_closing_parenthesis = false;
 		$params = array();
 		while ( true ) {
 			$token = $this->rewriter->peek();
@@ -1580,11 +1581,12 @@ class WP_SQLite_Translator {
 					$this->rewriter->add(
 						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD),
 					);
-					$has_where = true;
+					$needs_closing_parenthesis = true;
 					$this->remember_last_reserved_keyword($token);
 					$this->prepare_update_nested_query();
 				} else if ($token->value === 'WHERE') {
 					$has_where = true;
+					$needs_closing_parenthesis = true;
 					$this->remember_last_reserved_keyword($token);
 					$this->rewriter->consume();
 					$this->prepare_update_nested_query();
@@ -1601,11 +1603,11 @@ class WP_SQLite_Translator {
 
 			// Record the table name.
 			if (
-			! $this->table_name &&
-			! $token->matches(
-				WP_SQLite_Token::TYPE_KEYWORD,
-				WP_SQLite_Token::FLAG_KEYWORD_RESERVED
-			)
+				! $this->table_name &&
+				! $token->matches(
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED
+				)
 			) {
 				$this->table_name = $token->value;
 			}
@@ -1623,7 +1625,7 @@ class WP_SQLite_Translator {
 		}
 
 		// Wrap up the WHERE clause with the nested SELECT statement
-		if ( $has_where ) {
+		if ( $needs_closing_parenthesis ) {
 			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		}
 
