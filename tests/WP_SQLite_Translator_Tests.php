@@ -196,6 +196,45 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
 	}
 
+	public function testUpdateWithoutWhereButWithSubSelect() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('User 0000019', 'second');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);		
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
+		);
+		$return = $this->assertQuery(
+			"UPDATE _dates SET option_value = (SELECT option_value from _options WHERE option_name = 'User 0000019')"
+		);
+		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when two row were changed' );
+		
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( 'second', $result1[0]->option_value );
+		$this->assertEquals( 'second', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithoutWhereButWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);		
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
+		);
+		$return = $this->assertQuery(
+			"UPDATE _dates SET option_value = 'second' LIMIT 1"
+		);
+		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when two row were changed' );
+		
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( '2003-05-27 10:08:48', $result1[0]->option_value );
+		$this->assertEquals( 'second', $result2[0]->option_value );
+	}
+
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token
