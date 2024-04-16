@@ -129,6 +129,112 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( gmdate( 'Y' ), $results[0]->y );
 	}
 
+	public function testUpdateWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-28 00:00:45');"
+		);
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1;"
+		);
+
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second';" );
+
+		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-28 00:00:45', $result2[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:49' WHERE option_name = 'first';"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$this->assertEquals( '2001-05-27 10:08:49', $result1[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-12 10:00:40' WHERE option_name in ( SELECT option_name from _dates );"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first';" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second';" );
+		$this->assertEquals( '2001-05-12 10:00:40', $result1[0]->option_value );
+		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithLimitNoEndToken() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-28 00:00:45')"
+		);
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:48' WHERE option_name = 'first' ORDER BY option_name LIMIT 1"
+		);
+		$results = $this->engine->get_query_results();
+
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+
+		$this->assertEquals( '2001-05-27 10:08:48', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-28 00:00:45', $result2[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-27 10:08:49' WHERE option_name = 'first'"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$this->assertEquals( '2001-05-27 10:08:49', $result1[0]->option_value );
+
+		$this->assertQuery(
+			"UPDATE _dates SET option_value = '2001-05-12 10:00:40' WHERE option_name in ( SELECT option_name from _dates )"
+		);
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( '2001-05-12 10:00:40', $result1[0]->option_value );
+		$this->assertEquals( '2001-05-12 10:00:40', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithoutWhereButWithSubSelect() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('User 0000019', 'second');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);		
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
+		);
+		$return = $this->assertQuery(
+			"UPDATE _dates SET option_value = (SELECT option_value from _options WHERE option_name = 'User 0000019')"
+		);
+		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when two row were changed' );
+		
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( 'second', $result1[0]->option_value );
+		$this->assertEquals( 'second', $result2[0]->option_value );
+	}
+
+	public function testUpdateWithoutWhereButWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
+		);		
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
+		);
+		$return = $this->assertQuery(
+			"UPDATE _dates SET option_value = 'second' LIMIT 1"
+		);
+		$this->assertSame( 1, $return, 'UPDATE query did not return 2 when two row were changed' );
+		
+		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
+		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
+		$this->assertEquals( 'second', $result1[0]->option_value );
+		$this->assertEquals( '2003-05-27 10:08:48', $result2[0]->option_value );
+	}
+
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token
@@ -225,6 +331,21 @@ class WP_SQLite_Translator_Tests extends TestCase {
 );",
 			$results[0]->{'Create Table'}
 		);
+
+	public function testSelectIndexHintForce() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
+		$result = $this->assertQuery(
+			'SELECT 1 as output FROM _options FORCE INDEX (PRIMARY, post_parent) WHERE 1=1'
+		);
+		$this->assertEquals( 1, $result[0]->output );
+	}
+
+	public function testSelectIndexHintUseGroup() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
+		$result = $this->assertQuery(
+			'SELECT 1 as output FROM _options USE KEY FOR GROUP BY (PRIMARY, post_parent) WHERE 1=1'
+		);
+		$this->assertEquals( 1, $result[0]->output );
 	}
 
 	public function testLeftFunction1Char() {
@@ -449,7 +570,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'bigint(20) unsigned',
 					'Null'    => 'NO',
 					'Key'     => 'PRI',
-					'Default' => null,
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
@@ -1166,7 +1287,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'integer',
 					'Null'    => 'NO',
 					'Key'     => 'PRI',
-					'Default' => null,
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
@@ -2017,5 +2138,120 @@ QUERY
 		);
 
 		$this->assertQuery( 'DELETE FROM _options' );
+	}
+
+	public function testOnConflictReplace()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(20) NOT NULL default 'default-value',
+				unique_name varchar(20) NOT NULL default 'unique-default-value',
+				inline_unique_name varchar(20) NOT NULL default 'inline-unique-default-value',
+				no_default varchar(20) NOT NULL,
+				UNIQUE KEY unique_name (unique_name)
+			);"
+		);
+
+		$this->assertQuery(
+			"INSERT INTO _tmp_table VALUES (1, null, null, null, '');"
+		);
+		$result = $this->assertQuery("SELECT * FROM _tmp_table WHERE ID = 1");
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ID' => '1',
+					'name' => 'default-value',
+					'unique_name' => 'unique-default-value',
+					'inline_unique_name' => 'inline-unique-default-value',
+					'no_default' => '',
+				),
+			),
+			$result
+		);
+
+		$this->assertQuery(
+			"INSERT INTO _tmp_table VALUES (2, '1', '2', '3', '4');"
+		);
+		$this->assertQuery(
+			"UPDATE _tmp_table SET name = null WHERE ID = 2;"
+		);
+
+		$result = $this->assertQuery("SELECT name FROM _tmp_table WHERE ID = 2");
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name' => 'default-value',
+				),
+			),
+			$result
+		);
+
+		// This should fail because of the UNIQUE constraint
+		$this->assertQuery(
+			"UPDATE _tmp_table SET unique_name = NULL WHERE ID = 2;",
+			'UNIQUE constraint failed: _tmp_table.unique_name'
+		);
+
+		// Inline unique constraint aren't supported currently, so this should pass
+		$this->assertQuery(
+			"UPDATE _tmp_table SET inline_unique_name = NULL WHERE ID = 2;",
+			''
+		);
+
+		// WPDB allows for NULL values in columns that don't have a default value and a NOT NULL constraint
+		$this->assertQuery(
+			"UPDATE _tmp_table SET no_default = NULL WHERE ID = 2;",
+			''
+		);
+
+		$result = $this->assertQuery("SELECT * FROM _tmp_table WHERE ID = 2");
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ID' => '2',
+					'name' => 'default-value',
+					'unique_name' => '2',
+					'inline_unique_name' => 'inline-unique-default-value',
+					'no_default' => '',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testDefaultNullValue()
+	{
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL default NULL,
+				no_default varchar(20) NOT NULL
+			);"
+		);
+
+		$result = $this->assertQuery(
+			"DESCRIBE _tmp_table;"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'NULL',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'no_default',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
 	}
 }
