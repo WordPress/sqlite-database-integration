@@ -1438,6 +1438,10 @@ class WP_SQLite_Translator {
 				continue;
 			}
 
+			if ( $this->skip_index_hint() ) {
+				continue;
+			}
+
 			$this->rewriter->consume();
 		}
 		$this->rewriter->consume_all();
@@ -1488,6 +1492,71 @@ class WP_SQLite_Translator {
 				$stmt->fetchAll( $this->pdo_fetch_mode )
 			);
 		}
+	}
+
+	/**
+	 * Ignores the FORCE INDEX clause
+	 *
+	 *
+	 *    USE {INDEX|KEY}
+	 *      [FOR {JOIN|ORDER BY|GROUP BY}] ([index_list])
+	 *  | {IGNORE|FORCE} {INDEX|KEY}
+	 *      [FOR {JOIN|ORDER BY|GROUP BY}] (index_list)
+	 * @see https://dev.mysql.com/doc/refman/8.3/en/index-hints.html
+	 * @return bool
+	 */
+	private function skip_index_hint() {
+		$force = $this->rewriter->peek();
+		if ( ! $force || ! $force->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'USE', 'FORCE', 'IGNORE' )
+			) ) {
+			return false;
+		}
+
+		$index = $this->rewriter->peek_nth( 2 );
+		if ( ! $index || ! $index->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'INDEX', 'KEY' )
+			) ) {
+			return false;
+		}
+
+		$this->rewriter->skip(); // USE, FORCE, IGNORE
+		$this->rewriter->skip(); // INDEX, KEY
+
+		$maybe_for = $this->rewriter->peek();
+		if ( $maybe_for && $maybe_for->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'FOR' )
+			) ) {
+			$this->rewriter->skip(); // FOR
+
+			$token = $this->rewriter->peek();
+			if ( $token && $token->matches(
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+					array( 'JOIN', 'ORDER', 'GROUP' )
+				) ) {
+				$this->rewriter->skip(); // JOIN, ORDER, GROUP
+				if ( 'BY' === strtoupper( $this->rewriter->peek()->value ) ) {
+					$this->rewriter->skip(); // BY
+				}
+			}
+		}
+
+		// Skip everything until the closing parenthesis.
+		$this->rewriter->skip(
+			array(
+				'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+				'value' => ')',
+			)
+		);
+
+		return true;
 	}
 
 	/**

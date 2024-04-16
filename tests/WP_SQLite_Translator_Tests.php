@@ -252,6 +252,22 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
+	public function testSelectIndexHintForce() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
+		$result = $this->assertQuery(
+			'SELECT 1 as output FROM _options FORCE INDEX (PRIMARY, post_parent) WHERE 1=1'
+		);
+		$this->assertEquals( 1, $result[0]->output );
+	}
+
+	public function testSelectIndexHintUseGroup() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
+		$result = $this->assertQuery(
+			'SELECT 1 as output FROM _options USE KEY FOR GROUP BY (PRIMARY, post_parent) WHERE 1=1'
+		);
+		$this->assertEquals( 1, $result[0]->output );
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'
