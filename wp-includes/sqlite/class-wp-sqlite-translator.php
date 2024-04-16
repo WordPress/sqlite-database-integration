@@ -1582,12 +1582,10 @@ class WP_SQLite_Translator {
 						new WP_SQLite_Token('WHERE', WP_SQLite_Token::TYPE_KEYWORD),
 					);
 					$needs_closing_parenthesis = true;
-					$this->remember_last_reserved_keyword($token);
 					$this->prepare_update_nested_query();
 				} else if ($token->value === 'WHERE') {
 					$has_where = true;
 					$needs_closing_parenthesis = true;
-					$this->remember_last_reserved_keyword($token);
 					$this->rewriter->consume();
 					$this->prepare_update_nested_query();
 					$this->rewriter->add(
