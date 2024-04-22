@@ -16,9 +16,6 @@
 		"wp-coding-standards/wpcs": "^3.1",
 		"phpcompatibility/phpcompatibility-wp": "*",
 		"php-parallel-lint/php-parallel-lint": "^1.3",
-		"phpstan/phpstan": "^1.10",
-		"szepeviktor/phpstan-wordpress": "^1.3",
-		"phpstan/extension-installer": "^1.3",
 		"yoast/phpunit-polyfills": "2.0.0"
 	},
 	"config": {
