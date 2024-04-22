@@ -26,5 +26,13 @@
 			"dealerdirect/phpcodesniffer-composer-installer": true,
 			"phpstan/extension-installer": true
 		}
+	},
+	"scripts": {
+		"check-cs": [
+			"@php ./vendor/bin/phpcs"
+		],
+		"fix-cs": [
+			"@php ./vendor/bin/phpcbf"
+		]
 	}
 }
