@@ -282,8 +282,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	public function testShowCreateTableSimpleTable() {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (
-					ID BIGINT NOT NULL
-				);'
+				ID BIGINT NOT NULL
+			);'
 		);
 
 		$this->assertQuery(
@@ -292,8 +292,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
 			'CREATE TABLE _tmp_table (
-		`ID` bigint NOT NULL
-	);',
+	`ID` bigint NOT NULL
+);',
 			$results[0]->{'Create Table'}
 		);
 	}
@@ -321,11 +321,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
 			'CREATE TABLE _tmp_table (
-		`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
-		`option_name` smallint NOT NULL DEFAULT 14,
-		`option_value` text NOT NULL,
-		KEY _tmp_table__option_name (option_name)
-	);',
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`option_name` smallint NOT NULL DEFAULT 14,
+	`option_value` text NOT NULL,
+	KEY _tmp_table__option_name (option_name)
+);',
 			$results[0]->{'Create Table'}
 		);
 	}

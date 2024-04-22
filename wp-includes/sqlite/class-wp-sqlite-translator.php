@@ -1524,8 +1524,8 @@ class WP_SQLite_Translator {
 			return false;
 		}
 
-		$this->rewriter->skip(); // USE, FORCE, IGNORE
-		$this->rewriter->skip(); // INDEX, KEY
+		$this->rewriter->skip(); // USE, FORCE, IGNORE.
+		$this->rewriter->skip(); // INDEX, KEY.
 
 		$maybe_for = $this->rewriter->peek();
 		if ( $maybe_for && $maybe_for->matches(
@@ -1533,7 +1533,7 @@ class WP_SQLite_Translator {
 			WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
 			array( 'FOR' )
 		) ) {
-			$this->rewriter->skip(); // FOR
+			$this->rewriter->skip(); // FOR.
 
 			$token = $this->rewriter->peek();
 			if ( $token && $token->matches(
@@ -1541,9 +1541,9 @@ class WP_SQLite_Translator {
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
 				array( 'JOIN', 'ORDER', 'GROUP' )
 			) ) {
-				$this->rewriter->skip(); // JOIN, ORDER, GROUP
+				$this->rewriter->skip(); // JOIN, ORDER, GROUP.
 				if ( 'BY' === strtoupper( $this->rewriter->peek()->value ) ) {
-					$this->rewriter->skip(); // BY
+					$this->rewriter->skip(); // BY.
 				}
 			}
 		}
@@ -1592,6 +1592,13 @@ class WP_SQLite_Translator {
 		}
 	}
 
+	/**
+	 * Executes a SELECT statement.
+	 *
+	 * @param string $table_name The table name.
+	 *
+	 * @return array
+	 */
 	private function describe( $table_name ) {
 		return $this->execute_sqlite_query(
 			"SELECT
@@ -1709,7 +1716,7 @@ class WP_SQLite_Translator {
 			$this->rewriter->consume();
 		}
 
-		// Wrap up the WHERE clause with the nested SELECT statement
+		// Wrap up the WHERE clause with the nested SELECT statement.
 		if ( $needs_closing_parenthesis ) {
 			$this->rewriter->add( new WP_SQLite_Token( ')', WP_SQLite_Token::TYPE_OPERATOR ) );
 		}
@@ -3374,7 +3381,7 @@ class WP_SQLite_Translator {
 				return;
 
 			case 'TABLE STATUS':  // FROM `database`.
-				// Match the optional [{FROM | IN} db_name]
+				// Match the optional [{FROM | IN} db_name].
 				$database_expression = $this->rewriter->consume();
 				if ( 'FROM' === $database_expression->token || 'IN' === $database_expression->token ) {
 					$this->rewriter->consume();
@@ -3470,6 +3477,13 @@ class WP_SQLite_Translator {
 		}
 	}
 
+	/**
+	 * Gets the columns from a table.
+	 *
+	 * @param string $table_name The table name.
+	 *
+	 * @return array The columns.
+	 */
 	private function get_columns_from( $table_name ) {
 		$stmt = $this->execute_sqlite_query(
 			"PRAGMA table_info(\"$table_name\");"

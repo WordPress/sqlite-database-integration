@@ -175,9 +175,25 @@
 	<rule ref="WordPress.Files.FileName">
 		<exclude-pattern>/tests/*</exclude-pattern>
 	</rule>
-
-	<rule ref="WordPress.NamingConventions">
+	<rule ref="WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.NamingConventions.ValidFunctionName.FunctionNameInvalid">
 		<exclude-pattern>/tests/*</exclude-pattern>
 	</rule>
-
+	<rule ref="WordPress.Files.FileName.NotHyphenatedLowercase">
+		<exclude-pattern>/tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase">
+		<exclude-pattern>/tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.Files.FileName.InvalidClassFileName">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="Universal.Operators.DisallowShortTernary.Found">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
+	<rule ref="PEAR.NamingConventions.ValidClassName.Invalid">
+		<exclude-pattern>/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php</exclude-pattern>
+	</rule>
 </ruleset>
