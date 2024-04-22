@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout
+        uses: actions/checkout@main
 
       - name: Install PHP
         uses: shivammathur/setup-php@v2
