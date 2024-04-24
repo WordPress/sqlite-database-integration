@@ -256,12 +256,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	public function testShowCreateTable1() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
-					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
-					option_name VARCHAR(255) default '',
-					option_value TEXT NOT NULL,
-					UNIQUE KEY option_name (option_name),
-					KEY composite (option_name, option_value)
-				);"
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name VARCHAR(255) default '',
+				option_value TEXT NOT NULL,
+				UNIQUE KEY option_name (option_name),
+				KEY composite (option_name, option_value)
+			);"
 		);
 
 		$this->assertQuery(
@@ -324,7 +324,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'CREATE TABLE _tmp_table (
 	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
 	`option_name` smallint NOT NULL DEFAULT 14,
-	`option_value` text NOT NULL,
+	`option_value` text NOT NULL DEFAULT \'\',
 	KEY _tmp_table__option_name (option_name)
 );',
 			$results[0]->{'Create Table'}
