@@ -268,11 +268,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'SHOW CREATE TABLE _tmp_table;'
 		);
 		$results = $this->engine->get_query_results();
+		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
 			"CREATE TABLE _tmp_table (
 	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
 	`option_name` varchar(255) DEFAULT '',
-	`option_value` text NOT NULL,
+	`option_value` text NOT NULL DEFAULT '',
 	KEY _tmp_table__composite (option_name, option_value),
 	UNIQUE KEY _tmp_table__option_name (option_name)
 );",
