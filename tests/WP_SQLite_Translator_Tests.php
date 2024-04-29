@@ -93,7 +93,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function regexpOperators() {
+	public static function regexpOperators() {
 		$lowercase_rss       = (object) array(
 			'ID'          => '1',
 			'option_name' => 'rss_123',
