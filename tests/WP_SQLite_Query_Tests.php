@@ -27,7 +27,6 @@ class WP_SQLite_Query_Tests extends TestCase {
 			$GLOBALS['wpdb']->suppress_errors = false;
 			$GLOBALS['wpdb']->show_errors     = true;
 		}
-		return;
 	}
 
 	/**

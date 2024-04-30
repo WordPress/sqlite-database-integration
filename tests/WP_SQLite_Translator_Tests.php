@@ -24,7 +24,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$GLOBALS['wpdb']->suppress_errors = false;
 			$GLOBALS['wpdb']->show_errors     = true;
 		}
-		return;
 	}
 
 	// Before each test, we create a new database
