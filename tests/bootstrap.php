@@ -80,7 +80,7 @@ if ( ! function_exists( 'str_ends_with' ) ) {
 	 * @return bool
 	 */
 	function str_ends_with( string $haystack, string $needle ) {
-		return empty( $needle ) || substr( $haystack, -strlen( $needle ) === $needle );
+		return empty( $needle ) || substr( $haystack, -strlen( $needle ) ) === $needle;
 	}
 }
 if ( extension_loaded( 'mbstring' ) ) {
