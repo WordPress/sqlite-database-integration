@@ -6,7 +6,6 @@
 		colors="true"
 		beStrictAboutTestsThatDoNotTestAnything="true"
 		beStrictAboutOutputDuringTests="true"
-		convertErrorsToExceptions="true"
 		>
 	<testsuites>
 		<!-- Default test suite to run all tests. -->
