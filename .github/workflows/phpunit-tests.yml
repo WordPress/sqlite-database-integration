@@ -17,7 +17,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest ]
-        php: [ '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3' ]
+        # NOTE: There does not appear to be a single phpunit version that supports all
+        # PHP versions tested here. For now, we are removing PHP 7.0. and 7.1 tests
+        # in order to run a single phpunit version for PHP 7.2 and up.
+        php: [ '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3' ]
 
     with:
       os: ${{ matrix.os }}
