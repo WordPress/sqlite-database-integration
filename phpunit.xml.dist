@@ -7,9 +7,6 @@
 		beStrictAboutTestsThatDoNotTestAnything="true"
 		beStrictAboutOutputDuringTests="true"
 		convertErrorsToExceptions="true"
-		convertWarningsToExceptions="true"
-		convertNoticesToExceptions="true"
-		convertDeprecationsToExceptions="true"
 		>
 	<testsuites>
 		<!-- Default test suite to run all tests. -->
