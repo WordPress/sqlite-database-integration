@@ -1453,8 +1453,9 @@ class WP_SQLite_Translator {
 			$updated_query                     = $this->get_information_schema_query( $updated_query );
 			$params                            = array();
 		} elseif (
-			strpos( $updated_query, '@@SESSION.sql_mode' ) !== false
-			|| strpos( $updated_query, 'CONVERT( ' ) !== false
+			// Examples: @@SESSION.sql_mode or @@GLOBAL.max_allowed_packet
+			preg_match( '/@@((SESSION|GLOBAL)\s*\.\s*)?\w+\b/i', $updated_query ) === 1 ||
+			strpos( $updated_query, 'CONVERT( ' ) !== false
 		) {
 			/*
 			 * If the query contains a function that is not supported by SQLite,
