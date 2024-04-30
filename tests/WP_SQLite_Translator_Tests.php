@@ -2247,4 +2247,34 @@ QUERY
 			$result
 		);
 	}
+
+	/**
+	 * @dataProvider mysqlVariablesToTest
+	 */
+	public function testSelectVariable( $variable_name ) {
+		$this->assertQuery( "SELECT $variable_name;" );
+		// TODO: Assert about results once we provide them
+	}
+
+	public static function mysqlVariablesToTest() {
+		return array(
+			// TODO: generate variable name permutations with mixed letter casing
+			// NOTE: This list was derived from the variables used by the UpdraftPlus plugin.
+			// We will start here and plan to expand supported variables over time.
+			array( '@@character_set_client' ),
+			array( '@@character_set_results' ),
+			array( '@@collation_connection' ),
+			array( '@@GLOBAL.gtid_purged' ),
+			array( '@@GLOBAL.log_bin' ),
+			array( '@@GLOBAL.log_bin_trust_function_creators' ),
+			array( '@@GLOBAL.sql_mode' ),
+			array( '@@SESSION.max_allowed_packet' ),
+			array( '@@SESSION.sql_mode' ),
+		);
+	}
+
+	// TODO:
+	//public function testSelectUnsupportedVariable() {
+	//	// TODO
+	//}
 }
