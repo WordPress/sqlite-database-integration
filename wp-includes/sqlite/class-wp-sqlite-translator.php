@@ -1453,7 +1453,7 @@ class WP_SQLite_Translator {
 			$updated_query                     = $this->get_information_schema_query( $updated_query );
 			$params                            = array();
 		} elseif (
-			// Examples: @@SESSION.sql_mode or @@GLOBAL.max_allowed_packet
+			// Examples: @@SESSION.sql_mode, @@GLOBAL.max_allowed_packet, @@character_set_client
 			preg_match( '/@@((SESSION|GLOBAL)\s*\.\s*)?\w+\b/i', $updated_query ) === 1 ||
 			strpos( $updated_query, 'CONVERT( ' ) !== false
 		) {
