@@ -2252,8 +2252,8 @@ QUERY
 	 * @dataProvider mysqlVariablesToTest
 	 */
 	public function testSelectVariable( $variable_name ) {
+		// Make sure the query does not error
 		$this->assertQuery( "SELECT $variable_name;" );
-		// TODO: Assert about results once we provide them
 	}
 
 	public static function mysqlVariablesToTest() {
@@ -2272,9 +2272,4 @@ QUERY
 			array( '@@SESSION.sql_mode' ),
 		);
 	}
-
-	// TODO:
-	//public function testSelectUnsupportedVariable() {
-	//	// TODO
-	//}
 }
