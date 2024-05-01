@@ -2258,7 +2258,6 @@ QUERY
 
 	public static function mysqlVariablesToTest() {
 		return array(
-			// TODO: generate variable name permutations with mixed letter casing
 			// NOTE: This list was derived from the variables used by the UpdraftPlus plugin.
 			// We will start here and plan to expand supported variables over time.
 			array( '@@character_set_client' ),
@@ -2270,6 +2269,11 @@ QUERY
 			array( '@@GLOBAL.sql_mode' ),
 			array( '@@SESSION.max_allowed_packet' ),
 			array( '@@SESSION.sql_mode' ),
+
+			// Intentionally mix letter casing to help demonstrate case-insensitivity
+			array( '@@cHarActer_Set_cLient' ),
+			array( '@@gLoBAL.gTiD_purGed' ),
+			array( '@@sEssIOn.sqL_moDe' ),
 		);
 	}
 }
