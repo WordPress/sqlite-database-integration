@@ -33,7 +33,7 @@ if ( ! function_exists( 'apply_filters' ) ) {
 }
 
 /**
- * Polyfills for php 8 functions
+ * Polyfills for php 7 & 8 functions
  */
 
 if ( ! function_exists( 'str_starts_with' ) ) {
