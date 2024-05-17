@@ -505,6 +505,21 @@ QUERY;
 		$this->assertEquals( $obj, $unserialized );
 	}
 
+	public function testOnDuplicateKey() {
+		$this->assertQuery(
+			'CREATE TABLE `test` (
+				`id` INT PRIMARY KEY,
+				`text` VARCHAR(255),
+			);'
+		);
+		// The order is deliberate to test that the query works with the keys in any order.
+		$this->assertQuery(
+			'INSERT INTO test (`text`, `id`)
+			VALUES ("test", 1)
+			ON DUPLICATE KEY UPDATE `text` = "test1"'
+		);
+	}
+
 	public function testShowColumns() {
 
 		$query = 'SHOW COLUMNS FROM wp_posts';
