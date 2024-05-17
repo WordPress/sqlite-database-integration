@@ -506,16 +506,17 @@ QUERY;
 	}
 
 	public function testOnDuplicateKey() {
-		$this->assertQuery("
-			CREATE TABLE `test` (
+		$this->assertQuery(
+			'CREATE TABLE `test` (
 				`id` INT PRIMARY KEY,
 				`text` VARCHAR(255),
-			);
-		");
+			);'
+		);
 		// The order is deliberate to test that the query works with the keys in any order.
-		$this->assertQuery( "INSERT INTO test (`text`, `id`)
-			VALUES ('test', 1)
-			ON DUPLICATE KEY UPDATE `text` = 'test1'"
+		$this->assertQuery(
+			'INSERT INTO test (`text`, `id`)
+			VALUES ("test", 1)
+			ON DUPLICATE KEY UPDATE `text` = "test1"'
 		);
 	}
 
