@@ -33,7 +33,7 @@ if ( ! function_exists( 'apply_filters' ) ) {
 }
 
 /**
- * Polyfills for php 8 functions
+ * Polyfills for php 7 & 8 functions
  */
 
 if ( ! function_exists( 'str_starts_with' ) ) {
@@ -80,7 +80,7 @@ if ( ! function_exists( 'str_ends_with' ) ) {
 	 * @return bool
 	 */
 	function str_ends_with( string $haystack, string $needle ) {
-		return empty( $needle ) || substr( $haystack, -strlen( $needle ) === $needle );
+		return empty( $needle ) || substr( $haystack, -strlen( $needle ) ) === $needle;
 	}
 }
 if ( extension_loaded( 'mbstring' ) ) {

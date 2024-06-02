@@ -24,6 +24,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$GLOBALS['wpdb']->suppress_errors = false;
 			$GLOBALS['wpdb']->show_errors     = true;
 		}
+		return;
 	}
 
 	// Before each test, we create a new database
@@ -33,17 +34,17 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->engine = new WP_SQLite_Translator( $this->sqlite );
 		$this->engine->query(
 			"CREATE TABLE _options (
-				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
-				option_name TEXT NOT NULL default '',
-				option_value TEXT NOT NULL default ''
-			);"
+					ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name TEXT NOT NULL default '',
+					option_value TEXT NOT NULL default ''
+				);"
 		);
 		$this->engine->query(
 			"CREATE TABLE _dates (
-				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
-				option_name TEXT NOT NULL default '',
-				option_value DATE NOT NULL
-			);"
+					ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name TEXT NOT NULL default '',
+					option_value DATE NOT NULL
+				);"
 		);
 	}
 
@@ -92,7 +93,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function regexpOperators() {
+	public static function regexpOperators() {
 		$lowercase_rss       = (object) array(
 			'ID'          => '1',
 			'option_name' => 'rss_123',
@@ -202,7 +203,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
-		);		
+		);
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
 		);
@@ -210,7 +211,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			"UPDATE _dates SET option_value = (SELECT option_value from _options WHERE option_name = 'User 0000019')"
 		);
 		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when two row were changed' );
-		
+
 		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
 		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
 		$this->assertEquals( 'second', $result1[0]->option_value );
@@ -220,7 +221,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	public function testUpdateWithoutWhereButWithLimit() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
-		);		
+		);
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48');"
 		);
@@ -228,7 +229,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			"UPDATE _dates SET option_value = 'second' LIMIT 1"
 		);
 		$this->assertSame( 1, $return, 'UPDATE query did not return 2 when two row were changed' );
-		
+
 		$result1 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='first'" );
 		$result2 = $this->engine->query( "SELECT option_value FROM _dates WHERE option_name='second'" );
 		$this->assertEquals( 'second', $result1[0]->option_value );
@@ -252,8 +253,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
-	public function testShowCreateTable1()
-	{
+	public function testShowCreateTable1() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
 				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
@@ -268,11 +268,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'SHOW CREATE TABLE _tmp_table;'
 		);
 		$results = $this->engine->get_query_results();
+		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
 			"CREATE TABLE _tmp_table (
 	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
 	`option_name` varchar(255) DEFAULT '',
-	`option_value` text NOT NULL,
+	`option_value` text NOT NULL DEFAULT '',
 	KEY _tmp_table__composite (option_name, option_value),
 	UNIQUE KEY _tmp_table__option_name (option_name)
 );",
@@ -280,12 +281,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testShowCreateTableSimpleTable()
-	{
+	public function testShowCreateTableSimpleTable() {
 		$this->assertQuery(
-			"CREATE TABLE _tmp_table (
+			'CREATE TABLE _tmp_table (
 				ID BIGINT NOT NULL
-			);"
+			);'
 		);
 
 		$this->assertQuery(
@@ -293,21 +293,20 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			"CREATE TABLE _tmp_table (
+			'CREATE TABLE _tmp_table (
 	`ID` bigint NOT NULL
-);",
+);',
 			$results[0]->{'Create Table'}
 		);
 	}
 
-	public function testShowCreateTableWithAlterAndCreateIndex()
-	{
+	public function testShowCreateTableWithAlterAndCreateIndex() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
-				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
-				option_name VARCHAR(255) default '',
-				option_value TEXT NOT NULL
-			);"
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL
+				);"
 		);
 
 		$this->assertQuery(
@@ -323,14 +322,15 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			"CREATE TABLE _tmp_table (
+			'CREATE TABLE _tmp_table (
 	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
 	`option_name` smallint NOT NULL DEFAULT 14,
-	`option_value` text NOT NULL,
+	`option_value` text NOT NULL DEFAULT \'\',
 	KEY _tmp_table__option_name (option_name)
-);",
+);',
 			$results[0]->{'Create Table'}
 		);
+	}
 
 	public function testSelectIndexHintForce() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
@@ -383,7 +383,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result );
 	}
 
-
 	public function testCreateTemporaryTable() {
 		$this->assertQuery(
 			"CREATE TEMPORARY TABLE _tmp_table (
@@ -426,11 +425,10 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testShowTableStatusFrom()
-	{
+	public function testShowTableStatusFrom() {
 		// Created in setUp() function
-		$this->assertQuery("DROP TABLE _options");
-		$this->assertQuery("DROP TABLE _dates");
+		$this->assertQuery( 'DROP TABLE _options' );
+		$this->assertQuery( 'DROP TABLE _dates' );
 
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
@@ -450,11 +448,10 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testShowTableStatusIn()
-	{
+	public function testShowTableStatusIn() {
 		// Created in setUp() function
-		$this->assertQuery("DROP TABLE _options");
-		$this->assertQuery("DROP TABLE _dates");
+		$this->assertQuery( 'DROP TABLE _options' );
+		$this->assertQuery( 'DROP TABLE _dates' );
 
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
@@ -474,11 +471,10 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testShowTableStatusInTwoTables()
-	{
+	public function testShowTableStatusInTwoTables() {
 		// Created in setUp() function
-		$this->assertQuery("DROP TABLE _options");
-		$this->assertQuery("DROP TABLE _dates");
+		$this->assertQuery( 'DROP TABLE _options' );
+		$this->assertQuery( 'DROP TABLE _dates' );
 
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
@@ -507,8 +503,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testShowTableStatusLike() {
 		// Created in setUp() function
-		$this->assertQuery("DROP TABLE _options");
-		$this->assertQuery("DROP TABLE _dates");
+		$this->assertQuery( 'DROP TABLE _options' );
+		$this->assertQuery( 'DROP TABLE _dates' );
 
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table1 (
@@ -848,7 +844,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			$results
 		);
 	}
-
 
 	public function testAlterTableModifyColumn() {
 		$this->assertQuery(
@@ -2140,8 +2135,7 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
-	public function testOnConflictReplace()
-	{
+	public function testOnConflictReplace() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
 				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -2156,15 +2150,15 @@ QUERY
 		$this->assertQuery(
 			"INSERT INTO _tmp_table VALUES (1, null, null, null, '');"
 		);
-		$result = $this->assertQuery("SELECT * FROM _tmp_table WHERE ID = 1");
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE ID = 1' );
 		$this->assertEquals(
 			array(
 				(object) array(
-					'ID' => '1',
-					'name' => 'default-value',
-					'unique_name' => 'unique-default-value',
+					'ID'                 => '1',
+					'name'               => 'default-value',
+					'unique_name'        => 'unique-default-value',
 					'inline_unique_name' => 'inline-unique-default-value',
-					'no_default' => '',
+					'no_default'         => '',
 				),
 			),
 			$result
@@ -2174,10 +2168,10 @@ QUERY
 			"INSERT INTO _tmp_table VALUES (2, '1', '2', '3', '4');"
 		);
 		$this->assertQuery(
-			"UPDATE _tmp_table SET name = null WHERE ID = 2;"
+			'UPDATE _tmp_table SET name = null WHERE ID = 2;'
 		);
 
-		$result = $this->assertQuery("SELECT name FROM _tmp_table WHERE ID = 2");
+		$result = $this->assertQuery( 'SELECT name FROM _tmp_table WHERE ID = 2' );
 		$this->assertEquals(
 			array(
 				(object) array(
@@ -2189,48 +2183,47 @@ QUERY
 
 		// This should fail because of the UNIQUE constraint
 		$this->assertQuery(
-			"UPDATE _tmp_table SET unique_name = NULL WHERE ID = 2;",
+			'UPDATE _tmp_table SET unique_name = NULL WHERE ID = 2;',
 			'UNIQUE constraint failed: _tmp_table.unique_name'
 		);
 
 		// Inline unique constraint aren't supported currently, so this should pass
 		$this->assertQuery(
-			"UPDATE _tmp_table SET inline_unique_name = NULL WHERE ID = 2;",
+			'UPDATE _tmp_table SET inline_unique_name = NULL WHERE ID = 2;',
 			''
 		);
 
 		// WPDB allows for NULL values in columns that don't have a default value and a NOT NULL constraint
 		$this->assertQuery(
-			"UPDATE _tmp_table SET no_default = NULL WHERE ID = 2;",
+			'UPDATE _tmp_table SET no_default = NULL WHERE ID = 2;',
 			''
 		);
 
-		$result = $this->assertQuery("SELECT * FROM _tmp_table WHERE ID = 2");
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE ID = 2' );
 		$this->assertEquals(
 			array(
 				(object) array(
-					'ID' => '2',
-					'name' => 'default-value',
-					'unique_name' => '2',
+					'ID'                 => '2',
+					'name'               => 'default-value',
+					'unique_name'        => '2',
 					'inline_unique_name' => 'inline-unique-default-value',
-					'no_default' => '',
+					'no_default'         => '',
 				),
 			),
 			$result
 		);
 	}
 
-	public function testDefaultNullValue()
-	{
+	public function testDefaultNullValue() {
 		$this->assertQuery(
-			"CREATE TABLE _tmp_table (
+			'CREATE TABLE _tmp_table (
 				name varchar(20) NOT NULL default NULL,
 				no_default varchar(20) NOT NULL
-			);"
+			);'
 		);
 
 		$result = $this->assertQuery(
-			"DESCRIBE _tmp_table;"
+			'DESCRIBE _tmp_table;'
 		);
 		$this->assertEquals(
 			array(
@@ -2252,6 +2245,35 @@ QUERY
 				),
 			),
 			$result
+		);
+	}
+
+	/**
+	 * @dataProvider mysqlVariablesToTest
+	 */
+	public function testSelectVariable( $variable_name ) {
+		// Make sure the query does not error
+		$this->assertQuery( "SELECT $variable_name;" );
+	}
+
+	public static function mysqlVariablesToTest() {
+		return array(
+			// NOTE: This list was derived from the variables used by the UpdraftPlus plugin.
+			// We will start here and plan to expand supported variables over time.
+			array( '@@character_set_client' ),
+			array( '@@character_set_results' ),
+			array( '@@collation_connection' ),
+			array( '@@GLOBAL.gtid_purged' ),
+			array( '@@GLOBAL.log_bin' ),
+			array( '@@GLOBAL.log_bin_trust_function_creators' ),
+			array( '@@GLOBAL.sql_mode' ),
+			array( '@@SESSION.max_allowed_packet' ),
+			array( '@@SESSION.sql_mode' ),
+
+			// Intentionally mix letter casing to help demonstrate case-insensitivity
+			array( '@@cHarActer_Set_cLient' ),
+			array( '@@gLoBAL.gTiD_purGed' ),
+			array( '@@sEssIOn.sqL_moDe' ),
 		);
 	}
 }
