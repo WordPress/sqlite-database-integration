@@ -260,6 +260,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertCount( 0, $results );
 	}
+
 	public function testShowCreateTable1() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
