@@ -258,7 +258,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'SHOW CREATE TABLE _no_such_table;'
 		);
 		$results = $this->engine->get_query_results();
-		$this->assertCount(0, $results);
+		$this->assertCount( 0, $results );
 	}
 	public function testShowCreateTable1() {
 		$this->assertQuery(
