@@ -253,6 +253,13 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
+	public function testShowCreateTableNotFound() {
+		$this->assertQuery(
+			'SHOW CREATE TABLE _no_such_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertCount(0, $results);
+	}
 	public function testShowCreateTable1() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
@@ -266,6 +273,34 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$this->assertQuery(
 			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
+		$this->assertEquals(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`option_name` varchar(255) DEFAULT '',
+	`option_value` text NOT NULL DEFAULT '',
+	KEY _tmp_table__composite (option_name, option_value),
+	UNIQUE KEY _tmp_table__option_name (option_name)
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTableQuoted() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name VARCHAR(255) default '',
+				option_value TEXT NOT NULL,
+				UNIQUE KEY option_name (option_name),
+				KEY composite (option_name, option_value)
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE `_tmp_table`;'
 		);
 		$results = $this->engine->get_query_results();
 		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
@@ -417,9 +452,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$this->assertEquals(
 			array(
-				(object) array(
-					'Tables_in_db' => '_tmp_table',
-				),
+				'_tmp_table',
 			),
 			$this->engine->get_query_results()
 		);
