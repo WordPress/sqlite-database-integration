@@ -455,7 +455,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			array(
 				(object) array(
 					'Tables_in_db' => '_tmp_table',
-				)
+				),
 			),
 			$this->engine->get_query_results()
 		);
