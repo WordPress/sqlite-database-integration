@@ -3462,10 +3462,7 @@ class WP_SQLite_Translator {
 				);
 
 				$this->set_results_from_fetched_data(
-					array_column(
-						$stmt->fetchAll( $this->pdo_fetch_mode ),
-						'Tables_in_db'
-					)
+					$stmt->fetchAll( $this->pdo_fetch_mode )
 				);
 				return;
 
@@ -3476,10 +3473,7 @@ class WP_SQLite_Translator {
 							"SELECT name FROM sqlite_master WHERE type='table'"
 						);
 						$this->set_results_from_fetched_data(
-							array_column(
-								$stmt->fetchAll( $this->pdo_fetch_mode ),
-								'Tables_in_db'
-							)
+							$stmt->fetchAll( $this->pdo_fetch_mode )
 						);
 						return;
 
