@@ -3238,8 +3238,8 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_show() {
 		$this->rewriter->skip();
-		$what1 = $this->rewriter->consume()->token;
-		$what2 = $this->rewriter->consume()->token;
+		$what1 = strtoupper( $this->rewriter->consume()->token );
+		$what2 = strtoupper( $this->rewriter->consume()->token );
 		$what  = $what1 . ' ' . $what2;
 		switch ( $what ) {
 			case 'CREATE PROCEDURE':
@@ -3338,9 +3338,17 @@ class WP_SQLite_Translator {
 				return;
 
 			case 'CREATE TABLE':
-				$table_name = $this->rewriter->consume()->token;
+				// Value is unquoted table name
+				$table_name = $this->rewriter->consume()->value;
 				$columns    = $this->get_columns_from( $table_name );
 				$keys       = $this->get_keys( $table_name );
+
+				if ( empty( $columns ) ) {
+					$this->set_results_from_fetched_data(
+						array()
+					);
+					return;
+				}
 
 				foreach ( $columns as $column ) {
 					$column      = (array) $column;
@@ -3452,6 +3460,7 @@ class WP_SQLite_Translator {
 						':param' => $table_expression->value,
 					)
 				);
+
 				$this->set_results_from_fetched_data(
 					$stmt->fetchAll( $this->pdo_fetch_mode )
 				);
