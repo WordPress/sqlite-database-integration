@@ -420,6 +420,11 @@ class WP_SQLite_Translator {
 			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
+
+		// https://www.sqlite.org/wal.html#activating_and_configuring_wal_mode
+		if ( defined( 'SQLITE_WAL_MODE' ) && SQLITE_WAL_MODE ) {
+			$this->pdo->query( 'PRAGMA journal_mode=WAL;' );
+		}
 	}
 
 	/**
