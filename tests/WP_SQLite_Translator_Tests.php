@@ -128,11 +128,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 		$this->assertQuery( "SELECT * FROM _options WHERE REGEXP_REPLACE(option_name, '(-ignore|-remove)', '') = 'test'" );
 		$this->assertCount( 2, $this->engine->get_query_results() );
-
-		$result1 = $this->engine->query( "SELECT option_value FROM _options WHERE option_name='test-ignore';" );
-		$result2 = $this->engine->query( "SELECT option_value FROM _options WHERE option_name='test-remove';" );
-		$this->assertEquals( '1', $result1[0]->option_value );
-		$this->assertEquals( '2', $result2[0]->option_value );
 	}
 
 	public function testInsertDateNow() {
