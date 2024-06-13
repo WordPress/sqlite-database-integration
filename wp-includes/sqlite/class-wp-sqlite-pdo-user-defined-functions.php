@@ -518,7 +518,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * be reasonably safe since PHP does not allow null bytes in
 		 * regular expressions anyway.
 		 */
-		
+
 		/* Return null if one of the required parameter is null */
 		if ( is_null( $field ) || is_null( $pattern ) || is_null( $replacement ) ) {
 			return null;

@@ -129,15 +129,15 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertQuery( "SELECT * FROM _options WHERE REGEXP_REPLACE(option_name, '(-ignore|-remove)', '') = 'test'" );
 		$this->assertCount( 2, $this->engine->get_query_results() );
 
-		$this->assertQuery( 'SELECT REGEXP_REPLACE( null, 'a', 'x') as result' );
+		$this->assertQuery( "SELECT REGEXP_REPLACE( null, 'a', 'x') as result" );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals( null, $results[0]->result );
 
-		$this->assertQuery( 'SELECT REGEXP_REPLACE( 'abc', null, 'x') as result' );
+		$this->assertQuery( "SELECT REGEXP_REPLACE( 'abc', null, 'x') as result" );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals( null, $results[0]->result );
 
-		$this->assertQuery( 'SELECT REGEXP_REPLACE( 'abc', 'a', null) as result' );
+		$this->assertQuery( "SELECT REGEXP_REPLACE( 'abc', 'a', null) as result" );
 		$results = $this->engine->get_query_results();
 		$this->assertEquals( null, $results[0]->result );
 	}
