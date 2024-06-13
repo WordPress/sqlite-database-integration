@@ -503,7 +503,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @return Array if the field parameter is an array, or a string otherwise.
 	 */
-	public function regexp_replace( $pattern, $replacement, $field ) {
+	public function regexp_replace( $field, $pattern, $replacement ) {
 		/*
 		 * If the original query says REGEXP BINARY
 		 * the comparison is byte-by-byte and letter casing now
