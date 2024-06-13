@@ -117,6 +117,18 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testRegexpReplace() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('first', 'test');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('second', 'ignore test');"
+		);
+
+		$this->assertQuery( "SELECT FROM _options WHERE REGEXP_REPLACE(option_value, 'ignore ', '') = 'test'" );
+		$this->assertCount( 2, $this->engine->get_query_results() );
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
