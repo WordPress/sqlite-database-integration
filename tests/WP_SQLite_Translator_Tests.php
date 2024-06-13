@@ -120,13 +120,13 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testRegexpReplace() {
 		$this->assertQuery(
-			"INSERT INTO _options (option_name, option_value) VALUES ('first', 'test');"
+			"INSERT INTO _options (option_name, option_value) VALUES ('test-ignore', '1');"
 		);
 		$this->assertQuery(
-			"INSERT INTO _options (option_name, option_value) VALUES ('second', 'ignore test');"
+			"INSERT INTO _options (option_name, option_value) VALUES ('test-remove', '2');"
 		);
 
-		$this->assertQuery( "SELECT FROM _options WHERE REGEXP_REPLACE(option_value, 'ignore ', '') = 'test'" );
+		$this->assertQuery( "SELECT * FROM _options WHERE REGEXP_REPLACE(option_name, '(-ignore|-remove)', '') = 'test'" );
 		$this->assertCount( 2, $this->engine->get_query_results() );
 	}
 
