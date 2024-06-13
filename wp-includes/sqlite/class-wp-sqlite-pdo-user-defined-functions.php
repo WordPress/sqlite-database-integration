@@ -68,6 +68,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'isnull'         => 'isnull',
 		'if'             => '_if',
 		'regexp'         => 'regexp',
+		'regexp_replace' => 'regexp_replace',
 		'field'          => 'field',
 		'log'            => 'log',
 		'least'          => 'least',
@@ -491,6 +492,54 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$pattern = '/' . $pattern . '/' . $flags;
 
 		return preg_match( $pattern, $field );
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_REPLACE() function.
+	 *
+	 * @param string|array $pattern     Regular expression to search for (or array of strings).
+	 * @param string|array $replacement The string or an array with strings to replace.
+	 * @param string|array $field       Haystack.
+	 *
+	 * @return Array if the field parameter is an array, or a string otherwise.
+	 */
+	public function regexp_replace( $field, $pattern, $replacement ) {
+		/*
+		 * If the original query says REGEXP BINARY
+		 * the comparison is byte-by-byte and letter casing now
+		 * matters since lower- and upper-case letters have different
+		 * byte codes.
+		 *
+		 * The REGEXP function can't be easily made to accept two
+		 * parameters, so we'll have to use a hack to get around this.
+		 *
+		 * If the first character of the pattern is a null byte, we'll
+		 * remove it and make the comparison case-sensitive. This should
+		 * be reasonably safe since PHP does not allow null bytes in
+		 * regular expressions anyway.
+		 */
+
+		/* Return null if one of the required parameter is null */
+		if ( is_null( $field ) || is_null( $pattern ) || is_null( $replacement ) ) {
+			return null;
+		}
+
+		/* Return null if the pattern is empty - this changes MySQL/MariaDB behavior! */
+		if ( empty( $pattern ) ) {
+			return null;
+		}
+
+		if ( "\x00" === $pattern[0] ) {
+			$pattern = substr( $pattern, 1 );
+			$flags   = '';
+		} else {
+			// Otherwise, the search is case-insensitive.
+			$flags = 'i';
+		}
+		$pattern = str_replace( '/', '\/', $pattern );
+		$pattern = '/' . $pattern . '/' . $flags;
+
+		return preg_replace( $pattern, $replacement, $field );
 	}
 
 	/**
