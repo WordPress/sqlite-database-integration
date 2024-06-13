@@ -524,6 +524,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return null;
 		}
 
+		/* Return null if the pattern is empty - this changes MySQL/MariaDB behavior! */
+		if ( empty( $pattern ) ) {
+			return null;
+		}
+
 		if ( "\x00" === $pattern[0] ) {
 			$pattern = substr( $pattern, 1 );
 			$flags   = '';
