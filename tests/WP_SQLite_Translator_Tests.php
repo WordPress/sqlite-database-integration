@@ -756,7 +756,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			),
 			$results
 		);
-
 	}
 
 	public function testAlterTableAddColumn() {
