@@ -886,6 +886,7 @@ class WP_SQLite_Translator {
 			implode( ",\n", $definitions ) .
 			')'
 		);
+
 		$this->execute_sqlite_query( $create_query );
 		$this->results      = $this->last_exec_returned;
 		$this->return_value = $this->results;
@@ -897,6 +898,7 @@ class WP_SQLite_Translator {
 				$unique = 'UNIQUE ';
 			}
 			$index_name = "{$table->name}__{$constraint->name}";
+
 			$this->execute_sqlite_query(
 				"CREATE $unique INDEX \"$index_name\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
 			);
@@ -3449,7 +3451,7 @@ class WP_SQLite_Translator {
 		}
 
 		$column_definitions = $this->get_column_definitions( $table_name, $columns );
-		$key_definitions    = $this->get_key_definitions( $table_name );
+		$key_definitions    = $this->get_key_definitions( $table_name, $columns );
 		$pk_definition      = $this->get_primary_key_definition( $columns );
 
 		if ( $pk_definition ) {
@@ -3523,9 +3525,24 @@ class WP_SQLite_Translator {
 	 *
 	 * @return array An array of key definitions
 	 */
-	private function get_key_definitions( $table_name ) {
+	private function get_key_definitions( $table_name, $columns ) {
 		$key_definitions = array();
+
+		$pks = array();
+		foreach ( $columns as $column ) {
+			if ( '0' !== $column->pk ) {
+				$pks[] = $column->name;
+			}
+		}
+
 		foreach ( $this->get_keys( $table_name ) as $key ) {
+			// If the PK columns are the same as the unique key columns, skip the key.
+			// This is because the PK is already unique in MySQL.
+			$key_equals_pk = ! array_diff( $pks, array_column( $key['columns'], 'name' ) );
+			if ( $key['index']['unique'] && $key_equals_pk ) {
+				continue;
+			}
+
 			$key_definition = array();
 			if ( $key['index']['unique'] ) {
 				$key_definition[] = 'UNIQUE';
@@ -3535,9 +3552,14 @@ class WP_SQLite_Translator {
 
 			$key_definition[] = sprintf( '`%s`', $key['index']['name'] );
 
-			$key_definition[] = '(' . implode( ', ', array_map( function ( $column ) {
-					return sprintf('`%s`', $column['name'] );
-				}, $key['columns'] ) ) . ')';
+			$cols = array_map(
+				function ( $column ) {
+					return sprintf( '`%s`', $column['name'] );
+				},
+				$key['columns']
+			);
+
+			$key_definition[] = '(' . implode( ', ', $cols ) . ')';
 
 			$key_definitions[] = implode( ' ', $key_definition );
 		}
@@ -3556,12 +3578,12 @@ class WP_SQLite_Translator {
 		$primary_keys = array();
 		foreach ( $columns as $column ) {
 			if ( '0' !== $column->pk ) {
-				$primary_keys[] = $column->name;
+				$primary_keys[] = sprintf('`%s`', $column->name );
 			}
 		}
 
 		return ! empty( $primary_keys )
-			? sprintf( 'PRIMARY KEY (`%s`)', implode( ', ', $primary_keys ) )
+			? sprintf( 'PRIMARY KEY (%s)', implode( ', ', $primary_keys ) )
 			: null;
 	}
 
