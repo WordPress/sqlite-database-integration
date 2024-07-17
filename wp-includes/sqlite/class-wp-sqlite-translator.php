@@ -65,6 +65,7 @@ class WP_SQLite_Translator {
 		'double'             => 'real',
 		'decimal'            => 'real',
 		'dec'                => 'real',
+		'enum'               => 'text',
 		'numeric'            => 'real',
 		'fixed'              => 'real',
 		'date'               => 'text',
