@@ -3578,7 +3578,7 @@ class WP_SQLite_Translator {
 		$primary_keys = array();
 		foreach ( $columns as $column ) {
 			if ( '0' !== $column->pk ) {
-				$primary_keys[] = sprintf('`%s`', $column->name );
+				$primary_keys[] = sprintf( '`%s`', $column->name );
 			}
 		}
 
@@ -3625,7 +3625,6 @@ class WP_SQLite_Translator {
 			'pk'         => null,
 		);
 		$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
-
 		$columns  = array_map(
 			function ( $row ) use ( $name_map ) {
 				$new       = array();
