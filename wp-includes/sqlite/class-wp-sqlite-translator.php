@@ -3563,10 +3563,9 @@ class WP_SQLite_Translator {
 			$mysql_data_type .= $this->rewriter->skip()->token; // Skip '(' and add it to the data type
 
 			// Loop to capture everything until the closing parenthesis ')'
-			while ( true ) {
-				$token            = $this->rewriter->skip()->token;
-				$mysql_data_type .= $token;
-				if ( ')' === $token ) {
+			while ( $token = $this->rewriter->skip() ) {
+				$mysql_data_type .= $token->token;
+				if ( ')' === $token->token ) {
 					break;
 				}
 			}
