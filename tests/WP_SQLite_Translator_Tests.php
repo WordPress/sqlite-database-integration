@@ -278,12 +278,13 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
-			"CREATE TABLE _tmp_table (
-	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+			"CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL DEFAULT 0 AUTO_INCREMENT,
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
-	KEY _tmp_table__composite (option_name, option_value),
-	UNIQUE KEY _tmp_table__option_name (option_name)
+	PRIMARY KEY (`ID`),
+	KEY `_tmp_table__composite` (`option_name`, `option_value`),
+	UNIQUE KEY `_tmp_table__option_name` (`option_name`)
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -306,12 +307,13 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
-			"CREATE TABLE _tmp_table (
-	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+			"CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL DEFAULT 0 AUTO_INCREMENT,
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
-	KEY _tmp_table__composite (option_name, option_value),
-	UNIQUE KEY _tmp_table__option_name (option_name)
+	PRIMARY KEY (`ID`),
+	KEY `_tmp_table__composite` (`option_name`, `option_value`),
+	UNIQUE KEY `_tmp_table__option_name` (`option_name`)
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -329,8 +331,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			'CREATE TABLE _tmp_table (
-	`ID` bigint NOT NULL
+			'CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL DEFAULT 0
 );',
 			$results[0]->{'Create Table'}
 		);
@@ -358,11 +360,12 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			'CREATE TABLE _tmp_table (
-	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+			'CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL DEFAULT 0 AUTO_INCREMENT,
 	`option_name` smallint NOT NULL DEFAULT 14,
 	`option_value` text NOT NULL DEFAULT \'\',
-	KEY _tmp_table__option_name (option_name)
+	PRIMARY KEY (`ID`),
+	KEY `_tmp_table__option_name` (`option_name`)
 );',
 			$results[0]->{'Create Table'}
 		);

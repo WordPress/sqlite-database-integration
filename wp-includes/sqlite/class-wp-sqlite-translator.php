@@ -3338,56 +3338,7 @@ class WP_SQLite_Translator {
 				return;
 
 			case 'CREATE TABLE':
-				// Value is unquoted table name
-				$table_name = $this->rewriter->consume()->value;
-				$columns    = $this->get_columns_from( $table_name );
-				$keys       = $this->get_keys( $table_name );
-
-				if ( empty( $columns ) ) {
-					$this->set_results_from_fetched_data(
-						array()
-					);
-					return;
-				}
-
-				foreach ( $columns as $column ) {
-					$column      = (array) $column;
-					$definition  = '';
-					$definition .= '`' . $column['Field'] . '` ';
-					$definition .= $this->get_cached_mysql_data_type(
-						$table_name,
-						$column['Field']
-					) ?? $column['Type'];
-					$definition .= 'PRI' === $column['Key'] ? ' PRIMARY KEY' : '';
-					$definition .= 'PRI' === $column['Key'] && 'INTEGER' === $column['Type'] ? ' AUTO_INCREMENT' : '';
-					$definition .= 'NO' === $column['Null'] ? ' NOT NULL' : '';
-					$definition .= $column['Default'] ? ' DEFAULT ' . $column['Default'] : '';
-					$entries[]   = $definition;
-				}
-				foreach ( $keys as $key ) {
-					$key         = (array) $key;
-					$definition  = '';
-					$definition .= '1' === $key['index']['unique'] ? 'UNIQUE ' : '';
-					$definition .= 'KEY ';
-					$definition .= $key['index']['name'];
-					$definition .= ' (';
-					$definition .= implode(
-						', ',
-						array_column( $key['columns'], 'name' )
-					);
-					$definition .= ')';
-					$entries[]   = $definition;
-				}
-				$create_table  = "CREATE TABLE $table_name (\n\t";
-				$create_table .= implode( ",\n\t", $entries );
-				$create_table .= "\n);";
-				$this->set_results_from_fetched_data(
-					array(
-						(object) array(
-							'Create Table' => $create_table,
-						),
-					)
-				);
+				$this->generate_create_statement();
 				return;
 
 			case 'TABLE STATUS':  // FROM `database`.
@@ -3488,6 +3439,149 @@ class WP_SQLite_Translator {
 		}
 	}
 
+	private function generate_create_statement() {
+		$table_name = $this->rewriter->consume()->value;
+		$columns    = $this->get_table_columns( $table_name );
+
+		if ( empty( $columns ) ) {
+			$this->set_results_from_fetched_data( array() );
+			return;
+		}
+
+		$column_definitions = $this->get_column_definitions( $table_name, $columns );
+		$key_definitions    = $this->get_key_definitions( $table_name );
+		$pk_definition      = $this->get_primary_key_definition( $columns );
+
+		if ( $pk_definition ) {
+			array_unshift( $key_definitions, $pk_definition );
+		}
+
+		$sql_parts = array(
+			"CREATE TABLE `$table_name` (",
+			"\t" . implode( ",\n\t", array_merge( $column_definitions, $key_definitions ) ),
+			');',
+		);
+
+		$this->set_results_from_fetched_data(
+			array(
+				(object) array(
+					'Create Table' => implode( "\n", $sql_parts ),
+				),
+			)
+		);
+	}
+
+	/**
+	 * Get columns from pragma table info for the given table.
+	 *
+	 * @param string $table_name
+	 *
+	 * @return stdClass[]
+	 */
+	protected function get_table_columns( $table_name ) {
+		return $this->execute_sqlite_query( "PRAGMA table_info(\"$table_name\");" )
+			->fetchAll( $this->pdo_fetch_mode );
+	}
+
+	/**
+	 * Get the column definitions for a create statement
+	 *
+	 * @param  string $table_name
+	 * @param  array  $columns
+	 *
+	 * @return array An array of column definitions
+	 */
+	protected function get_column_definitions( $table_name, $columns ) {
+		$auto_increment_column = $this->get_autoincrement_column( $table_name );
+		$column_definitions    = array();
+		foreach ( $columns as $column ) {
+			$definition   = array();
+			$definition[] = '`' . $column->name . '`';
+			$definition[] = $this->get_cached_mysql_data_type( $table_name, $column->name ) ?? $column->name;
+
+			if ( '1' === $column->notnull ) {
+				$definition[] = 'NOT NULL';
+			}
+
+			if ( '' !== $column->dflt_value ) {
+				$definition[] = 'DEFAULT ' . $column->dflt_value; // quotes?
+			}
+
+			if ( $auto_increment_column && strtolower( $auto_increment_column ) === strtolower( $column->name ) ) {
+				$definition[] = 'AUTO_INCREMENT';
+			}
+			$column_definitions[] = implode( ' ', $definition );
+		}
+
+		return $column_definitions;
+	}
+
+	/**
+	 * Get the key definitions for a create statement
+	 *
+	 * @param $table_name
+	 *
+	 * @return array An array of key definitions
+	 */
+	private function get_key_definitions( $table_name ) {
+		$key_definitions = array();
+		foreach ( $this->get_keys( $table_name ) as $key ) {
+			$key_definition = array();
+			if ( $key['index']['unique'] ) {
+				$key_definition[] = 'UNIQUE';
+			}
+
+			$key_definition[] = 'KEY';
+
+			$key_definition[] = sprintf( '`%s`', $key['index']['name'] );
+
+			$key_definition[] = '(' . implode( ', ', array_map( function ( $column ) {
+					return sprintf('`%s`', $column['name'] );
+				}, $key['columns'] ) ) . ')';
+
+			$key_definitions[] = implode( ' ', $key_definition );
+		}
+
+		return $key_definitions;
+	}
+
+	/**
+	 * Get the definition for the primary key(s) of a table.
+	 *
+	 * @param array $columns result from PRAGMA table_info() query
+	 *
+	 * @return string|null definition for the primary key(s)
+	 */
+	private function get_primary_key_definition( $columns ) {
+		$primary_keys = array();
+		foreach ( $columns as $column ) {
+			if ( '0' !== $column->pk ) {
+				$primary_keys[] = $column->name;
+			}
+		}
+
+		return ! empty( $primary_keys )
+			? sprintf( 'PRIMARY KEY (`%s`)', implode( ', ', $primary_keys ) )
+			: null;
+	}
+
+	/**
+	 * Get the auto-increment column from a table.
+	 *
+	 * @param $table_name
+	 *
+	 * @return string|null
+	 */
+	private function get_autoincrement_column( $table_name ) {
+		preg_match(
+			'/"([^"]+)"\s+integer\s+primary\s+key\s+autoincrement/i',
+			$this->get_sqlite_create_table( $table_name ),
+			$matches
+		);
+
+		return $matches[1] ?? null;
+	}
+
 	/**
 	 * Gets the columns from a table.
 	 *
@@ -3509,6 +3603,7 @@ class WP_SQLite_Translator {
 			'pk'         => null,
 		);
 		$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
+
 		$columns  = array_map(
 			function ( $row ) use ( $name_map ) {
 				$new       = array();
