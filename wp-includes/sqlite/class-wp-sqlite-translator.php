@@ -1188,7 +1188,7 @@ class WP_SQLite_Translator {
 			$this->rewriter->skip(); // Constraint type.
 
 			$name = $this->rewriter->peek();
-			if ( $name->token !== '(' && 'PRIMARY' !== $result->value ) {
+			if ( '(' !== $name->token && 'PRIMARY' !== $result->value ) {
 				$result->name = $this->rewriter->skip()->value;
 			}
 
