@@ -376,7 +376,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			'CREATE TABLE `_tmp_table` (
 				`ID_A` BIGINT NOT NULL,
 				`ID_B` BIGINT NOT NULL,
-				PRIMARY KEY (`ID_B`, `ID_A`)
+				`ID_C` BIGINT NOT NULL,
+				PRIMARY KEY (`ID_B`, `ID_A`, `ID_C`)
 			);'
 		);
 
@@ -388,7 +389,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 'CREATE TABLE `_tmp_table` (
 	`ID_A` bigint NOT NULL DEFAULT 0,
 	`ID_B` bigint NOT NULL DEFAULT 0,
-	PRIMARY KEY (`ID_B`, `ID_A`)
+	`ID_C` bigint NOT NULL DEFAULT 0,
+	PRIMARY KEY (`ID_B`, `ID_A`, `ID_C`)
 );',
 			$results[0]->{'Create Table'}
 		);
