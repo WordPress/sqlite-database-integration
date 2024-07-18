@@ -65,6 +65,7 @@ class WP_SQLite_Translator {
 		'double'             => 'real',
 		'decimal'            => 'real',
 		'dec'                => 'real',
+		'enum'               => 'text',
 		'numeric'            => 'real',
 		'fixed'              => 'real',
 		'date'               => 'text',
@@ -3673,12 +3674,18 @@ class WP_SQLite_Translator {
 
 		$sqlite_data_type = $this->field_types_translation[ $mysql_data_type ];
 
-		// Skip the length, e.g. (10) in VARCHAR(10).
+		// Skip the type modifier, e.g. (20) for varchar(20) or (10,2) for decimal(10,2).
 		$paren_maybe = $this->rewriter->peek();
 		if ( $paren_maybe && '(' === $paren_maybe->token ) {
-			$mysql_data_type .= $this->rewriter->skip()->token;
-			$mysql_data_type .= $this->rewriter->skip()->token;
-			$mysql_data_type .= $this->rewriter->skip()->token;
+			$mysql_data_type .= $this->rewriter->skip()->token; // Skip '(' and add it to the data type
+
+			// Loop to capture everything until the closing parenthesis ')'
+			while ( $token = $this->rewriter->skip() ) {
+				$mysql_data_type .= $token->token;
+				if ( ')' === $token->token ) {
+					break;
+				}
+			}
 		}
 
 		// Skip the int keyword.
