@@ -371,6 +371,29 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithPrimaryKeyColumnsReverseOrdered() {
+		$this->assertQuery(
+			'CREATE TABLE `_tmp_table` (
+				`ID_A` BIGINT NOT NULL,
+				`ID_B` BIGINT NOT NULL,
+				PRIMARY KEY (`ID_B`, `ID_A`)
+			);'
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+'CREATE TABLE `_tmp_table` (
+	`ID_A` bigint NOT NULL DEFAULT 0,
+	`ID_B` bigint NOT NULL DEFAULT 0,
+	PRIMARY KEY (`ID_B`, `ID_A`)
+);',
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testSelectIndexHintForce() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$result = $this->assertQuery(

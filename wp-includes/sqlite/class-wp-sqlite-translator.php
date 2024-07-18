@@ -3579,6 +3579,15 @@ class WP_SQLite_Translator {
 	 */
 	private function get_primary_key_definition( $columns ) {
 		$primary_keys = array();
+
+		// Sort the columns by primary key order.
+		usort(
+			$columns,
+			function ( $a, $b ) {
+				return $a->pk - $b->pk;
+			}
+		);
+
 		foreach ( $columns as $column ) {
 			if ( '0' !== $column->pk ) {
 				$primary_keys[] = sprintf( '`%s`', $column->name );
@@ -3627,8 +3636,8 @@ class WP_SQLite_Translator {
 			'notnull'    => null,
 			'pk'         => null,
 		);
-		$columns  = $stmt->fetchAll( $this->pdo_fetch_mode );
-		$columns  = array_map(
+
+		return array_map(
 			function ( $row ) use ( $name_map ) {
 				$new       = array();
 				$is_object = is_object( $row );
@@ -3647,9 +3656,8 @@ class WP_SQLite_Translator {
 				}
 				return $is_object ? (object) $new : $new;
 			},
-			$columns
+			$this->get_table_columns( $table_name )
 		);
-		return $columns;
 	}
 
 	/**
