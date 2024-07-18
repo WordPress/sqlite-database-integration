@@ -3498,6 +3498,7 @@ class WP_SQLite_Translator {
 		$auto_increment_column = $this->get_autoincrement_column( $table_name );
 		$column_definitions    = array();
 		foreach ( $columns as $column ) {
+			$is_auto_incr = $auto_increment_column && strtolower( $auto_increment_column ) === strtolower( $column->name );
 			$definition   = array();
 			$definition[] = '`' . $column->name . '`';
 			$definition[] = $this->get_cached_mysql_data_type( $table_name, $column->name ) ?? $column->name;
@@ -3506,11 +3507,11 @@ class WP_SQLite_Translator {
 				$definition[] = 'NOT NULL';
 			}
 
-			if ( '' !== $column->dflt_value ) {
+			if ( '' !== $column->dflt_value && ! $is_auto_incr ) {
 				$definition[] = 'DEFAULT ' . $column->dflt_value; // quotes?
 			}
 
-			if ( $auto_increment_column && strtolower( $auto_increment_column ) === strtolower( $column->name ) ) {
+			if ( $is_auto_incr ) {
 				$definition[] = 'AUTO_INCREMENT';
 			}
 			$column_definitions[] = implode( ' ', $definition );

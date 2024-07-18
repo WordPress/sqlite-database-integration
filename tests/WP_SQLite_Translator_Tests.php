@@ -279,7 +279,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
 			"CREATE TABLE `_tmp_table` (
-	`ID` bigint NOT NULL DEFAULT 0 AUTO_INCREMENT,
+	`ID` bigint NOT NULL AUTO_INCREMENT,
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	PRIMARY KEY (`ID`),
@@ -308,7 +308,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
 			"CREATE TABLE `_tmp_table` (
-	`ID` bigint NOT NULL DEFAULT 0 AUTO_INCREMENT,
+	`ID` bigint NOT NULL AUTO_INCREMENT,
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	PRIMARY KEY (`ID`),
@@ -361,7 +361,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
 			'CREATE TABLE `_tmp_table` (
-	`ID` bigint NOT NULL DEFAULT 0 AUTO_INCREMENT,
+	`ID` bigint NOT NULL AUTO_INCREMENT,
 	`option_name` smallint NOT NULL DEFAULT 14,
 	`option_value` text NOT NULL DEFAULT \'\',
 	PRIMARY KEY (`ID`),
