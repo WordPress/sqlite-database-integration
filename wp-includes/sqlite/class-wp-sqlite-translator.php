@@ -3508,7 +3508,7 @@ class WP_SQLite_Translator {
 			}
 
 			if ( '' !== $column->dflt_value && ! $is_auto_incr ) {
-				$definition[] = 'DEFAULT ' . $column->dflt_value; // quotes?
+				$definition[] = 'DEFAULT ' . $column->dflt_value;
 			}
 
 			if ( $is_auto_incr ) {
