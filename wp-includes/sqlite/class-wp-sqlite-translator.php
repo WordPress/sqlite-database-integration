@@ -3539,7 +3539,8 @@ class WP_SQLite_Translator {
 			// If the PK columns are the same as the unique key columns, skip the key.
 			// This is because the PK is already unique in MySQL.
 			$key_equals_pk = ! array_diff( $pks, array_column( $key['columns'], 'name' ) );
-			if ( $key['index']['unique'] && $key_equals_pk ) {
+			$is_auto_index = strpos( $key['index']['name'], 'sqlite_autoindex_' ) === 0;
+			if ( $is_auto_index && $key['index']['unique'] && $key_equals_pk ) {
 				continue;
 			}
 
