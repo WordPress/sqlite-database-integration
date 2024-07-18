@@ -130,6 +130,18 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( gmdate( 'Y' ), $results[0]->y );
 	}
 
+	public function testInsertDateCurrentTimestamp() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', current_timestamp());"
+		);
+
+		$this->assertQuery( 'SELECT YEAR(option_value) as y FROM _dates' );
+
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( gmdate( 'Y' ), $results[0]->y );
+	}
+
 	public function testUpdateWithLimit() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45');"
