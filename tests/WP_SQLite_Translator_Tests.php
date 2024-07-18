@@ -704,6 +704,60 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result );
 	}
 
+	public function testCreateTableWithMultiValueColumnTypeModifiers() {
+		$result = $this->assertQuery(
+			"CREATE TABLE wptests_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				decimal_column DECIMAL(10,2) NOT NULL DEFAULT 0,
+				float_column FLOAT(10,2) NOT NULL DEFAULT 0,
+				enum_column ENUM('a', 'b', 'c') NOT NULL DEFAULT 'a',
+				PRIMARY KEY  (ID),
+			)"
+		);
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE wptests_users;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'ID',
+					'Type'    => 'bigint(20) unsigned',
+					'Null'    => 'NO',
+					'Key'     => 'PRI',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'decimal_column',
+					'Type'    => 'decimal(10,2)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 0,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'float_column',
+					'Type'    => 'float(10,2)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 0,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'enum_column',
+					'Type'    => "enum('a','b','c')",
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'a',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+	}
+
 	public function testAlterTableAddColumn() {
 		$result = $this->assertQuery(
 			"CREATE TABLE _tmp_table (
