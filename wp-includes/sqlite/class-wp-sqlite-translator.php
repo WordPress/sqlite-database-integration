@@ -898,8 +898,7 @@ class WP_SQLite_Translator {
 			if ( 'UNIQUE INDEX' === $index_type ) {
 				$unique = 'UNIQUE ';
 			}
-			$index_name = "{$table->name}__{$constraint->name}";
-
+			$index_name = $this->generate_index_name( $table->name, $constraint->name );
 			$this->execute_sqlite_query(
 				"CREATE $unique INDEX \"$index_name\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
 			);
@@ -3081,7 +3080,7 @@ class WP_SQLite_Translator {
 			} elseif ( 'ADD' === $op_type && $is_index_op ) {
 				$key_name          = $this->rewriter->consume()->value;
 				$sqlite_index_type = $this->mysql_index_type_to_sqlite_type( $mysql_index_type );
-				$sqlite_index_name = "{$this->table_name}__$key_name";
+				$sqlite_index_name = $this->generate_index_name( $this->table_name, $key_name );
 				$this->rewriter->replace_all(
 					array(
 						new WP_SQLite_Token( 'CREATE', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_RESERVED ),
@@ -3565,7 +3564,12 @@ class WP_SQLite_Translator {
 
 			$key_definition[] = 'KEY';
 
-			$key_definition[] = sprintf( '`%s`', $key['index']['name'] );
+			// Remove the prefix from the index name if there is any. We use __ as a separator.
+			$index_name = strstr( $key['index']['name'], '__' )
+				? explode( '__', $key['index']['name'] )[1]
+				: $key['index']['name'];
+
+			$key_definition[] = sprintf( '`%s`', $index_name );
 
 			$cols = array_map(
 				function ( $column ) {
@@ -4187,5 +4191,19 @@ class WP_SQLite_Translator {
 		}
 		do_action( 'sqlite_transaction_query_executed', 'ROLLBACK', (bool) $this->last_exec_returned, $this->transaction_level );
 		return $this->last_exec_returned;
+	}
+
+	/**
+	 * Create an index name consisting of table name and original index name.
+	 * This is to avoid duplicate index names in SQLite.
+	 *
+	 * @param $table
+	 * @param $original_index_name
+	 *
+	 * @return string
+	 */
+	private function generate_index_name( $table, $original_index_name ) {
+		// Strip the occurrences of 2 or more consecutive underscores to allow easier splitting on __ later.
+		return preg_replace( '/_{2,}/', '_', $table ) . '__' . $original_index_name;
 	}
 }
