@@ -1186,7 +1186,9 @@ class WP_SQLite_Translator {
 		$result->value = $this->normalize_mysql_index_type( $constraint->value );
 		if ( $result->value ) {
 			$this->rewriter->skip(); // Constraint type.
-			if ( 'PRIMARY' !== $result->value ) {
+
+			$name = $this->rewriter->peek();
+			if ( '(' !== $name->token && 'PRIMARY' !== $result->value ) {
 				$result->name = $this->rewriter->skip()->value;
 			}
 
@@ -1202,6 +1204,10 @@ class WP_SQLite_Translator {
 				}
 				$this->rewriter->skip(); // `,` or `)`
 			} while ( $this->rewriter->depth > $constraint_depth );
+
+			if ( empty( $result->name ) ) {
+				$result->name = implode( '_', $result->columns );
+			}
 		}
 
 		do {
