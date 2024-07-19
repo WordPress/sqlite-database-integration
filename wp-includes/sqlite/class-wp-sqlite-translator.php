@@ -1550,7 +1550,7 @@ class WP_SQLite_Translator {
 				array( 'JOIN', 'ORDER', 'GROUP' )
 			) ) {
 				$this->rewriter->skip(); // JOIN, ORDER, GROUP.
-				if ( 'BY' === strtoupper( $this->rewriter->peek()->value ) ) {
+				if ( 'BY' === strtoupper( $this->rewriter->peek()->value ?? '' ) ) {
 					$this->rewriter->skip(); // BY.
 				}
 			}
@@ -1572,7 +1572,7 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_truncate() {
 		$this->rewriter->skip(); // TRUNCATE.
-		if ( 'TABLE' === strtoupper( $this->rewriter->peek()->value ) ) {
+		if ( 'TABLE' === strtoupper( $this->rewriter->peek()->value ?? '' ) ) {
 			$this->rewriter->skip(); // TABLE.
 		}
 		$this->rewriter->add( new WP_SQLite_Token( 'DELETE', WP_SQLite_Token::TYPE_KEYWORD ) );
@@ -2036,7 +2036,7 @@ class WP_SQLite_Translator {
 			return false;
 		}
 		$from_table = $this->rewriter->peek_nth( 2 )->value;
-		if ( 'DUAL' !== strtoupper( $from_table ) ) {
+		if ( 'DUAL' !== strtoupper( $from_table ?? '' ) ) {
 			return false;
 		}
 
@@ -2558,7 +2558,7 @@ class WP_SQLite_Translator {
 			return false;
 		}
 		$next = $this->rewriter->peek_nth( 2 )->value;
-		if ( 'BY' !== strtoupper( $next ) ) {
+		if ( 'BY' !== strtoupper( $next ?? '' ) ) {
 			return false;
 		}
 
@@ -2909,8 +2909,8 @@ class WP_SQLite_Translator {
 					new WP_SQLite_Token( $this->table_name, WP_SQLite_Token::TYPE_KEYWORD ),
 				)
 			);
-			$op_type          = strtoupper( $this->rewriter->consume()->token );
-			$op_subject       = strtoupper( $this->rewriter->consume()->token );
+			$op_type          = strtoupper( $this->rewriter->consume()->token ?? '' );
+			$op_subject       = strtoupper( $this->rewriter->consume()->token ?? '' );
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
 			$is_index_op      = (bool) $mysql_index_type;
 
