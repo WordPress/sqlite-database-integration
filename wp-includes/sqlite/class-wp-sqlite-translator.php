@@ -888,6 +888,8 @@ class WP_SQLite_Translator {
 			')'
 		);
 
+		$if_not_exists = false === strpos( $create_query, 'IF NOT EXISTS' ) ? '' : 'IF NOT EXISTS';
+
 		$this->execute_sqlite_query( $create_query );
 		$this->results      = $this->last_exec_returned;
 		$this->return_value = $this->results;
@@ -901,7 +903,7 @@ class WP_SQLite_Translator {
 			$index_name = "{$table->name}__{$constraint->name}";
 
 			$this->execute_sqlite_query(
-				"CREATE $unique INDEX \"$index_name\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
+				"CREATE $unique INDEX $if_not_exists \"$index_name\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
 			);
 			$this->update_data_type_cache(
 				$table->name,
