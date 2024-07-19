@@ -403,7 +403,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	KEY _tmp_table__composite (option_name, option_value),
-	UNIQUE KEY _tmp_table__option_name (option_name) );" );
+	UNIQUE KEY _tmp_table__option_name (option_name) );"
+		);
 	}
 
 	public function testSelectIndexHintForce() {
