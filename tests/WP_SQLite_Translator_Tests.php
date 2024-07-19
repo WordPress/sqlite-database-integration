@@ -396,6 +396,16 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithColumnKeys() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`option_name` varchar(255) DEFAULT '',
+	`option_value` text NOT NULL DEFAULT '',
+	KEY _tmp_table__composite (option_name, option_value),
+	UNIQUE KEY _tmp_table__option_name (option_name) );" );
+	}
+
 	public function testSelectIndexHintForce() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$result = $this->assertQuery(
