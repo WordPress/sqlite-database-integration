@@ -3442,6 +3442,11 @@ class WP_SQLite_Translator {
 		}
 	}
 
+	/**
+	 * Generates a MySQL compatible create statement for a SHOW CREATE TABLE query.
+	 *
+	 * @return void
+	 */
 	private function generate_create_statement() {
 		$table_name = $this->rewriter->consume()->value;
 		$columns    = $this->get_table_columns( $table_name );
@@ -3475,7 +3480,7 @@ class WP_SQLite_Translator {
 	}
 
 	/**
-	 * Get columns from pragma table info for the given table.
+	 * Get raw columns details from pragma table info for the given table.
 	 *
 	 * @param string $table_name
 	 *
@@ -3523,7 +3528,8 @@ class WP_SQLite_Translator {
 	/**
 	 * Get the key definitions for a create statement
 	 *
-	 * @param $table_name
+	 * @param string $table_name
+	 * @param array  $columns
 	 *
 	 * @return array An array of key definitions
 	 */
@@ -3617,16 +3623,15 @@ class WP_SQLite_Translator {
 	}
 
 	/**
-	 * Gets the columns from a table.
+	 * Gets the columns from a table for the SHOW COLUMNS query.
+	 *
+	 * The output is identical to the output of the MySQL `SHOW COLUMNS` query.
 	 *
 	 * @param string $table_name The table name.
 	 *
 	 * @return array The columns.
 	 */
 	private function get_columns_from( $table_name ) {
-		$stmt = $this->execute_sqlite_query(
-			"PRAGMA table_info(\"$table_name\");"
-		);
 		/* @todo we may need to add the Extra column if anybdy needs it. 'auto_increment' is the value */
 		$name_map = array(
 			'name'       => 'Field',
