@@ -3245,8 +3245,8 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_show() {
 		$this->rewriter->skip();
-		$what1 = strtoupper( $this->rewriter->consume()->token );
-		$what2 = strtoupper( $this->rewriter->consume()->token );
+		$what1 = strtoupper( $this->rewriter->consume()->token ?? '' );
+		$what2 = strtoupper( $this->rewriter->consume()->token ?? '' );
 		$what  = $what1 . ' ' . $what2;
 		switch ( $what ) {
 			case 'CREATE PROCEDURE':
