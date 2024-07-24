@@ -539,7 +539,7 @@ QUERY;
 
 	public function testOnCreateTableIfNotExistsWithIndexAdded() {
 		$this->assertQuery(
-			'CREATE TABLE IF NOT EXISTS `test` (
+			'CREATE TABLE IF not EXISTS `test` (
 				`id` INT,
 				`name` VARCHAR(255),
 				`other` VARCHAR(255),
@@ -548,7 +548,7 @@ QUERY;
 			);'
 		);
 		$this->assertQuery(
-			'CREATE TABLE IF NOT EXISTS `test` (
+			'CREATE TABLE if   NOT   ExisTS `test` (
 				`id` INT,
 				`name` VARCHAR(255),
 				`other` VARCHAR(255),

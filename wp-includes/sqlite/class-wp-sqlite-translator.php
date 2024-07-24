@@ -888,7 +888,7 @@ class WP_SQLite_Translator {
 			')'
 		);
 
-		$if_not_exists = false === strpos( $create_query, 'IF NOT EXISTS' ) ? '' : 'IF NOT EXISTS';
+		$if_not_exists = preg_match( '/\bIF\s+NOT\s+EXISTS\b/i', $create_query ) ? 'IF NOT EXISTS' : '';
 
 		$this->execute_sqlite_query( $create_query );
 		$this->results      = $this->last_exec_returned;
