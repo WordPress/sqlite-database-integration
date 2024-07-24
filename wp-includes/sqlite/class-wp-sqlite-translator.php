@@ -623,27 +623,29 @@ class WP_SQLite_Translator {
 				}
 			} while ( $error );
 
-			/**
-			 * Notifies that a query has been translated and executed.
-			 *
-			 * @param string $query          The executed SQL query.
-			 * @param string $query_type     The type of the SQL query (e.g. SELECT, INSERT, UPDATE, DELETE).
-			 * @param string $table_name     The name of the table affected by the SQL query.
-			 * @param array  $insert_columns The columns affected by the INSERT query (if applicable).
-			 * @param int    $last_insert_id The ID of the last inserted row (if applicable).
-			 * @param int    $affected_rows  The number of affected rows (if applicable).
-			 *
-			 * @since 0.1.0
-			 */
-			do_action(
-				'sqlite_translated_query_executed',
-				$this->mysql_query,
-				$this->query_type,
-				$this->table_name,
-				$this->insert_columns,
-				$this->last_insert_id,
-				$this->affected_rows
-			);
+			if ( function_exists( 'do_action' ) ) {
+				/**
+				 * Notifies that a query has been translated and executed.
+				 *
+				 * @param string $query The executed SQL query.
+				 * @param string $query_type The type of the SQL query (e.g. SELECT, INSERT, UPDATE, DELETE).
+				 * @param string $table_name The name of the table affected by the SQL query.
+				 * @param array $insert_columns The columns affected by the INSERT query (if applicable).
+				 * @param int $last_insert_id The ID of the last inserted row (if applicable).
+				 * @param int $affected_rows The number of affected rows (if applicable).
+				 *
+				 * @since 0.1.0
+				 */
+				do_action(
+					'sqlite_translated_query_executed',
+					$this->mysql_query,
+					$this->query_type,
+					$this->table_name,
+					$this->insert_columns,
+					$this->last_insert_id,
+					$this->affected_rows
+				);
+			}
 
 			// Commit the nested transaction.
 			$this->commit();
@@ -1865,7 +1867,10 @@ class WP_SQLite_Translator {
 		if ( is_numeric( $this->last_insert_id ) ) {
 			$this->last_insert_id = (int) $this->last_insert_id;
 		}
-		$this->last_insert_id = apply_filters( 'sqlite_last_insert_id', $this->last_insert_id, $this->table_name );
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$this->last_insert_id = apply_filters( 'sqlite_last_insert_id', $this->last_insert_id, $this->table_name );
+		}
 	}
 
 	/**
@@ -4133,16 +4138,18 @@ class WP_SQLite_Translator {
 		} finally {
 			if ( $success ) {
 				++$this->transaction_level;
-				/**
-				 * Notifies that a transaction-related query has been translated and executed.
-				 *
-				 * @param string $command       The SQL statement (one of "START TRANSACTION", "COMMIT", "ROLLBACK").
-				 * @param bool   $success       Whether the SQL statement was successful or not.
-				 * @param int    $nesting_level The nesting level of the transaction.
-				 *
-				 * @since 0.1.0
-				 */
-				do_action( 'sqlite_transaction_query_executed', 'START TRANSACTION', (bool) $this->last_exec_returned, $this->transaction_level - 1 );
+				if ( function_exists( 'do_action' ) ) {
+					/**
+					 * Notifies that a transaction-related query has been translated and executed.
+					 *
+					 * @param string $command The SQL statement (one of "START TRANSACTION", "COMMIT", "ROLLBACK").
+					 * @param bool $success Whether the SQL statement was successful or not.
+					 * @param int $nesting_level The nesting level of the transaction.
+					 *
+					 * @since 0.1.0
+					 */
+					do_action( 'sqlite_transaction_query_executed', 'START TRANSACTION', (bool) $this->last_exec_returned, $this->transaction_level - 1 );
+				}
 			}
 		}
 		return $success;
@@ -4165,7 +4172,9 @@ class WP_SQLite_Translator {
 			$this->execute_sqlite_query( 'RELEASE SAVEPOINT LEVEL' . $this->transaction_level );
 		}
 
-		do_action( 'sqlite_transaction_query_executed', 'COMMIT', (bool) $this->last_exec_returned, $this->transaction_level );
+		if ( function_exists( 'do_action' ) ) {
+			do_action( 'sqlite_transaction_query_executed', 'COMMIT', (bool) $this->last_exec_returned, $this->transaction_level );
+		}
 		return $this->last_exec_returned;
 	}
 
@@ -4185,7 +4194,9 @@ class WP_SQLite_Translator {
 		} else {
 			$this->execute_sqlite_query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
 		}
-		do_action( 'sqlite_transaction_query_executed', 'ROLLBACK', (bool) $this->last_exec_returned, $this->transaction_level );
+		if ( function_exists( 'do_action' ) ) {
+			do_action( 'sqlite_transaction_query_executed', 'ROLLBACK', (bool) $this->last_exec_returned, $this->transaction_level );
+		}
 		return $this->last_exec_returned;
 	}
 }
