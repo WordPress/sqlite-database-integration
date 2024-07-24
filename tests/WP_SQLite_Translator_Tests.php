@@ -283,8 +283,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	PRIMARY KEY (`ID`),
-	KEY `_tmp_table__composite` (`option_name`, `option_value`),
-	UNIQUE KEY `_tmp_table__option_name` (`option_name`)
+	KEY `composite` (`option_name`, `option_value`),
+	UNIQUE KEY `option_name` (`option_name`)
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -312,8 +312,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
 	PRIMARY KEY (`ID`),
-	KEY `_tmp_table__composite` (`option_name`, `option_value`),
-	UNIQUE KEY `_tmp_table__option_name` (`option_name`)
+	KEY `composite` (`option_name`, `option_value`),
+	UNIQUE KEY `option_name` (`option_name`)
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -365,9 +365,29 @@ class WP_SQLite_Translator_Tests extends TestCase {
 	`option_name` smallint NOT NULL DEFAULT 14,
 	`option_value` text NOT NULL DEFAULT \'\',
 	PRIMARY KEY (`ID`),
-	KEY `_tmp_table__option_name` (`option_name`)
+	KEY `option_name` (`option_name`)
 );',
 			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testCreateTablseWithIdenticalIndexNames() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table_a (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL,
+					KEY `option_name` (`option_name`)
+				);"
+		);
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table_b (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL,
+					KEY `option_name` (`option_name`)
+				);"
 		);
 	}
 
