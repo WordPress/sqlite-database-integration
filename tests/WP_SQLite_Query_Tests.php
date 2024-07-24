@@ -537,7 +537,7 @@ QUERY;
 		);
 	}
 
-	public function testOnCreateTableIfNotExistswithIndexAdded() {
+	public function testOnCreateTableIfNotExistsWithIndexAdded() {
 		$this->assertQuery(
 			'CREATE TABLE IF NOT EXISTS `test` (
 				`id` INT,
