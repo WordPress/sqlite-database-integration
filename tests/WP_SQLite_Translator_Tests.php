@@ -393,6 +393,34 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testDoubleUnderscoreInKeyNamesArePreserved() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL,
+					KEY `option_name` (`option_name`),
+					KEY `double__underscores` (`option_name`, `ID`)
+				);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			'CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL AUTO_INCREMENT,
+	`option_name` varchar(255) DEFAULT \'\',
+	`option_value` text NOT NULL DEFAULT \'\',
+	PRIMARY KEY (`ID`),
+	KEY `double__underscores` (`option_name`, `ID`),
+	KEY `option_name` (`option_name`)
+);',
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testShowCreateTableWithPrimaryKeyColumnsReverseOrdered() {
 		$this->assertQuery(
 			'CREATE TABLE `_tmp_table` (
