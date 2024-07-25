@@ -377,7 +377,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name VARCHAR(255) default '',
 					option_value TEXT NOT NULL,
-					KEY `option_name` (`option_name`)
+					KEY `option_name` (`option_name`),
+					KEY `double__underscores` (`option_name`, `ID`)
 				);"
 		);
 
@@ -386,7 +387,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name VARCHAR(255) default '',
 					option_value TEXT NOT NULL,
-					KEY `option_name` (`option_name`)
+					KEY `option_name` (`option_name`),
+					KEY `double__underscores` (`option_name`, `ID`)
 				);"
 		);
 	}
