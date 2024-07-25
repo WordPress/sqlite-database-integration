@@ -395,7 +395,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 
 	public function testDoubleUnderscoreInKeyNamesArePreserved() {
 		$this->assertQuery(
-			"CREATE TABLE _tmp_table (
+			"CREATE TABLE _tmp__table (
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
 					option_name VARCHAR(255) default '',
 					option_value TEXT NOT NULL,
@@ -405,11 +405,11 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			'SHOW CREATE TABLE _tmp_table;'
+			'SHOW CREATE TABLE _tmp__table;'
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			'CREATE TABLE `_tmp_table` (
+			'CREATE TABLE `_tmp__table` (
 	`ID` bigint NOT NULL AUTO_INCREMENT,
 	`option_name` varchar(255) DEFAULT \'\',
 	`option_value` text NOT NULL DEFAULT \'\',
