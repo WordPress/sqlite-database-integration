@@ -421,6 +421,11 @@ class WP_SQLite_Translator {
 			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
+
+		$valid_journal_modes = array( 'DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY', 'WAL', 'OFF' );
+		if ( defined( 'SQLITE_JOURNAL_MODE' ) && in_array( SQLITE_JOURNAL_MODE, $valid_journal_modes, true ) ) {
+			$this->pdo->query( 'PRAGMA journal_mode = ' . SQLITE_JOURNAL_MODE );
+		}
 	}
 
 	/**
