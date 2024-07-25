@@ -393,7 +393,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testDoubleUnderscoreInKeyNamesArePreserved() {
+	public function testShowCreateTablePreservesDoubleUnderscoreKeyNames() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp__table (
 					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
