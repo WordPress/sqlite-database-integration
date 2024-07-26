@@ -3570,9 +3570,7 @@ class WP_SQLite_Translator {
 			$key_definition[] = 'KEY';
 
 			// Remove the prefix from the index name if there is any. We use __ as a separator.
-			$index_name = strstr( $key['index']['name'], '__' )
-				? explode( '__', $key['index']['name'] )[1]
-				: $key['index']['name'];
+			$index_name = explode( '__', $key['index']['name'], 2 )[1] ?? $key['index']['name'];
 
 			$key_definition[] = sprintf( '`%s`', $index_name );
 
@@ -4214,7 +4212,8 @@ class WP_SQLite_Translator {
 	 * @return string
 	 */
 	private function generate_index_name( $table, $original_index_name ) {
-		// Strip the occurrences of 2 or more consecutive underscores to allow easier splitting on __ later.
+		// Strip the occurrences of 2 or more consecutive underscores from the table name
+		// to allow easier splitting on __ later.
 		return preg_replace( '/_{2,}/', '_', $table ) . '__' . $original_index_name;
 	}
 }
