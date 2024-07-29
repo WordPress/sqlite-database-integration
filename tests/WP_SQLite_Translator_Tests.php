@@ -253,6 +253,14 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 1, $result[0]->output );
 	}
 
+	public function testShowCreateTableNotFound() {
+		$this->assertQuery(
+			'SHOW CREATE TABLE _no_such_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 0, $results );
+	}
+
 	public function testShowCreateTable1() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
@@ -270,12 +278,42 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$results = $this->engine->get_query_results();
 		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
 		$this->assertEquals(
-			"CREATE TABLE _tmp_table (
-	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+			"CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL AUTO_INCREMENT,
 	`option_name` varchar(255) DEFAULT '',
 	`option_value` text NOT NULL DEFAULT '',
-	KEY _tmp_table__composite (option_name, option_value),
-	UNIQUE KEY _tmp_table__option_name (option_name)
+	PRIMARY KEY (`ID`),
+	KEY `composite` (`option_name`, `option_value`),
+	UNIQUE KEY `option_name` (`option_name`)
+);",
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTableQuoted() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name VARCHAR(255) default '',
+				option_value TEXT NOT NULL,
+				UNIQUE KEY option_name (option_name),
+				KEY composite (option_name, option_value)
+			);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE `_tmp_table`;'
+		);
+		$results = $this->engine->get_query_results();
+		# TODO: Should we fix mismatch with original `option_value` text NOT NULL,` without default?
+		$this->assertEquals(
+			"CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL AUTO_INCREMENT,
+	`option_name` varchar(255) DEFAULT '',
+	`option_value` text NOT NULL DEFAULT '',
+	PRIMARY KEY (`ID`),
+	KEY `composite` (`option_name`, `option_value`),
+	UNIQUE KEY `option_name` (`option_name`)
 );",
 			$results[0]->{'Create Table'}
 		);
@@ -293,8 +331,8 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			'CREATE TABLE _tmp_table (
-	`ID` bigint NOT NULL
+			'CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL DEFAULT 0
 );',
 			$results[0]->{'Create Table'}
 		);
@@ -322,13 +360,100 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$results = $this->engine->get_query_results();
 		$this->assertEquals(
-			'CREATE TABLE _tmp_table (
-	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+			'CREATE TABLE `_tmp_table` (
+	`ID` bigint NOT NULL AUTO_INCREMENT,
 	`option_name` smallint NOT NULL DEFAULT 14,
 	`option_value` text NOT NULL DEFAULT \'\',
-	KEY _tmp_table__option_name (option_name)
+	PRIMARY KEY (`ID`),
+	KEY `option_name` (`option_name`)
 );',
 			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testCreateTablseWithIdenticalIndexNames() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table_a (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL,
+					KEY `option_name` (`option_name`),
+					KEY `double__underscores` (`option_name`, `ID`)
+				);"
+		);
+
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table_b (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL,
+					KEY `option_name` (`option_name`),
+					KEY `double__underscores` (`option_name`, `ID`)
+				);"
+		);
+	}
+
+	public function testShowCreateTablePreservesDoubleUnderscoreKeyNames() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp__table (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					option_name VARCHAR(255) default '',
+					option_value TEXT NOT NULL,
+					KEY `option_name` (`option_name`),
+					KEY `double__underscores` (`option_name`, `ID`)
+				);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp__table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			'CREATE TABLE `_tmp__table` (
+	`ID` bigint NOT NULL AUTO_INCREMENT,
+	`option_name` varchar(255) DEFAULT \'\',
+	`option_value` text NOT NULL DEFAULT \'\',
+	PRIMARY KEY (`ID`),
+	KEY `double__underscores` (`option_name`, `ID`),
+	KEY `option_name` (`option_name`)
+);',
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTableWithPrimaryKeyColumnsReverseOrdered() {
+		$this->assertQuery(
+			'CREATE TABLE `_tmp_table` (
+				`ID_A` BIGINT NOT NULL,
+				`ID_B` BIGINT NOT NULL,
+				`ID_C` BIGINT NOT NULL,
+				PRIMARY KEY (`ID_B`, `ID_A`, `ID_C`)
+			);'
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp_table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			'CREATE TABLE `_tmp_table` (
+	`ID_A` bigint NOT NULL DEFAULT 0,
+	`ID_B` bigint NOT NULL DEFAULT 0,
+	`ID_C` bigint NOT NULL DEFAULT 0,
+	PRIMARY KEY (`ID_B`, `ID_A`, `ID_C`)
+);',
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testShowCreateTableWithColumnKeys() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+	`ID` bigint PRIMARY KEY AUTO_INCREMENT NOT NULL,
+	`option_name` varchar(255) DEFAULT '',
+	`option_value` text NOT NULL DEFAULT '',
+	KEY _tmp_table__composite (option_name, option_value),
+	UNIQUE KEY _tmp_table__option_name (option_name) );"
 		);
 	}
 
@@ -666,6 +791,60 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 		$this->assertEquals( '', $this->engine->get_error_message() );
 		$this->assertEquals( 1, $result );
+	}
+
+	public function testCreateTableWithMultiValueColumnTypeModifiers() {
+		$result = $this->assertQuery(
+			"CREATE TABLE wptests_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				decimal_column DECIMAL(10,2) NOT NULL DEFAULT 0,
+				float_column FLOAT(10,2) NOT NULL DEFAULT 0,
+				enum_column ENUM('a', 'b', 'c') NOT NULL DEFAULT 'a',
+				PRIMARY KEY  (ID),
+			)"
+		);
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE wptests_users;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'ID',
+					'Type'    => 'bigint(20) unsigned',
+					'Null'    => 'NO',
+					'Key'     => 'PRI',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'decimal_column',
+					'Type'    => 'decimal(10,2)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 0,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'float_column',
+					'Type'    => 'float(10,2)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 0,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'enum_column',
+					'Type'    => "enum('a','b','c')",
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'a',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
 	}
 
 	public function testAlterTableAddColumn() {

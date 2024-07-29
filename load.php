@@ -3,7 +3,7 @@
  * Plugin Name: SQLite Database Integration
  * Description: SQLite database driver drop-in.
  * Author: The WordPress Team
- * Version: 2.1.11
+ * Version: 2.1.12
  * Requires PHP: 7.0
  * Textdomain: sqlite-database-integration
  *
