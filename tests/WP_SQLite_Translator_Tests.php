@@ -457,6 +457,30 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithCorrectDefaultValues() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp__table (
+					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
+					default_empty_string VARCHAR(255) default '',
+					null_no_default VARCHAR(255),
+				);"
+		);
+
+		$this->assertQuery(
+			'SHOW CREATE TABLE _tmp__table;'
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			'CREATE TABLE `_tmp__table` (
+	`ID` bigint NOT NULL AUTO_INCREMENT,
+	`default_empty_string` varchar(255) DEFAULT \'\',
+	`null_no_default` varchar(255),
+	PRIMARY KEY (`ID`)
+);',
+			$results[0]->{'Create Table'}
+		);
+	}
+
 	public function testSelectIndexHintForce() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$result = $this->assertQuery(

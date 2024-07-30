@@ -3522,7 +3522,7 @@ class WP_SQLite_Translator {
 				$definition[] = 'NOT NULL';
 			}
 
-			if ( '' !== $column->dflt_value && ! $is_auto_incr ) {
+			if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! $is_auto_incr ) {
 				$definition[] = 'DEFAULT ' . $column->dflt_value;
 			}
 
