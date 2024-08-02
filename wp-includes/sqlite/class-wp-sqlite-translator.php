@@ -2916,7 +2916,8 @@ class WP_SQLite_Translator {
 				)
 			);
 			$op_type          = strtoupper( $this->rewriter->consume()->token ?? '' );
-			$op_subject       = strtoupper( $this->rewriter->consume()->token ?? '' );
+			$op_raw_subject   = $this->rewriter->consume()->token ?? '';
+			$op_subject       = strtoupper( $op_raw_subject );
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
 			$is_index_op      = (bool) $mysql_index_type;
 
@@ -2941,9 +2942,10 @@ class WP_SQLite_Translator {
 				);
 			} elseif ( 'DROP' === $op_type && 'COLUMN' === $op_subject ) {
 				$this->rewriter->consume_all();
-			} elseif ( 'CHANGE' === $op_type && 'COLUMN' === $op_subject ) {
+			} elseif ( 'CHANGE' === $op_type ) {
 				// Parse the new column definition.
-				$from_name        = $this->normalize_column_name( $this->rewriter->skip()->token );
+				$raw_from_name    = 'COLUMN' === $op_subject ? $this->rewriter->skip()->token : $op_raw_subject;
+				$from_name        = $this->normalize_column_name( $raw_from_name );
 				$new_field        = $this->parse_mysql_create_table_field();
 				$alter_terminator = end( $this->rewriter->output_tokens );
 				$this->update_data_type_cache(
@@ -3522,7 +3524,7 @@ class WP_SQLite_Translator {
 				$definition[] = 'NOT NULL';
 			}
 
-			if ( '' !== $column->dflt_value && ! $is_auto_incr ) {
+			if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! $is_auto_incr ) {
 				$definition[] = 'DEFAULT ' . $column->dflt_value;
 			}
 
