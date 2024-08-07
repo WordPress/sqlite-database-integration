@@ -1027,6 +1027,31 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testAlterTableWithColumnFirstAndAfter() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				id int(11) NOT NULL,
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table ADD COLUMN new_first_column VARCHAR(255) NOT NULL DEFAULT '' FIRST"
+		);
+
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table ADD COLUMN new_column VARCHAR(255) NOT NULL DEFAULT '' AFTER id"
+		);
+
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL DEFAULT '' FIRST"
+		);
+
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL  DEFAULT '' AFTER name"
+		);
+	}
+
 	public function testAlterTableAddIndex() {
 		$result = $this->assertQuery(
 			"CREATE TABLE _tmp_table (

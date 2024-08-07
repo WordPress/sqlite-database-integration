@@ -2939,6 +2939,35 @@ class WP_SQLite_Translator {
 						WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE
 					)
 				);
+
+				// Drop "FIRST" and "AFTER <another-column>", as these are not supported in SQLite.
+				$column_position = $this->rewriter->peek(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+						'value' => array( 'FIRST', 'AFTER' ),
+					)
+				);
+
+				$comma = $this->rewriter->peek(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+						'value' => ',',
+					)
+				);
+
+				if ( $column_position && ( ! $comma || $column_position->position < $comma->position ) ) {
+					$this->rewriter->consume(
+						array(
+							'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+							'value' => array( 'FIRST', 'AFTER' ),
+						)
+					);
+					$this->rewriter->drop_last();
+					if ( 'AFTER' === strtoupper( $column_position->value ) ) {
+						$this->rewriter->skip();
+					}
+				}
+
 				$this->update_data_type_cache(
 					$this->table_name,
 					$column_name,
