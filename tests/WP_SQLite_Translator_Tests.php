@@ -1938,8 +1938,92 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
-	public function testOnConflictReplace()
-	{
+	public function testTranslateLikeBinaryAndGlob() {
+		// Create a temporary table for testing
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name varchar(20) NOT NULL default ''
+        );"
+		);
+
+		// Insert data into the table
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('first');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('FIRST');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('second');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('%special%');" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (name) VALUES (NULL);' );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('special%chars');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('special_chars');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('special\\chars');" );
+
+		// Test case-sensitive LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'first'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test case-sensitive LIKE BINARY with wildcard %
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'f%'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test case-sensitive LIKE BINARY with wildcard _
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'f_rst'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test case-insensitive LIKE
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE 'FIRST'" );
+		$this->assertCount( 2, $result ); // Should match both 'first' and 'FIRST'
+
+		// Test mixed case with LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'First'" );
+		$this->assertCount( 0, $result );
+
+		// Test no matches with LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'third'" );
+		$this->assertCount( 0, $result );
+
+		// Test GLOB equivalent for case-sensitive matching with wildcard
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'f*'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test GLOB with single character wildcard
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'f?rst'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test GLOB with no matches
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'S*'" );
+		$this->assertCount( 0, $result );
+
+		// Test GLOB case sensitivity with LIKE and GLOB
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'first';" );
+		$this->assertCount( 1, $result ); // Should only match 'first'
+
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'FIRST';" );
+		$this->assertCount( 1, $result ); // Should only match 'FIRST'
+
+		// Test NULL comparison with LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'first';" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE name LIKE BINARY NULL;' );
+		$this->assertCount( 0, $result );  // NULL comparison should return no results
+
+		// Test pattern with special characters using LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY '%special%';" );
+		$this->assertCount( 4, $result );
+		$this->assertEquals( '%special%', $result[0]->name );
+		$this->assertEquals( 'special%chars', $result[1]->name );
+		$this->assertEquals( 'special_chars', $result[2]->name );
+		$this->assertEquals( 'specialchars', $result[3]->name );
+	}
+
+	public function testOnConflictReplace() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
 				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
