@@ -1200,6 +1200,106 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testAlterTableWithMultiColumnFirstAndAfter() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id int(11) NOT NULL
+			);'
+		);
+
+		// ADD COLUMN
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table
+			ADD COLUMN new1 varchar(255) NOT NULL,
+			ADD COLUMN new2 varchar(255) NOT NULL FIRST,
+			ADD COLUMN new3 varchar(255) NOT NULL AFTER new1'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new1',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new2',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new3',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// CHANGE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table
+			CHANGE new1 new1 int(11) NOT NULL FIRST,
+			CHANGE new2 new2 int(11) NOT NULL,
+			CHANGE new3 new3 int(11) NOT NULL AFTER new2'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new1',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new2',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new3',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+	}
+
 	public function testAlterTableAddIndex() {
 		$result = $this->assertQuery(
 			"CREATE TABLE _tmp_table (
