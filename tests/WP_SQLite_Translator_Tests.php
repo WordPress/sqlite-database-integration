@@ -1035,22 +1035,10 @@ class WP_SQLite_Translator_Tests extends TestCase {
 			);"
 		);
 
+		// ADD COLUMN with FIRST
 		$this->assertQuery(
 			"ALTER TABLE _tmp_table ADD COLUMN new_first_column VARCHAR(255) NOT NULL DEFAULT '' FIRST"
 		);
-
-		$this->assertQuery(
-			"ALTER TABLE _tmp_table ADD COLUMN new_column VARCHAR(255) NOT NULL DEFAULT '' AFTER id"
-		);
-
-		$this->assertQuery(
-			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL DEFAULT '' FIRST"
-		);
-
-		$this->assertQuery(
-			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL  DEFAULT '' AFTER name"
-		);
-
 		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
 		$this->assertEquals(
 			array(
@@ -1059,7 +1047,128 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Type'    => 'int(11)',
 					'Null'    => 'NO',
 					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
 					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// ADD COLUMN with AFTER
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table ADD COLUMN new_column VARCHAR(255) NOT NULL DEFAULT '' AFTER id"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// CHANGE with FIRST
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL DEFAULT '0' FIRST"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// CHANGE with AFTER
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL DEFAULT '0' AFTER name"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
 					'Extra'   => '',
 				),
 				(object) array(
