@@ -2921,8 +2921,12 @@ class WP_SQLite_Translator {
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
 			$is_index_op      = (bool) $mysql_index_type;
 
-			if ( 'ADD' === $op_type && 'COLUMN' === $op_subject ) {
-				$column_name = $this->rewriter->consume()->value;
+			if ( 'ADD' === $op_type && ! $is_index_op ) {
+				if ( 'COLUMN' === $op_subject ) {
+					$column_name = $this->rewriter->consume()->value;
+				} else {
+					$column_name = $op_subject;
+				}
 
 				$skip_mysql_data_type_parts = $this->skip_mysql_data_type();
 				$sqlite_data_type           = $skip_mysql_data_type_parts[0];
@@ -2940,7 +2944,7 @@ class WP_SQLite_Translator {
 					$column_name,
 					$mysql_data_type
 				);
-			} elseif ( 'DROP' === $op_type && 'COLUMN' === $op_subject ) {
+			} elseif ( 'DROP' === $op_type && ! $is_index_op ) {
 				$this->rewriter->consume_all();
 			} elseif ( 'CHANGE' === $op_type ) {
 				// Parse the new column definition.

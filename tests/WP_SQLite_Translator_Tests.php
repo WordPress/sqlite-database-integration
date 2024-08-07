@@ -871,7 +871,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testAlterTableAddColumn() {
+	public function testAlterTableAddAndDropColumn() {
 		$result = $this->assertQuery(
 			"CREATE TABLE _tmp_table (
 				name varchar(20) NOT NULL default ''
@@ -900,6 +900,90 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Null'    => 'YES',
 					'Key'     => '',
 					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD `column2` int;' );
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'column',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'column2',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		$result = $this->assertQuery( 'ALTER TABLE _tmp_table DROP COLUMN `column`;' );
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'column2',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		$result = $this->assertQuery( 'ALTER TABLE _tmp_table DROP `column2`;' );
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
 					'Extra'   => '',
 				),
 			),
