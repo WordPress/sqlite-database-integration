@@ -864,6 +864,7 @@ class WP_SQLite_Translator {
 		$table = $this->parse_create_table();
 
 		$definitions = array();
+		$on_updates  = array();
 		foreach ( $table->fields as $field ) {
 			/*
 			 * Do not include the inline PRIMARY KEY definition
@@ -877,6 +878,10 @@ class WP_SQLite_Translator {
 			}
 
 			$definitions[] = $this->make_sqlite_field_definition( $field );
+			if ( $field->on_update ) {
+				$on_updates[ $field->name ] = $field->on_update;
+			}
+
 			$this->update_data_type_cache(
 				$table->name,
 				$field->name,
@@ -916,6 +921,12 @@ class WP_SQLite_Translator {
 				$index_name,
 				$constraint->value
 			);
+		}
+
+		foreach ( $table->fields as $field ) {
+			if ( $field->on_update ) {
+				$this->add_column_on_update_current_timestamp( $table->name, $field->name );
+			}
 		}
 	}
 
@@ -1054,6 +1065,7 @@ class WP_SQLite_Translator {
 		$result->default          = false;
 		$result->auto_increment   = false;
 		$result->primary_key      = false;
+		$result->on_update        = false;
 
 		$field_name_token = $this->rewriter->skip(); // Field name.
 		$this->rewriter->add( new WP_SQLite_Token( "\n", WP_SQLite_Token::TYPE_WHITESPACE ) );
@@ -1105,6 +1117,16 @@ class WP_SQLite_Translator {
 				array( 'DEFAULT' )
 			) ) {
 				$result->default = $this->rewriter->consume()->token;
+				continue;
+			}
+
+			if ( $token->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+				array( 'ON UPDATE' )
+			) ) {
+				$this->rewriter->skip();
+				$result->on_update = true;
 				continue;
 			}
 
@@ -2927,6 +2949,7 @@ class WP_SQLite_Translator {
 			$op_subject       = strtoupper( $op_raw_subject );
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
 			$is_index_op      = (bool) $mysql_index_type;
+			$on_update        = false;
 
 			if ( 'ADD' === $op_type && ! $is_index_op ) {
 				if ( 'COLUMN' === $op_subject ) {
@@ -2947,18 +2970,38 @@ class WP_SQLite_Translator {
 					)
 				);
 
+				$comma = $this->rewriter->peek(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+						'value' => ',',
+					)
+				);
+
+				// Handle "ON UPDATE CURRENT_TIMESTAMP".
+				$on_update_token = $this->rewriter->peek(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+						'value' => array( 'ON UPDATE' ),
+					)
+				);
+
+				if ( $on_update_token && ( ! $comma || $on_update_token->position < $comma->position ) ) {
+					$this->rewriter->consume(
+						array(
+							'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+							'value' => array( 'ON UPDATE' ),
+						)
+					);
+					$this->rewriter->drop_last();
+					$this->rewriter->skip();
+					$on_update = $column_name;
+				}
+
 				// Drop "FIRST" and "AFTER <another-column>", as these are not supported in SQLite.
 				$column_position = $this->rewriter->peek(
 					array(
 						'type'  => WP_SQLite_Token::TYPE_KEYWORD,
 						'value' => array( 'FIRST', 'AFTER' ),
-					)
-				);
-
-				$comma = $this->rewriter->peek(
-					array(
-						'type'  => WP_SQLite_Token::TYPE_OPERATOR,
-						'value' => ',',
 					)
 				);
 
@@ -3205,9 +3248,17 @@ class WP_SQLite_Translator {
 				)
 			);
 			$this->rewriter->drop_last();
+
+			$on_update_trigger_name = $this->get_column_on_update_current_timestamp_trigger_name( $this->table_name, $op_subject );
+			$this->execute_sqlite_query( "DROP TRIGGER IF EXISTS \"$on_update_trigger_name\"" );
+
 			$this->execute_sqlite_query(
 				$this->rewriter->get_updated_query()
 			);
+
+			if ( $on_update ) {
+				$this->add_column_on_update_current_timestamp( $this->table_name, $on_update );
+			}
 		} while ( $comma );
 
 		$this->results      = 1;
@@ -4257,5 +4308,30 @@ class WP_SQLite_Translator {
 		// Strip the occurrences of 2 or more consecutive underscores from the table name
 		// to allow easier splitting on __ later.
 		return preg_replace( '/_{2,}/', '_', $table ) . '__' . $original_index_name;
+	}
+
+	/**
+	 * @param string $table
+	 * @param string $column
+	 */
+	private function add_column_on_update_current_timestamp( $table, $column ) {
+		$trigger_name = $this->get_column_on_update_current_timestamp_trigger_name( $table, $column );
+		$this->execute_sqlite_query(
+			"CREATE TRIGGER \"$trigger_name\"
+			AFTER UPDATE ON \"$table\"
+			FOR EACH ROW
+			BEGIN
+			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE id = NEW.id;
+			END"
+		);
+	}
+
+	/**
+	 * @param string $table
+	 * @param string $column
+	 * @return string
+	 */
+	private function get_column_on_update_current_timestamp_trigger_name( $table, $column ) {
+		return "__{$table}_{$column}_on_update__";
 	}
 }
