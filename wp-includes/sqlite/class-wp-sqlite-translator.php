@@ -2968,8 +2968,7 @@ class WP_SQLite_Translator {
 				)
 			);
 			$op_type          = strtoupper( $this->rewriter->consume()->token ?? '' );
-			$op_raw_subject   = $this->rewriter->consume()->token ?? '';
-			$op_subject       = strtoupper( $op_raw_subject );
+			$op_subject       = strtoupper( $this->rewriter->consume()->token ?? '' );
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
 			$is_index_op      = (bool) $mysql_index_type;
 
