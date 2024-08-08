@@ -27,6 +27,7 @@ class WP_SQLite_Query_Tests extends TestCase {
 			$GLOBALS['wpdb']->suppress_errors = false;
 			$GLOBALS['wpdb']->show_errors     = true;
 		}
+		return;
 	}
 
 	/**
@@ -502,6 +503,38 @@ QUERY;
 		$this->assertEquals( $option_value, $retrieved_string );
 		$unserialized = unserialize( $retrieved_string );
 		$this->assertEquals( $obj, $unserialized );
+	}
+
+	public function testOnDuplicateKey() {
+		$this->assertQuery(
+			'CREATE TABLE `test` (
+				`id` INT PRIMARY KEY,
+				`text` VARCHAR(255),
+			);'
+		);
+		// The order is deliberate to test that the query works with the keys in any order.
+		$this->assertQuery(
+			'INSERT INTO test (`text`, `id`)
+			VALUES ("test", 1)
+			ON DUPLICATE KEY UPDATE `text` = "test1"'
+		);
+	}
+	public function testOnDuplicateKeyWithUnnamedKeys() {
+		$this->assertQuery(
+			'CREATE TABLE `test` (
+				`id` INT,
+				`name` VARCHAR(255),
+				`other` VARCHAR(255),
+				PRIMARY KEY (id),
+				UNIQUE KEY (name)
+			);'
+		);
+		// The order is deliberate to test that the query works with the keys in any order.
+		$this->assertQuery(
+			'INSERT INTO test (`name`, other)
+			VALUES ("name", "test")
+			ON DUPLICATE KEY UPDATE `other` = values(other)'
+		);
 	}
 
 	public function testShowColumns() {
