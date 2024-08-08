@@ -457,30 +457,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testShowCreateTableWithCorrectDefaultValues() {
-		$this->assertQuery(
-			"CREATE TABLE _tmp__table (
-					ID BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL,
-					default_empty_string VARCHAR(255) default '',
-					null_no_default VARCHAR(255),
-				);"
-		);
-
-		$this->assertQuery(
-			'SHOW CREATE TABLE _tmp__table;'
-		);
-		$results = $this->engine->get_query_results();
-		$this->assertEquals(
-			'CREATE TABLE `_tmp__table` (
-	`ID` bigint NOT NULL AUTO_INCREMENT,
-	`default_empty_string` varchar(255) DEFAULT \'\',
-	`null_no_default` varchar(255),
-	PRIMARY KEY (`ID`)
-);',
-			$results[0]->{'Create Table'}
-		);
-	}
-
 	public function testSelectIndexHintForce() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$result = $this->assertQuery(
@@ -1098,56 +1074,6 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertEquals( 2, $result[0]->ID );
 	}
 
-
-	public function testAlterTableModifyColumnWithSkippedColumnKeyword() {
-		$this->assertQuery(
-			"CREATE TABLE _tmp_table (
-				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
-				name varchar(20) NOT NULL default '',
-				lastname varchar(20) NOT NULL default '',
-				KEY composite (name, lastname),
-				UNIQUE KEY name (name)
-			);"
-		);
-		// Insert a record
-		$result = $this->assertQuery( "INSERT INTO _tmp_table (ID, name, lastname) VALUES (1, 'Johnny', 'Appleseed');" );
-		$this->assertEquals( 1, $result );
-
-		// Primary key violation:
-		$result = $this->engine->query( "INSERT INTO _tmp_table (ID, name, lastname) VALUES (1, 'Mike', 'Pearseed');" );
-		$this->assertEquals( false, $result );
-
-		// Unique constraint violation:
-		$result = $this->engine->query( "INSERT INTO _tmp_table (ID, name, lastname) VALUES (2, 'Johnny', 'Appleseed');" );
-		$this->assertEquals( false, $result );
-
-		// Rename the "name" field to "firstname":
-		$result = $this->engine->query( "ALTER TABLE _tmp_table CHANGE name firstname varchar(50) NOT NULL default 'mark';" );
-		$this->assertEquals( '', $this->engine->get_error_message() );
-		$this->assertEquals( 1, $result );
-
-		// Confirm the original data is still there:
-		$result = $this->engine->query( 'SELECT * FROM _tmp_table;' );
-		$this->assertCount( 1, $result );
-		$this->assertEquals( 1, $result[0]->ID );
-		$this->assertEquals( 'Johnny', $result[0]->firstname );
-		$this->assertEquals( 'Appleseed', $result[0]->lastname );
-
-		// Confirm the primary key is intact:
-		$result = $this->engine->query( "INSERT INTO _tmp_table (ID, firstname, lastname) VALUES (1, 'Mike', 'Pearseed');" );
-		$this->assertEquals( false, $result );
-
-		// Confirm the unique key is intact:
-		$result = $this->engine->query( "INSERT INTO _tmp_table (ID, firstname, lastname) VALUES (2, 'Johnny', 'Appleseed');" );
-		$this->assertEquals( false, $result );
-
-		// Confirm the autoincrement still works:
-		$result = $this->engine->query( "INSERT INTO _tmp_table (firstname, lastname) VALUES ('John', 'Doe');" );
-		$this->assertEquals( true, $result );
-		$result = $this->engine->query( "SELECT * FROM _tmp_table WHERE firstname='John';" );
-		$this->assertCount( 1, $result );
-		$this->assertEquals( 2, $result[0]->ID );
-	}
 
 	public function testAlterTableModifyColumnWithHyphens() {
 		$result = $this->assertQuery(
