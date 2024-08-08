@@ -2876,7 +2876,7 @@ QUERY
 
 		// INSERT
 		$this->assertQuery(
-			"INSERT INTO _dates (option_name, option_value) VALUES ('first', current_timestamp())"
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', CURRENT_TIMESTAMP())"
 		);
 		$results = $this->assertQuery( 'SELECT option_value AS t FROM _dates' );
 		$this->assertCount( 1, $results );
