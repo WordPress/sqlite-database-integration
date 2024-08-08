@@ -537,6 +537,27 @@ QUERY;
 		);
 	}
 
+	public function testOnCreateTableIfNotExistsWithIndexAdded() {
+		$this->assertQuery(
+			'CREATE TABLE IF not EXISTS `test` (
+				`id` INT,
+				`name` VARCHAR(255),
+				`other` VARCHAR(255),
+				PRIMARY KEY (id),
+				UNIQUE KEY (name)
+			);'
+		);
+		$this->assertQuery(
+			'CREATE TABLE if   NOT   ExisTS `test` (
+				`id` INT,
+				`name` VARCHAR(255),
+				`other` VARCHAR(255),
+				PRIMARY KEY (id),
+				UNIQUE KEY (name)
+			);'
+		);
+	}
+
 	public function testShowColumns() {
 
 		$query = 'SHOW COLUMNS FROM wp_posts';

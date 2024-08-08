@@ -421,6 +421,11 @@ class WP_SQLite_Translator {
 			$this->pdo->query( 'PRAGMA foreign_keys = ON' );
 		}
 		$this->pdo->query( 'PRAGMA encoding="UTF-8";' );
+
+		$valid_journal_modes = array( 'DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY', 'WAL', 'OFF' );
+		if ( defined( 'SQLITE_JOURNAL_MODE' ) && in_array( SQLITE_JOURNAL_MODE, $valid_journal_modes, true ) ) {
+			$this->pdo->query( 'PRAGMA journal_mode = ' . SQLITE_JOURNAL_MODE );
+		}
 	}
 
 	/**
@@ -890,6 +895,8 @@ class WP_SQLite_Translator {
 			')'
 		);
 
+		$if_not_exists = preg_match( '/\bIF\s+NOT\s+EXISTS\b/i', $create_query ) ? 'IF NOT EXISTS' : '';
+
 		$this->execute_sqlite_query( $create_query );
 		$this->results      = $this->last_exec_returned;
 		$this->return_value = $this->results;
@@ -902,7 +909,7 @@ class WP_SQLite_Translator {
 			}
 			$index_name = $this->generate_index_name( $table->name, $constraint->name );
 			$this->execute_sqlite_query(
-				"CREATE $unique INDEX \"$index_name\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
+				"CREATE $unique INDEX $if_not_exists \"$index_name\" ON \"{$table->name}\" (\"" . implode( '", "', $constraint->columns ) . '")'
 			);
 			$this->update_data_type_cache(
 				$table->name,
@@ -2968,12 +2975,17 @@ class WP_SQLite_Translator {
 				)
 			);
 			$op_type          = strtoupper( $this->rewriter->consume()->token ?? '' );
-			$op_subject       = strtoupper( $this->rewriter->consume()->token ?? '' );
+			$op_raw_subject   = $this->rewriter->consume()->token ?? '';
+			$op_subject       = strtoupper( $op_raw_subject );
 			$mysql_index_type = $this->normalize_mysql_index_type( $op_subject );
 			$is_index_op      = (bool) $mysql_index_type;
 
-			if ( 'ADD' === $op_type && 'COLUMN' === $op_subject ) {
-				$column_name = $this->rewriter->consume()->value;
+			if ( 'ADD' === $op_type && ! $is_index_op ) {
+				if ( 'COLUMN' === $op_subject ) {
+					$column_name = $this->rewriter->consume()->value;
+				} else {
+					$column_name = $op_subject;
+				}
 
 				$skip_mysql_data_type_parts = $this->skip_mysql_data_type();
 				$sqlite_data_type           = $skip_mysql_data_type_parts[0];
@@ -2986,16 +2998,46 @@ class WP_SQLite_Translator {
 						WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE
 					)
 				);
+
+				// Drop "FIRST" and "AFTER <another-column>", as these are not supported in SQLite.
+				$column_position = $this->rewriter->peek(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+						'value' => array( 'FIRST', 'AFTER' ),
+					)
+				);
+
+				$comma = $this->rewriter->peek(
+					array(
+						'type'  => WP_SQLite_Token::TYPE_OPERATOR,
+						'value' => ',',
+					)
+				);
+
+				if ( $column_position && ( ! $comma || $column_position->position < $comma->position ) ) {
+					$this->rewriter->consume(
+						array(
+							'type'  => WP_SQLite_Token::TYPE_KEYWORD,
+							'value' => array( 'FIRST', 'AFTER' ),
+						)
+					);
+					$this->rewriter->drop_last();
+					if ( 'AFTER' === strtoupper( $column_position->value ) ) {
+						$this->rewriter->skip();
+					}
+				}
+
 				$this->update_data_type_cache(
 					$this->table_name,
 					$column_name,
 					$mysql_data_type
 				);
-			} elseif ( 'DROP' === $op_type && 'COLUMN' === $op_subject ) {
+			} elseif ( 'DROP' === $op_type && ! $is_index_op ) {
 				$this->rewriter->consume_all();
-			} elseif ( 'CHANGE' === $op_type && 'COLUMN' === $op_subject ) {
+			} elseif ( 'CHANGE' === $op_type ) {
 				// Parse the new column definition.
-				$from_name        = $this->normalize_column_name( $this->rewriter->skip()->token );
+				$raw_from_name    = 'COLUMN' === $op_subject ? $this->rewriter->skip()->token : $op_raw_subject;
+				$from_name        = $this->normalize_column_name( $raw_from_name );
 				$new_field        = $this->parse_mysql_create_table_field();
 				$alter_terminator = end( $this->rewriter->output_tokens );
 				$this->update_data_type_cache(
@@ -3574,7 +3616,7 @@ class WP_SQLite_Translator {
 				$definition[] = 'NOT NULL';
 			}
 
-			if ( '' !== $column->dflt_value && ! $is_auto_incr ) {
+			if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! $is_auto_incr ) {
 				$definition[] = 'DEFAULT ' . $column->dflt_value;
 			}
 
