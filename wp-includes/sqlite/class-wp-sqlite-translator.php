@@ -1120,11 +1120,17 @@ class WP_SQLite_Translator {
 				continue;
 			}
 
-			if ( $token->matches(
-				WP_SQLite_Token::TYPE_KEYWORD,
-				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-				array( 'ON UPDATE' )
-			) ) {
+			if (
+				$token->matches(
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+					array( 'ON UPDATE' )
+				) && $this->rewriter->peek()->matches(
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+					array( 'CURRENT_TIMESTAMP' )
+				)
+			) {
 				$this->rewriter->skip();
 				$result->on_update = true;
 				continue;
@@ -2992,9 +2998,15 @@ class WP_SQLite_Translator {
 							'value' => array( 'ON UPDATE' ),
 						)
 					);
-					$this->rewriter->drop_last();
-					$this->rewriter->skip();
-					$on_update = $column_name;
+					if ( $this->rewriter->peek()->matches(
+						WP_SQLite_Token::TYPE_KEYWORD,
+						WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+						array( 'CURRENT_TIMESTAMP' )
+					) ) {
+						$this->rewriter->drop_last();
+						$this->rewriter->skip();
+						$on_update = $column_name;
+					}
 				}
 
 				// Drop "FIRST" and "AFTER <another-column>", as these are not supported in SQLite.
