@@ -2994,10 +2994,9 @@ class WP_SQLite_Translator {
 				);
 			} elseif ( 'DROP' === $op_type && 'COLUMN' === $op_subject ) {
 				$this->rewriter->consume_all();
-			} elseif ( 'CHANGE' === $op_type ) {
+			} elseif ( 'CHANGE' === $op_type && 'COLUMN' === $op_subject ) {
 				// Parse the new column definition.
-				$raw_from_name    = 'COLUMN' === $op_subject ? $this->rewriter->skip()->token : $op_raw_subject;
-				$from_name        = $this->normalize_column_name( $raw_from_name );
+				$from_name        = $this->normalize_column_name( $this->rewriter->skip()->token );
 				$new_field        = $this->parse_mysql_create_table_field();
 				$alter_terminator = end( $this->rewriter->output_tokens );
 				$this->update_data_type_cache(
@@ -3576,7 +3575,7 @@ class WP_SQLite_Translator {
 				$definition[] = 'NOT NULL';
 			}
 
-			if ( null !== $column->dflt_value && '' !== $column->dflt_value && ! $is_auto_incr ) {
+			if ( '' !== $column->dflt_value && ! $is_auto_incr ) {
 				$definition[] = 'DEFAULT ' . $column->dflt_value;
 			}
 
