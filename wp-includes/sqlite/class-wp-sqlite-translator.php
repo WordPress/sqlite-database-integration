@@ -923,10 +923,8 @@ class WP_SQLite_Translator {
 			);
 		}
 
-		foreach ( $table->fields as $field ) {
-			if ( $field->on_update ) {
-				$this->add_column_on_update_current_timestamp( $table->name, $field->name );
-			}
+		foreach ( $on_updates as $column => $on_update ) {
+			$this->add_column_on_update_current_timestamp( $table->name, $column );
 		}
 	}
 
