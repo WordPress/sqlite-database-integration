@@ -1027,6 +1027,155 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testColumnWithOnUpdate() {
+		// CREATE TABLE with ON UPDATE
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id int(11) NOT NULL,
+				created_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP
+			);'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// ADD COLUMN with ON UPDATE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table ADD COLUMN updated_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'updated_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// assert ON UPDATE triggers
+		$results = $this->assertQuery( "SELECT * FROM sqlite_master WHERE type = 'trigger'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'type'     => 'trigger',
+					'name'     => '___tmp_table_created_at_on_update__',
+					'tbl_name' => '_tmp_table',
+					'rootpage' => '0',
+					'sql'      => "CREATE TRIGGER \"___tmp_table_created_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"created_at\" = CURRENT_TIMESTAMP WHERE id = NEW.id;\n\t\t\tEND",
+				),
+				(object) array(
+					'type'     => 'trigger',
+					'name'     => '___tmp_table_updated_at_on_update__',
+					'tbl_name' => '_tmp_table',
+					'rootpage' => '0',
+					'sql'      => "CREATE TRIGGER \"___tmp_table_updated_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE id = NEW.id;\n\t\t\tEND",
+				),
+			),
+			$results
+		);
+
+		// on INSERT, no timestamps are expected
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertNull( $result[0]->created_at );
+		$this->assertNull( $result[0]->updated_at );
+
+		// on UPDATE, we expect timestamps in form YYYY-MM-DD HH:MM:SS
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 2' );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated_at );
+
+		// drop ON UPDATE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table
+			CHANGE created_at created_at timestamp NULL,
+			CHANGE COLUMN updated_at updated_at timestamp NULL'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'updated_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// assert ON UPDATE triggers are removed
+		$results = $this->assertQuery( "SELECT * FROM sqlite_master WHERE type = 'trigger'" );
+		$this->assertEquals( array(), $results );
+
+		// now, no timestamps are expected
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (10)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 11 WHERE id = 10' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 11' );
+		$this->assertNull( $result[0]->created_at );
+		$this->assertNull( $result[0]->updated_at );
+	}
+
 	public function testAlterTableWithColumnFirstAndAfter() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
