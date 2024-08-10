@@ -2607,13 +2607,9 @@ class WP_SQLite_Translator {
 			! $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-				array( 'GROUP' )
+				array( 'GROUP BY' )
 			)
 		) {
-			return false;
-		}
-		$next = $this->rewriter->peek_nth( 2 )->value;
-		if ( 'BY' !== strtoupper( $next ?? '' ) ) {
 			return false;
 		}
 
