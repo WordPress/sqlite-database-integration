@@ -10241,54 +10241,57 @@ class MySQLParser {
         $children[] = $this->simpleExpr();
         $token = $this->lexer->peekNextToken();
 
-        while ($token->getType() === MySQLLexer::BITWISE_XOR_OPERATOR ||
-               $token->getType() === MySQLLexer::MULT_OPERATOR ||
-               $token->getType() === MySQLLexer::DIV_OPERATOR ||
-               $token->getType() === MySQLLexer::MOD_OPERATOR ||
-               $token->getType() === MySQLLexer::DIV_SYMBOL ||
-               $token->getType() === MySQLLexer::MOD_SYMBOL ||
-               $token->getType() === MySQLLexer::PLUS_OPERATOR ||
-               $token->getType() === MySQLLexer::MINUS_OPERATOR ||
-               $token->getType() === MySQLLexer::SHIFT_LEFT_OPERATOR ||
-               $token->getType() === MySQLLexer::SHIFT_RIGHT_OPERATOR ||
-               $token->getType() === MySQLLexer::BITWISE_AND_OPERATOR ||
-               $token->getType() === MySQLLexer::BITWISE_OR_OPERATOR) {
-            if ($this->lexer->peekNextToken(2)->getType() !== MySQLLexer::INTERVAL_SYMBOL) {
-                $token = $this->lexer->peekNextToken();
-
-                if ($token->getType() === MySQLLexer::BITWISE_XOR_OPERATOR) {
-                    $children[] = $this->match(MySQLLexer::BITWISE_XOR_OPERATOR);
-                    $children[] = $this->bitExpr();
-                } elseif ($token->getType() === MySQLLexer::MULT_OPERATOR ||
-                          $token->getType() === MySQLLexer::DIV_OPERATOR ||
-                          $token->getType() === MySQLLexer::MOD_OPERATOR ||
-                          $token->getType() === MySQLLexer::DIV_SYMBOL ||
-                          $token->getType() === MySQLLexer::MOD_SYMBOL) {
-                    $this->match($token->getType());
-                    $children[] = new ASTNode(MySQLLexer::getTokenName($token->getType()));
-                    $children[] = $this->bitExpr();
-                } elseif ($token->getType() === MySQLLexer::PLUS_OPERATOR ||
-                          $token->getType() === MySQLLexer::MINUS_OPERATOR) {
-                    $this->match($token->getType());
-                    $children[] = new ASTNode(MySQLLexer::getTokenName($token->getType()));
-                    $children[] = $this->bitExpr();
-                } elseif ($token->getType() === MySQLLexer::SHIFT_LEFT_OPERATOR ||
-                          $token->getType() === MySQLLexer::SHIFT_RIGHT_OPERATOR) {
-                    $this->match($token->getType());
-                    $children[] = new ASTNode(MySQLLexer::getTokenName($token->getType()));
-                    $children[] = $this->bitExpr();
-                } elseif ($token->getType() === MySQLLexer::BITWISE_AND_OPERATOR) {
-                    $children[] = $this->match(MySQLLexer::BITWISE_AND_OPERATOR);
-                    $children[] = $this->bitExpr();
-                } elseif ($token->getType() === MySQLLexer::BITWISE_OR_OPERATOR) {
-                    $children[] = $this->match(MySQLLexer::BITWISE_OR_OPERATOR);
-                    $children[] = $this->bitExpr();
-                } else {
-                    throw new \Exception('Unexpected token in bitExpr: ' . $token->getText());
-                }
-            } else {
+        while (
+            $token->getType() === MySQLLexer::BITWISE_XOR_OPERATOR ||
+            $token->getType() === MySQLLexer::MULT_OPERATOR ||
+            $token->getType() === MySQLLexer::DIV_OPERATOR ||
+            $token->getType() === MySQLLexer::MOD_OPERATOR ||
+            $token->getType() === MySQLLexer::DIV_SYMBOL ||
+            $token->getType() === MySQLLexer::MOD_SYMBOL ||
+            $token->getType() === MySQLLexer::PLUS_OPERATOR ||
+            $token->getType() === MySQLLexer::MINUS_OPERATOR ||
+            $token->getType() === MySQLLexer::SHIFT_LEFT_OPERATOR ||
+            $token->getType() === MySQLLexer::SHIFT_RIGHT_OPERATOR ||
+            $token->getType() === MySQLLexer::BITWISE_AND_OPERATOR ||
+            $token->getType() === MySQLLexer::BITWISE_OR_OPERATOR
+        ) {
+            if ($this->lexer->peekNextToken(2)->getType() === MySQLLexer::INTERVAL_SYMBOL) {
                 break;
             }
+            $token = $this->lexer->peekNextToken();
+
+            if ($token->getType() === MySQLLexer::BITWISE_XOR_OPERATOR) {
+                $children[] = $this->match(MySQLLexer::BITWISE_XOR_OPERATOR);
+                $children[] = $this->bitExpr();
+            } elseif ($token->getType() === MySQLLexer::MULT_OPERATOR ||
+                        $token->getType() === MySQLLexer::DIV_OPERATOR ||
+                        $token->getType() === MySQLLexer::MOD_OPERATOR ||
+                        $token->getType() === MySQLLexer::DIV_SYMBOL ||
+                        $token->getType() === MySQLLexer::MOD_SYMBOL) {
+                $this->match($token->getType());
+                $children[] = new ASTNode(MySQLLexer::getTokenName($token->getType()));
+                $children[] = $this->bitExpr();
+            } elseif ($token->getType() === MySQLLexer::PLUS_OPERATOR ||
+                        $token->getType() === MySQLLexer::MINUS_OPERATOR) {
+                $this->match($token->getType());
+                $children[] = new ASTNode(MySQLLexer::getTokenName($token->getType()));
+                $children[] = $this->bitExpr();
+            } elseif ($token->getType() === MySQLLexer::SHIFT_LEFT_OPERATOR ||
+                        $token->getType() === MySQLLexer::SHIFT_RIGHT_OPERATOR) {
+                $this->match($token->getType());
+                $children[] = new ASTNode(MySQLLexer::getTokenName($token->getType()));
+                $children[] = $this->bitExpr();
+            } elseif ($token->getType() === MySQLLexer::BITWISE_AND_OPERATOR) {
+                $children[] = $this->match(MySQLLexer::BITWISE_AND_OPERATOR);
+                $children[] = $this->bitExpr();
+            } elseif ($token->getType() === MySQLLexer::BITWISE_OR_OPERATOR) {
+                $children[] = $this->match(MySQLLexer::BITWISE_OR_OPERATOR);
+                $children[] = $this->bitExpr();
+            } else {
+                throw new \Exception('Unexpected token in bitExpr: ' . $token->getText());
+            }
+
+            $token = $this->lexer->peekNextToken();
         }
 
         if ($token->getType() === MySQLLexer::PLUS_OPERATOR ||
@@ -10376,17 +10379,17 @@ class MySQLParser {
             $children[] = $this->exprList();
             $children[] = $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
             return new ASTNode('simpleExpr', $children);
-        } elseif ($token->getType() === MySQLLexer::OPEN_PAR_SYMBOL) {
-            $children[] = $this->match(MySQLLexer::OPEN_PAR_SYMBOL);
-            $children[] = $this->exprList();
-            $children[] = $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
-            return new ASTNode('simpleExpr', $children);
         } elseif ($token->getType() === MySQLLexer::EXISTS_SYMBOL ||
                   $this->isSubqueryStart($this->lexer->peekNextToken(2))) {
             if ($token->getType() === MySQLLexer::EXISTS_SYMBOL) {
                 $children[] = $this->match(MySQLLexer::EXISTS_SYMBOL);
             }
             $children[] = $this->subquery();
+            return new ASTNode('simpleExpr', $children);
+        } elseif ($token->getType() === MySQLLexer::OPEN_PAR_SYMBOL) {
+            $children[] = $this->match(MySQLLexer::OPEN_PAR_SYMBOL);
+            $children[] = $this->exprList();
+            $children[] = $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
             return new ASTNode('simpleExpr', $children);
         } elseif ($token->getType() === MySQLLexer::OPEN_CURLY_SYMBOL) {
             $children[] = $this->match(MySQLLexer::OPEN_CURLY_SYMBOL);

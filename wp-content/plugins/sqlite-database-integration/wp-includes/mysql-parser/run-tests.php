@@ -88,6 +88,39 @@ JOIN (
 ) c ON o.customer_id = c.customer_id
 SET o.`status` = 'Shipped';
 ACID,
+
+    'updateSubQuery' => <<<ACID
+UPDATE products p
+SET p.stock_quantity = p.stock_quantity - (
+    SELECT SUM(o.quantity)
+    FROM orders o
+    WHERE o.product_id = p.product_id
+)
+WHERE p.product_id = 1;
+ACID,
+
+    'updateJsonSet' => <<<ACID
+UPDATE customers
+SET address = JSON_SET(address, '$.city', 'New Springfield')
+WHERE email = 'john.doe@example.com';
+ACID,
+
+    'updateCase' => <<<ACID
+UPDATE products
+SET category = CASE
+    WHEN price < 50 THEN 'Books'
+    WHEN price BETWEEN 50 AND 200 THEN 'Electronics'
+    ELSE 'Home'
+END;
+ACID,
+
+    'updateLimit' => <<<ACID
+    UPDATE orders
+SET `status` = 'Processing'
+WHERE `status` = 'Pending'
+LIMIT 10;
+ACID,
+
 ];
 
 foreach ($queries as $key => $query) {
