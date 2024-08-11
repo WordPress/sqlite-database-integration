@@ -3623,7 +3623,10 @@ class MySQLParser {
             $children[] = $this->insertQueryExpression();
         }
 
-        if ($this->lexer->peekNextToken()->getText() === 'ON DUPLICATE KEY UPDATE') {
+        if ($this->lexer->peekNextToken()->getType() === MySQLLexer::ON_SYMBOL &&
+            $this->lexer->peekNextToken(2)->getType() === MySQLLexer::DUPLICATE_SYMBOL &&
+            $this->lexer->peekNextToken(3)->getType() === MySQLLexer::KEY_SYMBOL &&
+            $this->lexer->peekNextToken(4)->getType() === MySQLLexer::UPDATE_SYMBOL) {
             $children[] = $this->insertUpdateList();
         }
 

@@ -69,13 +69,21 @@ SELECT
 WHERE NOT EXISTS (
     SELECT 1 FROM products WHERE product_name = 'Smartphone'
 ) AND 1=2;
+ACID,
+    'insertSelectOnDuplicateKey' => <<<ACID
+INSERT INTO customers (first_name, last_name, email, phone_number, address, birth_date)
+VALUES 
+('Bob', 'Brown', 'bob.brown@example.com', '111-222-3333', JSON_OBJECT('street', '101 Maple St', 'city', 'Springfield', 'state', 'IL', 'zip', '62704'), '1982-03-25')
+ON DUPLICATE KEY UPDATE 
+phone_number = VALUES(phone_number), 
+address = VALUES(address);
+
 ACID
 ];
 
-printAST(parse($queries['complexSelect']));
-printAST(parse($queries['createTable']));
-printAST(parse($queries['insertMulti']));
-printAST(parse($queries['insertSelect']));
+foreach ($queries as $key => $query) {
+    printAST(parse($query));
+}
 // benchmarkParser($queries['acidTest']);
 
 die();
