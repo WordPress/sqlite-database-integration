@@ -212,6 +212,23 @@ ACID,
     'setTimeZone' => 'SET TIME_ZONE = "+00:00";',
     // 'setPassword' => 'SET PASSWORD = "newpassword";',
 
+    'begin' => 'BEGIN;',
+    'commit' => 'COMMIT;',
+    'rollback' => 'ROLLBACK;',
+    'savepoint' => 'SAVEPOINT mysavepoint;',
+    'releaseSavepoint' => 'RELEASE SAVEPOINT mysavepoint;',
+    'rollbackToSavepoint' => 'ROLLBACK TO SAVEPOINT mysavepoint;',
+    'lockTable' => 'LOCK TABLES products WRITE;',
+    // 'unlockTable' => 'UNLOCK TABLES;',
+    'flush' => 'FLUSH PRIVILEGES;',
+    // 'flushTables' => 'FLUSH TABLES;',
+    'flushLogs' => 'FLUSH LOGS;',
+    'flushStatus' => 'FLUSH STATUS;',
+    // 'flushTablesWithReadLock' => 'FLUSH TABLES WITH READ LOCK;',
+    // 'flushQueryCache' => 'FLUSH QUERY CACHE;',
+    // 'flushHosts' => 'FLUSH HOSTS;',
+    // 'flushOptimizerCosts' => 'FLUSH OPTIMIZER COSTS;',
+
 ];
 
 foreach ($queries as $key => $query) {

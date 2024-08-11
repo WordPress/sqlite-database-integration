@@ -5843,8 +5843,6 @@ class MySQLParser {
                     }
                     $children[] = $this->match(MySQLLexer::RELEASE_SYMBOL);
                 }
-            } else {
-                throw new \Exception('Unexpected token in savepointStatement: ' . $this->lexer->peekNextToken()->getText());
             }
         } elseif ($token->getType() === MySQLLexer::RELEASE_SYMBOL) {
             $children[] = $this->match(MySQLLexer::RELEASE_SYMBOL);
