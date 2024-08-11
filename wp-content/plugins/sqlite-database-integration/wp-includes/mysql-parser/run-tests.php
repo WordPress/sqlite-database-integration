@@ -77,8 +77,17 @@ VALUES
 ON DUPLICATE KEY UPDATE 
 phone_number = VALUES(phone_number), 
 address = VALUES(address);
-
-ACID
+ACID,
+    'updateJoin' => <<<ACID
+UPDATE orders o
+JOIN (
+    SELECT customer_id
+    FROM orders
+    GROUP BY customer_id
+    HAVING COUNT(order_id) > 5
+) c ON o.customer_id = c.customer_id
+SET o.`status` = 'Shipped';
+ACID,
 ];
 
 foreach ($queries as $key => $query) {

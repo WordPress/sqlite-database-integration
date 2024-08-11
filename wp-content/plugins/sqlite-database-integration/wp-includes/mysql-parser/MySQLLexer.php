@@ -845,7 +845,8 @@ class MySQLLexer {
     public const CUME_DIST_SYMBOL = 842;
     public const FOUND_ROWS_SYMBOL = 843;
     public const CONCAT_SYMBOL = 844;
-
+    public const OVER_SYMBOL = 845;
+    public const IO_THREAD_SYMBOL = 846;
 
     public const EOF = -1;
 
@@ -874,6 +875,7 @@ class MySQLLexer {
     const PipesAsConcat = 1;
     const HighNotPrecedence = 2;
     const NoBackslashEscapes = 4;
+    public const ANSI_QUOTES = 8;
 
     public function isSqlModeActive(int $mode): bool
     {
