@@ -121,6 +121,26 @@ WHERE `status` = 'Pending'
 LIMIT 10;
 ACID,
 
+    'deleteJoin' => <<<ACID
+DELETE o
+FROM orders o
+JOIN customers c ON o.customer_id = c.customer_id
+WHERE c.first_name = 'John';
+ACID,
+
+    'deleteUsing' => <<<ACID
+DELETE FROM products
+USING products p
+JOIN orders o ON p.product_id = o.product_id
+WHERE o.`status` = 'Cancelled';
+ACID,
+
+    'deleteLimit' => <<<ACID
+DELETE QUICK LOW_PRIORITY FROM orders
+WHERE `status` = 'Cancelled'
+LIMIT 5;
+ACID,
+
 ];
 
 foreach ($queries as $key => $query) {

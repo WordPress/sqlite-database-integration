@@ -3469,12 +3469,12 @@ class MySQLParser {
                 $this->lexer->peekNextToken()->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
                 $this->lexer->peekNextToken()->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
                 $this->isIdentifierKeyword($this->lexer->peekNextToken()) ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::DOT_SYMBOL) {
+                $this->lexer->peekNextToken()->getType() === MySQLLexer::DOT_SYMBOL
+            ) {
                 $children[] = $this->tableAliasRefList();
-                $children[] = $this->match(MySQLLexer::USING_SYMBOL);
-                $children[] = $this->tableReferenceList();
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::WHERE_SYMBOL) {
-                    $children[] = $this->whereClause();
+                if($this->lexer->peekNextToken()->getType() === MySQLLexer::USING_SYMBOL) {
+                    $children[] = $this->match(MySQLLexer::USING_SYMBOL);
+                    $children[] = $this->tableReferenceList();
                 }
             } else {
                 $children[] = $this->tableRef();
@@ -3486,18 +3486,23 @@ class MySQLParser {
                      $this->isIdentifierKeyword($this->lexer->peekNextToken()))) {
                     $children[] = $this->tableAlias();
                 }
-                if ($this->serverVersion >= 50602 && $this->lexer->peekNextToken()->getText() === 'PARTITION') {
-                    $children[] = $this->partitionDelete();
-                }
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::WHERE_SYMBOL) {
-                    $children[] = $this->whereClause();
-                }
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::ORDER_SYMBOL) {
-                    $children[] = $this->orderClause();
-                }
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::LIMIT_SYMBOL) {
-                    $children[] = $this->simpleLimitClause();
-                }
+            }
+
+            // Technically, these clauses are only supported in the second code branch
+            // above, but it's much easier to always scan for them than it is to distinguish
+            // between tableAliasRefList and tableRef.
+            // It doesn't seem like a big problem, either.
+            if ($this->serverVersion >= 50602 && $this->lexer->peekNextToken()->getText() === 'PARTITION') {
+                $children[] = $this->partitionDelete();
+            }
+            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::WHERE_SYMBOL) {
+                $children[] = $this->whereClause();
+            }
+            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::ORDER_SYMBOL) {
+                $children[] = $this->orderClause();
+            }
+            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::LIMIT_SYMBOL) {
+                $children[] = $this->simpleLimitClause();
             }
         } else {
             $children[] = $this->tableAliasRefList();
