@@ -8266,7 +8266,7 @@ class MySQLParser {
                 $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::FOR_SYMBOL));
                 $children[] = $this->user();
             }
-            $this->equal();
+            $children[] = $this->equal();
             $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
             $token = $this->lexer->peekNextToken();
             if ($this->serverVersion < 80014 &&
@@ -8491,7 +8491,7 @@ class MySQLParser {
             $children = [];
             $children[] = $this->optionType();
             $children[] = $this->internalVariableName();
-            $this->equal();
+            $children[] = $this->equal();
             $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
             $children[] = $this->setExprOrDefault();
             return new ASTNode('optionValue', $children);
@@ -8536,7 +8536,7 @@ class MySQLParser {
         $children = [];
 
         $children[] = $this->internalVariableName();
-        $this->equal();
+        $children[] = $this->equal();
         $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
         $children[] = $this->setExprOrDefault();
         return new ASTNode('optionValueFollowingOptionType', $children);
@@ -10347,7 +10347,7 @@ class MySQLParser {
             $children[] = $this->variable();
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::ASSIGN_OPERATOR ||
                 $this->lexer->peekNextToken()->getType() === MySQLLexer::EQUAL_OPERATOR) {
-                $this->equal();
+                $children[] = $this->equal();
                 $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
                 $children[] = $this->expr();
             }
