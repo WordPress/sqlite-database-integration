@@ -17,7 +17,7 @@ FROM
 (SELECT `mycol`, 997482686 FROM "mytable") as subquery
 LEFT JOIN (SELECT a_column_yo from mytable) as t2 
     ON (t2.id = mytable.id AND t2.id = 1)
-WHERE 1 = 3
+WHERE NOT EXISTS (SELECT 1)
 GROUP BY col_a, col_b
 HAVING 1 = 2
 UNION SELECT * from table_cde
@@ -50,11 +50,32 @@ CREATE TABLE products (
     UNIQUE INDEX idx_col_k (`col_k`),
     FULLTEXT INDEX idx_col_l (`col_l`)
 ) DEFAULT CHARACTER SET cp1250 COLLATE cp1250_general_ci;
+ACID,
+    'insertMulti' => <<<ACID
+INSERT INTO customers (first_name, last_name, email, phone_number, address, birth_date)
+VALUES 
+('John', 'Doe', 'john.doe@example.com', '123-456-7890', JSON_OBJECT('street', '123 Elm St', 'city', 'Springfield', 'state', 'IL', 'zip', '62701'), '1985-05-15'),
+('Jane', 'Smith', 'jane.smith@example.com', '987-654-3210', JSON_OBJECT('street', '456 Oak St', 'city', 'Springfield', 'state', 'IL', 'zip', '62702'), '1990-07-22'),
+('Alice', 'Johnson', 'alice.johnson@example.com', '555-123-4567', JSON_OBJECT('street', '789 Pine St', 'city', 'Springfield', 'state', 'IL', 'zip', '62703'), '1978-11-30');
+ACID,
+    'insertSelect' => <<<ACID
+INSERT INTO products
+SELECT 
+    'Smartphone', 
+    'Latest model with advanced features', 
+    699.99, 
+    50, 
+    'Electronics'
+WHERE NOT EXISTS (
+    SELECT 1 FROM products WHERE product_name = 'Smartphone'
+) AND 1=2;
 ACID
 ];
 
 printAST(parse($queries['complexSelect']));
 printAST(parse($queries['createTable']));
+printAST(parse($queries['insertMulti']));
+printAST(parse($queries['insertSelect']));
 // benchmarkParser($queries['acidTest']);
 
 die();

@@ -3603,6 +3603,7 @@ class MySQLParser {
         }
 
         $token = $this->lexer->peekNextToken();
+
         if ($token->getType() === MySQLLexer::OPEN_PAR_SYMBOL ||
             $token->getType() === MySQLLexer::VALUES_SYMBOL ||
             $token->getType() === MySQLLexer::VALUE_SYMBOL) {
@@ -9675,51 +9676,42 @@ class MySQLParser {
     public function expr()
     {
         $children = [];
-        $children[] = $this->boolPri();
-
         $token = $this->lexer->peekNextToken();
-        while ($token->getType() === MySQLLexer::IS_SYMBOL ||
-               $token->getType() === MySQLLexer::NOT_SYMBOL ||
-               $token->getType() === MySQLLexer::AND_SYMBOL ||
-               $token->getType() === MySQLLexer::XOR_SYMBOL ||
-               $token->getType() === MySQLLexer::OR_SYMBOL ||
-               $token->getType() === MySQLLexer::LOGICAL_AND_OPERATOR ||
-               $token->getType() === MySQLLexer::LOGICAL_OR_OPERATOR) {
+        if($this->isBoolPriStart($token)) {
+            $children[] = $this->boolPri();
+            $token = $this->lexer->peekNextToken();
             if ($token->getType() === MySQLLexer::IS_SYMBOL) {
                 $children[] = $this->match(MySQLLexer::IS_SYMBOL);
                 if ($this->lexer->peekNextToken()->getType() === MySQLLexer::NOT_SYMBOL ||
                     $this->lexer->peekNextToken()->getType() === MySQLLexer::NOT2_SYMBOL) {
                     $children[] = $this->notRule();
                 }
-                $token = $this->lexer->peekNextToken();
-                if ($token->getType() === MySQLLexer::TRUE_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::TRUE_SYMBOL);
-                } elseif ($token->getType() === MySQLLexer::FALSE_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::FALSE_SYMBOL);
-                } elseif ($token->getType() === MySQLLexer::UNKNOWN_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::UNKNOWN_SYMBOL);
-                } else {
-                    throw new \Exception('Unexpected token in expr: ' . $token->getText());
+                $token = $this->lexer->getNextToken();
+                switch ($token->getType()) {
+                    case MySQLLexer::TRUE_SYMBOL:
+                    case MySQLLexer::FALSE_SYMBOL:
+                    case MySQLLexer::UNKNOWN_SYMBOL:
+                        $children[] = ASTNode::fromToken($this->lexer->getNextToken());
+                        break;
+                    default:
+                        throw new \Exception('Unexpected token in expr: ' . $token->getText());
                 }
-            } elseif ($token->getType() === MySQLLexer::NOT_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::NOT_SYMBOL);
-                $children[] = $this->expr();
-            } elseif ($token->getType() === MySQLLexer::AND_SYMBOL ||
-                      $token->getType() === MySQLLexer::LOGICAL_AND_OPERATOR) {
-                $children[] = $this->match($token->getType());
-                $children[] = $this->expr();
-            } elseif ($token->getType() === MySQLLexer::XOR_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::XOR_SYMBOL);
-                $children[] = $this->expr();
-            } elseif ($token->getType() === MySQLLexer::OR_SYMBOL ||
-                      $token->getType() === MySQLLexer::LOGICAL_OR_OPERATOR) {
-                $children[] = $this->match($token->getType());
-                $children[] = $this->expr();
-            } else {
-                throw new \Exception('Unexpected token in expr: ' . $token->getText());
             }
 
-            $token = $this->lexer->peekNextToken();
+            if ($token->getType() === MySQLLexer::AND_SYMBOL ||
+                $token->getType() === MySQLLexer::LOGICAL_AND_OPERATOR ||
+                $token->getType() === MySQLLexer::XOR_SYMBOL ||
+                $token->getType() === MySQLLexer::OR_SYMBOL ||
+                $token->getType() === MySQLLexer::LOGICAL_OR_OPERATOR
+            ) {
+                $children[] = ASTNode::fromToken($this->lexer->getNextToken());
+                $children[] = $this->expr();
+            }
+        } elseif ($token->getType() === MySQLLexer::NOT_SYMBOL) {
+            $children[] = $this->notRule();
+            $children[] = $this->expr();
+        } else {
+            throw new \Exception('Unexpected token in expr: ' . $token->getText());
         }
 
         return new ASTNode('expr', $children);
@@ -9775,25 +9767,20 @@ class MySQLParser {
 
     public function compOp()
     {
-        $token = $this->lexer->peekNextToken();
-        if ($token->getType() === MySQLLexer::EQUAL_OPERATOR) {
-            $this->match(MySQLLexer::EQUAL_OPERATOR);
-        } elseif ($token->getType() === MySQLLexer::NULL_SAFE_EQUAL_OPERATOR) {
-            $this->match(MySQLLexer::NULL_SAFE_EQUAL_OPERATOR);
-        } elseif ($token->getType() === MySQLLexer::GREATER_OR_EQUAL_OPERATOR) {
-            $this->match(MySQLLexer::GREATER_OR_EQUAL_OPERATOR);
-        } elseif ($token->getType() === MySQLLexer::GREATER_THAN_OPERATOR) {
-            $this->match(MySQLLexer::GREATER_THAN_OPERATOR);
-        } elseif ($token->getType() === MySQLLexer::LESS_OR_EQUAL_OPERATOR) {
-            $this->match(MySQLLexer::LESS_OR_EQUAL_OPERATOR);
-        } elseif ($token->getType() === MySQLLexer::LESS_THAN_OPERATOR) {
-            $this->match(MySQLLexer::LESS_THAN_OPERATOR);
-        } elseif ($token->getType() === MySQLLexer::NOT_EQUAL_OPERATOR) {
-            $this->match(MySQLLexer::NOT_EQUAL_OPERATOR);
-        } else {
-            throw new \Exception('Unexpected token in compOp: ' . $token->getText());
+        $token = $this->lexer->getNextToken();
+        switch ($token->getType()) {
+            case MySQLLexer::EQUAL_OPERATOR:
+            case MySQLLexer::NULL_SAFE_EQUAL_OPERATOR:
+            case MySQLLexer::GREATER_OR_EQUAL_OPERATOR:
+            case MySQLLexer::GREATER_THAN_OPERATOR:
+            case MySQLLexer::LESS_OR_EQUAL_OPERATOR:
+            case MySQLLexer::LESS_THAN_OPERATOR:
+            case MySQLLexer::NOT_EQUAL_OPERATOR:
+                return ASTNode::fromToken($token);
+                break;
+            default:
+                throw new \Exception('Unexpected token in compOp: ' . $token->getText());
         }
-        return new ASTNode(MySQLLexer::getTokenName($token->getType()));
     }
 
     public function predicate()
@@ -10007,7 +9994,10 @@ class MySQLParser {
             $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
             $children[] = $this->simpleExpr();
             return new ASTNode('simpleExpr', $children);
-        } elseif ($token->getType() === MySQLLexer::LOGICAL_NOT_OPERATOR || $token->getType() === MySQLLexer::NOT2_SYMBOL) {
+        } elseif (
+            $token->getType() === MySQLLexer::LOGICAL_NOT_OPERATOR || 
+            $token->getType() === MySQLLexer::NOT2_SYMBOL
+        ) {
             $children[] = $this->not2Rule();
             $children[] = $this->simpleExpr();
             return new ASTNode('simpleExpr', $children);
@@ -10131,76 +10121,84 @@ class MySQLParser {
 
     private function isRuntimeFunctionCallStart($token)
     {
-        return $token->getType() === MySQLLexer::CHAR_SYMBOL ||
-               $token->getType() === MySQLLexer::CURRENT_USER_SYMBOL ||
-               $token->getType() === MySQLLexer::DATE_SYMBOL ||
-               $token->getType() === MySQLLexer::DAY_SYMBOL ||
-               $token->getType() === MySQLLexer::HOUR_SYMBOL ||
-               $token->getType() === MySQLLexer::INSERT_SYMBOL ||
-               $token->getType() === MySQLLexer::INTERVAL_SYMBOL ||
-               $token->getType() === MySQLLexer::LEFT_SYMBOL ||
-               $token->getType() === MySQLLexer::MICROSECOND_SYMBOL ||
-               $token->getType() === MySQLLexer::MINUTE_SYMBOL ||
-               $token->getType() === MySQLLexer::MONTH_SYMBOL ||
-               $token->getType() === MySQLLexer::RIGHT_SYMBOL ||
-               $token->getType() === MySQLLexer::SECOND_SYMBOL ||
-               $token->getType() === MySQLLexer::TIME_SYMBOL ||
-               $token->getType() === MySQLLexer::TIMESTAMP_SYMBOL ||
-               $token->getType() === MySQLLexer::TRIM_SYMBOL ||
-               $token->getType() === MySQLLexer::USER_SYMBOL ||
-               $token->getType() === MySQLLexer::VALUES_SYMBOL ||
-               $token->getType() === MySQLLexer::YEAR_SYMBOL ||
-               $token->getType() === MySQLLexer::ADDDATE_SYMBOL ||
-               $token->getType() === MySQLLexer::SUBDATE_SYMBOL ||
-               $token->getType() === MySQLLexer::CURDATE_SYMBOL ||
-               $token->getType() === MySQLLexer::CURTIME_SYMBOL ||
-               $token->getType() === MySQLLexer::DATE_ADD_SYMBOL ||
-               $token->getType() === MySQLLexer::DATE_SUB_SYMBOL ||
-               $token->getType() === MySQLLexer::EXTRACT_SYMBOL ||
-               $token->getType() === MySQLLexer::GET_FORMAT_SYMBOL ||
-               $token->getType() === MySQLLexer::NOW_SYMBOL ||
-               $token->getType() === MySQLLexer::POSITION_SYMBOL ||
-               $token->getType() === MySQLLexer::SUBSTR_SYMBOL ||
-               $token->getType() === MySQLLexer::SUBSTRING_SYMBOL ||
-               $token->getType() === MySQLLexer::SYSDATE_SYMBOL ||
-               $token->getType() === MySQLLexer::TIMESTAMP_ADD_SYMBOL ||
-               $token->getType() === MySQLLexer::TIMESTAMP_DIFF_SYMBOL ||
-               $token->getType() === MySQLLexer::UTC_DATE_SYMBOL ||
-               $token->getType() === MySQLLexer::UTC_TIME_SYMBOL ||
-               $token->getType() === MySQLLexer::UTC_TIMESTAMP_SYMBOL ||
-               $token->getType() === MySQLLexer::ASCII_SYMBOL ||
-               $token->getType() === MySQLLexer::CHARSET_SYMBOL ||
-               $token->getType() === MySQLLexer::COALESCE_SYMBOL ||
-               $token->getType() === MySQLLexer::COLLATION_SYMBOL ||
-               $token->getType() === MySQLLexer::CONCAT_SYMBOL ||
-               $token->getType() === MySQLLexer::DATABASE_SYMBOL ||
-               $token->getType() === MySQLLexer::IF_SYMBOL ||
-               $token->getType() === MySQLLexer::FORMAT_SYMBOL ||
-               $token->getType() === MySQLLexer::FOUND_ROWS_SYMBOL ||
-               $token->getType() === MySQLLexer::MOD_SYMBOL ||
-               ($this->serverVersion < 50607 &&
-                $token->getType() === MySQLLexer::OLD_PASSWORD_SYMBOL) ||
-               ($this->serverVersion < 80011 &&
-                $token->getType() === MySQLLexer::PASSWORD_SYMBOL) ||
-               $token->getType() === MySQLLexer::QUARTER_SYMBOL ||
-               $token->getType() === MySQLLexer::REPEAT_SYMBOL ||
-               $token->getType() === MySQLLexer::REPLACE_SYMBOL ||
-               $token->getType() === MySQLLexer::REVERSE_SYMBOL ||
-               $token->getType() === MySQLLexer::ROW_COUNT_SYMBOL ||
-               $token->getType() === MySQLLexer::SCHEMA_SYMBOL ||
-               $token->getType() === MySQLLexer::SESSION_USER_SYMBOL ||
-               $token->getType() === MySQLLexer::SYSTEM_USER_SYMBOL ||
-               $token->getType() === MySQLLexer::TRUNCATE_SYMBOL ||
-               $token->getType() === MySQLLexer::WEEK_SYMBOL ||
-               $token->getType() === MySQLLexer::WEIGHT_STRING_SYMBOL ||
-               ($this->serverVersion < 50706 && $token->getType() === MySQLLexer::CONTAINS_SYMBOL) ||
-               $token->getType() === MySQLLexer::GEOMETRYCOLLECTION_SYMBOL ||
-               $token->getType() === MySQLLexer::LINESTRING_SYMBOL ||
-               $token->getType() === MySQLLexer::MULTILINESTRING_SYMBOL ||
-               $token->getType() === MySQLLexer::MULTIPOINT_SYMBOL ||
-               $token->getType() === MySQLLexer::MULTIPOLYGON_SYMBOL ||
-               $token->getType() === MySQLLexer::POINT_SYMBOL ||
-               $token->getType() === MySQLLexer::POLYGON_SYMBOL;
+        switch ($token->getType()) {
+            case MySQLLexer::CHAR_SYMBOL:
+            case MySQLLexer::CURRENT_USER_SYMBOL:
+            case MySQLLexer::DATE_SYMBOL:
+            case MySQLLexer::DAY_SYMBOL:
+            case MySQLLexer::HOUR_SYMBOL:
+            case MySQLLexer::INSERT_SYMBOL:
+            case MySQLLexer::INTERVAL_SYMBOL:
+            case MySQLLexer::LEFT_SYMBOL:
+            case MySQLLexer::MICROSECOND_SYMBOL:
+            case MySQLLexer::MINUTE_SYMBOL:
+            case MySQLLexer::MONTH_SYMBOL:
+            case MySQLLexer::RIGHT_SYMBOL:
+            case MySQLLexer::SECOND_SYMBOL:
+            case MySQLLexer::TIME_SYMBOL:
+            case MySQLLexer::TIMESTAMP_SYMBOL:
+            case MySQLLexer::TRIM_SYMBOL:
+            case MySQLLexer::USER_SYMBOL:
+            case MySQLLexer::VALUES_SYMBOL:
+            case MySQLLexer::YEAR_SYMBOL:
+            case MySQLLexer::ADDDATE_SYMBOL:
+            case MySQLLexer::SUBDATE_SYMBOL:
+            case MySQLLexer::CURDATE_SYMBOL:
+            case MySQLLexer::CURTIME_SYMBOL:
+            case MySQLLexer::DATE_ADD_SYMBOL:
+            case MySQLLexer::DATE_SUB_SYMBOL:
+            case MySQLLexer::EXTRACT_SYMBOL:
+            case MySQLLexer::GET_FORMAT_SYMBOL:
+            case MySQLLexer::NOW_SYMBOL:
+            case MySQLLexer::POSITION_SYMBOL:
+            case MySQLLexer::SUBSTR_SYMBOL:
+            case MySQLLexer::SUBSTRING_SYMBOL:
+            case MySQLLexer::SYSDATE_SYMBOL:
+            case MySQLLexer::TIMESTAMP_ADD_SYMBOL:
+            case MySQLLexer::TIMESTAMP_DIFF_SYMBOL:
+            case MySQLLexer::UTC_DATE_SYMBOL:
+            case MySQLLexer::UTC_TIME_SYMBOL:
+            case MySQLLexer::UTC_TIMESTAMP_SYMBOL:
+            case MySQLLexer::ASCII_SYMBOL:
+            case MySQLLexer::CHARSET_SYMBOL:
+            case MySQLLexer::COALESCE_SYMBOL:
+            case MySQLLexer::COLLATION_SYMBOL:
+            case MySQLLexer::CONCAT_SYMBOL:
+            case MySQLLexer::DATABASE_SYMBOL:
+            case MySQLLexer::IF_SYMBOL:
+            case MySQLLexer::FORMAT_SYMBOL:
+            case MySQLLexer::FOUND_ROWS_SYMBOL:
+            case MySQLLexer::MOD_SYMBOL:
+                return true;
+            case MySQLLexer::OLD_PASSWORD_SYMBOL:
+                return $this->serverVersion < 50607;
+            case MySQLLexer::PASSWORD_SYMBOL:
+                return $this->serverVersion < 80011;
+            case MySQLLexer::QUARTER_SYMBOL:
+            case MySQLLexer::REPEAT_SYMBOL:
+            case MySQLLexer::REPLACE_SYMBOL:
+            case MySQLLexer::REVERSE_SYMBOL:
+            case MySQLLexer::ROW_COUNT_SYMBOL:
+            case MySQLLexer::SCHEMA_SYMBOL:
+            case MySQLLexer::SESSION_USER_SYMBOL:
+            case MySQLLexer::SYSTEM_USER_SYMBOL:
+            case MySQLLexer::TRUNCATE_SYMBOL:
+            case MySQLLexer::WEEK_SYMBOL:
+            case MySQLLexer::WEIGHT_STRING_SYMBOL:
+                return true;
+            case MySQLLexer::CONTAINS_SYMBOL:
+                return $this->serverVersion < 50706;
+            case MySQLLexer::GEOMETRYCOLLECTION_SYMBOL:
+            case MySQLLexer::LINESTRING_SYMBOL:
+            case MySQLLexer::MULTILINESTRING_SYMBOL:
+            case MySQLLexer::MULTIPOINT_SYMBOL:
+            case MySQLLexer::MULTIPOLYGON_SYMBOL:
+            case MySQLLexer::POINT_SYMBOL:
+            case MySQLLexer::POLYGON_SYMBOL:
+                return true;
+            default:
+                return false;
+        }
     }
 
     public function variable()
