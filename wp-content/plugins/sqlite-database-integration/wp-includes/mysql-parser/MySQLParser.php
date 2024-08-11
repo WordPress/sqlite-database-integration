@@ -1027,6 +1027,20 @@ class MySQLParser {
         return new ASTNode('alterList', $children);
     }
 
+    private function isTableConstraintDefStart($token)
+    {
+        return $token->getType() === MySQLLexer::PRIMARY_SYMBOL ||
+               $token->getType() === MySQLLexer::UNIQUE_SYMBOL ||
+               $token->getType() === MySQLLexer::KEY_SYMBOL ||
+               $token->getType() === MySQLLexer::INDEX_SYMBOL ||
+               $token->getType() === MySQLLexer::FULLTEXT_SYMBOL ||
+               $token->getType() === MySQLLexer::SPATIAL_SYMBOL ||
+               $token->getType() === MySQLLexer::FOREIGN_SYMBOL ||
+               $token->getType() === MySQLLexer::CHECK_SYMBOL ||
+               ($this->serverVersion >= 80017 &&
+                $token->getType() === MySQLLexer::CONSTRAINT_SYMBOL);
+    }
+
     public function alterListItem()
     {
         $token = $this->lexer->peekNextToken();
@@ -1034,29 +1048,33 @@ class MySQLParser {
 
         if ($token->getType() === MySQLLexer::ADD_SYMBOL) {
             $children[] = $this->match(MySQLLexer::ADD_SYMBOL);
-            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::COLUMN_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::COLUMN_SYMBOL);
-            }
-            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::IDENTIFIER ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
-                $this->isIdentifierKeyword($this->lexer->peekNextToken())) {
-                $children[] = $this->identifier();
-                $children[] = $this->fieldDefinition();
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::CHECK_SYMBOL ||
-                    $this->lexer->peekNextToken()->getType() === MySQLLexer::REFERENCES_SYMBOL) {
-                    $children[] = $this->checkOrReferences();
-                }
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::AFTER_SYMBOL ||
-                    $this->lexer->peekNextToken()->getType() === MySQLLexer::FIRST_SYMBOL) {
-                    $children[] = $this->place();
-                }
-            } elseif ($this->lexer->peekNextToken()->getType() === MySQLLexer::OPEN_PAR_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::OPEN_PAR_SYMBOL);
-                $children[] = $this->tableElementList();
-                $children[] = $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
+            if ($this->isTableConstraintDefStart($this->lexer->peekNextToken())) {
+                $children[] = $this->tableConstraintDef();
             } else {
-                throw new \Exception('Unexpected token in alterListItem: ' . $token->getText());
+                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::COLUMN_SYMBOL) {
+                    $children[] = $this->match(MySQLLexer::COLUMN_SYMBOL);
+                }
+                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::IDENTIFIER ||
+                    $this->lexer->peekNextToken()->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
+                    $this->lexer->peekNextToken()->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
+                    $this->isIdentifierKeyword($this->lexer->peekNextToken())) {
+                    $children[] = $this->identifier();
+                    $children[] = $this->fieldDefinition();
+                    if ($this->lexer->peekNextToken()->getType() === MySQLLexer::CHECK_SYMBOL ||
+                        $this->lexer->peekNextToken()->getType() === MySQLLexer::REFERENCES_SYMBOL) {
+                        $children[] = $this->checkOrReferences();
+                    }
+                    if ($this->lexer->peekNextToken()->getType() === MySQLLexer::AFTER_SYMBOL ||
+                        $this->lexer->peekNextToken()->getType() === MySQLLexer::FIRST_SYMBOL) {
+                        $children[] = $this->place();
+                    }
+                } elseif ($this->lexer->peekNextToken()->getType() === MySQLLexer::OPEN_PAR_SYMBOL) {
+                    $children[] = $this->match(MySQLLexer::OPEN_PAR_SYMBOL);
+                    $children[] = $this->tableElementList();
+                    $children[] = $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
+                } else {
+                    throw new \Exception('Unexpected token in alterListItem: ' . $this->lexer->peekNextToken()->getText());
+                }
             }
         } elseif ($token->getType() === MySQLLexer::ALTER_SYMBOL) {
             $children[] = $this->match(MySQLLexer::ALTER_SYMBOL);
@@ -8235,75 +8253,39 @@ class MySQLParser {
 
     public function startOptionValueList()
     {
+        $token = $this->lexer->peekNextToken();
         $children = [];
-        $token1 = $this->lexer->peekNextToken();
-        $token2 = $this->lexer->peekNextToken(2);
 
-        if (($token1->getType() === MySQLLexer::AT_SIGN_SYMBOL ||
-             $token1->getType() === MySQLLexer::AT_TEXT_SUFFIX ||
-             $token1->getType() === MySQLLexer::AT_AT_SIGN_SYMBOL ||
-             $token1->getType() === MySQLLexer::IDENTIFIER ||
-             $token1->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
-             $token1->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
-             $this->isIdentifierKeyword($token1) ||
-             $token1->getType() === MySQLLexer::DOT_SYMBOL ||
-             $token1->getType() === MySQLLexer::DEFAULT_SYMBOL ||
-             $token1->getType() === MySQLLexer::CHARSET_SYMBOL ||
-             $token1->getType() === MySQLLexer::CHAR_SYMBOL ||
-             $token1->getType() === MySQLLexer::NAMES_SYMBOL) &&
-            ($token2->getType() === MySQLLexer::COMMA_SYMBOL ||
-             $token2->getType() === MySQLLexer::EQUAL_OPERATOR ||
-             $token2->getType() === MySQLLexer::ASSIGN_OPERATOR ||
-             $this->isCharsetName($token2) ||
-             ($this->serverVersion >= 80011 && $token2->getType() === MySQLLexer::DEFAULT_SYMBOL))) {
-            $children[] = $this->optionValueNoOptionType();
-            $children[] = $this->optionValueListContinued();
-        } elseif ($token1->getType() === MySQLLexer::TRANSACTION_SYMBOL) {
-            $children[] = $this->match(MySQLLexer::TRANSACTION_SYMBOL);
+        if ($token->getType() === MySQLLexer::TRANSACTION_SYMBOL) {
+            $this->match(MySQLLexer::TRANSACTION_SYMBOL);
+            $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::TRANSACTION_SYMBOL));
             $children[] = $this->transactionCharacteristics();
-        } elseif ($token1->getType() === MySQLLexer::GLOBAL_SYMBOL ||
-                  $token1->getType() === MySQLLexer::LOCAL_SYMBOL ||
-                  $token1->getType() === MySQLLexer::SESSION_SYMBOL ||
-                  ($this                 >= 80000 &&
-                   ($token1->getType() === MySQLLexer::PERSIST_SYMBOL ||
-                    $token1->getType() === MySQLLexer::PERSIST_ONLY_SYMBOL))) {
-            $children[] = $this->optionType();
-            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::IDENTIFIER ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
-                $this->isIdentifierKeyword($this->lexer->peekNextToken()) ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::DOT_SYMBOL ||
-                $this->lexer->peekNextToken()->getType() === MySQLLexer::DEFAULT_SYMBOL) {
-                $children[] = $this->startOptionValueListFollowingOptionType();
-            } elseif ($this->lexer->peekNextToken()->getType() === MySQLLexer::TRANSACTION_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::TRANSACTION_SYMBOL);
-                $children[] = $this->transactionCharacteristics();
-            } else {
-                throw new \Exception('Unexpected token in startOptionValueList: ' . $this->lexer->peekNextToken()->getText());
-            }
-        } elseif ($token1->getType() === MySQLLexer::PASSWORD_SYMBOL) {
-            $children[] = $this->match(MySQLLexer::PASSWORD_SYMBOL);
-
+        } elseif ($token->getType() === MySQLLexer::PASSWORD_SYMBOL) {
+            $this->match(MySQLLexer::PASSWORD_SYMBOL);
+            $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::PASSWORD_SYMBOL));
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::FOR_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::FOR_SYMBOL);
+                $this->match(MySQLLexer::FOR_SYMBOL);
+                $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::FOR_SYMBOL));
                 $children[] = $this->user();
             }
-
             $this->equal();
             $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
             $token = $this->lexer->peekNextToken();
-
             if ($this->serverVersion < 80014 &&
                 ($token->getType() === MySQLLexer::OLD_PASSWORD_SYMBOL ||
                  $token->getType() === MySQLLexer::PASSWORD_SYMBOL)) {
                 if ($this->lexer->peekNextToken()->getType() === MySQLLexer::OLD_PASSWORD_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::OLD_PASSWORD_SYMBOL);
+                    $this->match(MySQLLexer::OLD_PASSWORD_SYMBOL);
+                    $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::OLD_PASSWORD_SYMBOL));
                 } else {
-                    $children[] = $this->match(MySQLLexer::PASSWORD_SYMBOL);
+                    $this->match(MySQLLexer::PASSWORD_SYMBOL);
+                    $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::PASSWORD_SYMBOL));
                 }
-                $children[] = $this->match(MySQLLexer::OPEN_PAR_SYMBOL);
+                $this->match(MySQLLexer::OPEN_PAR_SYMBOL);
+                $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::OPEN_PAR_SYMBOL));
                 $children[] = $this->textString();
-                $children[] = $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
+                $this->match(MySQLLexer::CLOSE_PAR_SYMBOL);
+                $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::CLOSE_PAR_SYMBOL));
             } elseif ($token->getType() === MySQLLexer::SINGLE_QUOTED_TEXT ||
                       $token->getType() === MySQLLexer::HEX_NUMBER ||
                       $token->getType() === MySQLLexer::BIN_NUMBER) {
@@ -8315,8 +8297,10 @@ class MySQLParser {
                     $children[] = $this->retainCurrentPassword();
                 }
             } elseif ($this->serverVersion >= 80018 && $token->getType() === MySQLLexer::TO_SYMBOL) {
-                $children[] = $this->match(MySQLLexer::TO_SYMBOL);
-                $children[] = $this->match(MySQLLexer::RANDOM_SYMBOL);
+                $this->match(MySQLLexer::TO_SYMBOL);
+                $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::TO_SYMBOL));
+                $this->match(MySQLLexer::RANDOM_SYMBOL);
+                $children[] = new ASTNode(MySQLLexer::getTokenName(MySQLLexer::RANDOM_SYMBOL));
                 if ($this->lexer->peekNextToken()->getType() === MySQLLexer::REPLACE_SYMBOL) {
                     $children[] = $this->replacePassword();
                 }
@@ -8326,11 +8310,46 @@ class MySQLParser {
             } else {
                 throw new \Exception('Unexpected token in startOptionValueList: ' . $token->getText());
             }
+        } elseif ($this->isOptionValueStart($this->lexer->peekNextToken())) {
+            $children[] = $this->optionValue();
+            $children[] = $this->optionValueListContinued();
         } else {
-            throw new \Exception('Unexpected token in startOptionValueList: ' . $token1->getText());
+            throw new \Exception('Unexpected token in startOptionValueList: ' . $token->getText());
         }
 
         return new ASTNode('startOptionValueList', $children);
+    }
+
+    private function isOptionValueStart($token)
+    {
+        return ($token->getType() === MySQLLexer::GLOBAL_SYMBOL ||
+                $token->getType() === MySQLLexer::LOCAL_SYMBOL ||
+                $token->getType() === MySQLLexer::SESSION_SYMBOL ||
+                ($this->serverVersion >= 80000 &&
+                 ($token->getType() === MySQLLexer::PERSIST_SYMBOL ||
+                  $token->getType() === MySQLLexer::PERSIST_ONLY_SYMBOL))) ||
+               $this->isOptionValueNoOptionTypeStart($token);
+    }
+
+    private function isOptionValueNoOptionTypeStart($token)
+    {
+        return $token->getType() === MySQLLexer::AT_SIGN_SYMBOL ||
+               $token->getType() === MySQLLexer::AT_TEXT_SUFFIX ||
+               $token->getType() === MySQLLexer::AT_AT_SIGN_SYMBOL ||
+               $this->isInternalVariableNameStart($token) ||
+               $token->getType() === MySQLLexer::CHARSET_SYMBOL ||
+               $token->getType() === MySQLLexer::CHAR_SYMBOL ||
+               $token->getType() === MySQLLexer::NAMES_SYMBOL;
+    }
+
+    private function isInternalVariableNameStart($token)
+    {
+        return $token->getType() === MySQLLexer::IDENTIFIER ||
+               $token->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
+               $token->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
+               $this->isIdentifierKeyword($token) ||
+               $token->getType() === MySQLLexer::DOT_SYMBOL ||
+               $token->getType() === MySQLLexer::DEFAULT_SYMBOL;
     }
 
     public function transactionCharacteristics()
@@ -8418,15 +8437,10 @@ class MySQLParser {
     {
         $children = [];
         $token1 = $this->lexer->peekNextToken();
-        $token2 = $this->lexer->peekNextToken(2);
-
         if (($token1->getType() === MySQLLexer::AT_SIGN_SYMBOL ||
-             $token1->getType() === MySQLLexer::AT_TEXT_SUFFIX) &&
-            ($token2->getType() === MySQLLexer::EQUAL_OPERATOR ||
-             $token2->getType() === MySQLLexer::ASSIGN_OPERATOR)) {
+             $token1->getType() === MySQLLexer::AT_TEXT_SUFFIX)) {
             $children[] = $this->userVariable();
-            $this->equal();
-            $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
+            $children[] = $this->equal();
             $children[] = $this->expr();
         } elseif (($token1->getType() === MySQLLexer::AT_AT_SIGN_SYMBOL ||
                    $token1->getType() === MySQLLexer::IDENTIFIER ||
@@ -8434,12 +8448,9 @@ class MySQLParser {
                    $token1->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
                    $this->isIdentifierKeyword($token1) ||
                    $token1->getType() === MySQLLexer::DOT_SYMBOL ||
-                   $token1->getType() === MySQLLexer::DEFAULT_SYMBOL) &&
-                  ($token2->getType() === MySQLLexer::EQUAL_OPERATOR ||
-                   $token2->getType() === MySQLLexer::ASSIGN_OPERATOR)) {
+                   $token1->getType() === MySQLLexer::DEFAULT_SYMBOL)) {
             $children[] = $this->setSystemVariable();
-            $this->equal();
-            $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
+            $children[] = $this->equal();
             $children[] = $this->setExprOrDefault();
         } elseif ($token1->getType() === MySQLLexer::CHARSET_SYMBOL || $token1->getType() === MySQLLexer::CHAR_SYMBOL) {
             $children[] = $this->charsetClause();
@@ -8448,8 +8459,7 @@ class MySQLParser {
             $token = $this->lexer->peekNextToken();
             if ($token->getType() === MySQLLexer::EQUAL_OPERATOR ||
                 $token->getType() === MySQLLexer::ASSIGN_OPERATOR) {
-                $this->equal();
-                $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
+                $children[] = $this->equal();
                 $children[] = $this->expr();
             } elseif ($this->isCharsetName($token)) {
                 $children[] = $this->charsetName();
@@ -8463,8 +8473,7 @@ class MySQLParser {
             }
         } else {
             $children[] = $this->internalVariableName();
-            $this->equal();
-            $children[] = new ASTNode(MySQLLexer::getTokenName($this->lexer->peekNextToken()->getType()));
+            $children[] = $this->equal();
             $children[] = $this->setExprOrDefault();
         }
 
@@ -8497,7 +8506,9 @@ class MySQLParser {
     {
         $children = [];
 
-        $children[] = $this->match(MySQLLexer::AT_AT_SIGN_SYMBOL);
+        if($this->lexer->peekNextToken()->getType() === MySQLLexer::AT_SIGN_SYMBOL) {
+            $children[] = $this->match(MySQLLexer::AT_SIGN_SYMBOL);
+        }
 
         if ($this->lexer->peekNextToken()->getType() === MySQLLexer::GLOBAL_SYMBOL ||
             $this->lexer->peekNextToken()->getType() === MySQLLexer::LOCAL_SYMBOL ||
@@ -8577,6 +8588,7 @@ class MySQLParser {
         $token1 = $this->lexer->peekNextToken();
         $token2 = $this->lexer->peekNextToken(2);
 
+        $hasCommandType = ($token1->getText() === 'EXTENDED' || $token1->getText() === 'FULL');
         if ($this->serverVersion < 50700 && $token1->getType() === MySQLLexer::AUTHORS_SYMBOL) {
             $children[] = $this->match(MySQLLexer::AUTHORS_SYMBOL);
         } elseif ($token1->getType() === MySQLLexer::BINARY_SYMBOL && $token2->getType() === MySQLLexer::LOGS_SYMBOL) {
@@ -8618,7 +8630,10 @@ class MySQLParser {
                    $token1->getText() === 'FULL COLUMNS') &&
                   ($token2->getType() === MySQLLexer::FROM_SYMBOL ||
                    $token2->getType() === MySQLLexer::IN_SYMBOL)) {
-            $children[] = $this->showCommandType();
+
+            if($this->isShowCommandType($token1)) {
+                $children[] = $this->showCommandType();
+            }
             $children[] = $this->match(MySQLLexer::COLUMNS_SYMBOL);
 
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::FROM_SYMBOL) {
@@ -8741,10 +8756,13 @@ class MySQLParser {
                 $this->lexer->peekNextToken()->getType() === MySQLLexer::WHERE_SYMBOL) {
                 $children[] = $this->likeOrWhere();
             }
-        } elseif (($token1->getText() === 'EXTENDED' ||
-                   $token1->getText() === 'FULL') &&
-                  $token2->getType() === MySQLLexer::TABLES_SYMBOL) {
-            $children[] = $this->showCommandType();
+        } elseif (
+            ($this->isShowCommandType($token1) && $token2->getType() === MySQLLexer::TABLES_SYMBOL)
+            || $token1->getType() === MySQLLexer::TABLES_SYMBOL
+        ) {
+            if($this->isShowCommandType($token1)) {
+                $children[] = $this->showCommandType();
+            }
             $children[] = $this->match(MySQLLexer::TABLES_SYMBOL);
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::FROM_SYMBOL ||
                 $this->lexer->peekNextToken()->getType() === MySQLLexer::IN_SYMBOL) {
@@ -8798,9 +8816,14 @@ class MySQLParser {
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::WHERE_SYMBOL) {
                 $children[] = $this->whereClause();
             }
-        } elseif ($token1->getType() === MySQLLexer::FULL_SYMBOL &&
-                  $token2->getType() === MySQLLexer::PROCESSLIST_SYMBOL) {
-            $children[] = $this->match(MySQLLexer::FULL_SYMBOL);
+        } elseif (
+            ($token1->getType() === MySQLLexer::FULL_SYMBOL &&
+             $token2->getType() === MySQLLexer::PROCESSLIST_SYMBOL)
+             || $token1->getType() === MySQLLexer::PROCESSLIST_SYMBOL
+         ) {
+            if($token1->getType() === MySQLLexer::FULL_SYMBOL) {
+                $children[] = $this->match(MySQLLexer::FULL_SYMBOL);
+            }
             $children[] = $this->match(MySQLLexer::PROCESSLIST_SYMBOL);
         } elseif ($token1->getType() === MySQLLexer::FUNCTION_SYMBOL &&
                   $token2->getType() === MySQLLexer::STATUS_SYMBOL) {
@@ -8974,10 +8997,10 @@ class MySQLParser {
                 $this->lexer->peekNextToken()->getType() === MySQLLexer::WHERE_SYMBOL) {
                 $children[] = $this->likeOrWhere();
             }
-        } elseif (($token1->getText() === 'EXTENDED FULL' ||
+        } elseif ((($token1->getText() === 'EXTENDED FULL' ||
                    $token1->getText() === 'EXTENDED' ||
                    $token1->getText() === 'FULL') &&
-                  $token2->getType() === MySQLLexer::TABLES_SYMBOL) {
+                   $token2->getType() === MySQLLexer::TABLES_SYMBOL) || $token1->getType() === MySQLLexer::TABLES_SYMBOL) {
             $children[] = $this->showCommandType();
             $children[] = $this->match(MySQLLexer::TABLES_SYMBOL);
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::FROM_SYMBOL ||
@@ -9011,6 +9034,11 @@ class MySQLParser {
         }
 
         return new ASTNode('showStatement', $children);
+    }
+
+    private function isShowCommandType($token)
+    {
+        return $token->getText() === 'EXTENDED' || $token->getText() === 'FULL';
     }
 
     public function showCommandType()
@@ -17137,7 +17165,6 @@ class MySQLParser {
             return $node;
         }
 
-        var_dump($token);
         throw new \Exception(
             'Unexpected token: ' . $token->getText() .
             ', expected ' . MySQLLexer::getTokenName($expectedType)

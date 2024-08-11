@@ -1,4 +1,12 @@
 <?php
+/**
+ * 
+ * @TODOs
+ * 
+ * * Support literal column names like "status", "description"
+ * * Support comments (as in, ignore them except where they are a part of
+ *   the query, like in CREATE TABLE queries)
+ */
 
 require __DIR__ . '/MySQLLexer.php';
 require __DIR__ . '/MySQLParser.php';
@@ -28,15 +36,12 @@ ACID,
 CREATE TABLE products (
     product_id INT AUTO_INCREMENT PRIMARY KEY,
     product_name VARCHAR(100) NOT NULL,
-    description TEXT,
-    price DECIMAL(10, 2) CHECK (price > 0),
-    stock_quantity INT CHECK (stock_quantity >= 0),
+    `description` TEXT,
     category ENUM('Electronics', 'Clothing', 'Books', 'Home', 'Beauty'),
     order_id INT AUTO_INCREMENT PRIMARY KEY,
     customer_id INT,
     product_id INT,
     `status` SET('Pending', 'Shipped', 'Delivered', 'Cancelled'),
-    quantity INT CHECK (quantity > 0),
     order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     delivery_date DATETIME,
     CONSTRAINT fk_customer
@@ -141,6 +146,72 @@ WHERE `status` = 'Cancelled'
 LIMIT 5;
 ACID,
 
+    'alterConstraint' => <<<ACID
+ALTER TABLE orders
+ADD CONSTRAINT fk_product_id
+FOREIGN KEY (product_id) REFERENCES products(product_id)
+ON DELETE CASCADE;
+ACID,
+
+    'alterColumn' => <<<ACID
+ALTER TABLE products
+MODIFY COLUMN product_name VARCHAR(200) NOT NULL;
+ACID,
+
+    'alterIndex' => <<<ACID
+ALTER TABLE products
+DROP INDEX idx_col_h_i,
+ADD INDEX idx_col_h_i_j (`col_h`, `col_i`, `col_j`);
+ACID,
+
+    'dropTable' => 'DROP TABLE products;',
+    'dropIndex' => 'DROP INDEX idx_col_h_i_j ON products;',
+    'dropColumn' => 'ALTER TABLE products DROP COLUMN product_name;',
+    'dropConstraint' => 'ALTER TABLE products DROP FOREIGN KEY fk_product_id;',
+    'dropDatabase' => 'DROP DATABASE mydatabase;',
+    'createDatabase' => 'CREATE DATABASE mydatabase;',
+    'showDatabases' => 'SHOW DATABASES;',
+    'showTables' => 'SHOW TABLES;',
+    'showColumns' => 'SHOW COLUMNS FROM products;',
+    'showIndexes' => 'SHOW INDEXES FROM products;',
+    // 'showConstraints' => 'SHOW CONSTRAINTS FROM products;',
+    'showCreateTable' => 'SHOW CREATE TABLE products;',
+    // 'showStatus' => 'SHOW STATUS;',
+    // 'showVariables' => 'SHOW VARIABLES;',
+    'showProcesslist' => 'SHOW PROCESSLIST;',
+    'showGrants' => 'SHOW GRANTS;',
+    'showPrivileges' => 'SHOW PRIVILEGES;',
+    'showEngines' => 'SHOW ENGINES;',
+    // 'showStorageEngines' => 'SHOW STORAGE ENGINES;',
+    'showPlugins' => 'SHOW PLUGINS;',
+    'showWarnings' => 'SHOW WARNINGS;',
+    'showErrors' => 'SHOW ERRORS;',
+    'showEvents' => 'SHOW EVENTS;',
+    'showTriggers' => 'SHOW TRIGGERS;',
+    'showCreateEvent' => 'SHOW CREATE EVENT myevent;',
+    'showCreateTrigger' => 'SHOW CREATE TRIGGER mytrigger;',
+    // 'showCreateFunction' => 'SHOW CREATE FUNCTION myfunction;',
+    'showCreateProcedure' => 'SHOW CREATE PROCEDURE myprocedure;',
+    'showCreateView' => 'SHOW CREATE VIEW myview;',
+    'showCreateUser' => 'SHOW CREATE USER myuser;',
+    // 'showCreateRole' => 'SHOW CREATE ROLE myrole;',
+    // 'showCreateTablespace' => 'SHOW CREATE TABLESPACE mytablespace;',
+    'showCreateDatabase' => 'SHOW CREATE DATABASE mydatabase;',
+    // 'showCreateIndex' => 'SHOW CREATE INDEX idx_col_h_i_j;',
+    // 'showCreateFulltextIndex' => 'SHOW CREATE FULLTEXT INDEX idx_col_l;',
+
+    'setVariable' => 'SET @myvar = 1;',
+    'setGlobalVariable' => 'SET GLOBAL myvar = 1;',
+    'setSessionVariable' => 'SET SESSION myvar = 1;',
+    'setTransaction' => 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED;',
+    'setAutocommit' => 'SET AUTOCOMMIT = 0;',
+    // 'setNames' => 'SET NAMES utf8;',
+    // 'setCharacter' => 'SET CHARACTER SET utf8;',
+    // 'setCollation' => 'SET COLLATION utf8_general_ci;',
+    'setSqlMode' => 'SET SQL_MODE = "ANSI_QUOTES";',
+    'setTimeZone' => 'SET TIME_ZONE = "+00:00";',
+    // 'setPassword' => 'SET PASSWORD = "newpassword";',
+
 ];
 
 foreach ($queries as $key => $query) {
@@ -164,7 +235,7 @@ function benchmarkParser($query) {
 }
 
 function parse($query) {
-    $lexer = new MySQLLexer($query);
+    $lexer = new MySQLLexer($query, 80019);
     $parser = new MySQLParser($lexer);
     return $parser->query();
 }
