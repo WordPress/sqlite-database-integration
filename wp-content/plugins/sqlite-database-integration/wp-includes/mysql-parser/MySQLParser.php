@@ -8585,7 +8585,7 @@ class MySQLParser {
         $token1 = $this->lexer->peekNextToken();
         $token2 = $this->lexer->peekNextToken(2);
 
-        $hasCommandType = ($token1->getText() === 'EXTENDED' || $token1->getText() === 'FULL');
+        
             if ($this->serverVersion < 50700 && $token1->getType() === MySQLLexer::AUTHORS_SYMBOL) {
                 $children[] = $this->match(MySQLLexer::AUTHORS_SYMBOL);
             } elseif ($token1->getType() === MySQLLexer::BINARY_SYMBOL && $token2->getType() === MySQLLexer::LOGS_SYMBOL) {
@@ -8683,8 +8683,18 @@ class MySQLParser {
                 } elseif ($token->getType() === MySQLLexer::EVENT_SYMBOL) {
                     $children[] = $this->match(MySQLLexer::EVENT_SYMBOL);
                     $children[] = $this->eventRef();
-                } elseif ($token->getType() === MySQLLexer::FUNCTION_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::FUNCTION_SYMBOL);
+                } elseif (
+                    (
+                        $this->serverVersion < 80000 &&
+                        $token->getType() === MySQLLexer::FUNCTION_SYMBOL
+                    ) ||
+                    (
+                        $this->serverVersion >= 80000 &&
+                        $token->getType() === MySQLLexer::IDENTIFIER &&
+                        strtoupper($token->getText()) === 'FUNCTION'
+                    )
+                ) {
+                    $children[] = ASTNode::fromToken($this->lexer->getNextToken());
                     $children[] = $this->functionRef();
                 } elseif ($token->getType() === MySQLLexer::PROCEDURE_SYMBOL) {
                     $children[] = $this->match(MySQLLexer::PROCEDURE_SYMBOL);
@@ -8704,9 +8714,20 @@ class MySQLParser {
                 } elseif ($token->getType() === MySQLLexer::ROLE_SYMBOL) {
                     $children[] = $this->match(MySQLLexer::ROLE_SYMBOL);
                     $children[] = $this->roleRef();
-                } elseif ($token->getType() === MySQLLexer::TABLESPACE_SYMBOL) {
+                } else if($token->getType() === MySQLLexer::INDEX_SYMBOL) {
+                    $children[] = $this->match(MySQLLexer::INDEX_SYMBOL);
+                    $children[] = $this->indexRef();
+                } else if(
+                    $this->serverVersion >= 80014 && 
+                    $token->getType() === MySQLLexer::TABLESPACE_SYMBOL
+                ) {
                     $children[] = $this->match(MySQLLexer::TABLESPACE_SYMBOL);
                     $children[] = $this->tablespaceRef();
+                } else if($token->getType() === MySQLLexer::SPATIAL_SYMBOL) {
+                    $children[] = $this->match(MySQLLexer::SPATIAL_SYMBOL);
+                    $children[] = $this->match(MySQLLexer::REFERENCE_SYMBOL);
+                    $children[] = $this->match(MySQLLexer::SYSTEM_SYMBOL);
+                    $children[] = $this->real_ulonglong_number();
                 } else {
                     throw new \Exception('Unexpected token in showStatement: ' . $token->getText());
                 }
@@ -9069,58 +9090,6 @@ class MySQLParser {
                 }
             } elseif ($token1->getType() === MySQLLexer::PRIVILEGES_SYMBOL) {
                 $children[] = $this->match(MySQLLexer::PRIVILEGES_SYMBOL);
-            } elseif ($token1->getText() === 'CREATE PROCEDURE' ||
-                    $token1->getText() === 'CREATE FUNCTION' ||
-                    $token1->getText() === 'CREATE EVENT' ||
-                    $token1->getText() === 'CREATE TABLE' ||
-                    $token1->getText() === 'CREATE VIEW' ||
-                    $token1->getText() === 'CREATE TRIGGER') {
-                $children[] = $this->match(MySQLLexer::CREATE_SYMBOL);
-                $token = $this->lexer->peekNextToken();
-                if ($token->getType() === MySQLLexer::PROCEDURE_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::PROCEDURE_SYMBOL);
-                    $children[] = $this->procedureRef();
-                } elseif ($token->getType() === MySQLLexer::FUNCTION_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::FUNCTION_SYMBOL);
-                    $children[] = $this->functionRef();
-                } elseif ($token->getType() === MySQLLexer::EVENT_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::EVENT_SYMBOL);
-                    $children[] = $this->eventRef();
-                } elseif ($token->getType() === MySQLLexer::TABLE_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::TABLE_SYMBOL);
-                    $children[] = $this->tableRef();
-                } elseif ($token->getType() === MySQLLexer::VIEW_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::VIEW_SYMBOL);
-                    $children[] = $this->viewRef();
-                } elseif ($token->getType() === MySQLLexer::TRIGGER_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::TRIGGER_SYMBOL);
-                    $children[] = $this->triggerRef();
-                } else {
-                    throw new \Exception('Unexpected token in showStatement: ' . $token->getText());
-                }
-            } elseif ($this->serverVersion >= 80000 && $token1->getText() === 'CREATE USER') {
-                $children[] = $this->match(MySQLLexer::CREATE_SYMBOL);
-                $children[] = $this->match(MySQLLexer::USER_SYMBOL);
-                $children[] = $this->user();
-            } elseif ($this->serverVersion >= 80000 &&
-                    ($token1->getText() === 'CREATE ROLE' || $token1->getText() === 'CREATE SPATIAL REFERENCE SYSTEM')) {
-                $children[] = $this->match(MySQLLexer::CREATE_SYMBOL);
-                $token = $this->lexer->peekNextToken();
-                if ($token->getType() === MySQLLexer::ROLE_SYMBOL) {
-                    $children[] = $this->match(MySQLLexer::ROLE_SYMBOL);
-                    $children[] = $this->roleRef();
-                } elseif ($token->getText() === 'SPATIAL REFERENCE SYSTEM') {
-                    $children[] = $this->match(MySQLLexer::SPATIAL_SYMBOL);
-                    $children[] = $this->match(MySQLLexer::REFERENCE_SYMBOL);
-                    $children[] = $this->match(MySQLLexer::SYSTEM_SYMBOL);
-                    $children[] = $this->real_ulonglong_number();
-                } else {
-                    throw new \Exception('Unexpected token in showStatement: ' . $token->getText());
-                }
-            } elseif ($this->serverVersion >= 80014 && $token1->getText() === 'CREATE TABLESPACE') {
-                $children[] = $this->match(MySQLLexer::CREATE_SYMBOL);
-                $children[] = $this->match(MySQLLexer::TABLESPACE_SYMBOL);
-                $children[] = $this->tablespaceRef();
             } elseif ($token1->getType() === MySQLLexer::CONSTRAINTS_SYMBOL ||
                     $token1->getText() === 'INDEXES' ||
                     $token1->getText() === 'KEYS') {
