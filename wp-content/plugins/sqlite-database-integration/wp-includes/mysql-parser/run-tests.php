@@ -22,7 +22,8 @@ SELECT HIGH_PRIORITY DISTINCT
     DATE_ADD(col_b, INTERVAL 1 DAY) as date_plus_one,
 	col_a
 FROM 
-(SELECT `mycol`, 997482686 FROM "mytable") as subquery
+my_table as subquery
+FORCE INDEX (idx_col_a)
 LEFT JOIN (SELECT a_column_yo from mytable) as t2 
     ON (t2.id = mytable.id AND t2.id = 1)
 WHERE NOT EXISTS (SELECT 1)
@@ -174,10 +175,10 @@ ACID,
     'showTables' => 'SHOW TABLES;',
     'showColumns' => 'SHOW COLUMNS FROM products;',
     'showIndexes' => 'SHOW INDEXES FROM products;',
-    // 'showConstraints' => 'SHOW CONSTRAINTS FROM products;',
+    'showConstraints' => 'SHOW CONSTRAINTS FROM products;',
     'showCreateTable' => 'SHOW CREATE TABLE products;',
-    // 'showStatus' => 'SHOW STATUS;',
-    // 'showVariables' => 'SHOW VARIABLES;',
+    'showStatus' => 'SHOW STATUS;',
+    'showVariables' => 'SHOW VARIABLES;',
     'showProcesslist' => 'SHOW PROCESSLIST;',
     'showGrants' => 'SHOW GRANTS;',
     'showPrivileges' => 'SHOW PRIVILEGES;',
@@ -194,11 +195,11 @@ ACID,
     'showCreateProcedure' => 'SHOW CREATE PROCEDURE myprocedure;',
     'showCreateView' => 'SHOW CREATE VIEW myview;',
     'showCreateUser' => 'SHOW CREATE USER myuser;',
-    // 'showCreateRole' => 'SHOW CREATE ROLE myrole;',
-    // 'showCreateTablespace' => 'SHOW CREATE TABLESPACE mytablespace;',
+    'showCreateRole' => 'SHOW CREATE ROLE myrole;',
+    'showCreateTablespace' => 'SHOW CREATE TABLESPACE mytablespace;',
     'showCreateDatabase' => 'SHOW CREATE DATABASE mydatabase;',
     // 'showCreateIndex' => 'SHOW CREATE INDEX idx_col_h_i_j;',
-    // 'showCreateFulltextIndex' => 'SHOW CREATE FULLTEXT INDEX idx_col_l;',
+    'showCreateFulltextIndex' => 'SHOW CREATE FULLTEXT INDEX idx_col_l;',
 
     'setVariable' => 'SET @myvar = 1;',
     'setGlobalVariable' => 'SET GLOBAL myvar = 1;',

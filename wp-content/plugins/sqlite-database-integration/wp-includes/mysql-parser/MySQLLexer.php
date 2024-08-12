@@ -847,6 +847,8 @@ class MySQLLexer {
     public const CONCAT_SYMBOL = 844;
     public const OVER_SYMBOL = 845;
     public const IO_THREAD_SYMBOL = 846;
+    public const REPLICA_SYMBOL = 847;
+    public const CONSTRAINTS_SYMBOL = 848;
 
     public const EOF = -1;
 
@@ -2249,6 +2251,9 @@ class MySQLLexer {
                 break;
             case 'CONSTRAINT':
                 $this->CONSTRAINT_SYMBOL();
+                break;
+            case 'CONSTRAINTS':
+                $this->CONSTRAINTS_SYMBOL();
                 break;
             case 'CONSTRAINT_CATALOG':
                 $this->CONSTRAINT_CATALOG_SYMBOL();
@@ -5684,6 +5689,11 @@ class MySQLLexer {
     protected function CONSTRAINT_SYMBOL()
     {
         $this->setType(self::CONSTRAINT_SYMBOL);
+    }
+
+    protected function CONSTRAINTS_SYMBOL()
+    {
+        $this->setType(self::CONSTRAINTS_SYMBOL);
     }
 
     protected function CONSTRAINT_CATALOG_SYMBOL()
