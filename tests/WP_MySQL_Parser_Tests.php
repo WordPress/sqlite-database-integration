@@ -10,8 +10,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 	/**
 	 * @dataProvider mysqlQueries
 	 */
-	public function testParsesWithoutErrors( $query ) {
-		$lexer = new MySQLLexer($query, 80019);
+	public function testParsesWithoutErrors( $query, $mysql_version=80000 ) {
+		$lexer = new MySQLLexer($query, $mysql_version);
 		$parser = new MySQLParser($lexer);
 		$parser->query();
 
@@ -22,28 +22,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 
 	public static function mysqlQueries() {
 		return array(
-			'simple' => ['SELECT 1'],
-			'simple' => ['SELECT 1'],
-			'complexSelect' => [<<<SQL
-				WITH mytable AS (select 1 as a, `b`.c from dual)
-					SELECT HIGH_PRIORITY DISTINCT
-						CONCAT("a", "b"),
-						UPPER(z),
-						DATE_FORMAT(col_a, '%Y-%m-%d %H:%i:%s') as formatted_date,
-						DATE_ADD(col_b, INTERVAL 1 DAY) as date_plus_one,
-						col_a
-					FROM 
-					my_table as subquery
-					FORCE INDEX (idx_col_a)
-					LEFT JOIN (SELECT a_column_yo from mytable) as t2 
-						ON (t2.id = mytable.id AND t2.id = 1)
-					WHERE NOT EXISTS (SELECT 1)
-					GROUP BY col_a, col_b
-					HAVING 1 = 2
-					UNION SELECT * from table_cde
-					ORDER BY col_a DESC, col_b ASC
-					FOR UPDATE
-				SQL],
+			// CREATE
+			'createDatabase' => ['CREATE DATABASE mydatabase;'],
 			'createTable' => [<<<SQL
 				CREATE TABLE products (
 						product_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -68,6 +48,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 						FULLTEXT INDEX idx_col_l (`col_l`)
 					) DEFAULT CHARACTER SET cp1250 COLLATE cp1250_general_ci;
 				SQL],
+
+			// INSERT 
 			'insertMulti' => [<<<SQL
 				INSERT INTO customers (first_name, last_name, email, phone_number, address, birth_date)
 					VALUES 
@@ -95,6 +77,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 					phone_number = VALUES(phone_number), 
 					address = VALUES(address);
 				SQL],
+
+			// UPDATE
 			'updateJoin' => [<<<SQL
 				UPDATE orders o
 					JOIN (
@@ -133,6 +117,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 					WHERE `status` = 'Pending'
 					LIMIT 10;
 				SQL],
+
+			// DELETE
 			'deleteJoin' => [<<<SQL
 					DELETE o
 					FROM orders o
@@ -150,23 +136,82 @@ class WP_MySQL_Parser_Tests extends TestCase {
 					WHERE `status` = 'Cancelled'
 					LIMIT 5;
 				SQL],
+
+			// ALTER
 			'alterConstraint' => [<<<SQL
 					ALTER TABLE orders
 					ADD CONSTRAINT fk_product_id
 					FOREIGN KEY (product_id) REFERENCES products(product_id)
 					ON DELETE CASCADE;
-				SQL],
+				SQL,
+				80017
+			],
 			'alterColumn' => ['ALTER TABLE products
 					MODIFY COLUMN product_name VARCHAR(200) NOT NULL;'],
 			'alterIndex' => ['ALTER TABLE products
 					DROP INDEX idx_col_h_i,
 					ADD INDEX idx_col_h_i_j (`col_h`, `col_i`, `col_j`);'],
+
+			// SELECT
+			'simple' => ['SELECT 1'],
+			'complexSelect' => [<<<SQL
+				WITH mytable AS (select 1 as a, `b`.c from dual)
+					SELECT HIGH_PRIORITY DISTINCT
+						CONCAT("a", "b"),
+						UPPER(z),
+						DATE_FORMAT(col_a, '%Y-%m-%d %H:%i:%s') as formatted_date,
+						DATE_ADD(col_b, INTERVAL 1 DAY) as date_plus_one,
+						col_a
+					FROM 
+					my_table as subquery
+					FORCE INDEX (idx_col_a)
+					LEFT JOIN (SELECT a_column_yo from mytable) as t2 
+						ON (t2.id = mytable.id AND t2.id = 1)
+					WHERE NOT EXISTS (SELECT 1)
+					GROUP BY col_a, col_b
+					HAVING 1 = 2
+					UNION SELECT * from table_cde
+					ORDER BY col_a DESC, col_b ASC
+					FOR UPDATE
+				SQL],
+
+			// DROP
 			'dropTable' => ['DROP TABLE products;'],
 			'dropIndex' => ['DROP INDEX idx_col_h_i_j ON products;'],
 			'dropColumn' => ['ALTER TABLE products DROP COLUMN product_name;'],
 			'dropConstraint' => ['ALTER TABLE products DROP FOREIGN KEY fk_product_id;'],
 			'dropDatabase' => ['DROP DATABASE mydatabase;'],
-			'createDatabase' => ['CREATE DATABASE mydatabase;'],
+
+			// GRANT
+			'grantAll' => ['GRANT ALL ON mydatabase TO myuser@localhost;'],
+			'grantSelect' => ['GRANT SELECT ON mydatabase TO myuser@localhost;'],
+			'grantInsert' => ['GRANT INSERT ON mydatabase TO myuser@localhost;'],
+			'grantUpdate' => ['GRANT UPDATE ON mydatabase TO myuser@localhost;'],
+			'grantDelete' => ['GRANT DELETE ON mydatabase TO myuser@localhost;'],
+			'grantCreate' => ['GRANT CREATE ON mydatabase TO myuser@localhost;'],
+			'grantDrop' => ['GRANT DROP ON mydatabase TO myuser@localhost;'],
+			'grantAlter' => ['GRANT ALTER ON mydatabase TO myuser@localhost;'],
+			'grantIndex' => ['GRANT INDEX ON mydatabase TO myuser@localhost;'],
+			'grantCreateView' => ['GRANT CREATE VIEW ON mydatabase TO myuser@localhost;'],
+			'grantShowView' => ['GRANT SHOW VIEW ON mydatabase TO myuser@localhost;'],
+			'grantCreateRoutine' => ['GRANT CREATE ROUTINE ON mydatabase TO myuser@localhost;'],
+			'grantAlterRoutine' => ['GRANT ALTER ROUTINE ON mydatabase TO myuser@localhost;'],
+			'grantExecute' => ['GRANT EXECUTE ON mydatabase TO myuser@localhost;'],
+			'grantEvent' => ['GRANT EVENT ON mydatabase TO myuser@localhost;'],
+			'grantTrigger' => ['GRANT TRIGGER ON mydatabase TO myuser@localhost;'],
+			'grantLockTables' => ['GRANT LOCK TABLES ON mydatabase TO myuser@localhost;'],
+			'grantReferences' => ['GRANT REFERENCES ON mydatabase TO myuser@localhost;'],
+			'grantCreateTemporaryTables' => ['GRANT CREATE TEMPORARY TABLES ON mydatabase TO myuser@localhost;'],
+			'grantShowDatabases' => ['GRANT SHOW DATABASES ON mydatabase TO myuser@localhost;'],
+			'grantSuper' => ['GRANT SUPER ON mydatabase TO myuser@localhost;'],
+			'grantReload' => ['GRANT RELOAD ON mydatabase TO myuser@localhost;'],
+			'grantShutdown' => ['GRANT SHUTDOWN ON mydatabase TO myuser@localhost;', 80017],
+			'grantProcess' => ['GRANT PROCESS ON mydatabase TO myuser@localhost;'],
+			'grantFile' => ['GRANT FILE ON mydatabase TO myuser@localhost;'],
+			'grantSelectOnAllTables' => ['GRANT SELECT ON mydatabase.* TO myuser@localhost;', 80000],
+			'grantSelectOnTable' => ['GRANT SELECT ON mydatabase.mytable TO myuser@localhost;', 80017],
+
+			// SHOW
 			'showDatabases' => ['SHOW DATABASES;'],
 			'showTables' => ['SHOW TABLES;'],
 			'showColumns' => ['SHOW COLUMNS FROM products;'],
@@ -193,12 +238,14 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'showCreateView' => ['SHOW CREATE VIEW myview;'],
 			'showCreateUser' => ['SHOW CREATE USER myuser;'],
 			'showCreateRole' => ['SHOW CREATE ROLE myrole;'],
-			'showCreateTablespace' => ['SHOW CREATE TABLESPACE mytablespace;'],
+			'showCreateTablespace' => ['SHOW CREATE TABLESPACE mytablespace;', 80017],
 			'showCreateDatabase' => ['SHOW CREATE DATABASE mydatabase;'],
 			'showCreateDatabaseIfNotExists' => ['SHOW CREATE DATABASE IF NOT EXISTS myevent;'],
 			'showExtended' => ['SHOW EXTENDED COLUMNS FROM products;'],
 			'showFull' => ['SHOW FULL COLUMNS FROM products;'],
 			'showExtendedFull' => ['SHOW EXTENDED FULL COLUMNS FROM products;'],
+
+			// SET
 			'setVariable' => ['SET @myvar = 1;'],
 			'setGlobalVariable' => ['SET GLOBAL myvar = 1;'],
 			'setSessionVariable' => ['SET SESSION myvar = 1;'],
@@ -212,6 +259,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'setSqlMode' => ['SET SQL_MODE = "ANSI_QUOTES";'],
 			'setTimeZone' => ['SET TIME_ZONE = "+00:00";'],
 			'setPassword' => ["SET PASSWORD = 'newpassword';"],
+
+			// Transactions
 			'begin' => ['BEGIN;'],
 			'commit' => ['COMMIT;'],
 			'rollback' => ['ROLLBACK;'],

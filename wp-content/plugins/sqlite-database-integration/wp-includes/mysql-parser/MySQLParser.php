@@ -7492,7 +7492,7 @@ class MySQLParser {
                 $children[] = $this->match(MySQLLexer::ADMIN_SYMBOL);
                 $children[] = $this->match(MySQLLexer::OPTION_SYMBOL);
             }
-        } elseif (($token->getType() === MySQLLexer::SELECT_SYMBOL ||
+        } elseif ($token->getType() === MySQLLexer::SELECT_SYMBOL ||
                    $token->getType() === MySQLLexer::INSERT_SYMBOL ||
                    $token->getType() === MySQLLexer::UPDATE_SYMBOL ||
                    $token->getType() === MySQLLexer::REFERENCES_SYMBOL ||
@@ -7520,11 +7520,12 @@ class MySQLParser {
                    $token->getType() === MySQLLexer::LOCK_SYMBOL ||
                    $token->getType() === MySQLLexer::REPLICATION_SYMBOL ||
                    $token->getType() === MySQLLexer::SHOW_SYMBOL ||
+                   $token->getType() === MySQLLexer::ALTER_SYMBOL ||
                    ($this->serverVersion > 80000 &&
                     ($token->getType() === MySQLLexer::CREATE_SYMBOL || $token->getType() === MySQLLexer::DROP_SYMBOL)) ||
                    $token->getType() === MySQLLexer::GRANT_SYMBOL ||
-                   $token->getType() === MySQLLexer::ALL_SYMBOL) &&
-                  $this->lexer->peekNextToken(2)->getType() === MySQLLexer::ON_SYMBOL) {
+                   $token->getType() === MySQLLexer::ALL_SYMBOL
+                ) {
             if ($token->getType() === MySQLLexer::ALL_SYMBOL) {
                 $children[] = $this->match(MySQLLexer::ALL_SYMBOL);
                 if ($this->lexer->peekNextToken()->getType() === MySQLLexer::PRIVILEGES_SYMBOL) {
@@ -7533,6 +7534,9 @@ class MySQLParser {
                 }
             } else {
                 $children[] = $this->roleOrPrivilegesList();
+            }
+            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::ROUTINE_SYMBOL) {
+                $children[] = $this->match(MySQLLexer::ROUTINE_SYMBOL);
             }
             $children[] = $this->match(MySQLLexer::ON_SYMBOL);
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::TABLE_SYMBOL ||
@@ -7837,32 +7841,10 @@ class MySQLParser {
         $token1 = $this->lexer->peekNextToken();
         $token2 = $this->lexer->peekNextToken(2);
         $children = [];
-
-        if ($this->serverVersion > 80000 &&
-            ($token1->getType() === MySQLLexer::IDENTIFIER ||
-             $token1->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
-             $token1->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
-             $this->isIdentifierKeyword($token1) ||
-             $token1->getType() === MySQLLexer::SINGLE_QUOTED_TEXT)) {
-            $children[] = $this->roleIdentifierOrText();
-            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::OPEN_PAR_SYMBOL) {
-                $children[] = $this->columnInternalRefList();
-            } elseif ($this->lexer->peekNextToken()->getType() === MySQLLexer::AT_TEXT_SUFFIX ||
-                      $this->lexer->peekNextToken()->getType() === MySQLLexer::AT_SIGN_SYMBOL) {
-                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::AT_TEXT_SUFFIX) {
-                    $children[] = $this->match(MySQLLexer::AT_TEXT_SUFFIX);
-                } else {
-                    $children[] = $this->match(MySQLLexer::AT_SIGN_SYMBOL);
-                    $children[] = $this->textOrIdentifier();
-                }
-            }
-
-            return new ASTNode('roleOrPrivilege', $children);
-        } elseif (($token1->getType() === MySQLLexer::SELECT_SYMBOL ||
+        if (($token1->getType() === MySQLLexer::SELECT_SYMBOL ||
                    $token1->getType() === MySQLLexer::INSERT_SYMBOL ||
                    $token1->getType() === MySQLLexer::UPDATE_SYMBOL ||
-                   $token1->getType() === MySQLLexer::REFERENCES_SYMBOL) &&
-                  $token2->getType() !== MySQLLexer::ON_SYMBOL) {
+                   $token1->getType() === MySQLLexer::REFERENCES_SYMBOL)) {
             if ($token1->getType() === MySQLLexer::SELECT_SYMBOL) {
                 $children[] = $this->match(MySQLLexer::SELECT_SYMBOL);
             } elseif ($token1->getType() === MySQLLexer::INSERT_SYMBOL) {
@@ -7899,9 +7881,13 @@ class MySQLParser {
             $children[] = $this->match(MySQLLexer::GRANT_SYMBOL);
             $children[] = $this->match(MySQLLexer::OPTION_SYMBOL);
             return new ASTNode('roleOrPrivilege', $children);
-        } elseif ($token1->getType() === MySQLLexer::SHOW_SYMBOL) {
+        } elseif ($token1->getType() === MySQLLexer::SHOW_SYMBOL && $token2->getType() === MySQLLexer::DATABASES_SYMBOL) {
             $children[] = $this->match(MySQLLexer::SHOW_SYMBOL);
             $children[] = $this->match(MySQLLexer::DATABASES_SYMBOL);
+            return new ASTNode('roleOrPrivilege', $children);
+        } elseif ($token1->getType() === MySQLLexer::SHOW_SYMBOL && $token2->getType() === MySQLLexer::VIEW_SYMBOL) {
+            $children[] = $this->match(MySQLLexer::SHOW_SYMBOL);
+            $children[] = $this->match(MySQLLexer::VIEW_SYMBOL);
             return new ASTNode('roleOrPrivilege', $children);
         } elseif ($token1->getType() === MySQLLexer::CREATE_SYMBOL) {
             $children[] = $this->match(MySQLLexer::CREATE_SYMBOL);
@@ -7940,10 +7926,6 @@ class MySQLParser {
                 throw new \Exception('Unexpected token in roleOrPrivilege: ' . $this->lexer->peekNextToken()->getText());
             }
             return new ASTNode('roleOrPrivilege', $children);
-        } elseif ($token1->getType() === MySQLLexer::SHOW_SYMBOL) {
-            $children[] = $this->match(MySQLLexer::SHOW_SYMBOL);
-            $children[] = $this->match(MySQLLexer::VIEW_SYMBOL);
-            return new ASTNode('roleOrPrivilege', $children);
         } elseif ($token1->getType() === MySQLLexer::ALTER_SYMBOL) {
             $children[] = $this->match(MySQLLexer::ALTER_SYMBOL);
             if ($this->lexer->peekNextToken()->getType() === MySQLLexer::ROUTINE_SYMBOL) {
@@ -7959,6 +7941,26 @@ class MySQLParser {
                 $children[] = $this->match(MySQLLexer::DROP_SYMBOL);
             }
             $children[] = $this->match(MySQLLexer::ROLE_SYMBOL);
+            return new ASTNode('roleOrPrivilege', $children);
+        } elseif ($this->serverVersion > 80000 &&
+            ($token1->getType() === MySQLLexer::IDENTIFIER ||
+            $token1->getType() === MySQLLexer::BACK_TICK_QUOTED_ID ||
+            $token1->getType() === MySQLLexer::DOUBLE_QUOTED_TEXT ||
+            $this->isIdentifierKeyword($token1) ||
+            $token1->getType() === MySQLLexer::SINGLE_QUOTED_TEXT)) {
+            $children[] = $this->roleIdentifierOrText();
+            if ($this->lexer->peekNextToken()->getType() === MySQLLexer::OPEN_PAR_SYMBOL) {
+                $children[] = $this->columnInternalRefList();
+            } elseif ($this->lexer->peekNextToken()->getType() === MySQLLexer::AT_TEXT_SUFFIX ||
+                    $this->lexer->peekNextToken()->getType() === MySQLLexer::AT_SIGN_SYMBOL) {
+                if ($this->lexer->peekNextToken()->getType() === MySQLLexer::AT_TEXT_SUFFIX) {
+                    $children[] = $this->match(MySQLLexer::AT_TEXT_SUFFIX);
+                } else {
+                    $children[] = $this->match(MySQLLexer::AT_SIGN_SYMBOL);
+                    $children[] = $this->textOrIdentifier();
+                }
+            }
+
             return new ASTNode('roleOrPrivilege', $children);
         } else {
             throw new \Exception('Unexpected token in roleOrPrivilege: ' . $token1->getText());

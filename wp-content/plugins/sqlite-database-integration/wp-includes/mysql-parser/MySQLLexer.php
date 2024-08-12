@@ -4017,6 +4017,9 @@ class MySQLLexer {
                     $this->IDENTIFIER();
                 }
                 break;
+            case 'ROUTINE':
+                $this->ROUTINE_SYMBOL();
+                break;
             case 'ROW':
                 if ($this->serverVersion < 80000) {
                     $this->ROW_SYMBOL();
@@ -8941,6 +8944,11 @@ class MySQLLexer {
     protected function IDENTIFIER()
     {
         $this->setType(self::IDENTIFIER);
+    }
+    
+    protected function ROUTINE_SYMBOL()
+    {
+        $this->setType(self::ROUTINE_SYMBOL);
     }
 
     protected function MYSQL_COMMENT_START()

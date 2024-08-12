@@ -12,11 +12,12 @@ require __DIR__ . '/MySQLLexer.php';
 require __DIR__ . '/MySQLParser.php';
 
 $queries = [
-    'simple' => 'SELECT 1',
+    'simple' => ['SELECT 1'],
+    'grantSelectOnAll' => ['GRANT SELECT ON mydatabase.* TO myuser@localhost;'],
 ];
 
 foreach ($queries as $key => $query) {
-    printAST(parse($query));
+    printAST(parse($query[0]));
 }
 // benchmarkParser($queries['acidTest']);
 
@@ -36,7 +37,7 @@ function benchmarkParser($query) {
 }
 
 function parse($query) {
-    $lexer = new MySQLLexer($query, 80019);
+    $lexer = new MySQLLexer($query, 80000);
     $parser = new MySQLParser($lexer);
     return $parser->query();
 }
