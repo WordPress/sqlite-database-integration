@@ -772,7 +772,23 @@ class WP_SQLite_Translator {
 	 * @throws Exception If the query is not supported.
 	 */
 	private function execute_mysql_query( $query ) {
-		$tokens           = ( new WP_SQLite_Lexer( $query ) )->tokens;
+		$tokens = ( new WP_SQLite_Lexer( $query ) )->tokens;
+
+		// SQLite does not support CURRENT_TIMESTAMP() calls with parentheses.
+		// Since CURRENT_TIMESTAMP() can appear in most types of SQL queries,
+		// let's remove the parentheses globally before further processing.
+		foreach ( $tokens as $i => $token ) {
+			if ( WP_SQLite_Token::TYPE_KEYWORD === $token->type && 'CURRENT_TIMESTAMP' === $token->keyword ) {
+				$paren_open  = $tokens[ $i + 1 ] ?? null;
+				$paren_close = $tokens[ $i + 2 ] ?? null;
+				if ( WP_SQLite_Token::TYPE_OPERATOR === $paren_open->type && '(' === $paren_open->value
+					&& WP_SQLite_Token::TYPE_OPERATOR === $paren_close->type && ')' === $paren_close->value ) {
+					unset( $tokens[ $i + 1 ], $tokens[ $i + 2 ] );
+				}
+			}
+		}
+		$tokens = array_values( $tokens );
+
 		$this->rewriter   = new WP_SQLite_Query_Rewriter( $tokens );
 		$this->query_type = $this->rewriter->peek()->value;
 
