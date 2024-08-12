@@ -4531,6 +4531,9 @@ class MySQLLexer {
             case 'UNINSTALL':
                 $this->UNINSTALL_SYMBOL();
                 break;
+            case 'UNLOCK':
+                $this->UNLOCK_SYMBOL();
+                break;
             case 'UNSIGNED':
                 $this->UNSIGNED_SYMBOL();
                 break;
@@ -8663,6 +8666,11 @@ class MySQLLexer {
     protected function UNINSTALL_SYMBOL()
     {
         $this->setType(self::UNINSTALL_SYMBOL);
+    }
+
+    protected function UNLOCK_SYMBOL()
+    {
+        $this->setType(self::UNLOCK_SYMBOL);
     }
 
     protected function UNSIGNED_SYMBOL()
