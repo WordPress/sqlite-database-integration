@@ -7519,7 +7519,7 @@ class MySQLParser {
                    ($this->serverVersion < 80000 && $token->getType() === MySQLLexer::FUNCTION_SYMBOL) ||
                    $token->getType() === MySQLLexer::LOCK_SYMBOL ||
                    $token->getType() === MySQLLexer::REPLICATION_SYMBOL ||
-                   $token->getType() === MySQLLexer::SHOW_SYMBOL
+                   $token->getType() === MySQLLexer::SHOW_SYMBOL ||
                    ($this->serverVersion > 80000 &&
                     ($token->getType() === MySQLLexer::CREATE_SYMBOL || $token->getType() === MySQLLexer::DROP_SYMBOL)) ||
                    $token->getType() === MySQLLexer::GRANT_SYMBOL ||
