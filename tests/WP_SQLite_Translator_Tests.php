@@ -871,7 +871,7 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
-	public function testAlterTableAddColumn() {
+	public function testAlterTableAddAndDropColumn() {
 		$result = $this->assertQuery(
 			"CREATE TABLE _tmp_table (
 				name varchar(20) NOT NULL default ''
@@ -900,6 +900,90 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Null'    => 'YES',
 					'Key'     => '',
 					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		$result = $this->assertQuery( 'ALTER TABLE _tmp_table ADD `column2` int;' );
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'column',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'column2',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		$result = $this->assertQuery( 'ALTER TABLE _tmp_table DROP COLUMN `column`;' );
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'column2',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		$result = $this->assertQuery( 'ALTER TABLE _tmp_table DROP `column2`;' );
+		$this->assertEquals( '', $this->engine->get_error_message() );
+		$this->assertEquals( 1, $result );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
 					'Extra'   => '',
 				),
 			),
@@ -936,6 +1020,428 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => 'foo',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testColumnWithOnUpdate() {
+		// CREATE TABLE with ON UPDATE
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id int(11) NOT NULL,
+				created_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP
+			);'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// ADD COLUMN with ON UPDATE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table ADD COLUMN updated_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'updated_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// assert ON UPDATE triggers
+		$results = $this->assertQuery( "SELECT * FROM sqlite_master WHERE type = 'trigger'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'type'     => 'trigger',
+					'name'     => '___tmp_table_created_at_on_update__',
+					'tbl_name' => '_tmp_table',
+					'rootpage' => '0',
+					'sql'      => "CREATE TRIGGER \"___tmp_table_created_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"created_at\" = CURRENT_TIMESTAMP WHERE id = NEW.id;\n\t\t\tEND",
+				),
+				(object) array(
+					'type'     => 'trigger',
+					'name'     => '___tmp_table_updated_at_on_update__',
+					'tbl_name' => '_tmp_table',
+					'rootpage' => '0',
+					'sql'      => "CREATE TRIGGER \"___tmp_table_updated_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE id = NEW.id;\n\t\t\tEND",
+				),
+			),
+			$results
+		);
+
+		// on INSERT, no timestamps are expected
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertNull( $result[0]->created_at );
+		$this->assertNull( $result[0]->updated_at );
+
+		// on UPDATE, we expect timestamps in form YYYY-MM-DD HH:MM:SS
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 2' );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated_at );
+
+		// drop ON UPDATE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table
+			CHANGE created_at created_at timestamp NULL,
+			CHANGE COLUMN updated_at updated_at timestamp NULL'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'updated_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// assert ON UPDATE triggers are removed
+		$results = $this->assertQuery( "SELECT * FROM sqlite_master WHERE type = 'trigger'" );
+		$this->assertEquals( array(), $results );
+
+		// now, no timestamps are expected
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (10)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 11 WHERE id = 10' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 11' );
+		$this->assertNull( $result[0]->created_at );
+		$this->assertNull( $result[0]->updated_at );
+	}
+
+	public function testAlterTableWithColumnFirstAndAfter() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				id int(11) NOT NULL,
+				name varchar(20) NOT NULL default ''
+			);"
+		);
+
+		// ADD COLUMN with FIRST
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table ADD COLUMN new_first_column VARCHAR(255) NOT NULL DEFAULT '' FIRST"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// ADD COLUMN with AFTER
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table ADD COLUMN new_column VARCHAR(255) NOT NULL DEFAULT '' AFTER id"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// CHANGE with FIRST
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL DEFAULT '0' FIRST"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// CHANGE with AFTER
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table CHANGE id id int(11) NOT NULL DEFAULT '0' AFTER name"
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_first_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new_column',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testAlterTableWithMultiColumnFirstAndAfter() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id int(11) NOT NULL
+			);'
+		);
+
+		// ADD COLUMN
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table
+			ADD COLUMN new1 varchar(255) NOT NULL,
+			ADD COLUMN new2 varchar(255) NOT NULL FIRST,
+			ADD COLUMN new3 varchar(255) NOT NULL AFTER new1'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new1',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new2',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new3',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// CHANGE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table
+			CHANGE new1 new1 int(11) NOT NULL FIRST,
+			CHANGE new2 new2 int(11) NOT NULL,
+			CHANGE new3 new3 int(11) NOT NULL AFTER new2'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new1',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new2',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'new3',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
 					'Extra'   => '',
 				),
 			),
@@ -2389,6 +2895,91 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
+	public function testTranslateLikeBinaryAndGlob() {
+		// Create a temporary table for testing
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name varchar(20) NOT NULL default ''
+        );"
+		);
+
+		// Insert data into the table
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('first');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('FIRST');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('second');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('%special%');" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (name) VALUES (NULL);' );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('special%chars');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('special_chars');" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('special\\chars');" );
+
+		// Test case-sensitive LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'first'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test case-sensitive LIKE BINARY with wildcard %
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'f%'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test case-sensitive LIKE BINARY with wildcard _
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'f_rst'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test case-insensitive LIKE
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE 'FIRST'" );
+		$this->assertCount( 2, $result ); // Should match both 'first' and 'FIRST'
+
+		// Test mixed case with LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'First'" );
+		$this->assertCount( 0, $result );
+
+		// Test no matches with LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'third'" );
+		$this->assertCount( 0, $result );
+
+		// Test GLOB equivalent for case-sensitive matching with wildcard
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'f*'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test GLOB with single character wildcard
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'f?rst'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		// Test GLOB with no matches
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'S*'" );
+		$this->assertCount( 0, $result );
+
+		// Test GLOB case sensitivity with LIKE and GLOB
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'first';" );
+		$this->assertCount( 1, $result ); // Should only match 'first'
+
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name GLOB 'FIRST';" );
+		$this->assertCount( 1, $result ); // Should only match 'FIRST'
+
+		// Test NULL comparison with LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'first';" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'first', $result[0]->name );
+
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE name LIKE BINARY NULL;' );
+		$this->assertCount( 0, $result );  // NULL comparison should return no results
+
+		// Test pattern with special characters using LIKE BINARY
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY '%special%';" );
+		$this->assertCount( 4, $result );
+		$this->assertEquals( '%special%', $result[0]->name );
+		$this->assertEquals( 'special%chars', $result[1]->name );
+		$this->assertEquals( 'special_chars', $result[2]->name );
+		$this->assertEquals( 'specialchars', $result[3]->name );
+	}
+
 	public function testOnConflictReplace() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
@@ -2500,6 +3091,46 @@ QUERY
 			),
 			$result
 		);
+	}
+
+	public function testCurrentTimestamp() {
+		// SELECT
+		$results = $this->assertQuery(
+			'SELECT
+				current_timestamp AS t1,
+				CURRENT_TIMESTAMP AS t2,
+				current_timestamp() AS t3,
+				CURRENT_TIMESTAMP() AS t4'
+		);
+		$this->assertIsArray( $results );
+		$this->assertCount( 1, $results );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $results[0]->t1 );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $results[0]->t2 );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $results[0]->t3 );
+
+		// INSERT
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', CURRENT_TIMESTAMP())"
+		);
+		$results = $this->assertQuery( 'SELECT option_value AS t FROM _dates' );
+		$this->assertCount( 1, $results );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $results[0]->t );
+
+		// UPDATE
+		$this->assertQuery( 'UPDATE _dates SET option_value = NULL' );
+		$results = $this->assertQuery( 'SELECT option_value AS t FROM _dates' );
+		$this->assertCount( 1, $results );
+		$this->assertEmpty( $results[0]->t );
+
+		$this->assertQuery( 'UPDATE _dates SET option_value = CURRENT_TIMESTAMP()' );
+		$results = $this->assertQuery( 'SELECT option_value AS t FROM _dates' );
+		$this->assertCount( 1, $results );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $results[0]->t );
+
+		// DELETE
+		// We can only assert that the query passes. It is not guaranteed that we'll actually
+		// delete the existing record, as the delete query could fall into a different second.
+		$this->assertQuery( 'DELETE FROM _dates WHERE option_value = CURRENT_TIMESTAMP()' );
 	}
 
 	/**
