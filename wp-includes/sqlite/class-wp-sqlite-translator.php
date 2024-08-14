@@ -2659,13 +2659,9 @@ class WP_SQLite_Translator {
 			! $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-				array( 'GROUP' )
+				array( 'GROUP BY' )
 			)
 		) {
-			return false;
-		}
-		$next = $this->rewriter->peek_nth( 2 )->value;
-		if ( 'BY' !== strtoupper( $next ?? '' ) ) {
 			return false;
 		}
 
@@ -2675,7 +2671,7 @@ class WP_SQLite_Translator {
 	}
 
 	/**
-	 * Translate WHERE something HAVING something to WHERE something AND something.
+	 * Translate HAVING without GROUP BY to GROUP BY 1 HAVING.
 	 *
 	 * @param WP_SQLite_Token $token The token to translate.
 	 *
@@ -2694,8 +2690,15 @@ class WP_SQLite_Translator {
 		if ( $this->has_group_by ) {
 			return false;
 		}
-		$this->rewriter->skip();
-		$this->rewriter->add( new WP_SQLite_Token( 'AND', WP_SQLite_Token::TYPE_KEYWORD ) );
+
+		// GROUP BY is missing, add "GROUP BY 1" before the HAVING clause.
+		$having = $this->rewriter->skip();
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+		$this->rewriter->add( new WP_SQLite_Token( 'GROUP BY', WP_SQLite_Token::TYPE_KEYWORD ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+		$this->rewriter->add( new WP_SQLite_Token( '1', WP_SQLite_Token::TYPE_NUMBER ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+		$this->rewriter->add( $having );
 
 		return true;
 	}

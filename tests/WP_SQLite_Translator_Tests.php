@@ -3133,6 +3133,85 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _dates WHERE option_value = CURRENT_TIMESTAMP()' );
 	}
 
+	public function testGroupByHaving() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				name varchar(20)
+			);'
+		);
+
+		$this->assertQuery(
+			"INSERT INTO _tmp_table VALUES ('a'), ('b'), ('b'), ('c'), ('c'), ('c')"
+		);
+
+		$result = $this->assertQuery(
+			'SELECT name, COUNT(*) as count FROM _tmp_table GROUP BY name HAVING COUNT(*) > 1'
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'  => 'b',
+					'count' => '2',
+				),
+				(object) array(
+					'name'  => 'c',
+					'count' => '3',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testHavingWithoutGroupBy() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				name varchar(20)
+			);'
+		);
+
+		$this->assertQuery(
+			"INSERT INTO _tmp_table VALUES ('a'), ('b'), ('b'), ('c'), ('c'), ('c')"
+		);
+
+		// HAVING condition satisfied
+		$result = $this->assertQuery(
+			"SELECT 'T' FROM _tmp_table HAVING COUNT(*) > 1"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					':param0' => 'T',
+				),
+			),
+			$result
+		);
+
+		// HAVING condition not satisfied
+		$result = $this->assertQuery(
+			"SELECT 'T' FROM _tmp_table HAVING COUNT(*) > 100"
+		);
+		$this->assertEquals(
+			array(),
+			$result
+		);
+
+		// DISTINCT ... HAVING, where only some results meet the HAVING condition
+		$result = $this->assertQuery(
+			'SELECT DISTINCT name FROM _tmp_table HAVING COUNT(*) > 1'
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name' => 'b',
+				),
+				(object) array(
+					'name' => 'c',
+				),
+			),
+			$result
+		);
+	}
+
 	/**
 	 * @dataProvider mysqlVariablesToTest
 	 */
