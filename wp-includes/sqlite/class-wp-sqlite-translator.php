@@ -2068,6 +2068,7 @@ class WP_SQLite_Translator {
 			|| $this->translate_regexp_functions( $token )
 			|| $this->capture_group_by( $token )
 			|| $this->translate_ungrouped_having( $token )
+			|| $this->translate_like_binary( $token )
 			|| $this->translate_like_escape( $token )
 			|| $this->translate_left_function( $token )
 		);
@@ -2591,6 +2592,57 @@ class WP_SQLite_Translator {
 			);
 		}
 		return true;
+	}
+	/**
+	 * Translate LIKE BINARY to SQLite equivalent using GLOB.
+	 *
+	 * @param WP_SQLite_Token $token The token to translate.
+	 *
+	 * @return bool
+	 */
+	private function translate_like_binary( $token ): bool {
+		if ( ! $token->matches( WP_SQLite_Token::TYPE_KEYWORD, null, array( 'LIKE' ) ) ) {
+			return false;
+		}
+
+		$next = $this->rewriter->peek_nth( 2 );
+		if ( ! $next || ! $next->matches( WP_SQLite_Token::TYPE_KEYWORD, null, array( 'BINARY' ) ) ) {
+			return false;
+		}
+
+		$this->rewriter->skip(); // Skip 'LIKE'
+		$this->rewriter->skip(); // Skip 'BINARY'
+
+		$pattern_token = $this->rewriter->peek();
+		$this->rewriter->skip(); // Skip the pattern token
+
+		$this->rewriter->add( new WP_SQLite_Token( 'GLOB', WP_SQLite_Token::TYPE_KEYWORD ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+
+		$escaped_pattern = $this->escape_like_to_glob( $pattern_token->value );
+		$this->rewriter->add( new WP_SQLite_Token( $escaped_pattern, WP_SQLite_Token::TYPE_STRING ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+
+		return true;
+	}
+
+	/**
+	 * Escape LIKE pattern to GLOB pattern.
+	 *
+	 * @param string $pattern The LIKE pattern.
+	 * @return string The escaped GLOB pattern.
+	 */
+	private function escape_like_to_glob( $pattern ) {
+		// Remove surrounding quotes
+		$pattern = trim( $pattern, "'\"" );
+
+		$pattern = str_replace( '%', '*', $pattern );
+		$pattern = str_replace( '_', '?', $pattern );
+
+		// No need to escape special characters in this case
+		// because GLOB doesn't require escaping in the same way LIKE does
+		// Return the pattern wrapped in single quotes
+		return "'" . $pattern . "'";
 	}
 
 	/**
