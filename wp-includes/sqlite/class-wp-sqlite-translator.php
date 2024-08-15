@@ -3081,6 +3081,70 @@ class WP_SQLite_Translator {
 				}
 				// We're done.
 				break;
+			} elseif ( 'ALTER' === $op_type ) {
+				$raw_from_name = 'COLUMN' === $op_subject ? $this->rewriter->skip()->token : $op_raw_subject;
+				$from_name     = $this->normalize_column_name( $raw_from_name );
+
+				$set_or_drop_default = $this->rewriter->peek()->matches(
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+					array( 'SET', 'DROP' )
+				) && $this->rewriter->peek_nth( 2 )->matches(
+					WP_SQLite_Token::TYPE_KEYWORD,
+					WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+					array( 'DEFAULT' )
+				);
+
+				// Handle "CHANGE <column> DROP DEFAULT" and "CHANGE <column> SET DEFAULT <value>".
+				if ( $set_or_drop_default ) {
+					$this->execute_change(
+						function ( $old_name, $old_column ) use ( $from_name ) {
+							//$old_column->consume_all();
+							//var_dump($old_column->get_updated_query());ob_flush();
+							//$old_column->replace_all([]);
+							if ( $from_name !== $old_name ) {
+								return null;
+							}
+
+							// 1. Drop "DEFAULT <value>" from old column definition.
+							do {
+								$is_default = $old_column->peek()->matches(
+									WP_SQLite_Token::TYPE_KEYWORD,
+									WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
+									array( 'DEFAULT' )
+								);
+								if ( $is_default ) {
+									$old_column->skip(); // DEFAULT
+									$old_column->skip(); // value
+								} else {
+									$old_column->consume();
+								}
+							} while ( $old_column->peek() );
+
+							// 2. For SET, add new "DEFAULT <value>" to column definition.
+							$keyword = $this->rewriter->consume();
+							if ( 'SET' === $keyword->value ) {
+								$old_column->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+								$old_column->add( $this->rewriter->consume() ); // DEFAULT
+								$old_column->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE ) );
+								$old_column->add( $this->rewriter->consume() ); // value
+							}
+							return $old_column->get_updated_query();
+						}
+					);
+
+					if ( ',' === $this->rewriter->peek()->value ) {
+						/*
+						 * If the terminator was a comma,
+						 * we need to continue processing the rest of the ALTER query.
+						 */
+						$this->rewriter->consume();
+						$comma = true;
+						continue;
+					}
+					// We're done.
+					break;
+				}
 			} elseif ( 'ADD' === $op_type && $is_index_op ) {
 				$key_name          = $this->rewriter->consume()->value;
 				$sqlite_index_type = $this->mysql_index_type_to_sqlite_type( $mysql_index_type );

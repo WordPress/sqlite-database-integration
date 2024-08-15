@@ -3056,6 +3056,94 @@ QUERY
 		$this->assertQuery( "SELECT $variable_name;" );
 	}
 
+	public function testAlterColumnSetAndDropDefault() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL
+			);'
+		);
+		$result = $this->assertQuery( 'DESCRIBE _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+
+		// SET DEFAULT
+		$this->assertQuery( "ALTER TABLE _tmp_table ALTER COLUMN name SET DEFAULT 'abc'" );
+		$result = $this->assertQuery( 'DESCRIBE _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'abc',
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+
+		// DROP DEFAULT
+		$this->assertQuery( 'ALTER TABLE _tmp_table ALTER COLUMN name DROP DEFAULT' );
+		$result = $this->assertQuery( 'DESCRIBE _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+
+		// multiple ALTER statements, with and without the COLUMN keyword
+		$this->assertQuery( "ALTER TABLE _tmp_table ADD COLUMN value varchar(255) DEFAULT 'aaa'" );
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table
+				ALTER name SET DEFAULT 'bbb',
+				ALTER COLUMN name DROP DEFAULT,
+				ALTER value DROP DEFAULT,
+				ALTER COLUMN name SET DEFAULT 'ccc'"
+		);
+		$result = $this->assertQuery( 'DESCRIBE _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'name',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'value',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'aaa',
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+	}
+
 	public static function mysqlVariablesToTest() {
 		return array(
 			// NOTE: This list was derived from the variables used by the UpdraftPlus plugin.
