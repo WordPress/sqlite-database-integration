@@ -3063,151 +3063,13 @@ class WP_SQLite_Translator {
 					$new_field->mysql_data_type
 				);
 
-				// Update the column definition using a callback.
-				// This is extracted here so that the CHANGE COLUMN logic below can be moved to a method and reused.
-				// It will unlock modifying the existing schema (SET/DROP DEFAULT) and implementing additional
-				// expressions like MODIFY COLUMN and DROP COLUMN in the future. Additionally, it should also enable
-				// modifying multiple columns at once in the future to avoid unnecessary table copying.
-				$update_column_callback = function ( $old_name ) use ( $from_name, $new_field ) {
-					if ( $from_name === $old_name ) {
-						return $this->make_sqlite_field_definition( $new_field );
-					}
-				};
-
-				/*
-				 * In SQLite, there is no direct equivalent to the CHANGE COLUMN
-				 * statement from MySQL. We need to do a bit of work to emulate it.
-				 *
-				 * The idea is to:
-				 * 1. Get the existing table schema.
-				 * 2. Adjust the column definition.
-				 * 3. Copy the data out of the old table.
-				 * 4. Drop the old table to free up the indexes names.
-				 * 5. Create a new table from the updated schema.
-				 * 6. Copy the data from step 3 to the new table.
-				 * 7. Drop the old table copy.
-				 * 8. Restore any indexes that were dropped in step 4.
-				 */
-
-				// 1. Get the existing table schema.
-				$old_schema  = $this->get_sqlite_create_table( $this->table_name );
-				$old_indexes = $this->get_keys( $this->table_name, false );
-
-				// 2. Adjust the column definition.
-
-				// First, tokenize the old schema.
-				$tokens       = ( new WP_SQLite_Lexer( $old_schema ) )->tokens;
-				$create_table = new WP_SQLite_Query_Rewriter( $tokens );
-
-				// Now, replace every reference to the old column name with the new column name.
-				$renames = array();
-				while ( true ) {
-					$token = $create_table->consume();
-					if ( ! $token ) {
-						break;
-					}
-					if ( WP_SQLite_Token::TYPE_STRING !== $token->type ) {
-						continue;
-					}
-
-					// We found the old column name, let's store it and remove it from the old schema.
-					$old_name_token = $create_table->drop_last();
-					$old_name       = $old_name_token->value;
-
-					// If the next token is a data type, we're dealing with a column definition.
-					$is_column_definition = $create_table->peek()->matches(
-						WP_SQLite_Token::TYPE_KEYWORD,
-						WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE
-					);
-					if ( $is_column_definition ) {
-						// Skip the old field definition in the old schema and store it separately.
-						$field_depth      = $create_table->depth;
-						$old_field_tokens = array( $old_name_token );
-						do {
-							$field_terminator   = $create_table->skip();
-							$old_field_tokens[] = new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE );
-							$old_field_tokens[] = $field_terminator;
-						} while (
-							! $this->is_create_table_field_terminator(
-								$field_terminator,
-								$field_depth,
-								$create_table->depth
-							)
-						);
-						array_pop( $old_field_tokens ); // terminator
-						$old_field = new WP_SQLite_Query_Rewriter( $old_field_tokens );
-
-						// Add an updated field definition.
-						//  1) string = new column definition,
-						//  2) null   = no change, use the old definition.
-						//  (We could add "false" to implement DROP COLUMN in the future.)
-						$definition = $update_column_callback( $old_name, $old_field );
-						if ( null === $definition ) {
-							$old_field->consume_all();
-							$definition = $old_field->get_updated_query();
+				$this->execute_change(
+					function ( $old_name ) use ( $from_name, $new_field ) {
+						if ( $from_name === $old_name ) {
+							return $this->make_sqlite_field_definition( $new_field );
 						}
-
-						// Save new column name.
-						$new_name             = ( new WP_SQLite_Lexer( $definition ) )->tokens[0] ?? $old_name;
-						$renames[ $old_name ] = $new_name->value;
-
-						// Technically it's not a token, but it's fine to cheat a little bit.
-						$create_table->add( new WP_SQLite_Token( $definition, WP_SQLite_Token::TYPE_KEYWORD ) );
-						// Restore the terminating "," or ")" token.
-						$create_table->add( $field_terminator );
-					} else {
-						// Otherwise, just add the new name in place of the old name we dropped.
-						$create_table->add(
-							isset( $renames[ $old_name ] )
-								? new WP_SQLite_Token( '"' . $renames[ $old_name ] . '"', WP_SQLite_Token::TYPE_STRING )
-								: $old_name_token
-						);
 					}
-				}
-
-				// 3. Copy the data out of the old table
-				$cache_table_name = "_tmp__{$this->table_name}_" . rand( 10000000, 99999999 );
-				$this->execute_sqlite_query(
-					"CREATE TABLE `$cache_table_name` as SELECT * FROM `$this->table_name`"
 				);
-
-				// 4. Drop the old table to free up the indexes names
-				$this->execute_sqlite_query( "DROP TABLE `$this->table_name`" );
-
-				// 5. Create a new table from the updated schema
-				$this->execute_sqlite_query( $create_table->get_updated_query() );
-
-				// 6. Copy the data from step 3 to the new table
-				$this->execute_sqlite_query( "INSERT INTO {$this->table_name} SELECT * FROM $cache_table_name" );
-
-				// 7. Drop the old table copy
-				$this->execute_sqlite_query( "DROP TABLE `$cache_table_name`" );
-
-				// 8. Restore any indexes that were dropped in step 4
-				foreach ( $old_indexes as $row ) {
-					/*
-					 * Skip indexes prefixed with sqlite_autoindex_
-					 * (these are automatically created by SQLite).
-					 */
-					if ( str_starts_with( $row['index']['name'], 'sqlite_autoindex_' ) ) {
-						continue;
-					}
-
-					$columns = array();
-					foreach ( $row['columns'] as $column ) {
-						$columns[] = '`' . ( $renames[ $column['name'] ] ?? $column['name'] ) . '`';
-					}
-
-					$unique = '1' === $row['index']['unique'] ? 'UNIQUE' : '';
-
-					/*
-					 * Use IF NOT EXISTS to avoid collisions with indexes that were
-					 * a part of the CREATE TABLE statement
-					 */
-					$this->execute_sqlite_query(
-						"CREATE $unique INDEX IF NOT EXISTS `{$row['index']['name']}` ON $this->table_name (" . implode( ', ', $columns ) . ')'
-					);
-				}
 
 				if ( ',' === $alter_terminator->token ) {
 					/*
@@ -3386,6 +3248,146 @@ class WP_SQLite_Translator {
 
 			default:
 				throw new Exception( 'Unknown drop type: ' . $what );
+		}
+	}
+
+	/**
+	 * Translates a CHANGE query.
+	 *
+	 * In SQLite, there is no direct equivalent to the CHANGE COLUMN
+	 * statement from MySQL. We need to do a bit of work to emulate it.
+	 *
+	 * The idea is to:
+	 * 1. Get the existing table schema.
+	 * 2. Adjust the column definition.
+	 * 3. Copy the data out of the old table.
+	 * 4. Drop the old table to free up the indexes names.
+	 * 5. Create a new table from the updated schema.
+	 * 6. Copy the data from step 3 to the new table.
+	 * 7. Drop the old table copy.
+	 * 8. Restore any indexes that were dropped in step 4.
+	 *
+	 * @param callable(string, WP_SQLite_Query_Rewriter): string|null $update_column_callback
+	 */
+	private function execute_change( $update_column_callback ) {
+		// 1. Get the existing table schema.
+		$old_schema  = $this->get_sqlite_create_table( $this->table_name );
+		$old_indexes = $this->get_keys( $this->table_name, false );
+
+		// 2. Adjust the column definition.
+
+		// First, tokenize the old schema.
+		$tokens       = ( new WP_SQLite_Lexer( $old_schema ) )->tokens;
+		$create_table = new WP_SQLite_Query_Rewriter( $tokens );
+
+		// Now, replace every reference to the old column name with the new column name.
+		$renames = array();
+		while ( true ) {
+			$token = $create_table->consume();
+			if ( ! $token ) {
+				break;
+			}
+			if ( WP_SQLite_Token::TYPE_STRING !== $token->type ) {
+				continue;
+			}
+
+			// We found the old column name, let's store it and remove it from the old schema.
+			$old_name_token = $create_table->drop_last();
+			$old_name       = $old_name_token->value;
+
+			// If the next token is a data type, we're dealing with a column definition.
+			$is_column_definition = $create_table->peek()->matches(
+				WP_SQLite_Token::TYPE_KEYWORD,
+				WP_SQLite_Token::FLAG_KEYWORD_DATA_TYPE
+			);
+			if ( $is_column_definition ) {
+				// Skip the old field definition in the old schema and store it separately.
+				$field_depth      = $create_table->depth;
+				$old_field_tokens = array( $old_name_token );
+				do {
+					$field_terminator   = $create_table->skip();
+					$old_field_tokens[] = new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_WHITESPACE );
+					$old_field_tokens[] = $field_terminator;
+				} while (
+					! $this->is_create_table_field_terminator(
+						$field_terminator,
+						$field_depth,
+						$create_table->depth
+					)
+				);
+				array_pop( $old_field_tokens ); // terminator
+				$old_field = new WP_SQLite_Query_Rewriter( $old_field_tokens );
+
+				// Add an updated field definition.
+				//  1) string = new column definition,
+				//  2) null   = no change, use the old definition.
+				//  (We could add "false" to implement DROP COLUMN in the future.)
+				$definition = $update_column_callback( $old_name, $old_field );
+				if ( null === $definition ) {
+					$old_field->consume_all();
+					$definition = $old_field->get_updated_query();
+				}
+
+				// Save new column name.
+				$new_name             = ( new WP_SQLite_Lexer( $definition ) )->tokens[0] ?? $old_name;
+				$renames[ $old_name ] = $new_name->value;
+
+				// Technically it's not a token, but it's fine to cheat a little bit.
+				$create_table->add( new WP_SQLite_Token( $definition, WP_SQLite_Token::TYPE_KEYWORD ) );
+				// Restore the terminating "," or ")" token.
+				$create_table->add( $field_terminator );
+			} else {
+				// Otherwise, just add the new name in place of the old name we dropped.
+				$create_table->add(
+					isset( $renames[ $old_name ] )
+						? new WP_SQLite_Token( '"' . $renames[ $old_name ] . '"', WP_SQLite_Token::TYPE_STRING )
+						: $old_name_token
+				);
+			}
+		}
+
+		// 3. Copy the data out of the old table
+		$cache_table_name = "_tmp__{$this->table_name}_" . rand( 10000000, 99999999 );
+		$this->execute_sqlite_query(
+			"CREATE TABLE `$cache_table_name` as SELECT * FROM `$this->table_name`"
+		);
+
+		// 4. Drop the old table to free up the indexes names
+		$this->execute_sqlite_query( "DROP TABLE `$this->table_name`" );
+
+		// 5. Create a new table from the updated schema
+		$this->execute_sqlite_query( $create_table->get_updated_query() );
+
+		// 6. Copy the data from step 3 to the new table
+		$this->execute_sqlite_query( "INSERT INTO {$this->table_name} SELECT * FROM $cache_table_name" );
+
+		// 7. Drop the old table copy
+		$this->execute_sqlite_query( "DROP TABLE `$cache_table_name`" );
+
+		// 8. Restore any indexes that were dropped in step 4
+		foreach ( $old_indexes as $row ) {
+			/*
+			 * Skip indexes prefixed with sqlite_autoindex_
+			 * (these are automatically created by SQLite).
+			 */
+			if ( str_starts_with( $row['index']['name'], 'sqlite_autoindex_' ) ) {
+				continue;
+			}
+
+			$columns = array();
+			foreach ( $row['columns'] as $column ) {
+				$columns[] = '`' . ( $renames[ $column['name'] ] ?? $column['name'] ) . '`';
+			}
+
+			$unique = '1' === $row['index']['unique'] ? 'UNIQUE' : '';
+
+			/*
+			 * Use IF NOT EXISTS to avoid collisions with indexes that were
+			 * a part of the CREATE TABLE statement
+			 */
+			$this->execute_sqlite_query(
+				"CREATE $unique INDEX IF NOT EXISTS `{$row['index']['name']}` ON $this->table_name (" . implode( ', ', $columns ) . ')'
+			);
 		}
 	}
 
