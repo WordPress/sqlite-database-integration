@@ -4397,12 +4397,16 @@ class WP_SQLite_Translator {
 	 */
 	private function add_column_on_update_current_timestamp( $table, $column ) {
 		$trigger_name = $this->get_column_on_update_current_timestamp_trigger_name( $table, $column );
+
+		// The trigger wouldn't work for virtual and "WITHOUT ROWID" tables,
+		// but currently that can't happen as we're not creating such tables.
+		// See: https://www.sqlite.org/rowidtable.html
 		$this->execute_sqlite_query(
 			"CREATE TRIGGER \"$trigger_name\"
 			AFTER UPDATE ON \"$table\"
 			FOR EACH ROW
 			BEGIN
-			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE id = NEW.id;
+			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
 			END"
 		);
 	}

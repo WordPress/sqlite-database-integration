@@ -1102,14 +1102,14 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'name'     => '___tmp_table_created_at_on_update__',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER \"___tmp_table_created_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"created_at\" = CURRENT_TIMESTAMP WHERE id = NEW.id;\n\t\t\tEND",
+					'sql'      => "CREATE TRIGGER \"___tmp_table_created_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"created_at\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
 				),
 				(object) array(
 					'type'     => 'trigger',
 					'name'     => '___tmp_table_updated_at_on_update__',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER \"___tmp_table_updated_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE id = NEW.id;\n\t\t\tEND",
+					'sql'      => "CREATE TRIGGER \"___tmp_table_updated_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
 				),
 			),
 			$results
@@ -1174,6 +1174,26 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 11' );
 		$this->assertNull( $result[0]->created_at );
 		$this->assertNull( $result[0]->updated_at );
+	}
+
+	public function testColumnWithOnUpdateAndNoIdField() {
+		// CREATE TABLE with ON UPDATE
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				name varchar(20) NOT NULL,
+				created_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP
+			);'
+		);
+
+		// on INSERT, no timestamps are expected
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('aaa')" );
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name = 'aaa'" );
+		$this->assertNull( $result[0]->created_at );
+
+		// on UPDATE, we expect timestamps in form YYYY-MM-DD HH:MM:SS
+		$this->assertQuery( "UPDATE _tmp_table SET name = 'bbb' WHERE name = 'aaa'" );
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name = 'bbb'" );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
 	}
 
 	public function testAlterTableWithColumnFirstAndAfter() {
