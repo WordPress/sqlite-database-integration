@@ -1196,6 +1196,109 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
 	}
 
+	public function testChangeColumnWithOnUpdate() {
+		// CREATE TABLE with ON UPDATE
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id int(11) NOT NULL,
+				created_at timestamp NULL
+			);'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// no ON UPDATE is set
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 1 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertNull( $result[0]->created_at );
+
+		// CHANGE COLUMN to add ON UPDATE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table CHANGE COLUMN created_at created_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// now, ON UPDATE SHOULD BE SET
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 1 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
+
+		// change column to remove ON UPDATE
+		$this->assertQuery(
+			'ALTER TABLE _tmp_table CHANGE COLUMN created_at created_at timestamp NULL'
+		);
+		$results = $this->assertQuery( 'DESCRIBE _tmp_table;' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int(11)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'created_at',
+					'Type'    => 'timestamp',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$results
+		);
+
+		// now, no timestamp is expected
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2 WHERE id = 2' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 2' );
+		$this->assertNull( $result[0]->created_at );
+	}
+
 	public function testAlterTableWithColumnFirstAndAfter() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
