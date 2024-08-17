@@ -29,7 +29,7 @@ FOR UPDATE;
 SQL;
 
 // $query = <<<SQL
-// SELECT CONCAT(a.a,"b",'c','d');
+// SELECT DATE_ADD(col_a, INTERVAL - 9472 MONTH);
 // SQL;
 
 $grammar_data = include "./grammar.php";
@@ -39,7 +39,7 @@ $grammar = new Grammar($grammar_data);
 $parser = new DynamicRecursiveDescentParser($grammar, tokenizeQuery($query));
 $parseTree = $parser->parse();
 // echo 'a';
-print_r($parseTree);
+// print_r($parseTree);
 // die();
 $expr = translateQuery($parseTree);
 echo SQLiteQueryBuilder::stringify($expr) . '';
@@ -90,8 +90,8 @@ function translateQuery($ast, $rule_name=null) {
         return null;
     }
 
-    if(count($ast) === 1 && $ast[0] instanceof MySQLToken) {
-        $token = $ast[0];
+    if($ast instanceof MySQLToken) {
+        $token = $ast;
         switch ($token->type) {
             case MySQLLexer::EOF:
                 return new SQLiteExpression([]);
@@ -236,15 +236,15 @@ function translateQuery($ast, $rule_name=null) {
         case 'textStringLiteral':
             return new SQLiteExpression([
                 ParseTreeTools::hasChildren($ast, MySQLLexer::DOUBLE_QUOTED_TEXT) ? 
-                    SQLiteTokenFactory::doubleQuotedValue($ast[0]['DOUBLE_QUOTED_TEXT'][0]->text) : false,
+                    SQLiteTokenFactory::doubleQuotedValue($ast[0]['DOUBLE_QUOTED_TEXT']->text) : false,
                 ParseTreeTools::hasChildren($ast, MySQLLexer::SINGLE_QUOTED_TEXT) ? 
-                    SQLiteTokenFactory::raw($ast[0]['SINGLE_QUOTED_TEXT'][0]->text) : false,
+                    SQLiteTokenFactory::raw($ast[0]['SINGLE_QUOTED_TEXT']->text) : false,
             ]);
 
         case 'functionCall':
             if(isset($ast[0]['pureIdentifier'])) {
-                $name = $ast[0]['pureIdentifier'][0]['IDENTIFIER'][0]->text;
-                return translateFunctionCall($name, $ast[0]['udfExprList']);
+                $name = $ast[0]['pureIdentifier'][0]['IDENTIFIER']->text;
+                return translateFunctionCall($name, $ast[2]['udfExprList']);
             }
             throw new Exception('Unsupported function call AST: ' . print_r($ast, true));
 
@@ -267,10 +267,8 @@ function translateFunctionCall($name, $args_ast): SQLiteExpression
 {
     $args = [];
     foreach($args_ast as $k => $arg) {
-        if($k === 0) {
-            $args[] = translateQuery([$arg], 'udfExpr');
-        } else {
-            $args[] = translateQuery($arg['udfExpr'], 'udfExpr');
+        if(isset($arg['udfExpr'])) {
+            $args[] = translateQuery($arg['udfExpr'][0], 'udfExpr');
         }
     }
     switch (strtoupper($name)) {

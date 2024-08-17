@@ -220,6 +220,8 @@ class DynamicRecursiveDescentParser {
                         $expanded[$new_rule_name][] = $child;
                     }
                 }
+            } else {
+                $expanded[$new_rule_name] = $children;
             }
         }
         return $expanded;
@@ -276,13 +278,85 @@ class DynamicRecursiveDescentParser {
                 } else if(is_array($matched_children) && count($matched_children) === 0) {
                     continue;
                 }
-                if (!isset($match[$subrule_id])) {
-                    $match[$subrule_id] = [];
+                if(is_array($matched_children) && !count($matched_children)) {
+                    continue;
                 }
-                if(is_array($matched_children)) {
-                    $match[$subrule_id] += $matched_children;
+                /**
+                 * Flatten the matched rule fragments as if their children were direct
+                 * descendants of the current rule.
+                 * 
+                 * What are rule fragments?
+                 * 
+                 * When we initially parse the BNF grammar file, it has compound rules such
+                 * as this one:
+                 * 
+                 *      query ::= EOF | ((simpleStatement | beginWork) ((SEMICOLON_SYMBOL EOF?) | EOF))
+                 * 
+                 * Building a parser that can understand such rules is way more complex than building
+                 * a parser that only follows simple rules, so we flatten those compound rules into
+                 * simpler ones. The above rule would be flattened to:
+                 * 
+                 *      query ::= EOF | %query0
+                 *      %query0 ::= %%query01 %%query02
+                 *      %%query01 ::= simpleStatement | beginWork 
+                 *      %%query02 ::= SEMICOLON_SYMBOL EOF_zero_or_one | EOF
+                 *      EOF_zero_or_one ::= EOF | ε
+                 * 
+                 * This factorization happens in 1-ebnf-to-json.js.
+                 * 
+                 * "Fragments" are intermediate artifacts whose names are not in the original grammar.
+                 * They are extremely useful for the parser, but the API consumer should never have to
+                 * worry about them. Fragment names start with a percent sign ("%"). 
+                 * 
+                 * The code below inlines every fragment back in its parent rule.
+                 * 
+                 * We could optimize this. The current $match may be discarded later on so any inlining
+                 * effort here would be wasted. However, inlining seems cheap and doing it bottom-up here
+                 * is **much** easier than reprocessing the parse tree top-down later on.
+                 * 
+                 * The following parse tree:
+                 * 
+                 * [
+                 *      'query' => [
+                 *          [
+                 *              '%query01' => [
+                 *                  [
+                 *                      'simpleStatement' => [
+                 *                          MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+                 *                      ],
+                 *                      '%query02' => [
+                 *                          [
+                 *                              'simpleStatement' => [
+                 *                                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+                 *                          ]
+                 *                      ],
+                 *                  ]
+                 *              ]
+                 *          ]
+                 *      ]
+                 * ]
+                 * 
+                 * Would be inlined as:
+                 * 
+                 * [
+                 *      'query' => [
+                 *          [
+                 *              'simpleStatement' => [
+                 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+                 *              ]
+                 *          ],
+                 *          [
+                 *              'simpleStatement' => [
+                 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+                 *              ]
+                 *          ]
+                 *      ]
+                 * ]
+                 */
+                if(isset($this->grammar->fragment_ids[$subrule_id])) {
+                    $match = array_merge($match, $matched_children);
                 } else {
-                    $match[$subrule_id][] = $matched_children;
+                    $match[] = [$subrule_id => $matched_children];
                 }
             }
             if ($branch_matches === true) {
@@ -295,106 +369,7 @@ class DynamicRecursiveDescentParser {
             return null;
         }
 
-        /**
-         * Flatten the matched rule fragments as if their children were direct
-         * descendants of the current rule.
-         * 
-         * What are rule fragments?
-         * 
-         * When we initially parse the BNF grammar file, it has compound rules such
-         * as this one:
-         * 
-         *      query ::= EOF | ((simpleStatement | beginWork) ((SEMICOLON_SYMBOL EOF?) | EOF))
-         * 
-         * Building a parser that can understand such rules is way more complex than building
-         * a parser that only follows simple rules, so we flatten those compound rules into
-         * simpler ones. The above rule would be flattened to:
-         * 
-         *      query ::= EOF | %query0
-         *      %query0 ::= %%query01 %%query02
-         *      %%query01 ::= simpleStatement | beginWork 
-         *      %%query02 ::= SEMICOLON_SYMBOL EOF_zero_or_one | EOF
-         *      EOF_zero_or_one ::= EOF | ε
-         * 
-         * This factorization happens in 1-ebnf-to-json.js.
-         * 
-         * "Fragments" are intermediate artifacts whose names are not in the original grammar.
-         * They are extremely useful for the parser, but the API consumer should never have to
-         * worry about them. Fragment names start with a percent sign ("%"). 
-         * 
-         * The code below inlines every fragment back in its parent rule.
-         * 
-         * We could optimize this. The current $match may be discarded later on so any inlining
-         * effort here would be wasted. However, inlining seems cheap and doing it bottom-up here
-         * is **much** easier than reprocessing the parse tree top-down later on.
-         * 
-         * The following parse tree:
-         * 
-         * [
-         *      'query' => [
-         *          [
-         *              '%query01' => [
-         *                  [
-         *                      'simpleStatement' => [
-         *                          MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-         *                      ],
-         *                      '%query02' => [
-         *                          [
-         *                              'simpleStatement' => [
-         *                                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-         *                          ]
-         *                      ],
-         *                  ]
-         *              ]
-         *          ]
-         *      ]
-         * ]
-         * 
-         * Would be inlined as:
-         * 
-         * [
-         *      'query' => [
-         *          [
-         *              'simpleStatement' => [
-         *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-         *              ]
-         *          ],
-         *          [
-         *              'simpleStatement' => [
-         *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-         *              ]
-         *          ]
-         *      ]
-         * ]
-         */
-        $match_to_flatmap = [];
-        $last_entry_is_fragment = false;
-        foreach($match as $subrule_id => $fragment_children) {
-            $is_fragment = (
-                is_array($fragment_children) &&
-                isset($this->grammar->fragment_ids[$subrule_id])
-            );
-
-            // Every fragment becomes a new match
-            if($is_fragment) {
-                $last_entry_is_fragment = true;
-                $match_to_flatmap = array_merge($match_to_flatmap, $fragment_children);
-                continue;
-            }
-
-            // Every non-fragment is preserved and either:
-            // * Added to the last match
-            // * Becomes a new match if the last match was an inlined fragment
-            if($last_entry_is_fragment || count($match_to_flatmap) === 0) {
-                $match_to_flatmap[] = [];
-                $last_entry_is_fragment = false;
-            }
-
-            $index = count($match_to_flatmap) - 1;
-            $match_to_flatmap[$index][$subrule_id] = $fragment_children;
-        }
-
-        return $match_to_flatmap;
+        return $match;
     }
 
     private function get_rule_name($id)
