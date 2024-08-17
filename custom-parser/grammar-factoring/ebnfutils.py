@@ -222,6 +222,7 @@ def split_rules(rules_string):
 
 
 def expand_grammar(grammar):
+    new_rules = set()
     expanded_grammar = { rule["name"]: [] for rule in grammar }
     for rule in grammar:
         bnfs = []
@@ -249,6 +250,8 @@ def expand_grammar(grammar):
                     ]
                 else:
                     new_rule_name = predicate
+                if new_rule_name != predicate:
+                    new_rules.add(new_rule_name)
                 # if "createTableOptions" in predicate:
                 #     print(new_rule_name)
                 #     print(expanded_grammar[new_rule_name])
@@ -256,7 +259,7 @@ def expand_grammar(grammar):
                 new_branch.append(new_rule_name)
             bnfs.append(new_branch)
         expanded_grammar[rule["name"]] = bnfs
-    return unhash_grammar(expanded_grammar)
+    return unhash_grammar(expanded_grammar), new_rules
 
 def remove_extra_epsilon(grammar):
     """
@@ -275,15 +278,37 @@ def remove_extra_epsilon(grammar):
     return new_grammar
 
 def eliminate_left_recursion(grammar):
-    grammar = expand_grammar(grammar)
+    grammar, new_rules = expand_grammar(grammar)
     enc = GrammarEncoder(grammar)
     alg = LeftRecursionEliminator()
     for rule in enc.encoded_grammar:
         alg.addRule(rule)
     alg.applyAlgorithm()
     grammar = enc.decode_alg_rules(alg.nonTerminals)
+    grammar = remove_extra_epsilon(grammar)
+    grammar = hash_grammar(grammar)
 
-    return remove_extra_epsilon(grammar)
+    # Some rules, like udfExprList, are factored so that the first matched udfExpr shows
+    # up inline under the udfExprList rule and not as a separate match. This refactors
+    # the grammar to ensure we still get a separate parse tree node.
+    for new_rule in new_rules:
+        tails = list(set([subrules[-1] for subrules in grammar[new_rule] if subrules != ["ε"]]))
+        if len(tails) != 1:
+            continue
+        # @TODO the parser breaks without this arbitrary condition,
+        #       let's find the problem with this algorithm.
+        if len(grammar[new_rule]) < 30:
+            continue
+        without_tail = [(branch if branch == ["ε"] else branch[:-1]) for branch in grammar[new_rule]]
+        without_tail = [branch for branch in without_tail if len(branch) > 0]
+        grammar[new_rule] = [[new_rule+"_nested", tails[0]]]
+        grammar[new_rule+"_nested"] = without_tail
+    return unhash_grammar(grammar)
+
+        
+
+
+
 
 def factor_common_prefixes(grammar, passes=1):
     """Factors out common prefixes in the given EBNF grammar.

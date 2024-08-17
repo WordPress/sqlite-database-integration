@@ -29,7 +29,7 @@ FOR UPDATE;
 SQL;
 
 // $query = <<<SQL
-// SELECT DATE_ADD(col_a, INTERVAL - 9472 MONTH);
+// SELECT CONCAT(1 + 3, "b", "c"), DATE_ADD(col_b, INTERVAL 5 MONTH);
 // SQL;
 
 $grammar_data = include "./grammar.php";
@@ -39,8 +39,7 @@ $grammar = new Grammar($grammar_data);
 $parser = new DynamicRecursiveDescentParser($grammar, tokenizeQuery($query));
 $parseTree = $parser->parse();
 // echo 'a';
-// print_r($parseTree);
-// die();
+
 $expr = translateQuery($parseTree);
 echo SQLiteQueryBuilder::stringify($expr) . '';
 die();
@@ -79,19 +78,13 @@ class ParseTreeTools {
     }
 }
 
-function translateQuery($ast, $rule_name=null) {
-    if($ast === null) {
-        return null;
-    }
-    if(null === $rule_name) {
-        if(array_key_exists('query', $ast)) {
-            return translateQuery($ast['query'], 'query');
-        }
+function translateQuery($parseTree) {
+    if($parseTree === null) {
         return null;
     }
 
-    if($ast instanceof MySQLToken) {
-        $token = $ast;
+    if($parseTree instanceof MySQLToken) {
+        $token = $parseTree;
         switch ($token->type) {
             case MySQLLexer::EOF:
                 return new SQLiteExpression([]);
@@ -110,6 +103,13 @@ function translateQuery($ast, $rule_name=null) {
         }
     }
 
+    if (!($parseTree instanceof ParseTree)) {
+        throw new Exception('translateQuery only accepts MySQLToken and ParseTree instances');
+
+    }
+
+    $rule_name = $parseTree->rule_name;
+
     switch($rule_name) {
         case 'indexHintList':
             // SQLite doesn't support index hints. Let's
@@ -118,20 +118,11 @@ function translateQuery($ast, $rule_name=null) {
 
         case 'selectOption':
             $all_options = [];
-            $options_stack = [$ast];
-            while (!empty($options_stack)) {
-                $option_ast = array_pop($options_stack);
-                foreach ($option_ast as $option) {
-                    foreach ($option as $sub_rule => $sub_ast) {
-                        if ($sub_rule === 'selectOption') {
-                            array_push($options_stack, $sub_ast);
-                        } else {
-                            $option = translateQuery($sub_ast, $sub_rule);
-                            $all_options[] = $option->elements[0]->value;
-                        }
-                    }
-                }
-            }
+            do {
+                $all_options[] = $parseTree->get_token()->text;
+                $parseTree = $parseTree->get_child('selectOption');
+            } while ($parseTree);
+            
             $emit_options = [];
             if(in_array('ALL', $all_options)) {
                 $emit_options[] = SQLiteTokenFactory::raw('ALL');
@@ -151,8 +142,8 @@ function translateQuery($ast, $rule_name=null) {
             // FROM DUAL statement, as FROM mytable, DUAL is a syntax
             // error.
             if(
-                ParseTreeTools::hasChildren($ast, MySQLLexer::DUAL_SYMBOL) && 
-                !ParseTreeTools::hasChildren($ast, 'tableReferenceList')
+                $parseTree->has_token(MySQLLexer::DUAL_SYMBOL) && 
+                !$parseTree->has_child('tableReferenceList')
             ) {
                 return null;
             }
@@ -226,27 +217,21 @@ function translateQuery($ast, $rule_name=null) {
         case 'orderExpression':
         case 'runtimeFunctionCall':
             $child_expressions = [];
-            foreach($ast as $child) {
-                foreach ($child as $sub_rule => $sub_ast) {
-                    $child_expressions[] = translateQuery($sub_ast, $sub_rule);
-                }
+            foreach($parseTree->children as $child) {
+                $child_expressions[] = translateQuery($child);
             }
             return new SQLiteExpression($child_expressions);
 
         case 'textStringLiteral':
             return new SQLiteExpression([
-                ParseTreeTools::hasChildren($ast, MySQLLexer::DOUBLE_QUOTED_TEXT) ? 
-                    SQLiteTokenFactory::doubleQuotedValue($ast[0]['DOUBLE_QUOTED_TEXT']->text) : false,
-                ParseTreeTools::hasChildren($ast, MySQLLexer::SINGLE_QUOTED_TEXT) ? 
-                    SQLiteTokenFactory::raw($ast[0]['SINGLE_QUOTED_TEXT']->text) : false,
+                $parseTree->has_token(MySQLLexer::DOUBLE_QUOTED_TEXT) ? 
+                    SQLiteTokenFactory::doubleQuotedValue($parseTree->get_token(MySQLLexer::DOUBLE_QUOTED_TEXT)->text) : false,
+                $parseTree->has_token(MySQLLexer::SINGLE_QUOTED_TEXT) ? 
+                    SQLiteTokenFactory::raw($parseTree->get_token(MySQLLexer::SINGLE_QUOTED_TEXT)->text) : false,
             ]);
 
         case 'functionCall':
-            if(isset($ast[0]['pureIdentifier'])) {
-                $name = $ast[0]['pureIdentifier'][0]['IDENTIFIER']->text;
-                return translateFunctionCall($name, $ast[2]['udfExprList']);
-            }
-            throw new Exception('Unsupported function call AST: ' . print_r($ast, true));
+            return translateFunctionCall($parseTree);
 
         default:
             // var_dump(count($ast->children));
@@ -263,13 +248,12 @@ function translateQuery($ast, $rule_name=null) {
     }
 }
 
-function translateFunctionCall($name, $args_ast): SQLiteExpression
+function translateFunctionCall($functionCallTree): SQLiteExpression
 {
+    $name = $functionCallTree->get_child('pureIdentifier')->get_token()->text;
     $args = [];
-    foreach($args_ast as $k => $arg) {
-        if(isset($arg['udfExpr'])) {
-            $args[] = translateQuery($arg['udfExpr'][0], 'udfExpr');
-        }
+    foreach($functionCallTree->get_child('udfExprList')->get_children() as $node) {
+        $args[] = translateQuery($node);
     }
     switch (strtoupper($name)) {
         case 'ABS':

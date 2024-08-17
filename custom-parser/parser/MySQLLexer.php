@@ -1066,7 +1066,7 @@ class MySQLLexer {
                 $this->IDENTIFIER_OR_KEYWORD();
             } elseif ($la === null) {
                 $this->matchEOF();
-                $this->tokenInstance = new MySQLToken(self::EOF, '<EOF>');
+                $this->tokenInstance = new MySQLToken(self::EOF, self::$tokenNames[self::EOF], '<EOF>');
                 return false;
             } else {
                 $this->INVALID_INPUT();
@@ -1077,7 +1077,7 @@ class MySQLLexer {
             }
         }
 
-        $this->tokenInstance = new MySQLToken($this->type, $this->text, $this->channel);
+        $this->tokenInstance = new MySQLToken($this->type, self::$tokenNames[$this->type], $this->text, $this->channel);
         return true;
     }
 
@@ -1207,6 +1207,7 @@ class MySQLLexer {
     }
 
     protected static $tokenNames = [
+        self::EOF => '$',
         self::EMPTY_TOKEN => 'ε',
         self::EQUAL_OPERATOR => 'EQUAL_OPERATOR',
         self::ASSIGN_OPERATOR => 'ASSIGN_OPERATOR',
@@ -9015,12 +9016,14 @@ class MySQLLexer {
 class MySQLToken
 {
     public $type;
+    public $name;
     public $text;
     private $channel;
 
-    public function __construct($type, $text, $channel=null)
+    public function __construct($type, $name, $text, $channel=null)
     {
         $this->type = $type;
+        $this->name = $name;
         $this->text = $text;
         $this->channel = $channel;
     }

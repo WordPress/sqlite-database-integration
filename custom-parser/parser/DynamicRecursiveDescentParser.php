@@ -154,10 +154,164 @@ class StackFrame {
     public $child_frame;
 }
 
+class ParseTree {
+    public $rule_id;
+    public $rule_name;
+    public $children = [];
+
+    public function __construct($rule_id, $rule_name)
+    {
+        $this->rule_id = $rule_id;
+        $this->rule_name = $rule_name;
+    }
+
+    /**
+     * Flatten the matched rule fragments as if their children were direct
+     * descendants of the current rule.
+     * 
+     * What are rule fragments?
+     * 
+     * When we initially parse the BNF grammar file, it has compound rules such
+     * as this one:
+     * 
+     *      query ::= EOF | ((simpleStatement | beginWork) ((SEMICOLON_SYMBOL EOF?) | EOF))
+     * 
+     * Building a parser that can understand such rules is way more complex than building
+     * a parser that only follows simple rules, so we flatten those compound rules into
+     * simpler ones. The above rule would be flattened to:
+     * 
+     *      query ::= EOF | %query0
+     *      %query0 ::= %%query01 %%query02
+     *      %%query01 ::= simpleStatement | beginWork 
+     *      %%query02 ::= SEMICOLON_SYMBOL EOF_zero_or_one | EOF
+     *      EOF_zero_or_one ::= EOF | ε
+     * 
+     * This factorization happens in 1-ebnf-to-json.js.
+     * 
+     * "Fragments" are intermediate artifacts whose names are not in the original grammar.
+     * They are extremely useful for the parser, but the API consumer should never have to
+     * worry about them. Fragment names start with a percent sign ("%"). 
+     * 
+     * The code below inlines every fragment back in its parent rule.
+     * 
+     * We could optimize this. The current $match may be discarded later on so any inlining
+     * effort here would be wasted. However, inlining seems cheap and doing it bottom-up here
+     * is **much** easier than reprocessing the parse tree top-down later on.
+     * 
+     * The following parse tree:
+     * 
+     * [
+     *      'query' => [
+     *          [
+     *              '%query01' => [
+     *                  [
+     *                      'simpleStatement' => [
+     *                          MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+     *                      ],
+     *                      '%query02' => [
+     *                          [
+     *                              'simpleStatement' => [
+     *                                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+     *                          ]
+     *                      ],
+     *                  ]
+     *              ]
+     *          ]
+     *      ]
+     * ]
+     * 
+     * Would be inlined as:
+     * 
+     * [
+     *      'query' => [
+     *          [
+     *              'simpleStatement' => [
+     *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+     *              ]
+     *          ],
+     *          [
+     *              'simpleStatement' => [
+     *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
+     *              ]
+     *          ]
+     *      ]
+     * ]
+     */
+    public function append_child($node)
+    {
+        $this->children[] = $node;
+    }
+
+    public function merge_fragment($node)
+    {
+        $this->children = array_merge($this->children, $node->children);        
+    }
+
+    public function has_child($rule_name)
+    {
+        foreach($this->children as $child) {
+            if(($child instanceof ParseTree && $child->rule_name === $rule_name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function has_token($token_id=null)
+    {
+        foreach($this->children as $child) {
+            if($child instanceof MySQLToken && (
+                $token_id === null ||
+                $child->type === $token_id
+            )) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public function get_token($token_id=null)
+    {
+        foreach($this->children as $child) {
+            if($child instanceof MySQLToken && (
+                $token_id === null ||
+                $child->type === $token_id
+            )) {
+                return $child;
+            }
+        }
+        return null;
+    }
+
+    public function get_child($rule_name)
+    {
+        foreach($this->children as $child) {
+            if($child instanceof ParseTree && $child->rule_name === $rule_name) {
+                return $child;
+            }
+        }        
+    }
+
+    public function get_children($rule_name=null)
+    {
+        $matches = [];
+        foreach($this->children as $child) {
+            if($child instanceof ParseTree && (
+                $rule_name === null ||
+                $child->rule_name === $rule_name
+            )) {
+                $matches[] = $child;
+            }
+        }
+        return $matches;
+    }
+
+}
+
 class DynamicRecursiveDescentParser {
     private $tokens;
     private $position;
-    private Grammar $grammar;
+    private $grammar;
 
     public function __construct(Grammar $grammar, array $tokens) {
         $this->grammar = $grammar;
@@ -167,65 +321,9 @@ class DynamicRecursiveDescentParser {
 
     public function parse() {
         $query_rule_id = $this->grammar->get_rule_id('query');
-        $result = $this->parse_recursive($query_rule_id);
-        return $this->expand_rule_names([$query_rule_id => $result]);
+        return $this->parse_recursive($query_rule_id);
     }
 
-    /**
-     * We store the rule names as integers during parsing. This method
-     * expands them back to their string representation.
-     * 
-     * For example, the following input parse tree:
-     * 
-     * [
-     *     2005 => [
-     *         2354 => [
-     *             MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-     *         ]
-     *     ]
-     * ]
-     * 
-     * Would be expanded to:
-     * 
-     * [
-     *     'simpleStatement' => [
-     *         'selectStatement' => [
-     *             MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-     *         ]
-     *     ]
-     * ]
-     * 
-     * 
-     * @param mixed $parse_tree
-     * @return array
-     */
-    private function expand_rule_names($parse_tree) {
-        $expanded = [];
-        foreach($parse_tree as $rule_id => $children) {
-            $rule_name = $this->get_rule_name($rule_id);
-            $new_rule_name = str_replace(
-                array('_zero_or_one', '_zero_or_more', '_one_or_more', '_rr'),
-                '',
-                $rule_name
-            );
-            if (is_array($children)) {
-                if(isset($expanded[$new_rule_name])) {
-                    throw new Exception("Rule $new_rule_name already exists in the parse tree. This should never happen.");
-                }
-                $expanded[$new_rule_name] = [];
-                foreach ($children as $child) {
-                    if (is_array($child)) {
-                        $expanded[$new_rule_name][] = $this->expand_rule_names($child);
-                    } else {
-                        $expanded[$new_rule_name][] = $child;
-                    }
-                }
-            } else {
-                $expanded[$new_rule_name] = $children;
-            }
-        }
-        return $expanded;
-    }
 
     private function parse_recursive($rule_id) {
         $is_terminal = $rule_id <= $this->grammar->highest_terminal_id;
@@ -248,6 +346,10 @@ class DynamicRecursiveDescentParser {
         }
 
         $rule = $this->grammar->rules[$rule_id];
+        if(!count($rule)) {
+            return null;
+        }
+
         // Bale out from processing the current branch if none of its rules can
         // possibly match the current token.
         if(isset($this->grammar->lookahead_is_match_possible[$rule_id])) {
@@ -260,103 +362,36 @@ class DynamicRecursiveDescentParser {
             }
         }
 
-        $starting_position = $this->position;
+        $rule_name = str_replace(
+            array('_zero_or_one', '_zero_or_more', '_one_or_more', '_rr', '_nested'),
+            '',
+            $this->grammar->rule_names[$rule_id]
+        );
 
+        $starting_position = $this->position;
         foreach ($rule as $branch) {
             $this->position = $starting_position;
-            $match = [];
+            $node = new ParseTree($rule_id, $rule_name);
             $branch_matches = true;
             foreach ($branch as $subrule_id) {
-                $matched_children = $this->parse_recursive($subrule_id);
-                if ($matched_children === null) {
+                $subnode = $this->parse_recursive($subrule_id);
+                if ($subnode === null) {
                     $branch_matches = false;
                     break;
-                } else if($matched_children === true) {
+                } else if($subnode === true) {
                     // ε – the rule matched without actually matching a token.
                     //     Proceed without adding anything to $match.
                     continue;
-                } else if(is_array($matched_children) && count($matched_children) === 0) {
+                } else if(is_array($subnode) && count($subnode) === 0) {
                     continue;
                 }
-                if(is_array($matched_children) && !count($matched_children)) {
+                if(is_array($subnode) && !count($subnode)) {
                     continue;
                 }
-                /**
-                 * Flatten the matched rule fragments as if their children were direct
-                 * descendants of the current rule.
-                 * 
-                 * What are rule fragments?
-                 * 
-                 * When we initially parse the BNF grammar file, it has compound rules such
-                 * as this one:
-                 * 
-                 *      query ::= EOF | ((simpleStatement | beginWork) ((SEMICOLON_SYMBOL EOF?) | EOF))
-                 * 
-                 * Building a parser that can understand such rules is way more complex than building
-                 * a parser that only follows simple rules, so we flatten those compound rules into
-                 * simpler ones. The above rule would be flattened to:
-                 * 
-                 *      query ::= EOF | %query0
-                 *      %query0 ::= %%query01 %%query02
-                 *      %%query01 ::= simpleStatement | beginWork 
-                 *      %%query02 ::= SEMICOLON_SYMBOL EOF_zero_or_one | EOF
-                 *      EOF_zero_or_one ::= EOF | ε
-                 * 
-                 * This factorization happens in 1-ebnf-to-json.js.
-                 * 
-                 * "Fragments" are intermediate artifacts whose names are not in the original grammar.
-                 * They are extremely useful for the parser, but the API consumer should never have to
-                 * worry about them. Fragment names start with a percent sign ("%"). 
-                 * 
-                 * The code below inlines every fragment back in its parent rule.
-                 * 
-                 * We could optimize this. The current $match may be discarded later on so any inlining
-                 * effort here would be wasted. However, inlining seems cheap and doing it bottom-up here
-                 * is **much** easier than reprocessing the parse tree top-down later on.
-                 * 
-                 * The following parse tree:
-                 * 
-                 * [
-                 *      'query' => [
-                 *          [
-                 *              '%query01' => [
-                 *                  [
-                 *                      'simpleStatement' => [
-                 *                          MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-                 *                      ],
-                 *                      '%query02' => [
-                 *                          [
-                 *                              'simpleStatement' => [
-                 *                                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-                 *                          ]
-                 *                      ],
-                 *                  ]
-                 *              ]
-                 *          ]
-                 *      ]
-                 * ]
-                 * 
-                 * Would be inlined as:
-                 * 
-                 * [
-                 *      'query' => [
-                 *          [
-                 *              'simpleStatement' => [
-                 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-                 *              ]
-                 *          ],
-                 *          [
-                 *              'simpleStatement' => [
-                 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-                 *              ]
-                 *          ]
-                 *      ]
-                 * ]
-                 */
                 if(isset($this->grammar->fragment_ids[$subrule_id])) {
-                    $match = array_merge($match, $matched_children);
+                    $node->merge_fragment($subnode);
                 } else {
-                    $match[] = [$subrule_id => $matched_children];
+                    $node->append_child($subnode);
                 }
             }
             if ($branch_matches === true) {
@@ -369,7 +404,11 @@ class DynamicRecursiveDescentParser {
             return null;
         }
 
-        return $match;
+        if(count($node->children) === 0) {
+            return true;
+        }
+
+        return $node;
     }
 
     private function get_rule_name($id)
