@@ -1,0 +1,612 @@
+QUERY:
+INSERT INTO products
+SELECT 
+    'Smartphone', 
+    'Latest model with advanced features', 
+    699.99, 
+    50, 
+    'Electronics'
+WHERE NOT EXISTS (
+    SELECT 1 FROM products WHERE product_name = 'Smartphone'
+) AND 1=2;
+
+PARSE TREE:
+
+{
+    "simpleStatement": [
+        {
+            "insertStatement": [
+                {
+                    "319": [
+                        "INSERT<319,INSERT_SYMBOL>"
+                    ],
+                    "INTO_SYMBOL_zero_or_one": [
+                        {
+                            "326": [
+                                "INTO<326,INTO_SYMBOL>"
+                            ]
+                        }
+                    ],
+                    "tableRef": [
+                        {
+                            "qualifiedIdentifier": [
+                                {
+                                    "790": [
+                                        "products<790,IDENTIFIER>"
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    "%insertStatement198": [
+                        {
+                            "insertQueryExpression": [
+                                {
+                                    "queryExpression": [
+                                        {
+                                            "%queryExpression224": [
+                                                {
+                                                    "queryExpressionBody": [
+                                                        {
+                                                            "queryPrimary": [
+                                                                {
+                                                                    "querySpecification": [
+                                                                        {
+                                                                            "610": [
+                                                                                "SELECT<610,SELECT_SYMBOL>"
+                                                                            ],
+                                                                            "selectItemList": [
+                                                                                {
+                                                                                    "selectItem": [
+                                                                                        {
+                                                                                            "expr": [
+                                                                                                {
+                                                                                                    "boolPri": [
+                                                                                                        {
+                                                                                                            "predicate": [
+                                                                                                                {
+                                                                                                                    "bitExpr": [
+                                                                                                                        {
+                                                                                                                            "simpleExpr": [
+                                                                                                                                {
+                                                                                                                                    "literal": [
+                                                                                                                                        {
+                                                                                                                                            "textLiteral": [
+                                                                                                                                                {
+                                                                                                                                                    "textStringLiteral": [
+                                                                                                                                                        {
+                                                                                                                                                            "793": [
+                                                                                                                                                                "'Smartphone'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ],
+                                                                                    "%selectItemList272_zero_or_more": [
+                                                                                        {
+                                                                                            "24": [
+                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                            ],
+                                                                                            "selectItem": [
+                                                                                                {
+                                                                                                    "expr": [
+                                                                                                        {
+                                                                                                            "boolPri": [
+                                                                                                                {
+                                                                                                                    "predicate": [
+                                                                                                                        {
+                                                                                                                            "bitExpr": [
+                                                                                                                                {
+                                                                                                                                    "simpleExpr": [
+                                                                                                                                        {
+                                                                                                                                            "literal": [
+                                                                                                                                                {
+                                                                                                                                                    "textLiteral": [
+                                                                                                                                                        {
+                                                                                                                                                            "textStringLiteral": [
+                                                                                                                                                                {
+                                                                                                                                                                    "793": [
+                                                                                                                                                                        "'Latest model with advanced features'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ],
+                                                                                            "%selectItemList272_zero_or_more": [
+                                                                                                {
+                                                                                                    "24": [
+                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                    ],
+                                                                                                    "selectItem": [
+                                                                                                        {
+                                                                                                            "expr": [
+                                                                                                                {
+                                                                                                                    "boolPri": [
+                                                                                                                        {
+                                                                                                                            "predicate": [
+                                                                                                                                {
+                                                                                                                                    "bitExpr": [
+                                                                                                                                        {
+                                                                                                                                            "simpleExpr": [
+                                                                                                                                                {
+                                                                                                                                                    "literal": [
+                                                                                                                                                        {
+                                                                                                                                                            "numLiteral": [
+                                                                                                                                                                {
+                                                                                                                                                                    "796": [
+                                                                                                                                                                        "699.99<796,DECIMAL_NUMBER>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ],
+                                                                                                    "%selectItemList272_zero_or_more": [
+                                                                                                        {
+                                                                                                            "24": [
+                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                            ],
+                                                                                                            "selectItem": [
+                                                                                                                {
+                                                                                                                    "expr": [
+                                                                                                                        {
+                                                                                                                            "boolPri": [
+                                                                                                                                {
+                                                                                                                                    "predicate": [
+                                                                                                                                        {
+                                                                                                                                            "bitExpr": [
+                                                                                                                                                {
+                                                                                                                                                    "simpleExpr": [
+                                                                                                                                                        {
+                                                                                                                                                            "literal": [
+                                                                                                                                                                {
+                                                                                                                                                                    "numLiteral": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "796": [
+                                                                                                                                                                                "50<796,DECIMAL_NUMBER>"
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "%selectItemList272_zero_or_more": [
+                                                                                                                {
+                                                                                                                    "24": [
+                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                    ],
+                                                                                                                    "selectItem": [
+                                                                                                                        {
+                                                                                                                            "expr": [
+                                                                                                                                {
+                                                                                                                                    "boolPri": [
+                                                                                                                                        {
+                                                                                                                                            "predicate": [
+                                                                                                                                                {
+                                                                                                                                                    "bitExpr": [
+                                                                                                                                                        {
+                                                                                                                                                            "simpleExpr": [
+                                                                                                                                                                {
+                                                                                                                                                                    "literal": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "textLiteral": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "textStringLiteral": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "793": [
+                                                                                                                                                                                                "'Electronics'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ],
+                                                                            "whereClause_zero_or_one": [
+                                                                                {
+                                                                                    "769": [
+                                                                                        "WHERE<769,WHERE_SYMBOL>"
+                                                                                    ],
+                                                                                    "expr": [
+                                                                                        {
+                                                                                            "453": [
+                                                                                                "NOT<453,NOT_SYMBOL>"
+                                                                                            ],
+                                                                                            "expr": [
+                                                                                                {
+                                                                                                    "boolPri": [
+                                                                                                        {
+                                                                                                            "predicate": [
+                                                                                                                {
+                                                                                                                    "bitExpr": [
+                                                                                                                        {
+                                                                                                                            "simpleExpr": [
+                                                                                                                                {
+                                                                                                                                    "EXISTS_SYMBOL_zero_or_one": [
+                                                                                                                                        {
+                                                                                                                                            "247": [
+                                                                                                                                                "EXISTS<247,EXISTS_SYMBOL>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ],
+                                                                                                                                    "subquery": [
+                                                                                                                                        {
+                                                                                                                                            "27": [
+                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                            ],
+                                                                                                                                            "%queryExpressionParens232": [
+                                                                                                                                                {
+                                                                                                                                                    "%queryExpression224": [
+                                                                                                                                                        {
+                                                                                                                                                            "queryExpressionBody": [
+                                                                                                                                                                {
+                                                                                                                                                                    "queryPrimary": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "querySpecification": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "610": [
+                                                                                                                                                                                        "SELECT<610,SELECT_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "selectItemList": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "selectItem": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "expr": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "boolPri": [
+                                                                                                                                                                                                                {
+                                                                                                                                                                                                                    "predicate": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "bitExpr": [
+                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                    "simpleExpr": [
+                                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                                            "literal": [
+                                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                                    "numLiteral": [
+                                                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                                                            "796": [
+                                                                                                                                                                                                                                                                "1<796,DECIMAL_NUMBER>"
+                                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "fromClause_zero_or_one": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "277": [
+                                                                                                                                                                                                "FROM<277,FROM_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "%fromClause263": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "tableReferenceList": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "tableReference": [
+                                                                                                                                                                                                                {
+                                                                                                                                                                                                                    "tableFactor": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "singleTable": [
+                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                    "tableRef": [
+                                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                                            "qualifiedIdentifier": [
+                                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                                    "790": [
+                                                                                                                                                                                                                                                        "products<790,IDENTIFIER>"
+                                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "whereClause_zero_or_one": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "769": [
+                                                                                                                                                                                                "WHERE<769,WHERE_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "expr": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "boolPri": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "predicate": [
+                                                                                                                                                                                                                {
+                                                                                                                                                                                                                    "bitExpr": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "simpleExpr": [
+                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                    "columnRef": [
+                                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                                            "qualifiedIdentifier": [
+                                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                                    "790": [
+                                                                                                                                                                                                                                                        "product_name<790,IDENTIFIER>"
+                                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "boolPri_rr": [
+                                                                                                                                                                                                                {
+                                                                                                                                                                                                                    "compOp": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "1": [
+                                                                                                                                                                                                                                "=<1,EQUAL_OPERATOR>"
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ],
+                                                                                                                                                                                                                    "predicate": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "bitExpr": [
+                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                    "simpleExpr": [
+                                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                                            "literal": [
+                                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                                    "textLiteral": [
+                                                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                                                            "textStringLiteral": [
+                                                                                                                                                                                                                                                                {
+                                                                                                                                                                                                                                                                    "793": [
+                                                                                                                                                                                                                                                                        "'Smartphone'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                                }
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ],
+                                                                                                                                            "28": [
+                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ],
+                                                                                                    "expr_rr": [
+                                                                                                        {
+                                                                                                            "%%expr698699": [
+                                                                                                                {
+                                                                                                                    "90": [
+                                                                                                                        "AND<90,AND_SYMBOL>"
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "expr": [
+                                                                                                                {
+                                                                                                                    "boolPri": [
+                                                                                                                        {
+                                                                                                                            "predicate": [
+                                                                                                                                {
+                                                                                                                                    "bitExpr": [
+                                                                                                                                        {
+                                                                                                                                            "simpleExpr": [
+                                                                                                                                                {
+                                                                                                                                                    "literal": [
+                                                                                                                                                        {
+                                                                                                                                                            "numLiteral": [
+                                                                                                                                                                {
+                                                                                                                                                                    "796": [
+                                                                                                                                                                        "1<796,DECIMAL_NUMBER>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ],
+                                                                                                                            "boolPri_rr": [
+                                                                                                                                {
+                                                                                                                                    "compOp": [
+                                                                                                                                        {
+                                                                                                                                            "1": [
+                                                                                                                                                "=<1,EQUAL_OPERATOR>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ],
+                                                                                                                                    "predicate": [
+                                                                                                                                        {
+                                                                                                                                            "bitExpr": [
+                                                                                                                                                {
+                                                                                                                                                    "simpleExpr": [
+                                                                                                                                                        {
+                                                                                                                                                            "literal": [
+                                                                                                                                                                {
+                                                                                                                                                                    "numLiteral": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "796": [
+                                                                                                                                                                                "2<796,DECIMAL_NUMBER>"
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "%%query02": [
+        {
+            "25": [
+                ";<25,SEMICOLON_SYMBOL>"
+            ],
+            "EOF_zero_or_one": [
+                {
+                    "-1": [
+                        "<EOF><-1,<INVALID>>"
+                    ]
+                }
+            ]
+        }
+    ]
+}

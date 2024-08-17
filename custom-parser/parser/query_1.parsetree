@@ -1,0 +1,1197 @@
+QUERY:
+CREATE TABLE products (
+    product_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_name VARCHAR(100) NOT NULL,
+    `description` TEXT,
+    category ENUM('Electronics', 'Clothing', 'Books', 'Home', 'Beauty'),
+    order_id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT,
+    product_id INT,
+    `status` SET('Pending', 'Shipped', 'Delivered', 'Cancelled'),
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    delivery_date DATETIME,
+    CONSTRAINT fk_customer
+        FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_product
+        FOREIGN KEY (product_id) REFERENCES products (product_id)
+        ON DELETE CASCADE,
+    INDEX idx_col_h_i (`col_h`, `col_i`),
+    INDEX idx_col_g (`col_g`),
+    UNIQUE INDEX idx_col_k (`col_k`),
+    FULLTEXT INDEX idx_col_l (`col_l`)
+) DEFAULT CHARACTER SET cp1250 COLLATE cp1250_general_ci;
+
+PARSE TREE:
+
+{
+    "simpleStatement": [
+        {
+            "createStatement": [
+                {
+                    "168": [
+                        "CREATE<168,CREATE_SYMBOL>"
+                    ],
+                    "%createStatement105": [
+                        {
+                            "createTable": [
+                                {
+                                    "695": [
+                                        "TABLE<695,TABLE_SYMBOL>"
+                                    ],
+                                    "tableName": [
+                                        {
+                                            "qualifiedIdentifier": [
+                                                {
+                                                    "790": [
+                                                        "products<790,IDENTIFIER>"
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ],
+                                    "%createTable106": [
+                                        {
+                                            "%%%createTable106107108_zero_or_one": [
+                                                {
+                                                    "27": [
+                                                        "(<27,OPEN_PAR_SYMBOL>"
+                                                    ],
+                                                    "tableElementList": [
+                                                        {
+                                                            "tableElement": [
+                                                                {
+                                                                    "columnDefinition": [
+                                                                        {
+                                                                            "columnName": [
+                                                                                {
+                                                                                    "identifier": [
+                                                                                        {
+                                                                                            "790": [
+                                                                                                "product_id<790,IDENTIFIER>"
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ],
+                                                                            "fieldDefinition": [
+                                                                                {
+                                                                                    "dataType": [
+                                                                                        {
+                                                                                            "39": [
+                                                                                                "INT<39,INT_SYMBOL>"
+                                                                                            ]
+                                                                                        }
+                                                                                    ],
+                                                                                    "%fieldDefinition946": [
+                                                                                        {
+                                                                                            "columnAttribute_zero_or_more": [
+                                                                                                {
+                                                                                                    "97": [
+                                                                                                        "AUTO_INCREMENT<97,AUTO_INCREMENT_SYMBOL>"
+                                                                                                    ],
+                                                                                                    "columnAttribute_zero_or_more": [
+                                                                                                        {
+                                                                                                            "PRIMARY_SYMBOL_zero_or_one": [
+                                                                                                                {
+                                                                                                                    "517": [
+                                                                                                                        "PRIMARY<517,PRIMARY_SYMBOL>"
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "342": [
+                                                                                                                "KEY<342,KEY_SYMBOL>"
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ],
+                                                            "%tableElementList111_zero_or_more": [
+                                                                {
+                                                                    "24": [
+                                                                        ",<24,COMMA_SYMBOL>"
+                                                                    ],
+                                                                    "tableElement": [
+                                                                        {
+                                                                            "columnDefinition": [
+                                                                                {
+                                                                                    "columnName": [
+                                                                                        {
+                                                                                            "identifier": [
+                                                                                                {
+                                                                                                    "790": [
+                                                                                                        "product_name<790,IDENTIFIER>"
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ],
+                                                                                    "fieldDefinition": [
+                                                                                        {
+                                                                                            "dataType": [
+                                                                                                {
+                                                                                                    "55": [
+                                                                                                        "VARCHAR<55,VARCHAR_SYMBOL>"
+                                                                                                    ],
+                                                                                                    "fieldLength": [
+                                                                                                        {
+                                                                                                            "27": [
+                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                            ],
+                                                                                                            "%fieldLength1027": [
+                                                                                                                {
+                                                                                                                    "real_ulonglong_number": [
+                                                                                                                        {
+                                                                                                                            "796": [
+                                                                                                                                "100<796,DECIMAL_NUMBER>"
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "28": [
+                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ],
+                                                                                            "%fieldDefinition946": [
+                                                                                                {
+                                                                                                    "columnAttribute_zero_or_more": [
+                                                                                                        {
+                                                                                                            "453": [
+                                                                                                                "NOT<453,NOT_SYMBOL>"
+                                                                                                            ],
+                                                                                                            "nullLiteral": [
+                                                                                                                {
+                                                                                                                    "457": [
+                                                                                                                        "NULL<457,NULL_SYMBOL>"
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ],
+                                                                    "%tableElementList111_zero_or_more": [
+                                                                        {
+                                                                            "24": [
+                                                                                ",<24,COMMA_SYMBOL>"
+                                                                            ],
+                                                                            "tableElement": [
+                                                                                {
+                                                                                    "columnDefinition": [
+                                                                                        {
+                                                                                            "columnName": [
+                                                                                                {
+                                                                                                    "identifier": [
+                                                                                                        {
+                                                                                                            "791": [
+                                                                                                                "`description`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ],
+                                                                                            "fieldDefinition": [
+                                                                                                {
+                                                                                                    "dataType": [
+                                                                                                        {
+                                                                                                            "63": [
+                                                                                                                "TEXT<63,TEXT_SYMBOL>"
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ],
+                                                                            "%tableElementList111_zero_or_more": [
+                                                                                {
+                                                                                    "24": [
+                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                    ],
+                                                                                    "tableElement": [
+                                                                                        {
+                                                                                            "columnDefinition": [
+                                                                                                {
+                                                                                                    "columnName": [
+                                                                                                        {
+                                                                                                            "identifier": [
+                                                                                                                {
+                                                                                                                    "790": [
+                                                                                                                        "category<790,IDENTIFIER>"
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ],
+                                                                                                    "fieldDefinition": [
+                                                                                                        {
+                                                                                                            "dataType": [
+                                                                                                                {
+                                                                                                                    "66": [
+                                                                                                                        "ENUM<66,ENUM_SYMBOL>"
+                                                                                                                    ],
+                                                                                                                    "stringList": [
+                                                                                                                        {
+                                                                                                                            "27": [
+                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                            ],
+                                                                                                                            "textString": [
+                                                                                                                                {
+                                                                                                                                    "793": [
+                                                                                                                                        "'Electronics'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ],
+                                                                                                                            "%stringList1146_zero_or_more": [
+                                                                                                                                {
+                                                                                                                                    "24": [
+                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                    ],
+                                                                                                                                    "textString": [
+                                                                                                                                        {
+                                                                                                                                            "793": [
+                                                                                                                                                "'Clothing'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ],
+                                                                                                                                    "%stringList1146_zero_or_more": [
+                                                                                                                                        {
+                                                                                                                                            "24": [
+                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                            ],
+                                                                                                                                            "textString": [
+                                                                                                                                                {
+                                                                                                                                                    "793": [
+                                                                                                                                                        "'Books'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ],
+                                                                                                                                            "%stringList1146_zero_or_more": [
+                                                                                                                                                {
+                                                                                                                                                    "24": [
+                                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                                    ],
+                                                                                                                                                    "textString": [
+                                                                                                                                                        {
+                                                                                                                                                            "793": [
+                                                                                                                                                                "'Home'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ],
+                                                                                                                                                    "%stringList1146_zero_or_more": [
+                                                                                                                                                        {
+                                                                                                                                                            "24": [
+                                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                                            ],
+                                                                                                                                                            "textString": [
+                                                                                                                                                                {
+                                                                                                                                                                    "793": [
+                                                                                                                                                                        "'Beauty'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ],
+                                                                                                                            "28": [
+                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ],
+                                                                                    "%tableElementList111_zero_or_more": [
+                                                                                        {
+                                                                                            "24": [
+                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                            ],
+                                                                                            "tableElement": [
+                                                                                                {
+                                                                                                    "columnDefinition": [
+                                                                                                        {
+                                                                                                            "columnName": [
+                                                                                                                {
+                                                                                                                    "identifier": [
+                                                                                                                        {
+                                                                                                                            "790": [
+                                                                                                                                "order_id<790,IDENTIFIER>"
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "fieldDefinition": [
+                                                                                                                {
+                                                                                                                    "dataType": [
+                                                                                                                        {
+                                                                                                                            "39": [
+                                                                                                                                "INT<39,INT_SYMBOL>"
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ],
+                                                                                                                    "%fieldDefinition946": [
+                                                                                                                        {
+                                                                                                                            "columnAttribute_zero_or_more": [
+                                                                                                                                {
+                                                                                                                                    "97": [
+                                                                                                                                        "AUTO_INCREMENT<97,AUTO_INCREMENT_SYMBOL>"
+                                                                                                                                    ],
+                                                                                                                                    "columnAttribute_zero_or_more": [
+                                                                                                                                        {
+                                                                                                                                            "PRIMARY_SYMBOL_zero_or_one": [
+                                                                                                                                                {
+                                                                                                                                                    "517": [
+                                                                                                                                                        "PRIMARY<517,PRIMARY_SYMBOL>"
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ],
+                                                                                                                                            "342": [
+                                                                                                                                                "KEY<342,KEY_SYMBOL>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ],
+                                                                                            "%tableElementList111_zero_or_more": [
+                                                                                                {
+                                                                                                    "24": [
+                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                    ],
+                                                                                                    "tableElement": [
+                                                                                                        {
+                                                                                                            "columnDefinition": [
+                                                                                                                {
+                                                                                                                    "columnName": [
+                                                                                                                        {
+                                                                                                                            "identifier": [
+                                                                                                                                {
+                                                                                                                                    "790": [
+                                                                                                                                        "customer_id<790,IDENTIFIER>"
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ],
+                                                                                                                    "fieldDefinition": [
+                                                                                                                        {
+                                                                                                                            "dataType": [
+                                                                                                                                {
+                                                                                                                                    "39": [
+                                                                                                                                        "INT<39,INT_SYMBOL>"
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ],
+                                                                                                    "%tableElementList111_zero_or_more": [
+                                                                                                        {
+                                                                                                            "24": [
+                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                            ],
+                                                                                                            "tableElement": [
+                                                                                                                {
+                                                                                                                    "columnDefinition": [
+                                                                                                                        {
+                                                                                                                            "columnName": [
+                                                                                                                                {
+                                                                                                                                    "identifier": [
+                                                                                                                                        {
+                                                                                                                                            "790": [
+                                                                                                                                                "product_id<790,IDENTIFIER>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ],
+                                                                                                                            "fieldDefinition": [
+                                                                                                                                {
+                                                                                                                                    "dataType": [
+                                                                                                                                        {
+                                                                                                                                            "39": [
+                                                                                                                                                "INT<39,INT_SYMBOL>"
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ],
+                                                                                                            "%tableElementList111_zero_or_more": [
+                                                                                                                {
+                                                                                                                    "24": [
+                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                    ],
+                                                                                                                    "tableElement": [
+                                                                                                                        {
+                                                                                                                            "columnDefinition": [
+                                                                                                                                {
+                                                                                                                                    "columnName": [
+                                                                                                                                        {
+                                                                                                                                            "identifier": [
+                                                                                                                                                {
+                                                                                                                                                    "791": [
+                                                                                                                                                        "`status`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ],
+                                                                                                                                    "fieldDefinition": [
+                                                                                                                                        {
+                                                                                                                                            "dataType": [
+                                                                                                                                                {
+                                                                                                                                                    "67": [
+                                                                                                                                                        "SET<67,SET_SYMBOL>"
+                                                                                                                                                    ],
+                                                                                                                                                    "stringList": [
+                                                                                                                                                        {
+                                                                                                                                                            "27": [
+                                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                            ],
+                                                                                                                                                            "textString": [
+                                                                                                                                                                {
+                                                                                                                                                                    "793": [
+                                                                                                                                                                        "'Pending'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ],
+                                                                                                                                                            "%stringList1146_zero_or_more": [
+                                                                                                                                                                {
+                                                                                                                                                                    "24": [
+                                                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                    ],
+                                                                                                                                                                    "textString": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "793": [
+                                                                                                                                                                                "'Shipped'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ],
+                                                                                                                                                                    "%stringList1146_zero_or_more": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "24": [
+                                                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "textString": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "793": [
+                                                                                                                                                                                        "'Delivered'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "%stringList1146_zero_or_more": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "24": [
+                                                                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "textString": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "793": [
+                                                                                                                                                                                                "'Cancelled'<793,SINGLE_QUOTED_TEXT>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ],
+                                                                                                                                                            "28": [
+                                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ],
+                                                                                                                    "%tableElementList111_zero_or_more": [
+                                                                                                                        {
+                                                                                                                            "24": [
+                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                            ],
+                                                                                                                            "tableElement": [
+                                                                                                                                {
+                                                                                                                                    "columnDefinition": [
+                                                                                                                                        {
+                                                                                                                                            "columnName": [
+                                                                                                                                                {
+                                                                                                                                                    "identifier": [
+                                                                                                                                                        {
+                                                                                                                                                            "790": [
+                                                                                                                                                                "order_date<790,IDENTIFIER>"
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ],
+                                                                                                                                            "fieldDefinition": [
+                                                                                                                                                {
+                                                                                                                                                    "dataType": [
+                                                                                                                                                        {
+                                                                                                                                                            "51": [
+                                                                                                                                                                "TIMESTAMP<51,TIMESTAMP_SYMBOL>"
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ],
+                                                                                                                                                    "%fieldDefinition946": [
+                                                                                                                                                        {
+                                                                                                                                                            "columnAttribute_zero_or_more": [
+                                                                                                                                                                {
+                                                                                                                                                                    "198": [
+                                                                                                                                                                        "DEFAULT<198,DEFAULT_SYMBOL>"
+                                                                                                                                                                    ],
+                                                                                                                                                                    "%%columnAttribute953954": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "810": [
+                                                                                                                                                                                "CURRENT_TIMESTAMP<810,<INVALID>>"
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ],
+                                                                                                                            "%tableElementList111_zero_or_more": [
+                                                                                                                                {
+                                                                                                                                    "24": [
+                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                    ],
+                                                                                                                                    "tableElement": [
+                                                                                                                                        {
+                                                                                                                                            "columnDefinition": [
+                                                                                                                                                {
+                                                                                                                                                    "columnName": [
+                                                                                                                                                        {
+                                                                                                                                                            "identifier": [
+                                                                                                                                                                {
+                                                                                                                                                                    "790": [
+                                                                                                                                                                        "delivery_date<790,IDENTIFIER>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ],
+                                                                                                                                                    "fieldDefinition": [
+                                                                                                                                                        {
+                                                                                                                                                            "dataType": [
+                                                                                                                                                                {
+                                                                                                                                                                    "52": [
+                                                                                                                                                                        "DATETIME<52,DATETIME_SYMBOL>"
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ],
+                                                                                                                                    "%tableElementList111_zero_or_more": [
+                                                                                                                                        {
+                                                                                                                                            "24": [
+                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                            ],
+                                                                                                                                            "tableElement": [
+                                                                                                                                                {
+                                                                                                                                                    "tableConstraintDef": [
+                                                                                                                                                        {
+                                                                                                                                                            "constraintName_zero_or_one": [
+                                                                                                                                                                {
+                                                                                                                                                                    "157": [
+                                                                                                                                                                        "CONSTRAINT<157,CONSTRAINT_SYMBOL>"
+                                                                                                                                                                    ],
+                                                                                                                                                                    "identifier_zero_or_one": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "790": [
+                                                                                                                                                                                "fk_customer<790,IDENTIFIER>"
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ],
+                                                                                                                                                            "%%tableConstraintDef938939": [
+                                                                                                                                                                {
+                                                                                                                                                                    "273": [
+                                                                                                                                                                        "FOREIGN<273,FOREIGN_SYMBOL>"
+                                                                                                                                                                    ],
+                                                                                                                                                                    "342": [
+                                                                                                                                                                        "KEY<342,KEY_SYMBOL>"
+                                                                                                                                                                    ],
+                                                                                                                                                                    "keyList": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "27": [
+                                                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "keyPart": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "identifier": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "790": [
+                                                                                                                                                                                                "customer_id<790,IDENTIFIER>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "28": [
+                                                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ],
+                                                                                                                                                                    "references": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "543": [
+                                                                                                                                                                                "REFERENCES<543,REFERENCES_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "tableRef": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "qualifiedIdentifier": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "790": [
+                                                                                                                                                                                                "customers<790,IDENTIFIER>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "identifierListWithParentheses_zero_or_one": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "27": [
+                                                                                                                                                                                        "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "identifierList": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "790": [
+                                                                                                                                                                                                "customer_id<790,IDENTIFIER>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "28": [
+                                                                                                                                                                                        ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "%references971_zero_or_one": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "471": [
+                                                                                                                                                                                        "ON<471,ON_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "203": [
+                                                                                                                                                                                        "DELETE<203,DELETE_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "deleteOption": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "120": [
+                                                                                                                                                                                                "CASCADE<120,CASCADE_SYMBOL>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ],
+                                                                                                                                            "%tableElementList111_zero_or_more": [
+                                                                                                                                                {
+                                                                                                                                                    "24": [
+                                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                                    ],
+                                                                                                                                                    "tableElement": [
+                                                                                                                                                        {
+                                                                                                                                                            "tableConstraintDef": [
+                                                                                                                                                                {
+                                                                                                                                                                    "constraintName_zero_or_one": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "157": [
+                                                                                                                                                                                "CONSTRAINT<157,CONSTRAINT_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "identifier_zero_or_one": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "790": [
+                                                                                                                                                                                        "fk_product<790,IDENTIFIER>"
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ],
+                                                                                                                                                                    "%%tableConstraintDef938939": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "273": [
+                                                                                                                                                                                "FOREIGN<273,FOREIGN_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "342": [
+                                                                                                                                                                                "KEY<342,KEY_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "keyList": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "27": [
+                                                                                                                                                                                        "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "keyPart": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "identifier": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "790": [
+                                                                                                                                                                                                        "product_id<790,IDENTIFIER>"
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "28": [
+                                                                                                                                                                                        ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "references": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "543": [
+                                                                                                                                                                                        "REFERENCES<543,REFERENCES_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "tableRef": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "qualifiedIdentifier": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "790": [
+                                                                                                                                                                                                        "products<790,IDENTIFIER>"
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "identifierListWithParentheses_zero_or_one": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "27": [
+                                                                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "identifierList": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "790": [
+                                                                                                                                                                                                        "product_id<790,IDENTIFIER>"
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "28": [
+                                                                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "%references971_zero_or_one": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "471": [
+                                                                                                                                                                                                "ON<471,ON_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "203": [
+                                                                                                                                                                                                "DELETE<203,DELETE_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "deleteOption": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "120": [
+                                                                                                                                                                                                        "CASCADE<120,CASCADE_SYMBOL>"
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ],
+                                                                                                                                                    "%tableElementList111_zero_or_more": [
+                                                                                                                                                        {
+                                                                                                                                                            "24": [
+                                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                                            ],
+                                                                                                                                                            "tableElement": [
+                                                                                                                                                                {
+                                                                                                                                                                    "tableConstraintDef": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "313": [
+                                                                                                                                                                                "INDEX<313,INDEX_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "indexNameAndType_zero_or_one": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "790": [
+                                                                                                                                                                                        "idx_col_h_i<790,IDENTIFIER>"
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "keyListVariants": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "27": [
+                                                                                                                                                                                        "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "keyPartOrExpression": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "identifier": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "791": [
+                                                                                                                                                                                                        "`col_h`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "%keyListWithExpression980_zero_or_more": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "24": [
+                                                                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "keyPartOrExpression": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "identifier": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "791": [
+                                                                                                                                                                                                                "`col_i`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "28": [
+                                                                                                                                                                                        ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ],
+                                                                                                                                                            "%tableElementList111_zero_or_more": [
+                                                                                                                                                                {
+                                                                                                                                                                    "24": [
+                                                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                    ],
+                                                                                                                                                                    "tableElement": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "tableConstraintDef": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "313": [
+                                                                                                                                                                                        "INDEX<313,INDEX_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "indexNameAndType_zero_or_one": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "790": [
+                                                                                                                                                                                                "idx_col_g<790,IDENTIFIER>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "keyListVariants": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "27": [
+                                                                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "keyPartOrExpression": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "identifier": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "791": [
+                                                                                                                                                                                                                "`col_g`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ],
+                                                                                                                                                                                            "28": [
+                                                                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ],
+                                                                                                                                                                    "%tableElementList111_zero_or_more": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "24": [
+                                                                                                                                                                                ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                            ],
+                                                                                                                                                                            "tableElement": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "tableConstraintDef": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "%%tableConstraintDef938939": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "734": [
+                                                                                                                                                                                                        "UNIQUE<734,UNIQUE_SYMBOL>"
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "keyOrIndex_zero_or_one": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "313": [
+                                                                                                                                                                                                                "INDEX<313,INDEX_SYMBOL>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "indexNameAndType_zero_or_one": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "790": [
+                                                                                                                                                                                                                "idx_col_k<790,IDENTIFIER>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "keyListVariants": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "27": [
+                                                                                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "keyPartOrExpression": [
+                                                                                                                                                                                                                {
+                                                                                                                                                                                                                    "identifier": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "791": [
+                                                                                                                                                                                                                                "`col_k`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "28": [
+                                                                                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ],
+                                                                                                                                                                            "%tableElementList111_zero_or_more": [
+                                                                                                                                                                                {
+                                                                                                                                                                                    "24": [
+                                                                                                                                                                                        ",<24,COMMA_SYMBOL>"
+                                                                                                                                                                                    ],
+                                                                                                                                                                                    "tableElement": [
+                                                                                                                                                                                        {
+                                                                                                                                                                                            "tableConstraintDef": [
+                                                                                                                                                                                                {
+                                                                                                                                                                                                    "278": [
+                                                                                                                                                                                                        "FULLTEXT<278,FULLTEXT_SYMBOL>"
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "keyOrIndex_zero_or_one": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "313": [
+                                                                                                                                                                                                                "INDEX<313,INDEX_SYMBOL>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "indexName_zero_or_one": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "790": [
+                                                                                                                                                                                                                "idx_col_l<790,IDENTIFIER>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ],
+                                                                                                                                                                                                    "keyListVariants": [
+                                                                                                                                                                                                        {
+                                                                                                                                                                                                            "27": [
+                                                                                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "keyPartOrExpression": [
+                                                                                                                                                                                                                {
+                                                                                                                                                                                                                    "identifier": [
+                                                                                                                                                                                                                        {
+                                                                                                                                                                                                                            "791": [
+                                                                                                                                                                                                                                "`col_l`<791,BACK_TICK_QUOTED_ID>"
+                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                        }
+                                                                                                                                                                                                                    ]
+                                                                                                                                                                                                                }
+                                                                                                                                                                                                            ],
+                                                                                                                                                                                                            "28": [
+                                                                                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
+                                                                                                                                                                                                            ]
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    ]
+                                                                                                                                                                                                }
+                                                                                                                                                                                            ]
+                                                                                                                                                                                        }
+                                                                                                                                                                                    ]
+                                                                                                                                                                                }
+                                                                                                                                                                            ]
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ],
+                                                    "28": [
+                                                        ")<28,CLOSE_PAR_SYMBOL>"
+                                                    ]
+                                                }
+                                            ],
+                                            "createTableOptions_zero_or_one": [
+                                                {
+                                                    "DEFAULT_SYMBOL_zero_or_one": [
+                                                        {
+                                                            "198": [
+                                                                "DEFAULT<198,DEFAULT_SYMBOL>"
+                                                            ]
+                                                        }
+                                                    ],
+                                                    "charset": [
+                                                        {
+                                                            "54": [
+                                                                "CHARACTER<54,CHAR_SYMBOL>"
+                                                            ],
+                                                            "67": [
+                                                                "SET<67,SET_SYMBOL>"
+                                                            ]
+                                                        }
+                                                    ],
+                                                    "charsetName": [
+                                                        {
+                                                            "textOrIdentifier": [
+                                                                {
+                                                                    "790": [
+                                                                        "cp1250<790,IDENTIFIER>"
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ],
+                                                    "%createTableOptions1036_zero_or_more": [
+                                                        {
+                                                            "createTableOption": [
+                                                                {
+                                                                    "defaultCollation": [
+                                                                        {
+                                                                            "140": [
+                                                                                "COLLATE<140,COLLATE_SYMBOL>"
+                                                                            ],
+                                                                            "collationName": [
+                                                                                {
+                                                                                    "textOrIdentifier": [
+                                                                                        {
+                                                                                            "790": [
+                                                                                                "cp1250_general_ci<790,IDENTIFIER>"
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "%%query02": [
+        {
+            "25": [
+                ";<25,SEMICOLON_SYMBOL>"
+            ],
+            "EOF_zero_or_one": [
+                {
+                    "-1": [
+                        "<EOF><-1,<INVALID>>"
+                    ]
+                }
+            ]
+        }
+    ]
+}

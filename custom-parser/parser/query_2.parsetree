@@ -1,0 +1,102 @@
+QUERY:
+GRANT SELECT ON mytable TO myuser@localhost
+
+PARSE TREE:
+
+{
+    "simpleStatement": [
+        {
+            "accountManagementStatement": [
+                {
+                    "grant": [
+                        {
+                            "288": [
+                                "GRANT<288,GRANT_SYMBOL>"
+                            ],
+                            "%grant477": [
+                                {
+                                    "roleOrPrivilegesList": [
+                                        {
+                                            "roleOrPrivilege": [
+                                                {
+                                                    "610": [
+                                                        "SELECT<610,SELECT_SYMBOL>"
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ],
+                                    "471": [
+                                        "ON<471,ON_SYMBOL>"
+                                    ],
+                                    "grantIdentifier": [
+                                        {
+                                            "schemaRef": [
+                                                {
+                                                    "identifier": [
+                                                        {
+                                                            "790": [
+                                                                "mytable<790,IDENTIFIER>"
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ],
+                                    "715": [
+                                        "TO<715,TO_SYMBOL>"
+                                    ],
+                                    "grantTargetList": [
+                                        {
+                                            "createUserList": [
+                                                {
+                                                    "createUserEntry": [
+                                                        {
+                                                            "user": [
+                                                                {
+                                                                    "textOrIdentifier": [
+                                                                        {
+                                                                            "790": [
+                                                                                "myuser<790,IDENTIFIER>"
+                                                                            ]
+                                                                        }
+                                                                    ],
+                                                                    "%userIdentifierOrText1125_zero_or_one": [
+                                                                        {
+                                                                            "34": [
+                                                                                "@<34,AT_SIGN_SYMBOL>"
+                                                                            ],
+                                                                            "textOrIdentifier": [
+                                                                                {
+                                                                                    "790": [
+                                                                                        "localhost<790,IDENTIFIER>"
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "%%query02": [
+        {
+            "-1": [
+                "<EOF><-1,<INVALID>>"
+            ]
+        }
+    ]
+}
