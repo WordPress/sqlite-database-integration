@@ -305,9 +305,6 @@ def eliminate_left_recursion(grammar):
         grammar[new_rule+"_nested"] = without_tail
     return unhash_grammar(grammar)
 
-        
-
-
 
 
 def factor_common_prefixes(grammar, passes=1):

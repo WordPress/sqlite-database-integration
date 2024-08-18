@@ -81,13 +81,15 @@ unset($grammar_data);
 // die();
 
 
-// foreach ($queries as $k => $query) {
-//     $parser = new DynamicRecursiveDescentParser($grammar, tokenizeQuery($query), $lookup);
-    // $parser->debug = true;
-    // print_r($parse_tree);
-//     file_put_contents("query_$k.parsetree", 
-//     "QUERY:\n$query\n\nPARSE TREE:\n\n" . json_encode($parse_tree, JSON_PRETTY_PRINT));
-// }
+foreach ($queries as $k => $query) {
+    $parser = new DynamicRecursiveDescentParser($grammar, tokenizeQuery($query));
+    $parse_tree = $parser->parse();
+    $parser->debug = true;
+    print_r($parse_tree);
+    file_put_contents("query_$k.parsetree", 
+    "QUERY:\n$query\n\nPARSE TREE:\n\n" . json_encode($parse_tree, JSON_PRETTY_PRINT));
+}
+die();
 
 // die();
 // Benchmark 5 times
@@ -96,7 +98,7 @@ $tokens = tokenizeQuery($queries[1]);
 
 var_dump(memory_get_usage(true)/1024/1024);
 $start_time = microtime(true);
-for ($i = 0; $i < 700; $i++) {
+for ($i = 0; $i < 1000; $i++) {
     $parser = new DynamicRecursiveDescentParser($grammar, $tokens);
     $parse_tree = $parser->parse();
 }

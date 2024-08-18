@@ -79,7 +79,7 @@ class Grammar {
              *   rules that are not part of the original grammar. They are useful
              * 
              */
-            if($rule_name[0] === '%' || $rule_name[0] === 'selectOption_rr') {
+            if($rule_name[0] === '%' || str_ends_with($rule_name, '_fragment')) {
                 $this->fragment_ids[$rule_index + $grammar['rules_offset']] = true;
             }
         }
@@ -290,6 +290,18 @@ class ParseTree {
                 return $child;
             }
         }        
+    }
+
+    public function get_descendants($rule_name)
+    {
+        $parse_trees = [$this];
+        $all_descendants = [];
+        while(count($parse_trees)) {
+            $parse_tree = array_pop($parse_trees);
+            $all_descendants = array_merge($all_descendants, $parse_tree->get_children($rule_name));
+            array_push($parse_trees, ...$parse_tree->get_children());
+        }
+        return $all_descendants;
     }
 
     public function get_children($rule_name=null)

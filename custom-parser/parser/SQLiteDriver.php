@@ -33,7 +33,7 @@ class SQLiteTokenFactory {
         'TRIM' => ['argCount' => 3, 'optionalArgs' => 2],
         'DATE' => ['argCount' => 1, 'optionalArgs' => 0],
         'TIME' => ['argCount' => 1, 'optionalArgs' => 0],
-        'DATETIME' => ['argCount' => 1, 'optionalArgs' => 0],
+        'DATETIME' => ['argCount' => 2, 'optionalArgs' => 1],
         'JULIANDAY' => ['argCount' => 1, 'optionalArgs' => 0],
         'STRFTIME' => ['argCount' => 2, 'optionalArgs' => 0],
         'RANDOM' => ['argCount' => 0, 'optionalArgs' => 0],

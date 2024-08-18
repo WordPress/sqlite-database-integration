@@ -1,576 +1,149 @@
 QUERY:
-INSERT INTO products
-SELECT 
-    'Smartphone', 
-    'Latest model with advanced features', 
-    699.99, 
-    50, 
-    'Electronics'
-WHERE NOT EXISTS (
-    SELECT 1 FROM products WHERE product_name = 'Smartphone'
-) AND 1=2;
+GRANT SELECT ON mytable TO myuser@localhost
 
 PARSE TREE:
 
 {
-    "simpleStatement": [
+    "rule_id": 2004,
+    "rule_name": "query",
+    "children": [
         {
-            "insertStatement": [
+            "rule_id": 2005,
+            "rule_name": "simpleStatement",
+            "children": [
                 {
-                    "319": [
-                        "INSERT<319,INSERT_SYMBOL>"
-                    ],
-                    "INTO_SYMBOL_zero_or_one": [
+                    "rule_id": 2693,
+                    "rule_name": "accountManagementStatement",
+                    "children": [
                         {
-                            "326": [
-                                "INTO<326,INTO_SYMBOL>"
-                            ]
-                        }
-                    ],
-                    "tableRef": [
-                        {
-                            "qualifiedIdentifier": [
+                            "rule_id": 2747,
+                            "rule_name": "grant",
+                            "children": [
                                 {
-                                    "790": [
-                                        "products<790,IDENTIFIER>"
-                                    ]
-                                }
-                            ]
-                        }
-                    ],
-                    "%insertStatement198": [
-                        {
-                            "insertQueryExpression": [
+                                    "type": 288,
+                                    "name": "GRANT_SYMBOL",
+                                    "text": "GRANT"
+                                },
                                 {
-                                    "queryExpression": [
+                                    "rule_id": 2774,
+                                    "rule_name": "roleOrPrivilegesList",
+                                    "children": [
                                         {
-                                            "%queryExpression224": [
+                                            "rule_id": 2796,
+                                            "rule_name": "roleOrPrivilege",
+                                            "children": [
                                                 {
-                                                    "queryExpressionBody": [
+                                                    "type": 610,
+                                                    "name": "SELECT_SYMBOL",
+                                                    "text": "SELECT"
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 471,
+                                    "name": "ON_SYMBOL",
+                                    "text": "ON"
+                                },
+                                {
+                                    "rule_id": 2802,
+                                    "rule_name": "grantIdentifier",
+                                    "children": [
+                                        {
+                                            "rule_id": 3606,
+                                            "rule_name": "schemaRef",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3648,
+                                                    "rule_name": "identifier",
+                                                    "children": [
                                                         {
-                                                            "queryPrimary": [
+                                                            "rule_id": 3647,
+                                                            "rule_name": "pureIdentifier",
+                                                            "children": [
                                                                 {
-                                                                    "querySpecification": [
+                                                                    "type": 790,
+                                                                    "name": "IDENTIFIER",
+                                                                    "text": "mytable"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 715,
+                                    "name": "TO_SYMBOL",
+                                    "text": "TO"
+                                },
+                                {
+                                    "rule_id": 2748,
+                                    "rule_name": "grantTargetList",
+                                    "children": [
+                                        {
+                                            "rule_id": 3558,
+                                            "rule_name": "createUserList",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3570,
+                                                    "rule_name": "createUserEntry",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3587,
+                                                            "rule_name": "user",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3585,
+                                                                    "rule_name": "userIdentifierOrText",
+                                                                    "children": [
                                                                         {
-                                                                            "610": [
-                                                                                "SELECT<610,SELECT_SYMBOL>"
-                                                                            ],
-                                                                            "selectItemList": [
+                                                                            "rule_id": 3689,
+                                                                            "rule_name": "textOrIdentifier",
+                                                                            "children": [
                                                                                 {
-                                                                                    "selectItem": [
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
                                                                                         {
-                                                                                            "expr": [
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
                                                                                                 {
-                                                                                                    "boolPri": [
-                                                                                                        {
-                                                                                                            "predicate": [
-                                                                                                                {
-                                                                                                                    "bitExpr": [
-                                                                                                                        {
-                                                                                                                            "simpleExpr": [
-                                                                                                                                {
-                                                                                                                                    "literal": [
-                                                                                                                                        {
-                                                                                                                                            "textLiteral": [
-                                                                                                                                                {
-                                                                                                                                                    "textStringLiteral": [
-                                                                                                                                                        {
-                                                                                                                                                            "793": [
-                                                                                                                                                                "'Smartphone'<793,SINGLE_QUOTED_TEXT>"
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ]
-                                                                                                        }
-                                                                                                    ]
-                                                                                                }
-                                                                                            ]
-                                                                                        }
-                                                                                    ],
-                                                                                    "%selectItemList272_zero_or_more": [
-                                                                                        {
-                                                                                            "24": [
-                                                                                                ",<24,COMMA_SYMBOL>"
-                                                                                            ],
-                                                                                            "selectItem": [
-                                                                                                {
-                                                                                                    "expr": [
-                                                                                                        {
-                                                                                                            "boolPri": [
-                                                                                                                {
-                                                                                                                    "predicate": [
-                                                                                                                        {
-                                                                                                                            "bitExpr": [
-                                                                                                                                {
-                                                                                                                                    "simpleExpr": [
-                                                                                                                                        {
-                                                                                                                                            "literal": [
-                                                                                                                                                {
-                                                                                                                                                    "textLiteral": [
-                                                                                                                                                        {
-                                                                                                                                                            "textStringLiteral": [
-                                                                                                                                                                {
-                                                                                                                                                                    "793": [
-                                                                                                                                                                        "'Latest model with advanced features'<793,SINGLE_QUOTED_TEXT>"
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ]
-                                                                                                        }
-                                                                                                    ]
-                                                                                                }
-                                                                                            ],
-                                                                                            "%selectItemList272_zero_or_more": [
-                                                                                                {
-                                                                                                    "24": [
-                                                                                                        ",<24,COMMA_SYMBOL>"
-                                                                                                    ],
-                                                                                                    "selectItem": [
-                                                                                                        {
-                                                                                                            "expr": [
-                                                                                                                {
-                                                                                                                    "boolPri": [
-                                                                                                                        {
-                                                                                                                            "predicate": [
-                                                                                                                                {
-                                                                                                                                    "bitExpr": [
-                                                                                                                                        {
-                                                                                                                                            "simpleExpr": [
-                                                                                                                                                {
-                                                                                                                                                    "literal": [
-                                                                                                                                                        {
-                                                                                                                                                            "numLiteral": [
-                                                                                                                                                                {
-                                                                                                                                                                    "796": [
-                                                                                                                                                                        "699.99<796,DECIMAL_NUMBER>"
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ]
-                                                                                                        }
-                                                                                                    ],
-                                                                                                    "%selectItemList272_zero_or_more": [
-                                                                                                        {
-                                                                                                            "24": [
-                                                                                                                ",<24,COMMA_SYMBOL>"
-                                                                                                            ],
-                                                                                                            "selectItem": [
-                                                                                                                {
-                                                                                                                    "expr": [
-                                                                                                                        {
-                                                                                                                            "boolPri": [
-                                                                                                                                {
-                                                                                                                                    "predicate": [
-                                                                                                                                        {
-                                                                                                                                            "bitExpr": [
-                                                                                                                                                {
-                                                                                                                                                    "simpleExpr": [
-                                                                                                                                                        {
-                                                                                                                                                            "literal": [
-                                                                                                                                                                {
-                                                                                                                                                                    "numLiteral": [
-                                                                                                                                                                        {
-                                                                                                                                                                            "796": [
-                                                                                                                                                                                "50<796,DECIMAL_NUMBER>"
-                                                                                                                                                                            ]
-                                                                                                                                                                        }
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ],
-                                                                                                            "%selectItemList272_zero_or_more": [
-                                                                                                                {
-                                                                                                                    "24": [
-                                                                                                                        ",<24,COMMA_SYMBOL>"
-                                                                                                                    ],
-                                                                                                                    "selectItem": [
-                                                                                                                        {
-                                                                                                                            "expr": [
-                                                                                                                                {
-                                                                                                                                    "boolPri": [
-                                                                                                                                        {
-                                                                                                                                            "predicate": [
-                                                                                                                                                {
-                                                                                                                                                    "bitExpr": [
-                                                                                                                                                        {
-                                                                                                                                                            "simpleExpr": [
-                                                                                                                                                                {
-                                                                                                                                                                    "literal": [
-                                                                                                                                                                        {
-                                                                                                                                                                            "textLiteral": [
-                                                                                                                                                                                {
-                                                                                                                                                                                    "textStringLiteral": [
-                                                                                                                                                                                        {
-                                                                                                                                                                                            "793": [
-                                                                                                                                                                                                "'Electronics'<793,SINGLE_QUOTED_TEXT>"
-                                                                                                                                                                                            ]
-                                                                                                                                                                                        }
-                                                                                                                                                                                    ]
-                                                                                                                                                                                }
-                                                                                                                                                                            ]
-                                                                                                                                                                        }
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ]
-                                                                                                        }
-                                                                                                    ]
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "myuser"
                                                                                                 }
                                                                                             ]
                                                                                         }
                                                                                     ]
                                                                                 }
-                                                                            ],
-                                                                            "whereClause_zero_or_one": [
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 34,
+                                                                            "name": "AT_SIGN_SYMBOL",
+                                                                            "text": "@"
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3689,
+                                                                            "rule_name": "textOrIdentifier",
+                                                                            "children": [
                                                                                 {
-                                                                                    "769": [
-                                                                                        "WHERE<769,WHERE_SYMBOL>"
-                                                                                    ],
-                                                                                    "expr": [
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
                                                                                         {
-                                                                                            "453": [
-                                                                                                "NOT<453,NOT_SYMBOL>"
-                                                                                            ],
-                                                                                            "expr": [
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
                                                                                                 {
-                                                                                                    "boolPri": [
-                                                                                                        {
-                                                                                                            "predicate": [
-                                                                                                                {
-                                                                                                                    "bitExpr": [
-                                                                                                                        {
-                                                                                                                            "simpleExpr": [
-                                                                                                                                {
-                                                                                                                                    "EXISTS_SYMBOL_zero_or_one": [
-                                                                                                                                        {
-                                                                                                                                            "247": [
-                                                                                                                                                "EXISTS<247,EXISTS_SYMBOL>"
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ],
-                                                                                                                                    "subquery": [
-                                                                                                                                        {
-                                                                                                                                            "27": [
-                                                                                                                                                "(<27,OPEN_PAR_SYMBOL>"
-                                                                                                                                            ],
-                                                                                                                                            "%queryExpressionParens232": [
-                                                                                                                                                {
-                                                                                                                                                    "%queryExpression224": [
-                                                                                                                                                        {
-                                                                                                                                                            "queryExpressionBody": [
-                                                                                                                                                                {
-                                                                                                                                                                    "queryPrimary": [
-                                                                                                                                                                        {
-                                                                                                                                                                            "querySpecification": [
-                                                                                                                                                                                {
-                                                                                                                                                                                    "610": [
-                                                                                                                                                                                        "SELECT<610,SELECT_SYMBOL>"
-                                                                                                                                                                                    ],
-                                                                                                                                                                                    "selectItemList": [
-                                                                                                                                                                                        {
-                                                                                                                                                                                            "selectItem": [
-                                                                                                                                                                                                {
-                                                                                                                                                                                                    "expr": [
-                                                                                                                                                                                                        {
-                                                                                                                                                                                                            "boolPri": [
-                                                                                                                                                                                                                {
-                                                                                                                                                                                                                    "predicate": [
-                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                            "bitExpr": [
-                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                    "simpleExpr": [
-                                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                                            "literal": [
-                                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                                    "numLiteral": [
-                                                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                                                            "796": [
-                                                                                                                                                                                                                                                                "1<796,DECIMAL_NUMBER>"
-                                                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                }
-                                                                                                                                                                                                            ]
-                                                                                                                                                                                                        }
-                                                                                                                                                                                                    ]
-                                                                                                                                                                                                }
-                                                                                                                                                                                            ]
-                                                                                                                                                                                        }
-                                                                                                                                                                                    ],
-                                                                                                                                                                                    "fromClause_zero_or_one": [
-                                                                                                                                                                                        {
-                                                                                                                                                                                            "277": [
-                                                                                                                                                                                                "FROM<277,FROM_SYMBOL>"
-                                                                                                                                                                                            ],
-                                                                                                                                                                                            "%fromClause263": [
-                                                                                                                                                                                                {
-                                                                                                                                                                                                    "tableReferenceList": [
-                                                                                                                                                                                                        {
-                                                                                                                                                                                                            "tableReference": [
-                                                                                                                                                                                                                {
-                                                                                                                                                                                                                    "tableFactor": [
-                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                            "singleTable": [
-                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                    "tableRef": [
-                                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                                            "qualifiedIdentifier": [
-                                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                                    "790": [
-                                                                                                                                                                                                                                                        "products<790,IDENTIFIER>"
-                                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                }
-                                                                                                                                                                                                            ]
-                                                                                                                                                                                                        }
-                                                                                                                                                                                                    ]
-                                                                                                                                                                                                }
-                                                                                                                                                                                            ]
-                                                                                                                                                                                        }
-                                                                                                                                                                                    ],
-                                                                                                                                                                                    "whereClause_zero_or_one": [
-                                                                                                                                                                                        {
-                                                                                                                                                                                            "769": [
-                                                                                                                                                                                                "WHERE<769,WHERE_SYMBOL>"
-                                                                                                                                                                                            ],
-                                                                                                                                                                                            "expr": [
-                                                                                                                                                                                                {
-                                                                                                                                                                                                    "boolPri": [
-                                                                                                                                                                                                        {
-                                                                                                                                                                                                            "predicate": [
-                                                                                                                                                                                                                {
-                                                                                                                                                                                                                    "bitExpr": [
-                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                            "simpleExpr": [
-                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                    "columnRef": [
-                                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                                            "qualifiedIdentifier": [
-                                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                                    "790": [
-                                                                                                                                                                                                                                                        "product_name<790,IDENTIFIER>"
-                                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                }
-                                                                                                                                                                                                            ],
-                                                                                                                                                                                                            "boolPri_rr": [
-                                                                                                                                                                                                                {
-                                                                                                                                                                                                                    "compOp": [
-                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                            "1": [
-                                                                                                                                                                                                                                "=<1,EQUAL_OPERATOR>"
-                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                    ],
-                                                                                                                                                                                                                    "predicate": [
-                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                            "bitExpr": [
-                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                    "simpleExpr": [
-                                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                                            "literal": [
-                                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                                    "textLiteral": [
-                                                                                                                                                                                                                                                        {
-                                                                                                                                                                                                                                                            "textStringLiteral": [
-                                                                                                                                                                                                                                                                {
-                                                                                                                                                                                                                                                                    "793": [
-                                                                                                                                                                                                                                                                        "'Smartphone'<793,SINGLE_QUOTED_TEXT>"
-                                                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                            ]
-                                                                                                                                                                                                                        }
-                                                                                                                                                                                                                    ]
-                                                                                                                                                                                                                }
-                                                                                                                                                                                                            ]
-                                                                                                                                                                                                        }
-                                                                                                                                                                                                    ]
-                                                                                                                                                                                                }
-                                                                                                                                                                                            ]
-                                                                                                                                                                                        }
-                                                                                                                                                                                    ]
-                                                                                                                                                                                }
-                                                                                                                                                                            ]
-                                                                                                                                                                        }
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ],
-                                                                                                                                            "28": [
-                                                                                                                                                ")<28,CLOSE_PAR_SYMBOL>"
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ]
-                                                                                                        }
-                                                                                                    ],
-                                                                                                    "expr_rr": [
-                                                                                                        {
-                                                                                                            "%%expr698699": [
-                                                                                                                {
-                                                                                                                    "90": [
-                                                                                                                        "AND<90,AND_SYMBOL>"
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ],
-                                                                                                            "expr": [
-                                                                                                                {
-                                                                                                                    "boolPri": [
-                                                                                                                        {
-                                                                                                                            "predicate": [
-                                                                                                                                {
-                                                                                                                                    "bitExpr": [
-                                                                                                                                        {
-                                                                                                                                            "simpleExpr": [
-                                                                                                                                                {
-                                                                                                                                                    "literal": [
-                                                                                                                                                        {
-                                                                                                                                                            "numLiteral": [
-                                                                                                                                                                {
-                                                                                                                                                                    "796": [
-                                                                                                                                                                        "1<796,DECIMAL_NUMBER>"
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ],
-                                                                                                                            "boolPri_rr": [
-                                                                                                                                {
-                                                                                                                                    "compOp": [
-                                                                                                                                        {
-                                                                                                                                            "1": [
-                                                                                                                                                "=<1,EQUAL_OPERATOR>"
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ],
-                                                                                                                                    "predicate": [
-                                                                                                                                        {
-                                                                                                                                            "bitExpr": [
-                                                                                                                                                {
-                                                                                                                                                    "simpleExpr": [
-                                                                                                                                                        {
-                                                                                                                                                            "literal": [
-                                                                                                                                                                {
-                                                                                                                                                                    "numLiteral": [
-                                                                                                                                                                        {
-                                                                                                                                                                            "796": [
-                                                                                                                                                                                "2<796,DECIMAL_NUMBER>"
-                                                                                                                                                                            ]
-                                                                                                                                                                        }
-                                                                                                                                                                    ]
-                                                                                                                                                                }
-                                                                                                                                                            ]
-                                                                                                                                                        }
-                                                                                                                                                    ]
-                                                                                                                                                }
-                                                                                                                                            ]
-                                                                                                                                        }
-                                                                                                                                    ]
-                                                                                                                                }
-                                                                                                                            ]
-                                                                                                                        }
-                                                                                                                    ]
-                                                                                                                }
-                                                                                                            ]
-                                                                                                        }
-                                                                                                    ]
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "localhost"
                                                                                                 }
                                                                                             ]
                                                                                         }
@@ -593,20 +166,11 @@ PARSE TREE:
                     ]
                 }
             ]
-        }
-    ],
-    "%%query02": [
+        },
         {
-            "25": [
-                ";<25,SEMICOLON_SYMBOL>"
-            ],
-            "EOF_zero_or_one": [
-                {
-                    "-1": [
-                        "<EOF><-1,<INVALID>>"
-                    ]
-                }
-            ]
+            "type": -1,
+            "name": "$",
+            "text": "<EOF>"
         }
     ]
 }

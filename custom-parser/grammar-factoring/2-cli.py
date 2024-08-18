@@ -1,7 +1,7 @@
 import json
 import sys
 import argparse
-from ebnfutils import eliminate_left_recursion, encode_as_ebnf, factor_common_prefixes
+from ebnfutils import eliminate_left_recursion, encode_as_ebnf, factor_common_prefixes, expand_grammar
 
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
@@ -14,7 +14,7 @@ parser = CustomArgumentParser(description="Processes the parser grammar.")
 parser.add_argument(
     'mode',
     type=str,
-    choices=['lr', 'cp', 'all'],
+    choices=['lr', 'expand', 'cp', 'all'],
     help=(
         'Specify the mode. Options are:\n'
         "* 'lr' for left recursion elimination\n"
@@ -48,9 +48,10 @@ args = parser.parse_args()
 # print(f"Selected mode: {args.mode}")
 # print(f"Filename: {args.filename}")
 
-if args.filename is None or args.mode not in ["lr", "cp", "all"]:
+if args.filename is None or args.mode not in ["expand", "lr", "cp", "all"]:
     print("Usage: python ebnf-to-right-recursive.py <mode> <filename> [--format json|ebnf]")
     print("Mode can be one of:")
+    print("* 'expand' for expansion of * ? + symbols")
     print("* 'lr' for left recursion elimination")
     print("* 'cp' for factoring common prefixes")
     print("* 'all' for both")
@@ -68,6 +69,10 @@ except Exception as e:
     sys.exit(1)
 
 updated_grammar = input_grammar
+if args.mode == "expand" or args.mode == "all":
+    grammar, new_rules = expand_grammar(updated_grammar)
+    updated_grammar = grammar
+
 if args.mode == "lr" or args.mode == "all":
     updated_grammar = eliminate_left_recursion(updated_grammar)
 

@@ -61,6 +61,21 @@ foreach($grammar as $rule) {
     $compressed_grammar[$rule_index_by_name[$rule["name"]]] = $new_branches;
 }
 
+// Compress the fragment rules names – they take a lot of disk space and are
+// inlined in the final parse tree anyway.
+$last_fragment = 1;
+foreach($rules_ids as $id => $name) {
+    if(
+        $name[0] === '%' || 
+        str_ends_with($name, '_zero_or_one') || 
+        str_ends_with($name, '_zero_or_more') || 
+        str_ends_with($name, '_one_or_more')
+    ) {
+        $rules_ids[$id] = '%f' . $last_fragment;
+        ++$last_fragment;
+    }
+}
+
 $full_grammar = [
     "rules_offset" => $rules_offset,
     "rules_names" => $rules_ids,

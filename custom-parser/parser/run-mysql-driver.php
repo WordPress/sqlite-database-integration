@@ -28,16 +28,13 @@ FOR UPDATE;
 ;
 SQL;
 
-// $query = <<<SQL
-// SELECT CONCAT(1 + 3, "b", "c"), DATE_ADD(col_b, INTERVAL 5 MONTH);
-// SQL;
 
 $grammar_data = include "./grammar.php";
 $grammar = new Grammar($grammar_data);
-// print_r(tokenizeQuery($query));
-// die();
 $parser = new DynamicRecursiveDescentParser($grammar, tokenizeQuery($query));
 $parseTree = $parser->parse();
+// print_r($parseTree);
+// die();
 // echo 'a';
 
 $expr = translateQuery($parseTree);
@@ -116,27 +113,23 @@ function translateQuery($parseTree) {
             // skip them.
             return null;
 
-        case 'selectOption':
-            $all_options = [];
-            do {
-                $all_options[] = $parseTree->get_token()->text;
-                $parseTree = $parseTree->get_child('selectOption');
-            } while ($parseTree);
+        case 'querySpecOption':
+            $token = $parseTree->get_token();
+            $option = $parseTree->get_token()->type;
+            switch($token->type) {
+                case MySQLLexer::ALL_SYMBOL:
+                case MySQLLexer::DISTINCT_SYMBOL:
+                    return new SQLiteExpression([
+                        SQLiteTokenFactory::raw($token->text)
+                    ]);
+                case MySQLLexer::SQL_CALC_FOUND_ROWS_SYMBOL:
+                default:
+                    // we'll need to run the current SQL query without any
+                    // LIMIT clause, and then substitute the FOUND_ROWS()
+                    // function with a literal number of rows found.
+                    return new SQLiteExpression([]);
+            }
             
-            $emit_options = [];
-            if(in_array('ALL', $all_options)) {
-                $emit_options[] = SQLiteTokenFactory::raw('ALL');
-            }
-            if(in_array('DISTINCT', $all_options) || in_array('DISTINCTROW', $all_options)) {
-                $emit_options[] = SQLiteTokenFactory::raw('DISTINCT');
-            }
-            if(in_array('SQL_CALC_FOUND_ROWS', $all_options)) {
-                // we'll need to run the current SQL query without any
-                // LIMIT clause, and then substitute the FOUND_ROWS()
-                // function with a literal number of rows found.            
-            }
-            return new SQLiteExpression($emit_options);
-
         case 'fromClause':
             // Skip `FROM DUAL`. We only care about a singular 
             // FROM DUAL statement, as FROM mytable, DUAL is a syntax
@@ -147,6 +140,7 @@ function translateQuery($parseTree) {
             ) {
                 return null;
             }
+        case 'selectOption':
         case 'interval':
         case 'intervalTimeStamp':
         case 'bitExpr':
@@ -207,7 +201,6 @@ function translateQuery($parseTree) {
         case 'commonTableExpression':
         case 'derivedTable':
         case 'columnRefOrLiteral':
-        case 'querySpecOption':
         case 'orderClause':
         case 'groupByClause':
         case 'lockingClauseList':
@@ -215,7 +208,6 @@ function translateQuery($parseTree) {
         case 'havingClause':
         case 'direction':
         case 'orderExpression':
-        case 'runtimeFunctionCall':
             $child_expressions = [];
             foreach($parseTree->children as $child) {
                 $child_expressions[] = translateQuery($child);
@@ -232,6 +224,9 @@ function translateQuery($parseTree) {
 
         case 'functionCall':
             return translateFunctionCall($parseTree);
+            
+        case 'runtimeFunctionCall':
+            return translateRuntimeFunctionCall($parseTree);
 
         default:
             // var_dump(count($ast->children));
@@ -245,6 +240,42 @@ function translateQuery($parseTree) {
                     $rule_name
                 )
             ]);
+    }
+}
+
+function translateRuntimeFunctionCall($parseTree): SQLiteExpression {
+    $name_token = $parseTree->children[0];
+
+    switch (strtoupper($name_token->text)) {
+        case 'ADDDATE':
+        case 'DATE_ADD':
+            $args = $parseTree->get_children('expr');
+            $interval = $parseTree->get_child('interval');
+            $timespan = $interval->get_child('intervalTimeStamp')->get_token()->text;
+            return SQLiteTokenFactory::createFunction(
+                'DATETIME',
+                [
+                    translateQuery($args[0]),
+                    new SQLiteExpression([
+                        SQLiteTokenFactory::value('+'),
+                        SQLiteTokenFactory::raw('||'),
+                        translateQuery($args[1]),
+                        SQLiteTokenFactory::raw('||'),
+                        SQLiteTokenFactory::value($timespan),
+                    ])
+                ]
+            );
+
+        case 'DATE_SUB':
+            // return new Expression([
+            //     SQLiteTokenFactory::raw("DATETIME("),
+            //     $args[0],
+            //     SQLiteTokenFactory::raw(", '-'"),
+            //     $args[1],
+            //     SQLiteTokenFactory::raw(" days')")
+            // ]);
+        default:
+            throw new Exception('Unsupported function: ' . $name_token->text);
     }
 }
 
@@ -381,23 +412,6 @@ function translateFunctionCall($functionCallTree): SQLiteExpression
         case 'UPPER':
             return SQLiteTokenFactory::createFunction('UPPER', $args);
             
-        // case 'ADDDATE':
-        // case 'DATE_ADD':
-        //     return new Expression([
-        //         SQLiteTokenFactory::raw("DATETIME("),
-        //         $args[0],
-        //         SQLiteTokenFactory::raw(", '+'"),
-        //         $args[1],
-        //         SQLiteTokenFactory::raw(" days')")
-        //     ]);
-        // case 'DATE_SUB':
-        //     return new Expression([
-        //         SQLiteTokenFactory::raw("DATETIME("),
-        //         $args[0],
-        //         SQLiteTokenFactory::raw(", '-'"),
-        //         $args[1],
-        //         SQLiteTokenFactory::raw(" days')")
-        //     ]);
         case 'DATE_FORMAT':
             $mysql_date_format_to_sqlite_strftime = array(
                 '%a' => '%D',
