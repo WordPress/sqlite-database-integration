@@ -1196,6 +1196,27 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
 	}
 
+	public function testColumnWithOnUpdateAndAutoincrementPrimaryKey() {
+		// CREATE TABLE with ON UPDATE, AUTO_INCREMENT, and PRIMARY KEY
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id int(11) NOT NULL AUTO_INCREMENT,
+				created_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP,
+				PRIMARY KEY (id)
+			);'
+		);
+
+		// on INSERT, no timestamps are expected
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertNull( $result[0]->created_at );
+
+		// on UPDATE, we expect timestamps in form YYYY-MM-DD HH:MM:SS
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 2' );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
+	}
+
 	public function testChangeColumnWithOnUpdate() {
 		// CREATE TABLE with ON UPDATE
 		$this->assertQuery(

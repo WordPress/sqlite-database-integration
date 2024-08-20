@@ -1145,8 +1145,7 @@ class WP_SQLite_Translator {
 					array( 'CURRENT_TIMESTAMP' )
 				)
 			) {
-				$this->rewriter->skip(); // ON UPDATE
-				$this->rewriter->skip(); // CURRENT_TIMESTAMP
+				$this->rewriter->skip();
 				$result->on_update = true;
 				continue;
 			}
