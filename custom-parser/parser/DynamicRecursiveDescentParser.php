@@ -169,7 +169,7 @@ class ParseTree {
     {
         $this->children[] = $node;
     }
-    
+
     /**
      * Flatten the matched rule fragments as if their children were direct
      * descendants of the current rule.
@@ -283,13 +283,29 @@ class ParseTree {
         return null;
     }
 
-    public function get_child($rule_name)
+    public function get_child($rule_name=null)
     {
         foreach($this->children as $child) {
-            if($child instanceof ParseTree && $child->rule_name === $rule_name) {
+            if($child instanceof ParseTree && (
+                $child->rule_name === $rule_name ||
+                $rule_name === null
+            )) {
                 return $child;
             }
         }        
+    }
+
+    public function get_descendant($rule_name)
+    {
+        $parse_trees = [$this];
+        while(count($parse_trees)) {
+            $parse_tree = array_pop($parse_trees);
+            if($parse_tree->rule_name === $rule_name) {
+                return $parse_tree;
+            }
+            array_push($parse_trees, ...$parse_tree->get_children());
+        }
+        return null;
     }
 
     public function get_descendants($rule_name)

@@ -37,6 +37,10 @@ $driver = new MySQLonSQLiteDriver($grammar);
 // die();
 // echo 'a';
 
+$query = <<<SQL
+SELECT VALUES("col_a")
+SQL;
+
 echo $driver->runQuery($query);
 die();
 // $transformer = new SQLTransformer($parseTree, 'sqlite');
@@ -322,6 +326,18 @@ class MySQLonSQLiteDriver
             //     $args[1],
             //     SQLiteTokenFactory::raw(" days')")
             // ]);
+
+            case 'VALUES':
+                $column = $parseTree->get_child()->get_descendant('pureIdentifier');
+                if(!$column) {
+                    throw new Exception('VALUES() calls without explicit column names are unsupported');
+                }
+
+                $colname = $column->get_token()->extractValue();
+                return new SQLiteExpression([
+                    SQLiteTokenFactory::raw("excluded."),
+                    SQLiteTokenFactory::identifier($colname)
+                ]);
             default:
                 throw new Exception('Unsupported function: ' . $name_token->text);
         }
@@ -587,4 +603,5 @@ class MySQLonSQLiteDriver
                 throw new Exception('Unsupported function: ' . $name);
         }
     }
+    
 }

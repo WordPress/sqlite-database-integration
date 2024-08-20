@@ -9048,4 +9048,18 @@ class MySQLToken
         $token_name = MySQLLexer::getTokenName($this->type);
         return $this->text . '<' . $this->type . ','.$token_name.'>';
     }
+
+    public function extractValue()
+    {
+        if($this->type === MySQLLexer::BACK_TICK_QUOTED_ID) {
+            return substr($this->text, 1, -1);
+        } else if($this->type === MySQLLexer::DOUBLE_QUOTED_TEXT) {
+            return substr($this->text, 1, -1);
+        } else if($this->type === MySQLLexer::SINGLE_QUOTED_TEXT) {
+            return substr($this->text, 1, -1);
+        } else {
+            return $this->text;
+        }  
+    }
+
 }
