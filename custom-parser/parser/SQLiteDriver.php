@@ -184,7 +184,7 @@ class SQLiteToken
     const TYPE_RAW = 'TYPE_RAW';
     const TYPE_IDENTIFIER = 'TYPE_IDENTIFIER';
     const TYPE_VALUE = 'TYPE_VALUE';
-    const TYPE_OPERATOR = 'TYPE_OPERATO';
+    const TYPE_OPERATOR = 'TYPE_OPERATOR';
 
     public $type;
     public $value;

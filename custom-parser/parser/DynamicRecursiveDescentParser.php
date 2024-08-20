@@ -79,7 +79,7 @@ class Grammar {
              *   rules that are not part of the original grammar. They are useful
              * 
              */
-            if($rule_name[0] === '%' || str_ends_with($rule_name, '_fragment')) {
+            if($rule_name[0] === '%') {
                 $this->fragment_ids[$rule_index + $grammar['rules_offset']] = true;
             }
         }
@@ -165,6 +165,11 @@ class ParseTree {
         $this->rule_name = $rule_name;
     }
 
+    public function append_child($node)
+    {
+        $this->children[] = $node;
+    }
+    
     /**
      * Flatten the matched rule fragments as if their children were direct
      * descendants of the current rule.
@@ -237,11 +242,6 @@ class ParseTree {
      *      ]
      * ]
      */
-    public function append_child($node)
-    {
-        $this->children[] = $node;
-    }
-
     public function merge_fragment($node)
     {
         $this->children = array_merge($this->children, $node->children);        
