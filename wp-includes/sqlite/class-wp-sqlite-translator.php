@@ -2659,13 +2659,9 @@ class WP_SQLite_Translator {
 			! $token->matches(
 				WP_SQLite_Token::TYPE_KEYWORD,
 				WP_SQLite_Token::FLAG_KEYWORD_RESERVED,
-				array( 'GROUP' )
+				array( 'GROUP BY' )
 			)
 		) {
-			return false;
-		}
-		$next = $this->rewriter->peek_nth( 2 )->value;
-		if ( 'BY' !== strtoupper( $next ?? '' ) ) {
 			return false;
 		}
 
@@ -2675,7 +2671,7 @@ class WP_SQLite_Translator {
 	}
 
 	/**
-	 * Translate WHERE something HAVING something to WHERE something AND something.
+	 * Translate HAVING without GROUP BY to GROUP BY 1 HAVING.
 	 *
 	 * @param WP_SQLite_Token $token The token to translate.
 	 *
@@ -2694,8 +2690,15 @@ class WP_SQLite_Translator {
 		if ( $this->has_group_by ) {
 			return false;
 		}
-		$this->rewriter->skip();
-		$this->rewriter->add( new WP_SQLite_Token( 'AND', WP_SQLite_Token::TYPE_KEYWORD ) );
+
+		// GROUP BY is missing, add "GROUP BY 1" before the HAVING clause.
+		$having = $this->rewriter->skip();
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+		$this->rewriter->add( new WP_SQLite_Token( 'GROUP BY', WP_SQLite_Token::TYPE_KEYWORD ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+		$this->rewriter->add( new WP_SQLite_Token( '1', WP_SQLite_Token::TYPE_NUMBER ) );
+		$this->rewriter->add( new WP_SQLite_Token( ' ', WP_SQLite_Token::TYPE_DELIMITER ) );
+		$this->rewriter->add( $having );
 
 		return true;
 	}
@@ -3115,6 +3118,10 @@ class WP_SQLite_Translator {
 					$new_field->mysql_data_type
 				);
 
+				// Drop ON UPDATE trigger by the old column name.
+				$on_update_trigger_name = $this->get_column_on_update_current_timestamp_trigger_name( $this->table_name, $from_name );
+				$this->execute_sqlite_query( "DROP TRIGGER IF EXISTS \"$on_update_trigger_name\"" );
+
 				/*
 				 * In SQLite, there is no direct equivalent to the CHANGE COLUMN
 				 * statement from MySQL. We need to do a bit of work to emulate it.
@@ -3235,6 +3242,11 @@ class WP_SQLite_Translator {
 					);
 				}
 
+				// Add the ON UPDATE trigger if needed.
+				if ( $new_field->on_update ) {
+					$this->add_column_on_update_current_timestamp( $this->table_name, $new_field->name );
+				}
+
 				if ( ',' === $alter_terminator->token ) {
 					/*
 					 * If the terminator was a comma,
@@ -3326,9 +3338,6 @@ class WP_SQLite_Translator {
 				)
 			);
 			$this->rewriter->drop_last();
-
-			$on_update_trigger_name = $this->get_column_on_update_current_timestamp_trigger_name( $this->table_name, $op_subject );
-			$this->execute_sqlite_query( "DROP TRIGGER IF EXISTS \"$on_update_trigger_name\"" );
 
 			$this->execute_sqlite_query(
 				$this->rewriter->get_updated_query()
@@ -4394,12 +4403,16 @@ class WP_SQLite_Translator {
 	 */
 	private function add_column_on_update_current_timestamp( $table, $column ) {
 		$trigger_name = $this->get_column_on_update_current_timestamp_trigger_name( $table, $column );
+
+		// The trigger wouldn't work for virtual and "WITHOUT ROWID" tables,
+		// but currently that can't happen as we're not creating such tables.
+		// See: https://www.sqlite.org/rowidtable.html
 		$this->execute_sqlite_query(
 			"CREATE TRIGGER \"$trigger_name\"
 			AFTER UPDATE ON \"$table\"
 			FOR EACH ROW
 			BEGIN
-			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE id = NEW.id;
+			  UPDATE \"$table\" SET \"$column\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
 			END"
 		);
 	}
