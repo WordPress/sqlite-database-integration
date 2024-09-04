@@ -118,6 +118,36 @@ class WP_SQLite_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function testRegexpReplace() {
+		/* Testing if an actual replacment works correctly */
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('test-ignore', '1');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('test-remove', '2');"
+		);
+		$this->assertQuery( "SELECT * FROM _options WHERE REGEXP_REPLACE(option_name, '(-ignore|-remove)', '') = 'test'" );
+		$this->assertCount( 2, $this->engine->get_query_results() );
+
+		/* If one of the required parameters is null, the return value is null, copying the MYSQL/MariaDB behavior */
+		$this->assertQuery( "SELECT REGEXP_REPLACE( null, 'a', 'x') as result" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( null, $results[0]->result );
+
+		$this->assertQuery( "SELECT REGEXP_REPLACE( 'abc', null, 'x') as result" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( null, $results[0]->result );
+
+		$this->assertQuery( "SELECT REGEXP_REPLACE( 'abc', 'a', null) as result" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( null, $results[0]->result );
+
+		/* Providing an empty pattern should produce an error - but we changed that to null to avoid breaking things */
+		$this->assertQuery( "SELECT REGEXP_REPLACE( 'abc', '', 'x') as result" );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( null, $results[0]->result );
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
