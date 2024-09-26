@@ -1,9 +1,6 @@
 "SELECT ID FROM INFORMATION_SCHEMA.PROCESSLIST WHERE INFO LIKE ""ALTER TABLE%"" INTO @thread_id"
 "reset binary logs and gtids"
-"ALTER TABLE t1 ORDER BY t1.id, t1.status, t1.type_id, t1.user_id, t1.body"
 "CHECK TABLES t1"
-"alter table table_24562
-order by table_24562.subsection ASC, table_24562.section DESC"
 "EVAL insert into t1 values (2,2),(2,2),(2,2),(2,2),(2,2)"
 "alter table t1 algorithm=inplace, rename key k to kk"
 "alter table t2 algorithm=inplace, rename key k to kk"
