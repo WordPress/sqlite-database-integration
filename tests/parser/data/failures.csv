@@ -536,6 +536,16 @@ ROLLBACK;
 CREATE TABLE t1 (f1 INT) START TRANSACTION;
 COMMIT;
 END"
+"SELECT MAX(k COLLATE latin1_german2_ci)
+FROM t1
+WHERE
+SELECT *
+FROM t1
+WHERE (_latin1'Mu""ller' COLLATE latin1_german2_ci) = k
+HAVING
+SELECT *
+FROM t1
+HAVING (_latin1'Mu""ller' COLLATE latin1_german2_ci) = k"
 "CREATE TABLE t4 (s1 CHAR(50) CHARACTER SET latin1,
 s2 CHAR(50) CHARACTER SET cp932,
 d DECIMAL(10,2))|
@@ -544,6 +554,8 @@ IN ins2 CHAR(50) CHARACTER SET cp932,
 IN ind DECIMAL(10,2))
 BEGIN
 INSERT INTO t4 VALUES (ins1, ins2, ind)"
+"END|
+CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 "ALTER DATABASE DEFAULT CHARACTER SET latin2"
 "SELECT a FROM t1 GROUP BY 1 LIMIT 1 INTO @nullll"
 "SELECT b FROM t1 GROUP BY 1 LIMIT 1 INTO @nullll"
@@ -582,7 +594,11 @@ ORDER BY id, name"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
 "INSERT INTO t1 VALUES (N'\\')"
+"INSERT INTO t1 VALUES (N'Cote d\'Ivoire');
+INSERT INTO t1 VALUES (_utf8mb3'Cote d\'Ivoire')"
 "select concat(a, if(b>10, N'x', N'y')) from t1"
+"INSERT INTO t1 VALUES (N'Cote d\'Ivoire');
+INSERT INTO t1 VALUES (_utf8mb4'Cote d\'Ivoire')"
 "my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
 "SET @null = NULL"
 "EXECUTE ps USING @null"
@@ -655,10 +671,394 @@ KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
 "CREATE VIEW v1 AS
 SELECT '����' AS c1, ��� AS c2
 FROM t1"
+"CREATE PROCEDURE p1(
+INOUT �����1 CHAR(10),
+OUT �����2 CHAR(10))
+BEGIN
+DECLARE �����1 CHAR(10);
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION(�����1) AS c2,
+COLLATION(�����2) AS c3;
+
+SELECT
+COLLATION('�����') AS c4,
+COLLATION(_koi8r    '�����') AS c5,
+COLLATION(_utf8mb3 'текст') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET �����1 = 'a';
+SET �����2 = 'b';
+END"
+"CREATE PROCEDURE p2(
+INOUT �����1 CHAR(10) CHARACTER SET utf8mb3,
+OUT �����2 CHAR(10) CHARACTER SET utf8mb3)
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION(�����1) AS c2,
+COLLATION(�����2) AS c3;
+
+SELECT
+COLLATION('�����') AS c4,
+COLLATION(_koi8r    '�����') AS c5,
+COLLATION(_utf8mb3 'текст') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET �����1 = 'a';
+SET �����2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p3(
+INOUT �����1 CHAR(10),
+OUT �����2 CHAR(10))
+BEGIN
+DECLARE �����1 CHAR(10);
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION(�����1) AS c2,
+COLLATION(�����2) AS c3;
+
+SELECT
+COLLATION('�����') AS c4,
+COLLATION(_koi8r    '�����') AS c5,
+COLLATION(_utf8mb3 'текст') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET �����1 = 'a';
+SET �����2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p4(
+INOUT �����1 CHAR(10) CHARACTER SET utf8mb3,
+OUT �����2 CHAR(10) CHARACTER SET utf8mb3)
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION(�����1) AS c2,
+COLLATION(�����2) AS c3;
+
+SELECT
+COLLATION('�����') AS c4,
+COLLATION(_koi8r    '�����') AS c5,
+COLLATION(_utf8mb3 'текст') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET �����1 = 'a';
+SET �����2 = 'b';
+END"
+"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE �����1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(�����1));
+INSERT INTO log VALUES(COLLATION('�����'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = '�����';
+SET @a1 = _koi8r    '�����';
+SET @a2 = _utf8mb3 'текст';
+END"
+"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+INSERT INTO log VALUES(COLLATION(�����1));
+INSERT INTO log VALUES(COLLATION('�����'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = '�����';
+SET @b1 = _koi8r    '�����';
+SET @b2 = _utf8mb3 'текст';
+END"
+"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE �����1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(�����1));
+INSERT INTO log VALUES(COLLATION('�����'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = '�����';
+SET @a1 = _koi8r    '�����';
+SET @a2 = _utf8mb3 'текст';
+END"
+"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+INSERT INTO log VALUES(COLLATION(�����1));
+INSERT INTO log VALUES(COLLATION('�����'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = '�����';
+SET @b1 = _koi8r    '�����';
+SET @b2 = _utf8mb3 'текст';
+END"
+"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE �����1 CHAR(10);
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION('�����') AS c2,
+COLLATION(_koi8r    '�����') AS c3,
+COLLATION(_utf8mb3 'текст') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION('�����') AS c2,
+COLLATION(_koi8r    '�����') AS c3,
+COLLATION(_utf8mb3 'текст') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION('�����') AS c2,
+COLLATION(_koi8r    '�����') AS c3,
+COLLATION(_utf8mb3 'текст') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE �����1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(�����1) AS c1,
+COLLATION('�����') AS c2,
+COLLATION(_koi8r    '�����') AS c3,
+COLLATION(_utf8mb3 'текст') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
 "CREATE TABLE t1(кол INT)"
 "CREATE VIEW v1 AS
 SELECT 'тест' AS c1, кол AS c2
 FROM t1"
+"CREATE PROCEDURE p1(
+INOUT парам1 CHAR(10),
+OUT парам2 CHAR(10))
+BEGIN
+DECLARE перем1 CHAR(10);
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION(парам1) AS c2,
+COLLATION(парам2) AS c3;
+
+SELECT
+COLLATION('текст') AS c4,
+COLLATION(_utf8mb3 'текст') AS c5,
+COLLATION(_koi8r    '�����') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET парам1 = 'a';
+SET парам2 = 'b';
+END"
+"CREATE PROCEDURE p2(
+INOUT парам1 CHAR(10) CHARACTER SET utf8mb3,
+OUT парам2 CHAR(10) CHARACTER SET utf8mb3)
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION(парам1) AS c2,
+COLLATION(парам2) AS c3;
+
+SELECT
+COLLATION('текст') AS c4,
+COLLATION(_utf8mb3 'текст') AS c5,
+COLLATION(_koi8r    '�����') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET парам1 = 'a';
+SET парам2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p3(
+INOUT парам1 CHAR(10),
+OUT парам2 CHAR(10))
+BEGIN
+DECLARE перем1 CHAR(10);
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION(парам1) AS c2,
+COLLATION(парам2) AS c3;
+
+SELECT
+COLLATION('текст') AS c4,
+COLLATION(_utf8mb3 'текст') AS c5,
+COLLATION(_koi8r    '�����') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET парам1 = 'a';
+SET парам2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p4(
+INOUT парам1 CHAR(10) CHARACTER SET utf8mb3,
+OUT парам2 CHAR(10) CHARACTER SET utf8mb3)
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION(парам1) AS c2,
+COLLATION(парам2) AS c3;
+
+SELECT
+COLLATION('текст') AS c4,
+COLLATION(_utf8mb3 'текст') AS c5,
+COLLATION(_koi8r    '�����') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET парам1 = 'a';
+SET парам2 = 'b';
+END"
+"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE перем1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(перем1));
+INSERT INTO log VALUES(COLLATION('текст'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = 'текст';
+SET @a2 = _utf8mb3 'текст';
+SET @a3 = _koi8r    '�����';
+END"
+"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+INSERT INTO log VALUES(COLLATION(перем1));
+INSERT INTO log VALUES(COLLATION('текст'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = 'текст';
+SET @b2 = _utf8mb3 'текст';
+SET @b3 = _koi8r    '�����';
+END"
+"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE перем1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(перем1));
+INSERT INTO log VALUES(COLLATION('текст'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = 'текст';
+SET @a2 = _utf8mb3 'текст';
+SET @a3 = _koi8r    '�����';
+END"
+"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+INSERT INTO log VALUES(COLLATION(перем1));
+INSERT INTO log VALUES(COLLATION('текст'));
+INSERT INTO log VALUES(COLLATION(_utf8mb3 'текст'));
+INSERT INTO log VALUES(COLLATION(_koi8r    '�����'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = 'текст';
+SET @b2 = _utf8mb3 'текст';
+SET @b3 = _koi8r    '�����';
+END"
+"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE перем1 CHAR(10);
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION('текст') AS c2,
+COLLATION(_utf8mb3 'текст') AS c3,
+COLLATION(_koi8r    '�����') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION('текст') AS c2,
+COLLATION(_utf8mb3 'текст') AS c3,
+COLLATION(_koi8r    '�����') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION('текст') AS c2,
+COLLATION(_utf8mb3 'текст') AS c3,
+COLLATION(_koi8r    '�����') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE перем1 CHAR(10) CHARACTER SET utf8mb3;
+
+SELECT
+COLLATION(перем1) AS c1,
+COLLATION('текст') AS c2,
+COLLATION(_utf8mb3 'текст') AS c3,
+COLLATION(_koi8r    '�����') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
 "CREATE USER mysqltest_1@localhost"
 "CREATE USER mysqltest_2@localhost"
 "CREATE TABLE t3 LIKE t1"
@@ -933,6 +1333,7 @@ SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
 "CREATE USER evtest1@localhost"
 "SHOW CREATE EVENT CaFé"
 "DROP EVENT CaFé"
+"CREATE EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
 "SHOW CREATE EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "CREATE EVENT café ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
@@ -1467,6 +1868,48 @@ select least(1,2,3) | greatest(16,32,8), least(5,4)*1,greatest(-1.0,1.0)*1,least
 
 select quote('\'\"\\test')"
 "', 2),substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
+"', -2);
+
+explain select sha('abc');
+explain select sha1('abc');
+explain select soundex('');
+explain select 'mood' sounds like 'mud';
+explain select aes_decrypt(aes_encrypt('abc','1'),'1');
+explain select concat('*',space(5),'*');
+explain select reverse('abc');
+explain select rpad('a',4,'1');
+explain select lpad('a',4,'1');
+explain select concat_ws(',','',NULL,'a');
+explain select make_set(255,_latin2'a', _latin2'b', _latin2'c');
+explain select elt(2,1);
+explain select locate(""a"",""b"",2);
+explain select format(130,10);
+explain select char(0);
+explain select conv(130,16,10);
+explain select hex(130);
+explain select binary 'HE';
+explain select export_set(255,_latin2'y', _latin2'n', _latin2' ');
+explain select FIELD('b' COLLATE latin1_bin,'A','B');
+explain select FIND_IN_SET(_latin1'B', _latin1'a,b,c,d');
+explain select collation(conv(130,16,10));
+explain select coercibility(conv(130,16,10));
+explain select length('\n\t\r\b\0\_\%\\');
+explain select bit_length('\n\t\r\b\0\_\%\\');
+explain select bit_length('\n\t\r\b\0\_\%\\');
+explain select concat('monty',' was here ','again');
+explain select length('hello');
+explain select char(ascii('h'));
+explain select ord('h');
+explain select quote(1/0);
+explain select crc32(""123"");
+explain select replace('aaaa','a','b');
+explain select insert('txs',2,1,'hi');
+explain select left(_latin2'a',1);
+explain select right(_latin2'a',1);
+explain select lcase(_latin2'a');
+explain select ucase(_latin2'a');
+explain select SUBSTR('abcdefg',3,2);
+explain select substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
 """',repeat('a',60),
 repeat('b',60),
 repeat('c',60),
@@ -1485,6 +1928,59 @@ repeat('c',60),
 repeat ('d',100)),'""');
 SELECT
 CONCAT('""',CONCAT('"""
+"CREATE TABLE t1 AS
+SELECT 5 AS c1, 5 AS c2, 5 AS c3, 5 AS c4, 20010101 AS c5, 010101 AS c6,
+010101 AS c7, 20010101 AS c8, 5.55 AS c11, 5.5 AS c12, 5.5 AS c13,
+010101.5 AS c14, 5.5 AS c15, 010101.5 as c16, 5.5e5 as c21,
+2004041e1 as c22, 150505.0e5 AS c23, 2004041e1 AS c24, '010101' AS c31,
+'5' AS c32, '010101' AS c33, date '2005-05-05' AS c41,
+date '2005-05-05' AS c42, time '05:05:05.555555' AS c51,
+x'c3a5' AS c61, x'c3a5' AS c62, _utf8mb4 x'c3a5' AS c63,
+_utf8mb4 x'c3a5' AS c64, JSON_OBJECT('a', 1) as c71
+UNION
+SELECT -5, 5.5, 5.5e5, '5', date '2005-05-05', time '05:05:05.555555',
+timestamp '2005-05-05 05:05:05.555555', NOW(0), 88.8,
+5.5e5, '5', date '2005-05-05', time '05:05:05.555555',
+timestamp '2005-05-05 05:05:05.555555',
+'5', date '2005-05-05', time '05:05:05.555555',
+timestamp '2005-05-05 05:05:05.555555',
+date '2005-05-05', time '05:05:05.555555',
+timestamp '2005-05-05 05:05:05.555555',
+time '05:05:05.555555', timestamp '2005-05-05 05:05:05.555555',
+timestamp '2005-05-05 05:05:05.555555', '1', _binary '1', '1',
+_binary '1', NULL"
+"CREATE TABLE t2 AS
+SELECT COALESCE(5, -5) AS c1,
+COALESCE(5, 5.5) AS c2,
+COALESCE(5, 5.5e5) AS c3,
+COALESCE(5, '5') AS c4,
+COALESCE(20010101, date '2005-05-05') AS c5,
+COALESCE(010101, time '05:05:05.555555') AS c6,
+COALESCE(010101, timestamp '2005-05-05 05:05:05.555555') AS c7,
+COALESCE(20010101, NOW(0)) AS c8,
+COALESCE(5.55, 88.8) AS c11,
+COALESCE(5.5, 5.5e5) AS c12,
+COALESCE(5.5, '5') AS c13,
+COALESCE(010101.5, date '2005-05-05') AS c14,
+COALESCE(5.5, time '05:05:05.555555') AS c15,
+COALESCE(010101.5, timestamp '2005-05-05 05:05:05.555555') AS c16,
+COALESCE(5.5e5, '5') AS c21,
+COALESCE(2004041e1, date '2005-05-05') AS c22,
+COALESCE(150505.0e5, time '05:05:05.555555') AS c23,
+COALESCE(2004041e1, timestamp '2005-05-05 05:05:05.555555') AS c24,
+COALESCE('010101', date '2005-05-05') AS c31,
+COALESCE('5', time '05:05:05.555555') AS c32,
+COALESCE('010101', timestamp '2005-05-05 05:05:05.555555') AS c33,
+COALESCE(date '2005-05-05', time '05:05:05.555555') AS c41,
+COALESCE(date '2005-05-05', timestamp '2005-05-05 05:05:05.555555') AS
+c42,
+COALESCE(time '05:05:05.555555', timestamp '2005-05-05
+05:05:05.555555') AS c51,
+COALESCE(x'c3a5', '1') AS c61,
+COALESCE(x'c3a5', _binary '1') AS c62,
+COALESCE(_utf8mb4 x'c3a5', '1') AS c63,
+COALESCE(_utf8mb4 x'c3a5', _binary '1') AS c64,
+COALESCE(JSON_OBJECT('a', 1), NULL) AS c71"
 "select 1 from t1 where 1 < some (select cast(a as datetime) from t1)"
 "SELECT * FROM t1 WHERE TIMESTAMPDIFF(MONTH, a, TIMESTAMP'0000-00-01 00:00:00') IS NULL"
 "SELECT * FROM t1 WHERE TIMESTAMPDIFF(MONTH, a, DATE'0000-00-01') IS NULL"
@@ -2078,7 +2574,15 @@ MAX_USER_CONNECTIONS 2 PASSWORD EXPIRE NEVER"
 "CREATE USER u19@localhost REQUIRE SUBJECT '/C=SE/ST=Uppsala/O=MySQL AB'
 ISSUER ""/C=SE/ST=Uppsala/L=Uppsala/O=MySQL AB""
 PASSWORD EXPIRE DEFAULT"
+"CREATE USER 20553132_u1@localhost"
+"CREATE USER 20553132_u2@localhost"
 "CREATE USER '20553132_u3'@'%'"
+"GRANT ALL ON *.* TO 20553132_u1@localhost"
+"ALTER USER 20553132_u1@localhost PASSWORD EXPIRE"
+"ALTER USER 20553132_u2@localhost IDENTIFIED BY 'abcd', 20553132_u1@localhost IDENTIFIED BY 'defg' PASSWORD EXPIRE NEVER"
+"ALTER USER 20553132_u2@localhost IDENTIFIED BY 'abcd', 20553132_u1@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'hijk' PASSWORD EXPIRE DEFAULT"
+"DROP USER 20553132_u1@localhost"
+"DROP USER 20553132_u2@localhost"
 "CREATE USER bug20634154@localhost IDENTIFIED BY 'abc'"
 "CREATE USER bug22205360@localhost"
 "EOF
@@ -6724,10 +7228,12 @@ $line =~ s/Thread_id: \d* Errno:/Thread_id: 0 Errno:/"
 
 SET @@global.slow_query_log_file=@save_sqlf"
 "DROP PROCEDURE CaFé"
+"CREATE PROCEDURE очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e() BEGIN END"
 "SHOW CREATE PROCEDURE очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP PROCEDURE очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "SHOW CREATE FUNCTION CaFé"
 "DROP FUNCTION CaFé"
+"CREATE FUNCTION очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e() RETURNS INT return 15081947"
 "SHOW CREATE FUNCTION очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP FUNCTION очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "create procedure code_sample(x int, out err int, out nulls int)
@@ -7152,6 +7658,13 @@ $abdc_1234$
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS
+$_a$
+return ""$$"" + a + ""$$"";
+$_a$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
 $_$
 return ""$$"" + a + ""$$"";
 $_$
@@ -7380,6 +7893,13 @@ $abdc_1234$
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS
+$_a$
+let b = ""$$"" + a + ""$$"";
+$_a$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
 $_$
 let b = ""$$"" + a + ""$$"";
 $_$
@@ -7567,6 +8087,29 @@ $$
 "GRANT EXECUTE ON PROCEDURE mysqltest_db.p1 TO user@localhost"
 "REVOKE EXECUTE ON PROCEDURE mysqltest_db.p1 FROM user@localhost"
 "CREATE USER usr_no_priv@localhost, usr_show_routine@localhost, usr_global_select@localhost, usr_definer@localhost, usr_role@localhost, usr_create_routine@localhost, usr_alter_routine@localhost, usr_execute@localhost"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE i TINYINT DEFAULT 3;
+
+WHILE i > 0 DO
+IF MOD(i, 2) = 0 THEN
+SET @_test_session_var = 10;
+ELSE
+SET @_test_session_var = 'test';
+END IF;
+
+CASE @_test_session_var
+WHEN 10 THEN
+INSERT INTO t1 VALUES('p2: case: numerical type');
+WHEN 'test' THEN
+INSERT INTO t1 VALUES('p2: case: string type');
+ELSE
+INSERT INTO t1 VALUES('p2: case: ERROR');
+END CASE;
+
+SET i = i - 1;
+END WHILE;
+END"
 "create procedure h_ee()
 deterministic
 begin
@@ -7940,6 +8483,11 @@ END"
 "GRANT SELECT ON test1.t1 TO user_name_len_32_012345678901234@localhost"
 "GRANT EXECUTE ON FUNCTION test1.f1_len32 TO user_name_len_32_012345678901234@localhost"
 "GRANT EXECUTE ON FUNCTION test1.f1_len32 TO user_name_len_22_01234@localhost"
+"CREATE PROCEDURE `v1`(_limit_val BIGINT, _offset_val BIGINT)
+BEGIN
+CREATE TEMPORARY TABLE n1 AS (SELECT * FROM t1 LIMIT _limit_val OFFSET _offset_val);
+SELECT * FROM n1;
+END "
 "CREATE PROCEDURE proc_19194_codegen(
 IN proc_name VARCHAR(50),
 IN count INTEGER,
@@ -8310,9 +8858,23 @@ TO 'mysqltest_inv'@localhost"
 "CREATE USER 'no_rights'@'localhost'"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
 "GRANT INSERT ON test1.t1 TO user_name_len_22_01234@localhost"
+"CREATE TRIGGER _AI_1 AFTER INSERT ON t1 FOR EACH ROW SET
+@t1_var=concat(@t1_var,'_AI_1')"
+"CREATE TRIGGER _AI_2 AFTER INSERT ON t1 FOR EACH ROW SET
+@t1_var=concat(@t1_var,'_AI_2')"
+"CREATE TRIGGER _BU_2 BEFORE UPDATE ON t1 FOR EACH ROW SET
+@t1_var=concat(@t1_var,'_BU_2')"
+"CREATE TRIGGER _BD_2 BEFORE DELETE ON t1 FOR EACH ROW SET
+@t1_var=concat(@t1_var,'_BD_2')"
+"CREATE TRIGGER _AI_0 AFTER INSERT ON t1 FOR EACH ROW PRECEDES _AI_1 SET
+@t1_var=concat(@t1_var,'_AI_0')"
+"CREATE TRIGGER _AI_3 AFTER INSERT ON t1 FOR EACH ROW FOLLOWS _AI_2 SET
+@t1_var=concat(@t1_var,'_AI_3')"
 "CREATE TRIGGER cafe BEFORE INSERT ON t1 FOR EACH ROW SET @sum= @sum + NEW.f1"
 "SHOW CREATE TRIGGER cAfé"
 "DROP TRIGGER CaFé"
+"CREATE TRIGGER очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e
+BEFORE INSERT ON t1 FOR EACH ROW SET @sum= @sum + NEW.f1"
 "SHOW CREATE TRIGGER очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP TRIGGER очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "CONNECT (rl_holder,    localhost, root,,)"
@@ -8330,6 +8892,64 @@ TO 'mysqltest_inv'@localhost"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
 "SELECT * FROM t2 EXCEPT SELECT * FROM t3"
 "SELECT * FROM t3 EXCEPT SELECT * FROM t2"
+"CREATE TABLE t1 (
+t1_id bigint(21) NOT NULL auto_increment,
+_field_72 varchar(128) DEFAULT '' NOT NULL,
+_field_95 varchar(32),
+_field_115 tinyint(4) DEFAULT '0' NOT NULL,
+_field_122 tinyint(4) DEFAULT '0' NOT NULL,
+_field_126 tinyint(4),
+_field_134 tinyint(4),
+PRIMARY KEY (t1_id),
+UNIQUE _field_72 (_field_72),
+KEY _field_115 (_field_115),
+KEY _field_122 (_field_122)
+)"
+"CREATE TABLE t3 (
+t3_id bigint(21) NOT NULL auto_increment,
+_field_131 varchar(128),
+_field_133 tinyint(4) DEFAULT '0' NOT NULL,
+_field_135 datetime DEFAULT '0000-00-00 00:00:00' NOT NULL,
+_field_137 tinyint(4),
+_field_139 datetime DEFAULT '0000-00-00 00:00:00' NOT NULL,
+_field_140 blob,
+_field_142 tinyint(4) DEFAULT '0' NOT NULL,
+_field_145 tinyint(4) DEFAULT '0' NOT NULL,
+_field_148 tinyint(4) DEFAULT '0' NOT NULL,
+PRIMARY KEY (t3_id),
+KEY _field_133 (_field_133),
+KEY _field_135 (_field_135),
+KEY _field_139 (_field_139),
+KEY _field_142 (_field_142),
+KEY _field_145 (_field_145),
+KEY _field_148 (_field_148)
+)"
+"CREATE TABLE t5 (
+t5_id bigint(21) NOT NULL auto_increment,
+_field_149 tinyint(4),
+_field_156 varchar(128) DEFAULT '' NOT NULL,
+_field_157 varchar(128) DEFAULT '' NOT NULL,
+_field_158 varchar(128) DEFAULT '' NOT NULL,
+_field_159 varchar(128) DEFAULT '' NOT NULL,
+_field_160 varchar(128) DEFAULT '' NOT NULL,
+_field_161 varchar(128) DEFAULT '' NOT NULL,
+PRIMARY KEY (t5_id),
+KEY _field_156 (_field_156),
+KEY _field_157 (_field_157),
+KEY _field_158 (_field_158),
+KEY _field_159 (_field_159),
+KEY _field_160 (_field_160),
+KEY _field_161 (_field_161)
+)"
+"CREATE TABLE t7 (
+t7_id bigint(21) NOT NULL auto_increment,
+_field_143 tinyint(4),
+_field_165 varchar(32),
+_field_166 smallint(6) DEFAULT '0' NOT NULL,
+PRIMARY KEY (t7_id),
+KEY _field_166 (_field_166)
+)"
+"select replace(t3._field_140, ""\r"",""^M""),t3_id,min(t3._field_131), min(t3._field_135), min(t3._field_139), min(t3._field_137), min(link_alias_142._field_165), min(link_alias_133._field_72), min(t3._field_145), min(link_alias_148._field_156), replace(min(t3._field_140), ""\r"",""^M""),t3.t3_id from t3 left join t4 on t4.seq_0_id = t3.t3_id left join t7 link_alias_142 on t4.seq_1_id = link_alias_142.t7_id left join t6 on t6.seq_0_id = t3.t3_id left join t1 link_alias_133 on t6.seq_1_id = link_alias_133.t1_id left join t2 on t2.seq_0_id = t3.t3_id left join t5 link_alias_148 on t2.seq_1_id = link_alias_148.t5_id where t3.t3_id in (1) group by t3.t3_id order by link_alias_142._field_166, _field_139, link_alias_133._field_72, _field_135, link_alias_148._field_156"
 "INSERT INTO t1 VALUES (TIMESTAMP'2001-01-01 23:59:59.4')"
 "INSERT INTO t1 VALUES (TIME'23:59:59.4')"
 "INSERT INTO t1 VALUES
@@ -9430,6 +10050,135 @@ SELECT  AVG(c2)  OVER ( ) AS res FROM  te2 INTO ret;
 RETURN ret;
 END"
 "SET @sav_big= (SELECT COALESCE(@session.big_tables, 0))"
+"CREATE TABLE `C` (
+`pk` int(11) NOT NULL AUTO_INCREMENT,
+`col_int` int(11) NOT NULL,
+`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
+`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
+`col_date` date NOT NULL,
+`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
+`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
+`col_datetime` datetime NOT NULL,
+`col_time` time NOT NULL,
+`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
+`col_varchar` varchar(15) NOT NULL,
+`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
+`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
+PRIMARY KEY (`pk`),
+UNIQUE KEY `col_date_key` (`col_date_key`),
+UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
+UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
+UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
+UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
+UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
+UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
+UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
+UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
+KEY `col_int_gckey` (`col_int_gckey`),
+KEY `col_int_gckey_2` (`col_int_gckey` DESC),
+KEY `col_date_gckey` (`col_date_gckey`),
+KEY `col_datetime_gckey` (`col_datetime_gckey`),
+KEY `col_time_gckey` (`col_time_gckey`),
+KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
+KEY `col_int_key` (`col_int_key`),
+KEY `col_int_key_2` (`col_int_key` DESC),
+KEY `col_time_key` (`col_time_key`),
+KEY `col_datetime_key` (`col_datetime_key`),
+KEY `col_int_key_5` (`col_int_key`,`col_int`),
+KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
+KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
+KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
+KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=latin1"
+"CREATE TABLE `DD` (
+`pk` int(11) NOT NULL AUTO_INCREMENT,
+`col_int` int(11) NOT NULL,
+`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
+`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
+`col_date` date NOT NULL,
+`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
+`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
+`col_datetime` datetime NOT NULL,
+`col_time` time NOT NULL,
+`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
+`col_varchar` varchar(15) NOT NULL,
+`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
+`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
+PRIMARY KEY (`pk`),
+UNIQUE KEY `col_date_key` (`col_date_key`),
+UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
+UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
+UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
+UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
+UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
+UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
+UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
+UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
+KEY `col_int_gckey` (`col_int_gckey`),
+KEY `col_int_gckey_2` (`col_int_gckey` DESC),
+KEY `col_date_gckey` (`col_date_gckey`),
+KEY `col_datetime_gckey` (`col_datetime_gckey`),
+KEY `col_time_gckey` (`col_time_gckey`),
+KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
+KEY `col_int_key` (`col_int_key`),
+KEY `col_int_key_2` (`col_int_key` DESC),
+KEY `col_time_key` (`col_time_key`),
+KEY `col_datetime_key` (`col_datetime_key`),
+KEY `col_int_key_5` (`col_int_key`,`col_int`),
+KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
+KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
+KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
+KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=73 DEFAULT CHARSET=latin1"
+"CREATE TABLE `E` (
+`pk` int(11) NOT NULL AUTO_INCREMENT,
+`col_int` int(11) NOT NULL,
+`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
+`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
+`col_date` date NOT NULL,
+`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
+`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
+`col_datetime` datetime NOT NULL,
+`col_time` time NOT NULL,
+`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
+`col_varchar` varchar(15) NOT NULL,
+`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
+`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
+PRIMARY KEY (`pk`),
+UNIQUE KEY `col_date_key` (`col_date_key`),
+UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
+UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
+UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
+UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
+UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
+UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
+UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
+UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
+KEY `col_int_gckey` (`col_int_gckey`),
+KEY `col_int_gckey_2` (`col_int_gckey` DESC),
+KEY `col_date_gckey` (`col_date_gckey`),
+KEY `col_datetime_gckey` (`col_datetime_gckey`),
+KEY `col_time_gckey` (`col_time_gckey`),
+KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
+KEY `col_int_key` (`col_int_key`),
+KEY `col_int_key_2` (`col_int_key` DESC),
+KEY `col_time_key` (`col_time_key`),
+KEY `col_datetime_key` (`col_datetime_key`),
+KEY `col_int_key_5` (`col_int_key`,`col_int`),
+KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
+KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
+KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
+KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=80 DEFAULT CHARSET=latin1"
 "SELECT
 alias1 . col_int AS field1 ,
 CUME_DIST() OVER (   ORDER BY alias1 . pk) AS field2 ,
@@ -9484,6 +10233,9 @@ FROM t WINDOW w1 AS (PARTITION BY a)"
 "SELECT MAX(-2605.952148) OVER
 (PARTITION BY a ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
 FROM t WINDOW w1 AS (PARTITION BY a)"
+"CREATE TABLE t (
+f1 LONGTEXT GENERATED ALWAYS AS (_utf8mb4'1') VIRTUAL NOT NULL
+)"
 "SELECT VARIANCE(b) over w `var`,
 AVG(b) OVER w `avg`,
 SUM(b) OVER w `sum`,

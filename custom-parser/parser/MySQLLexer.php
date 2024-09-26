@@ -873,6 +873,50 @@ class MySQLLexer {
     protected const DEFAULT_TOKEN_CHANNEL = 0;
     protected const HIDDEN = 99;
 
+	const CHARSETS = [
+		'armscii8',
+		'ascii',
+		'big5',
+		'binary',
+		'cp1250',
+		'cp1251',
+		'cp1256',
+		'cp1257',
+		'cp850',
+		'cp852',
+		'cp866',
+		'cp932',
+		'dec8',
+		'eucjpms',
+		'euckr',
+		'gb18030',
+		'gb2312',
+		'gbk',
+		'geostd8',
+		'greek',
+		'hebrew',
+		'hp8',
+		'keybcs2',
+		'koi8r',
+		'koi8u',
+		'latin1',
+		'latin2',
+		'latin5',
+		'latin7',
+		'macce',
+		'macroman',
+		'sjis',
+		'swe7',
+		'tis620',
+		'ucs2',
+		'ujis',
+		'utf16',
+		'utf16le',
+		'utf32',
+		'utf8mb3',
+		'utf8mb4',
+	];
+
     public function __construct(string $input, int $serverVersion = 80000, int $sqlModes = 0)
     {
         $this->input = $input;
@@ -1193,15 +1237,12 @@ class MySQLLexer {
         return false;
     }
 
-    /**
-     * This is a place holder to support features of MySQLBaseLexer which are not yet implemented
-     * in the PHP target.
-     *
-     * @return int
-     */
     protected function checkCharset(string $text): int
     {
-        return 0;
+		if (in_array(strtolower(substr($text, 1)), self::CHARSETS)) {
+			return self::UNDERSCORE_CHARSET;
+		}
+        return self::IDENTIFIER;
     }
 
     /**
