@@ -2786,11 +2786,7 @@ class MySQLLexer {
                 $this->FULLTEXT_SYMBOL();
                 break;
             case 'FUNCTION':
-                if ($this->serverVersion < 80000) {
-                    $this->FUNCTION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
+				$this->FUNCTION_SYMBOL();
                 break;
             case 'GENERATED':
                 if ($this->serverVersion >= 50707) {
@@ -4083,18 +4079,10 @@ class MySQLLexer {
                 }
                 break;
             case 'ROW':
-                if ($this->serverVersion < 80000) {
-                    $this->ROW_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
+				$this->ROW_SYMBOL();
                 break;
             case 'ROWS':
-                if ($this->serverVersion <               80000) {
-                    $this->ROWS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
+				$this->ROWS_SYMBOL();
                 break;
             case 'ROW_COUNT':
                 $this->ROW_COUNT_SYMBOL();
