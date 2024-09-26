@@ -1972,6 +1972,54 @@ class MySQLLexer {
         self::DOT_IDENTIFIER => 'DOT_IDENTIFIER',
         self::INVALID_INPUT => 'INVALID_INPUT',
         self::LINEBREAK => 'LINEBREAK',
+
+		// Missing from the generated lexer and added manually
+		self::START_SYMBOL => 'START_SYMBOL',
+		self::UNLOCK_SYMBOL => 'UNLOCK_SYMBOL',
+		self::CLONE_SYMBOL => 'CLONE_SYMBOL',
+		self::GET_SYMBOL => 'GET_SYMBOL',
+		self::ASCII_SYMBOL => 'ASCII_SYMBOL',
+		self::BIT_SYMBOL => 'BIT_SYMBOL',
+		self::BUCKETS_SYMBOL => 'BUCKETS_SYMBOL',
+		self::COMPONENT_SYMBOL => 'COMPONENT_SYMBOL',
+		self::NOW_SYMBOL => 'NOW_SYMBOL',
+		self::DEFINITION_SYMBOL => 'DEFINITION_SYMBOL',
+		self::DENSE_RANK_SYMBOL => 'DENSE_RANK_SYMBOL',
+		self::DESCRIPTION_SYMBOL => 'DESCRIPTION_SYMBOL',
+		self::FAILED_LOGIN_ATTEMPTS_SYMBOL => 'FAILED_LOGIN_ATTEMPTS_SYMBOL',
+		self::FOLLOWING_SYMBOL => 'FOLLOWING_SYMBOL',
+		self::GROUPING_SYMBOL => 'GROUPING_SYMBOL',
+		self::GROUPS_SYMBOL => 'GROUPS_SYMBOL',
+		self::LAG_SYMBOL => 'LAG_SYMBOL',
+		self::LONG_SYMBOL => 'LONG_SYMBOL',
+		self::MASTER_COMPRESSION_ALGORITHM_SYMBOL => 'MASTER_COMPRESSION_ALGORITHM_SYMBOL',
+		self::NOT2_SYMBOL => 'NOT2_SYMBOL',
+		self::NO_SYMBOL => 'NO_SYMBOL',
+		self::REFERENCE_SYMBOL => 'REFERENCE_SYMBOL',
+		self::RETURN_SYMBOL => 'RETURN_SYMBOL',
+		self::SPECIFIC_SYMBOL => 'SPECIFIC_SYMBOL',
+		self::AUTHORS_SYMBOL => 'AUTHORS_SYMBOL',
+		self::ADDDATE_SYMBOL => 'ADDDATE_SYMBOL',
+		self::CONCAT_PIPES_SYMBOL => 'CONCAT_PIPES_SYMBOL',
+
+		// Unused in this class but present in MySQLParser, hmm
+		self::ACTIVE_SYMBOL => 'ACTIVE_SYMBOL',
+		self::ADMIN_SYMBOL => 'ADMIN_SYMBOL',
+		self::EXCLUDE_SYMBOL => 'EXCLUDE_SYMBOL',
+		self::INACTIVE_SYMBOL => 'INACTIVE_SYMBOL',
+		self::LOCKED_SYMBOL => 'LOCKED_SYMBOL',
+		self::ROUTINE_SYMBOL => 'ROUTINE_SYMBOL',
+		self::UNTIL_SYMBOL => 'UNTIL_SYMBOL',
+		self::ARRAY_SYMBOL => 'ARRAY_SYMBOL',
+		self::PASSWORD_LOCK_TIME_SYMBOL => 'PASSWORD_LOCK_TIME_SYMBOL',
+		self::NCHAR_TEXT => 'NCHAR_TEXT',
+		self::LONG_NUMBER => 'LONG_NUMBER',
+		self::ULONGLONG_NUMBER => 'ULONGLONG_NUMBER',
+		self::CUME_DIST_SYMBO => 'CUME_DIST_SYMBO',
+		self::CUME_DIST_SYMBOL => 'CUME_DIST_SYMBOL',
+		self::FOUND_ROWS_SYMBOL => 'FOUND_ROWS_SYMBOL',
+		self::CONCAT_SYMBOL => 'CONCAT_SYMBOL',
+		self::OVER_SYMBOL => 'OVER_SYMBOL',
     ];
 
     protected function IDENTIFIER_OR_KEYWORD()
@@ -4726,6 +4774,227 @@ class MySQLLexer {
             case 'INT8':
                 $this->INT8_SYMBOL();
                 break;
+
+			// Missing from the generated lexer and added manually
+			case 'START':
+				$this->START_SYMBOL();
+				break;
+			case 'UNLOCK':
+				$this->UNLOCK_SYMBOL();
+				break;
+			case 'CLONE':
+				if ($this->serverVersion >= 80000) {
+					$this->CLONE_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'GET':
+				if ($this->serverVersion >= 50604) {
+					$this->GET_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'ASCII':
+				$this->ASCII_SYMBOL();
+				break;
+			case 'BIT':
+				$this->BIT_SYMBOL();
+				break;
+			case 'BUCKETS':
+				if ($this->serverVersion >= 80000) {
+					$this->BUCKETS_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'COMPONENT':
+				if ($this->serverVersion >= 80000) {
+					$this->COMPONENT_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'NOW':
+				$this->NOW_SYMBOL(); // Synonym
+				break;
+			case 'DEFINITION':
+				if ($this->serverVersion >= 80011) {
+					$this->DEFINITION_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'DENSE_RANK':
+				if ($this->serverVersion >= 80000) {
+					$this->DENSE_RANK_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'DESCRIPTION_SYMBOL':
+				if ($this->serverVersion >= 80011) {
+					$this->DESCRIPTION_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'FAILED_LOGIN_ATTEMPTS':
+				if ($this->serverVersion >= 80019) {
+					$this->FAILED_LOGIN_ATTEMPTS_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'FOLLOWING':
+				if ($this->serverVersion >= 80000) {
+					$this->FOLLOWING_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'GROUPING_SYMBOL':
+				if ($this->serverVersion >= 80000) {
+					$this->GROUPING_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'GROUPS':
+				if ($this->serverVersion >= 80000) {
+					$this->GROUPS_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+			case 'LAG':
+				if ($this->serverVersion >= 80000) {
+					$this->LAG_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'LONG':
+				$this->LONG_SYMBOL();
+				break;
+			case 'MASTER_COMPRESSION_ALGORITHM':
+				if ($this->serverVersion >= 80000) {
+					$this->MASTER_COMPRESSION_ALGORITHM_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'NOT2': // TODO: check what is this
+				$this->NOT2_SYMBOL();
+				break;
+			case 'NO':
+				$this->NO_SYMBOL();
+				break;
+			case 'REFERENCE':
+				if ($this->serverVersion >= 80011) {
+					$this->REFERENCE_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'RETURN': // TODO: check the question mark in the lexer grammar
+				$this->RETURN_SYMBOL();
+				break;
+			case 'SPECIFIC':
+				$this->SPECIFIC_SYMBOL();
+				break;
+			case 'AUTHORS':
+				if ($this->serverVersion < 50700) {
+					$this->AUTHORS_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'ADDDATE':
+				$this->ADDDATE_SYMBOL();
+				break;
+			case 'CONCAT_PIPES':
+				$this->CONCAT_PIPES_SYMBOL();
+				break;
+
+			// Unused in this class but present in MySQLParser, hmm
+			case 'ACTIVE':
+				if ($this->serverVersion >= 80014) {
+					$this->ACTIVE_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'ADMIN':
+				if ($this->serverVersion >= 80000) {
+					$this->ADMIN_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'EXCLUDE':
+				if ($this->serverVersion >= 80000) {
+					$this->EXCLUDE_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'INACTIVE':
+				if ($this->serverVersion >= 80014) {
+					$this->INACTIVE_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'LOCKED':
+				if ($this->serverVersion >= 80000) {
+					$this->LOCKED_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'ROUTINE':
+				$this->ROUTINE_SYMBOL();
+				break;
+			case 'UNTIL':
+				$this->UNTIL_SYMBOL();
+				break;
+			case 'ARRAY':
+				if ($this->serverVersion >= 80017) {
+					$this->ARRAY_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'PASSWORD_LOCK_TIME':
+				if ($this->serverVersion >= 80019) {
+					$this->PASSWORD_LOCK_TIME_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'CUME_DIST':
+				if ($this->serverVersion >= 80000) {
+					$this->CUME_DIST_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+			case 'OVER':
+				if ($this->serverVersion >= 80000) {
+					$this->OVER_SYMBOL();
+				} else {
+					$this->IDENTIFIER();
+				}
+				break;
+
+			//@TODO: check these below
+			//case 'NCHAR':
+			//case 'LONG_NUMBER':
+			//case 'ULONG_NUMBER':
+			//case 'FOUND_ROWS':
+			//case 'CONCAT_SYMBOL':
+
             default:
                 // Not a keyword, emit as identifier.
                 $this->IDENTIFIER();
@@ -8931,6 +9200,71 @@ class MySQLLexer {
     protected function INT8_SYMBOL()
     {
         $this->setType(self::BIGINT_SYMBOL); // Synonym
+    }
+
+    protected function EXCLUDE_SYMBOL()
+    {
+        $this->setType(self::EXCLUDE_SYMBOL);
+    }
+
+    protected function UNLOCK_SYMBOL()
+    {
+        $this->setType(self::UNLOCK_SYMBOL);
+    }
+
+    protected function CONCAT_PIPES_SYMBOL()
+    {
+        $this->setType(self::CONCAT_PIPES_SYMBOL);
+    }
+
+    protected function ACTIVE_SYMBOL()
+    {
+        $this->setType(self::ACTIVE_SYMBOL);
+    }
+
+    protected function ADMIN_SYMBOL()
+    {
+        $this->setType(self::ADMIN_SYMBOL);
+    }
+
+    protected function INACTIVE_SYMBOL()
+    {
+        $this->setType(self::INACTIVE_SYMBOL);
+    }
+
+    protected function LOCKED_SYMBOL()
+    {
+        $this->setType(self::LOCKED_SYMBOL);
+    }
+
+    protected function ROUTINE_SYMBOL()
+    {
+        $this->setType(self::ROUTINE_SYMBOL);
+    }
+
+    protected function UNTIL_SYMBOL()
+    {
+        $this->setType(self::UNTIL_SYMBOL);
+    }
+
+    protected function ARRAY_SYMBOL()
+    {
+        $this->setType(self::ARRAY_SYMBOL);
+    }
+
+    protected function PASSWORD_LOCK_TIME_SYMBOL()
+    {
+        $this->setType(self::PASSWORD_LOCK_TIME_SYMBOL);
+    }
+
+    protected function CUME_DIST_SYMBOL()
+    {
+        $this->setType(self::CUME_DIST_SYMBOL);
+    }
+
+    protected function OVER_SYMBOL()
+    {
+        $this->setType(self::OVER_SYMBOL);
     }
 
     protected function IDENTIFIER()
