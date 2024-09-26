@@ -7,6 +7,13 @@ function safe_ctype_digit($string) {
     return ctype_digit($string);
 }
 
+function safe_ctype_xdigit($string) {
+	if (null === $string || strlen($string) === 0) {
+		return false;
+	}
+	return ctype_xdigit($string);
+}
+
 function safe_ctype_space($string) {
     if (null === $string || strlen($string) === 0) {
         return false;
@@ -5179,7 +5186,7 @@ class MySQLLexer {
     {
         $this->consume(); // Consume the '0'.
         $this->consume(); // Consume the 'x'.
-        while (ctype_xdigit($this->c)) {
+        while (safe_ctype_xdigit($this->c)) {
             $this->consume();
         }
         $this->setType(self::HEX_NUMBER);
@@ -5426,7 +5433,7 @@ class MySQLLexer {
 
         if (safe_ctype_alpha($this->LA(1))) {
             // If the next character is a letter, it's a charset.
-            while (ctype_alnum($this->LA(1))) {
+            while (safe_ctype_alnum($this->LA(1))) {
                 $this->consume();
             }
 
