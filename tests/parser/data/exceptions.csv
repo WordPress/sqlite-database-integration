@@ -1725,6 +1725,48 @@ _binary'2009-01-09' COLLATE 'binary')"
 "select _koi8r  0xF7 regexp _koi8r  '[[:alpha:]]'"
 "select _latin1'a' regexp _latin1'A' collate latin1_general_ci"
 "select _latin1'a' regexp _latin1'A' collate latin1_bin"
+"', -2);
+
+explain select sha('abc');
+explain select sha1('abc');
+explain select soundex('');
+explain select 'mood' sounds like 'mud';
+explain select aes_decrypt(aes_encrypt('abc','1'),'1');
+explain select concat('*',space(5),'*');
+explain select reverse('abc');
+explain select rpad('a',4,'1');
+explain select lpad('a',4,'1');
+explain select concat_ws(',','',NULL,'a');
+explain select make_set(255,_latin2'a', _latin2'b', _latin2'c');
+explain select elt(2,1);
+explain select locate(""a"",""b"",2);
+explain select format(130,10);
+explain select char(0);
+explain select conv(130,16,10);
+explain select hex(130);
+explain select binary 'HE';
+explain select export_set(255,_latin2'y', _latin2'n', _latin2' ');
+explain select FIELD('b' COLLATE latin1_bin,'A','B');
+explain select FIND_IN_SET(_latin1'B', _latin1'a,b,c,d');
+explain select collation(conv(130,16,10));
+explain select coercibility(conv(130,16,10));
+explain select length('\n\t\r\b\0\_\%\\');
+explain select bit_length('\n\t\r\b\0\_\%\\');
+explain select bit_length('\n\t\r\b\0\_\%\\');
+explain select concat('monty',' was here ','again');
+explain select length('hello');
+explain select char(ascii('h'));
+explain select ord('h');
+explain select quote(1/0);
+explain select crc32(""123"");
+explain select replace('aaaa','a','b');
+explain select insert('txs',2,1,'hi');
+explain select left(_latin2'a',1);
+explain select right(_latin2'a',1);
+explain select lcase(_latin2'a');
+explain select ucase(_latin2'a');
+explain select SUBSTR('abcdefg',3,2);
+explain select substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
 "do _cp852 """" <= lcase(trim(leading 1 from 12222)) not between '1' and '2'"
 "select database() = _utf8mb3""test"""
 "select database() = _latin1""test"""

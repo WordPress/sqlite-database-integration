@@ -73,18 +73,6 @@ c4 VARCHAR(2) GENERATED ALWAYS AS (CONCAT(c2,c3)) virtual)"
 "ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, EXCHANGE PARTITION p0 WITH TABLE t"
 reap
 "CREATE TABLE ta (pk INT, embedding VECTOR(4)) ENGINE=ARCHIVE"
-"insert into t1 values
-(NULL,b'1111111111111111111111111111111111111111111111111111111111111111'),
-(NULL,b'1000000000000000000000000000000000000000000000000000000000000000'),
-(NULL,b'0000000000000000000000000000000000000000000000000000000000000001'),
-(NULL,b'1010101010101010101010101010101010101010101010101010101010101010'),
-(NULL,b'0101010101010101010101010101010101010101010101010101010101010101')"
-"insert into t1 values
-(NULL,b'000000000'),
-(NULL,b'000000001'),
-(NULL,b'000000010'),
-(NULL,b'000000011'),
-(NULL,b'000000100')"
 "create table t1 (
 dummyKey INTEGER NOT NULL AUTO_INCREMENT,
 a001 TINYINT,
@@ -125,15 +113,6 @@ n TINYINT,
 o TINYINT,
 a034 TINYINT,
 PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
-"INSERT INTO `t1` VALUES
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'000001',b'111111',b'111110',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'000010',b'000000',b'111101',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'000100',b'001111',b'111011',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'001000',b'110000',b'110111',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'010000',b'100001',b'101111',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'100000',b'010010',b'011111',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'000000',b'001100',b'111111',4,5,5,5,5,5,5,5,5,5,3,2,1),
-(NULL,1,1,1,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,b'111111',b'000000',b'000000',4,5,5,5,5,5,5,5,5,5,3,2,1)"
 "CREATE USER caching_sha2@localhost IDENTIFIED BY 'caching'"
 "CREATE USER sha256@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
 "CREATE USER 'plug_user' IDENTIFIED WITH 'test_plugin_server' AS 'plug_user'"
@@ -193,11 +172,6 @@ die ""system failed on '$mysqld $init_file_args_d': $!"""
 
 SHOW DATABASES"
 disable_query_log
-"INSERT INTO t1 VALUES ('tinyblob-text readable', 'blob-text readable',
-'mediumblob-text readable', 'longblob-text readable',
-'text readable', b'1', 'c', 'variable',
-POINT(1, 1))"
-"INSERT INTO t2 VALUES (1, X'AB1234', X'123ABC'), (2, X'DE1234', X'123DEF')"
 "SELECT 1 FROM t1 WHERE a = ANY (SELECT a FROM t2)"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=BLACKHOLE"
 "SELECT MAX(processlist_id) FROM performance_schema.threads INTO @id2"
@@ -221,9 +195,6 @@ RETURN IFNULL(a, 666)"
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", CHAR(4))"
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", BINARY(4))"
 "select CAST(TIMESTAMP ""2004-01-22 21:45:33"" AS BINARY(4))"
-"SELECT a FROM t1
-WHERE CAST(a as BINARY)=x'62736D697468'
-AND CAST(a AS BINARY)=x'65736D697468'"
 "SELECT CAST(1/3 AS FLOAT(10)), CAST(1/3 AS FLOAT(53))"
 "SELECT CAST(DATE'2000-01-01' AS FLOAT), CAST(DATE'2000-01-01' AS DOUBLE)"
 "SELECT CAST(TIME'23:59:59' AS FLOAT), CAST(TIME'23:59:59' AS DOUBLE)"
@@ -277,8 +248,6 @@ CAST(TIMESTAMP'2000-01-01 23:59:59.123456' AS DOUBLE)"
 "SELECT CAST(JSON_EXTRACT('{""key_year"":1934}', '$.key_year') AS YEAR)"
 "SELECT CAST(CAST('{""_id"":""192312412512""}' AS JSON) AS YEAR)"
 "INSERT INTO t1 VALUES (19, CAST(TIMESTAMP'2015-01-15 23:24:25' AS JSON))"
-"INSERT INTO t1 VALUES (22, CAST(x'07C4' AS JSON))"
-"INSERT INTO t1 VALUES (23, CAST(x'07C407C4' AS JSON))"
 "SELECT i, CAST(j AS YEAR), CAST(j AS SIGNED) FROM t1 ORDER BY i"
 "SELECT CAST(numbers AS YEAR), CAST(colors AS YEAR) FROM t"
 "INSERT INTO t values(CAST(""2020extra"" AS YEAR))"
@@ -294,15 +263,6 @@ CAST(TIMESTAMP'2000-01-01 23:59:59.123456' AS DOUBLE)"
 "SELECT CAST(CAST(1988 AS YEAR) AS UNSIGNED)"
 "SELECT CAST(TIMESTAMP'579-10-10 10:10:10' AS YEAR)"
 "SELECT CAST(STR_TO_DATE('nope','%d-%m-%Y') AS YEAR)"
-"INSERT INTO tmp VALUES (CONVERT(X'F09F8DBA' USING utf8mb4))"
-"CREATE TABLE t AS
-SELECT CONVERT(X'F09F8DBA' USING utf8mb4) AS beer"
-"CREATE TABLE t AS
-SELECT CONVERT(CONVERT(X'F09F8DBA' USING utf8mb4) USING binary) AS beer"
-"CREATE TABLE t AS
-SELECT CONVERT(CONVERT(X'F09F8DBA', CHAR(1) CHARACTER SET utf8mb4) USING binary) AS beer"
-"CREATE TABLE t AS
-SELECT CONVERT(X'D83CDF7A' USING utf16) as beer"
 "create user test_nopw"
 "create user test_newpw identified by ""newpw"""
 "CREATE PROCEDURE p_flush_status()
@@ -415,8 +375,6 @@ ALTER CHECK ck11 ENFORCED"
 "ALTER TABLE t1 MODIFY COLUMN c1 FLOAT(10.3), DROP CHECK t1_chk_1, ADD CONSTRAINT CHECK(C1 > 10.1) ENFORCED"
 "CREATE FUNCTION func() RETURNS INT DETERMINISTIC return 1"
 "DROP FUNCTION func"
-"INSERT INTO t1(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10)
-VALUES(B'1111000',1,11,11,11,11,11,10.2,10.2,10.2)"
 "CREATE TRIGGER before_t2_insert
 BEFORE INSERT ON t2
 FOR EACH ROW
@@ -482,8 +440,6 @@ c8 DECIMAL(6,2) CHECK(c8 > 10.1),
 c9 FLOAT(6,2) CHECK(c9 > 10.1),
 c10 DOUBLE(6,2) CHECK(c10 > 10.1),
 c11 CHAR(6) CHECK (c11 IS NULL))"
-"INSERT INTO t1(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10)
-VALUES(B'1111111',0,5,5,5,11,11,10.2,10.2,10.2)"
 "CREATE TABLE t4(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
 "CREATE TABLE t5(a INTEGER CHECK (a > 0) NOT ENFORCED NOT NULL)"
 "CREATE TABLE t7(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
@@ -696,13 +652,6 @@ insert into t2 values(1);
 return 1;
 end"
 "drop function f"
-"CREATE TABLE t1(a ENUM( b'1001001'))"
-"CREATE TABLE t2(a ENUM( b'1001001') BYTE)"
-"CREATE TABLE t3(a ENUM( b'10010010') BYTE)"
-"CREATE TABLE t4(a ENUM( b'1001001101101111') BYTE)"
-"CREATE TABLE t5(a ENUM( b'10010011011011111111011000011') BYTE)"
-"ALTER TABLE t6
-MODIFY COLUMN a ENUM( b'10010011011011111111011000011') BYTE UNIQUE FIRST"
 "CREATE USER subuser@localhost"
 "CREATE TRIGGER t1_bi BEFORE INSERT ON t1
 FOR EACH ROW
@@ -789,41 +738,10 @@ ORDER BY id, name"
 "DROP DATABASE ����"
 "SELECT HEX('�����@�\') FROM DUAL"
 "SELECT QUOTE('�\')"
-"INSERT INTO t1 VALUES (X'042000200020',X'042000200020'), (X'200400200020', X'200400200020')"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
-"INSERT INTO t1 VALUES
-(X'000004200000002000000020',X'000004200000002000000020'),
-(X'000020040000002000000020',X'000020040000002000000020')"
-"INSERT INTO t1 VALUES(x'D7FF')"
-"INSERT INTO t1 VALUES(x'E000')"
-"INSERT INTO t1 VALUES(x'10FFFF')"
 "INSERT INTO t1 VALUES (N'\\')"
 "select concat(a, if(b>10, N'x', N'y')) from t1"
-"INSERT INTO t1 VALUES (19, x'E0B696'), (30, x'E0B69AE0B798'), (61, x'E0B6AF'), (93, x'E0B799'), (52, x'E0B6A6'), (73, x'E0B6BBE0B78AE2808D'), (3, x'E0B686'), (56, x'E0B6AA'), (55, x'E0B6A9'), (70, x'E0B6B9'), (94, x'E0B79A'), (80, x'E0B785'), (25, x'E0B69AE0B791'), (48, x'E0B6A2'), (13, x'E0B690'), (86, x'E0B793'), (91, x'E0B79F'), (81, x'E0B786'), (79, x'E0B784'), (14, x'E0B691'), (99, x'E0B78A'), (8, x'E0B68B'), (68, x'E0B6B7'), (22, x'E0B69A'), (16, x'E0B693'), (33, x'E0B69AE0B7B3'), (38, x'E0B69AE0B79D'), (21, x'E0B683'), (11, x'E0B68E'), (77, x'E0B782'), (40, x'E0B69AE0B78A'), (101, x'E0B78AE2808DE0B6BB'), (35, x'E0B69AE0B79A'), (1, x'E0B7B4'), (9, x'E0B68C'), (96, x'E0B79C'), (6, x'E0B689'), (95, x'E0B79B'), (88, x'E0B796'), (64, x'E0B6B3'), (26, x'E0B69AE0B792'), (82, x'E0B78F'), (28, x'E0B69AE0B794'), (39, x'E0B69AE0B79E'), (97, x'E0B79D'), (2, x'E0B685'), (75, x'E0B780'), (34, x'E0B69AE0B799'), (69, x'E0B6B8'), (83, x'E0B790'), (18, x'E0B695'), (90, x'E0B7B2'), (17, x'E0B694'), (72, x'E0B6BB'), (66, x'E0B6B5'), (59, x'E0B6AD'), (44, x'E0B69E'), (15, x'E0B692'), (23, x'E0B69AE0B78F'), (65, x'E0B6B4'), (42, x'E0B69C'), (63, x'E0B6B1'), (85, x'E0B792'), (47, x'E0B6A1'), (49, x'E0B6A3'), (92, x'E0B7B3'), (78, x'E0B783'), (36, x'E0B69AE0B79B'), (4, x'E0B687'), (24, x'E0B69AE0B790'), (87, x'E0B794'), (37, x'E0B69AE0B79C'), (32, x'E0B69AE0B79F'), (29, x'E0B69AE0B796'), (43, x'E0B69D'), (62, x'E0B6B0'), (100, x'E0B78AE2808DE0B6BA'), (60, x'E0B6AE'), (45, x'E0B69F'), (12, x'E0B68F'), (46, x'E0B6A0'), (50, x'E0B6A5'), (51, x'E0B6A4'), (5, x'E0B688'), (76, x'E0B781'), (89, x'E0B798'), (74, x'E0B6BD'), (10, x'E0B68D'), (57, x'E0B6AB'), (71, x'E0B6BA'), (58, x'E0B6AC'), (27, x'E0B69AE0B793'), (54, x'E0B6A8'), (84, x'E0B791'), (31, x'E0B69AE0B7B2'), (98, x'E0B79E'), (53, x'E0B6A7'), (41, x'E0B69B'), (67, x'E0B6B6'), (7, x'E0B68A'), (20, x'E0B682')"
-"INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 127))"
-"INSERT INTO t1 VALUES (119040, x'f09d8480'),
-(119070, x'f09d849e'),
-(119134, x'f09d859e'),
-(119247, x'f09d878f'),
-(120607, x'f09d9c9f'),
-(120735, x'f09d9e9f'),
-(1114111, x'f48fbfbf'),
-(917999, x'f3a087af')"
-"INSERT INTO t1 VALUES (119070, x'f09d849ef09d859ef09d859ef09d8480f09d859ff09d859ff09d859ff09d85a0f09d85a0f09d8480')"
-"INSERT INTO t1 VALUES (65131, x'efb9abf09d849ef09d859ef09d859ef09d8480f09d859fefb9abefb9abf09d85a0efb9ab')"
-"INSERT IGNORE INTO t1 VALUES (119070, x'f09d849ef09d859ef09d859ef09d8480f09d859ff09d859ff09d859ff09d85a0f09d85a0f09d8480f09d85a0')"
-"INSERT IGNORE INTO t1 VALUES (1114111, x'f5808080')"
-"INSERT INTO t2 VALUES (42856, x'ea9da8')"
-"INSERT INTO t2 VALUES (65131, x'efb9ab')"
-"INSERT IGNORE INTO t2 VALUES (1114111, x'f48fbfbf')"
-"UPDATE IGNORE t2 SET utf8mb3_encoding= x'f48fbfbd' where u_decimal= 42856"
-"INSERT INTO t1 VALUES (x'ea9da8'),(x'f48fbfbf')"
-"INSERT INTO t2 VALUES (x'ea9da8')"
-"INSERT INTO t1 VALUES (x'f48fbfbf')"
-"INSERT INTO t1(subject) VALUES(x'f0909080')"
-"SET @A = CONVERT(CHAR(X'33fc' USING utf32) USING utf8mb4)"
-"SET @B = CONVERT(CHAR(X'32' USING utf32) USING utf8mb4)"
 "my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
 "SET @null = NULL"
 "EXECUTE ps USING @null"
@@ -909,9 +827,6 @@ SELECT 'тест' AS c1, кол AS c2
 FROM t1"
 "CREATE USER mysqltest_1@localhost"
 "CREATE USER mysqltest_2@localhost"
-"CREATE TABLE t1 (f1 BINARY(6)  NOT NULL DEFAULT 0x414243FAFA00,
-f2 VARCHAR(6) CHARACTER SET ujis DEFAULT 0xA4A2,
-f3 BIT(4) DEFAULT b'1101')"
 "CREATE TABLE t3 LIKE t1"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (sha2(i, 0)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE FUNCTION CURRENT_TIMESTAMPfoo() RETURNS INT BEGIN RETURN 1; END"
@@ -1586,12 +1501,6 @@ gc INT GENERATED ALWAYS AS (1))"
 "/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */"
 "/*!40101 SET SQL_MODE=@OLD_SQL_MODE */"
 "EXPLAIN FORMAT=tree SELECT j FROM t1 ORDER BY pk"
-"EXPLAIN SELECT * FROM t1 WHERE bit1 <=>b'1'"
-"EXPLAIN SELECT * FROM t1 WHERE bit1 >  b'0'"
-"EXPLAIN SELECT * FROM t1 WHERE bit1 >= b'0'"
-"EXPLAIN SELECT * FROM t1 WHERE bit1 <  b'0'"
-"EXPLAIN SELECT * FROM t1 WHERE bit1 <= b'0'"
-"EXPLAIN SELECT * FROM t1 WHERE bit3 =  b'1'"
 "CREATE USER 'show_view_tbl'@'localhost', 'select_only_c1'@localhost"
 "GRANT CREATE VIEW, SHOW VIEW ON testdb.v1 TO 'show_view_tbl'@'localhost'"
 echo
@@ -1742,22 +1651,11 @@ foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12+00:00' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast( a AT TIME ZONE '+00:00' AS DATETIME ) FROM t1"
-"INSERT INTO t VALUES
-(1, x'59', x'6a'),
-(2, x'5939', x'6ac3'),
-(3, x'5939a998', x'6ac35d2a'),
-(4, x'5939a99861154f35', x'6ac35d2a3ab34bda'),
-(5, x'5939a99861154f3587d5440618e9b28b', x'6ac35d2a3ab34bda8ac412ea0141852c'),
-(6, x'5939a99861154f3587d5440618e9b28b166181c5ca514ab1b8e9c970ae5e421a', x'6ac35d2a3ab34bda8ac412ea0141852c3c8e38bb19934a7092a40bb19db13a80'),
-(7, x'5939a99861154f3587d5440618e9b28b', x'8ac412ea0141852c'),
-(8, x'5939a99861154f35', x'6ac35d2a3ab34bda8ac412ea0141852c')"
 "LET $have_debug= `SELECT (version() LIKE '%debug%')`"
 "IF ($have_debug)
 {
 disable_query_log"
 enable_result_log
-"SET @a:= b'1010010001000010000010000001000000010000000010000000001000000000010000000000010000000000001'"
-"INSERT INTO t VALUES(REPEAT(x'0a',1000))"
 "LET $c = 96"
 "WHILE ($c)
 {
@@ -1885,8 +1783,6 @@ TIMESTAMP'2020-05-05 05:05:05')"
 @int_five, @dec_five, @null"
 "CREATE TABLE t(x VARCHAR(10),
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
-"INSERT INTO t1 VALUES (B'10101', 127, 8388607, 2147483647,
-9223372036854775807, 10.5, 11.5, 12.5)"
 "CREATE TRIGGER trg1
 BEFORE INSERT ON t1
 FOR EACH ROW
@@ -2018,48 +1914,6 @@ select least(1,2,3) | greatest(16,32,8), least(5,4)*1,greatest(-1.0,1.0)*1,least
 
 select quote('\'\"\\test')"
 "', 2),substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
-"', -2);
-
-explain select sha('abc');
-explain select sha1('abc');
-explain select soundex('');
-explain select 'mood' sounds like 'mud';
-explain select aes_decrypt(aes_encrypt('abc','1'),'1');
-explain select concat('*',space(5),'*');
-explain select reverse('abc');
-explain select rpad('a',4,'1');
-explain select lpad('a',4,'1');
-explain select concat_ws(',','',NULL,'a');
-explain select make_set(255,_latin2'a', _latin2'b', _latin2'c');
-explain select elt(2,1);
-explain select locate(""a"",""b"",2);
-explain select format(130,10);
-explain select char(0);
-explain select conv(130,16,10);
-explain select hex(130);
-explain select binary 'HE';
-explain select export_set(255,_latin2'y', _latin2'n', _latin2' ');
-explain select FIELD('b' COLLATE latin1_bin,'A','B');
-explain select FIND_IN_SET(_latin1'B', _latin1'a,b,c,d');
-explain select collation(conv(130,16,10));
-explain select coercibility(conv(130,16,10));
-explain select length('\n\t\r\b\0\_\%\\');
-explain select bit_length('\n\t\r\b\0\_\%\\');
-explain select bit_length('\n\t\r\b\0\_\%\\');
-explain select concat('monty',' was here ','again');
-explain select length('hello');
-explain select char(ascii('h'));
-explain select ord('h');
-explain select quote(1/0);
-explain select crc32(""123"");
-explain select replace('aaaa','a','b');
-explain select insert('txs',2,1,'hi');
-explain select left(_latin2'a',1);
-explain select right(_latin2'a',1);
-explain select lcase(_latin2'a');
-explain select ucase(_latin2'a');
-explain select SUBSTR('abcdefg',3,2);
-explain select substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
 """',repeat('a',60),
 repeat('b',60),
 repeat('c',60),
@@ -2095,26 +1949,10 @@ end
 "SELECT * FROM t1 WHERE TIMESTAMPDIFF(MONTH, a, TIMESTAMP'0000-00-01 00:00:00') IS NULL"
 "SELECT * FROM t1 WHERE TIMESTAMPDIFF(MONTH, a, DATE'0000-00-01') IS NULL"
 "SELECT CAST(1 AS YEAR) UNION SELECT CAST(1 AS YEAR)"
-"INSERT into at VALUES(
-x'12345678123456781234567812345678',
-x'12345678123456781234567812345678',
-x'12345678123456781234567812345678',
-x'12345678123456781234567812345678',
-x'12345678123456781234567812345678')"
 "EVAL $query"
 "EVAL CREATE TABLE t3 AS $query"
 "CREATE TABLE t1(col1 varchar(100), gcol2 binary(16) AS (uuid_to_bin(col1)) virtual, index(gcol2))"
-"EXPLAIN SELECT col1, HEX(gcol2) FROM t1 where gcol2=x'12345679123456781234567812345678'"
-"SELECT col1, HEX(gcol2) FROM t1 where gcol2=x'12345679123456781234567812345678'"
-"EXPLAIN SELECT col1, HEX(gcol2) FROM t1 where uuid_to_bin(col1)=x'12345679123456781234567812345678'"
-"SELECT col1, HEX(gcol2) FROM t1 where uuid_to_bin(col1)=x'12345679123456781234567812345678'"
 "CREATE TABLE t2(col1 binary(16), gcol2 varchar(36) AS (bin_to_uuid(col1)) virtual, index(col1), index(gcol2))"
-"INSERT into t2(col1) VALUES
-(x'12345678123456781234567812345678'),
-(x'12345679123456781234567812345678'),
-(x'12345670123456781234567812345678')"
-"EXPLAIN SELECT HEX(col1), gcol2 FROM t2 where col1=x'12345679123456781234567812345678'"
-"SELECT HEX(col1), gcol2 FROM t2 where col1=x'12345679123456781234567812345678'"
 "select hex(weight_string('aa' as binary(3)))"
 "SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000)))"
 "CREATE VIEW v5 AS SELECT WEIGHT_STRING(a AS BINARY(2)) AS b FROM t1"
@@ -3202,9 +3040,6 @@ having g.id is null
 
 RETURN TRUE;
 END "
-"INSERT INTO t1 VALUES
-(1, b'0', b'000000000', b'0000000000000000000000000000000000000000000000000000000000000000'),
-(2, b'1', b'100000000', b'1000000000000000000000000000000000000000000000000000000000000000')"
 "SELECT COUNT(DISTINCT f), COUNT(DISTINCT d), AVG(DISTINCT f), AVG(DISTINCT d) FROM t"
 "EXPLAIN FORMAT=TREE
 SELECT DISTINCT MIN(t2.x), t1.x
@@ -3503,76 +3338,6 @@ UNIQUE KEY USING HASH (c2,c1)) ENGINE = MEMORY"
 "ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1000.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
 "ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [13.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
 "ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 32.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"INSERT INTO all_types VALUES (
-FALSE,                                                               # BOOLEAN
-b'0000000000000000000000000000000000000000000000000000000000000000', # BIT
--128,                                                                # TINYINT
--32768,                                                              # SMALLINT
--8388608,                                                            # MEDIUMINT
--2147483648,                                                         # INTEGER
--9223372036854775808,                                                # BIGINT
-0,                                                                   # TINYINT_UNSIGNED
-0,                                                                   # SMALLINT_UNSIGNED
-0,                                                                   # MEDIUMINT_UNSIGNED
-0,                                                                   # INTEGER_UNSIGNED
-0,                                                                   # BIGINT_UNSIGNED
--3.402823466E+38,                                                    # FLOAT
--1.7976931348623157E+308,                                            # DOUBLE
--999999999999999999999999999999999999999999999999999999999999999.99, # DECIMAL(65, 2)
-'1000-01-01',                                                        # DATE
-'-838:59:59.000000',                                                 # TIME
-1901,                                                                # YEAR
-'1000-01-01 00:00:00',                                               # DATETIME
-'1970-01-02 00:00:01',                                               # TIMESTAMP
-'',                                                                  # CHAR
-'',                                                                  # VARCHAR
-'',                                                                  # TINYTEXT
-'',                                                                  # TEXT
-'',                                                                  # MEDIUMTEXT
-'',                                                                  # LONGTEXT
-'',                                                                  # BINARY
-'',                                                                  # VARBINARY
-'',                                                                  # TINYBLOB
-'',                                                                  # BLOB
-'',                                                                  # MEDIUMBLOB
-'',                                                                  # LONGBLOB
-'red',                                                               # ENUM
-'')"
-"INSERT INTO all_types VALUES (
-TRUE,                                                                # BOOLEAN
-b'1111111111111111111111111111111111111111111111111111111111111111', # BIT
-127,                                                                 # TINYINT
-32767,                                                               # SMALLINT
-8388607,                                                             # MEDIUMINT
-2147483647,                                                          # INTEGER
-9223372036854775807,                                                 # BIGINT
-255,                                                                 # TINYINT_UNSIGNED
-65535,                                                               # SMALLINT_UNSIGNED
-16777215,                                                            # MEDIUMINT_UNSIGNED
-4294967295,                                                          # INTEGER_UNSIGNED
-18446744073709551615,                                                # BIGINT_UNSIGNED
-3.402823466E+38,                                                     # FLOAT
-1.7976931348623157E+308,                                             # DOUBLE
-999999999999999999999999999999999999999999999999999999999999999.99,  # DECIMAL(65, 2)
-'9999-12-31',                                                        # DATE
-'838:59:59.000000',                                                  # TIME
-2155,                                                                # YEAR
-'9999-12-31 23:59:59',                                               # DATETIME
-'2038-01-19 03:14:07',                                               # TIMESTAMP
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # CHAR
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # VARCHAR
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # TINYTEXT
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # TEXT
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # MEDIUMTEXT
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # LONGTEXT
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # BINARY
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # VARBINARY
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # TINYBLOB
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # BLOB
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # MEDIUMBLOB
-'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',                     # LONGBLOB
-'purple',                                                            # ENUM
-'three')"
 "ALTER TABLE t1 ADD COLUMN virtual_generated INT AS (col_integer + 10) VIRTUAL,
 ADD COLUMN stored_generated INT AS (col_integer + 20) STORED"
 "CREATE TABLE t1 (
@@ -3651,114 +3416,6 @@ col_varchar_key varchar(2) GENERATED ALWAYS AS (concat(col_varchar,col_varchar))
 PRIMARY KEY (pk),
 KEY col_date_key (col_date_key)
 ) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4"
-"INSERT INTO all_types VALUES (
-FALSE,                 # BOOLEAN
-b'0000',               # BIT
-0,                     # TINYINT
-0,                     # SMALLINT
-0,                     # MEDIUMINT
-0,                     # INTEGER
-0,                     # BIGINT
-0,                     # TINYINT_UNSIGNED
-0,                     # SMALLINT_UNSIGNED
-0,                     # MEDIUMINT_UNSIGNED
-0,                     # INTEGER_UNSIGNED
-0,                     # BIGINT_UNSIGNED
-0,                     # FLOAT
-0,                     # DOUBLE
-00.00,                 # DECIMAL(2, 2)
-'1000-01-01',          # DATE
-'00:00:00.000000',     # TIME
-1901,                  # YEAR
-'1000-01-01 00:00:00', # DATETIME
-'1971-01-01 00:00:00', # TIMESTAMP
-'0',                   # CHAR
-'0',                   # VARCHAR
-'0',                   # TINYTEXT
-'0',                   # TEXT
-'0',                   # MEDIUMTEXT
-'0',                   # LONGTEXT
-'0',                   # BINARY
-'0',                   # VARBINARY
-'0',                   # TINYBLOB
-'0',                   # BLOB
-'0',                   # MEDIUMBLOB
-'0',                   # LONGBLOB
-'zero',                 # ENUM
-'zero'                  # SET
-)"
-"INSERT INTO all_types VALUES (
-TRUE,                  # BOOLEAN
-b'0001',               # BIT
-1,                     # TINYINT
-1,                     # SMALLINT
-1,                     # MEDIUMINT
-1,                     # INTEGER
-1,                     # BIGINT
-1,                     # TINYINT_UNSIGNED
-1,                     # SMALLINT_UNSIGNED
-1,                     # MEDIUMINT_UNSIGNED
-1,                     # INTEGER_UNSIGNED
-1,                     # BIGINT_UNSIGNED
-1,                     # FLOAT
-1,                     # DOUBLE
-00.01,                 # DECIMAL(2, 2)
-'1001-01-01',          # DATE
-'00:00:00.000001',     # TIME
-1902,                  # YEAR
-'1001-01-01 00:00:00', # DATETIME
-'1971-01-01 00:00:01', # TIMESTAMP
-'1',                   # CHAR
-'1',                   # VARCHAR
-'1',                   # TINYTEXT
-'1',                   # TEXT
-'1',                   # MEDIUMTEXT
-'1',                   # LONGTEXT
-'1',                   # BINARY
-'1',                   # VARBINARY
-'1',                   # TINYBLOB
-'1',                   # BLOB
-'1',                   # MEDIUMBLOB
-'1',                   # LONGBLOB
-'one',                 # ENUM
-'one'                  # SET
-)"
-"INSERT INTO all_types VALUES (
-TRUE,                  # BOOLEAN
-b'0010',               # BIT
-2,                     # TINYINT
-2,                     # SMALLINT
-2,                     # MEDIUMINT
-2,                     # INTEGER
-2,                     # BIGINT
-2,                     # TINYINT_UNSIGNED
-2,                     # SMALLINT_UNSIGNED
-2,                     # MEDIUMINT_UNSIGNED
-2,                     # INTEGER_UNSIGNED
-2,                     # BIGINT_UNSIGNED
-2,                     # FLOAT
-2,                     # DOUBLE
-00.02,                 # DECIMAL(2, 2)
-'1002-01-01',          # DATE
-'00:00:00.000002',     # TIME
-1903,                  # YEAR
-'1002-01-01 00:00:00', # DATETIME
-'1971-01-01 00:00:02', # TIMESTAMP
-'2',                   # CHAR
-'2',                   # VARCHAR
-'2',                   # TINYTEXT
-'2',                   # TEXT
-'2',                   # MEDIUMTEXT
-'2',                   # LONGTEXT
-'2',                   # BINARY
-'2',                   # VARBINARY
-'2',                   # TINYBLOB
-'2',                   # BLOB
-'2',                   # MEDIUMBLOB
-'2',                   # LONGBLOB
-'two',                 # ENUM
-'two'                  # SET
-)"
 "ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[""base64:type254:MA=="", 0.3333333333333333], [""base64:type254:MQ=="", 0.6666666666666666], [""base64:type254:Mg=="", 1.0]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 255, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
 "ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[""base64:type254:MA=="", ""base64:type254:MQ=="", 0.6666666666666666, 2], [""base64:type254:Mg=="", ""base64:type254:Mg=="", 1.0, 1]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 255, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
 "ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[0, 0.3333333333333333], [1, 0.6666666666666666], [2, 1.0]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
@@ -3966,9 +3623,6 @@ END"
 FOR EACH ROW BEGIN
 INSERT IGNORE INTO t3 VALUES(4);
 END"
-"SELECT HEX(c1) FROM t5 WHERE c1 = b'1' ORDER BY c1"
-"SELECT HEX(c1) FROM t5 WHERE c1 <=> b'1' ORDER BY c1"
-"SELECT HEX(c1) FROM t5 WHERE c1 != b'1' ORDER BY c1"
 "LET $OLD_DB= `SELECT DATABASE()`"
 "chdir $ENV{'MYSQL_TMP_DIR'}"
 "EOF
@@ -4112,14 +3766,6 @@ end"
 returns char(10) return null"
 "create function f1() returns int return 1"
 "GRANT SELECT ON *.* TO очень_очень_очень_длинный_юзер__@localhost"
-"CREATE TABLE t1(fld1 BINARY(10) NOT NULL DEFAULT 'a',
-fld2 BINARY(10) NOT NULL DEFAULT 0xAA,
-fld3 BINARY(10) NOT NULL DEFAULT 0xA,
-fld4 BINARY(10) NOT NULL DEFAULT b'1001',
-fld5 VARBINARY(5) NOT NULL DEFAULT 'a',
-fld6 VARBINARY(5) NOT NULL DEFAULT 0xAA,
-fld7 VARBINARY(5) NOT NULL DEFAULT 0xA,
-fld8 VARBINARY(5) NOT NULL DEFAULT b'1001')"
 "CREATE TABLE t1 (f1 DATE NOT SECONDARY)"
 "ALTER TABLE  t1 MODIFY f1 DATE NOT SECONDARY"
 "CREATE TABLE t1 (f1 INT) SECONDARY_ENGINE=myisam"
@@ -4478,8 +4124,6 @@ ad INTEGER
 "INSERT INTO t1 (Ñ, N) VALUES (1, 2)"
 "CREATE TABLE t1 (f1 INTEGER, b INTEGER AS ((1)) INVISIBLE, KEY k1(b))"
 "CREATE TRIGGER trig1 BEFORE INSERT ON t1 FOR EACH ROW INSERT INTO t2 VALUES (1)"
-"INSERT INTO t1 (a) VALUES(x'616263AC646566')"
-"SELECT *, HEX(a) FROM t1 WHERE a = x'FFA5A4ABACA9'"
 "CREATE TABLE t1(
 Month date NOT NULL,
 Type tinyint(3) unsigned NOT NULL auto_increment,
@@ -4492,40 +4136,6 @@ UNIQUE KEY Month (Month,Type,Field)
 "insert into t2 Select null, Field, Count From t1 Where Month=20030901 and Type=2"
 enable_info
 disable_info
-"INSERT INTO t1 values(x'6162', x'6162', x'6162')"
-"INSERT INTO t2 values(x'6162', x'6162', x'6162')"
-"INSERT INTO t3 values(x'6162', x'6162', x'6162')"
-"INSERT INTO t1 values(x'8142', x'8142', x'8142')"
-"UPDATE t1 SET a=x'8243' where a=x'6162'"
-"INSERT INTO t2 values(x'8142', x'8142', x'8142')"
-"UPDATE t2 SET a=x'8243' where a=x'6162'"
-"INSERT INTO t3 values(x'8142', x'8142', x'8142')"
-"UPDATE t3 SET a=x'8243' where a=x'6162'"
-"INSERT INTO v1 values(x'6162', x'6162', x'6162')"
-"INSERT INTO v2 values(x'6162', x'6162', x'6162')"
-"INSERT INTO v3 values(x'6162', x'6162', x'6162')"
-"INSERT INTO v1 values(x'8142', x'8142', x'8142')"
-"UPDATE v1 SET a=x'8243' where a=x'6162'"
-"INSERT INTO v2 values(x'8142', x'8142', x'8142')"
-"UPDATE v2 SET a=x'8243' where a=x'6162'"
-"INSERT INTO v3 values(x'8142', x'8142', x'8142')"
-"UPDATE v3 SET a=x'8243' where a=x'6162'"
-"INSERT INTO t_latin1 values(x'f242', x'f242', x'f242')"
-"UPDATE t_latin1 SET a=x'f343' where a=x'f242'"
-"INSERT INTO t_gb2312 values(x'e5ac', x'e5ac', x'e5ac')"
-"UPDATE t_gb2312 SET a=x'e6af' where a=x'e5ac'"
-"INSERT INTO t_utf8 values(x'e4b8ad', x'e4b8ad', x'e4b8ad')"
-"INSERT INTO t_utf8 values(x'f4b8ad', x'f4b8ad', x'f4b8ad')"
-"UPDATE t_utf8 SET a=x'e69687' where a=x'e4b8ad'"
-"UPDATE t_utf8 SET a=x'f69687' where a=x'e69687'"
-"INSERT INTO v_latin1 values(x'f242', x'f242', x'f242')"
-"UPDATE v_latin1 SET a=x'f343' where a=x'f242'"
-"INSERT INTO v_gb2312 values(x'e5ac', x'e5ac', x'e5ac')"
-"UPDATE v_gb2312 SET a=x'e6af' where a=x'e5ac'"
-"INSERT INTO v_utf8 values(x'e4b8ad', x'e4b8ad', x'e4b8ad')"
-"INSERT INTO v_utf8 values(x'f4b8ad', x'f4b8ad', x'f4b8ad')"
-"UPDATE v_utf8 SET a=x'e69687' where a=x'e4b8ad'"
-"UPDATE v_utf8 SET a=x'f69687' where a=x'e69687'"
 "explain format=tree select SQL_BUFFER_RESULT * from t1"
 "create function func1(x int)
 returns int deterministic
@@ -4782,7 +4392,6 @@ END"
 (ORDER BY id DESC, n ASC ROWS BETWEEN  CURRENT ROW AND 2 FOLLOWING) L FROM t1"
 "SELECT n, id,  LEAD(id, 1, n*n) OVER
 (ORDER BY id DESC, n ASC ROWS BETWEEN  CURRENT ROW AND 2 FOLLOWING) L FROM t1"
-"INSERT INTO t VALUES(x'F09F90AC' /* dolphin */, 5, null)"
 "SELECT id, sex, COUNT(*) OVER w cnt, NTH_VALUE(id, 2) OVER w nth,
 LEAD(id, 1) OVER w le1,
 LAG(id, 1) OVER w la1,
@@ -5791,12 +5400,6 @@ EOF
 
 
 connection default"
-"INSERT INTO t1 VALUES(
-'basic',
-x'EE0C6D03C34C11E5B1640026B977EB17',
-x'EE0C6D03C34C11E5B1640026B977EB17',
-ST_GeomFromText('POINT(1 1)'),
-x'EE0C6D03C34C11E5')"
 "open FILE, ""$ENV{'MYSQLD_DATADIR'}/mysqldump_long_query_time-slow.log"" or die"
 "my @lines = <FILE>"
 "foreach $line (@lines) {
@@ -6349,8 +5952,6 @@ name TINYBLOB NOT NULL,
 modified TIMESTAMP DEFAULT '0000-00-00 00:00:00',
 INDEX namelocs (name(255))) ENGINE = InnoDB
 PARTITION BY HASH(id) PARTITIONS 2"
-"insert into t1 values (b'1')"
-"select hex(a) from t1 where a = b'1'"
 "CREATE TABLE t1_1 (
 `col1` int(11) DEFAULT NULL,
 `col2` int(11) DEFAULT NULL,
@@ -6496,16 +6097,6 @@ of multi-line
 comment */
 PARTITIONS 5 */"
 "ALTER TABLE t1 DROP PARTITION x1"
-"INSERT into t1 values (1, b'00001', NULL)"
-"INSERT into t1 values (2, b'00101', 2)"
-"INSERT into t1 values (30, b'00100', 2)"
-"INSERT into t1 values (35, b'00010', NULL)"
-"select a from t1 force index (b) where b > b'00000' order by b"
-"INSERT into t1 values (1,  b'000000000000001', NULL)"
-"INSERT into t1 values (2,  b'001010000000101', 2)"
-"INSERT into t1 values (30, b'001000000000100', 2)"
-"INSERT into t1 values (35, b'000100000000010', NULL)"
-"select a from t1 force index (b) where b > b'000000000000000' order by b"
 "CREATE TABLE t1 (a INT PRIMARY KEY)
 PARTITION BY RANGE (a) (
 PARTITION p0 VALUES LESS THAN (1),
@@ -10124,38 +9715,6 @@ RETURN 0"
 "DROP FUNCTION sp_vars_check_ret3"
 "DROP FUNCTION sp_vars_check_ret4"
 "DROP FUNCTION sp_vars_div_zero"
-"CREATE PROCEDURE p1()
-BEGIN
-DECLARE v1 BIT;
-DECLARE v2 BIT(1);
-DECLARE v3 BIT(3) DEFAULT b'101';
-DECLARE v4 BIT(64) DEFAULT 0x5555555555555555;
-DECLARE v5 BIT(3);
-DECLARE v6 BIT(64);
-DECLARE v7 BIT(8) DEFAULT 128;
-DECLARE v8 BIT(8) DEFAULT '128';
-DECLARE v9 BIT(8) DEFAULT ' 128';
-DECLARE v10 BIT(8) DEFAULT 'x 128';
-
-SET v1 = v4;
-SET v2 = 0;
-SET v5 = v4; # check overflow
-SHOW WARNINGS;
-SET v6 = v3; # check padding
-
-SELECT HEX(v1);
-SELECT HEX(v2);
-SELECT HEX(v3);
-SELECT HEX(v4);
-SELECT HEX(v5);
-SELECT HEX(v6);
-SELECT HEX(v7);
-SELECT HEX(v8);
-SELECT HEX(v9);
-SELECT HEX(v10);
-END"
-"INSERT INTO t1(b) VALUES(b'0'), (b'1')"
-"insert into table_12976_b values ('A', b'1', b'1'), ('B', b'0', b'0')"
 "CREATE FUNCTION f1(arg TINYINT UNSIGNED) RETURNS TINYINT
 BEGIN
 RETURN arg;
@@ -12526,44 +12085,6 @@ INSERT INTO t2 VALUES (new.id)"
 "CREATE TRIGGER t1_bu BEFORE UPDATE ON t1 FOR EACH ROW
 INSERT INTO t2 VALUES (3)"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
-"INSERT INTO parents VALUES (X'93222796caba43ca979f5c96eb6898b7')"
-"SELECT foos.text
-FROM foos
-JOIN parents ON parents.id = foos.parent_id
-JOIN bars ON bars.parent_id = parents.id
-WHERE bars.parent_id = X'93222796caba43ca979f5c96eb6898b7'"
-"insert into t1 values
-(b'1111111111111111111111111111111111111111111111111111111111111111'),
-(b'1000000000000000000000000000000000000000000000000000000000000000'),
-(b'0000000000000000000000000000000000000000000000000000000000000001'),
-(b'1010101010101010101010101010101010101010101010101010101010101010'),
-(b'0101010101010101010101010101010101010101010101010101010101010101')"
-"insert ignore into t1 values (b'0'), (b'1'), (b'000'), (b'100'), (b'001')"
-"insert ignore into t1 values (b'00'), (b'01'), (b'10'), (b'100')"
-"INSERT INTO t1 VALUES
-(b'1111111111111111111111111111111111111111111111111111111111111111')"
-"SELECT HEX(a) FROM t1 WHERE a =
-b'1111111111111111111111111111111111111111111111111111111111111111'"
-"insert into t1 values (b'0'), (b'1'), (b'000'), (b'100'), (b'001')"
-"insert into t1 values (b'00'), (b'01'), (b'10'), (b'100')"
-"CREATE TABLE IF NOT EXISTS t1 (
-f1 bit(2) NOT NULL default b'10',
-f2 bit(14) NOT NULL default b'11110000111100'
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_general_ci"
-"INSERT INTO t1 VALUES (b'', b'')"
-"insert into t1bit7 values (b'1100000')"
-"insert into t1bit7 values (b'1100001')"
-"insert into t1bit7 values (b'1100010')"
-"insert into t2bit7 values (b'1100001')"
-"insert into t2bit7 values (b'1100010')"
-"insert into t2bit7 values (b'1100110')"
-"insert into t1bit7 values (b'110000011111111')"
-"insert into t1bit7 values (b'110000111111111')"
-"insert into t1bit7 values (b'110001011111111')"
-"insert into t2bit7 values (b'110000111111111')"
-"insert into t2bit7 values (b'110001011111111')"
-"insert into t2bit7 values (b'110011011111111')"
-"INSERT INTO t1 VALUES (b'')"
 "SELECT * FROM t2 EXCEPT SELECT * FROM t3"
 "SELECT * FROM t3 EXCEPT SELECT * FROM t2"
 "CREATE FUNCTION f1() RETURNS TINYBLOB RETURN 1"
@@ -13010,7 +12531,6 @@ UNION ALL SELECT b FROM t1"
 "explain format=tree delete from t1 where a in (select a from t2)"
 "CREATE FUNCTION f1() RETURNS INT RETURN f1()"
 "CREATE FUNCTION f1() RETURNS INTEGER RETURN (SELECT 1 FROM not_exists)"
-"UPDATE t1 SET token = X'ad'"
 "CREATE TABLE t1(a INTEGER, b INTEGER AS (a))"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6"
 "ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2"
@@ -13114,7 +12634,6 @@ from tb1 order by 1 limit 1"
 from t1 order by score desc"
 "CREATE TRIGGER t_after_insert AFTER INSERT ON t1 FOR EACH ROW SET @bug42188 = 10"
 "CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW SET @aux = 1"
-"SET @str_utf8mb4=CONVERT(x'616263C3A6C3B8C3A578797A' USING utf8mb4)"
 "CREATE USER 'base_user'@'localhost' IDENTIFIED BY 'pass'"
 "CREATE USER 'user1'@'localhost' IDENTIFIED BY 'pass'"
 "CREATE USER 'user'@'localhost' IDENTIFIED BY 'aedfoiASE$%'"
@@ -13162,10 +12681,8 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "SET PASSWORD FOR 'usr1'@'localhost' TO RANDOM"
 "CREATE USER 'base_user'@'localhost' IDENTIFIED BY 'pass',
 'user1'@'localhost' IDENTIFIED BY 'pass'"
-"select x'31',X'ffff'+0"
 "create table table_28127_a(0b02 int)"
 "create table table_28127_b(0b2 int)"
-"SELECT 1.0 * (x'312E35' | x'312E35')"
 "set @select=2,@t5=1.23456"
 "set @test_int=10,@test_double=1e-10,@test_string=""abcdeghi"",@test_string2=""abcdefghij"",@select=NULL"
 "select @test_int,@test_double,@test_string,@test_string2,@select"
@@ -15009,9 +14526,5 @@ end
 "
 "CREATE USER wl14965_u2"
 "SEND UPDATE t1 SET a=5 WHERE a=2"
-"XA START X'1A2B3C4D5E6F',X'F6E5D4C3B2A1',12345"
-"XA END X'1A2B3C4D5E6F',X'F6E5D4C3B2A1',12345"
-"XA PREPARE X'1A2B3C4D5E6F',X'F6E5D4C3B2A1',12345"
-"XA ROLLBACK X'1A2B3C4D5E6F',X'F6E5D4C3B2A1',12345"
 "CREATE USER xau"
 "SELECT AVG(DISTINCT EXTRACTVALUE((''),('$@k')))"

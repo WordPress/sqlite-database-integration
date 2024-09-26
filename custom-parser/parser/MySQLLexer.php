@@ -1069,6 +1069,8 @@ class MySQLLexer {
                 $this->WHITESPACE();
             } elseif ($la === '0' && ($this->LA(2) === 'x' || $this->LA(2) === 'b')) {
                 $this->NUMBER();
+			} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $this->LA(2) === "'") {
+				$this->NUMBER();
             } elseif (safe_ctype_alpha($la)) {
                 $this->IDENTIFIER_OR_KEYWORD();
             } elseif ($la === null) {
@@ -5074,9 +5076,9 @@ class MySQLLexer {
 
     protected function NUMBER()
     {
-        if ($this->c === '0' && $this->n === 'x') {
+        if (($this->c === '0' && $this->n === 'x') || (strtolower($this->c) === 'x' && $this->n === "'")) {
             $this->HEX_NUMBER();
-        } elseif ($this->c === '0' && $this->n === 'b') {
+        } elseif (($this->c === '0' && $this->n === 'b') || (strtolower($this->c) === 'b' && $this->n === "'")) {
             $this->BIN_NUMBER();
         } elseif ($this->c === '.' && safe_ctype_digit($this->LA(2))) {
             $this->DECIMAL_NUMBER();
@@ -5182,23 +5184,41 @@ class MySQLLexer {
         $this->setType(self::BACK_TICK_QUOTED_ID);
     }
 
-    protected function HEX_NUMBER()
-    {
-        $this->consume(); // Consume the '0'.
-        $this->consume(); // Consume the 'x'.
-        while (safe_ctype_xdigit($this->c)) {
-            $this->consume();
-        }
-        $this->setType(self::HEX_NUMBER);
-    }
+	protected function HEX_NUMBER()
+	{
+		$isQuoted = strtolower($this->c) === 'x' && $this->n === "'";
+
+		// Consume "0x" or "x'".
+		$this->consume();
+		$this->consume();
+
+		while (safe_ctype_xdigit($this->c)) {
+			$this->consume();
+		}
+
+		if ($isQuoted) {
+			$this->consume(); // Consume the "'".
+		}
+
+		$this->setType(self::HEX_NUMBER);
+	}
 
     protected function BIN_NUMBER()
     {
-        $this->consume(); // Consume the '0'.
-        $this->consume(); // Consume the 'b'.
+		$isQuoted = strtolower($this->c) === 'b' && $this->n === "'";
+
+		// Consume "0b" or "b'".
+        $this->consume();
+        $this->consume();
+
         while ($this->c === '0' || $this->c === '1') {
             $this->consume();
         }
+
+		if ($isQuoted) {
+			$this->consume(); // Consume the "'".
+		}
+
         $this->setType(self::BIN_NUMBER);
     }
 
