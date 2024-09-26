@@ -1,4 +1,3 @@
-"SELECT ID FROM INFORMATION_SCHEMA.PROCESSLIST WHERE INFO LIKE ""ALTER TABLE%"" INTO @thread_id"
 "reset binary logs and gtids"
 "CHECK TABLES t1"
 "EVAL insert into t1 values (2,2),(2,2),(2,2),(2,2),(2,2)"
@@ -166,8 +165,6 @@ SHOW DATABASES"
 disable_query_log
 "SELECT 1 FROM t1 WHERE a = ANY (SELECT a FROM t2)"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=BLACKHOLE"
-"SELECT MAX(processlist_id) FROM performance_schema.threads INTO @id2"
-"SELECT variable_value FROM performance_schema.global_status WHERE variable_name='connections' INTO @id3"
 "EXPLAIN FORMAT=tree SELECT col_varchar_key FROM t1
 WHERE ( col_varchar_key, col_varchar_key ) NOT IN (
 SELECT alias1.col_varchar_key, alias1.col_varchar_key
@@ -258,8 +255,6 @@ CONSTRAINT max CHECK (f1 + f2 < 929))"
 "CREATE TABLE t2 LIKE t1"
 "CREATE TEMPORARY TABLE tmp_t2 LIKE t2"
 "CREATE TABLE t3 LIKE tmp_t2"
-"SELECT * FROM t2 INTO OUTFILE 'tmp1.txt'"
-"SELECT * FROM t2 INTO OUTFILE 'tmp2.txt'"
 "ALTER TABLE t1 ADD f3 INT CHECK (f3 < 10) NOT ENFORCED, ALGORITHM=INPLACE"
 "ALTER TABLE t1 ADD CONSTRAINT CHECK (f2 < 10) NOT ENFORCED, ALGORITHM=INPLACE"
 "ALTER TABLE t1 ALTER CHECK t1_chk_1 NOT ENFORCED, ALGORITHM=INPLACE"
@@ -490,8 +485,6 @@ INSERT INTO t4 VALUES (ins1, ins2, ind)"
 "END|
 CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 "ALTER DATABASE DEFAULT CHARACTER SET latin2"
-"SELECT a FROM t1 GROUP BY 1 LIMIT 1 INTO @nullll"
-"SELECT b FROM t1 GROUP BY 1 LIMIT 1 INTO @nullll"
 "RESET BINARY LOGS AND GTIDS"
 "SELECT 1 as �, 2 as �, 3 as �, 4 as �, 5 as �, 6 as �, 7 as �, 8 as �"
 "INSERT INTO abc�def VALUES (2)"
@@ -1025,7 +1018,6 @@ c TIMESTAMP GENERATED ALWAYS AS (65),
 UNIQUE KEY (a, b),
 UNIQUE KEY (c, a)
 )"
-"select * from t1 into outfile 'tmp1.txt' character set binary"
 perl
 "my $logf= $ENV{'LOGF'} or die ""LOGF not set"""
 "open(FILE, ""$logf"") or die(""Unable to open $logf: $!\n"")"
@@ -1057,18 +1049,6 @@ ON table3 .`i1`  = table2 .o1
 a INTEGER GENERATED ALWAYS AS (1) VIRTUAL,
 KEY (a)
 ) ENGINE = InnoDB"
-"CREATE FUNCTION p() RETURNS INTEGER
-BEGIN
-DECLARE retn INTEGER;
-SELECT count(f1) FROM t1 INTO retn;
-RETURN retn;
-END"
-"CREATE FUNCTION p() RETURNS INTEGER DETERMINISTIC
-BEGIN
-DECLARE retn INTEGER;
-SELECT count(f1) FROM t1 INTO retn;
-RETURN retn;
-END"
 "CREATE PROCEDURE p()
 BEGIN
 DECLARE val INTEGER;
@@ -1246,8 +1226,6 @@ SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
 "SHOW CREATE EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "CREATE EVENT café ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
-"SELECT COUNT(*) FROM t1 INTO @rows_before"
-"SELECT COUNT(*) FROM t1 INTO @rows_after"
 "CREATE TABLE t1 (count INT, unix_time INT, local_time INT, comment CHAR(80))"
 "CREATE TABLE t2 (count INT)"
 "CREATE FUNCTION f1(comment CHAR(80)) RETURNS INT
@@ -1973,8 +1951,6 @@ END"
 "LET $wait_condition=
 SELECT COUNT(*) = 1 FROM performance_schema.events_waits_current
 WHERE event_name LIKE '%COND_open'"
-"SELECT event_id FROM performance_schema.events_waits_current
-WHERE event_name LIKE '%COND_open' INTO @first_wait_id"
 "LET $wait_condition=
 SELECT event_id != @first_wait_id
 FROM performance_schema.events_waits_current
@@ -2184,12 +2160,6 @@ WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "REVOKE SELECT ON mysqltest2.t2 FROM mysqltest_2@localhost"
 "REVOKE UPDATE (f1) ON `test`.`t1` FROM 'mysqltest_1'@'localhost'"
 "REVOKE ALL ON db27878.* FROM 'mysqltest_1'@'localhost'"
-"create function test_function() returns varchar(30)
-begin
-declare tmp varchar(30);
-select col1 from test limit 1 into tmp;
-return '1';
-end"
 "grant execute on function mysqltest1.f1 to mysqluser1@localhost"
 "grant execute on procedure mysqltest1.p1 to mysqluser1@localhost"
 "grant execute on function mysqltest1.f1 to mysqluser11@localhost"
@@ -2286,12 +2256,6 @@ end"
 "REVOKE SELECT(b2) ON mysqltest.source FROM mysqltest@localhost"
 "REVOKE EXECUTE ON FUNCTION mysqltest.f1 FROM mysqltest@localhost"
 "REVOKE EXECUTE ON PROCEDURE mysqltest.p1 FROM mysqltest@localhost"
-"CREATE DEFINER='user01'@'localhost' FUNCTION test02.sf() RETURNS INT
-BEGIN
-SELECT tbl02.id FROM test02.tbl02 as tbl02, test01.c as c
-WHERE tbl02.id  = c.id INTO @a;
-RETURN 1;
-END"
 "GRANT SELECT, UPDATE, INSERT on test02.tbl01 TO 'user02'@'localhost'"
 "GRANT EXECUTE ON FUNCTION test02.sf to 'user02'@'localhost'"
 "grant update on test.t1 to 'mysqltest_2'"
@@ -2300,12 +2264,9 @@ END"
 "REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
 "revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.1'"
 "revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.0/255.0.0.0'"
-"CREATE FUNCTION f2 () RETURNS INT
-BEGIN DECLARE v INT; SELECT s1 FROM t2 INTO v; RETURN v; END"
 "grant select on mysqltest_2.t1 to mysqltest_u1@localhost"
 "create table t1 like mysqltest_2.t1"
 "grant select on mysqltest_1.t1 to mysqltest_2@localhost"
-"SELECT authentication_string FROM user WHERE user=@u AND host=@h INTO @pwd"
 "CREATE TEMPORARY TABLE t2 LIKE t1"
 "CREATE TEMPORARY TABLE t6(a INT) ENGINE = MERGE UNION = ()"
 "ALTER TABLE t6 UNION = ()"
@@ -3185,70 +3146,6 @@ SELECT * FROM information_schema.schemata"
 
 
 connect(root_con,localhost,root,,mysql)"
-"create procedure p1()
-begin
-declare counter integer default 0;
-declare continue handler for sqlexception begin set counter = counter + 10;end;
-repeat
-if rand()>0.5 then start transaction; end if;
-if rand()>0.5 then
-select var_samp(1), exists(select 1 from t1 lock in share mode)
-from t1 into @a,@b;
-end if;
-if rand()>0.5 then
-select var_samp(1), exists(select 1 from t1 for update)
-from t1 into @a,@b;
-end if;
-if rand()>0.5 then insert ignore into t1 values (); end if;
-if rand()>0.5 then insert ignore into t2 values (); end if;
-if rand()>0.5 then delete from t1; end if;
-if rand()>0.5 then delete from t2; end if;
-if rand()>0.5 then commit; end if;
-set counter = counter + 1;
-until counter >= 100 end repeat;
-end "
-"create function f1() returns int
-begin
-declare j int;
-select i from t1 where i = 1 into j;
-return j;
-end"
-"create function f2() returns int
-begin
-declare k int;
-select i from t1 where i = 1 into k;
-insert into t2 values (k + 5);
-return 0;
-end"
-"create function f6() returns int
-begin
-declare k int;
-select i from v1 where i = 1 into k;
-return k;
-end"
-"create function f7() returns int
-begin
-declare k int;
-select j from v2 where j = 1 into k;
-return k;
-end"
-"create function f8() returns int
-begin
-declare k int;
-select i from v1 where i = 1 into k;
-insert into t2 values (k+5);
-return k;
-end"
-"create procedure p2(inout p int)
-begin
-select i from t1 where i = 1 into p;
-end"
-"create trigger t4_bi before insert on t4 for each row
-begin
-declare k int;
-select i from t1 where i=1 into k;
-set new.l= k+1;
-end"
 "/* 8 */
 INSERT INTO t1 (id) SELECT id FROM t1"
 "/* 12 */
@@ -3847,14 +3744,6 @@ vbidxcol CHAR(3) AS (substr(b,1,3)) VIRTUAL
 "
 "ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
 "OPTIMIZE TABLES columns_priv, db, user"
-"create function f17() returns int
-begin
-declare j int;
-select i from t1 where i = 1 into j;
-call p3;
-return 1;
-end"
-"SELECT 1 FROM DUAL LIMIT 1 INTO @var FOR UPDATE"
 "SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
 "SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
 "GRANT ALL ON db1.t1 TO mysqluser1"
@@ -4159,10 +4048,6 @@ WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=MyISAM"
 "CONNECT (insertConn, localhost, root,,)"
 "SEND INSERT INTO t1(id) SELECT id  FROM t2"
-"SELECT ID FROM INFORMATION_SCHEMA.PROCESSLIST
-WHERE STATE = 'wait_in_enable_indexes' AND
-INFO = ""INSERT INTO t1(id) SELECT id  FROM t2""
-INTO @thread_id"
 "CONNECTION insertConn"
 "DISCONNECT insertConn"
 "CREATE TABLE t1(id int, name varchar(255), description varchar(255), count int, primary key(id)) ENGINE=myisam"
@@ -4645,10 +4530,6 @@ PRIMARY KEY(id)) SECONDARY_ENGINE MOCK"
 "drop table VAR_POP"
 "create table VAR_SAMP (a int)"
 "drop table VAR_SAMP"
-"SELECT 1 FROM t1 INTO @var17727401"
-"SELECT 1 FROM DUAL INTO @var17727401"
-"SELECT 1 FROM t1 WHERE 1 GROUP BY 1 HAVING 1 ORDER BY 1 LIMIT 1 INTO @var17727401"
-"SELECT 1 FROM t1 UNION SELECT 1 FROM t1 INTO @var17727401"
 "((SELECT 1 FROM t1 ORDER BY 1) ORDER BY 1) ORDER BY 1"
 "((SELECT 1 FROM t1 LIMIT 1) LIMIT 1) LIMIT 1"
 "( (SELECT 1 UNION SELECT 1 ) UNION SELECT 1 ) UNION SELECT 1"
@@ -4674,7 +4555,6 @@ PRIMARY KEY(id)) SECONDARY_ENGINE MOCK"
 "SELECT 1 FROM ((SELECT 2) LIMIT 1) AS res"
 "((SELECT 1 UNION SELECT 1) UNION SELECT 1)"
 "SELECT * FROM ((SELECT 1 UNION SELECT 1) UNION SELECT 1) a"
-"SELECT 1 FROM t1 INTO @v"
 "((SELECT 1) UNION (SELECT 1 INTO @v FROM t1))"
 "((SELECT 1) UNION (SELECT 2 INTO OUTFILE 'parser.test.file5'))"
 "select 2 as expected, /*!01000/**/*/ 2 as result"
@@ -4694,16 +4574,13 @@ ORDER BY c LIMIT 1"
 "SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'"
 "SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'"
 "SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'"
-"SELECT 1 UNION SELECT 1 FROM DUAL INTO @var"
 "SELECT 1 UNION SELECT 1 FROM DUAL FOR UPDATE INTO @var"
 "(SELECT 1 UNION SELECT 1 FROM DUAL FOR UPDATE INTO @var)"
-"SELECT 1 UNION SELECT 1 FROM DUAL INTO @var FOR UPDATE"
 "WITH cte AS (SELECT 0 /*! ) */ SELECT * FROM cte a, cte b"
 "WITH cte AS /*! ( */ SELECT 0) SELECT * FROM cte a, cte b"
 "(SELECT 1) LIMIT 1 INTO @var"
 "(SELECT 2 AS c) ORDER BY c INTO @var"
 "(SELECT 3 AS c) ORDER BY c LIMIT 1 INTO @var"
-"(SELECT 4) INTO @var"
 "SELECT cast( NULL AT TIME ZONE 'UTC' AS DATETIME )"
 "((SELECT * FROM t1 ORDER BY i) ORDER BY i) ORDER BY i"
 "ALTER TABLE t1 DROP PARTITION p0"
@@ -4736,7 +4613,6 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 "CREATE TABLE t2 like t1"
 "CREATE TABLE t LIKE general_log"
 "DELETE FROM t1 PARTITION(subp1) WHERE b = ""REPLACEd by REPLACE"""
-"SELECT * FROM t1 PARTITION (pNeg, `p10-99`) INTO OUTFILE 'loadtest.txt'"
 "DELETE FROM t1 PARTITION (pNeg) WHERE a = -1"
 "DELETE FROM t1 PARTITION (subp1) WHERE b like '%subp1%'"
 "DELETE FROM t1 PARTITION (subp1) WHERE b = 'p0-9:subp3'"
@@ -4952,25 +4828,6 @@ cast(rand(10)*@precision as unsigned integer) from t1"
 "set @dec=6"
 "set @dec=2"
 "SET @empty = ''"
-"create procedure p_verify_reprepare_count(expected int)
-begin
-declare old_reprepare_count int default @reprepare_count;
-
-select variable_value from
-performance_schema.session_status where
-variable_name='com_stmt_reprepare'
-into @reprepare_count;
-
-if old_reprepare_count + expected <> @reprepare_count then
-select concat(""Expected: "", expected,
-"", actual: "", @reprepare_count - old_reprepare_count)
-as ""ERROR"";
-else
-select '' as ""SUCCESS"";
-end if;
-end"
-"create procedure p1(out x int) select max(a) from t1 into x"
-"create procedure p1(out x int) select max(a) from t2 into x"
 "grant select on mysqltest.t9 to second_user@localhost"
 "grant select on mysqltest.t1 to second_user@localhost"
 "revoke all privileges on mysqltest.t1 from second_user@localhost"
@@ -5170,7 +5027,6 @@ create user nonsuper@localhost"
 "SHOW GRANTS FOR u2@localhost USING r1"
 "ALTER USER u5 DEFAULT ROLE r2,r3"
 "ALTER USER u2 DEFAULT ROLE r1, r2, r3"
-"SELECT ID FROM INFORMATION_SCHEMA.PROCESSLIST WHERE INFO LIKE ""RENAME TABLE%"" INTO @thread_id"
 "RESET PERSIST IF EXISTS max_connections"
 "RESET PERSIST IF EXISTS replica_net_timeout"
 "RESET PERSIST IF EXISTS sort_buffer_size"
@@ -5386,11 +5242,8 @@ COMMIT"
 "EXPLAIN FORMAT=tree SELECT COUNT(*) c FROM t_innodb HAVING c > 7"
 "EXPLAIN FORMAT=tree SELECT COUNT(*) c FROM t_myisam HAVING c > 7"
 "EXPLAIN FORMAT=tree select SQL_CALC_FOUND_ROWS * from t1 limit 10 offset 100"
-"SELECT f1 FROM t1 LIMIT 1 INTO @dummy"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
-"SELECT 1 FROM DUAL INTO @x"
-"SELECT 1 FROM DUAL INTO @dummy"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MyISAM"
@@ -6246,94 +6099,6 @@ RESIGNAL foo;
 RESIGNAL foo SET MESSAGE_TEXT = ""This is an error message"";
 return 0;
 end "
-"create procedure check_pk_person(in person_type char, in id integer)
-begin
-declare x integer;
-declare msg varchar(128);
-
-/*
-Test integrity constraints for an 'arc' relationship.
-Based on 'person_type', 'id' points to either a
-physical person, or a moral person.
-*/
-case person_type
-when 'P' then
-begin
-select count(person_id) from ab_physical_person
-where ab_physical_person.person_id = id
-into x;
-
-if (x != 1)
-then
-set msg= concat('No such physical person, PK:', id);
-SIGNAL SQLSTATE '45000' SET
-MESSAGE_TEXT = msg,
-MYSQL_ERRNO = 10000;
-end if;
-end;
-
-when 'M' then
-begin
-select count(company_id) from ab_moral_person
-where ab_moral_person.company_id = id
-into x;
-
-if (x != 1)
-then
-set msg= concat('No such moral person, PK:', id);
-SIGNAL SQLSTATE '45000' SET
-MESSAGE_TEXT = msg,
-MYSQL_ERRNO = 10000;
-end if;
-end;
-
-else
-begin
-set msg= concat('No such person type:', person_type);
-SIGNAL SQLSTATE '45000' SET
-MESSAGE_TEXT = msg,
-MYSQL_ERRNO = 50000;
-end;
-end case;
-end
-"
-"create procedure check_pk_inventory(in id integer)
-begin
-declare x integer;
-declare msg varchar(128);
-
-select count(item_id) from in_inventory
-where in_inventory.item_id = id
-into x;
-
-if (x != 1)
-then
-set msg= concat('Failed integrity constraint, table in_inventory, PK:',
-id);
-SIGNAL SQLSTATE '45000' SET
-MESSAGE_TEXT = msg,
-MYSQL_ERRNO = 10000;
-end if;
-end
-"
-"create procedure check_pk_order(in id integer)
-begin
-declare x integer;
-declare msg varchar(128);
-
-select count(po_id) from po_order
-where po_order.po_id = id
-into x;
-
-if (x != 1)
-then
-set msg= concat('Failed integrity constraint, table po_order, PK:', id);
-SIGNAL SQLSTATE '45000' SET
-MESSAGE_TEXT = msg,
-MYSQL_ERRNO = 10000;
-end if;
-end
-"
 "/* John Doe wants 1 table and 4 chairs */
 call po_create_order(""P"", 1, @my_po)"
 "/* Marry Smith wants a coffee table */
@@ -6667,8 +6432,6 @@ end if;
 until done end repeat;
 deallocate prepare update_stmt;
 end"
-"create procedure bad_into(out param int)
-select x from t3 into param"
 "DECLARE cur1 CURSOR FOR SHOW TABLES"
 "OPEN cur1"
 "FETCH cur1 INTO c"
@@ -6683,12 +6446,6 @@ declare continue handler for 1436 -- ER_STACK_OVERRUN_NEED_MORE
 select 'exception';
 call p1(a+1);
 end"
-"CREATE FUNCTION f1() RETURNS INTEGER
-BEGIN
-DECLARE v VARCHAR(5) DEFAULT -1;
-SELECT b FROM t1 WHERE a = 2 INTO v;
-RETURN v;
-END"
 "CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $$
 return x-1;
@@ -7618,37 +7375,6 @@ end */"
 main_loop: begin
 select 42;
 end */"
-"create procedure bug5967(a varchar(255))
-begin
-declare i varchar(255);
-declare c cursor for select a from t3;
-select a;
-select a from t3 into i;
-select i as 'Parameter takes precedence over table column';                     open c;
-fetch c into i;
-close c;
-select i as 'Parameter takes precedence over table column in cursors';
-begin
-declare a varchar(255) default 'a - local variable';
-declare c1 cursor for select a from t3;
-select a as 'A local variable takes precedence over parameter';
-open c1;
-fetch c1 into i;
-close c1;
-select i as 'A local variable takes precedence over parameter in cursors';
-begin
-declare a varchar(255) default 'a - local variable in a nested compound statement';
-declare c2 cursor for select a from t3;
-select a as 'A local variable in a nested compound statement takes precedence over a local variable in the outer statement';
-select a from t3 into i;
-select i as  'A local variable in a nested compound statement takes precedence over table column';
-open c2;
-fetch c2 into i;
-close c2;
-select i as  'A local variable in a nested compound statement takes precedence over table column in cursors';
-end;
-end;
-end"
 "create procedure mysqltest1.p1()
 begin
 alter database character set koi8r;
@@ -7659,18 +7385,6 @@ end"
 "select test.current_user(), test.current_user ()"
 "drop function test.database"
 "drop function test.current_user"
-"create function func_8407_a() returns int
-begin
-declare x int;
-
-declare continue handler for sqlexception
-begin
-end;
-
-select 1 from no_such_view limit 1 into x;
-
-return x;
-end"
 "CREATE PROCEDURE p1(IN loops BIGINT(19) UNSIGNED)
 BEGIN
 WHILE loops > 0 DO
@@ -7785,23 +7499,11 @@ SET code = concat(code, ""END\n"");
 
 SET body = code;
 END"
-"create procedure bug14210_fill_table()
-begin
-declare table_size, max_table_size int default 0;
-select @@session.max_heap_table_size into max_table_size;
-delete from t3;
-insert into t3 (a) values (repeat('a', 255));
-repeat
-insert into t3 select a from t3;
-select count(*)*255 from t3 into table_size;
-until table_size > max_table_size*2 end repeat;
-end"
 "create function bug23333()
 RETURNS int(11)
 DETERMINISTIC
 begin
 insert into t1 values (null)"
-"select count(*) from t1 into @a"
 "return @a"
 "end|
 
@@ -7946,14 +7648,6 @@ AND TIMESTAMP'2014-01-05 01:01:01'"
 "SELECT JSON_VALUE('{""data"": ""2019-01-01 11:11::11""}', '$.data' RETURNING DATETIME) AS v"
 "SELECT JSON_VALUE('{""data"": ""2019-01/01""}', '$.data' RETURNING DATE) AS v"
 "SELECT JSON_VALUE('{""data"": ""10:11:12.098700    ""}', '$.data' RETURNING TIME) AS v"
-"SELECT count_alloc
-FROM performance_schema.memory_summary_global_by_event_name
-WHERE event_name = 'memory/temptable/physical_disk'
-INTO @id1"
-"SELECT count_alloc
-FROM performance_schema.memory_summary_global_by_event_name
-WHERE event_name = 'memory/temptable/physical_disk'
-INTO @id2"
 "INSERT INTO t1 VALUES ( TIMESTAMP'2015-01-01 10:10:10.1+05:30' )"
 "INSERT INTO t1 VALUES ( TIMESTAMP'2015-01-01 10:10:10.01+05:30' )"
 "INSERT INTO t1 VALUES ( TIMESTAMP'2015-01-01 10:10:10.001+05:30' )"
@@ -8052,11 +7746,6 @@ update t1 set count= count + 1 where id = old.id;
 end if;
 end"
 "insert into t1 (id, count) values (1, 0)"
-"CREATE TRIGGER trg1 AFTER INSERT ON t2
-FOR EACH ROW BEGIN
-SELECT 1 FROM t1 c WHERE
-(@bug51650 IS NULL OR @bug51650 != c.b) AND c.b = NEW.a LIMIT 1 INTO @foo;
-END"
 "GRANT INSERT, DROP ON mysqltest_db1.t1 TO mysqltest_dfn@localhost"
 "GRANT INSERT, DROP ON mysqltest_db1.t2 TO mysqltest_dfn@localhost"
 "GRANT TRIGGER ON mysqltest_db1.t1 TO mysqltest_dfn@localhost"
@@ -8209,7 +7898,6 @@ KEY _field_166 (_field_166)
 "SET @decimal= 1.1"
 "CREATE TABLE t1 SELECT @decimal AS c1"
 "SELECT AVG(DISTINCT a) FROM t1"
-"SELECT a FROM t1 GROUP BY 1 IN(1) INTO @b"
 "INSERT INTO t1 VALUES (TIME'01:59:59.499999')"
 "INSERT INTO t1 VALUES (TIME'01:59:59.500000')"
 "INSERT INTO t1 VALUES (TIME'01:02:03.123')"
@@ -8708,8 +8396,6 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "grant create view, update on mysqltest.v3 to mysqltest_1@localhost"
 "grant update,select(b) on mysqltest.t2 to mysqltest_1@localhost"
 "revoke select on mysqltest.t1 from mysqltest_1@localhost"
-"create function f2 () returns int begin declare v int; select s1 from t2
-into v; return v; end"
 "GRANT SELECT, INSERT, UPDATE, DELETE ON mysqltest1.v_t1 TO readonly@localhost"
 "GRANT SELECT ON mysqltest1.v_ts TO readonly@localhost"
 "GRANT INSERT ON mysqltest1.v_ti TO readonly@localhost"

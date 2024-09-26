@@ -422,6 +422,16 @@ class DynamicRecursiveDescentParser {
                     $node->append_child($subnode);
                 }
             }
+
+			// Negative lookahead for INTO after a valid SELECT statement.
+			// If we match a SELECT statement, but there is an INTO keyword after it,
+			// we're in the wrong branch and need to leave matching to a later rule.
+			// For now, it's hard-coded, but we could extract it to a lookahead table.
+			$la = $this->tokens[$this->position] ?? null;
+			if ($la && $rule_name === 'selectStatement' && $la->type === MySQLLexer::INTO_SYMBOL) {
+				$branch_matches = false;
+			}
+
             if ($branch_matches === true) {
                 break;
             }
