@@ -108,9 +108,6 @@ n TINYINT,
 o TINYINT,
 a034 TINYINT,
 PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
-"CREATE USER caching_sha2@localhost IDENTIFIED BY 'caching'"
-"CREATE USER sha256@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER 'plug_user' IDENTIFIED WITH 'test_plugin_server' AS 'plug_user'"
 "CHANGE REPLICATION SOURCE TO
 SOURCE_USER=     'plug_user',
 SOURCE_PASSWORD= 'plug_user',
@@ -181,7 +178,6 @@ ON ( t2.col_int_key = alias2.col_int_key AND alias2.col_varchar_key IN ( SELECT 
 WHERE alias1.col_varchar >= 'Z' )"
 send
 REAP
-"CREATE USER user1@localhost"
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"" USING latin1)"
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", CHAR)"
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", CHAR(4))"
@@ -255,8 +251,6 @@ CAST(TIMESTAMP'2000-01-01 23:59:59.123456' AS DOUBLE)"
 "SELECT CAST(CAST(1988 AS YEAR) AS UNSIGNED)"
 "SELECT CAST(TIMESTAMP'579-10-10 10:10:10' AS YEAR)"
 "SELECT CAST(STR_TO_DATE('nope','%d-%m-%Y') AS YEAR)"
-"create user test_nopw"
-"create user test_newpw identified by ""newpw"""
 "CREATE PROCEDURE p_flush_status()
 BEGIN
 DECLARE x INT DEFAULT 3000"
@@ -410,7 +404,6 @@ CHECK (f1 < f2))"
 "CREATE PROCEDURE p1() SET SESSION TRANSACTION READ ONLY,
 ISOLATION LEVEL SERIALIZABLE"
 "SET SESSION TRANSACTION READ WRITE, ISOLATION LEVEL REPEATABLE READ"
-"CREATE USER mysqltest_u1@localhost"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = 8 + 8"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = @gizmo"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = @@global.max_connections"
@@ -434,18 +427,13 @@ SET validate_password.length = 16"
 "INSTALL COMPONENT ""file://component_validate_password""
 SET GLOBAL validate_password.length = 60, validate_password.number_count = 50"
 "RESET PERSIST"
-"CREATE USER wl10916@localhost"
 "GRANT INSERT,DELETE,UPDATE ON mysql.component TO wl10916@localhost"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = 12"
-"CREATE USER wl12475@localhost"
 "EOF
 SELECT COUNT(*) FROM wl12475.t1"
 "create user test@127.0.0.1 identified by ""gambling"""
 "grant ALL on *.* to test@127.0.0.1"
 "drop user test@127.0.0.1"
-"CREATE USER must_change@localhost IDENTIFIED BY 'aha'"
-"CREATE USER wl6587@localhost IDENTIFIED BY 'wl6587'"
-"CREATE USER 'new1'@'localhost'"
 "SELECT * FROM t WHERE t = TIME'180000.001'"
 "EXPLAIN SELECT * FROM t WHERE t = TIME'180000.001'"
 "CREATE TABLE t3 (col1 INT, col2 INT GENERATED ALWAYS AS (col1) STORED)"
@@ -471,7 +459,6 @@ ALTER TABLE t1 ALTER CONSTRAINT constraint_name NOT ENFORCED"
 "create temporary table t3 like mysqltest.t3"
 "create table t2 like t3"
 "create temporary table t3 like t1"
-"create user mysqltest_1"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1))"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1) USING HASH) ENGINE=MEMORY"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING HASH (c1) USING BTREE) ENGINE=MEMORY"
@@ -519,7 +506,6 @@ INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
 
 DROP TABLE t1"
 "create table t2 like t1"
-"CREATE USER subuser@localhost"
 "CREATE PROCEDURE IF NOT EXISTS sp1() BEGIN END"
 "CREATE FUNCTION IF NOT EXISTS sf1() RETURNS INT DETERMINISTIC return 0"
 "CREATE FUNCTION IF NOT EXISTS abs() RETURNS INT DETERMINISTIC return 0"
@@ -652,14 +638,11 @@ f CHAR(30),
 g INT,
 h TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
-"CREATE USER 'testuser'@'localhost'"
 "GRANT ALL ON db1.v2 TO 'testuser'@'localhost'"
 "GRANT ALL ON db1.v1 TO 'testuser'@'localhost'"
 "GRANT EXECUTE ON FUNCTION db1.f1 TO 'testuser'@'localhost'"
 "GRANT ALL ON db1.v3 TO 'testuser'@'localhost'"
 "GRANT SELECT on db1.t1 TO 'testuser'@'localhost'"
-"CREATE USER testuser1@localhost"
-"CREATE USER testuser2@localhost"
 "GRANT ALL ON db1.v1 TO testuser1@localhost"
 "GRANT ALL ON db1.t1 TO testuser1@localhost"
 "REVOKE ALL ON db1.v1 FROM testuser1@localhost"
@@ -1056,8 +1039,6 @@ COLLATION(_koi8r    '�����') AS c4,
 @@collation_connection AS c5,
 @@character_set_client AS c6;
 END"
-"CREATE USER mysqltest_1@localhost"
-"CREATE USER mysqltest_2@localhost"
 "CREATE TABLE t3 LIKE t1"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (sha2(i, 0)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
@@ -1240,22 +1221,12 @@ t1,
 LATERAL (SELECT DISTINCT t1.x) AS dt1,
 LATERAL (SELECT DISTINCT dt1.x) AS dt2
 WHERE dt1.x = dt2.x"
-"CREATE USER normal_user"
-"CREATE USER power_user"
-"CREATE USER u1"
-"CREATE USER dummy"
-"CREATE USER ABC"
-"CREATE USER ABc"
 "CREATE USER u1@192.129.12.11"
-"CREATE USER 'u1'@'%.com'"
-"CREATE USER 'u1'@'abc.com'"
 "CREATE DEFINER = u1@192.129.12.11 VIEW v3 as SELECT * FROM t1"
 "DROP USER u1@192.129.12.11"
-"CREATE USER u2"
 "SHOW REPLICA STATUS"
 "SHOW BINARY LOG STATUS"
 "SHOW REPLICAS"
-"CREATE USER 'bernt'"
 "EXPLAIN FORMAT=tree SELECT DISTINCT c2 FROM t1 GROUP BY c1 HAVING COUNT(*) > 1"
 "EXPLAIN FORMAT=tree SELECT DISTINCT table1.pk FROM t1 AS table1 LEFT JOIN t1 AS table2 ON table1.f2=table2.f3 WHERE table2.f1 IS NULL"
 "EXPLAIN FORMAT=tree SELECT /*+JOIN_ORDER(t2,t3,t1) */ DISTINCT t2.pk FROM t1 LEFT JOIN t2 RIGHT OUTER JOIN t3 ON t2.f1 = t3.f3 ON t1.pk = t3.f2 WHERE t3.pk <> t2.pk"
@@ -1296,11 +1267,6 @@ end"
 
 DROP DATABASE bug19573998"
 "LET $MYSQLD_DATADIR = `SELECT @@datadir`"
-"CREATE USER uplain@localhost IDENTIFIED WITH 'cleartext_plugin_server'
-AS 'cleartext_test'"
-"CREATE USER mysqltest_1"
-"CREATE USER mysqltest_yeslog"
-"CREATE USER mysqltest_nolog"
 "my $file= $ENV{'GREP_FILE'} or die(""grep file not set"")"
 "my $pattern= $ENV{'GREP_PATTERN'} or die(""pattern is not set"")"
 "open(FILE, ""$file"") or die(""Unable to open $file: $!"")"
@@ -1309,8 +1275,6 @@ AS 'cleartext_test'"
 "EOF
 
 SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
-"CREATE USER nopriv_user@localhost"
-"CREATE USER pauline@localhost"
 "create event ����21 on schedule every '50:23:59:95' day_second COMMENT '���� � 1251 ��������' do select 1"
 "SHOW CREATE EVENT ����21"
 "create event задачка on schedule every 123 minute starts now() ends now() + interval 1 month do select 1"
@@ -1326,21 +1290,14 @@ SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
 "DROP EVENT �����_��������_1251"
 "CREATE EVENT долен_регистър_утф8 ON SCHEDULE EVERY 3 YEAR DO SELECT 300"
 "DROP EVENT ДОЛЕН_регистър_утф8"
-"create user mysqltest_user1@localhost"
-"CREATE USER evtest1@localhost"
 "SHOW CREATE EVENT CaFé"
 "DROP EVENT CaFé"
 "CREATE EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
 "SHOW CREATE EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "CREATE EVENT café ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
-"CREATE USER ev_test@localhost"
-"CREATE USER 'user31633859'@'127.0.0.1'"
-"CREATE USER 'user33711304'@'127.0.0.1'"
 "SELECT COUNT(*) FROM t1 INTO @rows_before"
 "SELECT COUNT(*) FROM t1 INTO @rows_after"
-"CREATE USER event_user2@localhost"
-"CREATE USER event_user3@localhost"
 "CREATE TABLE t1 (count INT, unix_time INT, local_time INT, comment CHAR(80))"
 "CREATE TABLE t2 (count INT)"
 "CREATE FUNCTION f1(comment CHAR(80)) RETURNS INT
@@ -1454,7 +1411,6 @@ SELECT 1 + 1 AS x FROM t GROUP BY x WITH ROLLUP HAVING x = 1"
 "EXPLAIN FORMAT=JSON INTO @v1 DELETE t1, t2 FROM t1, t2"
 "EXPLAIN FORMAT=JSON INTO @v1 SELECT /*+ SET_VAR(optimizer_switch='hypergraph_optimizer=OFF')*/ * FROM t1"
 "EXPLAIN FORMAT=JSON INTO @v1 SELECT /*+ SET_VAR(optimizer_switch='hypergraph_optimizer=ON')*/ * FROM t1"
-"CREATE USER 'privtest'@'localhost'"
 "GRANT SELECT ON mysqltest1.t2 TO 'privtest'@'localhost'"
 "GRANT SELECT,INSERT,UPDATE ON mysqltest1.v2 TO 'privtest'@'localhost'"
 "EXPLAIN FORMAT=tree SELECT * FROM t1"
@@ -1609,19 +1565,13 @@ gc INT GENERATED ALWAYS AS (1))"
 "/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */"
 "/*!40101 SET SQL_MODE=@OLD_SQL_MODE */"
 "EXPLAIN FORMAT=tree SELECT j FROM t1 ORDER BY pk"
-"CREATE USER 'show_view_tbl'@'localhost', 'select_only_c1'@localhost"
 "GRANT CREATE VIEW, SHOW VIEW ON testdb.v1 TO 'show_view_tbl'@'localhost'"
 echo
 "GRANT SELECT(c1) on testdb.v1 to 'select_only_c1'@localhost"
-"CREATE USER u1b35380295, u2b35380295"
 "GRANT EXECUTE ON PROCEDURE db35380295.p35380295 TO u2b35380295"
 "REVOKE EXECUTE ON PROCEDURE db35380295.p35380295 FROM u2b35380295"
 "REVOKE ALL PRIVILEGES ON db35380295.* FROM u1b35380295"
-"create user mysqltest_u1"
 "FLUSH LOCAL TABLES test.t1, test.t2 for ExPoRt"
-"CREATE USER user1@localhost, user2@localhost,
-user3@localhost, user4@localhost,
-user5@localhost"
 "FLUSH TABLE db1.t1 FOR EXPORT"
 "FLUSH LOCAL TABLES test.t1 FOR EXPORT"
 "CREATE TABLE t1(a INT PRIMARY KEY,
@@ -1651,12 +1601,6 @@ UNIQUE KEY(pk))"
 "CREATE TABLE self (base INT, pk INT GENERATED ALWAYS AS (base+1) STORED, fk INT,
 UNIQUE KEY(pk), FOREIGN KEY (fk) REFERENCES self(pk))"
 "CREATE TABLE parent0 (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
-"CREATE USER user2@localhost"
-"CREATE USER user3@localhost"
-"CREATE USER user4@localhost"
-"CREATE USER user5@localhost"
-"CREATE USER user6@localhost"
-"CREATE USER user7@localhost"
 "GRANT SELECT, DELETE, INSERT, UPDATE on wl8910db.parent to user5@localhost"
 "GRANT SELECT, DELETE, INSERT, UPDATE on wl8910db.parent to user6@localhost"
 "GRANT SELECT, DELETE, INSERT, UPDATE on wl8910db.child to user6@localhost"
@@ -2193,20 +2137,14 @@ FROM buildings, bridges
 WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "ALTER TABLE t1 ALGORITHM=COPY, MODIFY COLUMN b GEOMETRY NOT NULL"
 "CREATE TABLE t1 (g GEOMCOLLECTION)"
-"create user mysqltest_1@localhost"
 "revoke all privileges on mysqltest.* from mysqltest_1@localhost"
-"create user mysqltest_2@localhost, mysqltest_3@localhost"
 "revoke all on test.* from mysqltest_3@localhost"
 "grant all on test.t1 to mysqltest_2@localhost with grant option"
 "revoke all on test.t1 from mysqltest_2@localhost"
 "revoke grant option on test.t1 from mysqltest_2@localhost"
-"create user test6123 identified by 'magic123'"
-"create user drop_user@localhost, drop_user2@localhost"
 "grant select(a) on test.t1 to drop_user@localhost"
-"create user drop_user1@localhost, drop_user3@localhost, drop_user4@localhost"
 "grant select(a) on test.t1 to drop_user1@localhost"
 "grant select on test.t1 to drop_user2@localhost"
-"create user mysqltest_1@localhost identified by ""password"""
 "CREATE DATABASE ��"
 "USE ��"
 "CREATE TABLE ��� (��� INT)"
@@ -2220,7 +2158,6 @@ WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "REVOKE SELECT (���) ON ��.��� FROM ����@localhost"
 "DROP USER ����@localhost"
 "DROP DATABASE ��"
-"create user testuser@localhost"
 "CREATE TABLE t4 LIKE t1"
 "CREATE TABLE t5 LIKE t1"
 "CREATE TABLE t6 LIKE t1"
@@ -2248,9 +2185,7 @@ WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "GRANT SELECT (a) ON test.t8 TO testuser@localhost"
 "GRANT SELECT (a) ON test.t9 TO testuser@localhost"
 "GRANT SELECT (a) ON test.t10 TO testuser@localhost"
-"create user grant_user@localhost"
 "revoke ALL PRIVILEGES on t1 from grant_user@localhost"
-"create user mysqltest_3@localhost"
 "grant update (a) on mysqltest_1.t1 to mysqltest_3@localhost"
 "grant select (b) on mysqltest_1.t2 to mysqltest_3@localhost"
 "grant select (c) on mysqltest_2.t1 to mysqltest_3@localhost"
@@ -2262,7 +2197,6 @@ WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "grant select on mysqltest_2.t1 to mysqltest_3@localhost"
 "grant all on mysqltest.t1 to mysqltest_1@localhost"
 "revoke all privileges on mysqltest.t1 from mysqltest_1@localhost"
-"CREATE USER dummy@localhost"
 "GRANT ALL PRIVILEGES ON mysqltest.dummytable TO dummy@localhost"
 "GRANT ALL PRIVILEGES ON mysqltest.dummyview TO dummy@localhost"
 "GRANT CREATE VIEW ON mysqltest.dummytable TO dummy@localhost"
@@ -2277,18 +2211,12 @@ WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "alter user mysqltest_7@ identified by 'systpass'"
 "show grants for mysqltest_7@"
 "drop user mysqltest_7@"
-"CREATE USER mysqltest1@'%', mysqltest1@'192.%'"
 "GRANT DELETE ON mysqltest.t1 TO mysqltest1@'%'"
 "GRANT SELECT ON mysqltest.t1 TO mysqltest1@'192.%'"
-"create user user27515@localhost"
 "grant alter on db27515.t1 to user27515@localhost"
 "grant insert, create on db27515.t2 to user27515@localhost"
-"create user mysqltest_8@''"
-"create user mysqltest_8"
-"create user mysqltest_8@host8"
 "grant select on mysqltest.* to mysqltest_8@"
 "show grants for mysqltest_8@"
-"CREATE USER 'mysqltest_1'@'localhost' IDENTIFIED BY 'mysqltest_1'"
 "GRANT SHOW VIEW        ON mysqltest2.v_ny TO 'mysqltest_1'@'localhost'"
 "GRANT SELECT           ON mysqltest2.v_yn TO 'mysqltest_1'@'localhost'"
 "GRANT SHOW VIEW,SELECT ON mysqltest2.v_yy TO 'mysqltest_1'@'localhost'"
@@ -2298,16 +2226,13 @@ WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "GRANT INSERT, CREATE ON mysqltest1.t1 TO mysqltest_1@localhost"
 "REVOKE DROP, INSERT ON mysqltest1.t1 FROM mysqltest_1@localhost"
 "REVOKE DROP, INSERT ON mysqltest1.t2 FROM mysqltest_1@localhost"
-"CREATE USER bug23556@localhost"
 "GRANT EXECUTE ON PROCEDURE mysqltest1.p_def TO mysqltest_1@localhost"
 "GRANT EXECUTE ON PROCEDURE mysqltest2.p_inv TO mysqltest_1@localhost"
 "GRANT EXECUTE ON FUNCTION mysqltest3.f_def TO mysqltest_1@localhost"
 "GRANT EXECUTE ON FUNCTION mysqltest4.f_inv TO mysqltest_1@localhost"
-"CREATE USER mysqltest_1@localhost, mysqltest_2@localhost"
 "GRANT SELECT ON mysqltest2.t2 TO mysqltest_2@localhost"
 "REVOKE SELECT ON mysqltest1.t1 FROM mysqltest_1@localhost"
 "REVOKE SELECT ON mysqltest2.t2 FROM mysqltest_2@localhost"
-"CREATE USER 'mysqltest_1'@'localhost'"
 "REVOKE UPDATE (f1) ON `test`.`t1` FROM 'mysqltest_1'@'localhost'"
 "REVOKE ALL ON db27878.* FROM 'mysqltest_1'@'localhost'"
 "create function test_function() returns varchar(30)
@@ -2316,12 +2241,8 @@ declare tmp varchar(30);
 select col1 from test limit 1 into tmp;
 return '1';
 end"
-"create user 'greg'@'localhost'"
-"CREATE USER testuser@localhost"
-"create user mysqluser1@localhost"
 "grant execute on function mysqltest1.f1 to mysqluser1@localhost"
 "grant execute on procedure mysqltest1.p1 to mysqluser1@localhost"
-"create user mysqluser11@localhost"
 "grant execute on function mysqltest1.f1 to mysqluser11@localhost"
 "grant execute on procedure mysqltest1.p1 to mysqluser11@localhost"
 "grant select on mysqltest1.t22 to mysqluser1@localhost"
@@ -2330,7 +2251,6 @@ end"
 "grant select on test.* to юзер_юзер@localhost"
 "revoke all on test.* from юзер_юзер@localhost"
 "drop user юзер_юзер@localhost"
-"create user mysqltest@localhost"
 "grant select, insert on mysqltest.t2 to mysqltest@localhost"
 "grant         insert on mysqltest.t4 to mysqltest@localhost"
 "grant create, insert on mysqltest.t5 to mysqltest@localhost"
@@ -2339,12 +2259,8 @@ end"
 "revoke insert         on mysqltest.t4 from mysqltest@localhost"
 "revoke create, insert on mysqltest.t5 from mysqltest@localhost"
 "revoke create, insert on mysqltest.t6 from mysqltest@localhost"
-"CREATE USER 'userbug33464'@'localhost'"
-"CREATE USER user2"
 "REVOKE ALL ON db1.* FROM 'user1'@'localhost'"
 "REVOKE ALL ON db1.* FROM 'user2'@'%'"
-"CREATE USER 'testbug'@localhost"
-"create user myuser@Localhost identified by 'foo'"
 "GRANT GRANT OPTION            ON mysqltest_db1.t1 TO mysqltest_u1@localhost"
 "GRANT SELECT ON mysqltest_db1.t1 TO mysqltest_u1@localhost"
 "GRANT INSERT ON mysqltest_db1.t1 TO mysqltest_u1@localhost"
@@ -2357,14 +2273,6 @@ end"
 "GRANT REFERENCES ON mysqltest_db1.t1 TO mysqltest_u1@localhost"
 "GRANT CREATE VIEW ON mysqltest_db1.t1 TO mysqltest_u1@localhost"
 "GRANT SHOW VIEW ON mysqltest_db1.t1 TO mysqltest_u1@localhost"
-"CREATE USER 'untrusted'@localhost"
-"CREATE USER foo@'127.0.0.1'"
-"CREATE USER 'wl7131' IDENTIFIED BY 'wl7131'"
-"CREATE USER 'wl7131'"
-"CREATE USER 'wl7131'@'localhost' IDENTIFIED BY 'wl7131'"
-"CREATE USER user_name_len_16@localhost"
-"CREATE USER user_name_len_22_01234@localhost"
-"CREATE USER user_name_len_32_012345678901234@localhost"
 "CREATE USER очень_длинный_юз@localhost"
 "CREATE USER очень_очень_длинный_юзер@localhost"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost"
@@ -2392,7 +2300,6 @@ end"
 "REVOKE EXECUTE ON PROCEDURE p1 FROM очень_длинный_юз@localhost"
 "REVOKE EXECUTE ON PROCEDURE p1 FROM очень_очень_длинный_юзер@localhost"
 "REVOKE EXECUTE ON PROCEDURE p1 FROM очень_очень_очень_длинный_юзер__@localhost"
-"CREATE USER user_name_len_25_01234567@localhost"
 "GRANT INSERT ON db_1.test_table TO user_name_len_25_01234567@localhost"
 "GRANT SELECT ON db_1.test_table TO user_name_len_25_01234567@localhost"
 "GRANT UPDATE ON db_1.test_table TO user_name_len_25_01234567@localhost"
@@ -2401,11 +2308,6 @@ end"
 "DROP USER очень_очень_длинный_юзер@localhost"
 "DROP USER очень_очень_очень_длинный_юзер__@localhost"
 "CONNECT (conn_su,localhost,user_name_len_22_01234,,)"
-"CREATE USER proxy_sha2_0123456789@localhost IDENTIFIED WITH caching_sha2_password"
-"CREATE USER 'untrusted8657'@'localhost'"
-"CREATE USER 'untrusted8063'@'localhost'"
-"CREATE USER mysqluser1@localhost, MySQLuser1@localhost"
-"CREATE USER mysqltest@localhost"
 "GRANT ALL PRIVILEGES ON mysqltest.visible TO mysqltest@localhost"
 "GRANT ALL PRIVILEGES ON mysqltest.v0 TO mysqltest@localhost"
 "GRANT SELECT(s1, s2, u1, u2, i1, i2) ON mysqltest.cols TO mysqltest@localhost"
@@ -2435,8 +2337,6 @@ end"
 "REVOKE SELECT(b2) ON mysqltest.source FROM mysqltest@localhost"
 "REVOKE EXECUTE ON FUNCTION mysqltest.f1 FROM mysqltest@localhost"
 "REVOKE EXECUTE ON PROCEDURE mysqltest.p1 FROM mysqltest@localhost"
-"CREATE USER 'user01'@'localhost' IDENTIFIED BY ''"
-"CREATE USER 'user02'@'localhost' IDENTIFIED BY ''"
 "CREATE DEFINER='user01'@'localhost' FUNCTION test02.sf() RETURNS INT
 BEGIN
 SELECT tbl02.id FROM test02.tbl02 as tbl02, test01.c as c
@@ -2445,331 +2345,73 @@ RETURN 1;
 END"
 "GRANT SELECT, UPDATE, INSERT on test02.tbl01 TO 'user02'@'localhost'"
 "GRANT EXECUTE ON FUNCTION test02.sf to 'user02'@'localhost'"
-"CREATE USER bug33578113"
-"create user mysqltest_1@localhost, mysqltest_3@localhost, mysqltest_4@localhost"
-"create user mysqltest_2@localhost"
-"create user mysqltest_1@localhost, mysqltest_2@localhost,
-mysqltest_3@localhost, mysqltest_4@localhost"
-"create user  mysqltest_1@localhost"
-"create user mysqltest_1@host1"
-"create user mysqltest_2@host2"
-"create user mysqltest_3@host3"
-"create user mysqltest_4@host4"
-"create user mysqltest_5@host5"
-"create user mysqltest_6@host6"
-"create user mysqltest_7@host7"
-"create user 'mysqltest_1'"
-"create user 'mysqltest_2' identified by 'Mysqltest-2'"
 "grant update on test.t1 to 'mysqltest_2'"
 "grant update (c2) on test.t2 to 'mysqltest_2'"
-"create user 'mysqltest_1', 'mysqltest_2', 'mysqltest_3'"
-"create user 'mysqltest_1', 'mysqltest_2' identified by 'Mysqltest-2', 'mysqltest_3' identified by 'haha'"
-"create user 'mysqltest_1a', 'mysqltest_3a'"
-"create user '%@b'@'b'"
-"create user mysqltest_A@'%'"
-"create user mysqltest_1@'127.0.0.0/255.0.0.0'"
 "GRANT ALL ON mysqltest_1.t1 TO mysqltest_1@'127.0.0.0/255.0.0.0'"
 "REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
-"create user mysqltest_1@'127.0.0.1'"
 "revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.1'"
 "revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.0/255.0.0.0'"
-"create user 'mysqltest_1'@'localhost'"
-"CREATE USER `a@`@localhost"
 "CREATE FUNCTION f2 () RETURNS INT
 BEGIN DECLARE v INT; SELECT s1 FROM t2 INTO v; RETURN v; END"
-"create user mysqltest_u1@localhost"
 "grant select on mysqltest_2.t1 to mysqltest_u1@localhost"
 "create table t1 like mysqltest_2.t1"
-"create user mysqltest_1@localhost, mysqltest_2@localhost"
 "grant select on mysqltest_1.t1 to mysqltest_2@localhost"
-"CREATE USER mysqltest1@localhost"
 "SELECT authentication_string FROM user WHERE user=@u AND host=@h INTO @pwd"
-"CREATE USER mysqltest_u1@localhost, mysqltest_u2@localhost,
-mysqltest_u3@localhost, mysqltest_u4@localhost,
-mysqltest_u5@localhost"
 "CREATE TEMPORARY TABLE t2 LIKE t1"
 "CREATE TEMPORARY TABLE t6(a INT) ENGINE = MERGE UNION = ()"
 "ALTER TABLE t6 UNION = ()"
 "ALTER TABLE mysqltest_db2.t2_2 UNION = ()"
-"create user CUser@localhost"
 "grant select on test.t1 to CUser@localhost"
 "grant select on test.t1 to CUser@LOCALHOST"
-"create user  CUser@localhost"
 "grant select(a) on test.t1 to CUser@localhost"
 "grant select(a) on test.t1 to CUser@LOCALHOST"
-"create user  CUser2@LOCALHOST"
-"CREATE USER 'mysqltest1'@'%'"
-"CREATE USER 'user1'@'%'"
 "GRANT SELECT (a), INSERT (b) ON `temp`.`t1` TO 'user2'@'%'"
 "create table t_select_priv like t_column_priv_only"
 "create table t_no_priv like t_column_priv_only"
 "grant insert (a) on mysqltest_db1.t_column_priv_only to mysqltest_u1@localhost"
 "grant select on mysqltest_db1.t_select_priv to mysqltest_u1@localhost"
 "create table test.t_duplicated like mysqltest_db1.t_select_priv"
-"CREATE USER ''@''"
 "GRANT EXECUTE ON PROCEDURE sys.table_exists TO ''@''"
 "grant insert, select on mysqltest_db1.t1 to mysqltest_u1@localhost"
 "flush table mysqltest_db1.t1"
-"CREATE USER u1@localhost"
-"CREATE USER u2@localhost IDENTIFIED BY 'auth_string'"
-"CREATE USER u3@localhost IDENTIFIED WITH 'sha256_password'"
-"CREATE USER u4@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER u5@localhost REQUIRE SSL"
-"CREATE USER u6@localhost IDENTIFIED BY 'auth_string' REQUIRE X509"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256"" PASSWORD EXPIRE NEVER"
-"CREATE USER u8@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE ISSUER 'issuer'"
-"CREATE USER u9@localhost REQUIRE SUBJECT 'sub'"
-"CREATE USER u10@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256"" AND
-SUBJECT ""/C=SE/ST=Uppsala/O=MySQL AB""
-ISSUER ""/C=SE/ST=Uppsala/L=Uppsala/O=MySQL AB"""
-"CREATE USER u11@localhost WITH MAX_QUERIES_PER_HOUR 2"
-"CREATE USER u12@localhost IDENTIFIED BY 'auth_string'  WITH MAX_QUERIES_PER_HOUR 2"
-"CREATE USER u13@localhost IDENTIFIED WITH 'sha256_password'
-WITH MAX_CONNECTIONS_PER_HOUR 2"
-"CREATE USER u14@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-WITH MAX_USER_CONNECTIONS 2 PASSWORD EXPIRE INTERVAL 6 DAY"
-"CREATE USER u15@localhost,
-u16@localhost IDENTIFIED BY 'auth_string',
-u17@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string' PASSWORD EXPIRE"
-"CREATE USER u18@localhost,
-u19@localhost IDENTIFIED BY 'auth_string',
-u20@localhost IDENTIFIED WITH 'sha256_password',
-u21@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE SUBJECT '/C=SE/ST=Uppsala/O=MySQL AB' WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2
-PASSWORD EXPIRE NEVER"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password'
-BY 'auth_string' REQUIRE CIPHER 'cipher'"
-"CREATE USER u14@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-WITH MAX_USER_CONNECTIONS 2"
-"CREATE USER u15@localhost,
-u16@localhost IDENTIFIED WITH 'sha256_password',
-u17@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER u18@localhost,
-u19@localhost IDENTIFIED BY 'auth_string',
-u20@localhost IDENTIFIED WITH 'sha256_password',
-u21@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE SUBJECT '/C=SE/ST=Uppsala/O=MySQL AB' WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER u1@localhost PASSWORD EXPIRE NEVER"
-"CREATE USER u1@localhost PASSWORD EXPIRE DEFAULT"
-"CREATE USER u1@localhost PASSWORD EXPIRE INTERVAL 4 DAY"
-"CREATE USER u1@localhost PASSWORD EXPIRE"
-"CREATE USER u1@localhost IDENTIFIED BY 'abc'"
 "ALTER USER user() IDENTIFIED BY 'abc'"
-"CREATE USER u1@localhost, u2@localhost IDENTIFIED BY 'abc'"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password'
-REQUIRE CIPHER 'ECDHE-RSA-AES128-GCM-SHA256'"
-"CREATE USER u15@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE SUBJECT '/C=SE/ST=Uppsala/O=MySQL AB' ISSUER ""/C=SE/ST=Uppsala/L=Uppsala/O=MySQL AB""
-CIPHER 'ECDHE-RSA-AES128-GCM-SHA256' WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER u16@localhost IDENTIFIED BY 'auth_string' PASSWORD EXPIRE"
-"CREATE USER u17@localhost WITH MAX_QUERIES_PER_HOUR 200
-MAX_USER_CONNECTIONS 2 PASSWORD EXPIRE NEVER"
-"CREATE USER u18@localhost IDENTIFIED WITH 'sha256_password' PASSWORD EXPIRE INTERVAL 365 DAY"
-"CREATE USER u19@localhost REQUIRE SUBJECT '/C=SE/ST=Uppsala/O=MySQL AB'
-ISSUER ""/C=SE/ST=Uppsala/L=Uppsala/O=MySQL AB""
-PASSWORD EXPIRE DEFAULT"
 "CREATE USER 20553132_u1@localhost"
 "CREATE USER 20553132_u2@localhost"
-"CREATE USER '20553132_u3'@'%'"
 "GRANT ALL ON *.* TO 20553132_u1@localhost"
 "ALTER USER 20553132_u1@localhost PASSWORD EXPIRE"
 "ALTER USER 20553132_u2@localhost IDENTIFIED BY 'abcd', 20553132_u1@localhost IDENTIFIED BY 'defg' PASSWORD EXPIRE NEVER"
 "ALTER USER 20553132_u2@localhost IDENTIFIED BY 'abcd', 20553132_u1@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'hijk' PASSWORD EXPIRE DEFAULT"
 "DROP USER 20553132_u1@localhost"
 "DROP USER 20553132_u2@localhost"
-"CREATE USER bug20634154@localhost IDENTIFIED BY 'abc'"
-"CREATE USER bug22205360@localhost"
 "EOF
 
 
 
 SELECT 1"
-"CREATE USER user1"
-"CREATE USER ""user2""@'%'"
-"CREATE USER user10@localhost
-IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'"
-"CREATE USER user4@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER user6@localhost IDENTIFIED WITH 'caching_sha2_password'"
-"CREATE USER user7@localhost
-IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string#%y'"
-"CREATE USER user8@localhost
-IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string'
-PASSWORD EXPIRE NEVER"
-"CREATE USER tu1@localhost IDENTIFIED WITH 'test_plugin_server'"
-"CREATE USER tu2@localhost IDENTIFIED WITH 'test_plugin_server'
-BY 'auth_@13*' PASSWORD EXPIRE"
-"CREATE USER tu3@localhost IDENTIFIED WITH 'test_plugin_server' AS '%auth_O0s-tring'"
-"CREATE USER tu4@localhost IDENTIFIED WITH 'test_plugin_server' BY 'djgsj743$'
-REQUIRE SSL"
-"CREATE USER tu5@localhost IDENTIFIED WITH 'test_plugin_server' AS 'dwh@#ghd$!'
-REQUIRE X509"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password' REQUIRE CIPHER 'cipher'"
-"CREATE USER u8@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE ISSUER '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA'
-PASSWORD EXPIRE NEVER"
-"CREATE USER u10@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string#y'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256"" AND
-SUBJECT ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client""
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA""
-PASSWORD EXPIRE DEFAULT"
-"CREATE USER tu6@localhost IDENTIFIED WITH 'test_plugin_server' AS '#hGrt0O6'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256"" AND
-SUBJECT ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client""
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA""
-WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER u12@localhost IDENTIFIED BY 'auth_string'
-WITH MAX_QUERIES_PER_HOUR 2 PASSWORD EXPIRE NEVER"
-"CREATE USER u14@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-WITH MAX_USER_CONNECTIONS 2  PASSWORD EXPIRE INTERVAL 999 DAY"
-"CREATE USER u15@localhost,
-u16@localhost IDENTIFIED BY 'auth_string',
-u17@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER u18@localhost,
-u19@localhost IDENTIFIED BY 'auth_string',
-u20@localhost IDENTIFIED WITH 'sha256_password',
-u21@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string',
-u22@localhost IDENTIFIED WITH 'test_plugin_server',
-u23@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_&string'
-REQUIRE SUBJECT '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client'
-WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER u2@localhost IDENTIFIED WITH 'caching_sha2_password'"
 "ALTER USER USER() IDENTIFIED BY 'abc'"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE CIPHER 'ECDHE-RSA-AES128-GCM-SHA256'"
-"CREATE USER u8@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE ISSUER '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA'"
-"CREATE USER tu1@localhost IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string' REQUIRE ISSUER 'issuer'"
-"CREATE USER u10@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256"" AND
-SUBJECT ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client""
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA"""
-"CREATE USER u12@localhost IDENTIFIED BY 'auth_string'
-WITH MAX_QUERIES_PER_HOUR 2"
 "ALTER USER USER() IDENTIFIED BY 'new_pwd_string'"
-"CREATE USER tu2@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-WITH MAX_USER_CONNECTIONS 2 "
-"CREATE USER u18@localhost,
-u19@localhost IDENTIFIED BY 'auth_string',
-u20@localhost IDENTIFIED WITH 'sha256_password',
-u21@localhost IDENTIFIED WITH 'sha256_password' BY '!Y_TOdh6)',
-u22@localhost IDENTIFIED WITH 'sha256_password',
-u23@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_&string'
-REQUIRE SUBJECT '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client'
-WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER 'u2'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string'
-REQUIRE NONE"
-"CREATE USER user1@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER user2@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string'"
-"CREATE USER u6@localhost IDENTIFIED BY 'auth_string'
-REQUIRE X509 PASSWORD EXPIRE INTERVAL 5 DAY"
-"CREATE USER 'u6'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'
-REQUIRE X509 PASSWORD EXPIRE INTERVAL 19 DAY"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password'
-REQUIRE CIPHER 'cipher'"
-"CREATE USER u15@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE SUBJECT '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client'
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA""
-CIPHER 'cipher' WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER 'u15'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'
-REQUIRE SUBJECT '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client'
-ISSUER '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA'
-CIPHER 'cipher'
-WITH MAX_QUERIES_PER_HOUR 60 MAX_UPDATES_PER_HOUR 100
-MAX_CONNECTIONS_PER_HOUR 1000 MAX_USER_CONNECTIONS 20
-PASSWORD EXPIRE DEFAULT"
-"CREATE USER user1@localhost IDENTIFIED WITH 'caching_sha2_password'
-AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'
-REQUIRE SUBJECT '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client'
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA""
-WITH MAX_CONNECTIONS_PER_HOUR 1000 MAX_USER_CONNECTIONS 20
-MAX_QUERIES_PER_HOUR 60 MAX_UPDATES_PER_HOUR 100"
-"CREATE USER user3@localhost IDENTIFIED BY 'auth_string'"
-"CREATE USER user1@localhost IDENTIFIED BY 'auth_string'"
-"CREATE USER user2@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string1'"
-"CREATE USER user3@localhost IDENTIFIED  BY 'auth_string'"
-"CREATE USER user5@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string1'"
-"CREATE USER user6@localhost IDENTIFIED BY 'auth_string'"
-"CREATE USER u1 IDENTIFIED WITH 'caching_sha2_password' BY 'azundris1'"
-"CREATE USER user8@localhost IDENTIFIED WITH 'caching_sha2_password'
-AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'"
-"CREATE USER user1@localhost IDENTIFIED WITH 'sha256_password'
-REQUIRE SSL"
-"CREATE USER user11@localhost IDENTIFIED WITH 'caching_sha2_password'
-PASSWORD EXPIRE NEVER ACCOUNT LOCK"
-"CREATE USER user12@localhost IDENTIFIED WITH 'sha256_password'
-PASSWORD EXPIRE NEVER"
-"CREATE USER u2@localhost IDENTIFIED BY 'meow'"
-"CREATE USER u10@localhost IDENTIFIED WITH 'sha256_password'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256"" AND
-SUBJECT ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client""
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA""
-WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2"
-"CREATE USER user13@localhost IDENTIFIED BY 'auth_string' ACCOUNT UNLOCK"
-"CREATE USER user14@localhost IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'
-ACCOUNT LOCK"
-"CREATE USER user15@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'azundris1'
-PASSWORD EXPIRE NEVER ACCOUNT UNLOCK"
-"CREATE USER user16@localhost IDENTIFIED WITH 'caching_sha2_password' AS  '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'
-ACCOUNT LOCK PASSWORD EXPIRE NEVER"
 "ALTER USER USER() IDENTIFIED BY 'new-auth'"
-"CREATE USER user1@localhost IDENTIFIED WITH 'sha256_password' REQUIRE SSL"
-"CREATE USER user16@localhost IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'
-ACCOUNT LOCK PASSWORD EXPIRE NEVER"
-"CREATE USER user10@localhost IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$ABCDEFGHIJKLMNOPQRSTabcdefgh01234567ijklmnop89012345ABCDEFGH678'"
-"CREATE USER bug20364862_user@localhost IDENTIFIED WITH test_plugin_server AS 'bug20364862_dest'"
-"CREATE USER bug20364862_dest@localhost IDENTIFIED BY 'dest_password'"
 "CREATE USER user1@47.9.9.9 IDENTIFIED BY 'pass1'"
-"CREATE USER user2 IDENTIFIED BY 'pass2'"
 "SHOW CREATE USER user1@47.9.9.9"
 "REVOKE ALL ON *.* FROM user1@localhost"
-"CREATE USER bug20625566_user@localhost IDENTIFIED WITH test_plugin_server
-AS 'bug20625566_dest'"
-"CREATE USER bug20625566_dest@localhost IDENTIFIED BY 'dest_password'"
 "DROP USER user1@localhost, user1@47.9.9.9, user2,
 bug20625566_user@localhost, bug20625566_dest@localhost"
-"CREATE USER user_name_robert_golebiowski1234@oh_my_gosh_this_is_a_long_hostname_look_at_it_it_has_60_char"
-"CREATE USER user_name_robert_golebiowski1234@localhost"
-"CREATE USER some_user@localhost"
 "GRANT SELECT ON db_1.test_table TO some_user@localhost"
-"CREATE USER u1@localhost IDENTIFIED BY 'foo'"
 "ALTER USER u1@localhost DEFAULT ROLE r1"
-"CREATE USER 'u1'@'localhost' IDENTIFIED BY '123'"
 "REVOKE ALL ON *.* FROM u1@localhost"
-"CREATE USER u2@localhost IDENTIFIED BY 'foo'"
-"CREATE USER u1, u1@localhost"
 "REVOKE ALL ON *.* FROM u1"
-"CREATE USER 'u1'@'localhost' IDENTIFIED BY 'pwd'"
 "GRANT ALL ON test.t1 TO 'u1'@'localhost'"
 "DISCONNECT con_admin_test"
 "CONNECTION con_admin_test"
-"CREATE USER u1, r1, r2"
 "SHOW GRANTS FOR u1 using r1"
 "SHOW GRANTS FOR u1 using r2"
-"CREATE USER u1@localhost IDENTIFIED BY 'pwd'"
 "DISCONNECT con_rep_slave_test"
-"CREATE USER u3"
 "REVOKE ALL ON *.* FROM CURRENT_USER()"
 "RESET REPLICA ALL"
-"CREATE USER B30628160@localhost"
 enable_connect_log
-"CREATE USER wl14303@localhost"
 "REVOKE ALL PRIVILEGES ON t1 FROM wl14303@localhost"
 disable_connect_log
-"CREATE USER test@localhost"
-"CREATE USER test_2@localhost"
 "SHOW GRANTS FOR CURRENT_USER USING flusher"
-"CREATE USER test@localhost, test_no_reload@localhost"
-"CREATE USER wl14303@localhost, wl14303_no_reload@localhost"
-"CREATE USER wl12217@localhost"
-"CREATE USER wl15874@localhost,wl15874_2@localhost"
 "CREATE EVENT wl15874_ev1
 ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
 DO SET @sum = @sum + 1"
@@ -2787,8 +2429,6 @@ DO SET @sum = @sum + 1"
 "ALTER DEFINER=wl15874_na@localhost EVENT wl15874_ev1
 ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
 DO SET @sum = @sum + 2"
-"CREATE USER wl15874_na@localhost"
-"CREATE USER wl15874@localhost"
 "GRANT SELECT ON privtest_db.t2 TO 'privtest'@'localhost'"
 "GRANT INSERT ON privtest_db.t1 TO 'privtest'@'localhost'"
 "REVOKE ALL PRIVILEGES ON privtest_db.t1 FROM 'privtest'@'localhost'"
@@ -2801,8 +2441,6 @@ DO SET @sum = @sum + 2"
 "GRANT UPDATE, SELECT ON privtest_db.t1 TO 'privtest'@'localhost'"
 "GRANT DELETE, SELECT ON privtest_db.t1 TO 'privtest'@'localhost'"
 "GRANT SELECT, INSERT, UPDATE, DELETE ON privtest_db.v1 TO 'privtest'@'localhost'"
-"CREATE USER user_1@localhost, USER_1@localhost"
-"CREATE USER rngp_user1, rngp_user2, rngp_user3"
 "REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_user1"
 "REVOKE IF EXISTS CREATE, SELECT ON rngp_db.* FROM rngp_user1"
 "REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_role1"
@@ -2813,7 +2451,6 @@ DO SET @sum = @sum + 2"
 "REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_user1, rngp_user2"
 "REVOKE ALL ON *.* FROM rngp_role1"
 "REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_role1, rngp_role2"
-"CREATE USER rngp_user"
 "GRANT EXECUTE, GRANT OPTION ON PROCEDURE rngp_db.rngp_proc TO rngp_role"
 "GRANT EXECUTE ON PROCEDURE rngp_db.rngp_proc TO rngp_role"
 "GRANT EXECUTE, ALTER ROUTINE ON PROCEDURE rngp_db.rngp_proc TO rngp_role"
@@ -2872,90 +2509,11 @@ DO SET @sum = @sum + 2"
 "GRANT INSERT (no) ON rngp_db.tb2 TO rngp_user"
 "REVOKE ALL PRIVILEGES ON rngp_db.tb1 FROM rngp_role"
 "REVOKE ALL PRIVILEGES ON rngp_db.tb1 FROM rngp_user"
-"CREATE USER unlocked_user@localhost IDENTIFIED BY 'pas'"
-"CREATE USER ''@localhost IDENTIFIED BY 'pass'"
-"CREATE USER ''@localhost IDENTIFIED BY 'pass' ACCOUNT UNLOCK"
-"CREATE USER ''@localhost IDENTIFIED BY 'pass' ACCOUNT LOCK"
-"CREATE user ''@localhost IDENTIFIED BY 'pass'"
-"CREATE USER 'unlocked_user'@localhost IDENTIFIED BY 'pass'"
-"CREATE USER u1@localhost IDENTIFIED BY 'pass'"
-"CREATE USER u2@localhost IDENTIFIED BY 'pass'"
 "GRANT EXECUTE ON PROCEDURE mysql.p1 TO u2@localhost"
-"CREATE USER 'u3'@'localhost' IDENTIFIED BY 'pass' ACCOUNT LOCK"
-"CREATE USER u1@localhost REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 100 ACCOUNT LOCK"
-"CREATE USER u1@localhost IDENTIFIED BY 'PASS' ACCOUNT LOCK ACCOUNT UNLOCK"
-"CREATE USER u1@localhost ACCOUNT UNLOCK ACCOUNT LOCK"
-"CREATE USER u1@localhost ACCOUNT LOCK PASSWORD EXPIRE ACCOUNT LOCK"
 "call mtr.add_suppression(""Column count of mysql.* is wrong. ""
 ""Expected .*, found .*. ""
 ""The table is probably corrupted"")"
 "CREATE TABLE mysql.temp_user LIKE mysql.user"
-"CREATE USER ACCOUNT@localhost ACCOUNT LOCK"
-"CREATE USER u1 IDENTIFIED BY 'pass'"
-"CREATE USER u2 IDENTIFIED BY 'pass' ACCOUNT LOCK"
-"CREATE USER u3 IDENTIFIED BY 'pass' ACCOUNT UNLOCK"
-"CREATE USER user2@localhost ACCOUNT UNLOCK"
-"CREATE USER 'user9'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string'
-ACCOUNT LOCK"
-"CREATE USER 'user10'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string'
-PASSWORD EXPIRE NEVER ACCOUNT UNLOCK"
-"CREATE USER 'user11'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string'
-ACCOUNT LOCK PASSWORD EXPIRE NEVER"
-"CREATE USER user3,user4@localhost ACCOUNT LOCK"
-"CREATE USER user6@'%',user7@localhost ACCOUNT LOCK"
-"CREATE USER u1@localhost ACCOUNT LOCK"
-"CREATE USER 'u2'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_string'
-REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT LOCK"
-"CREATE USER u3@localhost IDENTIFIED WITH 'sha256_password'
-ACCOUNT UNLOCK ACCOUNT LOCK"
-"CREATE USER u4@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-PASSWORD EXPIRE DEFAULT ACCOUNT LOCK"
-"CREATE USER user4@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-ACCOUNT LOCK PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD EXPIRE INTERVAL 90 DAY"
-"CREATE USER user5@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string'
-ACCOUNT UNLOCK PASSWORD EXPIRE NEVER"
-"CREATE USER user6@localhost IDENTIFIED WITH 'caching_sha2_password'
-ACCOUNT UNLOCK ACCOUNT LOCK PASSWORD EXPIRE NEVER"
-"CREATE USER user7@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string#%y'
-PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD EXPIRE NEVER ACCOUNT UNLOCK"
-"CREATE USER u5@localhost REQUIRE SSL ACCOUNT LOCK PASSWORD EXPIRE"
-"CREATE USER u6@localhost IDENTIFIED BY 'auth_string' REQUIRE X509
-ACCOUNT LOCK PASSWORD EXPIRE PASSWORD EXPIRE NEVER"
-"CREATE USER u7@localhost IDENTIFIED WITH 'sha256_password'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256""
-PASSWORD EXPIRE NEVER PASSWORD EXPIRE NEVER"
-"CREATE USER u10@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string#y'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256""
-SUBJECT ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client""
-ISSUER ""/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=CA""
-ACCOUNT LOCK PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"
-"CREATE USER 'u11'@'localhost' IDENTIFIED WITH 'caching_sha2_password'
-REQUIRE NONE WITH MAX_QUERIES_PER_HOUR 6 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"
-"CREATE USER u12@localhost IDENTIFIED BY 'auth_string'
-WITH MAX_QUERIES_PER_HOUR 4
-ACCOUNT LOCK PASSWORD EXPIRE NEVER PASSWORD EXPIRE ACCOUNT UNLOCK"
-"CREATE USER u13@localhost IDENTIFIED WITH 'sha256_password'
-WITH MAX_CONNECTIONS_PER_HOUR 2 ACCOUNT LOCK"
-"CREATE USER u14@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-REQUIRE CIPHER ""ECDHE-RSA-AES128-GCM-SHA256""
-WITH MAX_USER_CONNECTIONS 2 ACCOUNT LOCK PASSWORD EXPIRE INTERVAL 999 DAY ACCOUNT UNLOCK"
-"CREATE USER u15@localhost,
-u16@localhost IDENTIFIED BY 'auth_string',
-u17@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'
-ACCOUNT UNLOCK"
-"CREATE USER u18@localhost,
-u19@localhost IDENTIFIED BY 'auth_string',
-u20@localhost IDENTIFIED WITH 'sha256_password',
-u21@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string',
-u22@localhost IDENTIFIED WITH 'caching_sha2_password',
-u23@localhost IDENTIFIED WITH 'caching_sha2_password'
-BY 'auth_&string'
-REQUIRE SUBJECT '/C=SE/ST=Stockholm/L=Stockholm/O=Oracle/OU=MySQL/CN=Client'
-WITH MAX_QUERIES_PER_HOUR 2 MAX_USER_CONNECTIONS 2 ACCOUNT LOCK"
 "GRANT EXECUTE ON PROCEDURE test.p1 TO u2@localhost"
 "GRANT EXECUTE ON FUNCTION test.myfunc TO u2@localhost"
 "CREATE TABLE t100 LIKE t10"
@@ -3366,17 +2924,11 @@ KEY col_date_key (col_date_key)
 "ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[""base64:type254:MA=="", ""base64:type254:MQ=="", 0.6666666666666666, 2], [""base64:type254:Mg=="", ""base64:type254:Mg=="", 1.0, 1]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 255, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
 "ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[0, 0.3333333333333333], [1, 0.6666666666666666], [2, 1.0]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
 "ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[0, 1, 0.6666666666666666, 2], [2, 2, 1.0, 1]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
-"CREATE USER some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "GRANT UPDATE ON test.t1 TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "GRANT UPDATE (f1) ON test.t2 TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "GRANT some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 TO root@localhost"
 "GRANT u1@localhost TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "REVOKE ALL ON *.* FROM some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
-"CREATE USER pass_hist_user@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 IDENTIFIED BY 'haha' PASSWORD HISTORY 1"
-"CREATE USER u1@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
-"CREATE USER u2@localhost"
-"CREATE USER 'rick'@'192.0.2.4'"
-"CREATE USER 'morty'@'2001:db8::6:6'"
 "EXPLAIN FORMAT=tree SELECT * FROM t0, t1 LEFT JOIN (t2,t3) ON a1=5 WHERE a0=a1 AND a0=1"
 "EXPLAIN FORMAT=tree
 SELECT f1 FROM t1 GROUP BY f1 HAVING f1 = 10 AND f1 <> 11"
@@ -3557,7 +3109,6 @@ let $EXPORT_DIR= $MYSQL_TMP_DIR/export"
 "open(T1_, "">t1_.sdi"")"
 "print T1_ $_"
 close(T1_)
-"CREATE USER noimportforyou@localhost"
 "REVOKE ALL ON *.* FROM noimportforyou@localhost"
 "GRANT CREATE ON s1.t1 TO noimportforyou@localhost"
 "IMPORT TABLE FROM 't1_*.sdi', 't2_*.sdi'"
@@ -3606,20 +3157,13 @@ from bureau window w as (partition by id)"
 "EXPLAIN FORMAT=tree SELECT COUNT(f2)
 FROM t1 WHERE (f3 = 10 OR f2 BETWEEN 5 AND 10) AND f1 = f2"
 "EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b=0 AND c=0"
-"create user mysqltest_3"
 "grant select (a) on mysqltest.t1 to mysqltest_2@localhost"
 "grant select on mysqltest.v1 to mysqltest_3"
-"create user joe@localhost"
 "grant select (a) on test.t1 to joe@localhost with grant option"
-"create user mysqltest_4@localhost"
-"create user user1@localhost, user2@localhost, user3@localhost, user4@localhost"
 "grant select (f1) on mysqltest.t1 to user1@localhost"
 "grant select on mysqltest.t2 to user2@localhost"
-"CREATE USER mysql_bug20230@localhost"
 "grant select(b) on mysqltest.t1 to mysqltest_1@localhost"
 "explain format=tree select * from information_schema.engines WHERE ENGINE=""MyISAM"""
-"create user user3148@localhost"
-"CREATE USER nonpriv"
 "GRANT SELECT ON *.* TO очень_очень_очень_длинный_юзер__@localhost"
 "CREATE TABLE t1 (f1 DATE NOT SECONDARY)"
 "ALTER TABLE  t1 MODIFY f1 DATE NOT SECONDARY"
@@ -3627,7 +3171,6 @@ FROM t1 WHERE (f3 = 10 OR f2 BETWEEN 5 AND 10) AND f1 = f2"
 "ALTER TABLE t1 SECONDARY_ENGINE=myisam"
 "SET @table = 't1'"
 "EXECUTE ps1 USING @expected, @db, @table"
-"create user mysqltest1@localhost"
 "create procedure p1(out sum int)
 begin
 declare n int default 0;
@@ -3651,8 +3194,6 @@ end;
 end loop;
 end"
 "select @sum"
-"CREATE USER user1@localhost PASSWORD EXPIRE"
-"CREATE USER ''@localhost"
 "my $passwd_file= $ENV{'PASSWD_FILE'} or die"
 "my $FILE"
 "print ""password found\n"""
@@ -3683,7 +3224,6 @@ closedir($dh)
 
 
 remove_file $MYSQL_TMP_DIR/bug35254025init.sql"
-"CREATE USER u3@localhost"
 "my $log= $ENV{'MYSQLD_LOG'} || die ""Failed to read MYSQLD_LOG from env: $!"""
 "open(FILE, ""$log"") || die ""Failed to open error log: $!"""
 "EOF
@@ -3770,7 +3310,6 @@ INSERT INTO t1 (id) SELECT id FROM t1"
 INSERT INTO t1 (id) SELECT id FROM t1"
 "/* 24 */
 INSERT INTO t1 SELECT id+1 FROM t1"
-"CREATE USER user20989@localhost"
 "CREATE TABLE t1(a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
 c INT GENERATED ALWAYS AS (-a) STORED)"
@@ -4357,11 +3896,7 @@ vbcol CHAR(2) AS (substr(b,2,2)) VIRTUAL,
 vbidxcol CHAR(3) AS (substr(b,1,3)) VIRTUAL
 )
 "
-"CREATE USER 'testuser1'@'localhost'"
 "ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
-"CREATE USER 'user1'@'localhost'"
-"CREATE USER 'user2'@'localhost'"
-"CREATE USER 'user3'@'localhost'"
 "OPTIMIZE TABLES columns_priv, db, user"
 "create function f17() returns int
 begin
@@ -4370,13 +3905,9 @@ select i from t1 where i = 1 into j;
 call p3;
 return 1;
 end"
-"CREATE USER test2@localhost"
-"CREATE USER user_1@localhost"
-"CREATE USER user_2@localhost"
 "SELECT 1 FROM DUAL LIMIT 1 INTO @var FOR UPDATE"
 "SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
 "SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
-"CREATE USER mysqluser1"
 "GRANT ALL ON db1.t1 TO mysqluser1"
 "my $file_trad= $ENV{'LOG_FILE_TRAD'}"
 "my $file_json= $ENV{'LOG_FILE_JSON'}"
@@ -4587,7 +4118,6 @@ print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'}
 
 
 SELECT @@session.long_query_time INTO @old_long_query_time"
-"create user 'sample'@'localhost' identified by 'password'"
 "GRANT EXECUTE ON PROCEDURE db1.P1 to user_1@localhost"
 "GRANT EXECUTE ON FUNCTION db1.f1 to user_1@localhost"
 "my $c_w= grep(/Different lower_case_table_names settings/gi,<FILE>)"
@@ -4602,7 +4132,6 @@ SELECT @@session.long_query_time INTO @old_long_query_time"
 "drop table İİ"
 "CREATE TABLE TestTable2 LIKE TestTable1"
 "CREATE TABLE T2 LIKE T1"
-"CREATE USER 'test_user'@'localhost'"
 "GRANT SELECT ON my_db.UPPERCASE_MYISAM TO 'test_user'@'localhost'"
 "GRANT SELECT ON my_db.lowercase_myisam TO 'test_user'@'localhost'"
 "GRANT SELECT ON my_db.UPPERCASE_INNODB TO 'test_user'@'localhost'"
@@ -4701,10 +4230,6 @@ INTO @thread_id"
 create table t17583 (a int)"
 "EOF
 remove_file $MYSQLTEST_VARDIR/tmp/mysqltest.sql"
-"CREATE USER test_user2"
-"CREATE USER user_name_len_26_012345678@localhost"
-"CREATE USER 'test#user1'@'localhost'"
-"CREATE USER 'test1 test1'@'localhost'"
 "EOF
 
 
@@ -4729,8 +4254,6 @@ CREATE TABLE test.wl13168(id INT PRIMARY KEY, data VARCHAR(50))"
 
 
 remove_file $cmd_file"
-"CREATE USER regular_user"
-"CREATE USER u1@localhost IDENTIFIED BY 'secret' REQUIRE SSL"
 "my $dir = $ENV{'MYSQLTEST_VARDIR'}"
 "open ( OUTPUT, "">$dir/tmp/zoneinfocheck.inc"") "
 @path=()
@@ -4746,11 +4269,7 @@ if (!$zoneinfo_europe_path) {
 }
 
 CREATE DATABASE test_zone"
-"CREATE USER u1,u2"
-"CREATE USER u34068378"
-"CREATE USER 'user3'@'%'"
 "GRANT ALL PRIVILEGES ON `roelt`.`test2` TO 'user3'@'%'"
-"CREATE USER sheldon"
 "CREATE TABLE test.slave_master_info_backup LIKE mysql.slave_master_info"
 "[client]
 loose-database=db2
@@ -4778,12 +4297,10 @@ EOF
 
 
 CREATE USER testadmin_user1"
-"CREATE USER tester@localhost IDENTIFIED WITH caching_sha2_password BY 'abcd'"
 "insert into t5 select * from `äöüÄÖÜ`
 EOF
 
 flush logs"
-"CREATE USER untrusted@localhost"
 "EOF
 
 
@@ -4801,7 +4318,6 @@ $timeout--
 "SET @drop = IF(@have_ndb = 0, @drop_cmd, 'SET @dummy = 0')"
 "PREPARE create_stmt FROM @create"
 "PREPARE drop_stmt FROM @drop"
-"CREATE USER 'user_with_length_32_abcdefghijkl'@'localhost'"
 "create table `t``1`(a int) engine=myisam"
 "drop table `t``1`, `t 1`"
 "EOF
@@ -4851,9 +4367,7 @@ PRIMARY KEY (`a b`, `c""d`, `e``f`)
 return 42 */"
 "/*!50003 CREATE PROCEDURE `p`()
 select 42 */"
-"create user myDB_User@localhost"
 "revoke all privileges on mysqldump_myDB.* from myDB_User@localhost"
-"create user user1, user2"
 "CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
 sum INTEGER GENERATED ALWAYS AS (a+b),
 sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
@@ -4908,10 +4422,8 @@ EOF
 
 echo # cleanup
 DROP TABLE b34999015_db.`KEY`"
-"CREATE USER myuser"
 "/*!99999 SET @@SESSION.non_supported_session_variable = 1*/"
 "REVOKE ALL PRIVILEGES ON *.* FROM user1"
-"CREATE USER u1@h"
 "CREATE TEMPORARY TABLE Temp3 LIKE Temp2"
 "CREATE TEMPORARY TABLE tt1 LIKE performance_schema.setup_consumers"
 "SELECT NTH_VALUE(6,1)    OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
@@ -4981,17 +4493,6 @@ FIRST_VALUE(id) OVER w,
 NTH_VALUE(id, 1) OVER w,
 NTH_VALUE(id, 2) OVER w FROM t1
 WINDOW w AS (ORDER BY id ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"
-"create user regular@localhost identified by 'regular'"
-"create user power@localhost identified by 'power'"
-"create user super@localhost identified by 'super'"
-"create user sysadmin@localhost identified by 'sysadmin'"
-"CREATE USER base@localhost IDENTIFIED BY 'base'"
-"CREATE USER regular@localhost IDENTIFIED BY 'regular'"
-"CREATE USER power@localhost IDENTIFIED BY 'power'"
-"CREATE USER super@localhost IDENTIFIED BY 'super'"
-"CREATE USER admin@localhost IDENTIFIED BY 'admin'"
-"CREATE USER superadmin@localhost IDENTIFIED BY 'superadmin'"
-"CREATE USER sysadmin@localhost IDENTIFIED BY 'sysadmin'"
 "SELECT a, b, a AS c, COUNT(*) AS count FROM t1 GROUP BY a, b, c WITH ROLLUP"
 "EXPLAIN FORMAT=tree
 SELECT a, b FROM t1, t2 GROUP BY a, b WITH ROLLUP"
@@ -5015,10 +4516,6 @@ ORDER BY GROUPING(i),i, GROUPING(j),j, GROUPING(k),k"
 HAVING i+j is NULL ORDER BY GROUPING(i)"
 "SELECT i, j, i+j, AVG(j), AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
 HAVING GROUPING(j)+AVG(j) > 11 ORDER BY GROUPING(i)"
-"create user ssl_user1@localhost, ssl_user2@localhost,
-ssl_user3@localhost, ssl_user4@localhost,
-ssl_user5@localhost"
-"CREATE USER bug42158@localhost REQUIRE X509"
 "EXPLAIN FORMAT=JSON
 SELECT i1 FROM t1 WHERE i1 > 1"
 "EXPLAIN FORMAT=TREE SELECT /*+ JOIN_FIXED_ORDER() */ COUNT(*) FROM small_tab JOIN large_tab USING(val) JOIN medium_tab USING(val)"
@@ -5144,7 +4641,6 @@ c1 VARCHAR(10), c2 VARCHAR(10), c3 VARCHAR(10),
 PRIMARY KEY(id)) SECONDARY_ENGINE MOCK"
 "INSERT INTO t VALUES(1, x'4142434445464748494a414243444546', 'WRITEBACK',
 0, TIMESTAMP'2020-01-01 00:00:00.000000', NULL)"
-"create user user_1@localhost"
 "revoke all privileges on *.* from user_1@localhost"
 "create table BIT_AND (a int)"
 "drop table BIT_AND"
@@ -5340,8 +4836,6 @@ SEND
 WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
 "EXPLAIN DELETE FROM t1 PARTITION (p0)
 WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
-"CREATE USER 'mysqltest1'@'localhost'"
-"CREATE USER 'mysqltest2'@'localhost'"
 "CREATE TABLE t1 (a INT)
 /*!50100 PARTITION BY HASH (a)
 /* Test
@@ -5428,7 +4922,6 @@ source $MYSQL_TMP_DIR/perror_syslocale.inc"
 "RESET PERSIST event_scheduler"
 "RESET REPLICA"
 "RESET PERSIST ft_query_expansion_limit"
-"CREATE USER 'bug28749668'@'%'"
 "RESET PERSIST sql_mode"
 "[mysqld]
 innodb_fast_shutdown=1
@@ -5447,12 +4940,8 @@ EOF
 SELECT @@global.innodb_fast_shutdown"
 "RESET PERSIST slow_query_log_file"
 "RESET PERSIST general_log_file"
-"CREATE USER 'user1'@'localhost' IDENTIFIED BY 'pass1'"
 "RESET PERSIST auto_increment_increment"
 "RESET PERSIST innodb_checksum_algorithm"
-"CREATE USER 'internal_proxied'@'%' IDENTIFIED BY 'proxy_password'"
-"CREATE USER 'external_u1'@'%' IDENTIFIED WITH test_plugin_server AS 'internal_proxied'"
-"CREATE USER 'external_u2'@'%' IDENTIFIED WITH test_plugin_server AS 'internal_proxied'"
 "[mysqld]
 sort_buffer_size=314156
 EOF
@@ -5468,114 +4957,28 @@ SELECT VARIABLE_NAME, VARIABLE_SOURCE
 FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
 ('sort_buffer_size', 'max_connections', 'max_digest_length',
 'innodb_fast_shutdown', 'innodb_default_row_format', 'innodb_flush_log_at_trx_commit')"
-"CREATE USER bug25677422"
 "RESET PERSIST `validate_password.length`"
 "RESET PERSIST validate_password_length"
 "RESET PERSIST gtid_mode"
 "RESET PERSIST enforce_gtid_consistency"
-"CREATE USER bug51770@localhost"
 "GRANT INSERT ON mysql.plugin TO bug51770@localhost"
 "GRANT DELETE ON mysql.plugin TO bug51770@localhost"
-"CREATE USER plug IDENTIFIED WITH 'test_plugin_server' AS 'plug_dest'"
-"CREATE USER plug_dest IDENTIFIED BY 'plug_dest_passwd'"
-"CREATE USER `Ÿ` IDENTIFIED WITH 'test_plugin_server' AS 'plug_dest'"
-"CREATE USER grant_plug IDENTIFIED WITH 'test_plugin_server'
-AS 'grant_plug_dest'"
-"CREATE USER grant_plug_dest IDENTIFIED BY 'grant_plug_dest_passwd'"
-"CREATE USER grant_plug_dest2 IDENTIFIED BY 'grant_plug_dest_passwd2'"
-"CREATE USER proxy_admin IDENTIFIED BY 'test'"
-"CREATE USER test_drop@localhost"
-"CREATE USER ''@'' IDENTIFIED WITH 'test_plugin_server' AS 'power_user'"
-"CREATE USER ''@'' IDENTIFIED WITH 'test_plugin_server' AS 'standard_user'"
-"CREATE USER standard_user"
-"CREATE USER bug12610784@localhost"
-"CREATE USER bug12818542_dest@localhost
-IDENTIFIED BY 'bug12818542_dest_passwd'"
-"CREATE USER 'empl_external'@'localhost' IDENTIFIED WITH test_plugin_server AS 'employee'"
-"CREATE USER 'employee'@'localhost' IDENTIFIED BY 'passkey'"
-"CREATE USER bug20537246@localhost
-IDENTIFIED WITH 'cleartext_plugin_server' AS ''"
-"CREATE USER user_name_len_22_01234 IDENTIFIED WITH 'test_plugin_server' AS 'user_name_len_22_0dest'"
-"CREATE USER user_name_len_22_0dest IDENTIFIED BY 'plug_dest_passwd'"
 "CREATE USER очень_очень_очень_длинный_юзер__ IDENTIFIED WITH 'test_plugin_server' AS 'очень_очень_очень_длинный_дест__'"
 "CREATE USER очень_очень_очень_длинный_дест__ IDENTIFIED BY 'plug_dest_passwd'"
 "DROP USER очень_очень_очень_длинный_юзер__"
 "DROP USER очень_очень_очень_длинный_дест__"
-"CREATE USER user_name_len_22_01234@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER user_name_len_32_012345678901234@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string'"
-"CREATE USER user_name_len_32_012345678901234@localhost IDENTIFIED WITH 'cleartext_plugin_server' AS 'auth_string'"
-"CREATE USER user_name_len_22_01234@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string' REQUIRE SSL"
-"CREATE USER user_name_len_32_012345678901234@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string' REQUIRE SSL"
-"CREATE USER user_name_len_32_012345678901234@localhost IDENTIFIED WITH 'cleartext_plugin_server' AS 'auth_string' REQUIRE SSL"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string'"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost IDENTIFIED WITH 'cleartext_plugin_server' AS 'auth_string'"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string' REQUIRE SSL"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string' REQUIRE SSL"
 "CREATE USER очень_очень_очень_длинный_юзер__@localhost IDENTIFIED WITH 'cleartext_plugin_server' AS 'auth_string' REQUIRE SSL"
-"CREATE USER b22551523@localhost"
-"CREATE USER pwd_history_plugin@localhost IDENTIFIED WITH 'test_plugin_server' PASSWORD HISTORY 1"
-"CREATE USER mohit@localhost IDENTIFIED BY 'mohit_native' PASSWORD HISTORY 1"
-"CREATE USER plug IDENTIFIED WITH test_plugin_server"
-"CREATE USER plug IDENTIFIED WITH test_plugin_server BY '123'"
 "REVOKE ALL PRIVILEGES ON test_user_db.* FROM plug"
-"CREATE USER plug IDENTIFIED WITH 'test_plugin_server'"
-"CREATE USER plug IDENTIFIED WITH test_plugin_server AS ''"
-"CREATE USER plug IDENTIFIED WITH test_plugin_server AS 'plug_dest'"
-"CREATE USER plug_dest IDENTIFIED WITH 'test_plugin_server' AS 'plug_dest'"
 "CREATE USER plüg IDENTIFIED WITH 'test_plugin_server' AS 'plüg_dest'"
 "DROP USER plüg"
 "CREATE USER plüg_dest IDENTIFIED BY 'plug_dest_passwd'"
 "DROP USER plüg_dest"
-"CREATE USER 'plüg' IDENTIFIED WITH 'test_plugin_server' AS 'plüg_dest'"
-"CREATE USER 'plüg_dest' IDENTIFIED BY 'plug_dest_passwd'"
-"CREATE USER 'plug' IDENTIFIED WITH 'test_plugin_server' AS 'plüg_dest'"
 "CREATE USER plüg IDENTIFIED WITH test_plugin_server AS 'plüg_dest'"
-"CREATE USER plug IDENTIFIED WITH 'test_plugin_server' AS 'hh''s_plug_dest'"
-"CREATE USER 'hh''s_plug_dest' IDENTIFIED BY 'plug_dest_passwd'"
-"CREATE USER plug_user
-IDENTIFIED WITH test_plugin_server AS 'plug_dest'"
-"CREATE USER new_dest IDENTIFIED BY 'new_dest_passwd'"
-"CREATE USER ''@'' IDENTIFIED WITH test_plugin_server AS 'proxied_user'"
-"CREATE USER proxied_user IDENTIFIED BY 'proxied_user_passwd'"
-"CREATE USER proxied_user_1 IDENTIFIED BY 'proxied_user_1_pwd'"
-"CREATE USER proxied_user_2 IDENTIFIED BY 'proxied_user_2_pwd'"
-"CREATE USER proxied_user_3 IDENTIFIED BY 'proxied_user_3_pwd'"
-"CREATE USER proxied_user_4 IDENTIFIED BY 'proxied_user_4_pwd'"
-"CREATE USER proxied_user_5 IDENTIFIED BY 'proxied_user_5_pwd'"
-"CREATE USER qa_test_1_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_1_dest'"
-"CREATE USER qa_test_1_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_2_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_2_dest'"
-"CREATE USER qa_test_2_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER authenticated_as IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_3_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_3_dest'"
-"CREATE USER qa_test_3_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_4_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_4_dest'"
-"CREATE USER qa_test_4_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_5_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_5_dest'"
-"CREATE USER qa_test_5_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER ''@'localhost' IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_6_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_6_dest'"
-"CREATE USER qa_test_6_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_11_user IDENTIFIED WITH qa_auth_interface AS 'qa_test_11_dest'"
-"CREATE USER qa_test_11_dest IDENTIFIED BY 'dest_passwd'"
-"CREATE USER qa_test_11_user IDENTIFIED WITH qa_auth_server AS 'qa_test_11_dest'"
-"CREATE USER qa_test_11_dest identified by 'dest_passwd'"
-"CREATE USER 'kristofer' IDENTIFIED WITH 'sha256_password'"
-"CREATE USER 'kristofer'@'localhost' IDENTIFIED WITH 'sha256_password' BY '123'"
-"CREATE USER 'kristofer2'@'localhost' IDENTIFIED WITH 'sha256_password' BY '123'"
-"CREATE USER 'kristofer'@'33.33.33.33' IDENTIFIED WITH 'sha256_password' BY '123'"
-"CREATE USER 'kristofer' IDENTIFIED BY 'secret'"
-"CREATE USER 'kristofer'@'localhost' IDENTIFIED BY 'secret2'"
-"CREATE USER 'kristofer'@'localhost' IDENTIFIED BY '123'"
-"CREATE USER 'kristofer'@'33.33.33.33' IDENTIFIED BY '123'"
-"CREATE USER 'kristofer'"
-"CREATE USER 'kristofer'@'localhost'"
-"CREATE USER 'kristofer'@'33.33.33.33'"
-"CREATE USER 'kristofer'@'localhost' IDENTIFIED BY 'awesomeness'"
-"CREATE USER 'kristofer'@'localhost' IDENTIFIED WITH 'sha256_password'"
-"CREATE USER 'kristofer2'@'localhost' IDENTIFIED WITH 'sha256_password'"
-"CREATE USER 'u1'@'localhost' IDENTIFIED WITH 'sha256_password'"
 "set @precision=10000000000"
 "select rand(),
 cast(rand(10)*@precision as unsigned integer) from t1"
@@ -5594,14 +4997,12 @@ cast(rand(10)*@precision as unsigned integer) from t1"
 "create procedure proc_1() STOP REPLICA"
 "create procedure proc_1() SHOW REPLICA STATUS"
 "create procedure proc_1() show binary log status"
-"create procedure proc_1() create user pstest_xyz@localhost"
 "set @dec=0"
 "execute stmt2 using @to_format, @dec"
 "set @dec=4"
 "set @dec=6"
 "set @dec=2"
 "SET @empty = ''"
-"CREATE USER test_user1@'localhost'"
 "create procedure p_verify_reprepare_count(expected int)
 begin
 declare old_reprepare_count int default @reprepare_count;
@@ -5621,12 +5022,9 @@ end if;
 end"
 "create procedure p1(out x int) select max(a) from t1 into x"
 "create procedure p1(out x int) select max(a) from t2 into x"
-"create user second_user@localhost
-identified by 'looser' "
 "grant select on mysqltest.t9 to second_user@localhost"
 "grant select on mysqltest.t1 to second_user@localhost"
 "revoke all privileges on mysqltest.t1 from second_user@localhost"
-"create user drop_user@localhost identified by 'looser'"
 "grant all on test.t1 to drop_user@localhost"
 "revoke all privileges on test.t1 from drop_user@localhost "
 "set @a= timestamp ""2001-01-02 10:11:12.345"""
@@ -5811,27 +5209,19 @@ EXCEPT DISTINCT
 SELECT DISTINCT RANK() OVER () FROM t1 ) AS t
 ORDER BY len"
 "SELECT * FROM (SELECT * FROM t INTERSECT SELECT * FROM t) AS derived ORDER BY i LIMIT 2"
-"create user test@localhost"
-"create user `mysqltest_u1`@`%`"
 "EOF
 
 create user nonsuper@localhost"
-"CREATE USER bug33669@localhost"
 "CREATE TEMPORARY TABLE temp2 LIKE temp1"
-"CREATE USER wl9787"
 "RESET PERSIST replica_type_conversions"
-"CREATE USER u1, r1"
 "ALTER USER u11 DEFAULT ROLE ALL"
 "GRANT SELECT ON db1.t1 TO r1"
 "ALTER USER u1@localhost DEFAULT ROLE r1,r2"
 "SHOW GRANTS FOR u1@localhost USING r1"
 "SHOW GRANTS FOR u2@localhost USING r1"
-"CREATE USER usr, role_usr"
-"CREATE USER u5"
 "ALTER USER u5 DEFAULT ROLE r2,r3"
 "ALTER USER u2 DEFAULT ROLE r1, r2, r3"
 "SELECT ID FROM INFORMATION_SCHEMA.PROCESSLIST WHERE INFO LIKE ""RENAME TABLE%"" INTO @thread_id"
-"create user 'user_wl6797'@'localhost'"
 "RESET PERSIST IF EXISTS max_connections"
 "RESET PERSIST IF EXISTS replica_net_timeout"
 "RESET PERSIST IF EXISTS sort_buffer_size"
@@ -5845,7 +5235,6 @@ create user nonsuper@localhost"
 
 connection default"
 RESTART
-"CREATE USER u1,u2,u3,u4"
 "REVOKE ALL ON *.* FROM unknown_user IGNORE UNKNOWN USER"
 "REVOKE SELECT ON *.* FROM unknown_user IGNORE UNKNOWN USER"
 "REVOKE ALL PRIVILEGES, GRANT OPTION FROM unknown_user IGNORE UNKNOWN USER"
@@ -5895,18 +5284,11 @@ ON *.* FROM u1, u2 IGNORE UNKNOWN USER"
 "LET old_log_output=          `select @@global.log_output`"
 "LET old_general_log=         `select @@global.general_log`"
 "LET old_general_log_file=    `select @@global.general_log_file`"
-"CREATE USER test_user1 IDENTIFIED WITH caching_sha2_password BY 'azundris1'"
 "GRANT SELECT(f2), INSERT(f3), INDEX, UPDATE(f1,f3, f2, f4), ALTER on
 test.t1 TO test_user1"
 "GRANT ALL ON PROCEDURE test.proc_rewrite_1 TO test_user1"
 "GRANT EXECUTE ON FUNCTION test.func_rewrite_1 TO test_user1"
-"CREATE USER test_user3@localhost IDENTIFIED WITH caching_sha2_password BY 'meow' REQUIRE SSL"
-"CREATE USER test_user2 IDENTIFIED WITH caching_sha2_password BY 'azundris2'"
 "CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='azundris3'"
-"CREATE USER 'test_user4'@'localhost' IDENTIFIED WITH caching_sha2_password"
-"CREATE USER test_user8 IDENTIFIED BY ''"
-"CREATE USER test_user9 IDENTIFIED WITH 'caching_sha2_password' BY ''"
-"CREATE USER u1, u2"
 "SET PASSWORD = '' REPLACE ''"
 "ALTER USER u1 IDENTIFIED BY '123' REPLACE '', u2 IDENTIFIED BY '456'
 PASSWORD REQUIRE CURRENT OPTIONAL"
@@ -5914,10 +5296,8 @@ PASSWORD REQUIRE CURRENT OPTIONAL"
 "SET @sql='SELECT command_type, argument FROM mysql.general_log WHERE argument LIKE ""%Bug#16953758%""'"
 "PREPARE stmt FROM @sql"
 "SET @sql='DROP TABLE 18616826_does_not_exist'"
-"CREATE USER 'plaintext_test' IDENTIFIED BY 'pwd'"
 "ALTER USER plaintext_test IDENTIFIED BY '' REPLACE 'pwd'"
 "SET PASSWORD='789' REPLACE '456'"
-"CREATE USER test_user2 IDENTIFIED BY 'azundris2'"
 "ALTER USER test_user2 IDENTIFIED BY 'azundris2' REPLACE 'azundris2'"
 "SET PASSWORD='azundris2' REPLACE 'azundris2'"
 "CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='azundris3',
@@ -5936,41 +5316,24 @@ IGNORE_SERVER_IDS = (99,100), SOURCE_TLS_VERSION = 'TLSv1.2',
 SOURCE_TLS_CIPHERSUITES = NULL,
 SOURCE_BIND = 'eth4n', SOURCE_RETRY_COUNT = 7,
 SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
-"CREATE USER 'test_user4'@'localhost'"
-"CREATE USER `app-middleware-db1`@`localhost` IDENTIFIED BY 'foo'"
-"CREATE USER `app-middleware-db2`@`localhost` IDENTIFIED BY 'foo'"
-"CREATE USER `app`@`localhost` IDENTIFIED BY 'foo'"
 "GRANT SELECT, UPDATE, CREATE, DROP, INSERT, DELETE ON db1.t1 TO `admin-db1t1`"
 "GRANT SELECT, UPDATE, CREATE, DROP, INSERT, DELETE ON db2.t1 TO `admin-db2t1`"
 "SHOW GRANTS FOR CURRENT_USER() USING `admin-db1`"
-"CREATE USER u3@localhost IDENTIFIED BY 'foo'"
-"CREATE USER `u1`@`%` IDENTIFIED BY 'foo'"
-"CREATE USER `u2`@`%` IDENTIFIED BY 'foo'"
-"CREATE USER b30896461_test1@localhost"
-"CREATE USER b30896461_test2@localhost"
 "GRANT b30896461_test1@localhost TO b30896461_test2@localhost"
 "GRANT EXECUTE ON FUNCTION `B30896461`.`testFn` TO b30896461_test1@localhost"
 "GRANT EXECUTE ON PROCEDURE db1.sp1 TO r1"
 "GRANT EXECUTE ON PROCEDURE world.proc_empty TO r_worldrou"
 "GRANT EXECUTE ON FUNCTION world.func_plusone TO r_worldrou"
-"CREATE USER u_worldrou@localhost IDENTIFIED BY 'xxx' DEFAULT ROLE r_worldrou"
 "SHOW GRANTS FOR u_worldrou@localhost USING r_worldrou"
 "GRANT SELECT ON db1.v1 TO r1"
-"CREATE USER u2@localhost IDENTIFIED BY 'oof'"
-"CREATE USER user_with_role@localhost"
-"CREATE USER user_without_role@localhost"
 "GRANT ALL on test.t1 TO test_role"
 "GRANT ALL on test.v1 TO test_role"
 "GRANT ALL on test.v2 TO test_role"
 "GRANT ALL on test.t2 TO user_without_role@localhost"
 "GRANT ALL on test.v3 TO user_without_role@localhost"
 "GRANT ALL on test.v4 TO user_without_role@localhost"
-"CREATE USER user1, user2, user3@host3"
 "GRANT role1, `role2`@`host2`, role3 TO user1, user2, `user3`@`host3`"
-"CREATE USER joan"
-"CREATE USER sally"
 "GRANT `engineering`@`US` TO `engineering`@`INDIA`"
-"CREATE USER `joe`@`localhost`"
 "REVOKE role1, `role2`@`host2`, role3 FROM user1, user2, `user3`@`host3`"
 "ALTER USER `joe`@`localhost` DEFAULT ROLE wp_administrators"
 "ALTER USER CURRENT_USER() DEFAULT ROLE NONE"
@@ -5988,7 +5351,6 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "GRANT UPDATE,INSERT,DELETE ON mysql.db TO security_admin"
 "GRANT UPDATE,INSERT,DELETE ON mysql.proxies_priv TO security_admin WITH GRANT OPTION"
 "GRANT UPDATE,INSERT,DELETE ON mysql.role_edges TO security_admin"
-"CREATE USER `joe_schema_designer`@`localhost` IDENTIFIED BY 'schmoo'"
 "ALTER USER `joe_schema_designer`@`localhost` DEFAULT ROLE `schema_designer`"
 "SHOW GRANTS FOR 'joe_schema_designer'@'localhost' USING 'schema_designer'"
 "GRANT SELECT ON db1.t1 TO backup_admin"
@@ -5999,36 +5361,22 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "SHOW GRANTS FOR CURRENT_USER() USING `db_admin`"
 "SHOW GRANTS FOR CURRENT_USER() USING db_admin"
 "SHOW GRANTS FOR u1@`%` USING r1"
-"CREATE USER hoho@localhost IDENTIFIED BY 'foo'"
 "ALTER USER u1@localhost DEFAULT ROLE ALL"
 "ALTER USER u1@localhost DEFAULT ROLE NONE"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO r1"
-"CREATE USER r1"
 "GRANT SELECT ON other.t1 TO r1"
 "GRANT SELECT ON other.t1 TO u1@localhost"
-"CREATE USER r1, r11"
 "GRANT r1@Vilhelmina TO u1@localhost"
-"CREATE USER 'u1'@'localhost'"
 "SHOW GRANTS FOR u1@localhost USING u1234567890123456789012345678901"
 "ALTER USER r2 DEFAULT ROLE r1"
-"CREATE USER baseuser IDENTIFIED WITH caching_sha2_password,
-admin1 IDENTIFIED WITH caching_sha2_password,
-admin2 IDENTIFIED WITH caching_sha2_password"
 "GRANT SELECT ON mysql.db to r1"
 "GRANT SELECT ON mysql.user to r2"
 "ALTER USER baseuser default role r2"
 "DISCONNECT con_base"
 "DISCONNECT con_admin1"
 "DISCONNECT con_admin2"
-"CREATE USER u1 IDENTIFIED BY 'foo' DEFAULT ROLE a,a@localhost,`b`,`b`@local,`c c`,`aaa`, `a`@`a`"
-"CREATE USER u2 DEFAULT ROLE r1 REQUIRE SSL ACCOUNT LOCK"
 "ALTER USER u1 DEFAULT ROLE r1"
 "ALTER USER u1@localhost DEFAULT ROLE 'r1'"
-"CREATE USER u1@localhost IDENTIFIED BY 'foo' DEFAULT ROLE 'r2'"
-"CREATE USER foo@localhost IDENTIFIED BY 'foo'"
-"CREATE USER foo@localhost IDENTIFIED BY 'foo' DEFAULT ROLE r1"
-"CREATE USER 'ok' IDENTIFIED BY 'ok'"
-"CREATE USER foo@localhost"
 "SHOW GRANTS FOR CURRENT_USER() USING r1"
 "REVOKE SELECT ON db1.t1 FROM r1"
 "GRANT SELECT(c1) ON db1.t1 TO r1"
@@ -6045,31 +5393,19 @@ admin2 IDENTIFIED WITH caching_sha2_password"
 "GRANT SELECT ON db1.t2 TO r1"
 "SHOW GRANTS FOR u1@localhost USING r1,r2"
 "GRANT SELECT ON `secdb1`.`t1` TO u2@localhost"
-"CREATE USER 'u1'@'' IDENTIFIED BY '123'"
-"CREATE USER 'r1'@'' IDENTIFIED BY '123'"
-"CREATE USER 'r2'@'' IDENTIFIED BY '123'"
 "GRANT 'r1'@'' TO 'u1'@''"
 "GRANT 'r2'@'' TO 'u1'@''"
 "REVOKE 'r1'@'' FROM 'u1'@''"
 "REVOKE 'r2'@'' FROM 'u1'@''"
-"CREATE USER uu@localhost, u1@localhost"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO uu@localhost"
-"CREATE USER my_user, foo@localhost, baz@localhost"
 "REVOKE ALL ON *.* FROM my_role"
 "REVOKE ALL ON *.* FROM foo@localhost"
-"CREATE USER u2 DEFAULT ROLE r1"
-"CREATE USER `TestUserFails`@`localhost` IDENTIFIED BY 'test'"
-"CREATE USER `TestUserWorks`@`localhost` IDENTIFIED BY 'test'"
 "GRANT UPDATE (row_is_verified) ON bug_test.test_table TO `r_verifier`@`localhost`"
 "GRANT UPDATE (row_is_verified) ON bug_test.test_table TO `TestUserWorks`@`localhost`"
 "GRANT `r_verifier`@`localhost` TO `TestUserFails`@`localhost`"
-"CREATE USER test_user DEFAULT ROLE test_role"
-"CREATE USER testuser"
-"CREATE USER foo, bar"
 "GRANT INSERT(id), UPDATE(id), SELECT(id) ON my_db.t1 to foo_role, bar"
 "REVOKE ALL ON my_db.t1 FROM foo_role"
 "REVOKE ALL ON my_db.t1 FROM bar"
-"CREATE USER b35471453@localhost"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO b35471453@localhost"
 "REVOKE CREATE ROLE, DROP ROLE, SET_ANY_DEFINER, ALLOW_NONEXISTENT_DEFINER ON *.* FROM b35471453@localhost"
 "EXPLAIN FORMAT=tree SELECT * FROM t1,t2 WHERE t1.a=t2.a AND t1.b=t2.b"
@@ -6088,7 +5424,6 @@ ATTR_NAME IN ('program_name', '_client_replication_channel_name', '_client_role'
 "CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_LOG_FILE='binlog-ch1.000001', SOURCE_LOG_POS=4 FOR CHANNEL 'ch1'"
 "CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_LOG_FILE='binlog-ch2.000001', SOURCE_LOG_POS=4 FOR CHANNEL 'ch2'"
 "CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_LOG_FILE=""binlog-default.000001"", SOURCE_LOG_POS=4 FOR CHANNEL ''"
-"CREATE USER mohit@localhost IDENTIFIED BY 'mohit' PASSWORD HISTORY 1"
 "EOF
 COMMIT"
 "ALTER SCHEMA s1 READ ONLY DEFAULT"
@@ -6102,8 +5437,6 @@ COMMIT"
 "EXPLAIN FORMAT=tree SELECT COUNT(*) c FROM t_innodb HAVING c > 7"
 "EXPLAIN FORMAT=tree SELECT COUNT(*) c FROM t_myisam HAVING c > 7"
 "EXPLAIN FORMAT=tree select SQL_CALC_FOUND_ROWS * from t1 limit 10 offset 100"
-"CREATE USER wl13469_no_privilege"
-"CREATE USER wl13469_with_privilege"
 "SELECT f1 FROM t1 LIMIT 1 INTO @dummy"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
@@ -7182,9 +6515,7 @@ SET @@global.slow_query_log=0"
 "EOF
 
 SET @@global.general_log=0"
-"CREATE USER mysqltest_1@'127.0.0.1/255.255.255.255'"
 "REVOKE ALL ON test.* FROM mysqltest_1@'127.0.0.1/255.255.255.255'"
-"CREATE USER b20438524@'%' IDENTIFIED BY 'pwd'"
 "SELECT SUM(table1.pk )AS field1 , COUNT(table2.col_varchar_key ) AS field2
 FROM (t1 AS table1 JOIN (t2 AS table2))
 WHERE (table2.col_varchar_key <> SOME (SELECT SUBQUERY2_t1. col_varchar_key AS SUBQUERY2_field1
@@ -7197,7 +6528,6 @@ AND SUBQUERY2_t1. pk IN (SELECT 2 EXCEPT SELECT 9))))"
 "EOF
 
 SET @@global.slow_query_log_file= @old_slow_query_log_file"
-"CREATE USER 'duplicate_user'@'%' IDENTIFIED BY 'mypassword'"
 "my $obfs = 0"
 "my $nono = 0"
 "my $protdiv= $ENV{'IS_PS'}+1"
@@ -8045,45 +7375,27 @@ let b = $x + $y;
 $$
 "
 "SELECT 1 AS $hi"
-"create user user1@localhost"
-"create user ''@'%'"
-"create user user1"
 "grant execute on procedure db1_secret.stamp to user1@'%'"
 "grant execute on function db1_secret.db to user1@'%'"
 "grant execute on procedure db1_secret.stamp to ''@'%'"
 "grant execute on function db1_secret.db to ''@'%'"
-"create user user2@localhost"
 "grant usage on procedure db2.q to user2@localhost with grant option"
 "grant execute on procedure db2.q to user1@localhost"
-"create user usera@localhost"
-"create user userb@localhost"
-"create user userc@localhost"
 "grant execute on procedure sptest.p1 to usera@localhost"
 "grant execute on procedure sptest.p1 to userc@localhost with grant option"
 "grant execute on procedure sptest.p1 to userb@localhost"
 "grant all privileges on procedure sptest.p1 to userc@localhost"
 "revoke all privileges on procedure sptest.p1 from userb@localhost"
-"create user user1_bug14834@localhost identified by ''"
-"create user user2_bug14834@localhost identified by ''"
-"create user user3_bug14834@localhost identified by ''"
-"create user user_bug14533@localhost identified by ''"
 "grant execute on procedure db_bug14533.bug14533_1 to user_bug14533@localhost"
 "grant execute on procedure db_bug14533.bug14533_2 to user_bug14533@localhost"
-"CREATE USER user19857@localhost IDENTIFIED BY 'meow'"
-"CREATE USER 'tester'"
-"CREATE USER 'Tester'"
 "CONNECT (con_tester,localhost,tester,,B48872)"
 "CONNECT (con_tester_denied,localhost,Tester,,B48872)"
 "CONNECTION con_tester"
 "CONNECTION con_tester_denied"
 "DISCONNECT con_tester"
 "DISCONNECT con_tester_denied"
-"create user bug57061_user@localhost"
-"create user bug12602983_user@localhost"
-"CREATE USER user@localhost"
 "GRANT EXECUTE ON PROCEDURE mysqltest_db.p1 TO user@localhost"
 "REVOKE EXECUTE ON PROCEDURE mysqltest_db.p1 FROM user@localhost"
-"CREATE USER usr_no_priv@localhost, usr_show_routine@localhost, usr_global_select@localhost, usr_definer@localhost, usr_role@localhost, usr_create_routine@localhost, usr_alter_routine@localhost, usr_execute@localhost"
 "CREATE PROCEDURE p2()
 BEGIN
 DECLARE i TINYINT DEFAULT 3;
@@ -8455,7 +7767,6 @@ declare count int;
 set count= (select count(*) from (select * from t1 limit p1, p2) t_1);
 return count;
 end"
-"CREATE USER myuser@'localhost'"
 "create procedure 15298_1 () sql security definer show grants for current_user"
 "create procedure 15298_2 () sql security definer show grants"
 "call 15298_1()"
@@ -8536,7 +7847,6 @@ insert into t3 select a from t3;
 select count(*)*255 from t3 into table_size;
 until table_size > max_table_size*2 end repeat;
 end"
-"CREATE USER user_bug7787@localhost"
 "create function bug23333()
 RETURNS int(11)
 DETERMINISTIC
@@ -8547,21 +7857,8 @@ insert into t1 values (null)"
 "end|
 
 reset binary logs and gtids"
-"create user mysqltest_32753@localhost"
-"CREATE USER 'user_PCTFL'@'localhost' identified by 'PWD'"
-"CREATE USER 'user_no_PCTFL'@'localhost' identified by 'PWD'"
-"CREATE USER 'user\"s_12601974'@'localhost'"
-"CREATE USER 'user\bs_12601974'@'localhost'"
-"CREATE USER 'user\ns_12601974'@'localhost'"
-"CREATE USER 'user\rs_12601974'@'localhost'"
-"CREATE USER 'user\ts_12601974'@'localhost'"
-"CREATE USER 'user\\s_12601974'@'localhost'"
-"CREATE USER 'user\%s_12601974'@'localhost'"
-"CREATE USER 'user\_s_12601974'@'localhost'"
 "LET $ID= `SELECT connection_id()`"
-"CREATE USER 'ssl_charset_code_user'@'%' REQUIRE SSL"
 "ALTER INSTANCE RELOAD TLS"
-"CREATE USER test_connection_admin@localhost"
 "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
 "EXPLAIN FORMAT=tree SELECT * FROM t1 ORDER BY a"
 "EXPLAIN FORMAT=tree SELECT * FROM t1 JOIN t1 AS t2 ON t1.a=t2.a ORDER BY t1.a"
@@ -8683,7 +7980,6 @@ FROM (t1 AS dt1, t1 AS dt2) GROUP BY field1"
 "SELECT AVG(DISTINCT id) FROM t1 GROUP BY id % 13"
 "SELECT * FROM t1 WHERE int_key IN ( SELECT AVG(DISTINCT pk) FROM t2 WHERE time_nokey = datetime_key )"
 "FLUSH TABLE schema1.t1"
-"CREATE USER noprivs@localhost"
 "REVOKE ALL ON *.* FROM noprivs@localhost"
 "CREATE TABLESPACE ts1 ENGINE_ATTRIBUTE=''"
 "CREATE TABLESPACE ts2 ENGINE_ATTRIBUTE='{""c"": ""v""}'"
@@ -8728,25 +8024,14 @@ INTO @id2"
 "CREATE TABLE diffs (i INT, CONSTRAINT i CHECK (1200 = i) ENFORCED)"
 "grant all privileges on test.t1 to mysqltest_1@localhost"
 "grant all privileges on test.t2 to mysqltest_1@localhost"
-"CREATE USER test_user"
 "CALL mtr.add_suppression(""Column count of mysql.* is wrong. ""
 ""Expected .*, found .*. ""
 ""The table is probably corrupted"")"
-"CREATE USER u1@h, u2@h, u3@h"
-"CREATE USER u1@h IDENTIFIED WITH 'caching_sha2_password'"
-"CREATE USER user2@localhost, user3@localhost"
-"CREATE user user7@localhost"
-"CREATE USER u2@l"
-"CREATE USER u1@h, u3@h"
-"CREATE USER u2@h"
 "CREATE USER user1@"
 "GRANT UPDATE (a) ON t1 TO user1@"
 "DROP USER user1@"
-"CREATE USER 'mysql.session'@localhost IDENTIFIED WITH caching_sha2_password AS '$A$005$THISISACOMBINATIONOFINVALIDSALTANDPASSWORDTHATMUSTNEVERBRBEUSED' ACCOUNT LOCK"
 "GRANT SELECT ON mysql.user TO 'mysql.session'@localhost"
 "GRANT ALL ON test.t1 TO 'u1' "
-"CREATE USER mysqltest_dfn@localhost"
-"CREATE USER mysqltest_inv@localhost"
 "TYPE=TRIGGERNAME
 trigger_table=t1
 EOF
@@ -8823,8 +8108,6 @@ FOR EACH ROW BEGIN
 SELECT 1 FROM t1 c WHERE
 (@bug51650 IS NULL OR @bug51650 != c.b) AND c.b = NEW.a LIMIT 1 INTO @foo;
 END"
-"CREATE USER 'u1'@'localhost' IDENTIFIED BY 'pass'"
-"CREATE USER user_name_robert_golebiowski@oh_my_gosh_this_is_a_long_hostname_look_at_it_it_has_60_char"
 "GRANT INSERT, DROP ON mysqltest_db1.t1 TO mysqltest_dfn@localhost"
 "GRANT INSERT, DROP ON mysqltest_db1.t2 TO mysqltest_dfn@localhost"
 "GRANT TRIGGER ON mysqltest_db1.t1 TO mysqltest_dfn@localhost"
@@ -8852,7 +8135,6 @@ TO 'mysqltest_inv'@localhost"
 "REVOKE SELECT(col) ON mysqltest_db1.t4 FROM mysqltest_u1@localhost"
 "GRANT SELECT(col) ON mysqltest_db1.t3 TO mysqltest_u1@localhost"
 "GRANT SELECT(col) ON mysqltest_db1.t4 TO mysqltest_u1@localhost"
-"CREATE USER 'no_rights'@'localhost'"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
 "GRANT INSERT ON test1.t1 TO user_name_len_22_01234@localhost"
 "CREATE TRIGGER _AI_1 AFTER INSERT ON t1 FOR EACH ROW SET
@@ -9334,7 +8616,6 @@ UNION ALL SELECT b FROM t1"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6"
 "ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2"
 "ALTER USER foo@localhost PASSWORD_LOCK_TIME 3"
-"CREATE USER bar@localhost IDENTIFIED BY 'bar'"
 "CREATE USER foo@localhost FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
 "CREATE USER failed_login_attempts@localhost FAILED_LOGIN_ATTEMPTS 2"
 "CREATE USER password_lock_time@localhost PASSWORD_LOCK_TIME 3"
@@ -9345,7 +8626,6 @@ UNION ALL SELECT b FROM t1"
 "CREATE USER proxied_to_user@localhost IDENTIFIED WITH 'caching_sha2_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
 "CREATE USER proxy_user@localhost IDENTIFIED WITH 'caching_sha2_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 2"
-"CREATE USER u1 identified by 'pwd'"
 "ALTER USER u1 FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
 "ALTER USER u1 FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0"
 "CREATE USER foo@localhost FAILED_LOGIN_ATTEMPTS 32767"
@@ -9371,7 +8651,6 @@ UNION ALL SELECT b FROM t1"
 "ALTER USER foo4 ACCOUNT UNLOCK ATTRIBUTE '{""stuff"":""unlocked""}'"
 "ALTER USER foo@localhost ATTRIBUTE '{""key"":""value""}'"
 "ALTER USER foo@localhost COMMENT 'Added key/value pair'"
-"CREATE USER redqueen@localhost IDENTIFIED BY 'shoo'"
 "ALTER USER redqueen@localhost IDENTIFIED BY 'madness' RETAIN CURRENT PASSWORD"
 "ALTER USER redqueen@localhost DISCARD OLD PASSWORD COMMENT 'Dropped old password'"
 "CREATE USER u1 COMMENT 'Hello ""Smith""'"
@@ -9380,16 +8659,6 @@ UNION ALL SELECT b FROM t1"
 "ALTER USER CURRENT_USER() COMMENT 'test'"
 "ALTER USER CURRENT_USER() ATTRIBUTE '{ ""comment"" : null }'"
 "ALTER USER u1@localhost ATTRIBUTE '{""Restrictions"": [{""Database"":""mysql"",""Privileges"": [ ""CREATE"" ]}]}'"
-"CREATE USER wl8540@host1"
-"CREATE USER wl8540@nohost1"
-"CREATE USER user1@localhost
-IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string#%y'"
-"CREATE USER user1@localhost
-IDENTIFIED WITH 'caching_sha2_password'"
-"create user mysqltest_1@localhost with max_queries_per_hour 2"
-"create user mysqltest_1@localhost with max_updates_per_hour 2"
-"create user mysqltest_1@localhost with max_connections_per_hour 2"
-"create user mysqltest_1@localhost with max_user_connections 2"
 "CREATE TRIGGER trig_t1_ins BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 SET @aux = GET_LOCK(2,1)"
@@ -9400,27 +8669,6 @@ SET MESSAGE_TEXT = 'LOCK 2 not got. Abort.', MYSQL_ERRNO = 9999"
 END
 "|
 SELECT GET_LOCK(CAST(2 AS CHAR),0)"
-"CREATE USER no_pwd_history@localhost
-PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY"
-"CREATE USER default_def@localhost IDENTIFIED BY 'haha'"
-"CREATE USER method_alter@localhost IDENTIFIED BY 'haha'"
-"CREATE USER to_be_renamed@localhost IDENTIFIED BY 'haha' PASSWORD HISTORY 1"
-"CREATE USER no_pwd_history@localhost IDENTIFIED BY 'haha'"
-"CREATE USER dup_history@localhost IDENTIFIED BY 'haha'
-PASSWORD HISTORY 1 PASSWORD HISTORY DEFAULT"
-"CREATE USER dup_interval@localhost IDENTIFIED BY 'haha'
-PASSWORD REUSE INTERVAL 10 DAY PASSWORD REUSE INTERVAL DEFAULT"
-"CREATE USER empty_pwd@localhost IDENTIFIED BY ''
-PASSWORD HISTORY 1"
-"CREATE USER def_interval@localhost IDENTIFIED BY 'haha'"
-"CREATE USER mohit@localhost IDENTIFIED BY 'mohit'
-PASSWORD HISTORY 1 PASSWORD REUSE INTERVAL 2 DAY"
-"CREATE USER mohit_sha@localhost IDENTIFIED WITH sha256_password BY 'mohit_sha'
-PASSWORD HISTORY 1"
-"CREATE USER amar@localhost IDENTIFIED BY 'amar'
-PASSWORD REUSE INTERVAL 1 DAY"
-"CREATE USER mohit_sha@localhost IDENTIFIED WITH caching_sha2_password BY 'mohit_sha'
-PASSWORD HISTORY 1"
 "select sql_small_result
 distinct @var:=id2, @var1:=cast((avg(id) over(partition by id2)) as signed)
 from tb1 order by 1 limit 1"
@@ -9429,10 +8677,6 @@ from tb1 order by 1 limit 1"
 @rank := IF(@prev_score!=a, @rownum, @rank) as `rank`,
 @prev_score := a as score
 from t1 order by score desc"
-"CREATE USER 'base_user'@'localhost' IDENTIFIED BY 'pass'"
-"CREATE USER 'user1'@'localhost' IDENTIFIED BY 'pass'"
-"CREATE USER 'user'@'localhost' IDENTIFIED BY 'aedfoiASE$%'"
-"CREATE USER 'user2'@'localhost' IDENTIFIED BY 'PA00wrd!#'"
 "password
 validate
 EOF
@@ -9443,7 +8687,6 @@ monkey
 EOF
 
 CREATE USER 'user1'@'localhost' IDENTIFIED BY 'passWORD123#'"
-"CREATE USER 'user2'@'localhost' IDENTIFIED BY 'passWORD123#'"
 "my $dict_file= ""$ENV{MYSQLTEST_VARDIR}/tmp/dict.txt"""
 "my $outer = 100000"
 "open(DICT_FILE, "">"", $dict_file) or die ""Can't open $dict_file for write: $!"""
@@ -9463,26 +8706,19 @@ validate
 EOF
 
 eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dictionary.txt"""
-"CREATE USER 'passtest'@'localhost' IDENTIFIED BY 'My!Complex@Passw0rd'"
-"create user user@localhost identified by 'ABCabc1!'"
-"CREATE USER ""base_user""@localhost IDENTIFIED BY 'base_user'"
 "REVOKE ALL PRIVILEGES ON test.* FROM ""base_user""@localhost"
-"CREATE USER """"@localhost"
 "REVOKE ALL PRIVILEGES ON test.* FROM """"@localhost"
 "CREATE USER 'usr1'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
 "CREATE USER 'usr2'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
 "CREATE USER 'usr3'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
 "ALTER USER 'usr1'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
 "SET PASSWORD FOR 'usr1'@'localhost' TO RANDOM"
-"CREATE USER 'base_user'@'localhost' IDENTIFIED BY 'pass',
-'user1'@'localhost' IDENTIFIED BY 'pass'"
 "create table table_28127_a(0b02 int)"
 "create table table_28127_b(0b2 int)"
 "set @select=2,@t5=1.23456"
 "set @test_int=10,@test_double=1e-10,@test_string=""abcdeghi"",@test_string2=""abcdefghij"",@select=NULL"
 "select @test_int,@test_double,@test_string,@test_string2,@select"
 "CONNECT (con1,localhost,root,,test)"
-"CREATE USER vbhagi@localhost"
 "CONNECT (vtcon1, localhost, u1, foo,)"
 "CONNECT (vtcon2, localhost, root,,)"
 "CONNECT (vtcon3, localhost, root,,)"
@@ -9526,8 +8762,6 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "revoke select on mysqltest.t1 from mysqltest_1@localhost"
 "create function f2 () returns int begin declare v int; select s1 from t2
 into v; return v; end"
-"create user 'test14256'@'%'"
-"CREATE USER readonly@localhost"
 "GRANT SELECT, INSERT, UPDATE, DELETE ON mysqltest1.v_t1 TO readonly@localhost"
 "GRANT SELECT ON mysqltest1.v_ts TO readonly@localhost"
 "GRANT INSERT ON mysqltest1.v_ti TO readonly@localhost"
@@ -9535,22 +8769,16 @@ into v; return v; end"
 "GRANT UPDATE,SELECT ON mysqltest1.v_tus TO readonly@localhost"
 "GRANT DELETE ON mysqltest1.v_td TO readonly@localhost"
 "GRANT DELETE,SELECT ON mysqltest1.v_tds TO readonly@localhost"
-"CREATE USER def_17254@localhost"
-"CREATE USER inv_17254@localhost"
 "GRANT SELECT ON db17254.t1 TO inv_17254@localhost"
-"CREATE USER mysqltest_u2@localhost"
 "REVOKE ALL ON mysqltest_db1.* FROM mysqltest_u1@localhost"
 "REVOKE ALL ON mysqltest_db2.* FROM mysqltest_u2@localhost"
-"CREATE USER u26813@localhost"
 "GRANT DROP ON db26813.v1 TO u26813@localhost"
 "GRANT CREATE VIEW ON db26813.v2 TO u26813@localhost"
 "GRANT DROP, CREATE VIEW ON db26813.v3 TO u26813@localhost"
 "GRANT SELECT ON db26813.t1 TO u26813@localhost"
-"CREATE USER u29908_1@localhost"
 "GRANT SELECT, DROP, CREATE VIEW, SHOW VIEW ON mysqltest_29908.v1 TO u29908_1@localhost"
 "GRANT SELECT, DROP, CREATE VIEW, SHOW VIEW ON mysqltest_29908.v2 TO u29908_1@localhost"
 "GRANT SELECT ON mysqltest_29908.t1 TO u29908_1@localhost"
-"CREATE USER u29908_2@localhost"
 "GRANT SELECT, DROP, CREATE VIEW ON mysqltest_29908.v1 TO u29908_2@localhost"
 "GRANT SELECT, DROP, CREATE VIEW, SHOW VIEW ON mysqltest_29908.v2 TO u29908_2@localhost"
 "GRANT SELECT ON mysqltest_29908.t1 TO u29908_2@localhost"
@@ -9558,26 +8786,8 @@ into v; return v; end"
 "GRANT INSERT ON mysqltest1.t2 TO mysqltest_u1@localhost"
 "GRANT SELECT, UPDATE ON mysqltest1.t3 TO mysqltest_u1@localhost"
 "GRANT SELECT, DELETE ON mysqltest1.t4 TO mysqltest_u1@localhost"
-"CREATE USER foo"
 "REVOKE SELECT (f1) ON db1.t1 FROM foo"
 "REVOKE SELECT (f1) ON db1.v1 FROM foo"
-"create user alice@localhost"
-"create user bob@localhost"
-"create user cecil@localhost"
-"create user dan@localhost"
-"create user eugene@localhost"
-"create user fiona@localhost"
-"create user greg@localhost"
-"create user han@localhost"
-"create user inga@localhost"
-"create user jamie@localhost"
-"create user karl@localhost"
-"create user lena@localhost"
-"create user mhairi@localhost"
-"create user noam@localhost"
-"create user olga@localhost"
-"create user pjotr@localhost"
-"create user quintessa@localhost"
 "grant select            on mysqltest1.v1 to bob@localhost"
 "grant show view         on mysqltest1.v1 to cecil@localhost"
 "grant select, show view on mysqltest1.v1 to dan@localhost"
@@ -9617,10 +8827,6 @@ into v; return v; end"
 "grant select            on mysqltest1.t2 to pjotr@localhost"
 "grant select, show view on mysqltest1.v2 to pjotr@localhost"
 "grant select, show view on mysqltest1.v1 to quintessa@localhost"
-"CREATE USER mysqluser1@localhost"
-"CREATE USER 'mysqluser1'@'%'"
-"CREATE USER 'mysqluser2'@'%'"
-"create user user_11766767"
 "GRANT SELECT(cs,cus) ON test1.t1 TO user1@localhost"
 "GRANT INSERT(ci) ON test1.t1 TO user1@localhost"
 "GRANT UPDATE(cu,cus) ON test1.t1 TO user1@localhost"
@@ -9641,8 +8847,6 @@ into v; return v; end"
 "REVOKE SELECT(cs) ON test1.t1 FROM user1@localhost"
 "GRANT SELECT(cs) ON test1.v1_middle TO user1@localhost"
 "GRANT SELECT ON test1.v1 TO user_name_len_22_01234@localhost"
-"CREATE USER `u1`@`localhost`"
-"CREATE USER `u2`@`localhost`"
 "SELECT i, j, SUM(i+j) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t"
 "SELECT i, j, SUM(i+j) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) foo FROM t"
 "SELECT i, j, SUM(i+j) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo"
@@ -11189,7 +10393,5 @@ order by find_in_set(ln.n,eq.pivot_lines), ln.n;
 end
 
 "
-"CREATE USER wl14965_u2"
 "SEND UPDATE t1 SET a=5 WHERE a=2"
-"CREATE USER xau"
 "SELECT AVG(DISTINCT EXTRACTVALUE((''),('$@k')))"

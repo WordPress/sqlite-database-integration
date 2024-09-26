@@ -261,7 +261,7 @@ accountManagementStatement ::= alterUser | createUser | dropUser | grant | renam
 alterUser ::= ALTER_SYMBOL USER_SYMBOL ifExists? alterUserTail
 alterUserTail ::= ((createUserList | alterUserList) createUserTail) | (user IDENTIFIED_SYMBOL BY_SYMBOL textString replacePassword? retainCurrentPassword?) | (user discardOldPassword) | (user DEFAULT_SYMBOL ROLE_SYMBOL (ALL_SYMBOL | NONE_SYMBOL | roleList)) | (user IDENTIFIED_SYMBOL (WITH_SYMBOL textOrIdentifier)? BY_SYMBOL RANDOM_SYMBOL PASSWORD_SYMBOL retainCurrentPassword?) | (FAILED_LOGIN_ATTEMPTS_SYMBOL real_ulong_number) | (PASSWORD_LOCK_TIME_SYMBOL (real_ulong_number | UNBOUNDED_SYMBOL))
 userFunction ::= USER_SYMBOL parentheses
-createUser ::= CREATE_SYMBOL USER_SYMBOL (ifNotExists) createUserList defaultRoleClause createUserTail
+/* createUser ::= CREATE_SYMBOL USER_SYMBOL (ifNotExists) createUserList defaultRoleClause createUserTail */
 createUserTail ::= (requireClause? connectOptions? accountLockPasswordExpireOptions*)
 defaultRoleClause ::= (DEFAULT_SYMBOL ROLE_SYMBOL roleList)?
 requireClause ::= REQUIRE_SYMBOL (requireList | (SSL_SYMBOL | X509_SYMBOL | NONE_SYMBOL))
@@ -622,6 +622,13 @@ roleOrLabelKeyword ::= (ACTION_SYMBOL | ACTIVE_SYMBOL | ADDDATE_SYMBOL | AFTER_S
  * This is necessary to support "t.id" in a query like "ALTER TABLE t ORDER BY t.id".
  */
 alterOrderList ::= qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentifier direction?)*
+
+/*
+ * Fix CREATE USER statement.
+ * The original grammar contains "({serverVersion >= 50706}? ifNotExists | / * empty * /)",
+ * but the optionality of "| / * empty * /" part was lost during the conversion.
+ */
+createUser ::= CREATE_SYMBOL USER_SYMBOL ifNotExists? createUserList defaultRoleClause createUserTail
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*

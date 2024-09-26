@@ -8493,29 +8493,7 @@
     ]
   },
   {
-    "name": "%createUser452",
-    "bnf": [
-      [
-        "ifNotExists"
-      ]
-    ],
-    "fragment": true
-  },
-  {
-    "name": "createUser",
-    "bnf": [
-      [
-        "CREATE_SYMBOL",
-        "USER_SYMBOL",
-        "%createUser452",
-        "createUserList",
-        "defaultRoleClause",
-        "createUserTail"
-      ]
-    ]
-  },
-  {
-    "name": "%createUserTail453",
+    "name": "%createUserTail452",
     "bnf": [
       [
         "requireClause?",
@@ -8529,12 +8507,12 @@
     "name": "createUserTail",
     "bnf": [
       [
-        "%createUserTail453"
+        "%createUserTail452"
       ]
     ]
   },
   {
-    "name": "%defaultRoleClause454",
+    "name": "%defaultRoleClause453",
     "bnf": [
       [
         "DEFAULT_SYMBOL",
@@ -8548,12 +8526,12 @@
     "name": "defaultRoleClause",
     "bnf": [
       [
-        "%defaultRoleClause454?"
+        "%defaultRoleClause453?"
       ]
     ]
   },
   {
-    "name": "%%requireClause455456",
+    "name": "%%requireClause454455",
     "bnf": [
       [
         "SSL_SYMBOL"
@@ -8568,13 +8546,13 @@
     "fragment": true
   },
   {
-    "name": "%requireClause455",
+    "name": "%requireClause454",
     "bnf": [
       [
         "requireList"
       ],
       [
-        "%%requireClause455456"
+        "%%requireClause454455"
       ]
     ],
     "fragment": true
@@ -8584,12 +8562,12 @@
     "bnf": [
       [
         "REQUIRE_SYMBOL",
-        "%requireClause455"
+        "%requireClause454"
       ]
     ]
   },
   {
-    "name": "%%connectOptions457458",
+    "name": "%%connectOptions456457",
     "bnf": [
       [
         "MAX_QUERIES_PER_HOUR_SYMBOL",
@@ -8599,7 +8577,7 @@
     "fragment": true
   },
   {
-    "name": "%%connectOptions457459",
+    "name": "%%connectOptions456458",
     "bnf": [
       [
         "MAX_UPDATES_PER_HOUR_SYMBOL",
@@ -8609,7 +8587,7 @@
     "fragment": true
   },
   {
-    "name": "%%connectOptions457460",
+    "name": "%%connectOptions456459",
     "bnf": [
       [
         "MAX_CONNECTIONS_PER_HOUR_SYMBOL",
@@ -8619,7 +8597,7 @@
     "fragment": true
   },
   {
-    "name": "%%connectOptions457461",
+    "name": "%%connectOptions456460",
     "bnf": [
       [
         "MAX_USER_CONNECTIONS_SYMBOL",
@@ -8629,19 +8607,19 @@
     "fragment": true
   },
   {
-    "name": "%connectOptions457",
+    "name": "%connectOptions456",
     "bnf": [
       [
-        "%%connectOptions457458"
+        "%%connectOptions456457"
       ],
       [
-        "%%connectOptions457459"
+        "%%connectOptions456458"
       ],
       [
-        "%%connectOptions457460"
+        "%%connectOptions456459"
       ],
       [
-        "%%connectOptions457461"
+        "%%connectOptions456460"
       ]
     ],
     "fragment": true
@@ -8651,12 +8629,12 @@
     "bnf": [
       [
         "WITH_SYMBOL",
-        "%connectOptions457+"
+        "%connectOptions456+"
       ]
     ]
   },
   {
-    "name": "%%accountLockPasswordExpireOptions462463",
+    "name": "%%accountLockPasswordExpireOptions461462",
     "bnf": [
       [
         "LOCK_SYMBOL"
@@ -8668,17 +8646,17 @@
     "fragment": true
   },
   {
-    "name": "%accountLockPasswordExpireOptions462",
+    "name": "%accountLockPasswordExpireOptions461",
     "bnf": [
       [
         "ACCOUNT_SYMBOL",
-        "%%accountLockPasswordExpireOptions462463"
+        "%%accountLockPasswordExpireOptions461462"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%%accountLockPasswordExpireOptions464465466467468",
+    "name": "%%%%%accountLockPasswordExpireOptions463464465466467",
     "bnf": [
       [
         "INTERVAL_SYMBOL",
@@ -8689,10 +8667,10 @@
     "fragment": true
   },
   {
-    "name": "%%%%accountLockPasswordExpireOptions464465466467",
+    "name": "%%%%accountLockPasswordExpireOptions463464465466",
     "bnf": [
       [
-        "%%%%%accountLockPasswordExpireOptions464465466467468"
+        "%%%%%accountLockPasswordExpireOptions463464465466467"
       ],
       [
         "NEVER_SYMBOL"
@@ -8704,17 +8682,17 @@
     "fragment": true
   },
   {
-    "name": "%%%accountLockPasswordExpireOptions464465466",
+    "name": "%%%accountLockPasswordExpireOptions463464465",
     "bnf": [
       [
         "EXPIRE_SYMBOL",
-        "%%%%accountLockPasswordExpireOptions464465466467?"
+        "%%%%accountLockPasswordExpireOptions463464465466?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%accountLockPasswordExpireOptions464465469470",
+    "name": "%%%%accountLockPasswordExpireOptions463464468469",
     "bnf": [
       [
         "real_ulong_number"
@@ -8726,17 +8704,17 @@
     "fragment": true
   },
   {
-    "name": "%%%accountLockPasswordExpireOptions464465469",
+    "name": "%%%accountLockPasswordExpireOptions463464468",
     "bnf": [
       [
         "HISTORY_SYMBOL",
-        "%%%%accountLockPasswordExpireOptions464465469470"
+        "%%%%accountLockPasswordExpireOptions463464468469"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%%accountLockPasswordExpireOptions464465471472473",
+    "name": "%%%%%accountLockPasswordExpireOptions463464470471472",
     "bnf": [
       [
         "real_ulong_number",
@@ -8746,10 +8724,10 @@
     "fragment": true
   },
   {
-    "name": "%%%%accountLockPasswordExpireOptions464465471472",
+    "name": "%%%%accountLockPasswordExpireOptions463464470471",
     "bnf": [
       [
-        "%%%%%accountLockPasswordExpireOptions464465471472473"
+        "%%%%%accountLockPasswordExpireOptions463464470471472"
       ],
       [
         "DEFAULT_SYMBOL"
@@ -8758,18 +8736,18 @@
     "fragment": true
   },
   {
-    "name": "%%%accountLockPasswordExpireOptions464465471",
+    "name": "%%%accountLockPasswordExpireOptions463464470",
     "bnf": [
       [
         "REUSE_SYMBOL",
         "INTERVAL_SYMBOL",
-        "%%%%accountLockPasswordExpireOptions464465471472"
+        "%%%%accountLockPasswordExpireOptions463464470471"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%accountLockPasswordExpireOptions464465474475",
+    "name": "%%%%accountLockPasswordExpireOptions463464473474",
     "bnf": [
       [
         "DEFAULT_SYMBOL"
@@ -8781,40 +8759,40 @@
     "fragment": true
   },
   {
-    "name": "%%%accountLockPasswordExpireOptions464465474",
+    "name": "%%%accountLockPasswordExpireOptions463464473",
     "bnf": [
       [
         "REQUIRE_SYMBOL",
         "CURRENT_SYMBOL",
-        "%%%%accountLockPasswordExpireOptions464465474475?"
+        "%%%%accountLockPasswordExpireOptions463464473474?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%accountLockPasswordExpireOptions464465",
+    "name": "%%accountLockPasswordExpireOptions463464",
     "bnf": [
       [
-        "%%%accountLockPasswordExpireOptions464465466"
+        "%%%accountLockPasswordExpireOptions463464465"
       ],
       [
-        "%%%accountLockPasswordExpireOptions464465469"
+        "%%%accountLockPasswordExpireOptions463464468"
       ],
       [
-        "%%%accountLockPasswordExpireOptions464465471"
+        "%%%accountLockPasswordExpireOptions463464470"
       ],
       [
-        "%%%accountLockPasswordExpireOptions464465474"
+        "%%%accountLockPasswordExpireOptions463464473"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%accountLockPasswordExpireOptions464",
+    "name": "%accountLockPasswordExpireOptions463",
     "bnf": [
       [
         "PASSWORD_SYMBOL",
-        "%%accountLockPasswordExpireOptions464465"
+        "%%accountLockPasswordExpireOptions463464"
       ]
     ],
     "fragment": true
@@ -8823,10 +8801,10 @@
     "name": "accountLockPasswordExpireOptions",
     "bnf": [
       [
-        "%accountLockPasswordExpireOptions462"
+        "%accountLockPasswordExpireOptions461"
       ],
       [
-        "%accountLockPasswordExpireOptions464"
+        "%accountLockPasswordExpireOptions463"
       ]
     ]
   },
@@ -8842,7 +8820,7 @@
     ]
   },
   {
-    "name": "%%%grant476477478",
+    "name": "%%%grant475476477",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -8853,19 +8831,19 @@
     "fragment": true
   },
   {
-    "name": "%%grant476477",
+    "name": "%%grant475476",
     "bnf": [
       [
         "roleOrPrivilegesList",
         "TO_SYMBOL",
         "userList",
-        "%%%grant476477478?"
+        "%%%grant475476477?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%grant476479480481",
+    "name": "%%%%grant475478479480",
     "bnf": [
       [
         "ALL_SYMBOL",
@@ -8875,22 +8853,22 @@
     "fragment": true
   },
   {
-    "name": "%%%grant476479480",
+    "name": "%%%grant475478479",
     "bnf": [
       [
         "roleOrPrivilegesList"
       ],
       [
-        "%%%%grant476479480481"
+        "%%%%grant475478479480"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%grant476479",
+    "name": "%%grant475478",
     "bnf": [
       [
-        "%%%grant476479480",
+        "%%%grant475478479",
         "ON_SYMBOL",
         "aclType?",
         "grantIdentifier",
@@ -8904,7 +8882,7 @@
     "fragment": true
   },
   {
-    "name": "%%%grant476482483",
+    "name": "%%%grant475481482",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -8915,7 +8893,7 @@
     "fragment": true
   },
   {
-    "name": "%%grant476482",
+    "name": "%%grant475481",
     "bnf": [
       [
         "PROXY_SYMBOL",
@@ -8923,22 +8901,22 @@
         "user",
         "TO_SYMBOL",
         "grantTargetList",
-        "%%%grant476482483?"
+        "%%%grant475481482?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%grant476",
+    "name": "%grant475",
     "bnf": [
       [
-        "%%grant476477"
+        "%%grant475476"
       ],
       [
-        "%%grant476479"
+        "%%grant475478"
       ],
       [
-        "%%grant476482"
+        "%%grant475481"
       ]
     ],
     "fragment": true
@@ -8948,7 +8926,7 @@
     "bnf": [
       [
         "GRANT_SYMBOL",
-        "%grant476"
+        "%grant475"
       ]
     ]
   },
@@ -8964,7 +8942,7 @@
     ]
   },
   {
-    "name": "%grantOptions484",
+    "name": "%grantOptions483",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -8974,7 +8952,7 @@
     "fragment": true
   },
   {
-    "name": "%grantOptions485",
+    "name": "%grantOptions484",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -8988,10 +8966,10 @@
     "name": "grantOptions",
     "bnf": [
       [
-        "%grantOptions484"
+        "%grantOptions483"
       ],
       [
-        "%grantOptions485"
+        "%grantOptions484"
       ]
     ]
   },
@@ -9005,7 +8983,7 @@
     ]
   },
   {
-    "name": "%%withRoles486487",
+    "name": "%%withRoles485486",
     "bnf": [
       [
         "ALL_SYMBOL",
@@ -9015,13 +8993,13 @@
     "fragment": true
   },
   {
-    "name": "%withRoles486",
+    "name": "%withRoles485",
     "bnf": [
       [
         "roleList"
       ],
       [
-        "%%withRoles486487"
+        "%%withRoles485486"
       ],
       [
         "NONE_SYMBOL"
@@ -9038,7 +9016,7 @@
       [
         "WITH_SYMBOL",
         "ROLE_SYMBOL",
-        "%withRoles486"
+        "%withRoles485"
       ]
     ]
   },
@@ -9061,7 +9039,7 @@
     ]
   },
   {
-    "name": "%renameUser488",
+    "name": "%renameUser487",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -9081,12 +9059,12 @@
         "user",
         "TO_SYMBOL",
         "user",
-        "%renameUser488*"
+        "%renameUser487*"
       ]
     ]
   },
   {
-    "name": "%%revoke489490",
+    "name": "%%revoke488489",
     "bnf": [
       [
         "roleOrPrivilegesList",
@@ -9097,7 +9075,7 @@
     "fragment": true
   },
   {
-    "name": "%%revoke489491",
+    "name": "%%revoke488490",
     "bnf": [
       [
         "roleOrPrivilegesList",
@@ -9109,7 +9087,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%revoke489492493494",
+    "name": "%%%%revoke488491492493",
     "bnf": [
       [
         "ON_SYMBOL",
@@ -9120,7 +9098,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%revoke489492493495",
+    "name": "%%%%revoke488491492494",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -9133,30 +9111,30 @@
     "fragment": true
   },
   {
-    "name": "%%%revoke489492493",
+    "name": "%%%revoke488491492",
     "bnf": [
       [
-        "%%%%revoke489492493494"
+        "%%%%revoke488491492493"
       ],
       [
-        "%%%%revoke489492493495"
+        "%%%%revoke488491492494"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%revoke489492",
+    "name": "%%revoke488491",
     "bnf": [
       [
         "ALL_SYMBOL",
         "PRIVILEGES_SYMBOL?",
-        "%%%revoke489492493"
+        "%%%revoke488491492"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%revoke489496",
+    "name": "%%revoke488495",
     "bnf": [
       [
         "PROXY_SYMBOL",
@@ -9169,19 +9147,19 @@
     "fragment": true
   },
   {
-    "name": "%revoke489",
+    "name": "%revoke488",
     "bnf": [
       [
-        "%%revoke489490"
+        "%%revoke488489"
       ],
       [
-        "%%revoke489491"
+        "%%revoke488490"
       ],
       [
-        "%%revoke489492"
+        "%%revoke488491"
       ],
       [
-        "%%revoke489496"
+        "%%revoke488495"
       ]
     ],
     "fragment": true
@@ -9191,9 +9169,20 @@
     "bnf": [
       [
         "REVOKE_SYMBOL",
-        "%revoke489"
+        "%revoke488"
       ]
     ]
+  },
+  {
+    "name": "%onTypeTo496",
+    "bnf": [
+      [
+        "ON_SYMBOL",
+        "aclType?",
+        "grantIdentifier"
+      ]
+    ],
+    "fragment": true
   },
   {
     "name": "%onTypeTo497",
@@ -9207,24 +9196,13 @@
     "fragment": true
   },
   {
-    "name": "%onTypeTo498",
-    "bnf": [
-      [
-        "ON_SYMBOL",
-        "aclType?",
-        "grantIdentifier"
-      ]
-    ],
-    "fragment": true
-  },
-  {
     "name": "onTypeTo",
     "bnf": [
       [
-        "%onTypeTo497"
+        "%onTypeTo496"
       ],
       [
-        "%onTypeTo498?"
+        "%onTypeTo497?"
       ]
     ]
   },
@@ -9243,7 +9221,7 @@
     ]
   },
   {
-    "name": "%roleOrPrivilegesList499",
+    "name": "%roleOrPrivilegesList498",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -9257,12 +9235,12 @@
     "bnf": [
       [
         "roleOrPrivilege",
-        "%roleOrPrivilegesList499*"
+        "%roleOrPrivilegesList498*"
       ]
     ]
   },
   {
-    "name": "%%roleOrPrivilege500501",
+    "name": "%%roleOrPrivilege499500",
     "bnf": [
       [
         "roleIdentifierOrText",
@@ -9272,7 +9250,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%roleOrPrivilege500502503504",
+    "name": "%%%%roleOrPrivilege499501502503",
     "bnf": [
       [
         "AT_SIGN_SYMBOL",
@@ -9282,41 +9260,41 @@
     "fragment": true
   },
   {
-    "name": "%%%roleOrPrivilege500502503",
+    "name": "%%%roleOrPrivilege499501502",
     "bnf": [
       [
         "AT_TEXT_SUFFIX"
       ],
       [
-        "%%%%roleOrPrivilege500502503504"
+        "%%%%roleOrPrivilege499501502503"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%roleOrPrivilege500502",
+    "name": "%%roleOrPrivilege499501",
     "bnf": [
       [
         "roleIdentifierOrText",
-        "%%%roleOrPrivilege500502503"
+        "%%%roleOrPrivilege499501502"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege500",
+    "name": "%roleOrPrivilege499",
     "bnf": [
       [
-        "%%roleOrPrivilege500501"
+        "%%roleOrPrivilege499500"
       ],
       [
-        "%%roleOrPrivilege500502"
+        "%%roleOrPrivilege499501"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%roleOrPrivilege505506",
+    "name": "%%roleOrPrivilege504505",
     "bnf": [
       [
         "SELECT_SYMBOL"
@@ -9334,17 +9312,17 @@
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege505",
+    "name": "%roleOrPrivilege504",
     "bnf": [
       [
-        "%%roleOrPrivilege505506",
+        "%%roleOrPrivilege504505",
         "columnInternalRefList?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege507",
+    "name": "%roleOrPrivilege506",
     "bnf": [
       [
         "DELETE_SYMBOL"
@@ -9389,7 +9367,7 @@
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege508",
+    "name": "%roleOrPrivilege507",
     "bnf": [
       [
         "GRANT_SYMBOL",
@@ -9399,7 +9377,7 @@
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege509",
+    "name": "%roleOrPrivilege508",
     "bnf": [
       [
         "SHOW_SYMBOL",
@@ -9409,7 +9387,7 @@
     "fragment": true
   },
   {
-    "name": "%%%roleOrPrivilege510511512",
+    "name": "%%%roleOrPrivilege509510511",
     "bnf": [
       [
         "TEMPORARY_SYMBOL",
@@ -9419,7 +9397,7 @@
     "fragment": true
   },
   {
-    "name": "%%%roleOrPrivilege510511513",
+    "name": "%%%roleOrPrivilege509510512",
     "bnf": [
       [
         "ROUTINE_SYMBOL"
@@ -9437,29 +9415,29 @@
     "fragment": true
   },
   {
-    "name": "%%roleOrPrivilege510511",
+    "name": "%%roleOrPrivilege509510",
     "bnf": [
       [
-        "%%%roleOrPrivilege510511512"
+        "%%%roleOrPrivilege509510511"
       ],
       [
-        "%%%roleOrPrivilege510511513"
+        "%%%roleOrPrivilege509510512"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege510",
+    "name": "%roleOrPrivilege509",
     "bnf": [
       [
         "CREATE_SYMBOL",
-        "%%roleOrPrivilege510511?"
+        "%%roleOrPrivilege509510?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege514",
+    "name": "%roleOrPrivilege513",
     "bnf": [
       [
         "LOCK_SYMBOL",
@@ -9469,7 +9447,7 @@
     "fragment": true
   },
   {
-    "name": "%%roleOrPrivilege515516",
+    "name": "%%roleOrPrivilege514515",
     "bnf": [
       [
         "CLIENT_SYMBOL"
@@ -9481,17 +9459,17 @@
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege515",
+    "name": "%roleOrPrivilege514",
     "bnf": [
       [
         "REPLICATION_SYMBOL",
-        "%%roleOrPrivilege515516"
+        "%%roleOrPrivilege514515"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege517",
+    "name": "%roleOrPrivilege516",
     "bnf": [
       [
         "SHOW_SYMBOL",
@@ -9501,7 +9479,7 @@
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege518",
+    "name": "%roleOrPrivilege517",
     "bnf": [
       [
         "ALTER_SYMBOL",
@@ -9511,7 +9489,7 @@
     "fragment": true
   },
   {
-    "name": "%%roleOrPrivilege519520",
+    "name": "%%roleOrPrivilege518519",
     "bnf": [
       [
         "CREATE_SYMBOL"
@@ -9523,10 +9501,10 @@
     "fragment": true
   },
   {
-    "name": "%roleOrPrivilege519",
+    "name": "%roleOrPrivilege518",
     "bnf": [
       [
-        "%%roleOrPrivilege519520",
+        "%%roleOrPrivilege518519",
         "ROLE_SYMBOL"
       ]
     ],
@@ -9536,10 +9514,13 @@
     "name": "roleOrPrivilege",
     "bnf": [
       [
-        "%roleOrPrivilege500"
+        "%roleOrPrivilege499"
       ],
       [
-        "%roleOrPrivilege505"
+        "%roleOrPrivilege504"
+      ],
+      [
+        "%roleOrPrivilege506"
       ],
       [
         "%roleOrPrivilege507"
@@ -9551,27 +9532,24 @@
         "%roleOrPrivilege509"
       ],
       [
-        "%roleOrPrivilege510"
+        "%roleOrPrivilege513"
       ],
       [
         "%roleOrPrivilege514"
       ],
       [
-        "%roleOrPrivilege515"
+        "%roleOrPrivilege516"
       ],
       [
         "%roleOrPrivilege517"
       ],
       [
         "%roleOrPrivilege518"
-      ],
-      [
-        "%roleOrPrivilege519"
       ]
     ]
   },
   {
-    "name": "%%grantIdentifier521522",
+    "name": "%%grantIdentifier520521",
     "bnf": [
       [
         "DOT_SYMBOL",
@@ -9581,17 +9559,17 @@
     "fragment": true
   },
   {
-    "name": "%grantIdentifier521",
+    "name": "%grantIdentifier520",
     "bnf": [
       [
         "MULT_OPERATOR",
-        "%%grantIdentifier521522?"
+        "%%grantIdentifier520521?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%grantIdentifier523524",
+    "name": "%%grantIdentifier522523",
     "bnf": [
       [
         "DOT_SYMBOL",
@@ -9601,17 +9579,17 @@
     "fragment": true
   },
   {
-    "name": "%grantIdentifier523",
+    "name": "%grantIdentifier522",
     "bnf": [
       [
         "schemaRef",
-        "%%grantIdentifier523524?"
+        "%%grantIdentifier522523?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%grantIdentifier525",
+    "name": "%grantIdentifier524",
     "bnf": [
       [
         "schemaRef",
@@ -9625,21 +9603,21 @@
     "name": "grantIdentifier",
     "bnf": [
       [
-        "%grantIdentifier521"
+        "%grantIdentifier520"
       ],
       [
-        "%grantIdentifier523"
+        "%grantIdentifier522"
       ],
       [
         "tableRef"
       ],
       [
-        "%grantIdentifier525"
+        "%grantIdentifier524"
       ]
     ]
   },
   {
-    "name": "%requireList526",
+    "name": "%requireList525",
     "bnf": [
       [
         "AND_SYMBOL?",
@@ -9653,12 +9631,12 @@
     "bnf": [
       [
         "requireListElement",
-        "%requireList526*"
+        "%requireList525*"
       ]
     ]
   },
   {
-    "name": "%requireListElement527",
+    "name": "%requireListElement526",
     "bnf": [
       [
         "CIPHER_SYMBOL",
@@ -9668,7 +9646,7 @@
     "fragment": true
   },
   {
-    "name": "%requireListElement528",
+    "name": "%requireListElement527",
     "bnf": [
       [
         "ISSUER_SYMBOL",
@@ -9678,7 +9656,7 @@
     "fragment": true
   },
   {
-    "name": "%requireListElement529",
+    "name": "%requireListElement528",
     "bnf": [
       [
         "SUBJECT_SYMBOL",
@@ -9691,18 +9669,18 @@
     "name": "requireListElement",
     "bnf": [
       [
+        "%requireListElement526"
+      ],
+      [
         "%requireListElement527"
       ],
       [
         "%requireListElement528"
-      ],
-      [
-        "%requireListElement529"
       ]
     ]
   },
   {
-    "name": "%grantOption530",
+    "name": "%grantOption529",
     "bnf": [
       [
         "GRANT_SYMBOL",
@@ -9712,7 +9690,7 @@
     "fragment": true
   },
   {
-    "name": "%grantOption531",
+    "name": "%grantOption530",
     "bnf": [
       [
         "MAX_QUERIES_PER_HOUR_SYMBOL",
@@ -9722,7 +9700,7 @@
     "fragment": true
   },
   {
-    "name": "%grantOption532",
+    "name": "%grantOption531",
     "bnf": [
       [
         "MAX_UPDATES_PER_HOUR_SYMBOL",
@@ -9732,7 +9710,7 @@
     "fragment": true
   },
   {
-    "name": "%grantOption533",
+    "name": "%grantOption532",
     "bnf": [
       [
         "MAX_CONNECTIONS_PER_HOUR_SYMBOL",
@@ -9742,7 +9720,7 @@
     "fragment": true
   },
   {
-    "name": "%grantOption534",
+    "name": "%grantOption533",
     "bnf": [
       [
         "MAX_USER_CONNECTIONS_SYMBOL",
@@ -9755,6 +9733,9 @@
     "name": "grantOption",
     "bnf": [
       [
+        "%grantOption529"
+      ],
+      [
         "%grantOption530"
       ],
       [
@@ -9765,14 +9746,11 @@
       ],
       [
         "%grantOption533"
-      ],
-      [
-        "%grantOption534"
       ]
     ]
   },
   {
-    "name": "%setRole535",
+    "name": "%setRole534",
     "bnf": [
       [
         "SET_SYMBOL",
@@ -9783,7 +9761,7 @@
     "fragment": true
   },
   {
-    "name": "%%setRole536537",
+    "name": "%%setRole535536",
     "bnf": [
       [
         "NONE_SYMBOL"
@@ -9795,18 +9773,18 @@
     "fragment": true
   },
   {
-    "name": "%setRole536",
+    "name": "%setRole535",
     "bnf": [
       [
         "SET_SYMBOL",
         "ROLE_SYMBOL",
-        "%%setRole536537"
+        "%%setRole535536"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%setRole538539",
+    "name": "%%setRole537538",
     "bnf": [
       [
         "roleList"
@@ -9821,13 +9799,13 @@
     "fragment": true
   },
   {
-    "name": "%setRole538",
+    "name": "%setRole537",
     "bnf": [
       [
         "SET_SYMBOL",
         "DEFAULT_SYMBOL",
         "ROLE_SYMBOL",
-        "%%setRole538539",
+        "%%setRole537538",
         "TO_SYMBOL",
         "roleList"
       ]
@@ -9835,7 +9813,7 @@
     "fragment": true
   },
   {
-    "name": "%%setRole540541",
+    "name": "%%setRole539540",
     "bnf": [
       [
         "EXCEPT_SYMBOL",
@@ -9845,13 +9823,13 @@
     "fragment": true
   },
   {
-    "name": "%setRole540",
+    "name": "%setRole539",
     "bnf": [
       [
         "SET_SYMBOL",
         "ROLE_SYMBOL",
         "ALL_SYMBOL",
-        "%%setRole540541?"
+        "%%setRole539540?"
       ]
     ],
     "fragment": true
@@ -9860,21 +9838,21 @@
     "name": "setRole",
     "bnf": [
       [
+        "%setRole534"
+      ],
+      [
         "%setRole535"
       ],
       [
-        "%setRole536"
+        "%setRole537"
       ],
       [
-        "%setRole538"
-      ],
-      [
-        "%setRole540"
+        "%setRole539"
       ]
     ]
   },
   {
-    "name": "%roleList542",
+    "name": "%roleList541",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -9888,12 +9866,12 @@
     "bnf": [
       [
         "role",
-        "%roleList542*"
+        "%roleList541*"
       ]
     ]
   },
   {
-    "name": "%%role543544",
+    "name": "%%role542543",
     "bnf": [
       [
         "AT_SIGN_SYMBOL",
@@ -9903,10 +9881,10 @@
     "fragment": true
   },
   {
-    "name": "%role543",
+    "name": "%role542",
     "bnf": [
       [
-        "%%role543544"
+        "%%role542543"
       ],
       [
         "AT_TEXT_SUFFIX"
@@ -9919,12 +9897,12 @@
     "bnf": [
       [
         "roleIdentifierOrText",
-        "%role543?"
+        "%role542?"
       ]
     ]
   },
   {
-    "name": "%tableAdministrationStatement545",
+    "name": "%tableAdministrationStatement544",
     "bnf": [
       [
         "ANALYZE_SYMBOL",
@@ -9937,7 +9915,7 @@
     "fragment": true
   },
   {
-    "name": "%tableAdministrationStatement546",
+    "name": "%tableAdministrationStatement545",
     "bnf": [
       [
         "CHECK_SYMBOL",
@@ -9949,7 +9927,7 @@
     "fragment": true
   },
   {
-    "name": "%%tableAdministrationStatement547548",
+    "name": "%%tableAdministrationStatement546547",
     "bnf": [
       [
         "QUICK_SYMBOL"
@@ -9961,19 +9939,19 @@
     "fragment": true
   },
   {
-    "name": "%tableAdministrationStatement547",
+    "name": "%tableAdministrationStatement546",
     "bnf": [
       [
         "CHECKSUM_SYMBOL",
         "TABLE_SYMBOL",
         "tableRefList",
-        "%%tableAdministrationStatement547548?"
+        "%%tableAdministrationStatement546547?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%tableAdministrationStatement549",
+    "name": "%tableAdministrationStatement548",
     "bnf": [
       [
         "OPTIMIZE_SYMBOL",
@@ -9985,7 +9963,7 @@
     "fragment": true
   },
   {
-    "name": "%tableAdministrationStatement550",
+    "name": "%tableAdministrationStatement549",
     "bnf": [
       [
         "REPAIR_SYMBOL",
@@ -10001,24 +9979,24 @@
     "name": "tableAdministrationStatement",
     "bnf": [
       [
+        "%tableAdministrationStatement544"
+      ],
+      [
         "%tableAdministrationStatement545"
       ],
       [
         "%tableAdministrationStatement546"
       ],
       [
-        "%tableAdministrationStatement547"
+        "%tableAdministrationStatement548"
       ],
       [
         "%tableAdministrationStatement549"
-      ],
-      [
-        "%tableAdministrationStatement550"
       ]
     ]
   },
   {
-    "name": "%%histogram551552",
+    "name": "%%histogram550551",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -10029,20 +10007,20 @@
     "fragment": true
   },
   {
-    "name": "%histogram551",
+    "name": "%histogram550",
     "bnf": [
       [
         "UPDATE_SYMBOL",
         "HISTOGRAM_SYMBOL",
         "ON_SYMBOL",
         "identifierList",
-        "%%histogram551552?"
+        "%%histogram550551?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%histogram553",
+    "name": "%histogram552",
     "bnf": [
       [
         "DROP_SYMBOL",
@@ -10057,15 +10035,15 @@
     "name": "histogram",
     "bnf": [
       [
-        "%histogram551"
+        "%histogram550"
       ],
       [
-        "%histogram553"
+        "%histogram552"
       ]
     ]
   },
   {
-    "name": "%checkOption554",
+    "name": "%checkOption553",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -10075,7 +10053,7 @@
     "fragment": true
   },
   {
-    "name": "%checkOption555",
+    "name": "%checkOption554",
     "bnf": [
       [
         "QUICK_SYMBOL"
@@ -10099,10 +10077,10 @@
     "name": "checkOption",
     "bnf": [
       [
-        "%checkOption554"
+        "%checkOption553"
       ],
       [
-        "%checkOption555"
+        "%checkOption554"
       ]
     ]
   },
@@ -10121,7 +10099,7 @@
     ]
   },
   {
-    "name": "%installUninstallStatment556",
+    "name": "%installUninstallStatment555",
     "bnf": [
       [
         "INSTALL_SYMBOL",
@@ -10134,7 +10112,7 @@
     "fragment": true
   },
   {
-    "name": "%installUninstallStatment557",
+    "name": "%installUninstallStatment556",
     "bnf": [
       [
         "INSTALL_SYMBOL",
@@ -10145,7 +10123,7 @@
     "fragment": true
   },
   {
-    "name": "%installUninstallStatment558",
+    "name": "%installUninstallStatment557",
     "bnf": [
       [
         "UNINSTALL_SYMBOL",
@@ -10156,7 +10134,7 @@
     "fragment": true
   },
   {
-    "name": "%%installUninstallStatment559560",
+    "name": "%%installUninstallStatment558559",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -10166,13 +10144,13 @@
     "fragment": true
   },
   {
-    "name": "%installUninstallStatment559",
+    "name": "%installUninstallStatment558",
     "bnf": [
       [
         "UNINSTALL_SYMBOL",
         "COMPONENT_SYMBOL",
         "componentRef",
-        "%%installUninstallStatment559560*"
+        "%%installUninstallStatment558559*"
       ]
     ],
     "fragment": true
@@ -10181,6 +10159,9 @@
     "name": "installUninstallStatment",
     "bnf": [
       [
+        "%installUninstallStatment555"
+      ],
+      [
         "%installUninstallStatment556"
       ],
       [
@@ -10188,9 +10169,6 @@
       ],
       [
         "%installUninstallStatment558"
-      ],
-      [
-        "%installUninstallStatment559"
       ]
     ]
   },
@@ -10204,7 +10182,7 @@
     ]
   },
   {
-    "name": "%startOptionValueList561",
+    "name": "%startOptionValueList560",
     "bnf": [
       [
         "optionValueNoOptionType",
@@ -10214,7 +10192,7 @@
     "fragment": true
   },
   {
-    "name": "%startOptionValueList562",
+    "name": "%startOptionValueList561",
     "bnf": [
       [
         "TRANSACTION_SYMBOL",
@@ -10224,7 +10202,7 @@
     "fragment": true
   },
   {
-    "name": "%startOptionValueList563",
+    "name": "%startOptionValueList562",
     "bnf": [
       [
         "optionType",
@@ -10234,7 +10212,7 @@
     "fragment": true
   },
   {
-    "name": "%%startOptionValueList564565",
+    "name": "%%startOptionValueList563564",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -10244,7 +10222,7 @@
     "fragment": true
   },
   {
-    "name": "%%%startOptionValueList564566567",
+    "name": "%%%startOptionValueList563565566",
     "bnf": [
       [
         "textString",
@@ -10255,7 +10233,7 @@
     "fragment": true
   },
   {
-    "name": "%%%startOptionValueList564566568",
+    "name": "%%%startOptionValueList563565567",
     "bnf": [
       [
         "textString",
@@ -10266,7 +10244,7 @@
     "fragment": true
   },
   {
-    "name": "%%%startOptionValueList564566569",
+    "name": "%%%startOptionValueList563565568",
     "bnf": [
       [
         "OLD_PASSWORD_SYMBOL",
@@ -10278,7 +10256,7 @@
     "fragment": true
   },
   {
-    "name": "%%%startOptionValueList564566570",
+    "name": "%%%startOptionValueList563565569",
     "bnf": [
       [
         "PASSWORD_SYMBOL",
@@ -10290,37 +10268,37 @@
     "fragment": true
   },
   {
-    "name": "%%startOptionValueList564566",
+    "name": "%%startOptionValueList563565",
     "bnf": [
       [
-        "%%%startOptionValueList564566567"
+        "%%%startOptionValueList563565566"
       ],
       [
-        "%%%startOptionValueList564566568"
+        "%%%startOptionValueList563565567"
       ],
       [
-        "%%%startOptionValueList564566569"
+        "%%%startOptionValueList563565568"
       ],
       [
-        "%%%startOptionValueList564566570"
+        "%%%startOptionValueList563565569"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%startOptionValueList564",
+    "name": "%startOptionValueList563",
     "bnf": [
       [
         "PASSWORD_SYMBOL",
-        "%%startOptionValueList564565?",
+        "%%startOptionValueList563564?",
         "equal",
-        "%%startOptionValueList564566"
+        "%%startOptionValueList563565"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%startOptionValueList571572",
+    "name": "%%startOptionValueList570571",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -10330,11 +10308,11 @@
     "fragment": true
   },
   {
-    "name": "%startOptionValueList571",
+    "name": "%startOptionValueList570",
     "bnf": [
       [
         "PASSWORD_SYMBOL",
-        "%%startOptionValueList571572?",
+        "%%startOptionValueList570571?",
         "TO_SYMBOL",
         "RANDOM_SYMBOL",
         "replacePassword?",
@@ -10347,6 +10325,9 @@
     "name": "startOptionValueList",
     "bnf": [
       [
+        "%startOptionValueList560"
+      ],
+      [
         "%startOptionValueList561"
       ],
       [
@@ -10356,15 +10337,12 @@
         "%startOptionValueList563"
       ],
       [
-        "%startOptionValueList564"
-      ],
-      [
-        "%startOptionValueList571"
+        "%startOptionValueList570"
       ]
     ]
   },
   {
-    "name": "%transactionCharacteristics573",
+    "name": "%transactionCharacteristics572",
     "bnf": [
       [
         "transactionAccessMode",
@@ -10374,7 +10352,7 @@
     "fragment": true
   },
   {
-    "name": "%%transactionCharacteristics574575",
+    "name": "%%transactionCharacteristics573574",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -10384,11 +10362,11 @@
     "fragment": true
   },
   {
-    "name": "%transactionCharacteristics574",
+    "name": "%transactionCharacteristics573",
     "bnf": [
       [
         "isolationLevel",
-        "%%transactionCharacteristics574575?"
+        "%%transactionCharacteristics573574?"
       ]
     ],
     "fragment": true
@@ -10397,15 +10375,15 @@
     "name": "transactionCharacteristics",
     "bnf": [
       [
-        "%transactionCharacteristics573"
+        "%transactionCharacteristics572"
       ],
       [
-        "%transactionCharacteristics574"
+        "%transactionCharacteristics573"
       ]
     ]
   },
   {
-    "name": "%transactionAccessMode576",
+    "name": "%transactionAccessMode575",
     "bnf": [
       [
         "WRITE_SYMBOL"
@@ -10421,12 +10399,12 @@
     "bnf": [
       [
         "READ_SYMBOL",
-        "%transactionAccessMode576"
+        "%transactionAccessMode575"
       ]
     ]
   },
   {
-    "name": "%%isolationLevel577578",
+    "name": "%%isolationLevel576577",
     "bnf": [
       [
         "REPEATABLE_SYMBOL",
@@ -10436,7 +10414,7 @@
     "fragment": true
   },
   {
-    "name": "%%%isolationLevel577579580",
+    "name": "%%%isolationLevel576578579",
     "bnf": [
       [
         "COMMITTED_SYMBOL"
@@ -10448,23 +10426,23 @@
     "fragment": true
   },
   {
-    "name": "%%isolationLevel577579",
+    "name": "%%isolationLevel576578",
     "bnf": [
       [
         "READ_SYMBOL",
-        "%%%isolationLevel577579580"
+        "%%%isolationLevel576578579"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%isolationLevel577",
+    "name": "%isolationLevel576",
     "bnf": [
       [
-        "%%isolationLevel577578"
+        "%%isolationLevel576577"
       ],
       [
-        "%%isolationLevel577579"
+        "%%isolationLevel576578"
       ],
       [
         "SERIALIZABLE_SYMBOL"
@@ -10478,12 +10456,12 @@
       [
         "ISOLATION_SYMBOL",
         "LEVEL_SYMBOL",
-        "%isolationLevel577"
+        "%isolationLevel576"
       ]
     ]
   },
   {
-    "name": "%optionValueListContinued581",
+    "name": "%optionValueListContinued580",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -10496,12 +10474,12 @@
     "name": "optionValueListContinued",
     "bnf": [
       [
-        "%optionValueListContinued581*"
+        "%optionValueListContinued580*"
       ]
     ]
   },
   {
-    "name": "%optionValueNoOptionType582",
+    "name": "%optionValueNoOptionType581",
     "bnf": [
       [
         "internalVariableName",
@@ -10512,7 +10490,7 @@
     "fragment": true
   },
   {
-    "name": "%optionValueNoOptionType583",
+    "name": "%optionValueNoOptionType582",
     "bnf": [
       [
         "userVariable",
@@ -10523,7 +10501,7 @@
     "fragment": true
   },
   {
-    "name": "%optionValueNoOptionType584",
+    "name": "%optionValueNoOptionType583",
     "bnf": [
       [
         "setSystemVariable",
@@ -10534,7 +10512,7 @@
     "fragment": true
   },
   {
-    "name": "%%%optionValueNoOptionType585586587",
+    "name": "%%%optionValueNoOptionType584585586",
     "bnf": [
       [
         "equal",
@@ -10544,7 +10522,7 @@
     "fragment": true
   },
   {
-    "name": "%%%optionValueNoOptionType585586588",
+    "name": "%%%optionValueNoOptionType584585587",
     "bnf": [
       [
         "charsetName",
@@ -10554,13 +10532,13 @@
     "fragment": true
   },
   {
-    "name": "%%optionValueNoOptionType585586",
+    "name": "%%optionValueNoOptionType584585",
     "bnf": [
       [
-        "%%%optionValueNoOptionType585586587"
+        "%%%optionValueNoOptionType584585586"
       ],
       [
-        "%%%optionValueNoOptionType585586588"
+        "%%%optionValueNoOptionType584585587"
       ],
       [
         "DEFAULT_SYMBOL"
@@ -10569,11 +10547,11 @@
     "fragment": true
   },
   {
-    "name": "%optionValueNoOptionType585",
+    "name": "%optionValueNoOptionType584",
     "bnf": [
       [
         "NAMES_SYMBOL",
-        "%%optionValueNoOptionType585586"
+        "%%optionValueNoOptionType584585"
       ]
     ],
     "fragment": true
@@ -10582,24 +10560,24 @@
     "name": "optionValueNoOptionType",
     "bnf": [
       [
-        "%optionValueNoOptionType582"
+        "%optionValueNoOptionType581"
       ],
       [
         "charsetClause"
+      ],
+      [
+        "%optionValueNoOptionType582"
       ],
       [
         "%optionValueNoOptionType583"
       ],
       [
         "%optionValueNoOptionType584"
-      ],
-      [
-        "%optionValueNoOptionType585"
       ]
     ]
   },
   {
-    "name": "%optionValue589",
+    "name": "%optionValue588",
     "bnf": [
       [
         "optionType",
@@ -10614,7 +10592,7 @@
     "name": "optionValue",
     "bnf": [
       [
-        "%optionValue589"
+        "%optionValue588"
       ],
       [
         "optionValueNoOptionType"
@@ -10632,7 +10610,7 @@
     ]
   },
   {
-    "name": "%startOptionValueListFollowingOptionType590",
+    "name": "%startOptionValueListFollowingOptionType589",
     "bnf": [
       [
         "optionValueFollowingOptionType",
@@ -10642,7 +10620,7 @@
     "fragment": true
   },
   {
-    "name": "%startOptionValueListFollowingOptionType591",
+    "name": "%startOptionValueListFollowingOptionType590",
     "bnf": [
       [
         "TRANSACTION_SYMBOL",
@@ -10655,10 +10633,10 @@
     "name": "startOptionValueListFollowingOptionType",
     "bnf": [
       [
-        "%startOptionValueListFollowingOptionType590"
+        "%startOptionValueListFollowingOptionType589"
       ],
       [
-        "%startOptionValueListFollowingOptionType591"
+        "%startOptionValueListFollowingOptionType590"
       ]
     ]
   },
@@ -10673,7 +10651,7 @@
     ]
   },
   {
-    "name": "%setExprOrDefault592",
+    "name": "%setExprOrDefault591",
     "bnf": [
       [
         "DEFAULT_SYMBOL"
@@ -10691,7 +10669,7 @@
     "fragment": true
   },
   {
-    "name": "%setExprOrDefault593",
+    "name": "%setExprOrDefault592",
     "bnf": [
       [
         "ROW_SYMBOL"
@@ -10709,15 +10687,15 @@
         "expr"
       ],
       [
-        "%setExprOrDefault592"
+        "%setExprOrDefault591"
       ],
       [
-        "%setExprOrDefault593"
+        "%setExprOrDefault592"
       ]
     ]
   },
   {
-    "name": "%%showStatement594595",
+    "name": "%%showStatement593594",
     "bnf": [
       [
         "DATABASES_SYMBOL",
@@ -10727,7 +10705,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594596",
+    "name": "%%showStatement593595",
     "bnf": [
       [
         "showCommandType?",
@@ -10739,7 +10717,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594597",
+    "name": "%%showStatement593596",
     "bnf": [
       [
         "FULL_SYMBOL?",
@@ -10751,7 +10729,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594598",
+    "name": "%%showStatement593597",
     "bnf": [
       [
         "EVENTS_SYMBOL",
@@ -10762,7 +10740,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594599",
+    "name": "%%showStatement593598",
     "bnf": [
       [
         "TABLE_SYMBOL",
@@ -10774,7 +10752,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594600",
+    "name": "%%showStatement593599",
     "bnf": [
       [
         "OPEN_SYMBOL",
@@ -10786,7 +10764,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594601602",
+    "name": "%%%showStatement593600601",
     "bnf": [
       [
         "engineRef"
@@ -10798,7 +10776,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594601603",
+    "name": "%%%showStatement593600602",
     "bnf": [
       [
         "STATUS_SYMBOL"
@@ -10813,18 +10791,18 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594601",
+    "name": "%%showStatement593600",
     "bnf": [
       [
         "ENGINE_SYMBOL",
-        "%%%showStatement594601602",
-        "%%%showStatement594601603"
+        "%%%showStatement593600601",
+        "%%%showStatement593600602"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%showStatement594604605",
+    "name": "%%%showStatement593603604",
     "bnf": [
       [
         "FROM_SYMBOL"
@@ -10836,12 +10814,12 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594604",
+    "name": "%%showStatement593603",
     "bnf": [
       [
         "showCommandType?",
         "COLUMNS_SYMBOL",
-        "%%%showStatement594604605",
+        "%%%showStatement593603604",
         "tableRef",
         "inDb?",
         "likeOrWhere?"
@@ -10850,7 +10828,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594606607",
+    "name": "%%%showStatement593605606",
     "bnf": [
       [
         "BINARY_SYMBOL"
@@ -10862,17 +10840,17 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594606",
+    "name": "%%showStatement593605",
     "bnf": [
       [
-        "%%%showStatement594606607",
+        "%%%showStatement593605606",
         "LOGS_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594608609610",
+    "name": "%%%%showStatement593607608609",
     "bnf": [
       [
         "STATUS_SYMBOL",
@@ -10883,29 +10861,29 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594608609",
+    "name": "%%%showStatement593607608",
     "bnf": [
       [
         "HOSTS_SYMBOL"
       ],
       [
-        "%%%%showStatement594608609610"
+        "%%%%showStatement593607608609"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%showStatement594608",
+    "name": "%%showStatement593607",
     "bnf": [
       [
         "SLAVE_SYMBOL",
-        "%%%showStatement594608609"
+        "%%%showStatement593607608"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%showStatement594611612",
+    "name": "%%%showStatement593610611",
     "bnf": [
       [
         "BINLOG_SYMBOL"
@@ -10917,7 +10895,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594611613",
+    "name": "%%%showStatement593610612",
     "bnf": [
       [
         "IN_SYMBOL",
@@ -10927,7 +10905,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594611614",
+    "name": "%%%showStatement593610613",
     "bnf": [
       [
         "FROM_SYMBOL",
@@ -10937,13 +10915,13 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594611",
+    "name": "%%showStatement593610",
     "bnf": [
       [
-        "%%%showStatement594611612",
+        "%%%showStatement593610611",
         "EVENTS_SYMBOL",
-        "%%%showStatement594611613?",
-        "%%%showStatement594611614?",
+        "%%%showStatement593610612?",
+        "%%%showStatement593610613?",
         "limitClause?",
         "channel?"
       ]
@@ -10951,7 +10929,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594615616",
+    "name": "%%%showStatement593614615",
     "bnf": [
       [
         "INDEX_SYMBOL"
@@ -10966,11 +10944,11 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594615",
+    "name": "%%showStatement593614",
     "bnf": [
       [
         "EXTENDED_SYMBOL?",
-        "%%%showStatement594615616",
+        "%%%showStatement593614615",
         "fromOrIn",
         "tableRef",
         "inDb?",
@@ -10980,7 +10958,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594617",
+    "name": "%%showStatement593616",
     "bnf": [
       [
         "STORAGE_SYMBOL?",
@@ -10990,7 +10968,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594618619",
+    "name": "%%%showStatement593617618",
     "bnf": [
       [
         "WARNINGS_SYMBOL"
@@ -11002,20 +10980,20 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594618",
+    "name": "%%showStatement593617",
     "bnf": [
       [
         "COUNT_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "MULT_OPERATOR",
         "CLOSE_PAR_SYMBOL",
-        "%%%showStatement594618619"
+        "%%%showStatement593617618"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%showStatement594620",
+    "name": "%%showStatement593619",
     "bnf": [
       [
         "WARNINGS_SYMBOL",
@@ -11025,7 +11003,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594621",
+    "name": "%%showStatement593620",
     "bnf": [
       [
         "ERRORS_SYMBOL",
@@ -11035,7 +11013,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594622623624",
+    "name": "%%%%showStatement593621622623",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -11045,17 +11023,17 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594622623",
+    "name": "%%%showStatement593621622",
     "bnf": [
       [
         "profileType",
-        "%%%%showStatement594622623624*"
+        "%%%%showStatement593621622623*"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%showStatement594622625",
+    "name": "%%%showStatement593621624",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -11066,19 +11044,19 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594622",
+    "name": "%%showStatement593621",
     "bnf": [
       [
         "PROFILE_SYMBOL",
-        "%%%showStatement594622623?",
-        "%%%showStatement594622625?",
+        "%%%showStatement593621622?",
+        "%%%showStatement593621624?",
         "limitClause?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%showStatement594626627",
+    "name": "%%%showStatement593625626",
     "bnf": [
       [
         "STATUS_SYMBOL"
@@ -11090,18 +11068,18 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594626",
+    "name": "%%showStatement593625",
     "bnf": [
       [
         "optionType?",
-        "%%%showStatement594626627",
+        "%%%showStatement593625626",
         "likeOrWhere?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%showStatement594628",
+    "name": "%%showStatement593627",
     "bnf": [
       [
         "FULL_SYMBOL?",
@@ -11111,7 +11089,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594629",
+    "name": "%%showStatement593628",
     "bnf": [
       [
         "charset",
@@ -11121,7 +11099,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594630",
+    "name": "%%showStatement593629",
     "bnf": [
       [
         "COLLATION_SYMBOL",
@@ -11131,7 +11109,7 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594631632",
+    "name": "%%%showStatement593630631",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -11141,17 +11119,17 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594631",
+    "name": "%%showStatement593630",
     "bnf": [
       [
         "GRANTS_SYMBOL",
-        "%%%showStatement594631632?"
+        "%%%showStatement593630631?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%showStatement594633",
+    "name": "%%showStatement593632",
     "bnf": [
       [
         "GRANTS_SYMBOL",
@@ -11164,7 +11142,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594634",
+    "name": "%%showStatement593633",
     "bnf": [
       [
         "MASTER_SYMBOL",
@@ -11174,7 +11152,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636637",
+    "name": "%%%%showStatement593634635636",
     "bnf": [
       [
         "DATABASE_SYMBOL",
@@ -11185,7 +11163,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636638",
+    "name": "%%%%showStatement593634635637",
     "bnf": [
       [
         "EVENT_SYMBOL",
@@ -11195,7 +11173,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636639",
+    "name": "%%%%showStatement593634635638",
     "bnf": [
       [
         "FUNCTION_SYMBOL",
@@ -11205,7 +11183,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636640",
+    "name": "%%%%showStatement593634635639",
     "bnf": [
       [
         "PROCEDURE_SYMBOL",
@@ -11215,7 +11193,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636641",
+    "name": "%%%%showStatement593634635640",
     "bnf": [
       [
         "TABLE_SYMBOL",
@@ -11225,7 +11203,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636642",
+    "name": "%%%%showStatement593634635641",
     "bnf": [
       [
         "TRIGGER_SYMBOL",
@@ -11235,7 +11213,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636643",
+    "name": "%%%%showStatement593634635642",
     "bnf": [
       [
         "VIEW_SYMBOL",
@@ -11245,7 +11223,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%showStatement594635636644",
+    "name": "%%%%showStatement593634635643",
     "bnf": [
       [
         "USER_SYMBOL",
@@ -11255,47 +11233,47 @@
     "fragment": true
   },
   {
-    "name": "%%%showStatement594635636",
+    "name": "%%%showStatement593634635",
     "bnf": [
       [
-        "%%%%showStatement594635636637"
+        "%%%%showStatement593634635636"
       ],
       [
-        "%%%%showStatement594635636638"
+        "%%%%showStatement593634635637"
       ],
       [
-        "%%%%showStatement594635636639"
+        "%%%%showStatement593634635638"
       ],
       [
-        "%%%%showStatement594635636640"
+        "%%%%showStatement593634635639"
       ],
       [
-        "%%%%showStatement594635636641"
+        "%%%%showStatement593634635640"
       ],
       [
-        "%%%%showStatement594635636642"
+        "%%%%showStatement593634635641"
       ],
       [
-        "%%%%showStatement594635636643"
+        "%%%%showStatement593634635642"
       ],
       [
-        "%%%%showStatement594635636644"
+        "%%%%showStatement593634635643"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%showStatement594635",
+    "name": "%%showStatement593634",
     "bnf": [
       [
         "CREATE_SYMBOL",
-        "%%%showStatement594635636"
+        "%%%showStatement593634635"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%showStatement594645",
+    "name": "%%showStatement593644",
     "bnf": [
       [
         "PROCEDURE_SYMBOL",
@@ -11306,7 +11284,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594646",
+    "name": "%%showStatement593645",
     "bnf": [
       [
         "FUNCTION_SYMBOL",
@@ -11317,7 +11295,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594647",
+    "name": "%%showStatement593646",
     "bnf": [
       [
         "PROCEDURE_SYMBOL",
@@ -11328,7 +11306,7 @@
     "fragment": true
   },
   {
-    "name": "%%showStatement594648",
+    "name": "%%showStatement593647",
     "bnf": [
       [
         "FUNCTION_SYMBOL",
@@ -11339,79 +11317,79 @@
     "fragment": true
   },
   {
-    "name": "%showStatement594",
+    "name": "%showStatement593",
     "bnf": [
       [
         "AUTHORS_SYMBOL"
       ],
       [
-        "%%showStatement594595"
+        "%%showStatement593594"
       ],
       [
-        "%%showStatement594596"
+        "%%showStatement593595"
       ],
       [
-        "%%showStatement594597"
+        "%%showStatement593596"
       ],
       [
-        "%%showStatement594598"
+        "%%showStatement593597"
       ],
       [
-        "%%showStatement594599"
+        "%%showStatement593598"
       ],
       [
-        "%%showStatement594600"
+        "%%showStatement593599"
       ],
       [
         "PLUGINS_SYMBOL"
       ],
       [
-        "%%showStatement594601"
+        "%%showStatement593600"
       ],
       [
-        "%%showStatement594604"
+        "%%showStatement593603"
       ],
       [
-        "%%showStatement594606"
+        "%%showStatement593605"
       ],
       [
-        "%%showStatement594608"
+        "%%showStatement593607"
       ],
       [
-        "%%showStatement594611"
+        "%%showStatement593610"
       ],
       [
-        "%%showStatement594615"
+        "%%showStatement593614"
       ],
       [
-        "%%showStatement594617"
+        "%%showStatement593616"
       ],
       [
-        "%%showStatement594618"
+        "%%showStatement593617"
       ],
       [
-        "%%showStatement594620"
+        "%%showStatement593619"
       ],
       [
-        "%%showStatement594621"
+        "%%showStatement593620"
       ],
       [
         "PROFILES_SYMBOL"
       ],
       [
-        "%%showStatement594622"
+        "%%showStatement593621"
       ],
       [
-        "%%showStatement594626"
+        "%%showStatement593625"
       ],
       [
-        "%%showStatement594628"
+        "%%showStatement593627"
       ],
       [
-        "%%showStatement594629"
+        "%%showStatement593628"
       ],
       [
-        "%%showStatement594630"
+        "%%showStatement593629"
       ],
       [
         "CONTRIBUTORS_SYMBOL"
@@ -11420,28 +11398,28 @@
         "PRIVILEGES_SYMBOL"
       ],
       [
-        "%%showStatement594631"
+        "%%showStatement593630"
       ],
       [
-        "%%showStatement594633"
+        "%%showStatement593632"
       ],
       [
-        "%%showStatement594634"
+        "%%showStatement593633"
       ],
       [
-        "%%showStatement594635"
+        "%%showStatement593634"
       ],
       [
-        "%%showStatement594645"
+        "%%showStatement593644"
       ],
       [
-        "%%showStatement594646"
+        "%%showStatement593645"
       ],
       [
-        "%%showStatement594647"
+        "%%showStatement593646"
       ],
       [
-        "%%showStatement594648"
+        "%%showStatement593647"
       ]
     ],
     "fragment": true
@@ -11451,12 +11429,12 @@
     "bnf": [
       [
         "SHOW_SYMBOL",
-        "%showStatement594"
+        "%showStatement593"
       ]
     ]
   },
   {
-    "name": "%showCommandType649",
+    "name": "%showCommandType648",
     "bnf": [
       [
         "EXTENDED_SYMBOL",
@@ -11472,7 +11450,7 @@
         "FULL_SYMBOL"
       ],
       [
-        "%showCommandType649"
+        "%showCommandType648"
       ]
     ]
   },
@@ -11505,7 +11483,7 @@
     ]
   },
   {
-    "name": "%profileType650",
+    "name": "%profileType649",
     "bnf": [
       [
         "BLOCK_SYMBOL",
@@ -11515,7 +11493,7 @@
     "fragment": true
   },
   {
-    "name": "%profileType651",
+    "name": "%profileType650",
     "bnf": [
       [
         "CONTEXT_SYMBOL",
@@ -11525,7 +11503,7 @@
     "fragment": true
   },
   {
-    "name": "%profileType652",
+    "name": "%profileType651",
     "bnf": [
       [
         "PAGE_SYMBOL",
@@ -11535,7 +11513,7 @@
     "fragment": true
   },
   {
-    "name": "%profileType653",
+    "name": "%profileType652",
     "bnf": [
       [
         "ALL_SYMBOL"
@@ -11562,6 +11540,9 @@
     "name": "profileType",
     "bnf": [
       [
+        "%profileType649"
+      ],
+      [
         "%profileType650"
       ],
       [
@@ -11569,14 +11550,11 @@
       ],
       [
         "%profileType652"
-      ],
-      [
-        "%profileType653"
       ]
     ]
   },
   {
-    "name": "%otherAdministrativeStatement654",
+    "name": "%otherAdministrativeStatement653",
     "bnf": [
       [
         "BINLOG_SYMBOL",
@@ -11586,7 +11564,7 @@
     "fragment": true
   },
   {
-    "name": "%%otherAdministrativeStatement655656",
+    "name": "%%otherAdministrativeStatement654655",
     "bnf": [
       [
         "identifier"
@@ -11598,20 +11576,20 @@
     "fragment": true
   },
   {
-    "name": "%otherAdministrativeStatement655",
+    "name": "%otherAdministrativeStatement654",
     "bnf": [
       [
         "CACHE_SYMBOL",
         "INDEX_SYMBOL",
         "keyCacheListOrParts",
         "IN_SYMBOL",
-        "%%otherAdministrativeStatement655656"
+        "%%otherAdministrativeStatement654655"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%otherAdministrativeStatement657658659660",
+    "name": "%%%%otherAdministrativeStatement656657658659",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -11621,40 +11599,40 @@
     "fragment": true
   },
   {
-    "name": "%%%otherAdministrativeStatement657658659",
+    "name": "%%%otherAdministrativeStatement656657658",
     "bnf": [
       [
         "flushOption",
-        "%%%%otherAdministrativeStatement657658659660*"
+        "%%%%otherAdministrativeStatement656657658659*"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%otherAdministrativeStatement657658",
+    "name": "%%otherAdministrativeStatement656657",
     "bnf": [
       [
         "flushTables"
       ],
       [
-        "%%%otherAdministrativeStatement657658659"
+        "%%%otherAdministrativeStatement656657658"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%otherAdministrativeStatement657",
+    "name": "%otherAdministrativeStatement656",
     "bnf": [
       [
         "FLUSH_SYMBOL",
         "noWriteToBinLog?",
-        "%%otherAdministrativeStatement657658"
+        "%%otherAdministrativeStatement656657"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%otherAdministrativeStatement661662",
+    "name": "%%otherAdministrativeStatement660661",
     "bnf": [
       [
         "CONNECTION_SYMBOL"
@@ -11666,18 +11644,18 @@
     "fragment": true
   },
   {
-    "name": "%otherAdministrativeStatement661",
+    "name": "%otherAdministrativeStatement660",
     "bnf": [
       [
         "KILL_SYMBOL",
-        "%%otherAdministrativeStatement661662?",
+        "%%otherAdministrativeStatement660661?",
         "expr"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%otherAdministrativeStatement663",
+    "name": "%otherAdministrativeStatement662",
     "bnf": [
       [
         "LOAD_SYMBOL",
@@ -11693,19 +11671,19 @@
     "name": "otherAdministrativeStatement",
     "bnf": [
       [
+        "%otherAdministrativeStatement653"
+      ],
+      [
         "%otherAdministrativeStatement654"
       ],
       [
-        "%otherAdministrativeStatement655"
+        "%otherAdministrativeStatement656"
       ],
       [
-        "%otherAdministrativeStatement657"
+        "%otherAdministrativeStatement660"
       ],
       [
-        "%otherAdministrativeStatement661"
-      ],
-      [
-        "%otherAdministrativeStatement663"
+        "%otherAdministrativeStatement662"
       ],
       [
         "SHUTDOWN_SYMBOL"
@@ -11724,7 +11702,7 @@
     ]
   },
   {
-    "name": "%keyCacheList664",
+    "name": "%keyCacheList663",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -11738,7 +11716,7 @@
     "bnf": [
       [
         "assignToKeycache",
-        "%keyCacheList664*"
+        "%keyCacheList663*"
       ]
     ]
   },
@@ -11787,7 +11765,7 @@
     ]
   },
   {
-    "name": "%keyUsageList665",
+    "name": "%keyUsageList664",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -11801,12 +11779,12 @@
     "bnf": [
       [
         "keyUsageElement",
-        "%keyUsageList665*"
+        "%keyUsageList664*"
       ]
     ]
   },
   {
-    "name": "%flushOption666",
+    "name": "%flushOption665",
     "bnf": [
       [
         "DES_KEY_FILE_SYMBOL"
@@ -11827,7 +11805,7 @@
     "fragment": true
   },
   {
-    "name": "%flushOption667",
+    "name": "%flushOption666",
     "bnf": [
       [
         "logType?",
@@ -11837,7 +11815,7 @@
     "fragment": true
   },
   {
-    "name": "%flushOption668",
+    "name": "%flushOption667",
     "bnf": [
       [
         "RELAY_SYMBOL",
@@ -11848,7 +11826,7 @@
     "fragment": true
   },
   {
-    "name": "%flushOption669",
+    "name": "%flushOption668",
     "bnf": [
       [
         "QUERY_SYMBOL",
@@ -11861,6 +11839,9 @@
     "name": "flushOption",
     "bnf": [
       [
+        "%flushOption665"
+      ],
+      [
         "%flushOption666"
       ],
       [
@@ -11868,9 +11849,6 @@
       ],
       [
         "%flushOption668"
-      ],
-      [
-        "%flushOption669"
       ],
       [
         "OPTIMIZER_COSTS_SYMBOL"
@@ -11898,7 +11876,7 @@
     ]
   },
   {
-    "name": "%flushTables670",
+    "name": "%flushTables669",
     "bnf": [
       [
         "TABLES_SYMBOL"
@@ -11910,7 +11888,7 @@
     "fragment": true
   },
   {
-    "name": "%%flushTables671672",
+    "name": "%%flushTables670671",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -11921,7 +11899,7 @@
     "fragment": true
   },
   {
-    "name": "%%flushTables671673",
+    "name": "%%flushTables670672",
     "bnf": [
       [
         "identifierList",
@@ -11931,13 +11909,13 @@
     "fragment": true
   },
   {
-    "name": "%flushTables671",
+    "name": "%flushTables670",
     "bnf": [
       [
-        "%%flushTables671672"
+        "%%flushTables670671"
       ],
       [
-        "%%flushTables671673"
+        "%%flushTables670672"
       ]
     ],
     "fragment": true
@@ -11946,13 +11924,13 @@
     "name": "flushTables",
     "bnf": [
       [
-        "%flushTables670",
-        "%flushTables671?"
+        "%flushTables669",
+        "%flushTables670?"
       ]
     ]
   },
   {
-    "name": "%flushTablesOptions674",
+    "name": "%flushTablesOptions673",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -11962,7 +11940,7 @@
     "fragment": true
   },
   {
-    "name": "%flushTablesOptions675",
+    "name": "%flushTablesOptions674",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -11976,15 +11954,15 @@
     "name": "flushTablesOptions",
     "bnf": [
       [
-        "%flushTablesOptions674"
+        "%flushTablesOptions673"
       ],
       [
-        "%flushTablesOptions675"
+        "%flushTablesOptions674"
       ]
     ]
   },
   {
-    "name": "%%preloadTail676677",
+    "name": "%%preloadTail675676",
     "bnf": [
       [
         "IGNORE_SYMBOL",
@@ -11994,13 +11972,13 @@
     "fragment": true
   },
   {
-    "name": "%preloadTail676",
+    "name": "%preloadTail675",
     "bnf": [
       [
         "tableRef",
         "adminPartition",
         "cacheKeyList?",
-        "%%preloadTail676677?"
+        "%%preloadTail675676?"
       ]
     ],
     "fragment": true
@@ -12009,7 +11987,7 @@
     "name": "preloadTail",
     "bnf": [
       [
-        "%preloadTail676"
+        "%preloadTail675"
       ],
       [
         "preloadList"
@@ -12017,7 +11995,7 @@
     ]
   },
   {
-    "name": "%preloadList678",
+    "name": "%preloadList677",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -12031,12 +12009,12 @@
     "bnf": [
       [
         "preloadKeys",
-        "%preloadList678*"
+        "%preloadList677*"
       ]
     ]
   },
   {
-    "name": "%preloadKeys679",
+    "name": "%preloadKeys678",
     "bnf": [
       [
         "IGNORE_SYMBOL",
@@ -12051,7 +12029,7 @@
       [
         "tableRef",
         "cacheKeyList?",
-        "%preloadKeys679?"
+        "%preloadKeys678?"
       ]
     ]
   },
@@ -12084,7 +12062,7 @@
     ]
   },
   {
-    "name": "%createResourceGroup680",
+    "name": "%createResourceGroup679",
     "bnf": [
       [
         "USER_SYMBOL"
@@ -12105,7 +12083,7 @@
         "identifier",
         "TYPE_SYMBOL",
         "equal?",
-        "%createResourceGroup680",
+        "%createResourceGroup679",
         "resourceGroupVcpuList?",
         "resourceGroupPriority?",
         "resourceGroupEnableDisable?"
@@ -12113,7 +12091,7 @@
     ]
   },
   {
-    "name": "%resourceGroupVcpuList681",
+    "name": "%resourceGroupVcpuList680",
     "bnf": [
       [
         "COMMA_SYMBOL?",
@@ -12129,12 +12107,12 @@
         "VCPU_SYMBOL",
         "equal?",
         "vcpuNumOrRange",
-        "%resourceGroupVcpuList681*"
+        "%resourceGroupVcpuList680*"
       ]
     ]
   },
   {
-    "name": "%vcpuNumOrRange682",
+    "name": "%vcpuNumOrRange681",
     "bnf": [
       [
         "MINUS_OPERATOR",
@@ -12148,7 +12126,7 @@
     "bnf": [
       [
         "INT_NUMBER",
-        "%vcpuNumOrRange682?"
+        "%vcpuNumOrRange681?"
       ]
     ]
   },
@@ -12189,7 +12167,7 @@
     ]
   },
   {
-    "name": "%setResourceGroup683",
+    "name": "%setResourceGroup682",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -12206,12 +12184,12 @@
         "RESOURCE_SYMBOL",
         "GROUP_SYMBOL",
         "identifier",
-        "%setResourceGroup683?"
+        "%setResourceGroup682?"
       ]
     ]
   },
   {
-    "name": "%threadIdList684",
+    "name": "%threadIdList683",
     "bnf": [
       [
         "COMMA_SYMBOL?",
@@ -12225,7 +12203,7 @@
     "bnf": [
       [
         "real_ulong_number",
-        "%threadIdList684*"
+        "%threadIdList683*"
       ]
     ]
   },
@@ -12262,7 +12240,7 @@
     ]
   },
   {
-    "name": "%describeStatement685",
+    "name": "%describeStatement684",
     "bnf": [
       [
         "EXPLAIN_SYMBOL"
@@ -12277,7 +12255,7 @@
     "fragment": true
   },
   {
-    "name": "%describeStatement686",
+    "name": "%describeStatement685",
     "bnf": [
       [
         "textString"
@@ -12292,14 +12270,14 @@
     "name": "describeStatement",
     "bnf": [
       [
-        "%describeStatement685",
+        "%describeStatement684",
         "tableRef",
-        "%describeStatement686?"
+        "%describeStatement685?"
       ]
     ]
   },
   {
-    "name": "%explainStatement687",
+    "name": "%explainStatement686",
     "bnf": [
       [
         "EXPLAIN_SYMBOL"
@@ -12314,7 +12292,7 @@
     "fragment": true
   },
   {
-    "name": "%%explainStatement688689",
+    "name": "%%explainStatement687688",
     "bnf": [
       [
         "FORMAT_SYMBOL",
@@ -12325,7 +12303,7 @@
     "fragment": true
   },
   {
-    "name": "%%explainStatement688690",
+    "name": "%%explainStatement687689",
     "bnf": [
       [
         "ANALYZE_SYMBOL",
@@ -12337,7 +12315,7 @@
     "fragment": true
   },
   {
-    "name": "%explainStatement688",
+    "name": "%explainStatement687",
     "bnf": [
       [
         "EXTENDED_SYMBOL"
@@ -12346,13 +12324,13 @@
         "PARTITIONS_SYMBOL"
       ],
       [
-        "%%explainStatement688689"
+        "%%explainStatement687688"
       ],
       [
         "ANALYZE_SYMBOL"
       ],
       [
-        "%%explainStatement688690"
+        "%%explainStatement687689"
       ]
     ],
     "fragment": true
@@ -12361,14 +12339,14 @@
     "name": "explainStatement",
     "bnf": [
       [
-        "%explainStatement687",
-        "%explainStatement688?",
+        "%explainStatement686",
+        "%explainStatement687?",
         "explainableStatement"
       ]
     ]
   },
   {
-    "name": "%explainableStatement691",
+    "name": "%explainableStatement690",
     "bnf": [
       [
         "deleteStatement"
@@ -12386,7 +12364,7 @@
     "fragment": true
   },
   {
-    "name": "%explainableStatement692",
+    "name": "%explainableStatement691",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -12403,10 +12381,10 @@
         "selectStatement"
       ],
       [
-        "%explainableStatement691"
+        "%explainableStatement690"
       ],
       [
-        "%explainableStatement692"
+        "%explainableStatement691"
       ]
     ]
   },
@@ -12463,7 +12441,7 @@
     ]
   },
   {
-    "name": "%%%predicateOperations693694695",
+    "name": "%%%predicateOperations692693694",
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
@@ -12474,29 +12452,29 @@
     "fragment": true
   },
   {
-    "name": "%%predicateOperations693694",
+    "name": "%%predicateOperations692693",
     "bnf": [
       [
         "subquery"
       ],
       [
-        "%%%predicateOperations693694695"
+        "%%%predicateOperations692693694"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%predicateOperations693",
+    "name": "%predicateOperations692",
     "bnf": [
       [
         "IN_SYMBOL",
-        "%%predicateOperations693694"
+        "%%predicateOperations692693"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%predicateOperations696",
+    "name": "%predicateOperations695",
     "bnf": [
       [
         "BETWEEN_SYMBOL",
@@ -12508,7 +12486,7 @@
     "fragment": true
   },
   {
-    "name": "%%predicateOperations697698",
+    "name": "%%predicateOperations696697",
     "bnf": [
       [
         "ESCAPE_SYMBOL",
@@ -12518,18 +12496,18 @@
     "fragment": true
   },
   {
-    "name": "%predicateOperations697",
+    "name": "%predicateOperations696",
     "bnf": [
       [
         "LIKE_SYMBOL",
         "simpleExpr",
-        "%%predicateOperations697698?"
+        "%%predicateOperations696697?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%predicateOperations699",
+    "name": "%predicateOperations698",
     "bnf": [
       [
         "REGEXP_SYMBOL",
@@ -12542,16 +12520,16 @@
     "name": "predicateOperations",
     "bnf": [
       [
-        "%predicateOperations693"
+        "%predicateOperations692"
+      ],
+      [
+        "%predicateOperations695"
       ],
       [
         "%predicateOperations696"
       ],
       [
-        "%predicateOperations697"
-      ],
-      [
-        "%predicateOperations699"
+        "%predicateOperations698"
       ]
     ]
   },
@@ -12564,7 +12542,7 @@
     ]
   },
   {
-    "name": "%jsonOperator700",
+    "name": "%jsonOperator699",
     "bnf": [
       [
         "JSON_SEPARATOR_SYMBOL",
@@ -12574,7 +12552,7 @@
     "fragment": true
   },
   {
-    "name": "%jsonOperator701",
+    "name": "%jsonOperator700",
     "bnf": [
       [
         "JSON_UNQUOTED_SEPARATOR_SYMBOL",
@@ -12587,15 +12565,15 @@
     "name": "jsonOperator",
     "bnf": [
       [
-        "%jsonOperator700"
+        "%jsonOperator699"
       ],
       [
-        "%jsonOperator701"
+        "%jsonOperator700"
       ]
     ]
   },
   {
-    "name": "%sumExpr702",
+    "name": "%sumExpr701",
     "bnf": [
       [
         "AVG_SYMBOL",
@@ -12609,7 +12587,7 @@
     "fragment": true
   },
   {
-    "name": "%%sumExpr703704",
+    "name": "%%sumExpr702703",
     "bnf": [
       [
         "BIT_AND_SYMBOL"
@@ -12624,10 +12602,10 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr703",
+    "name": "%sumExpr702",
     "bnf": [
       [
-        "%%sumExpr703704",
+        "%%sumExpr702703",
         "OPEN_PAR_SYMBOL",
         "inSumExpr",
         "CLOSE_PAR_SYMBOL",
@@ -12637,7 +12615,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr705",
+    "name": "%sumExpr704",
     "bnf": [
       [
         "COUNT_SYMBOL",
@@ -12651,7 +12629,7 @@
     "fragment": true
   },
   {
-    "name": "%%%sumExpr706707708",
+    "name": "%%%sumExpr705706707",
     "bnf": [
       [
         "ALL_SYMBOL?",
@@ -12661,7 +12639,7 @@
     "fragment": true
   },
   {
-    "name": "%%%sumExpr706707709",
+    "name": "%%%sumExpr705706708",
     "bnf": [
       [
         "DISTINCT_SYMBOL",
@@ -12671,27 +12649,27 @@
     "fragment": true
   },
   {
-    "name": "%%sumExpr706707",
+    "name": "%%sumExpr705706",
     "bnf": [
       [
-        "%%%sumExpr706707708"
+        "%%%sumExpr705706707"
       ],
       [
         "inSumExpr"
       ],
       [
-        "%%%sumExpr706707709"
+        "%%%sumExpr705706708"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%sumExpr706",
+    "name": "%sumExpr705",
     "bnf": [
       [
         "COUNT_SYMBOL",
         "OPEN_PAR_SYMBOL",
-        "%%sumExpr706707",
+        "%%sumExpr705706",
         "CLOSE_PAR_SYMBOL",
         "windowingClause?"
       ]
@@ -12699,7 +12677,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr710",
+    "name": "%sumExpr709",
     "bnf": [
       [
         "MIN_SYMBOL",
@@ -12713,7 +12691,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr711",
+    "name": "%sumExpr710",
     "bnf": [
       [
         "MAX_SYMBOL",
@@ -12727,7 +12705,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr712",
+    "name": "%sumExpr711",
     "bnf": [
       [
         "STD_SYMBOL",
@@ -12740,7 +12718,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr713",
+    "name": "%sumExpr712",
     "bnf": [
       [
         "VARIANCE_SYMBOL",
@@ -12753,7 +12731,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr714",
+    "name": "%sumExpr713",
     "bnf": [
       [
         "STDDEV_SAMP_SYMBOL",
@@ -12766,7 +12744,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr715",
+    "name": "%sumExpr714",
     "bnf": [
       [
         "VAR_SAMP_SYMBOL",
@@ -12779,7 +12757,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr716",
+    "name": "%sumExpr715",
     "bnf": [
       [
         "SUM_SYMBOL",
@@ -12793,7 +12771,7 @@
     "fragment": true
   },
   {
-    "name": "%%sumExpr717718",
+    "name": "%%sumExpr716717",
     "bnf": [
       [
         "SEPARATOR_SYMBOL",
@@ -12803,7 +12781,7 @@
     "fragment": true
   },
   {
-    "name": "%sumExpr717",
+    "name": "%sumExpr716",
     "bnf": [
       [
         "GROUP_CONCAT_SYMBOL",
@@ -12811,7 +12789,7 @@
         "DISTINCT_SYMBOL?",
         "exprList",
         "orderClause?",
-        "%%sumExpr717718?",
+        "%%sumExpr716717?",
         "CLOSE_PAR_SYMBOL",
         "windowingClause?"
       ]
@@ -12822,19 +12800,22 @@
     "name": "sumExpr",
     "bnf": [
       [
-        "%sumExpr702"
+        "%sumExpr701"
       ],
       [
-        "%sumExpr703"
+        "%sumExpr702"
       ],
       [
         "jsonFunction"
       ],
       [
+        "%sumExpr704"
+      ],
+      [
         "%sumExpr705"
       ],
       [
-        "%sumExpr706"
+        "%sumExpr709"
       ],
       [
         "%sumExpr710"
@@ -12856,9 +12837,6 @@
       ],
       [
         "%sumExpr716"
-      ],
-      [
-        "%sumExpr717"
       ]
     ]
   },
@@ -12874,7 +12852,7 @@
     ]
   },
   {
-    "name": "%%windowFunctionCall719720",
+    "name": "%%windowFunctionCall718719",
     "bnf": [
       [
         "ROW_NUMBER_SYMBOL"
@@ -12895,10 +12873,10 @@
     "fragment": true
   },
   {
-    "name": "%windowFunctionCall719",
+    "name": "%windowFunctionCall718",
     "bnf": [
       [
-        "%%windowFunctionCall719720",
+        "%%windowFunctionCall718719",
         "parentheses",
         "windowingClause"
       ]
@@ -12906,7 +12884,7 @@
     "fragment": true
   },
   {
-    "name": "%windowFunctionCall721",
+    "name": "%windowFunctionCall720",
     "bnf": [
       [
         "NTILE_SYMBOL",
@@ -12917,7 +12895,7 @@
     "fragment": true
   },
   {
-    "name": "%%windowFunctionCall722723",
+    "name": "%%windowFunctionCall721722",
     "bnf": [
       [
         "LEAD_SYMBOL"
@@ -12929,10 +12907,10 @@
     "fragment": true
   },
   {
-    "name": "%windowFunctionCall722",
+    "name": "%windowFunctionCall721",
     "bnf": [
       [
-        "%%windowFunctionCall722723",
+        "%%windowFunctionCall721722",
         "OPEN_PAR_SYMBOL",
         "expr",
         "leadLagInfo?",
@@ -12944,7 +12922,7 @@
     "fragment": true
   },
   {
-    "name": "%%windowFunctionCall724725",
+    "name": "%%windowFunctionCall723724",
     "bnf": [
       [
         "FIRST_VALUE_SYMBOL"
@@ -12956,10 +12934,10 @@
     "fragment": true
   },
   {
-    "name": "%windowFunctionCall724",
+    "name": "%windowFunctionCall723",
     "bnf": [
       [
-        "%%windowFunctionCall724725",
+        "%%windowFunctionCall723724",
         "exprWithParentheses",
         "nullTreatment?",
         "windowingClause"
@@ -12968,7 +12946,7 @@
     "fragment": true
   },
   {
-    "name": "%%%windowFunctionCall726727728",
+    "name": "%%%windowFunctionCall725726727",
     "bnf": [
       [
         "FIRST_SYMBOL"
@@ -12980,17 +12958,17 @@
     "fragment": true
   },
   {
-    "name": "%%windowFunctionCall726727",
+    "name": "%%windowFunctionCall725726",
     "bnf": [
       [
         "FROM_SYMBOL",
-        "%%%windowFunctionCall726727728"
+        "%%%windowFunctionCall725726727"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%windowFunctionCall726",
+    "name": "%windowFunctionCall725",
     "bnf": [
       [
         "NTH_VALUE_SYMBOL",
@@ -12999,7 +12977,7 @@
         "COMMA_SYMBOL",
         "simpleExpr",
         "CLOSE_PAR_SYMBOL",
-        "%%windowFunctionCall726727?",
+        "%%windowFunctionCall725726?",
         "nullTreatment?",
         "windowingClause"
       ]
@@ -13010,24 +12988,24 @@
     "name": "windowFunctionCall",
     "bnf": [
       [
-        "%windowFunctionCall719"
+        "%windowFunctionCall718"
+      ],
+      [
+        "%windowFunctionCall720"
       ],
       [
         "%windowFunctionCall721"
       ],
       [
-        "%windowFunctionCall722"
+        "%windowFunctionCall723"
       ],
       [
-        "%windowFunctionCall724"
-      ],
-      [
-        "%windowFunctionCall726"
+        "%windowFunctionCall725"
       ]
     ]
   },
   {
-    "name": "%windowingClause729",
+    "name": "%windowingClause728",
     "bnf": [
       [
         "windowName"
@@ -13043,12 +13021,12 @@
     "bnf": [
       [
         "OVER_SYMBOL",
-        "%windowingClause729"
+        "%windowingClause728"
       ]
     ]
   },
   {
-    "name": "%leadLagInfo730",
+    "name": "%leadLagInfo729",
     "bnf": [
       [
         "ulonglong_number"
@@ -13060,7 +13038,7 @@
     "fragment": true
   },
   {
-    "name": "%leadLagInfo731",
+    "name": "%leadLagInfo730",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13074,13 +13052,13 @@
     "bnf": [
       [
         "COMMA_SYMBOL",
-        "%leadLagInfo730",
-        "%leadLagInfo731?"
+        "%leadLagInfo729",
+        "%leadLagInfo730?"
       ]
     ]
   },
   {
-    "name": "%nullTreatment732",
+    "name": "%nullTreatment731",
     "bnf": [
       [
         "RESPECT_SYMBOL"
@@ -13095,13 +13073,13 @@
     "name": "nullTreatment",
     "bnf": [
       [
-        "%nullTreatment732",
+        "%nullTreatment731",
         "NULLS_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%jsonFunction733",
+    "name": "%jsonFunction732",
     "bnf": [
       [
         "JSON_ARRAYAGG_SYMBOL",
@@ -13114,7 +13092,7 @@
     "fragment": true
   },
   {
-    "name": "%jsonFunction734",
+    "name": "%jsonFunction733",
     "bnf": [
       [
         "JSON_OBJECTAGG_SYMBOL",
@@ -13132,10 +13110,10 @@
     "name": "jsonFunction",
     "bnf": [
       [
-        "%jsonFunction733"
+        "%jsonFunction732"
       ],
       [
-        "%jsonFunction734"
+        "%jsonFunction733"
       ]
     ]
   },
@@ -13149,7 +13127,7 @@
     ]
   },
   {
-    "name": "%identListArg735",
+    "name": "%identListArg734",
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
@@ -13166,12 +13144,12 @@
         "identList"
       ],
       [
-        "%identListArg735"
+        "%identListArg734"
       ]
     ]
   },
   {
-    "name": "%identList736",
+    "name": "%identList735",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13185,12 +13163,12 @@
     "bnf": [
       [
         "simpleIdentifier",
-        "%identList736*"
+        "%identList735*"
       ]
     ]
   },
   {
-    "name": "%fulltextOptions737",
+    "name": "%fulltextOptions736",
     "bnf": [
       [
         "IN_SYMBOL",
@@ -13201,7 +13179,7 @@
     "fragment": true
   },
   {
-    "name": "%%fulltextOptions738739",
+    "name": "%%fulltextOptions737738",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -13212,20 +13190,20 @@
     "fragment": true
   },
   {
-    "name": "%fulltextOptions738",
+    "name": "%fulltextOptions737",
     "bnf": [
       [
         "IN_SYMBOL",
         "NATURAL_SYMBOL",
         "LANGUAGE_SYMBOL",
         "MODE_SYMBOL",
-        "%%fulltextOptions738739?"
+        "%%fulltextOptions737738?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%fulltextOptions740",
+    "name": "%fulltextOptions739",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -13239,18 +13217,18 @@
     "name": "fulltextOptions",
     "bnf": [
       [
+        "%fulltextOptions736"
+      ],
+      [
         "%fulltextOptions737"
       ],
       [
-        "%fulltextOptions738"
-      ],
-      [
-        "%fulltextOptions740"
+        "%fulltextOptions739"
       ]
     ]
   },
   {
-    "name": "%%runtimeFunctionCall741742",
+    "name": "%%runtimeFunctionCall740741",
     "bnf": [
       [
         "USING_SYMBOL",
@@ -13260,20 +13238,20 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall741",
+    "name": "%runtimeFunctionCall740",
     "bnf": [
       [
         "CHAR_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "exprList",
-        "%%runtimeFunctionCall741742?",
+        "%%runtimeFunctionCall740741?",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall743",
+    "name": "%runtimeFunctionCall742",
     "bnf": [
       [
         "CURRENT_USER_SYMBOL",
@@ -13283,7 +13261,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall744",
+    "name": "%runtimeFunctionCall743",
     "bnf": [
       [
         "DATE_SYMBOL",
@@ -13293,7 +13271,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall745",
+    "name": "%runtimeFunctionCall744",
     "bnf": [
       [
         "DAY_SYMBOL",
@@ -13303,7 +13281,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall746",
+    "name": "%runtimeFunctionCall745",
     "bnf": [
       [
         "HOUR_SYMBOL",
@@ -13313,7 +13291,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall747",
+    "name": "%runtimeFunctionCall746",
     "bnf": [
       [
         "INSERT_SYMBOL",
@@ -13331,7 +13309,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall748749",
+    "name": "%%runtimeFunctionCall747748",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13341,20 +13319,20 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall748",
+    "name": "%runtimeFunctionCall747",
     "bnf": [
       [
         "INTERVAL_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "expr",
-        "%%runtimeFunctionCall748749+",
+        "%%runtimeFunctionCall747748+",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall750",
+    "name": "%runtimeFunctionCall749",
     "bnf": [
       [
         "LEFT_SYMBOL",
@@ -13368,7 +13346,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall751",
+    "name": "%runtimeFunctionCall750",
     "bnf": [
       [
         "MINUTE_SYMBOL",
@@ -13378,7 +13356,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall752",
+    "name": "%runtimeFunctionCall751",
     "bnf": [
       [
         "MONTH_SYMBOL",
@@ -13388,7 +13366,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall753",
+    "name": "%runtimeFunctionCall752",
     "bnf": [
       [
         "RIGHT_SYMBOL",
@@ -13402,7 +13380,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall754",
+    "name": "%runtimeFunctionCall753",
     "bnf": [
       [
         "SECOND_SYMBOL",
@@ -13412,7 +13390,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall755",
+    "name": "%runtimeFunctionCall754",
     "bnf": [
       [
         "TIME_SYMBOL",
@@ -13422,7 +13400,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall756757",
+    "name": "%%runtimeFunctionCall755756",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13432,20 +13410,20 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall756",
+    "name": "%runtimeFunctionCall755",
     "bnf": [
       [
         "TIMESTAMP_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "expr",
-        "%%runtimeFunctionCall756757?",
+        "%%runtimeFunctionCall755756?",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall758",
+    "name": "%runtimeFunctionCall757",
     "bnf": [
       [
         "USER_SYMBOL",
@@ -13455,7 +13433,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall759",
+    "name": "%runtimeFunctionCall758",
     "bnf": [
       [
         "VALUES_SYMBOL",
@@ -13465,7 +13443,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall760",
+    "name": "%runtimeFunctionCall759",
     "bnf": [
       [
         "YEAR_SYMBOL",
@@ -13475,7 +13453,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall761762",
+    "name": "%%runtimeFunctionCall760761",
     "bnf": [
       [
         "ADDDATE_SYMBOL"
@@ -13487,7 +13465,7 @@
     "fragment": true
   },
   {
-    "name": "%%%runtimeFunctionCall761763764",
+    "name": "%%%runtimeFunctionCall760762763",
     "bnf": [
       [
         "INTERVAL_SYMBOL",
@@ -13498,33 +13476,33 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall761763",
+    "name": "%%runtimeFunctionCall760762",
     "bnf": [
       [
         "expr"
       ],
       [
-        "%%%runtimeFunctionCall761763764"
+        "%%%runtimeFunctionCall760762763"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall761",
+    "name": "%runtimeFunctionCall760",
     "bnf": [
       [
-        "%%runtimeFunctionCall761762",
+        "%%runtimeFunctionCall760761",
         "OPEN_PAR_SYMBOL",
         "expr",
         "COMMA_SYMBOL",
-        "%%runtimeFunctionCall761763",
+        "%%runtimeFunctionCall760762",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall765",
+    "name": "%runtimeFunctionCall764",
     "bnf": [
       [
         "CURDATE_SYMBOL",
@@ -13534,7 +13512,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall766",
+    "name": "%runtimeFunctionCall765",
     "bnf": [
       [
         "CURTIME_SYMBOL",
@@ -13544,7 +13522,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall767768",
+    "name": "%%runtimeFunctionCall766767",
     "bnf": [
       [
         "DATE_ADD_SYMBOL"
@@ -13556,10 +13534,10 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall767",
+    "name": "%runtimeFunctionCall766",
     "bnf": [
       [
-        "%%runtimeFunctionCall767768",
+        "%%runtimeFunctionCall766767",
         "OPEN_PAR_SYMBOL",
         "expr",
         "COMMA_SYMBOL",
@@ -13572,7 +13550,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall769",
+    "name": "%runtimeFunctionCall768",
     "bnf": [
       [
         "EXTRACT_SYMBOL",
@@ -13586,7 +13564,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall770",
+    "name": "%runtimeFunctionCall769",
     "bnf": [
       [
         "GET_FORMAT_SYMBOL",
@@ -13600,7 +13578,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall771",
+    "name": "%runtimeFunctionCall770",
     "bnf": [
       [
         "NOW_SYMBOL",
@@ -13610,7 +13588,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall772",
+    "name": "%runtimeFunctionCall771",
     "bnf": [
       [
         "POSITION_SYMBOL",
@@ -13624,7 +13602,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall773",
+    "name": "%runtimeFunctionCall772",
     "bnf": [
       [
         "SYSDATE_SYMBOL",
@@ -13634,7 +13612,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall774775",
+    "name": "%%runtimeFunctionCall773774",
     "bnf": [
       [
         "TIMESTAMP_ADD_SYMBOL"
@@ -13646,10 +13624,10 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall774",
+    "name": "%runtimeFunctionCall773",
     "bnf": [
       [
-        "%%runtimeFunctionCall774775",
+        "%%runtimeFunctionCall773774",
         "OPEN_PAR_SYMBOL",
         "intervalTimeStamp",
         "COMMA_SYMBOL",
@@ -13662,7 +13640,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall776",
+    "name": "%runtimeFunctionCall775",
     "bnf": [
       [
         "UTC_DATE_SYMBOL",
@@ -13672,7 +13650,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall777",
+    "name": "%runtimeFunctionCall776",
     "bnf": [
       [
         "UTC_TIME_SYMBOL",
@@ -13682,7 +13660,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall778",
+    "name": "%runtimeFunctionCall777",
     "bnf": [
       [
         "UTC_TIMESTAMP_SYMBOL",
@@ -13692,7 +13670,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall779",
+    "name": "%runtimeFunctionCall778",
     "bnf": [
       [
         "ASCII_SYMBOL",
@@ -13702,7 +13680,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall780",
+    "name": "%runtimeFunctionCall779",
     "bnf": [
       [
         "CHARSET_SYMBOL",
@@ -13712,7 +13690,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall781",
+    "name": "%runtimeFunctionCall780",
     "bnf": [
       [
         "COALESCE_SYMBOL",
@@ -13722,7 +13700,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall782",
+    "name": "%runtimeFunctionCall781",
     "bnf": [
       [
         "COLLATION_SYMBOL",
@@ -13732,7 +13710,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall783",
+    "name": "%runtimeFunctionCall782",
     "bnf": [
       [
         "DATABASE_SYMBOL",
@@ -13742,7 +13720,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall784",
+    "name": "%runtimeFunctionCall783",
     "bnf": [
       [
         "IF_SYMBOL",
@@ -13758,7 +13736,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall785786",
+    "name": "%%runtimeFunctionCall784785",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13768,7 +13746,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall785",
+    "name": "%runtimeFunctionCall784",
     "bnf": [
       [
         "FORMAT_SYMBOL",
@@ -13776,14 +13754,14 @@
         "expr",
         "COMMA_SYMBOL",
         "expr",
-        "%%runtimeFunctionCall785786?",
+        "%%runtimeFunctionCall784785?",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall787",
+    "name": "%runtimeFunctionCall786",
     "bnf": [
       [
         "MICROSECOND_SYMBOL",
@@ -13793,7 +13771,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall788",
+    "name": "%runtimeFunctionCall787",
     "bnf": [
       [
         "MOD_SYMBOL",
@@ -13807,7 +13785,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall789",
+    "name": "%runtimeFunctionCall788",
     "bnf": [
       [
         "OLD_PASSWORD_SYMBOL",
@@ -13819,7 +13797,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall790",
+    "name": "%runtimeFunctionCall789",
     "bnf": [
       [
         "PASSWORD_SYMBOL",
@@ -13829,7 +13807,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall791",
+    "name": "%runtimeFunctionCall790",
     "bnf": [
       [
         "QUARTER_SYMBOL",
@@ -13839,7 +13817,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall792",
+    "name": "%runtimeFunctionCall791",
     "bnf": [
       [
         "REPEAT_SYMBOL",
@@ -13853,7 +13831,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall793",
+    "name": "%runtimeFunctionCall792",
     "bnf": [
       [
         "REPLACE_SYMBOL",
@@ -13869,7 +13847,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall794",
+    "name": "%runtimeFunctionCall793",
     "bnf": [
       [
         "REVERSE_SYMBOL",
@@ -13879,7 +13857,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall795",
+    "name": "%runtimeFunctionCall794",
     "bnf": [
       [
         "ROW_COUNT_SYMBOL",
@@ -13889,7 +13867,7 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall796",
+    "name": "%runtimeFunctionCall795",
     "bnf": [
       [
         "TRUNCATE_SYMBOL",
@@ -13903,7 +13881,7 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall797798",
+    "name": "%%runtimeFunctionCall796797",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13913,20 +13891,20 @@
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall797",
+    "name": "%runtimeFunctionCall796",
     "bnf": [
       [
         "WEEK_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "expr",
-        "%%runtimeFunctionCall797798?",
+        "%%runtimeFunctionCall796797?",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%runtimeFunctionCall799800801802",
+    "name": "%%%%runtimeFunctionCall798799800801",
     "bnf": [
       [
         "AS_SYMBOL",
@@ -13937,17 +13915,17 @@
     "fragment": true
   },
   {
-    "name": "%%%runtimeFunctionCall799800801",
+    "name": "%%%runtimeFunctionCall798799800",
     "bnf": [
       [
-        "%%%%runtimeFunctionCall799800801802?",
+        "%%%%runtimeFunctionCall798799800801?",
         "weightStringLevels?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%runtimeFunctionCall799800803",
+    "name": "%%%runtimeFunctionCall798799802",
     "bnf": [
       [
         "AS_SYMBOL",
@@ -13958,7 +13936,7 @@
     "fragment": true
   },
   {
-    "name": "%%%runtimeFunctionCall799800804",
+    "name": "%%%runtimeFunctionCall798799803",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -13972,28 +13950,28 @@
     "fragment": true
   },
   {
-    "name": "%%runtimeFunctionCall799800",
+    "name": "%%runtimeFunctionCall798799",
     "bnf": [
       [
-        "%%%runtimeFunctionCall799800801"
+        "%%%runtimeFunctionCall798799800"
       ],
       [
-        "%%%runtimeFunctionCall799800803"
+        "%%%runtimeFunctionCall798799802"
       ],
       [
-        "%%%runtimeFunctionCall799800804"
+        "%%%runtimeFunctionCall798799803"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%runtimeFunctionCall799",
+    "name": "%runtimeFunctionCall798",
     "bnf": [
       [
         "WEIGHT_STRING_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "expr",
-        "%%runtimeFunctionCall799800",
+        "%%runtimeFunctionCall798799",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
@@ -14003,7 +13981,10 @@
     "name": "runtimeFunctionCall",
     "bnf": [
       [
-        "%runtimeFunctionCall741"
+        "%runtimeFunctionCall740"
+      ],
+      [
+        "%runtimeFunctionCall742"
       ],
       [
         "%runtimeFunctionCall743"
@@ -14021,7 +14002,7 @@
         "%runtimeFunctionCall747"
       ],
       [
-        "%runtimeFunctionCall748"
+        "%runtimeFunctionCall749"
       ],
       [
         "%runtimeFunctionCall750"
@@ -14042,10 +14023,10 @@
         "%runtimeFunctionCall755"
       ],
       [
-        "%runtimeFunctionCall756"
+        "trimFunction"
       ],
       [
-        "trimFunction"
+        "%runtimeFunctionCall757"
       ],
       [
         "%runtimeFunctionCall758"
@@ -14057,7 +14038,7 @@
         "%runtimeFunctionCall760"
       ],
       [
-        "%runtimeFunctionCall761"
+        "%runtimeFunctionCall764"
       ],
       [
         "%runtimeFunctionCall765"
@@ -14066,7 +14047,7 @@
         "%runtimeFunctionCall766"
       ],
       [
-        "%runtimeFunctionCall767"
+        "%runtimeFunctionCall768"
       ],
       [
         "%runtimeFunctionCall769"
@@ -14078,16 +14059,16 @@
         "%runtimeFunctionCall771"
       ],
       [
-        "%runtimeFunctionCall772"
+        "substringFunction"
       ],
       [
-        "substringFunction"
+        "%runtimeFunctionCall772"
       ],
       [
         "%runtimeFunctionCall773"
       ],
       [
-        "%runtimeFunctionCall774"
+        "%runtimeFunctionCall775"
       ],
       [
         "%runtimeFunctionCall776"
@@ -14117,7 +14098,7 @@
         "%runtimeFunctionCall784"
       ],
       [
-        "%runtimeFunctionCall785"
+        "%runtimeFunctionCall786"
       ],
       [
         "%runtimeFunctionCall787"
@@ -14150,10 +14131,7 @@
         "%runtimeFunctionCall796"
       ],
       [
-        "%runtimeFunctionCall797"
-      ],
-      [
-        "%runtimeFunctionCall799"
+        "%runtimeFunctionCall798"
       ],
       [
         "geometryFunction"
@@ -14161,7 +14139,7 @@
     ]
   },
   {
-    "name": "%geometryFunction805",
+    "name": "%geometryFunction804",
     "bnf": [
       [
         "CONTAINS_SYMBOL",
@@ -14175,7 +14153,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction806",
+    "name": "%geometryFunction805",
     "bnf": [
       [
         "GEOMETRYCOLLECTION_SYMBOL",
@@ -14187,7 +14165,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction807",
+    "name": "%geometryFunction806",
     "bnf": [
       [
         "LINESTRING_SYMBOL",
@@ -14197,7 +14175,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction808",
+    "name": "%geometryFunction807",
     "bnf": [
       [
         "MULTILINESTRING_SYMBOL",
@@ -14207,7 +14185,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction809",
+    "name": "%geometryFunction808",
     "bnf": [
       [
         "MULTIPOINT_SYMBOL",
@@ -14217,7 +14195,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction810",
+    "name": "%geometryFunction809",
     "bnf": [
       [
         "MULTIPOLYGON_SYMBOL",
@@ -14227,7 +14205,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction811",
+    "name": "%geometryFunction810",
     "bnf": [
       [
         "POINT_SYMBOL",
@@ -14241,7 +14219,7 @@
     "fragment": true
   },
   {
-    "name": "%geometryFunction812",
+    "name": "%geometryFunction811",
     "bnf": [
       [
         "POLYGON_SYMBOL",
@@ -14253,6 +14231,9 @@
   {
     "name": "geometryFunction",
     "bnf": [
+      [
+        "%geometryFunction804"
+      ],
       [
         "%geometryFunction805"
       ],
@@ -14273,9 +14254,6 @@
       ],
       [
         "%geometryFunction811"
-      ],
-      [
-        "%geometryFunction812"
       ]
     ]
   },
@@ -14298,7 +14276,7 @@
     ]
   },
   {
-    "name": "%%weightStringLevels813814",
+    "name": "%%weightStringLevels812813",
     "bnf": [
       [
         "real_ulong_number",
@@ -14309,7 +14287,7 @@
     "fragment": true
   },
   {
-    "name": "%%%weightStringLevels813815816",
+    "name": "%%%weightStringLevels812814815",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -14319,23 +14297,23 @@
     "fragment": true
   },
   {
-    "name": "%%weightStringLevels813815",
+    "name": "%%weightStringLevels812814",
     "bnf": [
       [
         "weightStringLevelListItem",
-        "%%%weightStringLevels813815816*"
+        "%%%weightStringLevels812814815*"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%weightStringLevels813",
+    "name": "%weightStringLevels812",
     "bnf": [
       [
-        "%%weightStringLevels813814"
+        "%%weightStringLevels812813"
       ],
       [
-        "%%weightStringLevels813815"
+        "%%weightStringLevels812814"
       ]
     ],
     "fragment": true
@@ -14345,12 +14323,12 @@
     "bnf": [
       [
         "LEVEL_SYMBOL",
-        "%weightStringLevels813"
+        "%weightStringLevels812"
       ]
     ]
   },
   {
-    "name": "%%%weightStringLevelListItem817818819",
+    "name": "%%%weightStringLevelListItem816817818",
     "bnf": [
       [
         "ASC_SYMBOL"
@@ -14362,20 +14340,20 @@
     "fragment": true
   },
   {
-    "name": "%%weightStringLevelListItem817818",
+    "name": "%%weightStringLevelListItem816817",
     "bnf": [
       [
-        "%%%weightStringLevelListItem817818819",
+        "%%%weightStringLevelListItem816817818",
         "REVERSE_SYMBOL?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%weightStringLevelListItem817",
+    "name": "%weightStringLevelListItem816",
     "bnf": [
       [
-        "%%weightStringLevelListItem817818"
+        "%%weightStringLevelListItem816817"
       ],
       [
         "REVERSE_SYMBOL"
@@ -14388,7 +14366,7 @@
     "bnf": [
       [
         "real_ulong_number",
-        "%weightStringLevelListItem817?"
+        "%weightStringLevelListItem816?"
       ]
     ]
   },
@@ -14410,7 +14388,7 @@
     ]
   },
   {
-    "name": "%%%trimFunction820821822",
+    "name": "%%%trimFunction819820821",
     "bnf": [
       [
         "FROM_SYMBOL",
@@ -14420,17 +14398,17 @@
     "fragment": true
   },
   {
-    "name": "%%trimFunction820821",
+    "name": "%%trimFunction819820",
     "bnf": [
       [
         "expr",
-        "%%%trimFunction820821822?"
+        "%%%trimFunction819820821?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%trimFunction820823",
+    "name": "%%trimFunction819822",
     "bnf": [
       [
         "LEADING_SYMBOL",
@@ -14442,7 +14420,7 @@
     "fragment": true
   },
   {
-    "name": "%%trimFunction820824",
+    "name": "%%trimFunction819823",
     "bnf": [
       [
         "TRAILING_SYMBOL",
@@ -14454,7 +14432,7 @@
     "fragment": true
   },
   {
-    "name": "%%trimFunction820825",
+    "name": "%%trimFunction819824",
     "bnf": [
       [
         "BOTH_SYMBOL",
@@ -14466,19 +14444,19 @@
     "fragment": true
   },
   {
-    "name": "%trimFunction820",
+    "name": "%trimFunction819",
     "bnf": [
       [
-        "%%trimFunction820821"
+        "%%trimFunction819820"
       ],
       [
-        "%%trimFunction820823"
+        "%%trimFunction819822"
       ],
       [
-        "%%trimFunction820824"
+        "%%trimFunction819823"
       ],
       [
-        "%%trimFunction820825"
+        "%%trimFunction819824"
       ]
     ],
     "fragment": true
@@ -14489,13 +14467,13 @@
       [
         "TRIM_SYMBOL",
         "OPEN_PAR_SYMBOL",
-        "%trimFunction820",
+        "%trimFunction819",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%%%substringFunction826827828",
+    "name": "%%%substringFunction825826827",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -14505,18 +14483,18 @@
     "fragment": true
   },
   {
-    "name": "%%substringFunction826827",
+    "name": "%%substringFunction825826",
     "bnf": [
       [
         "COMMA_SYMBOL",
         "expr",
-        "%%%substringFunction826827828?"
+        "%%%substringFunction825826827?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%substringFunction826829830",
+    "name": "%%%substringFunction825828829",
     "bnf": [
       [
         "FOR_SYMBOL",
@@ -14526,24 +14504,24 @@
     "fragment": true
   },
   {
-    "name": "%%substringFunction826829",
+    "name": "%%substringFunction825828",
     "bnf": [
       [
         "FROM_SYMBOL",
         "expr",
-        "%%%substringFunction826829830?"
+        "%%%substringFunction825828829?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%substringFunction826",
+    "name": "%substringFunction825",
     "bnf": [
       [
-        "%%substringFunction826827"
+        "%%substringFunction825826"
       ],
       [
-        "%%substringFunction826829"
+        "%%substringFunction825828"
       ]
     ],
     "fragment": true
@@ -14555,13 +14533,13 @@
         "SUBSTRING_SYMBOL",
         "OPEN_PAR_SYMBOL",
         "expr",
-        "%substringFunction826",
+        "%substringFunction825",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%functionCall831",
+    "name": "%functionCall830",
     "bnf": [
       [
         "pureIdentifier",
@@ -14573,7 +14551,7 @@
     "fragment": true
   },
   {
-    "name": "%functionCall832",
+    "name": "%functionCall831",
     "bnf": [
       [
         "qualifiedIdentifier",
@@ -14588,15 +14566,15 @@
     "name": "functionCall",
     "bnf": [
       [
-        "%functionCall831"
+        "%functionCall830"
       ],
       [
-        "%functionCall832"
+        "%functionCall831"
       ]
     ]
   },
   {
-    "name": "%udfExprList833",
+    "name": "%udfExprList832",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -14610,7 +14588,7 @@
     "bnf": [
       [
         "udfExpr",
-        "%udfExprList833*"
+        "%udfExprList832*"
       ]
     ]
   },
@@ -14635,7 +14613,7 @@
     ]
   },
   {
-    "name": "%userVariable834",
+    "name": "%userVariable833",
     "bnf": [
       [
         "AT_SIGN_SYMBOL",
@@ -14648,7 +14626,7 @@
     "name": "userVariable",
     "bnf": [
       [
-        "%userVariable834"
+        "%userVariable833"
       ],
       [
         "AT_TEXT_SUFFIX"
@@ -14667,7 +14645,7 @@
     ]
   },
   {
-    "name": "%%internalVariableName835836",
+    "name": "%%internalVariableName834835",
     "bnf": [
       [
         "identifier",
@@ -14677,7 +14655,7 @@
     "fragment": true
   },
   {
-    "name": "%%internalVariableName835837",
+    "name": "%%internalVariableName834836",
     "bnf": [
       [
         "lValueIdentifier",
@@ -14687,19 +14665,19 @@
     "fragment": true
   },
   {
-    "name": "%internalVariableName835",
+    "name": "%internalVariableName834",
     "bnf": [
       [
-        "%%internalVariableName835836"
+        "%%internalVariableName834835"
       ],
       [
-        "%%internalVariableName835837"
+        "%%internalVariableName834836"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%internalVariableName838",
+    "name": "%internalVariableName837",
     "bnf": [
       [
         "DEFAULT_SYMBOL",
@@ -14712,10 +14690,10 @@
     "name": "internalVariableName",
     "bnf": [
       [
-        "%internalVariableName835"
+        "%internalVariableName834"
       ],
       [
-        "%internalVariableName838"
+        "%internalVariableName837"
       ]
     ]
   },
@@ -14747,7 +14725,7 @@
     ]
   },
   {
-    "name": "%castType839",
+    "name": "%castType838",
     "bnf": [
       [
         "BINARY_SYMBOL",
@@ -14757,7 +14735,7 @@
     "fragment": true
   },
   {
-    "name": "%castType840",
+    "name": "%castType839",
     "bnf": [
       [
         "CHAR_SYMBOL",
@@ -14768,7 +14746,7 @@
     "fragment": true
   },
   {
-    "name": "%castType841",
+    "name": "%castType840",
     "bnf": [
       [
         "nchar",
@@ -14778,7 +14756,7 @@
     "fragment": true
   },
   {
-    "name": "%castType842",
+    "name": "%castType841",
     "bnf": [
       [
         "SIGNED_SYMBOL",
@@ -14788,7 +14766,7 @@
     "fragment": true
   },
   {
-    "name": "%castType843",
+    "name": "%castType842",
     "bnf": [
       [
         "UNSIGNED_SYMBOL",
@@ -14798,7 +14776,7 @@
     "fragment": true
   },
   {
-    "name": "%castType844",
+    "name": "%castType843",
     "bnf": [
       [
         "TIME_SYMBOL",
@@ -14808,7 +14786,7 @@
     "fragment": true
   },
   {
-    "name": "%castType845",
+    "name": "%castType844",
     "bnf": [
       [
         "DATETIME_SYMBOL",
@@ -14818,7 +14796,7 @@
     "fragment": true
   },
   {
-    "name": "%castType846",
+    "name": "%castType845",
     "bnf": [
       [
         "DECIMAL_SYMBOL",
@@ -14828,7 +14806,7 @@
     "fragment": true
   },
   {
-    "name": "%castType847",
+    "name": "%castType846",
     "bnf": [
       [
         "FLOAT_SYMBOL",
@@ -14840,6 +14818,9 @@
   {
     "name": "castType",
     "bnf": [
+      [
+        "%castType838"
+      ],
       [
         "%castType839"
       ],
@@ -14853,10 +14834,10 @@
         "%castType842"
       ],
       [
-        "%castType843"
+        "DATE_SYMBOL"
       ],
       [
-        "DATE_SYMBOL"
+        "%castType843"
       ],
       [
         "%castType844"
@@ -14865,21 +14846,18 @@
         "%castType845"
       ],
       [
-        "%castType846"
-      ],
-      [
         "JSON_SYMBOL"
       ],
       [
         "realType"
       ],
       [
-        "%castType847"
+        "%castType846"
       ]
     ]
   },
   {
-    "name": "%exprList848",
+    "name": "%exprList847",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -14893,12 +14871,12 @@
     "bnf": [
       [
         "expr",
-        "%exprList848*"
+        "%exprList847*"
       ]
     ]
   },
   {
-    "name": "%charset849",
+    "name": "%charset848",
     "bnf": [
       [
         "CHAR_SYMBOL",
@@ -14911,7 +14889,7 @@
     "name": "charset",
     "bnf": [
       [
-        "%charset849"
+        "%charset848"
       ],
       [
         "CHARSET_SYMBOL"
@@ -14941,7 +14919,7 @@
     ]
   },
   {
-    "name": "%interval850",
+    "name": "%interval849",
     "bnf": [
       [
         "SECOND_MICROSECOND_SYMBOL"
@@ -14986,7 +14964,7 @@
         "intervalTimeStamp"
       ],
       [
-        "%interval850"
+        "%interval849"
       ]
     ]
   },
@@ -15053,7 +15031,7 @@
     ]
   },
   {
-    "name": "%orderList851",
+    "name": "%orderList850",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15067,7 +15045,7 @@
     "bnf": [
       [
         "orderExpression",
-        "%orderList851*"
+        "%orderList850*"
       ]
     ]
   },
@@ -15081,7 +15059,7 @@
     ]
   },
   {
-    "name": "%groupList852",
+    "name": "%groupList851",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15095,7 +15073,7 @@
     "bnf": [
       [
         "groupingExpression",
-        "%groupList852*"
+        "%groupList851*"
       ]
     ]
   },
@@ -15182,7 +15160,7 @@
     ]
   },
   {
-    "name": "%%ifBody853854",
+    "name": "%%ifBody852853",
     "bnf": [
       [
         "ELSEIF_SYMBOL",
@@ -15192,7 +15170,7 @@
     "fragment": true
   },
   {
-    "name": "%%ifBody853855",
+    "name": "%%ifBody852854",
     "bnf": [
       [
         "ELSE_SYMBOL",
@@ -15202,13 +15180,13 @@
     "fragment": true
   },
   {
-    "name": "%ifBody853",
+    "name": "%ifBody852",
     "bnf": [
       [
-        "%%ifBody853854"
+        "%%ifBody852853"
       ],
       [
-        "%%ifBody853855"
+        "%%ifBody852854"
       ]
     ],
     "fragment": true
@@ -15219,7 +15197,7 @@
       [
         "expr",
         "thenStatement",
-        "%ifBody853?"
+        "%ifBody852?"
       ]
     ]
   },
@@ -15233,7 +15211,7 @@
     ]
   },
   {
-    "name": "%compoundStatementList856",
+    "name": "%compoundStatementList855",
     "bnf": [
       [
         "compoundStatement",
@@ -15246,12 +15224,12 @@
     "name": "compoundStatementList",
     "bnf": [
       [
-        "%compoundStatementList856+"
+        "%compoundStatementList855+"
       ]
     ]
   },
   {
-    "name": "%caseStatement857",
+    "name": "%caseStatement856",
     "bnf": [
       [
         "whenExpression",
@@ -15266,7 +15244,7 @@
       [
         "CASE_SYMBOL",
         "expr?",
-        "%caseStatement857+",
+        "%caseStatement856+",
         "elseStatement?",
         "END_SYMBOL",
         "CASE_SYMBOL"
@@ -15382,7 +15360,7 @@
     ]
   },
   {
-    "name": "%spDeclarations858",
+    "name": "%spDeclarations857",
     "bnf": [
       [
         "spDeclaration",
@@ -15395,7 +15373,7 @@
     "name": "spDeclarations",
     "bnf": [
       [
-        "%spDeclarations858+"
+        "%spDeclarations857+"
       ]
     ]
   },
@@ -15417,7 +15395,7 @@
     ]
   },
   {
-    "name": "%variableDeclaration859",
+    "name": "%variableDeclaration858",
     "bnf": [
       [
         "DEFAULT_SYMBOL",
@@ -15434,7 +15412,7 @@
         "identifierList",
         "dataType",
         "collate?",
-        "%variableDeclaration859?"
+        "%variableDeclaration858?"
       ]
     ]
   },
@@ -15472,7 +15450,7 @@
     ]
   },
   {
-    "name": "%handlerDeclaration860",
+    "name": "%handlerDeclaration859",
     "bnf": [
       [
         "CONTINUE_SYMBOL"
@@ -15487,7 +15465,7 @@
     "fragment": true
   },
   {
-    "name": "%handlerDeclaration861",
+    "name": "%handlerDeclaration860",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15501,17 +15479,17 @@
     "bnf": [
       [
         "DECLARE_SYMBOL",
-        "%handlerDeclaration860",
+        "%handlerDeclaration859",
         "HANDLER_SYMBOL",
         "FOR_SYMBOL",
         "handlerCondition",
-        "%handlerDeclaration861*",
+        "%handlerDeclaration860*",
         "compoundStatement"
       ]
     ]
   },
   {
-    "name": "%handlerCondition862",
+    "name": "%handlerCondition861",
     "bnf": [
       [
         "notRule",
@@ -15533,7 +15511,7 @@
         "SQLWARNING_SYMBOL"
       ],
       [
-        "%handlerCondition862"
+        "%handlerCondition861"
       ],
       [
         "SQLEXCEPTION_SYMBOL"
@@ -15571,7 +15549,7 @@
     ]
   },
   {
-    "name": "%getDiagnostics863",
+    "name": "%getDiagnostics862",
     "bnf": [
       [
         "CURRENT_SYMBOL"
@@ -15583,7 +15561,7 @@
     "fragment": true
   },
   {
-    "name": "%%%getDiagnostics864865866",
+    "name": "%%%getDiagnostics863864865",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15593,17 +15571,17 @@
     "fragment": true
   },
   {
-    "name": "%%getDiagnostics864865",
+    "name": "%%getDiagnostics863864",
     "bnf": [
       [
         "statementInformationItem",
-        "%%%getDiagnostics864865866*"
+        "%%%getDiagnostics863864865*"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%getDiagnostics864867868",
+    "name": "%%%getDiagnostics863866867",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15613,25 +15591,25 @@
     "fragment": true
   },
   {
-    "name": "%%getDiagnostics864867",
+    "name": "%%getDiagnostics863866",
     "bnf": [
       [
         "CONDITION_SYMBOL",
         "signalAllowedExpr",
         "conditionInformationItem",
-        "%%%getDiagnostics864867868*"
+        "%%%getDiagnostics863866867*"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%getDiagnostics864",
+    "name": "%getDiagnostics863",
     "bnf": [
       [
-        "%%getDiagnostics864865"
+        "%%getDiagnostics863864"
       ],
       [
-        "%%getDiagnostics864867"
+        "%%getDiagnostics863866"
       ]
     ],
     "fragment": true
@@ -15641,9 +15619,9 @@
     "bnf": [
       [
         "GET_SYMBOL",
-        "%getDiagnostics863?",
+        "%getDiagnostics862?",
         "DIAGNOSTICS_SYMBOL",
-        "%getDiagnostics864"
+        "%getDiagnostics863"
       ]
     ]
   },
@@ -15662,7 +15640,7 @@
     ]
   },
   {
-    "name": "%statementInformationItem869",
+    "name": "%statementInformationItem868",
     "bnf": [
       [
         "variable"
@@ -15674,7 +15652,7 @@
     "fragment": true
   },
   {
-    "name": "%statementInformationItem870",
+    "name": "%statementInformationItem869",
     "bnf": [
       [
         "NUMBER_SYMBOL"
@@ -15689,14 +15667,14 @@
     "name": "statementInformationItem",
     "bnf": [
       [
-        "%statementInformationItem869",
+        "%statementInformationItem868",
         "EQUAL_OPERATOR",
-        "%statementInformationItem870"
+        "%statementInformationItem869"
       ]
     ]
   },
   {
-    "name": "%conditionInformationItem871",
+    "name": "%conditionInformationItem870",
     "bnf": [
       [
         "variable"
@@ -15708,7 +15686,7 @@
     "fragment": true
   },
   {
-    "name": "%conditionInformationItem872",
+    "name": "%conditionInformationItem871",
     "bnf": [
       [
         "signalInformationItemName"
@@ -15723,9 +15701,9 @@
     "name": "conditionInformationItem",
     "bnf": [
       [
-        "%conditionInformationItem871",
+        "%conditionInformationItem870",
         "EQUAL_OPERATOR",
-        "%conditionInformationItem872"
+        "%conditionInformationItem871"
       ]
     ]
   },
@@ -15771,7 +15749,7 @@
     ]
   },
   {
-    "name": "%signalStatement873",
+    "name": "%signalStatement872",
     "bnf": [
       [
         "identifier"
@@ -15783,7 +15761,7 @@
     "fragment": true
   },
   {
-    "name": "%%signalStatement874875",
+    "name": "%%signalStatement873874",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15793,12 +15771,12 @@
     "fragment": true
   },
   {
-    "name": "%signalStatement874",
+    "name": "%signalStatement873",
     "bnf": [
       [
         "SET_SYMBOL",
         "signalInformationItem",
-        "%%signalStatement874875*"
+        "%%signalStatement873874*"
       ]
     ],
     "fragment": true
@@ -15808,13 +15786,13 @@
     "bnf": [
       [
         "SIGNAL_SYMBOL",
-        "%signalStatement873",
-        "%signalStatement874?"
+        "%signalStatement872",
+        "%signalStatement873?"
       ]
     ]
   },
   {
-    "name": "%resignalStatement876",
+    "name": "%resignalStatement875",
     "bnf": [
       [
         "identifier"
@@ -15826,7 +15804,7 @@
     "fragment": true
   },
   {
-    "name": "%%resignalStatement877878",
+    "name": "%%resignalStatement876877",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -15836,12 +15814,12 @@
     "fragment": true
   },
   {
-    "name": "%resignalStatement877",
+    "name": "%resignalStatement876",
     "bnf": [
       [
         "SET_SYMBOL",
         "signalInformationItem",
-        "%%resignalStatement877878*"
+        "%%resignalStatement876877*"
       ]
     ],
     "fragment": true
@@ -15851,8 +15829,8 @@
     "bnf": [
       [
         "RESIGNAL_SYMBOL",
-        "%resignalStatement876?",
-        "%resignalStatement877?"
+        "%resignalStatement875?",
+        "%resignalStatement876?"
       ]
     ]
   },
@@ -15885,7 +15863,7 @@
     ]
   },
   {
-    "name": "%cursorFetch879",
+    "name": "%cursorFetch878",
     "bnf": [
       [
         "NEXT_SYMBOL?",
@@ -15899,7 +15877,7 @@
     "bnf": [
       [
         "FETCH_SYMBOL",
-        "%cursorFetch879?",
+        "%cursorFetch878?",
         "identifier",
         "INTO_SYMBOL",
         "identifierList"
@@ -15907,7 +15885,7 @@
     ]
   },
   {
-    "name": "%schedule880",
+    "name": "%schedule879",
     "bnf": [
       [
         "AT_SYMBOL",
@@ -15917,7 +15895,7 @@
     "fragment": true
   },
   {
-    "name": "%%schedule881882",
+    "name": "%%schedule880881",
     "bnf": [
       [
         "STARTS_SYMBOL",
@@ -15927,7 +15905,7 @@
     "fragment": true
   },
   {
-    "name": "%%schedule881883",
+    "name": "%%schedule880882",
     "bnf": [
       [
         "ENDS_SYMBOL",
@@ -15937,14 +15915,14 @@
     "fragment": true
   },
   {
-    "name": "%schedule881",
+    "name": "%schedule880",
     "bnf": [
       [
         "EVERY_SYMBOL",
         "expr",
         "interval",
-        "%%schedule881882?",
-        "%%schedule881883?"
+        "%%schedule880881?",
+        "%%schedule880882?"
       ]
     ],
     "fragment": true
@@ -15953,10 +15931,10 @@
     "name": "schedule",
     "bnf": [
       [
-        "%schedule880"
+        "%schedule879"
       ],
       [
-        "%schedule881"
+        "%schedule880"
       ]
     ]
   },
@@ -16000,7 +15978,7 @@
     ]
   },
   {
-    "name": "%%tableConstraintDef884885",
+    "name": "%%tableConstraintDef883884",
     "bnf": [
       [
         "KEY_SYMBOL"
@@ -16012,10 +15990,10 @@
     "fragment": true
   },
   {
-    "name": "%tableConstraintDef884",
+    "name": "%tableConstraintDef883",
     "bnf": [
       [
-        "%%tableConstraintDef884885",
+        "%%tableConstraintDef883884",
         "indexNameAndType?",
         "keyListVariants",
         "indexOption*"
@@ -16024,7 +16002,7 @@
     "fragment": true
   },
   {
-    "name": "%tableConstraintDef886",
+    "name": "%tableConstraintDef885",
     "bnf": [
       [
         "FULLTEXT_SYMBOL",
@@ -16037,7 +16015,7 @@
     "fragment": true
   },
   {
-    "name": "%tableConstraintDef887",
+    "name": "%tableConstraintDef886",
     "bnf": [
       [
         "SPATIAL_SYMBOL",
@@ -16050,7 +16028,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%%tableConstraintDef888889890891892",
+    "name": "%%%%%tableConstraintDef887888889890891",
     "bnf": [
       [
         "PRIMARY_SYMBOL",
@@ -16060,7 +16038,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%%tableConstraintDef888889890891893",
+    "name": "%%%%%tableConstraintDef887888889890892",
     "bnf": [
       [
         "UNIQUE_SYMBOL",
@@ -16070,22 +16048,22 @@
     "fragment": true
   },
   {
-    "name": "%%%%tableConstraintDef888889890891",
+    "name": "%%%%tableConstraintDef887888889890",
     "bnf": [
       [
-        "%%%%%tableConstraintDef888889890891892"
+        "%%%%%tableConstraintDef887888889890891"
       ],
       [
-        "%%%%%tableConstraintDef888889890891893"
+        "%%%%%tableConstraintDef887888889890892"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%tableConstraintDef888889890",
+    "name": "%%%tableConstraintDef887888889",
     "bnf": [
       [
-        "%%%%tableConstraintDef888889890891",
+        "%%%%tableConstraintDef887888889890",
         "indexNameAndType?",
         "keyListVariants",
         "indexOption*"
@@ -16094,7 +16072,7 @@
     "fragment": true
   },
   {
-    "name": "%%%tableConstraintDef888889894",
+    "name": "%%%tableConstraintDef887888893",
     "bnf": [
       [
         "FOREIGN_SYMBOL",
@@ -16107,7 +16085,7 @@
     "fragment": true
   },
   {
-    "name": "%%%tableConstraintDef888889895",
+    "name": "%%%tableConstraintDef887888894",
     "bnf": [
       [
         "checkConstraint",
@@ -16117,26 +16095,26 @@
     "fragment": true
   },
   {
-    "name": "%%tableConstraintDef888889",
+    "name": "%%tableConstraintDef887888",
     "bnf": [
       [
-        "%%%tableConstraintDef888889890"
+        "%%%tableConstraintDef887888889"
       ],
       [
-        "%%%tableConstraintDef888889894"
+        "%%%tableConstraintDef887888893"
       ],
       [
-        "%%%tableConstraintDef888889895"
+        "%%%tableConstraintDef887888894"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%tableConstraintDef888",
+    "name": "%tableConstraintDef887",
     "bnf": [
       [
         "constraintName?",
-        "%%tableConstraintDef888889"
+        "%%tableConstraintDef887888"
       ]
     ],
     "fragment": true
@@ -16145,16 +16123,16 @@
     "name": "tableConstraintDef",
     "bnf": [
       [
-        "%tableConstraintDef884"
+        "%tableConstraintDef883"
+      ],
+      [
+        "%tableConstraintDef885"
       ],
       [
         "%tableConstraintDef886"
       ],
       [
         "%tableConstraintDef887"
-      ],
-      [
-        "%tableConstraintDef888"
       ]
     ]
   },
@@ -16168,7 +16146,7 @@
     ]
   },
   {
-    "name": "%%%fieldDefinition896897898",
+    "name": "%%%fieldDefinition895896897",
     "bnf": [
       [
         "GENERATED_SYMBOL",
@@ -16178,7 +16156,7 @@
     "fragment": true
   },
   {
-    "name": "%%%fieldDefinition896897899",
+    "name": "%%%fieldDefinition895896898",
     "bnf": [
       [
         "VIRTUAL_SYMBOL"
@@ -16190,7 +16168,7 @@
     "fragment": true
   },
   {
-    "name": "%%%fieldDefinition896897900",
+    "name": "%%%fieldDefinition895896899",
     "bnf": [
       [
         "gcolAttribute*"
@@ -16202,27 +16180,27 @@
     "fragment": true
   },
   {
-    "name": "%%fieldDefinition896897",
+    "name": "%%fieldDefinition895896",
     "bnf": [
       [
         "collate?",
-        "%%%fieldDefinition896897898?",
+        "%%%fieldDefinition895896897?",
         "AS_SYMBOL",
         "exprWithParentheses",
-        "%%%fieldDefinition896897899?",
-        "%%%fieldDefinition896897900"
+        "%%%fieldDefinition895896898?",
+        "%%%fieldDefinition895896899"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%fieldDefinition896",
+    "name": "%fieldDefinition895",
     "bnf": [
       [
         "columnAttribute*"
       ],
       [
-        "%%fieldDefinition896897"
+        "%%fieldDefinition895896"
       ]
     ],
     "fragment": true
@@ -16232,12 +16210,12 @@
     "bnf": [
       [
         "dataType",
-        "%fieldDefinition896"
+        "%fieldDefinition895"
       ]
     ]
   },
   {
-    "name": "%columnAttribute901",
+    "name": "%columnAttribute900",
     "bnf": [
       [
         "NOT_SYMBOL?",
@@ -16247,7 +16225,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute902",
+    "name": "%columnAttribute901",
     "bnf": [
       [
         "NOT_SYMBOL",
@@ -16257,7 +16235,7 @@
     "fragment": true
   },
   {
-    "name": "%%%columnAttribute903904905",
+    "name": "%%%columnAttribute902903904",
     "bnf": [
       [
         "NOW_SYMBOL",
@@ -16267,13 +16245,13 @@
     "fragment": true
   },
   {
-    "name": "%%columnAttribute903904",
+    "name": "%%columnAttribute902903",
     "bnf": [
       [
         "signedLiteral"
       ],
       [
-        "%%%columnAttribute903904905"
+        "%%%columnAttribute902903904"
       ],
       [
         "exprWithParentheses"
@@ -16282,17 +16260,17 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute903",
+    "name": "%columnAttribute902",
     "bnf": [
       [
         "DEFAULT_SYMBOL",
-        "%%columnAttribute903904"
+        "%%columnAttribute902903"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%columnAttribute906",
+    "name": "%columnAttribute905",
     "bnf": [
       [
         "ON_SYMBOL",
@@ -16304,7 +16282,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute907",
+    "name": "%columnAttribute906",
     "bnf": [
       [
         "SERIAL_SYMBOL",
@@ -16315,7 +16293,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute908",
+    "name": "%columnAttribute907",
     "bnf": [
       [
         "PRIMARY_SYMBOL?",
@@ -16325,7 +16303,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute909",
+    "name": "%columnAttribute908",
     "bnf": [
       [
         "UNIQUE_SYMBOL",
@@ -16335,7 +16313,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute910",
+    "name": "%columnAttribute909",
     "bnf": [
       [
         "COMMENT_SYMBOL",
@@ -16345,7 +16323,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute911",
+    "name": "%columnAttribute910",
     "bnf": [
       [
         "COLUMN_FORMAT_SYMBOL",
@@ -16355,7 +16333,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute912",
+    "name": "%columnAttribute911",
     "bnf": [
       [
         "STORAGE_SYMBOL",
@@ -16365,7 +16343,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute913",
+    "name": "%columnAttribute912",
     "bnf": [
       [
         "SRID_SYMBOL",
@@ -16375,7 +16353,7 @@
     "fragment": true
   },
   {
-    "name": "%columnAttribute914",
+    "name": "%columnAttribute913",
     "bnf": [
       [
         "constraintName?",
@@ -16388,19 +16366,22 @@
     "name": "columnAttribute",
     "bnf": [
       [
+        "%columnAttribute900"
+      ],
+      [
         "%columnAttribute901"
       ],
       [
         "%columnAttribute902"
       ],
       [
-        "%columnAttribute903"
-      ],
-      [
-        "%columnAttribute906"
+        "%columnAttribute905"
       ],
       [
         "AUTO_INCREMENT_SYMBOL"
+      ],
+      [
+        "%columnAttribute906"
       ],
       [
         "%columnAttribute907"
@@ -16412,10 +16393,10 @@
         "%columnAttribute909"
       ],
       [
-        "%columnAttribute910"
+        "collate"
       ],
       [
-        "collate"
+        "%columnAttribute910"
       ],
       [
         "%columnAttribute911"
@@ -16425,9 +16406,6 @@
       ],
       [
         "%columnAttribute913"
-      ],
-      [
-        "%columnAttribute914"
       ],
       [
         "constraintEnforcement"
@@ -16463,7 +16441,7 @@
     ]
   },
   {
-    "name": "%gcolAttribute915",
+    "name": "%gcolAttribute914",
     "bnf": [
       [
         "UNIQUE_SYMBOL",
@@ -16473,7 +16451,7 @@
     "fragment": true
   },
   {
-    "name": "%gcolAttribute916",
+    "name": "%gcolAttribute915",
     "bnf": [
       [
         "COMMENT_SYMBOL",
@@ -16483,7 +16461,7 @@
     "fragment": true
   },
   {
-    "name": "%gcolAttribute917",
+    "name": "%gcolAttribute916",
     "bnf": [
       [
         "notRule?",
@@ -16493,7 +16471,7 @@
     "fragment": true
   },
   {
-    "name": "%gcolAttribute918",
+    "name": "%gcolAttribute917",
     "bnf": [
       [
         "PRIMARY_SYMBOL?",
@@ -16506,6 +16484,9 @@
     "name": "gcolAttribute",
     "bnf": [
       [
+        "%gcolAttribute914"
+      ],
+      [
         "%gcolAttribute915"
       ],
       [
@@ -16513,14 +16494,11 @@
       ],
       [
         "%gcolAttribute917"
-      ],
-      [
-        "%gcolAttribute918"
       ]
     ]
   },
   {
-    "name": "%%references919920",
+    "name": "%%references918919",
     "bnf": [
       [
         "FULL_SYMBOL"
@@ -16535,17 +16513,17 @@
     "fragment": true
   },
   {
-    "name": "%references919",
+    "name": "%references918",
     "bnf": [
       [
         "MATCH_SYMBOL",
-        "%%references919920"
+        "%%references918919"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%references921922923",
+    "name": "%%%references920921922",
     "bnf": [
       [
         "ON_SYMBOL",
@@ -16556,19 +16534,19 @@
     "fragment": true
   },
   {
-    "name": "%%references921922",
+    "name": "%%references920921",
     "bnf": [
       [
         "ON_SYMBOL",
         "UPDATE_SYMBOL",
         "deleteOption",
-        "%%%references921922923?"
+        "%%%references920921922?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%references921924925",
+    "name": "%%%references920923924",
     "bnf": [
       [
         "ON_SYMBOL",
@@ -16579,25 +16557,25 @@
     "fragment": true
   },
   {
-    "name": "%%references921924",
+    "name": "%%references920923",
     "bnf": [
       [
         "ON_SYMBOL",
         "DELETE_SYMBOL",
         "deleteOption",
-        "%%%references921924925?"
+        "%%%references920923924?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%references921",
+    "name": "%references920",
     "bnf": [
       [
-        "%%references921922"
+        "%%references920921"
       ],
       [
-        "%%references921924"
+        "%%references920923"
       ]
     ],
     "fragment": true
@@ -16609,13 +16587,13 @@
         "REFERENCES_SYMBOL",
         "tableRef",
         "identifierListWithParentheses?",
-        "%references919?",
-        "%references921?"
+        "%references918?",
+        "%references920?"
       ]
     ]
   },
   {
-    "name": "%deleteOption926",
+    "name": "%deleteOption925",
     "bnf": [
       [
         "RESTRICT_SYMBOL"
@@ -16627,7 +16605,7 @@
     "fragment": true
   },
   {
-    "name": "%deleteOption927",
+    "name": "%deleteOption926",
     "bnf": [
       [
         "SET_SYMBOL",
@@ -16637,7 +16615,7 @@
     "fragment": true
   },
   {
-    "name": "%deleteOption928",
+    "name": "%deleteOption927",
     "bnf": [
       [
         "NO_SYMBOL",
@@ -16650,18 +16628,18 @@
     "name": "deleteOption",
     "bnf": [
       [
+        "%deleteOption925"
+      ],
+      [
         "%deleteOption926"
       ],
       [
         "%deleteOption927"
-      ],
-      [
-        "%deleteOption928"
       ]
     ]
   },
   {
-    "name": "%keyList929",
+    "name": "%keyList928",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -16676,7 +16654,7 @@
       [
         "OPEN_PAR_SYMBOL",
         "keyPart",
-        "%keyList929*",
+        "%keyList928*",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
@@ -16692,7 +16670,7 @@
     ]
   },
   {
-    "name": "%keyListWithExpression930",
+    "name": "%keyListWithExpression929",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -16707,13 +16685,13 @@
       [
         "OPEN_PAR_SYMBOL",
         "keyPartOrExpression",
-        "%keyListWithExpression930*",
+        "%keyListWithExpression929*",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%keyPartOrExpression931",
+    "name": "%keyPartOrExpression930",
     "bnf": [
       [
         "exprWithParentheses",
@@ -16729,7 +16707,7 @@
         "keyPart"
       ],
       [
-        "%keyPartOrExpression931"
+        "%keyPartOrExpression930"
       ]
     ]
   },
@@ -16770,7 +16748,7 @@
     ]
   },
   {
-    "name": "%commonIndexOption932",
+    "name": "%commonIndexOption931",
     "bnf": [
       [
         "KEY_BLOCK_SIZE_SYMBOL",
@@ -16781,7 +16759,7 @@
     "fragment": true
   },
   {
-    "name": "%commonIndexOption933",
+    "name": "%commonIndexOption932",
     "bnf": [
       [
         "COMMENT_SYMBOL",
@@ -16794,10 +16772,10 @@
     "name": "commonIndexOption",
     "bnf": [
       [
-        "%commonIndexOption932"
+        "%commonIndexOption931"
       ],
       [
-        "%commonIndexOption933"
+        "%commonIndexOption932"
       ],
       [
         "visibility"
@@ -16816,7 +16794,7 @@
     ]
   },
   {
-    "name": "%indexTypeClause934",
+    "name": "%indexTypeClause933",
     "bnf": [
       [
         "USING_SYMBOL"
@@ -16831,13 +16809,13 @@
     "name": "indexTypeClause",
     "bnf": [
       [
-        "%indexTypeClause934",
+        "%indexTypeClause933",
         "indexType"
       ]
     ]
   },
   {
-    "name": "%fulltextIndexOption935",
+    "name": "%fulltextIndexOption934",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -16854,7 +16832,7 @@
         "commonIndexOption"
       ],
       [
-        "%fulltextIndexOption935"
+        "%fulltextIndexOption934"
       ]
     ]
   },
@@ -16876,7 +16854,7 @@
     ]
   },
   {
-    "name": "%%dataType936937",
+    "name": "%%dataType935936",
     "bnf": [
       [
         "INT_SYMBOL"
@@ -16897,10 +16875,10 @@
     "fragment": true
   },
   {
-    "name": "%dataType936",
+    "name": "%dataType935",
     "bnf": [
       [
-        "%%dataType936937",
+        "%%dataType935936",
         "fieldLength?",
         "fieldOptions?"
       ]
@@ -16908,7 +16886,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType938939940",
+    "name": "%%%dataType937938939",
     "bnf": [
       [
         "DOUBLE_SYMBOL",
@@ -16918,22 +16896,22 @@
     "fragment": true
   },
   {
-    "name": "%%dataType938939",
+    "name": "%%dataType937938",
     "bnf": [
       [
         "REAL_SYMBOL"
       ],
       [
-        "%%%dataType938939940"
+        "%%%dataType937938939"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%dataType938",
+    "name": "%dataType937",
     "bnf": [
       [
-        "%%dataType938939",
+        "%%dataType937938",
         "precision?",
         "fieldOptions?"
       ]
@@ -16941,7 +16919,7 @@
     "fragment": true
   },
   {
-    "name": "%%dataType941942",
+    "name": "%%dataType940941",
     "bnf": [
       [
         "FLOAT_SYMBOL"
@@ -16959,10 +16937,10 @@
     "fragment": true
   },
   {
-    "name": "%dataType941",
+    "name": "%dataType940",
     "bnf": [
       [
-        "%%dataType941942",
+        "%%dataType940941",
         "floatOptions?",
         "fieldOptions?"
       ]
@@ -16970,7 +16948,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType943",
+    "name": "%dataType942",
     "bnf": [
       [
         "BIT_SYMBOL",
@@ -16980,7 +16958,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType944",
+    "name": "%dataType943",
     "bnf": [
       [
         "BOOL_SYMBOL"
@@ -16992,7 +16970,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType945",
+    "name": "%dataType944",
     "bnf": [
       [
         "CHAR_SYMBOL",
@@ -17003,7 +16981,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType946",
+    "name": "%dataType945",
     "bnf": [
       [
         "nchar",
@@ -17014,7 +16992,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType947",
+    "name": "%dataType946",
     "bnf": [
       [
         "BINARY_SYMBOL",
@@ -17024,7 +17002,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType948949950",
+    "name": "%%%dataType947948949",
     "bnf": [
       [
         "CHAR_SYMBOL",
@@ -17034,10 +17012,10 @@
     "fragment": true
   },
   {
-    "name": "%%dataType948949",
+    "name": "%%dataType947948",
     "bnf": [
       [
-        "%%%dataType948949950"
+        "%%%dataType947948949"
       ],
       [
         "VARCHAR_SYMBOL"
@@ -17046,10 +17024,10 @@
     "fragment": true
   },
   {
-    "name": "%dataType948",
+    "name": "%dataType947",
     "bnf": [
       [
-        "%%dataType948949",
+        "%%dataType947948",
         "fieldLength",
         "charsetWithOptBinary?"
       ]
@@ -17057,7 +17035,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType951952953",
+    "name": "%%%dataType950951952",
     "bnf": [
       [
         "NATIONAL_SYMBOL",
@@ -17067,7 +17045,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType951952954",
+    "name": "%%%dataType950951953",
     "bnf": [
       [
         "NCHAR_SYMBOL",
@@ -17077,7 +17055,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType951952955",
+    "name": "%%%dataType950951954",
     "bnf": [
       [
         "NATIONAL_SYMBOL",
@@ -17088,7 +17066,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType951952956",
+    "name": "%%%dataType950951955",
     "bnf": [
       [
         "NCHAR_SYMBOL",
@@ -17098,31 +17076,31 @@
     "fragment": true
   },
   {
-    "name": "%%dataType951952",
+    "name": "%%dataType950951",
     "bnf": [
       [
-        "%%%dataType951952953"
+        "%%%dataType950951952"
       ],
       [
         "NVARCHAR_SYMBOL"
       ],
       [
-        "%%%dataType951952954"
+        "%%%dataType950951953"
       ],
       [
-        "%%%dataType951952955"
+        "%%%dataType950951954"
       ],
       [
-        "%%%dataType951952956"
+        "%%%dataType950951955"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%dataType951",
+    "name": "%dataType950",
     "bnf": [
       [
-        "%%dataType951952",
+        "%%dataType950951",
         "fieldLength",
         "BINARY_SYMBOL?"
       ]
@@ -17130,7 +17108,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType957",
+    "name": "%dataType956",
     "bnf": [
       [
         "VARBINARY_SYMBOL",
@@ -17140,7 +17118,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType958",
+    "name": "%dataType957",
     "bnf": [
       [
         "YEAR_SYMBOL",
@@ -17151,7 +17129,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType959",
+    "name": "%dataType958",
     "bnf": [
       [
         "TIME_SYMBOL",
@@ -17161,7 +17139,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType960",
+    "name": "%dataType959",
     "bnf": [
       [
         "TIMESTAMP_SYMBOL",
@@ -17171,7 +17149,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType961",
+    "name": "%dataType960",
     "bnf": [
       [
         "DATETIME_SYMBOL",
@@ -17181,7 +17159,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType962",
+    "name": "%dataType961",
     "bnf": [
       [
         "BLOB_SYMBOL",
@@ -17191,7 +17169,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType963",
+    "name": "%dataType962",
     "bnf": [
       [
         "MEDIUMBLOB_SYMBOL"
@@ -17203,7 +17181,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType964",
+    "name": "%dataType963",
     "bnf": [
       [
         "LONG_SYMBOL",
@@ -17213,7 +17191,7 @@
     "fragment": true
   },
   {
-    "name": "%%%dataType965966967",
+    "name": "%%%dataType964965966",
     "bnf": [
       [
         "CHAR_SYMBOL",
@@ -17223,10 +17201,10 @@
     "fragment": true
   },
   {
-    "name": "%%dataType965966",
+    "name": "%%dataType964965",
     "bnf": [
       [
-        "%%%dataType965966967"
+        "%%%dataType964965966"
       ],
       [
         "VARCHAR_SYMBOL"
@@ -17235,18 +17213,18 @@
     "fragment": true
   },
   {
-    "name": "%dataType965",
+    "name": "%dataType964",
     "bnf": [
       [
         "LONG_SYMBOL",
-        "%%dataType965966?",
+        "%%dataType964965?",
         "charsetWithOptBinary?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%dataType968",
+    "name": "%dataType967",
     "bnf": [
       [
         "TINYTEXT_SYMBOL",
@@ -17256,7 +17234,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType969",
+    "name": "%dataType968",
     "bnf": [
       [
         "TEXT_SYMBOL",
@@ -17267,7 +17245,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType970",
+    "name": "%dataType969",
     "bnf": [
       [
         "MEDIUMTEXT_SYMBOL",
@@ -17277,7 +17255,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType971",
+    "name": "%dataType970",
     "bnf": [
       [
         "LONGTEXT_SYMBOL",
@@ -17287,7 +17265,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType972",
+    "name": "%dataType971",
     "bnf": [
       [
         "ENUM_SYMBOL",
@@ -17298,7 +17276,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType973",
+    "name": "%dataType972",
     "bnf": [
       [
         "SET_SYMBOL",
@@ -17309,7 +17287,7 @@
     "fragment": true
   },
   {
-    "name": "%dataType974",
+    "name": "%dataType973",
     "bnf": [
       [
         "GEOMETRY_SYMBOL"
@@ -17342,13 +17320,16 @@
     "name": "dataType",
     "bnf": [
       [
-        "%dataType936"
+        "%dataType935"
       ],
       [
-        "%dataType938"
+        "%dataType937"
       ],
       [
-        "%dataType941"
+        "%dataType940"
+      ],
+      [
+        "%dataType942"
       ],
       [
         "%dataType943"
@@ -17366,19 +17347,19 @@
         "%dataType947"
       ],
       [
-        "%dataType948"
+        "%dataType950"
       ],
       [
-        "%dataType951"
+        "%dataType956"
       ],
       [
         "%dataType957"
       ],
       [
-        "%dataType958"
+        "DATE_SYMBOL"
       ],
       [
-        "DATE_SYMBOL"
+        "%dataType958"
       ],
       [
         "%dataType959"
@@ -17387,10 +17368,10 @@
         "%dataType960"
       ],
       [
-        "%dataType961"
+        "TINYBLOB_SYMBOL"
       ],
       [
-        "TINYBLOB_SYMBOL"
+        "%dataType961"
       ],
       [
         "%dataType962"
@@ -17402,7 +17383,7 @@
         "%dataType964"
       ],
       [
-        "%dataType965"
+        "%dataType967"
       ],
       [
         "%dataType968"
@@ -17420,21 +17401,18 @@
         "%dataType972"
       ],
       [
-        "%dataType973"
-      ],
-      [
         "SERIAL_SYMBOL"
       ],
       [
         "JSON_SYMBOL"
       ],
       [
-        "%dataType974"
+        "%dataType973"
       ]
     ]
   },
   {
-    "name": "%nchar975",
+    "name": "%nchar974",
     "bnf": [
       [
         "NATIONAL_SYMBOL",
@@ -17450,12 +17428,12 @@
         "NCHAR_SYMBOL"
       ],
       [
-        "%nchar975"
+        "%nchar974"
       ]
     ]
   },
   {
-    "name": "%realType976",
+    "name": "%realType975",
     "bnf": [
       [
         "DOUBLE_SYMBOL",
@@ -17471,12 +17449,12 @@
         "REAL_SYMBOL"
       ],
       [
-        "%realType976"
+        "%realType975"
       ]
     ]
   },
   {
-    "name": "%fieldLength977",
+    "name": "%fieldLength976",
     "bnf": [
       [
         "real_ulonglong_number"
@@ -17492,13 +17470,13 @@
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
-        "%fieldLength977",
+        "%fieldLength976",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%fieldOptions978",
+    "name": "%fieldOptions977",
     "bnf": [
       [
         "SIGNED_SYMBOL"
@@ -17516,12 +17494,12 @@
     "name": "fieldOptions",
     "bnf": [
       [
-        "%fieldOptions978+"
+        "%fieldOptions977+"
       ]
     ]
   },
   {
-    "name": "%charsetWithOptBinary979",
+    "name": "%charsetWithOptBinary978",
     "bnf": [
       [
         "charset",
@@ -17532,7 +17510,7 @@
     "fragment": true
   },
   {
-    "name": "%%charsetWithOptBinary980981",
+    "name": "%%charsetWithOptBinary979980",
     "bnf": [
       [
         "charset",
@@ -17542,11 +17520,11 @@
     "fragment": true
   },
   {
-    "name": "%charsetWithOptBinary980",
+    "name": "%charsetWithOptBinary979",
     "bnf": [
       [
         "BINARY_SYMBOL",
-        "%%charsetWithOptBinary980981?"
+        "%%charsetWithOptBinary979980?"
       ]
     ],
     "fragment": true
@@ -17564,15 +17542,15 @@
         "BYTE_SYMBOL"
       ],
       [
-        "%charsetWithOptBinary979"
+        "%charsetWithOptBinary978"
       ],
       [
-        "%charsetWithOptBinary980"
+        "%charsetWithOptBinary979"
       ]
     ]
   },
   {
-    "name": "%ascii982",
+    "name": "%ascii981",
     "bnf": [
       [
         "ASCII_SYMBOL",
@@ -17582,7 +17560,7 @@
     "fragment": true
   },
   {
-    "name": "%ascii983",
+    "name": "%ascii982",
     "bnf": [
       [
         "BINARY_SYMBOL",
@@ -17595,15 +17573,15 @@
     "name": "ascii",
     "bnf": [
       [
-        "%ascii982"
+        "%ascii981"
       ],
       [
-        "%ascii983"
+        "%ascii982"
       ]
     ]
   },
   {
-    "name": "%unicode984",
+    "name": "%unicode983",
     "bnf": [
       [
         "UNICODE_SYMBOL",
@@ -17613,7 +17591,7 @@
     "fragment": true
   },
   {
-    "name": "%unicode985",
+    "name": "%unicode984",
     "bnf": [
       [
         "BINARY_SYMBOL",
@@ -17626,10 +17604,10 @@
     "name": "unicode",
     "bnf": [
       [
-        "%unicode984"
+        "%unicode983"
       ],
       [
-        "%unicode985"
+        "%unicode984"
       ]
     ]
   },
@@ -17682,7 +17660,7 @@
     ]
   },
   {
-    "name": "%createTableOptions986",
+    "name": "%createTableOptions985",
     "bnf": [
       [
         "COMMA_SYMBOL?",
@@ -17696,7 +17674,7 @@
     "bnf": [
       [
         "createTableOption",
-        "%createTableOptions986*"
+        "%createTableOptions985*"
       ]
     ]
   },
@@ -17709,7 +17687,7 @@
     ]
   },
   {
-    "name": "%createTableOption987",
+    "name": "%createTableOption986",
     "bnf": [
       [
         "ENGINE_SYMBOL",
@@ -17720,7 +17698,7 @@
     "fragment": true
   },
   {
-    "name": "%%createTableOption988989",
+    "name": "%%createTableOption987988",
     "bnf": [
       [
         "NULL_SYMBOL"
@@ -17732,18 +17710,18 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption988",
+    "name": "%createTableOption987",
     "bnf": [
       [
         "SECONDARY_ENGINE_SYMBOL",
         "equal?",
-        "%%createTableOption988989"
+        "%%createTableOption987988"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%createTableOption990",
+    "name": "%createTableOption989",
     "bnf": [
       [
         "MAX_ROWS_SYMBOL",
@@ -17754,7 +17732,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption991",
+    "name": "%createTableOption990",
     "bnf": [
       [
         "MIN_ROWS_SYMBOL",
@@ -17765,7 +17743,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption992",
+    "name": "%createTableOption991",
     "bnf": [
       [
         "AVG_ROW_LENGTH_SYMBOL",
@@ -17776,7 +17754,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption993",
+    "name": "%createTableOption992",
     "bnf": [
       [
         "PASSWORD_SYMBOL",
@@ -17787,7 +17765,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption994",
+    "name": "%createTableOption993",
     "bnf": [
       [
         "COMMENT_SYMBOL",
@@ -17798,7 +17776,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption995",
+    "name": "%createTableOption994",
     "bnf": [
       [
         "COMPRESSION_SYMBOL",
@@ -17809,7 +17787,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption996",
+    "name": "%createTableOption995",
     "bnf": [
       [
         "ENCRYPTION_SYMBOL",
@@ -17820,7 +17798,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption997",
+    "name": "%createTableOption996",
     "bnf": [
       [
         "AUTO_INCREMENT_SYMBOL",
@@ -17831,7 +17809,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption998",
+    "name": "%createTableOption997",
     "bnf": [
       [
         "PACK_KEYS_SYMBOL",
@@ -17842,7 +17820,7 @@
     "fragment": true
   },
   {
-    "name": "%%createTableOption9991000",
+    "name": "%%createTableOption998999",
     "bnf": [
       [
         "STATS_AUTO_RECALC_SYMBOL"
@@ -17857,10 +17835,10 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption999",
+    "name": "%createTableOption998",
     "bnf": [
       [
-        "%%createTableOption9991000",
+        "%%createTableOption998999",
         "EQUAL_OPERATOR?",
         "ternaryOption"
       ]
@@ -17868,7 +17846,7 @@
     "fragment": true
   },
   {
-    "name": "%%createTableOption10011002",
+    "name": "%%createTableOption10001001",
     "bnf": [
       [
         "CHECKSUM_SYMBOL"
@@ -17880,10 +17858,10 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1001",
+    "name": "%createTableOption1000",
     "bnf": [
       [
-        "%%createTableOption10011002",
+        "%%createTableOption10001001",
         "EQUAL_OPERATOR?",
         "ulong_number"
       ]
@@ -17891,7 +17869,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1003",
+    "name": "%createTableOption1002",
     "bnf": [
       [
         "DELAY_KEY_WRITE_SYMBOL",
@@ -17902,7 +17880,7 @@
     "fragment": true
   },
   {
-    "name": "%%createTableOption10041005",
+    "name": "%%createTableOption10031004",
     "bnf": [
       [
         "DEFAULT_SYMBOL"
@@ -17926,18 +17904,18 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1004",
+    "name": "%createTableOption1003",
     "bnf": [
       [
         "ROW_FORMAT_SYMBOL",
         "EQUAL_OPERATOR?",
-        "%%createTableOption10041005"
+        "%%createTableOption10031004"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%createTableOption1006",
+    "name": "%createTableOption1005",
     "bnf": [
       [
         "UNION_SYMBOL",
@@ -17950,7 +17928,7 @@
     "fragment": true
   },
   {
-    "name": "%%createTableOption10071008",
+    "name": "%%createTableOption10061007",
     "bnf": [
       [
         "NO_SYMBOL"
@@ -17965,18 +17943,18 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1007",
+    "name": "%createTableOption1006",
     "bnf": [
       [
         "INSERT_METHOD_SYMBOL",
         "EQUAL_OPERATOR?",
-        "%%createTableOption10071008"
+        "%%createTableOption10061007"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%createTableOption1009",
+    "name": "%createTableOption1008",
     "bnf": [
       [
         "DATA_SYMBOL",
@@ -17988,7 +17966,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1010",
+    "name": "%createTableOption1009",
     "bnf": [
       [
         "INDEX_SYMBOL",
@@ -18000,7 +17978,7 @@
     "fragment": true
   },
   {
-    "name": "%%createTableOption10111012",
+    "name": "%%createTableOption10101011",
     "bnf": [
       [
         "EQUAL_OPERATOR?"
@@ -18009,18 +17987,18 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1011",
+    "name": "%createTableOption1010",
     "bnf": [
       [
         "TABLESPACE_SYMBOL",
-        "%%createTableOption10111012",
+        "%%createTableOption10101011",
         "identifier"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%createTableOption10131014",
+    "name": "%%createTableOption10121013",
     "bnf": [
       [
         "DISK_SYMBOL"
@@ -18032,17 +18010,17 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1013",
+    "name": "%createTableOption1012",
     "bnf": [
       [
         "STORAGE_SYMBOL",
-        "%%createTableOption10131014"
+        "%%createTableOption10121013"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%createTableOption1015",
+    "name": "%createTableOption1014",
     "bnf": [
       [
         "CONNECTION_SYMBOL",
@@ -18053,7 +18031,7 @@
     "fragment": true
   },
   {
-    "name": "%createTableOption1016",
+    "name": "%createTableOption1015",
     "bnf": [
       [
         "KEY_BLOCK_SIZE_SYMBOL",
@@ -18067,10 +18045,13 @@
     "name": "createTableOption",
     "bnf": [
       [
+        "%createTableOption986"
+      ],
+      [
         "%createTableOption987"
       ],
       [
-        "%createTableOption988"
+        "%createTableOption989"
       ],
       [
         "%createTableOption990"
@@ -18100,19 +18081,16 @@
         "%createTableOption998"
       ],
       [
-        "%createTableOption999"
+        "%createTableOption1000"
       ],
       [
-        "%createTableOption1001"
+        "%createTableOption1002"
       ],
       [
         "%createTableOption1003"
       ],
       [
-        "%createTableOption1004"
-      ],
-      [
-        "%createTableOption1006"
+        "%createTableOption1005"
       ],
       [
         "defaultCharset"
@@ -18121,7 +18099,10 @@
         "defaultCollation"
       ],
       [
-        "%createTableOption1007"
+        "%createTableOption1006"
+      ],
+      [
+        "%createTableOption1008"
       ],
       [
         "%createTableOption1009"
@@ -18130,16 +18111,13 @@
         "%createTableOption1010"
       ],
       [
-        "%createTableOption1011"
+        "%createTableOption1012"
       ],
       [
-        "%createTableOption1013"
+        "%createTableOption1014"
       ],
       [
         "%createTableOption1015"
-      ],
-      [
-        "%createTableOption1016"
       ]
     ]
   },
@@ -18188,7 +18166,7 @@
     ]
   },
   {
-    "name": "%partitionClause1017",
+    "name": "%partitionClause1016",
     "bnf": [
       [
         "PARTITIONS_SYMBOL",
@@ -18204,14 +18182,14 @@
         "PARTITION_SYMBOL",
         "BY_SYMBOL",
         "partitionTypeDef",
-        "%partitionClause1017?",
+        "%partitionClause1016?",
         "subPartitions?",
         "partitionDefinitions?"
       ]
     ]
   },
   {
-    "name": "%partitionTypeDef1018",
+    "name": "%partitionTypeDef1017",
     "bnf": [
       [
         "LINEAR_SYMBOL?",
@@ -18225,7 +18203,7 @@
     "fragment": true
   },
   {
-    "name": "%partitionTypeDef1019",
+    "name": "%partitionTypeDef1018",
     "bnf": [
       [
         "LINEAR_SYMBOL?",
@@ -18238,7 +18216,7 @@
     "fragment": true
   },
   {
-    "name": "%%partitionTypeDef10201021",
+    "name": "%%partitionTypeDef10191020",
     "bnf": [
       [
         "RANGE_SYMBOL"
@@ -18250,7 +18228,7 @@
     "fragment": true
   },
   {
-    "name": "%%%partitionTypeDef102010221023",
+    "name": "%%%partitionTypeDef101910211022",
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
@@ -18261,7 +18239,7 @@
     "fragment": true
   },
   {
-    "name": "%%%partitionTypeDef102010221024",
+    "name": "%%%partitionTypeDef101910211023",
     "bnf": [
       [
         "COLUMNS_SYMBOL",
@@ -18273,23 +18251,23 @@
     "fragment": true
   },
   {
-    "name": "%%partitionTypeDef10201022",
+    "name": "%%partitionTypeDef10191021",
     "bnf": [
       [
-        "%%%partitionTypeDef102010221023"
+        "%%%partitionTypeDef101910211022"
       ],
       [
-        "%%%partitionTypeDef102010221024"
+        "%%%partitionTypeDef101910211023"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%partitionTypeDef1020",
+    "name": "%partitionTypeDef1019",
     "bnf": [
       [
-        "%%partitionTypeDef10201021",
-        "%%partitionTypeDef10201022"
+        "%%partitionTypeDef10191020",
+        "%%partitionTypeDef10191021"
       ]
     ],
     "fragment": true
@@ -18298,18 +18276,18 @@
     "name": "partitionTypeDef",
     "bnf": [
       [
+        "%partitionTypeDef1017"
+      ],
+      [
         "%partitionTypeDef1018"
       ],
       [
         "%partitionTypeDef1019"
-      ],
-      [
-        "%partitionTypeDef1020"
       ]
     ]
   },
   {
-    "name": "%%subPartitions10251026",
+    "name": "%%subPartitions10241025",
     "bnf": [
       [
         "HASH_SYMBOL",
@@ -18321,7 +18299,7 @@
     "fragment": true
   },
   {
-    "name": "%%subPartitions10251027",
+    "name": "%%subPartitions10241026",
     "bnf": [
       [
         "KEY_SYMBOL",
@@ -18332,19 +18310,19 @@
     "fragment": true
   },
   {
-    "name": "%subPartitions1025",
+    "name": "%subPartitions1024",
     "bnf": [
       [
-        "%%subPartitions10251026"
+        "%%subPartitions10241025"
       ],
       [
-        "%%subPartitions10251027"
+        "%%subPartitions10241026"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%subPartitions1028",
+    "name": "%subPartitions1027",
     "bnf": [
       [
         "SUBPARTITIONS_SYMBOL",
@@ -18360,8 +18338,8 @@
         "SUBPARTITION_SYMBOL",
         "BY_SYMBOL",
         "LINEAR_SYMBOL?",
-        "%subPartitions1025",
-        "%subPartitions1028?"
+        "%subPartitions1024",
+        "%subPartitions1027?"
       ]
     ]
   },
@@ -18376,7 +18354,7 @@
     ]
   },
   {
-    "name": "%partitionDefinitions1029",
+    "name": "%partitionDefinitions1028",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18391,13 +18369,13 @@
       [
         "OPEN_PAR_SYMBOL",
         "partitionDefinition",
-        "%partitionDefinitions1029*",
+        "%partitionDefinitions1028*",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%%%partitionDefinition103010311032",
+    "name": "%%%partitionDefinition102910301031",
     "bnf": [
       [
         "partitionValueItemListParen"
@@ -18409,19 +18387,19 @@
     "fragment": true
   },
   {
-    "name": "%%partitionDefinition10301031",
+    "name": "%%partitionDefinition10291030",
     "bnf": [
       [
         "VALUES_SYMBOL",
         "LESS_SYMBOL",
         "THAN_SYMBOL",
-        "%%%partitionDefinition103010311032"
+        "%%%partitionDefinition102910301031"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%partitionDefinition10301033",
+    "name": "%%partitionDefinition10291032",
     "bnf": [
       [
         "VALUES_SYMBOL",
@@ -18432,19 +18410,19 @@
     "fragment": true
   },
   {
-    "name": "%partitionDefinition1030",
+    "name": "%partitionDefinition1029",
     "bnf": [
       [
-        "%%partitionDefinition10301031"
+        "%%partitionDefinition10291030"
       ],
       [
-        "%%partitionDefinition10301033"
+        "%%partitionDefinition10291032"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%partitionDefinition10341035",
+    "name": "%%partitionDefinition10331034",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18454,12 +18432,12 @@
     "fragment": true
   },
   {
-    "name": "%partitionDefinition1034",
+    "name": "%partitionDefinition1033",
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
         "subpartitionDefinition",
-        "%%partitionDefinition10341035*",
+        "%%partitionDefinition10331034*",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
@@ -18471,14 +18449,14 @@
       [
         "PARTITION_SYMBOL",
         "identifier",
-        "%partitionDefinition1030?",
+        "%partitionDefinition1029?",
         "partitionOption*",
-        "%partitionDefinition1034?"
+        "%partitionDefinition1033?"
       ]
     ]
   },
   {
-    "name": "%%partitionValuesIn10361037",
+    "name": "%%partitionValuesIn10351036",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18488,12 +18466,12 @@
     "fragment": true
   },
   {
-    "name": "%partitionValuesIn1036",
+    "name": "%partitionValuesIn1035",
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
         "partitionValueItemListParen",
-        "%%partitionValuesIn10361037*",
+        "%%partitionValuesIn10351036*",
         "CLOSE_PAR_SYMBOL"
       ]
     ],
@@ -18506,12 +18484,12 @@
         "partitionValueItemListParen"
       ],
       [
-        "%partitionValuesIn1036"
+        "%partitionValuesIn1035"
       ]
     ]
   },
   {
-    "name": "%partitionOption1038",
+    "name": "%partitionOption1037",
     "bnf": [
       [
         "TABLESPACE_SYMBOL",
@@ -18522,7 +18500,7 @@
     "fragment": true
   },
   {
-    "name": "%partitionOption1039",
+    "name": "%partitionOption1038",
     "bnf": [
       [
         "STORAGE_SYMBOL?",
@@ -18534,7 +18512,7 @@
     "fragment": true
   },
   {
-    "name": "%partitionOption1040",
+    "name": "%partitionOption1039",
     "bnf": [
       [
         "NODEGROUP_SYMBOL",
@@ -18545,7 +18523,7 @@
     "fragment": true
   },
   {
-    "name": "%%partitionOption10411042",
+    "name": "%%partitionOption10401041",
     "bnf": [
       [
         "MAX_ROWS_SYMBOL"
@@ -18557,10 +18535,10 @@
     "fragment": true
   },
   {
-    "name": "%partitionOption1041",
+    "name": "%partitionOption1040",
     "bnf": [
       [
-        "%%partitionOption10411042",
+        "%%partitionOption10401041",
         "EQUAL_OPERATOR?",
         "real_ulong_number"
       ]
@@ -18568,7 +18546,7 @@
     "fragment": true
   },
   {
-    "name": "%%partitionOption10431044",
+    "name": "%%partitionOption10421043",
     "bnf": [
       [
         "DATA_SYMBOL"
@@ -18580,10 +18558,10 @@
     "fragment": true
   },
   {
-    "name": "%partitionOption1043",
+    "name": "%partitionOption1042",
     "bnf": [
       [
-        "%%partitionOption10431044",
+        "%%partitionOption10421043",
         "DIRECTORY_SYMBOL",
         "EQUAL_OPERATOR?",
         "textLiteral"
@@ -18592,7 +18570,7 @@
     "fragment": true
   },
   {
-    "name": "%partitionOption1045",
+    "name": "%partitionOption1044",
     "bnf": [
       [
         "COMMENT_SYMBOL",
@@ -18606,6 +18584,9 @@
     "name": "partitionOption",
     "bnf": [
       [
+        "%partitionOption1037"
+      ],
+      [
         "%partitionOption1038"
       ],
       [
@@ -18615,13 +18596,10 @@
         "%partitionOption1040"
       ],
       [
-        "%partitionOption1041"
+        "%partitionOption1042"
       ],
       [
-        "%partitionOption1043"
-      ],
-      [
-        "%partitionOption1045"
+        "%partitionOption1044"
       ]
     ]
   },
@@ -18636,7 +18614,7 @@
     ]
   },
   {
-    "name": "%partitionValueItemListParen1046",
+    "name": "%partitionValueItemListParen1045",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18651,7 +18629,7 @@
       [
         "OPEN_PAR_SYMBOL",
         "partitionValueItem",
-        "%partitionValueItemListParen1046*",
+        "%partitionValueItemListParen1045*",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
@@ -18697,7 +18675,7 @@
     ]
   },
   {
-    "name": "%procedureParameter1047",
+    "name": "%procedureParameter1046",
     "bnf": [
       [
         "IN_SYMBOL"
@@ -18715,7 +18693,7 @@
     "name": "procedureParameter",
     "bnf": [
       [
-        "%procedureParameter1047?",
+        "%procedureParameter1046?",
         "functionParameter"
       ]
     ]
@@ -18760,7 +18738,7 @@
     ]
   },
   {
-    "name": "%viewRefList1048",
+    "name": "%viewRefList1047",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18774,12 +18752,12 @@
     "bnf": [
       [
         "viewRef",
-        "%viewRefList1048*"
+        "%viewRefList1047*"
       ]
     ]
   },
   {
-    "name": "%updateList1049",
+    "name": "%updateList1048",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18793,12 +18771,12 @@
     "bnf": [
       [
         "updateElement",
-        "%updateList1049*"
+        "%updateList1048*"
       ]
     ]
   },
   {
-    "name": "%updateElement1050",
+    "name": "%updateElement1049",
     "bnf": [
       [
         "expr"
@@ -18815,7 +18793,7 @@
       [
         "columnRef",
         "EQUAL_OPERATOR",
-        "%updateElement1050"
+        "%updateElement1049"
       ]
     ]
   },
@@ -18838,7 +18816,7 @@
     ]
   },
   {
-    "name": "%fieldTerm1051",
+    "name": "%fieldTerm1050",
     "bnf": [
       [
         "TERMINATED_SYMBOL",
@@ -18849,7 +18827,7 @@
     "fragment": true
   },
   {
-    "name": "%fieldTerm1052",
+    "name": "%fieldTerm1051",
     "bnf": [
       [
         "OPTIONALLY_SYMBOL?",
@@ -18861,7 +18839,7 @@
     "fragment": true
   },
   {
-    "name": "%fieldTerm1053",
+    "name": "%fieldTerm1052",
     "bnf": [
       [
         "ESCAPED_SYMBOL",
@@ -18875,13 +18853,13 @@
     "name": "fieldTerm",
     "bnf": [
       [
+        "%fieldTerm1050"
+      ],
+      [
         "%fieldTerm1051"
       ],
       [
         "%fieldTerm1052"
-      ],
-      [
-        "%fieldTerm1053"
       ]
     ]
   },
@@ -18895,7 +18873,7 @@
     ]
   },
   {
-    "name": "%lineTerm1054",
+    "name": "%lineTerm1053",
     "bnf": [
       [
         "TERMINATED_SYMBOL"
@@ -18910,14 +18888,14 @@
     "name": "lineTerm",
     "bnf": [
       [
-        "%lineTerm1054",
+        "%lineTerm1053",
         "BY_SYMBOL",
         "textString"
       ]
     ]
   },
   {
-    "name": "%userList1055",
+    "name": "%userList1054",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18931,12 +18909,12 @@
     "bnf": [
       [
         "user",
-        "%userList1055*"
+        "%userList1054*"
       ]
     ]
   },
   {
-    "name": "%createUserList1056",
+    "name": "%createUserList1055",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18950,12 +18928,12 @@
     "bnf": [
       [
         "createUserEntry",
-        "%createUserList1056*"
+        "%createUserList1055*"
       ]
     ]
   },
   {
-    "name": "%alterUserList1057",
+    "name": "%alterUserList1056",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -18969,12 +18947,12 @@
     "bnf": [
       [
         "alterUserEntry",
-        "%alterUserList1057*"
+        "%alterUserList1056*"
       ]
     ]
   },
   {
-    "name": "%%%createUserEntry105810591060",
+    "name": "%%%createUserEntry105710581059",
     "bnf": [
       [
         "BY_SYMBOL",
@@ -18985,7 +18963,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%%createUserEntry10581059106110621063",
+    "name": "%%%%%createUserEntry10571058106010611062",
     "bnf": [
       [
         "AS_SYMBOL",
@@ -18995,7 +18973,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%%createUserEntry10581059106110621064",
+    "name": "%%%%%createUserEntry10571058106010611063",
     "bnf": [
       [
         "BY_SYMBOL",
@@ -19005,30 +18983,30 @@
     "fragment": true
   },
   {
-    "name": "%%%%createUserEntry1058105910611062",
+    "name": "%%%%createUserEntry1057105810601061",
     "bnf": [
       [
-        "%%%%%createUserEntry10581059106110621063"
+        "%%%%%createUserEntry10571058106010611062"
       ],
       [
-        "%%%%%createUserEntry10581059106110621064"
+        "%%%%%createUserEntry10571058106010611063"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%createUserEntry105810591061",
+    "name": "%%%createUserEntry105710581060",
     "bnf": [
       [
         "WITH_SYMBOL",
         "textOrIdentifier",
-        "%%%%createUserEntry1058105910611062?"
+        "%%%%createUserEntry1057105810601061?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%createUserEntry1058105910651066",
+    "name": "%%%%createUserEntry1057105810641065",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -19038,10 +19016,10 @@
     "fragment": true
   },
   {
-    "name": "%%%createUserEntry105810591065",
+    "name": "%%%createUserEntry105710581064",
     "bnf": [
       [
-        "%%%%createUserEntry1058105910651066?",
+        "%%%%createUserEntry1057105810641065?",
         "BY_SYMBOL",
         "RANDOM_SYMBOL",
         "PASSWORD_SYMBOL"
@@ -19050,26 +19028,26 @@
     "fragment": true
   },
   {
-    "name": "%%createUserEntry10581059",
+    "name": "%%createUserEntry10571058",
     "bnf": [
       [
-        "%%%createUserEntry105810591060"
+        "%%%createUserEntry105710581059"
       ],
       [
-        "%%%createUserEntry105810591061"
+        "%%%createUserEntry105710581060"
       ],
       [
-        "%%%createUserEntry105810591065"
+        "%%%createUserEntry105710581064"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%createUserEntry1058",
+    "name": "%createUserEntry1057",
     "bnf": [
       [
         "IDENTIFIED_SYMBOL",
-        "%%createUserEntry10581059"
+        "%%createUserEntry10571058"
       ]
     ],
     "fragment": true
@@ -19079,12 +19057,12 @@
     "bnf": [
       [
         "user",
-        "%createUserEntry1058?"
+        "%createUserEntry1057?"
       ]
     ]
   },
   {
-    "name": "%%%%%alterUserEntry10671068106910701071",
+    "name": "%%%%%alterUserEntry10661067106810691070",
     "bnf": [
       [
         "WITH_SYMBOL",
@@ -19094,7 +19072,7 @@
     "fragment": true
   },
   {
-    "name": "%%%%%alterUserEntry10671068106910701072",
+    "name": "%%%%%alterUserEntry10661067106810691071",
     "bnf": [
       [
         "REPLACE_SYMBOL",
@@ -19104,20 +19082,20 @@
     "fragment": true
   },
   {
-    "name": "%%%%alterUserEntry1067106810691070",
+    "name": "%%%%alterUserEntry1066106710681069",
     "bnf": [
       [
-        "%%%%%alterUserEntry10671068106910701071?",
+        "%%%%%alterUserEntry10661067106810691070?",
         "BY_SYMBOL",
         "textString",
-        "%%%%%alterUserEntry10671068106910701072?",
+        "%%%%%alterUserEntry10661067106810691071?",
         "retainCurrentPassword?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%%%alterUserEntry10671068106910731074",
+    "name": "%%%%%alterUserEntry10661067106810721073",
     "bnf": [
       [
         "AS_SYMBOL",
@@ -19128,43 +19106,43 @@
     "fragment": true
   },
   {
-    "name": "%%%%alterUserEntry1067106810691073",
+    "name": "%%%%alterUserEntry1066106710681072",
     "bnf": [
       [
         "WITH_SYMBOL",
         "textOrIdentifier",
-        "%%%%%alterUserEntry10671068106910731074?"
+        "%%%%%alterUserEntry10661067106810721073?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%alterUserEntry106710681069",
+    "name": "%%%alterUserEntry106610671068",
     "bnf": [
       [
-        "%%%%alterUserEntry1067106810691070"
+        "%%%%alterUserEntry1066106710681069"
       ],
       [
-        "%%%%alterUserEntry1067106810691073"
+        "%%%%alterUserEntry1066106710681072"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%alterUserEntry10671068",
+    "name": "%%alterUserEntry10661067",
     "bnf": [
       [
         "IDENTIFIED_SYMBOL",
-        "%%%alterUserEntry106710681069?"
+        "%%%alterUserEntry106610671068?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%alterUserEntry1067",
+    "name": "%alterUserEntry1066",
     "bnf": [
       [
-        "%%alterUserEntry10671068"
+        "%%alterUserEntry10661067"
       ],
       [
         "discardOldPassword?"
@@ -19177,7 +19155,7 @@
     "bnf": [
       [
         "user",
-        "%alterUserEntry1067"
+        "%alterUserEntry1066"
       ]
     ]
   },
@@ -19211,7 +19189,7 @@
     ]
   },
   {
-    "name": "%%userIdentifierOrText10751076",
+    "name": "%%userIdentifierOrText10741075",
     "bnf": [
       [
         "AT_SIGN_SYMBOL",
@@ -19221,10 +19199,10 @@
     "fragment": true
   },
   {
-    "name": "%userIdentifierOrText1075",
+    "name": "%userIdentifierOrText1074",
     "bnf": [
       [
-        "%%userIdentifierOrText10751076"
+        "%%userIdentifierOrText10741075"
       ],
       [
         "AT_TEXT_SUFFIX"
@@ -19237,12 +19215,12 @@
     "bnf": [
       [
         "textOrIdentifier",
-        "%userIdentifierOrText1075?"
+        "%userIdentifierOrText1074?"
       ]
     ]
   },
   {
-    "name": "%user1077",
+    "name": "%user1076",
     "bnf": [
       [
         "CURRENT_USER_SYMBOL",
@@ -19258,7 +19236,7 @@
         "userIdentifierOrText"
       ],
       [
-        "%user1077"
+        "%user1076"
       ]
     ]
   },
@@ -19314,7 +19292,7 @@
     ]
   },
   {
-    "name": "%fieldIdentifier1078",
+    "name": "%fieldIdentifier1077",
     "bnf": [
       [
         "qualifiedIdentifier",
@@ -19330,7 +19308,7 @@
         "dotIdentifier"
       ],
       [
-        "%fieldIdentifier1078"
+        "%fieldIdentifier1077"
       ]
     ]
   },
@@ -19354,7 +19332,7 @@
     ]
   },
   {
-    "name": "%columnInternalRefList1079",
+    "name": "%columnInternalRefList1078",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -19369,7 +19347,7 @@
       [
         "OPEN_PAR_SYMBOL",
         "columnInternalRef",
-        "%columnInternalRefList1079*",
+        "%columnInternalRefList1078*",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
@@ -19410,7 +19388,7 @@
     ]
   },
   {
-    "name": "%tableWild1080",
+    "name": "%tableWild1079",
     "bnf": [
       [
         "identifier",
@@ -19425,7 +19403,7 @@
       [
         "identifier",
         "DOT_SYMBOL",
-        "%tableWild1080?",
+        "%tableWild1079?",
         "MULT_OPERATOR"
       ]
     ]
@@ -19617,7 +19595,7 @@
     ]
   },
   {
-    "name": "%%tableRefWithWildcard10811082",
+    "name": "%%tableRefWithWildcard10801081",
     "bnf": [
       [
         "DOT_SYMBOL",
@@ -19627,7 +19605,7 @@
     "fragment": true
   },
   {
-    "name": "%%%tableRefWithWildcard108110831084",
+    "name": "%%%tableRefWithWildcard108010821083",
     "bnf": [
       [
         "DOT_SYMBOL",
@@ -19637,23 +19615,23 @@
     "fragment": true
   },
   {
-    "name": "%%tableRefWithWildcard10811083",
+    "name": "%%tableRefWithWildcard10801082",
     "bnf": [
       [
         "dotIdentifier",
-        "%%%tableRefWithWildcard108110831084?"
+        "%%%tableRefWithWildcard108010821083?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%tableRefWithWildcard1081",
+    "name": "%tableRefWithWildcard1080",
     "bnf": [
       [
-        "%%tableRefWithWildcard10811082"
+        "%%tableRefWithWildcard10801081"
       ],
       [
-        "%%tableRefWithWildcard10811083"
+        "%%tableRefWithWildcard10801082"
       ]
     ],
     "fragment": true
@@ -19663,7 +19641,7 @@
     "bnf": [
       [
         "identifier",
-        "%tableRefWithWildcard1081?"
+        "%tableRefWithWildcard1080?"
       ]
     ]
   },
@@ -19679,7 +19657,7 @@
     ]
   },
   {
-    "name": "%tableRefList1085",
+    "name": "%tableRefList1084",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -19693,12 +19671,12 @@
     "bnf": [
       [
         "tableRef",
-        "%tableRefList1085*"
+        "%tableRefList1084*"
       ]
     ]
   },
   {
-    "name": "%tableAliasRefList1086",
+    "name": "%tableAliasRefList1085",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -19712,7 +19690,7 @@
     "bnf": [
       [
         "tableRefWithWildcard",
-        "%tableAliasRefList1086*"
+        "%tableAliasRefList1085*"
       ]
     ]
   },
@@ -19795,7 +19773,7 @@
     ]
   },
   {
-    "name": "%pureIdentifier1087",
+    "name": "%pureIdentifier1086",
     "bnf": [
       [
         "IDENTIFIER"
@@ -19810,7 +19788,7 @@
     "name": "pureIdentifier",
     "bnf": [
       [
-        "%pureIdentifier1087"
+        "%pureIdentifier1086"
       ],
       [
         "DOUBLE_QUOTED_TEXT"
@@ -19829,7 +19807,7 @@
     ]
   },
   {
-    "name": "%identifierList1088",
+    "name": "%identifierList1087",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -19843,7 +19821,7 @@
     "bnf": [
       [
         "identifier",
-        "%identifierList1088*"
+        "%identifierList1087*"
       ]
     ]
   },
@@ -19867,7 +19845,7 @@
     ]
   },
   {
-    "name": "%%simpleIdentifier10891090",
+    "name": "%%simpleIdentifier10881089",
     "bnf": [
       [
         "dotIdentifier",
@@ -19877,17 +19855,17 @@
     "fragment": true
   },
   {
-    "name": "%simpleIdentifier1089",
+    "name": "%simpleIdentifier1088",
     "bnf": [
       [
         "identifier",
-        "%%simpleIdentifier10891090?"
+        "%%simpleIdentifier10881089?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%simpleIdentifier1091",
+    "name": "%simpleIdentifier1090",
     "bnf": [
       [
         "dotIdentifier",
@@ -19900,10 +19878,10 @@
     "name": "simpleIdentifier",
     "bnf": [
       [
-        "%simpleIdentifier1089"
+        "%simpleIdentifier1088"
       ],
       [
-        "%simpleIdentifier1091"
+        "%simpleIdentifier1090"
       ]
     ]
   },
@@ -19994,7 +19972,7 @@
     ]
   },
   {
-    "name": "%%literal10921093",
+    "name": "%%literal10911092",
     "bnf": [
       [
         "HEX_NUMBER"
@@ -20006,11 +19984,11 @@
     "fragment": true
   },
   {
-    "name": "%literal1092",
+    "name": "%literal1091",
     "bnf": [
       [
         "UNDERSCORE_CHARSET?",
-        "%%literal10921093"
+        "%%literal10911092"
       ]
     ],
     "fragment": true
@@ -20034,12 +20012,12 @@
         "boolLiteral"
       ],
       [
-        "%literal1092"
+        "%literal1091"
       ]
     ]
   },
   {
-    "name": "%signedLiteral1094",
+    "name": "%signedLiteral1093",
     "bnf": [
       [
         "PLUS_OPERATOR",
@@ -20049,7 +20027,7 @@
     "fragment": true
   },
   {
-    "name": "%signedLiteral1095",
+    "name": "%signedLiteral1094",
     "bnf": [
       [
         "MINUS_OPERATOR",
@@ -20065,15 +20043,15 @@
         "literal"
       ],
       [
-        "%signedLiteral1094"
+        "%signedLiteral1093"
       ],
       [
-        "%signedLiteral1095"
+        "%signedLiteral1094"
       ]
     ]
   },
   {
-    "name": "%stringList1096",
+    "name": "%stringList1095",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -20088,7 +20066,7 @@
       [
         "OPEN_PAR_SYMBOL",
         "textString",
-        "%stringList1096*",
+        "%stringList1095*",
         "CLOSE_PAR_SYMBOL"
       ]
     ]
@@ -20130,7 +20108,7 @@
     ]
   },
   {
-    "name": "%%textLiteral10971098",
+    "name": "%%textLiteral10961097",
     "bnf": [
       [
         "UNDERSCORE_CHARSET?",
@@ -20140,10 +20118,10 @@
     "fragment": true
   },
   {
-    "name": "%textLiteral1097",
+    "name": "%textLiteral1096",
     "bnf": [
       [
-        "%%textLiteral10971098"
+        "%%textLiteral10961097"
       ],
       [
         "NCHAR_TEXT"
@@ -20155,7 +20133,7 @@
     "name": "textLiteral",
     "bnf": [
       [
-        "%textLiteral1097",
+        "%textLiteral1096",
         "textStringLiteral*"
       ]
     ]
@@ -20169,7 +20147,7 @@
     ]
   },
   {
-    "name": "%textStringLiteralList1099",
+    "name": "%textStringLiteralList1098",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -20183,7 +20161,7 @@
     "bnf": [
       [
         "textStringLiteral",
-        "%textStringLiteralList1099*"
+        "%textStringLiteralList1098*"
       ]
     ]
   },
@@ -20230,7 +20208,7 @@
     ]
   },
   {
-    "name": "%temporalLiteral1100",
+    "name": "%temporalLiteral1099",
     "bnf": [
       [
         "DATE_SYMBOL",
@@ -20240,7 +20218,7 @@
     "fragment": true
   },
   {
-    "name": "%temporalLiteral1101",
+    "name": "%temporalLiteral1100",
     "bnf": [
       [
         "TIME_SYMBOL",
@@ -20250,7 +20228,7 @@
     "fragment": true
   },
   {
-    "name": "%temporalLiteral1102",
+    "name": "%temporalLiteral1101",
     "bnf": [
       [
         "TIMESTAMP_SYMBOL",
@@ -20263,13 +20241,13 @@
     "name": "temporalLiteral",
     "bnf": [
       [
+        "%temporalLiteral1099"
+      ],
+      [
         "%temporalLiteral1100"
       ],
       [
         "%temporalLiteral1101"
-      ],
-      [
-        "%temporalLiteral1102"
       ]
     ]
   },
@@ -20389,7 +20367,7 @@
     ]
   },
   {
-    "name": "%varIdentType1103",
+    "name": "%varIdentType1102",
     "bnf": [
       [
         "GLOBAL_SYMBOL",
@@ -20399,7 +20377,7 @@
     "fragment": true
   },
   {
-    "name": "%varIdentType1104",
+    "name": "%varIdentType1103",
     "bnf": [
       [
         "LOCAL_SYMBOL",
@@ -20409,7 +20387,7 @@
     "fragment": true
   },
   {
-    "name": "%varIdentType1105",
+    "name": "%varIdentType1104",
     "bnf": [
       [
         "SESSION_SYMBOL",
@@ -20422,18 +20400,18 @@
     "name": "varIdentType",
     "bnf": [
       [
+        "%varIdentType1102"
+      ],
+      [
         "%varIdentType1103"
       ],
       [
         "%varIdentType1104"
-      ],
-      [
-        "%varIdentType1105"
       ]
     ]
   },
   {
-    "name": "%setVarIdentType1106",
+    "name": "%setVarIdentType1105",
     "bnf": [
       [
         "PERSIST_SYMBOL",
@@ -20443,7 +20421,7 @@
     "fragment": true
   },
   {
-    "name": "%setVarIdentType1107",
+    "name": "%setVarIdentType1106",
     "bnf": [
       [
         "PERSIST_ONLY_SYMBOL",
@@ -20453,7 +20431,7 @@
     "fragment": true
   },
   {
-    "name": "%setVarIdentType1108",
+    "name": "%setVarIdentType1107",
     "bnf": [
       [
         "GLOBAL_SYMBOL",
@@ -20463,7 +20441,7 @@
     "fragment": true
   },
   {
-    "name": "%setVarIdentType1109",
+    "name": "%setVarIdentType1108",
     "bnf": [
       [
         "LOCAL_SYMBOL",
@@ -20473,7 +20451,7 @@
     "fragment": true
   },
   {
-    "name": "%setVarIdentType1110",
+    "name": "%setVarIdentType1109",
     "bnf": [
       [
         "SESSION_SYMBOL",
@@ -20486,6 +20464,9 @@
     "name": "setVarIdentType",
     "bnf": [
       [
+        "%setVarIdentType1105"
+      ],
+      [
         "%setVarIdentType1106"
       ],
       [
@@ -20496,14 +20477,11 @@
       ],
       [
         "%setVarIdentType1109"
-      ],
-      [
-        "%setVarIdentType1110"
       ]
     ]
   },
   {
-    "name": "%identifierKeyword1111",
+    "name": "%identifierKeyword1110",
     "bnf": [
       [
         "labelKeyword"
@@ -20524,7 +20502,7 @@
     "fragment": true
   },
   {
-    "name": "%identifierKeyword1112",
+    "name": "%identifierKeyword1111",
     "bnf": [
       [
         "identifierKeywordsUnambiguous"
@@ -20548,10 +20526,10 @@
     "name": "identifierKeyword",
     "bnf": [
       [
-        "%identifierKeyword1111"
+        "%identifierKeyword1110"
       ],
       [
-        "%identifierKeyword1112"
+        "%identifierKeyword1111"
       ]
     ]
   },
@@ -20680,7 +20658,7 @@
     ]
   },
   {
-    "name": "%labelKeyword1113",
+    "name": "%labelKeyword1112",
     "bnf": [
       [
         "roleOrLabelKeyword"
@@ -20716,7 +20694,7 @@
     "fragment": true
   },
   {
-    "name": "%labelKeyword1114",
+    "name": "%labelKeyword1113",
     "bnf": [
       [
         "identifierKeywordsUnambiguous"
@@ -20734,10 +20712,10 @@
     "name": "labelKeyword",
     "bnf": [
       [
-        "%labelKeyword1113"
+        "%labelKeyword1112"
       ],
       [
-        "%labelKeyword1114"
+        "%labelKeyword1113"
       ]
     ]
   },
@@ -20774,7 +20752,7 @@
     ]
   },
   {
-    "name": "%identifierKeywordsUnambiguous1115",
+    "name": "%identifierKeywordsUnambiguous1114",
     "bnf": [
       [
         "ACTION_SYMBOL"
@@ -21881,7 +21859,7 @@
     "fragment": true
   },
   {
-    "name": "%identifierKeywordsUnambiguous1116",
+    "name": "%identifierKeywordsUnambiguous1115",
     "bnf": [
       [
         "ARRAY_SYMBOL"
@@ -21935,15 +21913,15 @@
     "name": "identifierKeywordsUnambiguous",
     "bnf": [
       [
-        "%identifierKeywordsUnambiguous1115"
+        "%identifierKeywordsUnambiguous1114"
       ],
       [
-        "%identifierKeywordsUnambiguous1116"
+        "%identifierKeywordsUnambiguous1115"
       ]
     ]
   },
   {
-    "name": "%roleKeyword1117",
+    "name": "%roleKeyword1116",
     "bnf": [
       [
         "roleOrLabelKeyword"
@@ -21955,7 +21933,7 @@
     "fragment": true
   },
   {
-    "name": "%roleKeyword1118",
+    "name": "%roleKeyword1117",
     "bnf": [
       [
         "identifierKeywordsUnambiguous"
@@ -21973,10 +21951,10 @@
     "name": "roleKeyword",
     "bnf": [
       [
-        "%roleKeyword1117"
+        "%roleKeyword1116"
       ],
       [
-        "%roleKeyword1118"
+        "%roleKeyword1117"
       ]
     ]
   },
@@ -22018,7 +21996,7 @@
     ]
   },
   {
-    "name": "%roleOrIdentifierKeyword1119",
+    "name": "%roleOrIdentifierKeyword1118",
     "bnf": [
       [
         "ACCOUNT_SYMBOL"
@@ -22213,7 +22191,7 @@
     "name": "roleOrIdentifierKeyword",
     "bnf": [
       [
-        "%roleOrIdentifierKeyword1119"
+        "%roleOrIdentifierKeyword1118"
       ],
       [
         "SHUTDOWN_SYMBOL"
@@ -22224,7 +22202,7 @@
     ]
   },
   {
-    "name": "%roleOrLabelKeyword1120",
+    "name": "%roleOrLabelKeyword1119",
     "bnf": [
       [
         "ACTION_SYMBOL"
@@ -23244,7 +23222,7 @@
     "fragment": true
   },
   {
-    "name": "%roleOrLabelKeyword1121",
+    "name": "%roleOrLabelKeyword1120",
     "bnf": [
       [
         "CUBE_SYMBOL"
@@ -23265,7 +23243,7 @@
     "fragment": true
   },
   {
-    "name": "%roleOrLabelKeyword1122",
+    "name": "%roleOrLabelKeyword1121",
     "bnf": [
       [
         "EXCHANGE_SYMBOL"
@@ -23292,16 +23270,16 @@
     "name": "roleOrLabelKeyword",
     "bnf": [
       [
-        "%roleOrLabelKeyword1120"
+        "%roleOrLabelKeyword1119"
       ],
       [
         "SHUTDOWN_SYMBOL"
       ],
       [
-        "%roleOrLabelKeyword1121"
+        "%roleOrLabelKeyword1120"
       ],
       [
-        "%roleOrLabelKeyword1122"
+        "%roleOrLabelKeyword1121"
       ],
       [
         "ADMIN_SYMBOL"
@@ -23309,7 +23287,7 @@
     ]
   },
   {
-    "name": "%alterOrderList1123",
+    "name": "%alterOrderList1122",
     "bnf": [
       [
         "COMMA_SYMBOL",
@@ -23325,7 +23303,20 @@
       [
         "qualifiedIdentifier",
         "direction?",
-        "%alterOrderList1123*"
+        "%alterOrderList1122*"
+      ]
+    ]
+  },
+  {
+    "name": "createUser",
+    "bnf": [
+      [
+        "CREATE_SYMBOL",
+        "USER_SYMBOL",
+        "ifNotExists?",
+        "createUserList",
+        "defaultRoleClause",
+        "createUserTail"
       ]
     ]
   },
@@ -23339,7 +23330,7 @@
     ]
   },
   {
-    "name": "%%%%expr_simple112411251126",
+    "name": "%%%%expr_simple112311241125",
     "bnf": [
       [
         "TRUE_SYMBOL"
@@ -23354,28 +23345,28 @@
     "fragment": true
   },
   {
-    "name": "%%%expr_simple11241125",
+    "name": "%%%expr_simple11231124",
     "bnf": [
       [
         "IS_SYMBOL",
         "notRule?",
-        "%%%%expr_simple112411251126"
+        "%%%%expr_simple112311241125"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%expr_simple1124",
+    "name": "%%expr_simple1123",
     "bnf": [
       [
         "boolPri",
-        "%%%expr_simple11241125?"
+        "%%%expr_simple11231124?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%expr_simple1127",
+    "name": "%%expr_simple1126",
     "bnf": [
       [
         "NOT_SYMBOL",
@@ -23388,15 +23379,15 @@
     "name": "%expr_simple",
     "bnf": [
       [
-        "%%expr_simple1124"
+        "%%expr_simple1123"
       ],
       [
-        "%%expr_simple1127"
+        "%%expr_simple1126"
       ]
     ]
   },
   {
-    "name": "%%%expr_rr11281129",
+    "name": "%%%expr_rr11271128",
     "bnf": [
       [
         "AND_SYMBOL"
@@ -23408,17 +23399,17 @@
     "fragment": true
   },
   {
-    "name": "%%expr_rr1128",
+    "name": "%%expr_rr1127",
     "bnf": [
       [
-        "%%%expr_rr11281129",
+        "%%%expr_rr11271128",
         "expr"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%expr_rr1130",
+    "name": "%%expr_rr1129",
     "bnf": [
       [
         "XOR_SYMBOL",
@@ -23428,7 +23419,7 @@
     "fragment": true
   },
   {
-    "name": "%%%expr_rr11311132",
+    "name": "%%%expr_rr11301131",
     "bnf": [
       [
         "OR_SYMBOL"
@@ -23440,10 +23431,10 @@
     "fragment": true
   },
   {
-    "name": "%%expr_rr1131",
+    "name": "%%expr_rr1130",
     "bnf": [
       [
-        "%%%expr_rr11311132",
+        "%%%expr_rr11301131",
         "expr"
       ]
     ],
@@ -23453,13 +23444,13 @@
     "name": "%expr_rr",
     "bnf": [
       [
-        "%%expr_rr1128"
+        "%%expr_rr1127"
+      ],
+      [
+        "%%expr_rr1129"
       ],
       [
         "%%expr_rr1130"
-      ],
-      [
-        "%%expr_rr1131"
       ]
     ]
   },
@@ -23473,7 +23464,7 @@
     ]
   },
   {
-    "name": "%%boolPri_rr1133",
+    "name": "%%boolPri_rr1132",
     "bnf": [
       [
         "IS_SYMBOL",
@@ -23484,7 +23475,7 @@
     "fragment": true
   },
   {
-    "name": "%%boolPri_rr1134",
+    "name": "%%boolPri_rr1133",
     "bnf": [
       [
         "compOp",
@@ -23494,7 +23485,7 @@
     "fragment": true
   },
   {
-    "name": "%%%boolPri_rr11351136",
+    "name": "%%%boolPri_rr11341135",
     "bnf": [
       [
         "ALL_SYMBOL"
@@ -23506,11 +23497,11 @@
     "fragment": true
   },
   {
-    "name": "%%boolPri_rr1135",
+    "name": "%%boolPri_rr1134",
     "bnf": [
       [
         "compOp",
-        "%%%boolPri_rr11351136",
+        "%%%boolPri_rr11341135",
         "subquery"
       ]
     ],
@@ -23520,18 +23511,18 @@
     "name": "%boolPri_rr",
     "bnf": [
       [
+        "%%boolPri_rr1132"
+      ],
+      [
         "%%boolPri_rr1133"
       ],
       [
         "%%boolPri_rr1134"
-      ],
-      [
-        "%%boolPri_rr1135"
       ]
     ]
   },
   {
-    "name": "%%predicate11371138",
+    "name": "%%predicate11361137",
     "bnf": [
       [
         "notRule?",
@@ -23541,7 +23532,7 @@
     "fragment": true
   },
   {
-    "name": "%%predicate11371139",
+    "name": "%%predicate11361138",
     "bnf": [
       [
         "MEMBER_SYMBOL",
@@ -23552,7 +23543,7 @@
     "fragment": true
   },
   {
-    "name": "%%predicate11371140",
+    "name": "%%predicate11361139",
     "bnf": [
       [
         "SOUNDS_SYMBOL",
@@ -23563,16 +23554,16 @@
     "fragment": true
   },
   {
-    "name": "%predicate1137",
+    "name": "%predicate1136",
     "bnf": [
       [
-        "%%predicate11371138"
+        "%%predicate11361137"
       ],
       [
-        "%%predicate11371139"
+        "%%predicate11361138"
       ],
       [
-        "%%predicate11371140"
+        "%%predicate11361139"
       ]
     ],
     "fragment": true
@@ -23582,7 +23573,7 @@
     "bnf": [
       [
         "bitExpr",
-        "%predicate1137?"
+        "%predicate1136?"
       ]
     ]
   },
@@ -23596,7 +23587,7 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1141",
+    "name": "%%bitExpr_rr1140",
     "bnf": [
       [
         "BITWISE_XOR_OPERATOR",
@@ -23606,7 +23597,7 @@
     "fragment": true
   },
   {
-    "name": "%%%bitExpr_rr11421143",
+    "name": "%%%bitExpr_rr11411142",
     "bnf": [
       [
         "MULT_OPERATOR"
@@ -23627,17 +23618,17 @@
     "fragment": true
   },
   {
-    "name": "%%bitExpr_rr1142",
+    "name": "%%bitExpr_rr1141",
     "bnf": [
       [
-        "%%%bitExpr_rr11421143",
+        "%%%bitExpr_rr11411142",
         "bitExpr"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%bitExpr_rr11441145",
+    "name": "%%%bitExpr_rr11431144",
     "bnf": [
       [
         "PLUS_OPERATOR"
@@ -23649,17 +23640,17 @@
     "fragment": true
   },
   {
-    "name": "%%bitExpr_rr1144",
+    "name": "%%bitExpr_rr1143",
     "bnf": [
       [
-        "%%%bitExpr_rr11441145",
+        "%%%bitExpr_rr11431144",
         "bitExpr"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%%bitExpr_rr11461147",
+    "name": "%%%bitExpr_rr11451146",
     "bnf": [
       [
         "PLUS_OPERATOR"
@@ -23671,10 +23662,10 @@
     "fragment": true
   },
   {
-    "name": "%%bitExpr_rr1146",
+    "name": "%%bitExpr_rr1145",
     "bnf": [
       [
-        "%%%bitExpr_rr11461147",
+        "%%%bitExpr_rr11451146",
         "INTERVAL_SYMBOL",
         "expr",
         "interval"
@@ -23683,7 +23674,7 @@
     "fragment": true
   },
   {
-    "name": "%%%bitExpr_rr11481149",
+    "name": "%%%bitExpr_rr11471148",
     "bnf": [
       [
         "SHIFT_LEFT_OPERATOR"
@@ -23695,17 +23686,17 @@
     "fragment": true
   },
   {
-    "name": "%%bitExpr_rr1148",
+    "name": "%%bitExpr_rr1147",
     "bnf": [
       [
-        "%%%bitExpr_rr11481149",
+        "%%%bitExpr_rr11471148",
         "bitExpr"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%bitExpr_rr1150",
+    "name": "%%bitExpr_rr1149",
     "bnf": [
       [
         "BITWISE_AND_OPERATOR",
@@ -23715,7 +23706,7 @@
     "fragment": true
   },
   {
-    "name": "%%bitExpr_rr1151",
+    "name": "%%bitExpr_rr1150",
     "bnf": [
       [
         "BITWISE_OR_OPERATOR",
@@ -23728,30 +23719,30 @@
     "name": "%bitExpr_rr",
     "bnf": [
       [
+        "%%bitExpr_rr1140"
+      ],
+      [
         "%%bitExpr_rr1141"
       ],
       [
-        "%%bitExpr_rr1142"
+        "%%bitExpr_rr1143"
       ],
       [
-        "%%bitExpr_rr1144"
+        "%%bitExpr_rr1145"
       ],
       [
-        "%%bitExpr_rr1146"
+        "%%bitExpr_rr1147"
       ],
       [
-        "%%bitExpr_rr1148"
+        "%%bitExpr_rr1149"
       ],
       [
         "%%bitExpr_rr1150"
-      ],
-      [
-        "%%bitExpr_rr1151"
       ]
     ]
   },
   {
-    "name": "%simpleExpr1152",
+    "name": "%simpleExpr1151",
     "bnf": [
       [
         "CONCAT_PIPES_SYMBOL",
@@ -23765,12 +23756,12 @@
     "bnf": [
       [
         "%simpleExpr_collate",
-        "%simpleExpr1152*"
+        "%simpleExpr1151*"
       ]
     ]
   },
   {
-    "name": "%%simpleExpr_collate1153",
+    "name": "%%simpleExpr_collate1152",
     "bnf": [
       [
         "COLLATE_SYMBOL",
@@ -23784,12 +23775,12 @@
     "bnf": [
       [
         "%simpleExpr_factored",
-        "%%simpleExpr_collate1153?"
+        "%%simpleExpr_collate1152?"
       ]
     ]
   },
   {
-    "name": "%%%simpleExpr_factored11541155",
+    "name": "%%%simpleExpr_factored11531154",
     "bnf": [
       [
         "equal",
@@ -23799,17 +23790,17 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1154",
+    "name": "%%simpleExpr_factored1153",
     "bnf": [
       [
         "variable",
-        "%%%simpleExpr_factored11541155?"
+        "%%%simpleExpr_factored11531154?"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1156",
+    "name": "%%simpleExpr_factored1155",
     "bnf": [
       [
         "columnRef",
@@ -23819,7 +23810,7 @@
     "fragment": true
   },
   {
-    "name": "%%%simpleExpr_factored11571158",
+    "name": "%%%simpleExpr_factored11561157",
     "bnf": [
       [
         "PLUS_OPERATOR"
@@ -23834,17 +23825,17 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1157",
+    "name": "%%simpleExpr_factored1156",
     "bnf": [
       [
-        "%%%simpleExpr_factored11571158",
+        "%%%simpleExpr_factored11561157",
         "simpleExpr"
       ]
     ],
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1159",
+    "name": "%%simpleExpr_factored1158",
     "bnf": [
       [
         "not2Rule",
@@ -23854,7 +23845,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1160",
+    "name": "%%simpleExpr_factored1159",
     "bnf": [
       [
         "ROW_SYMBOL?",
@@ -23866,7 +23857,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1161",
+    "name": "%%simpleExpr_factored1160",
     "bnf": [
       [
         "EXISTS_SYMBOL?",
@@ -23876,7 +23867,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1162",
+    "name": "%%simpleExpr_factored1161",
     "bnf": [
       [
         "OPEN_CURLY_SYMBOL",
@@ -23888,7 +23879,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1163",
+    "name": "%%simpleExpr_factored1162",
     "bnf": [
       [
         "MATCH_SYMBOL",
@@ -23903,7 +23894,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1164",
+    "name": "%%simpleExpr_factored1163",
     "bnf": [
       [
         "BINARY_SYMBOL",
@@ -23913,7 +23904,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1165",
+    "name": "%%simpleExpr_factored1164",
     "bnf": [
       [
         "CAST_SYMBOL",
@@ -23928,7 +23919,7 @@
     "fragment": true
   },
   {
-    "name": "%%%simpleExpr_factored11661167",
+    "name": "%%%simpleExpr_factored11651166",
     "bnf": [
       [
         "whenExpression",
@@ -23938,12 +23929,12 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1166",
+    "name": "%%simpleExpr_factored1165",
     "bnf": [
       [
         "CASE_SYMBOL",
         "expr?",
-        "%%%simpleExpr_factored11661167+",
+        "%%%simpleExpr_factored11651166+",
         "elseExpression?",
         "END_SYMBOL"
       ]
@@ -23951,7 +23942,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1168",
+    "name": "%%simpleExpr_factored1167",
     "bnf": [
       [
         "CONVERT_SYMBOL",
@@ -23965,7 +23956,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1169",
+    "name": "%%simpleExpr_factored1168",
     "bnf": [
       [
         "CONVERT_SYMBOL",
@@ -23979,7 +23970,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1170",
+    "name": "%%simpleExpr_factored1169",
     "bnf": [
       [
         "DEFAULT_SYMBOL",
@@ -23991,7 +23982,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1171",
+    "name": "%%simpleExpr_factored1170",
     "bnf": [
       [
         "VALUES_SYMBOL",
@@ -24003,7 +23994,7 @@
     "fragment": true
   },
   {
-    "name": "%%simpleExpr_factored1172",
+    "name": "%%simpleExpr_factored1171",
     "bnf": [
       [
         "INTERVAL_SYMBOL",
@@ -24019,7 +24010,7 @@
     "name": "%simpleExpr_factored",
     "bnf": [
       [
-        "%%simpleExpr_factored1154"
+        "%%simpleExpr_factored1153"
       ],
       [
         "functionCall"
@@ -24028,7 +24019,7 @@
         "runtimeFunctionCall"
       ],
       [
-        "%%simpleExpr_factored1156"
+        "%%simpleExpr_factored1155"
       ],
       [
         "literal"
@@ -24046,7 +24037,10 @@
         "windowFunctionCall"
       ],
       [
-        "%%simpleExpr_factored1157"
+        "%%simpleExpr_factored1156"
+      ],
+      [
+        "%%simpleExpr_factored1158"
       ],
       [
         "%%simpleExpr_factored1159"
@@ -24070,7 +24064,7 @@
         "%%simpleExpr_factored1165"
       ],
       [
-        "%%simpleExpr_factored1166"
+        "%%simpleExpr_factored1167"
       ],
       [
         "%%simpleExpr_factored1168"
@@ -24083,9 +24077,6 @@
       ],
       [
         "%%simpleExpr_factored1171"
-      ],
-      [
-        "%%simpleExpr_factored1172"
       ]
     ]
   }
