@@ -383,7 +383,7 @@ internalVariableName ::= ((identifier dotIdentifier?) | (lValueIdentifier dotIde
 whenExpression ::= WHEN_SYMBOL expr
 thenExpression ::= THEN_SYMBOL expr
 elseExpression ::= ELSE_SYMBOL expr
-castType ::= (BINARY_SYMBOL fieldLength?) | (CHAR_SYMBOL fieldLength? charsetWithOptBinary?) | (nchar fieldLength?) | (SIGNED_SYMBOL INT_SYMBOL?) | (UNSIGNED_SYMBOL INT_SYMBOL?) | DATE_SYMBOL | (TIME_SYMBOL typeDatetimePrecision?) | (DATETIME_SYMBOL typeDatetimePrecision?) | (DECIMAL_SYMBOL floatOptions?) | JSON_SYMBOL | realType | (FLOAT_SYMBOL standardFloatOptions?)
+/* castType ::= (BINARY_SYMBOL fieldLength?) | (CHAR_SYMBOL fieldLength? charsetWithOptBinary?) | (nchar fieldLength?) | (SIGNED_SYMBOL INT_SYMBOL?) | (UNSIGNED_SYMBOL INT_SYMBOL?) | DATE_SYMBOL | (TIME_SYMBOL typeDatetimePrecision?) | (DATETIME_SYMBOL typeDatetimePrecision?) | (DECIMAL_SYMBOL floatOptions?) | JSON_SYMBOL | realType | (FLOAT_SYMBOL standardFloatOptions?) */
 exprList ::= expr (COMMA_SYMBOL expr)*
 charset ::= (CHAR_SYMBOL SET_SYMBOL) | CHARSET_SYMBOL
 notRule ::= NOT_SYMBOL | NOT2_SYMBOL
@@ -629,6 +629,12 @@ alterOrderList ::= qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentif
  * but the optionality of "| / * empty * /" part was lost during the conversion.
  */
 createUser ::= CREATE_SYMBOL USER_SYMBOL ifNotExists? createUserList defaultRoleClause createUserTail
+
+/*
+ * Fix CAST(2024 AS YEAR).
+ * The original grammar was missing the YEAR_SYMBOL in the "castType" rule.
+ */
+castType ::= (BINARY_SYMBOL fieldLength?) | (CHAR_SYMBOL fieldLength? charsetWithOptBinary?) | (nchar fieldLength?) | (SIGNED_SYMBOL INT_SYMBOL?) | (UNSIGNED_SYMBOL INT_SYMBOL?) | DATE_SYMBOL | (TIME_SYMBOL typeDatetimePrecision?) | (DATETIME_SYMBOL typeDatetimePrecision?) | (DECIMAL_SYMBOL floatOptions?) | JSON_SYMBOL | realType | (FLOAT_SYMBOL standardFloatOptions?) | YEAR_SYMBOL
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*
