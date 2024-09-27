@@ -158,7 +158,7 @@ havingClause ::= HAVING_SYMBOL expr
 windowClause ::= WINDOW_SYMBOL windowDefinition (COMMA_SYMBOL windowDefinition)*
 windowDefinition ::= windowName AS_SYMBOL windowSpec
 windowSpec ::= OPEN_PAR_SYMBOL windowSpecDetails CLOSE_PAR_SYMBOL
-windowSpecDetails ::= windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause?
+/* windowSpecDetails ::= windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause? */
 windowFrameClause ::= windowFrameUnits windowFrameExtent windowFrameExclusion?
 windowFrameUnits ::= ROWS_SYMBOL | RANGE_SYMBOL | GROUPS_SYMBOL
 windowFrameExtent ::= windowFrameStart | windowFrameBetween
@@ -647,6 +647,17 @@ castType ::= (BINARY_SYMBOL fieldLength?) | (CHAR_SYMBOL fieldLength? charsetWit
  * token as an identifier.
  */
 utilityStatement ::= explainStatement | describeStatement | helpCommand | useCommand | restartServer
+
+/*
+ * Rewrite "windowSpecDetails" so to keep variants with "windowName?" last.
+ * We first need to try to match the symbols as keywords, only then as identifiers.
+ * Identifiers can never take precedence over keywords in the grammar.
+ *
+ * E.g., in "OVER (ROWS UNBOUNDED PRECEDING)", the "ROWS" token needs to match as a keyword
+ * rather than as an identifier. At the same time, "OVER (ROWS PARTITION BY x)" is also valid
+ * with the "ROWS" token as an identifier.
+ */
+windowSpecDetails ::= (PARTITION_SYMBOL BY_SYMBOL orderList orderClause? windowFrameClause?) | ((PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause windowFrameClause?) | ((PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause) | (windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause?)
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*
