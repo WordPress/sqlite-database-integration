@@ -165,14 +165,6 @@ SHOW DATABASES"
 disable_query_log
 "SELECT 1 FROM t1 WHERE a = ANY (SELECT a FROM t2)"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=BLACKHOLE"
-"EXPLAIN FORMAT=tree SELECT col_varchar_key FROM t1
-WHERE ( col_varchar_key, col_varchar_key ) NOT IN (
-SELECT alias1.col_varchar_key, alias1.col_varchar_key
-FROM (
-t1 AS alias1
-JOIN ( t1 AS alias2 JOIN t2 ON t2.col_varchar_key = alias2.col_varchar_key )
-ON ( t2.col_int_key = alias2.col_int_key AND alias2.col_varchar_key IN ( SELECT f1 FROM v1 ) ) )
-WHERE alias1.col_varchar >= 'Z' )"
 send
 REAP
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"" USING latin1)"
@@ -1038,50 +1030,13 @@ WHERE SUBQUERY1_t1.col_varchar_10_key <= table1.col_varchar_10_key
 )
 )
 "
-"EXPLAIN FORMAT=tree SELECT table1 . o1
-FROM C table1
-JOIN ( C table2
-JOIN ( SELECT * FROM cc ) table3
-ON table3 .`i1`  = table2 .o1
-) ON table3 .`i2`  = table2 .o1
-"
 "CREATE TABLE t (
 a INTEGER GENERATED ALWAYS AS (1) VIRTUAL,
 KEY (a)
 ) ENGINE = InnoDB"
-"CREATE PROCEDURE p()
-BEGIN
-DECLARE val INTEGER;
-SET val = 2;
-EXPLAIN FORMAT=tree SELECT AVG(f1) FROM (SELECT * FROM t1) as dt
-WHERE f2 > val;
-SELECT AVG(f1) FROM (SELECT * FROM t1) as dt WHERE f2 > val;
-END"
 "SELECT w.g FROM t1 INNER JOIN (
 SELECT g, ROW_NUMBER() OVER (PARTITION BY g) AS r FROM t1
 ) w ON w.g=t1.g AND w.r=1 WHERE w.g IS NULL"
-"EXPLAIN format=tree INSERT INTO t2 SELECT * FROM v WHERE f1=2"
-"EXPLAIN format=tree UPDATE t2 SET f1=3 WHERE f1 IN (SELECT f1 FROM v WHERE f1=2)"
-"EXPLAIN format=tree DELETE FROM t2 WHERE f1 IN (SELECT f1 FROM v WHERE f1=3)"
-"CREATE PROCEDURE p()
-BEGIN
-DECLARE val INTEGER;
-SET val = 2;
-EXPLAIN FORMAT=tree SELECT AVG(f1)
-FROM (SELECT * FROM t1
-UNION
-SELECT * FROM t1) as dt
-WHERE f2 > val;
-SELECT AVG(f1)
-FROM (SELECT * FROM t1
-UNION
-SELECT * FROM t1) as dt
-WHERE f2 > val;
-END"
-"EXPLAIN format=tree UPDATE t2 JOIN v ON t2.f2=v.f2
-SET t2.f1 = t2.f1 + v.f1
-WHERE v.f2 > 10"
-"EXPLAIN format=tree DELETE t2 FROM t2 JOIN v ON t2.f2=v.f2 WHERE v.f2 > 10"
 "SELECT f1
 FROM t1 JOIN
 LATERAL (SELECT (t1.f1 + t2.f1) AS f2
@@ -1116,7 +1071,6 @@ lateral (with qn as (select t1.a) select (select max(a) from qn)) as dt"
 "SELECT * FROM t1 JOIN LATERAL (
 SELECT GROUP_CONCAT(t.id) AS c FROM t2 t WHERE (t.id = t1.id)
 ) d0 ON (1)"
-"EXPLAIN FORMAT=TREE SELECT * FROM v2 WHERE f3 = 3"
 "EXPLAIN SELECT * FROM t1 JOIN LATERAL (SELECT a+t1.a from t2 GROUP BY a) AS dt"
 "SELECT * FROM t1 JOIN LATERAL (SELECT a+t1.a from t2 GROUP BY a) AS dt"
 "SELECT *
@@ -1157,10 +1111,6 @@ WHERE dt1.x = dt2.x"
 "SHOW REPLICA STATUS"
 "SHOW BINARY LOG STATUS"
 "SHOW REPLICAS"
-"EXPLAIN FORMAT=tree SELECT DISTINCT c2 FROM t1 GROUP BY c1 HAVING COUNT(*) > 1"
-"EXPLAIN FORMAT=tree SELECT DISTINCT table1.pk FROM t1 AS table1 LEFT JOIN t1 AS table2 ON table1.f2=table2.f3 WHERE table2.f1 IS NULL"
-"EXPLAIN FORMAT=tree SELECT /*+JOIN_ORDER(t2,t3,t1) */ DISTINCT t2.pk FROM t1 LEFT JOIN t2 RIGHT OUTER JOIN t3 ON t2.f1 = t3.f3 ON t1.pk = t3.f2 WHERE t3.pk <> t2.pk"
-"EXPLAIN FORMAT=tree SELECT DISTINCT COUNT(*) AS num FROM t1 GROUP BY f HAVING num=1"
 "create table $t(id int)"
 "drop table $t"
 "create table t(id int, $id int, $id2 int, `$$id` int, $ int, $1 int,
@@ -1268,7 +1218,6 @@ VALUES (@tzid, @now + 7 * @step, 2)"
 VALUES (@tzid, @now + 12 * @step, 3)"
 disable_result_log
 enable_query_log
-"explain format=json select * from t1 where str is null"
 "create table таб (кол0 int, кол1 int, key инд0 (кол0), key инд01 (кол0,кол1))"
 "insert into таб (кол0) values (1)"
 "insert into таб (кол0) values (2)"
@@ -1288,46 +1237,9 @@ FROM t1 PARTITION (p1)
 WHERE c1 > 0
 ORDER BY c2
 LIMIT 10"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE f1 = ( SELECT MIN(f1) FROM t1 AS i WHERE i.f1 > t1.f1 )"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE f1 = ( SELECT MIN(f1) FROM t1 AS i WHERE i.f1 > t1.f1 )"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE f1 > ( SELECT f1 FROM t1 LIMIT 1 )"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 WHERE f1 > ( SELECT f1 FROM t1 LIMIT 1 )"
-"explain format=TREE select * from t1 where a > 2"
-"explain format=JSON select * from t1 where a > 2"
-"EXPLAIN format=TREE SELECT * FROM t1 WHERE t1.i IN (SELECT t2.i FROM t2)"
-"EXPLAIN format=JSON SELECT * FROM t1 WHERE t1.i IN (SELECT t2.i FROM t2)"
-"EXPLAIN FORMAT=TREE SELECT t1.*,t2.* FROM t1 straight_join t2
-ON t2.col_int_key = t1.col_int WHERE t2.pk < t1.pk"
-"EXPLAIN FORMAT=JSON SELECT t1.*,t2.* FROM t1 straight_join t2
-ON t2.col_int_key = t1.col_int WHERE t2.pk < t1.pk"
-"EXPLAIN FORMAT=TREE SELECT
-t1.col_varchar_key AS field1 FROM (t1, t1 as alias1)
-WHERE NOT EXISTS( SELECT alias2.col_varchar_key FROM t1 AS alias2
-WHERE alias2.col_varchar_key >= t1.col_varchar)
-GROUP BY field1"
-"EXPLAIN FORMAT=JSON SELECT
-t1.col_varchar_key AS field1 FROM (t1, t1 as alias1)
-WHERE NOT EXISTS( SELECT alias2.col_varchar_key FROM t1 AS alias2
-WHERE alias2.col_varchar_key >= t1.col_varchar)
-GROUP BY field1"
-"explain format=TREE select * from information_schema.engines e WHERE e.ENGINE=""MyISAM"""
-"explain format=JSON select * from information_schema.engines e WHERE e.ENGINE=""MyISAM"""
-"EXPLAIN FORMAT=TREE SELECT * FROM
-(SELECT SQL_BIG_RESULT f1, SUM(f2) OVER() FROM t1 GROUP BY f1) as dt
-WHERE f1 > 2"
-"EXPLAIN FORMAT=JSON SELECT * FROM
-(SELECT SQL_BIG_RESULT f1, SUM(f2) OVER() FROM t1 GROUP BY f1) as dt
-WHERE f1 > 2"
 "EXPLAIN analyze FORMAT=TREE SELECT t1.a, GROUP_CONCAT(t2.b) AS b FROM t1 LEFT JOIN t2 ON t1.a=t2.a GROUP BY t1.a ORDER BY t1.b"
-"EXPLAIN FORMAT=JSON SELECT t1.a, GROUP_CONCAT(t2.b) AS b FROM t1 LEFT JOIN t2 ON t1.a=t2.a GROUP BY t1.a ORDER BY t1.b"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 AS a LEFT JOIN t1 AS b ON FALSE
-LEFT JOIN t1 AS c ON b.a=c.a"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 AS a LEFT JOIN t1 AS b ON FALSE
-LEFT JOIN t1 AS c ON b.a=c.a"
 "EXPLAIN FORMAT=JSON INTO @var
 SELECT 1 + 1 AS x FROM t GROUP BY x WITH ROLLUP HAVING x = 1"
-"EXPLAIN FORMAT=JSON INSERT INTO t VALUES (4), (5), (6)"
-"EXPLAIN FORMAT=JSON REPLACE INTO t VALUES (7), (8), (9)"
 "EXPLAIN FORMAT=JSON INTO @v1 SELECT * FROM t1 JOIN t2 ON i1 = i3 WHERE i2 = 2"
 "EXPLAIN FORMAT=JSON INTO @v1 SELECT * FROM t1"
 "EXPLAIN FORMAT=JSON INTO @v1 INSERT INTO t1 VALUES (4,5)"
@@ -1341,36 +1253,6 @@ SELECT 1 + 1 AS x FROM t GROUP BY x WITH ROLLUP HAVING x = 1"
 "EXPLAIN FORMAT=JSON INTO @v1 SELECT /*+ SET_VAR(optimizer_switch='hypergraph_optimizer=ON')*/ * FROM t1"
 "GRANT SELECT ON mysqltest1.t2 TO 'privtest'@'localhost'"
 "GRANT SELECT,INSERT,UPDATE ON mysqltest1.v2 TO 'privtest'@'localhost'"
-"EXPLAIN FORMAT=tree SELECT * FROM t1"
-"EXPLAIN FORMAT=tree INSERT INTO t2 SELECT * FROM t1"
-"EXPLAIN FORMAT=tree UPDATE t1, t2 SET f1=f1+2, f2=f2+1 WHERE f1 = f2"
-"EXPLAIN FORMAT=tree DELETE t1, t2 FROM t1, t2"
-"EXPLAIN FORMAT=tree SELECT f1, (SELECT MIN(f1) FROM t1 i WHERE i.f1 > t1.f1) < 3 FROM t1"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 ORDER BY f1 DESC"
-"EXPLAIN FORMAT=tree SELECT SUM(f1) FROM t1"
-"EXPLAIN FORMAT=tree SELECT f1 FROM t1 GROUP BY f1"
-"EXPLAIN FORMAT=tree SELECT f1,COUNT(*) FROM t1 GROUP BY f1"
-"EXPLAIN FORMAT=tree SELECT f1,COUNT(*) FROM t1 GROUP BY f1 WITH ROLLUP"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE f1=2"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t2 ON t1.f1 = t2.f1 + 2 AND t2.f1 = 3"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t2 USING (f1) WHERE t1.f1=2"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN ( t2 LEFT JOIN t3 USING (a) ) ON t3.b IS NULL"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t2 USING (f1) WHERE t2.f1 IS NULL"
-"EXPLAIN FORMAT=tree SELECT DISTINCT b FROM t1 LEFT JOIN t2 USING(a) WHERE c <= 3"
-"EXPLAIN FORMAT=tree SELECT 0 AS foo FROM t1 WHERE 0 = (SELECT group_concat(b) FROM t1 t GROUP BY t1.a) "
-"EXPLAIN FORMAT=tree SELECT SUBSTRING(a,1,10), LENGTH(a) FROM t1 GROUP BY a"
-"EXPLAIN FORMAT=tree SELECT DISTINCT f1 FROM t1 LIMIT 2"
-"EXPLAIN FORMAT=tree INSERT INTO t1 SELECT a + 2 FROM t1 LIMIT 1"
-"EXPLAIN FORMAT=tree SELECT DISTINCT (COUNT(DISTINCT b) + 1) AS c FROM t1 GROUP BY a"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE f1 = ( SELECT MIN(f1) FROM t1 AS i WHERE i.f1 > t1.f1 )"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE f1 > ( SELECT f1 FROM t1 LIMIT 1 )"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE f1 = ( SELECT ( SELECT MIN(f1) FROM t1 AS ii WHERE ii.f1 > t1.f1 ) > i.f1 FROM t1 AS i ) "
-"EXPLAIN FORMAT=tree SELECT ( SELECT ( SELECT ( SELECT MIN(f1) FROM t1 i WHERE i.f1 > t1.f1 ) + 1 ) + 1 ) FROM t1"
-"EXPLAIN FORMAT=tree SELECT ( SELECT f1 FROM t1 AS inner_t1 WHERE inner_t1.f1 > t1.f1 LIMIT 1 ) AS tmp1 FROM t1 ORDER BY tmp1"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE a > 3 ORDER BY b"
-"EXPLAIN FORMAT=tree INSERT INTO t1 VALUES (10)"
-"EXPLAIN FORMAT=tree REPLACE INTO t1 VALUES (10)"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 ORDER BY b LIMIT 3"
 "EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t2 USING ( a ),
 LATERAL ( SELECT * FROM t3 WHERE t3.a = t2.a LIMIT 1 ) t3d,
 LATERAL ( SELECT * FROM t3 WHERE t3.a > t1.a LIMIT 1 ) t4d"
@@ -1380,14 +1262,8 @@ LATERAL ( SELECT * FROM t4 WHERE t4.a = t3.a LIMIT 1 ) t4d
 ) ON t1.a = t4d.a"
 "EXPLAIN FORMAT=TREE SELECT * FROM ( SELECT * FROM t1 LIMIT 2 OFFSET 1 ) AS alias1
 WHERE f1 <= ANY ( SELECT f1 FROM t1 ) ORDER BY f1"
-"EXPLAIN format=tree WITH my_cte AS ( SELECT * FROM t1 LIMIT 3 ) SELECT * FROM my_cte, t2"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE (t1.i) IN (SELECT t2.i FROM t2)"
-"EXPLAIN FORMAT=tree SELECT * FROM t1,t2 WHERE (t1.i) IN (SELECT t3.i FROM t3,t4) AND t1.pk = 2 AND t2.pk = 4"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE t1.i IN ( SELECT i FROM t2 LEFT JOIN t3 USING (i) WHERE t3.j = 1234 OR t3.j IS NULL )"
 "EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a = ANY ( SELECT a FROM t1 WHERE b = 2 )"
-"EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a NOT IN ( SELECT b FROM t1 WHERE b > 2 )"
 "EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a = ANY ( SELECT MAX(a) FROM t1 WHERE b = 2 )"
-"EXPLAIN format=tree SELECT * FROM t1 WHERE t1.i IN (SELECT t2.i FROM t2)"
 "CREATE TABLE t1 (
 col_int_key INTEGER,
 col_json JSON,
@@ -1396,78 +1272,9 @@ KEY mv_idx ((CAST(col_json->'$[*]' AS CHAR(40) ARRAY)))
 "EXPLAIN FORMAT=tree SELECT /*+ NO_BNL(t1, t2) */ * FROM t2
 JOIN t1 ON 1 WHERE (CAST(""1"" AS JSON) MEMBER OF( t1.col_json->'$[*]'))"
 "EXPLAIN ANALYZE FORMAT=TREE SELECT 1"
-"EXPLAIN FORMAT=tree SELECT * FROM INFORMATION_SCHEMA.ENGINES"
-"EXPLAIN FORMAT=tree SELECT * FROM t1, ( SELECT f1 FROM t1 UNION SELECT f1 + 10 FROM t1 ) d1"
-"EXPLAIN FORMAT=tree SELECT * FROM t1, ( SELECT f1 FROM t1 UNION ALL SELECT f1 + 10 FROM t1 ) d1"
-"EXPLAIN FORMAT=TREE UPDATE t1,t2 SET t1.a=1,t2.b=1"
-"EXPLAIN FORMAT=TREE UPDATE t1,t2 SET t1.a=1,t2.b=1 WHERE t2.a=t1.a"
-"EXPLAIN FORMAT=TREE DELETE t1.*,t2.* FROM t1,t2"
-"EXPLAIN FORMAT=TREE DELETE t1.*,t1bis.* FROM t1, t1 AS t1bis"
-"EXPLAIN FORMAT=tree SELECT (1 IN (SELECT 1 FROM t1)) WHERE FALSE"
-"EXPLAIN FORMAT=tree SELECT a IN (SELECT a FROM (table t1) AS d) FROM t1 GROUP BY (@b:=5)"
-"EXPLAIN FORMAT=tree
-(SELECT 1 FROM t1)
-UNION ALL
-SELECT 1 IN (SELECT 1 FROM t1) FROM t1 WHERE 1=2"
-"EXPLAIN FORMAT=tree
-SELECT * FROM t1 WHERE a IN (2,4,6,8,10)"
-"EXPLAIN FORMAT=tree
-SELECT * FROM t1 WHERE a IN (2,4,6,8,10) ORDER BY a DESC"
-"EXPLAIN FORMAT=tree
-SELECT /*+ SKIP_SCAN(t1) */ * FROM t1 WHERE a IN (2,4,6,8,10) AND b=5 AND e BETWEEN 100 AND 200"
-"EXPLAIN FORMAT=tree SELECT * FROM t WHERE a > 'abc' AND a < 'ghi'"
-"EXPLAIN FORMAT=tree
-SELECT * FROM t WHERE a > 'abc''def' AND a < CONCAT('z', UNHEX('090A1A5C0D'))"
-"EXPLAIN FORMAT=TREE DELETE t FROM t WHERE 0=1"
-"EXPLAIN FORMAT=TREE
-WITH tx AS (SELECT FLOOR(5*RAND(0)) i1 FROM t1 j1 JOIN t1 j2 ON j1.b=j2.a)
-(SELECT 1 FROM t1 d1 JOIN t1 d2 ON d1.a=-d2.a JOIN tx ON d2.b=i1) UNION
-SELECT 2 FROM tx"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t WHERE x = 4"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t WHERE x > 4"
-"EXPLAIN FORMAT=TREE SELECT x FROM t ORDER BY MOD(x, 2)"
-"EXPLAIN FORMAT=TREE SELECT t1.x FROM t t1, t t2 WHERE t1.x < t2.y"
-"EXPLAIN FORMAT=TREE
-SELECT * FROM t1 x1 JOIN t1 x2 ON x2.a=
-(SELECT MIN(x3.a) FROM t1 x3 WHERE x1.a=x3.a)"
-"EXPLAIN FORMAT=TREE
-SELECT * FROM t1 x1 LEFT JOIN t1 x2 ON x2.a<
-(SELECT MIN(x3.a) FROM t1 x3 WHERE x1.a=x3.a)"
 "EXPLAIN FORMAT=TREE SELECT LAST_VALUE((SELECT x1.a FROM t1))
 OVER (PARTITION BY b) FROM t1 x1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.b = (SELECT MAX(b) FROM t1 x2 WHERE x2.a>x1.a)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.b IN (SELECT MAX(b) FROM t1 x2 WHERE x2.a>x1.a)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.b = (SELECT MAX(b) FROM t1 x2 WHERE x2.a>5)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.b IN (SELECT MAX(b) FROM t1 x2 WHERE x2.a>5)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.b = (SELECT MAX(b) FROM t1 x2 WHERE x2.a>10*rand(0))"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.b IN (SELECT MAX(b) FROM t1 x2 WHERE x2.a>10*rand(0))"
-"EXPLAIN FORMAT=TREE SELECT SUM(x1.a) s FROM t1 x1
-GROUP BY x1.b HAVING s>(SELECT MAX(x2.a) FROM t1 x2)"
-"EXPLAIN FORMAT=TREE SELECT SUM(x1.a) s FROM t1 x1
-GROUP BY x1.b HAVING s>(SELECT MAX(x2.a+RAND(0)) FROM t1 x2)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c<720"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3 WHERE x1.c<721 AND x2.c<900"
 "EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1, t1 x2 WHERE x1.c=x2.d AND x1.d>900 AND x2.a=x2.b"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3 WHERE x1.c<921 AND x2.c<900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE e=0 AND c=0"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE e=0 AND c=0 AND f<999"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2 LIMIT 999999"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE d=0 AND c=0 AND e=0 AND f=0 AND g=0"
-"EXPLAIN FORMAT=TREE
-SELECT * FROM t1 WHERE a=0 AND b=0 AND c=0 AND e=0 AND f=0 AND g=0 AND h=0"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3 LIMIT 999500000"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3 LIMIT 999499999"
-"EXPLAIN FORMAT=TREE INSERT INTO t VALUES (4), (5), (6)"
-"EXPLAIN FORMAT=TREE REPLACE INTO t VALUES (7), (8), (9)"
-"EXPLAIN FORMAT=TREE
-SELECT x IN (SELECT x FROM t) FROM t GROUP BY x ORDER BY MAX(y)"
 "print ""\nChecking 'INFO_SRC' and 'INFO_BIN'\n"""
 "$dir_bin = $ENV{'MYSQL_BINDIR'}"
 "$dir_docs =~ s|/lib|/share/doc|"
@@ -1479,20 +1286,12 @@ SELECT x IN (SELECT x FROM t) FROM t GROUP BY x ORDER BY MAX(y)"
 "$found_features = ""No line 'Feature flags'"""
 "open(I_BIN,""<"",""$dir_docs/INFO_BIN"") or print ""Cannot open 'INFO_BIN' in '$dir_docs' (starting from bindir '$dir_bin')\n"""
 "print ""INFO_BIN: $found_compiler / $found_features\n"""
-"EXPLAIN FORMAT=tree SELECT * FROM
-t1
-LEFT JOIN t1 AS table2 ON 119 IN (
-SELECT SUBQUERY1_t2.pk
-FROM t1 AS SUBQUERY1_t1, (t2 AS SUBQUERY1_t2 STRAIGHT_JOIN t1 ON TRUE)
-)
-ORDER BY t1.f2"
 "CREATE TABLE t2 (
 pk INT PRIMARY KEY,
 vc VARCHAR(1) NOT NULL,
 gc INT GENERATED ALWAYS AS (1))"
 "/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */"
 "/*!40101 SET SQL_MODE=@OLD_SQL_MODE */"
-"EXPLAIN FORMAT=tree SELECT j FROM t1 ORDER BY pk"
 "GRANT CREATE VIEW, SHOW VIEW ON testdb.v1 TO 'show_view_tbl'@'localhost'"
 echo
 "GRANT SELECT(c1) on testdb.v1 to 'select_only_c1'@localhost"
@@ -1571,7 +1370,6 @@ on update no action,
 foreign key (a,b) references t3 (c,d) on update cascade,
 foreign key (a,b) references t3 (c,d) on delete set default,
 foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
-"EXPLAIN FORMAT=tree select * from t1 where MATCH(a,b) AGAINST (""collections"")"
 "SET @KEYS=REPEAT('c', 16)"
 "SELECT AES_DECRYPT(AES_ENCRYPT(@ENCSTR, @KEYS), @KEYS)=@ENCSTR"
 "SELECT AES_DECRYPT(AES_ENCRYPT(@ENCSTR, @KEYS, @IV), @KEYS, @IV)=@ENCSTR"
@@ -1686,7 +1484,6 @@ TIMESTAMP'2020-05-05 05:05:05')"
 "CREATE TABLE t(x VARCHAR(10),
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
 exit
-"EXPLAIN FORMAT=tree SELECT 1 WHERE RAND() < RAND()"
 "SELECT r FROM t LEFT JOIN LATERAL (SELECT i, RAND(0) AS r) AS dt ON TRUE"
 "SELECT TIMEDIFF(TIME('17:00:00'),TIME('17:00:00'))=TIME('00:00:00') AS 1Eq,
 TIMEDIFF(TIME('17:59:00'),TIME('17:00:00'))=TIME('00:00:00') AS 1NEq1,
@@ -2428,7 +2225,6 @@ DO SET @sum = @sum + 2"
 "GRANT EXECUTE ON FUNCTION test.myfunc TO u2@localhost"
 "CREATE TABLE t100 LIKE t10"
 "CREATE TABLE t10000 LIKE t10"
-"EXPLAIN FORMAT=tree SELECT t2.userid, MIN(t1.score) FROM t1, t2 WHERE t1.userID=t2.userID GROUP BY t2.userid"
 "insert into t2 select
 x3.a,  -- 3
 concat('val-', x3.a + 3*x4.a), -- 12
@@ -2465,32 +2261,7 @@ a INT GENERATED ALWAYS AS (1) VIRTUAL,
 b INT GENERATED ALWAYS AS (a) VIRTUAL,
 c INT GENERATED ALWAYS AS (1) VIRTUAL
 )"
-"EXPLAIN FORMAT=tree SELECT (SELECT a) AS col1, COUNT(DISTINCT b) FROM t GROUP BY -col1"
-"EXPLAIN FORMAT=tree SELECT f1, f1 + 1, COUNT(DISTINCT f2) AS x FROM t1 GROUP BY f1 ORDER BY x"
 "SELECT COUNT(DISTINCT f), COUNT(DISTINCT d), AVG(DISTINCT f), AVG(DISTINCT d) FROM t"
-"EXPLAIN FORMAT=TREE
-SELECT DISTINCT MIN(t2.x), t1.x
-FROM t t1 JOIN t t2 USING (x)
-GROUP BY t2.x"
-"EXPLAIN FORMAT=TREE SELECT a,c,d,sum(e) FROM t1 GROUP BY a,c,d WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT a,d,c,sum(e) FROM t1 GROUP BY a,d,c WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT c,a,d,sum(e) FROM t1 GROUP BY c,a,d WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT d,a,c,sum(e) FROM t1 GROUP BY d,a,c WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT c,d,b,sum(e) FROM t1 GROUP BY c,d,b WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT d,c,a,sum(e) FROM t1 GROUP BY d,c,a WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT b,a,sum(e) FROM t1 GROUP BY b,a WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT b,sum(e) FROM t1 GROUP BY b WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT c,sum(e) FROM t1 GROUP BY c WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT c,d,sum(e) FROM t1 GROUP BY c,d WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT c,d,a,sum(e) FROM t1 GROUP BY c,d,a WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT c,d,a,b,sum(e) FROM t1 GROUP BY c,d,a,b WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT a,sum(e) FROM t1 GROUP BY a WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT a,b,sum(e) FROM t1 GROUP BY a,b WITH ROLLUP"
-"EXPLAIN FORMAT=TREE SELECT d,a,c,sum(e) FROM t1 GROUP BY d,a,c"
-"EXPLAIN FORMAT=TREE SELECT a,d,c,sum(e) FROM t1 GROUP BY a,d,c"
-"EXPLAIN FORMAT=TREE SELECT b,a,sum(e) FROM t1 GROUP BY b,a"
-"EXPLAIN FORMAT=TREE SELECT a,c,e,sum(d) FROM t1 GROUP BY a,c,e"
-"EXPLAIN FORMAT=TREE SELECT DISTINCT * FROM t GROUP BY col1 + col2"
 "select * from (select * from tb1 where id %3 = 0) even,
 lateral (select sql_small_result avg(id2) a from tb1 where id > even.id group by id2 ) l
 where even.id != l.a"
@@ -2498,20 +2269,7 @@ where even.id != l.a"
 LATERAL (SELECT t2.f3 AS field2 FROM t1 t3 WHERE (t2.f3 <=> t2.f4)
 GROUP BY field2 ORDER BY t1.f2) AS t4)
 GROUP BY field2 ORDER BY field1"
-"EXPLAIN FORMAT=TREE select sql_small_result avg(id), JSON_ARRAYAGG(id) from tb1 t1 group by id2 "
-"EXPLAIN FORMAT=TREE select sql_small_result avg(id) from tb1 group by 'abcd'"
-"EXPLAIN FORMAT=TREE select sql_big_result avg(id) from tb1 t1 group by id2"
-"EXPLAIN FORMAT=TREE select sql_small_result avg(id2) from tb1 t1 group by id"
-"EXPLAIN FORMAT=TREE select sql_small_result avg(id) from tb1 t1 group by id2"
-"EXPLAIN FORMAT=TREE SELECT a, b FROM t  WHERE (a > 4) AND (c = 3 OR c > 6)  GROUP BY a, b"
-"EXPLAIN FORMAT=TREE SELECT a, b FROM t  WHERE (a > 4) AND (c = 3 OR c = 40) AND
-(d = -1 OR d = -2 OR d > 7)  GROUP BY a, b"
-"EXPLAIN FORMAT=TREE SELECT a, b, MIN(d) FROM t WHERE (a > 9) AND (c = 3) GROUP BY a, b"
-"EXPLAIN FORMAT=TREE SELECT a, b, MIN(d), MAX(d) FROM t WHERE (a > 9) AND (c = 3) GROUP BY a, b"
-"EXPLAIN FORMAT=TREE SELECT a, COUNT(DISTINCT b) FROM t WHERE a=b GROUP BY a"
 "GRANT SELECT(c1) ON s1.t1 TO u1@localhost"
-"EXPLAIN FORMAT=TREE SELECT x FROM large_tab STRAIGHT_JOIN small_tab USING (x)"
-"EXPLAIN FORMAT=TREE SELECT x FROM small_tab STRAIGHT_JOIN large_tab USING (x)"
 "SELECT EMPNUM, GRADE*1000
 FROM HU.STAFF WHERE GRADE * 1000 >
 ANY (SELECT SUM(BUDGET) FROM HU.PROJ
@@ -2839,28 +2597,8 @@ KEY col_date_key (col_date_key)
 "GRANT some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 TO root@localhost"
 "GRANT u1@localhost TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "REVOKE ALL ON *.* FROM some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
-"EXPLAIN FORMAT=tree SELECT * FROM t0, t1 LEFT JOIN (t2,t3) ON a1=5 WHERE a0=a1 AND a0=1"
-"EXPLAIN FORMAT=tree
-SELECT f1 FROM t1 GROUP BY f1 HAVING f1 = 10 AND f1 <> 11"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE f1 = 1 AND f1 <> 11"
-"EXPLAIN FORMAT=tree
-SELECT 1
-FROM t1 LEFT JOIN (SELECT * FROM t1 AS t2
-WHERE f1 IN (SELECT f1+1 FROM t1 AS t3)) AS dt
-ON t1.f1=dt.f1"
-"EXPLAIN FORMAT=TREE SELECT x1.a+0 k, COUNT(x1.b) FROM t1 x1
-LEFT JOIN t2 x2 ON x1.b=x2.a
-LEFT JOIN t1 x3 ON x2.b=x3.a GROUP BY k"
-"EXPLAIN FORMAT=TREE SELECT a,b FROM t1 GROUP BY a,b"
 "EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3
 WHERE x1.a=x2.a AND x2.b=x3.b AND x3.c=x1.c"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t1 x1 WHERE x1.c IN
-(SELECT c FROM t1 x2 WHERE  b<""150"" AND c<70)"
-"EXPLAIN  FORMAT=TREE SELECT 1 FROM t1 WHERE b<""150"" AND c<70"
-"EXPLAIN  FORMAT=TREE SELECT 1 FROM t1 WHERE b<""150"" AND c<80"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t1
-WHERE  b<""150"" AND RAND(0)>-1 AND c< 70"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t1 WHERE foo(2)=3 AND c=5"
 "CREATE TABLE t1 (
 a INT,
 b INT,
@@ -2877,55 +2615,9 @@ KEY k4 (f,g) -- 'f' and 'g' are independet.
 )"
 "EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1 WHERE d =
 (SELECT MIN(g) FROM t1 x2 WHERE x1.b<>x2.b)"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t1 x1 WHERE EXISTS
-(SELECT 1 FROM t1 x2, t1 x3, t1 x4
-WHERE x2.b=x3.d AND x2.c=x3.e AND x3.d=x4.b AND x2.e=x4.e)"
-"EXPLAIN FORMAT=TREE SELECT * FROM  t1 x1 LEFT JOIN (t1 x2, t1 x3)
-ON x1.a=x3.a WHERE x1.b<x2.b OR x2.a IS NULL"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x0 WHERE (b=3 OR c=4) AND a <>
-(SELECT MAX(x1.a+x2.a) FROM t2 x1 JOIN t2 x2 ON x1.b<x2.b)"
-"EXPLAIN FORMAT=TREE SELECT b FROM t1 x1
-WHERE c < 1 AND c = (SELECT MAX(b) FROM t1 x2)"
-"EXPLAIN FORMAT=TREE SELECT a, COUNT(*) FROM
-(SELECT x1.a FROM t1 x1, t1 x2 WHERE x1.b = x2.a) AS dt GROUP BY a"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b=5 OR c=NULL"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b=5 OR c<=>NULL"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b=5 OR c IS NULL"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b=NULL OR c=5"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b<=>NULL OR c=5"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b<=>FLOOR(RAND(0))"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c<=>FLOOR(RAND(0))"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE a IN
-(SELECT t2.l FROM t2 WHERE t2.l<0)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE t1.a IN (SELECT 5 FROM t2)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1
-WHERE x1.a IN (SELECT x2.b FROM t1 x2)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3, t1 x4"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE a=5 AND b=5"
 "EXPLAIN FORMAT=JSON INTO @explain_output
 SELECT a FROM t1 x2 WHERE x2.b IN
 (SELECT a FROM t1 x1 WHERE x1.b IN (SELECT a FROM t1 x0))"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3
-WHERE x1.b=x2.a AND x2.b=x3.a AND (x1.c < 5 OR x3.c=7)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3
-WHERE x1.b=x2.d AND x2.b=x3.d AND (x1.c < 5 OR x3.c=7) ORDER BY x3.d"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1 LEFT JOIN t1 x2
-ON x1.a <=> x2.a AND  x1.a <=> x2.a"
-"EXPLAIN FORMAT=TREE SELECT SQL_BIG_RESULT DISTINCT t1.x, t2.x FROM t AS t1, t AS t2
-WHERE t1.pk = t2.x ORDER BY t2.x"
-"EXPLAIN FORMAT=TREE SELECT SQL_SMALL_RESULT DISTINCT t1.x, t2.x FROM t AS t1, t AS t2
-WHERE t1.pk = t2.x ORDER BY t2.x"
-"EXPLAIN FORMAT=TREE SELECT SQL_BIG_RESULT DISTINCT t1.x, t1.pk FROM t AS t1, t AS t2
-WHERE t1.pk = t2.x ORDER BY t1.x"
-"EXPLAIN FORMAT=TREE SELECT SQL_SMALL_RESULT DISTINCT t1.x, t1.pk FROM t AS t1, t AS t2
-WHERE t1.pk = t2.x ORDER BY t1.x"
-"EXPLAIN FORMAT=TREE SELECT SQL_BIG_RESULT DISTINCT t1.pk, t2.x FROM t AS t1, t AS t2
-WHERE t1.pk = t2.x ORDER BY t2.x"
-"EXPLAIN FORMAT=TREE SELECT SQL_SMALL_RESULT DISTINCT t1.pk, t2.x FROM t AS t1, t AS t2
-WHERE t1.pk = t2.x ORDER BY t2.x"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 x1 JOIN
-(SELECT MAX(x2.c) k FROM t1 x2 JOIN t1 x3 ON x2.c < x3.b GROUP BY x3.c) d1
-ON x1.b=d1.k ORDER BY x1.a LIMIT 1"
 "INSERT INTO t (a)
 WITH RECURSIVE 150tup(n) AS
 (SELECT 1 UNION ALL SELECT n + 1 FROM 150tup WHERE n < 150)
@@ -2935,77 +2627,6 @@ SELECT /*+ SET_VAR(optimizer_max_subgraph_pairs = 1) */ COUNT(*)
 FROM t AS t1 LEFT JOIN t AS t2 ON TRUE,
 LATERAL (SELECT DISTINCT t2.a FROM t) AS t3
 WHERE t1.a = t3.a"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 JOIN t2 ON t1.x = t2.x JOIN t3 ON t2.x = t3.x"
-"EXPLAIN FORMAT=TREE SELECT * FROM t"
-"EXPLAIN FORMAT=TREE SELECT * FROM t WHERE x < 5"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1"
-"EXPLAIN FORMAT=TREE SELECT c1 FROM t2"
-"EXPLAIN FORMAT=TREE SELECT c1,c2 FROM t2"
-"EXPLAIN FORMAT=TREE SELECT c1,c2,c3 FROM t2"
-"EXPLAIN FORMAT=TREE SELECT c1 FROM t1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY p"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY s0"
-"EXPLAIN FORMAT=TREE SELECT s0 FROM t1 ORDER BY s0"
-"EXPLAIN FORMAT=TREE SELECT s1 FROM t1 ORDER BY s1"
-"EXPLAIN FORMAT=TREE SELECT s1, s2 FROM t1 ORDER BY s1"
-"EXPLAIN FORMAT=TREE SELECT p FROM t1 WHERE p < 10"
-"EXPLAIN FORMAT=TREE SELECT p, c FROM t1 WHERE p < 10"
-"EXPLAIN FORMAT=TREE SELECT p FROM t1 WHERE p < 1"
-"EXPLAIN FORMAT=TREE SELECT p FROM t1 WHERE p < 2"
-"EXPLAIN FORMAT=TREE SELECT p FROM t1 WHERE p < 3"
-"EXPLAIN FORMAT=TREE SELECT p FROM t1 WHERE p < 20"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE p < 10"
-"EXPLAIN FORMAT=TREE SELECT s0 FROM t1 WHERE s0 < 10"
-"EXPLAIN FORMAT=TREE SELECT s1 FROM t1 WHERE s1 < 10"
-"EXPLAIN FORMAT=TREE SELECT s1, s2 FROM t1 WHERE s1 < 10"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY c1 LIMIT 1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY c1 LIMIT 2"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY c1 LIMIT 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY c1 LIMIT 200"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 ORDER BY c1 LIMIT 400"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 AND c2 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 AND c2 < 100 AND c3 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 AND c2 < 100 AND c3 < 100 AND c4 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 AND c2 < 100 AND c3 < 100 AND c4 < 100 AND c5 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 AND c2 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 AND c2 < 900 AND c3 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 AND c2 < 900 AND c3 < 900 AND c4 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 AND c2 < 900 AND c3 < 900 AND c4 < 900 AND c5 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 OR c2 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 OR c2 < 100 OR c3 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 OR c2 < 100 OR c3 < 100 OR c4 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 100 OR c2 < 100 OR c3 < 100 OR c4 < 100 OR c5 < 100"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 OR c2 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 OR c2 < 900 OR c3 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 OR c2 < 900 OR c3 < 900 OR c4 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE c1 < 900 OR c2 < 900 OR c3 < 900 OR c4 < 900 OR c5 < 900"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3 AS a JOIN t3 AS b ON a.c1 = b.c1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t2 AS a JOIN t3 AS b ON a.c1 = b.c1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t2 AS a JOIN t2 AS b ON a.c1 = b.c1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 JOIN t2 ON t1.c1 = t2.c1"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 JOIN t2 ON t1.c1 = t2.c5"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 JOIN t2 ON t1.c1 = t2.c10"
-"EXPLAIN FORMAT=TREE SELECT * FROM t0"
-"EXPLAIN FORMAT=TREE SELECT * FROM t2"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3"
-"EXPLAIN FORMAT=TREE SELECT s FROM t3"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3 WHERE s < 10"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3 WHERE s < 500"
-"EXPLAIN FORMAT=TREE SELECT s FROM t3 ORDER BY s"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3 ORDER BY s"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3 ORDER BY s LIMIT 10"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3 WHERE p = 0"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3, t2 WHERE t3.c = t2.c"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3, t0 WHERE t3.c = t0.c"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3, t1 WHERE t3.p = t1.p"
-"EXPLAIN FORMAT=TREE SELECT * FROM t3, t1 WHERE t3.s = t1.c"
-"EXPLAIN FORMAT=TREE SELECT * FROM t2 AS t WHERE t.s < 33"
-"EXPLAIN FORMAT=TREE SELECT * FROM t_wide AS t WHERE t.s < 33"
-"EXPLAIN FORMAT=TREE SELECT * FROM t WHERE s0 = 0"
-"EXPLAIN FORMAT=TREE SELECT * FROM t WHERE s1 = 0"
-"EXPLAIN FORMAT=TREE SELECT * FROM t WHERE s3 = 0"
 "LET $OLD_DB= `SELECT DATABASE()`"
 "chdir $ENV{'MYSQL_TMP_DIR'}"
 "EOF
@@ -3063,17 +2684,12 @@ c9, c10, c11,
 c12, c13,
 c14, c15, c16
 from bureau window w as (partition by id)"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE f1 < 3 or f2 > 1020"
-"EXPLAIN FORMAT=tree SELECT COUNT(f2)
-FROM t1 WHERE (f3 = 10 OR f2 BETWEEN 5 AND 10) AND f1 = f2"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 WHERE b=0 AND c=0"
 "grant select (a) on mysqltest.t1 to mysqltest_2@localhost"
 "grant select on mysqltest.v1 to mysqltest_3"
 "grant select (a) on test.t1 to joe@localhost with grant option"
 "grant select (f1) on mysqltest.t1 to user1@localhost"
 "grant select on mysqltest.t2 to user2@localhost"
 "grant select(b) on mysqltest.t1 to mysqltest_1@localhost"
-"explain format=tree select * from information_schema.engines WHERE ENGINE=""MyISAM"""
 "GRANT SELECT ON *.* TO п╬я┤п╣п╫я▄_п╬я┤п╣п╫я▄_п╬я┤п╣п╫я▄_п╢п╩п╦п╫п╫я▀п╧_я▌п╥п╣я─__@localhost"
 "CREATE TABLE t1 (f1 DATE NOT SECONDARY)"
 "ALTER TABLE  t1 MODIFY f1 DATE NOT SECONDARY"
@@ -3207,34 +2823,6 @@ UNIQUE KEY Month (Month,Type,Field)
 "insert into t2 Select null, Field, Count From t1 Where Month=20030901 and Type=2"
 enable_info
 disable_info
-"explain format=tree select SQL_BUFFER_RESULT * from t1"
-"explain format=tree select * from t1 order by func1(a)"
-"explain format=tree SELECt a FROM t1 group by b order by sum(a)"
-"explain format=tree select SQL_BIG_RESULT distinct * from t1, t2"
-"explain format=tree select SQL_BIG_RESULT t1.b from t1, t2 group by t1.b"
-"explain format=tree select SQL_BIG_RESULT distinct t1.a from t1, t2 group by t1.b"
-"explain format=tree select t1.* from t1 inner join t2 where t1.a = t2.a group by t1.a"
-"explain format=tree select distinct t1.a from t1, t2 where  t1.b = t2.b"
-"explain format=tree select distinct b from t3 group by a"
-"explain format=tree select distinct t3.a,e from t3, t1 order by t3.b"
-"explain format=tree select * from t1 union all select * from t2"
-"explain format=tree select tt.* from (select * from t1) as tt"
-"explain format=tree select * from (select b from t1) as t1, (select b from t2) as t2"
-"explain format=tree select * from t1, (select * from t3) as t where t.a =5"
-"explain format=tree select * from t1 where t1.a in (select a from t2) "
-"explain format=tree select * from information_schema.character_sets order by 1 limit 3"
-"explain format=tree update t1, t2 set t1.a = 9, t2.a = 10 where t1.b = 'a'"
-"explain format=tree select count(distinct a) from t1"
-"explain format=tree select b, group_concat(a) from t1"
-"explain format=tree
-select * from t1 left join t2 on t1.a = t2.a order by t1.b"
-"explain format=tree select a from t1 group by b"
-"explain format=tree select distinct b from t1"
-"explain format=tree select distinct concat(c1, repeat('xx', 250)) as cc from t2"
-"explain format=tree select concat(c1, repeat('xx', 250)) as cc from t2 group by cc"
-"explain format=tree select count(distinct concat(c1, repeat('xx', 250))) as cc from t2"
-"explain format=tree select distinct * from test"
-"explain format=tree select * from t3 where b in (select a from t1)"
 "CREATE TABLE t1(f1 INT INVISIBLE, f2 INT)"
 "CREATE TABLE t1 (f1 INT, f2 INT PRIMARY KEY INVISIBLE)"
 "CREATE TABLE t2 (f1 INT PRIMARY KEY INVISIBLE, f2 INT,
@@ -3282,13 +2870,6 @@ UNIQUE token_2 (token(75),count,phone)
 "select a.id, b.category as catid, b.state as stateid, b.county as
 countyid from t1 a, t2 b where (a.token =
 'a71250b7ed780f6ef3185bfffe027983') and (a.count = b.id) order by a.id"
-"explain format=json select straight_join count(*) from parent
-join eq_child as c1 on c1.a = parent.b and c1.b = parent.b
-join eq_child as c2 on c2.a = parent.b and c2.b = parent.b
-join eq_child as c3 on c3.a = parent.b and c3.b = parent.b
-join eq_child as c4 on c4.a = parent.b and c4.b = parent.b
-"
-"EXPLAIN FORMAT=tree SELECT t1.i AS a, (SELECT t2.i FROM t t2 WHERE t1.j = t2.j ORDER BY j DESC, i DESC LIMIT 1) AS b FROM t t1"
 "SELECT *
 FROM t1
 NATURAL JOIN (
@@ -3318,7 +2899,6 @@ WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 "create table t6 like t5"
 "create table t7 like t6"
 "create table t3 like t2"
-"EXPLAIN FORMAT=tree select t1.*,t2.* from t1 left join t2 on (t1.a=t2.a) order by t1.grp,t1.a,t2.c"
 "CREATE TABLE t2 (
 id INT unsigned NOT NULL DEFAULT 0,
 usr2_id INT unsigned NOT NULL DEFAULT 0,
@@ -3348,23 +2928,12 @@ ORDER BY t2.c_amount"
 "SELECT t1.usr_id,t1.uniq_id,t1.increment,t2.usr2_id,t2.c_amount,t2.max FROM t1 LEFT JOIN t2 ON t2.id = t1.uniq_id WHERE t1.uniq_id = 4 ORDER BY t2.c_amount"
 "SELECT t1.usr_id,t1.uniq_id,t1.increment,t2.usr2_id,t2.c_amount,t2.max FROM t1 LEFT JOIN t2 ON t2.id = t1.uniq_id WHERE t1.uniq_id = 4 GROUP BY t2.c_amount"
 "SELECT t1.usr_id,t1.uniq_id,t1.increment,t2.usr2_id,t2.c_amount,t2.max FROM t1 LEFT JOIN t2 ON t2.id = t1.uniq_id WHERE t1.uniq_id = 4"
-"explain format=tree select t1.name, t2.name, t2.id, t2.owner, t3.id from t1 left join t2 on (t1.id = t2.owner) right join t1 as t3 on t3.id=t2.owner"
-"explain format=tree select * from t1 where str is null"
 "create table t2 ( count int, color varchar(20) )"
 "select t2.count, t1.name from t2 natural join t1"
 "select t2.count, t1.name from t2 inner join t1 using (color)"
 "SELECT t1.pcode, IF(ISNULL(t2.pcode), 0, COUNT(*)) AS count FROM t1
 LEFT JOIN t2 ON t1.pcode = t2.pcode GROUP BY t1.pcode"
 "SELECT SQL_BIG_RESULT t1.pcode, IF(ISNULL(t2.pcode), 0, COUNT(*)) AS count FROM t1 LEFT JOIN t2 ON t1.pcode = t2.pcode GROUP BY t1.pcode"
-"EXPLAIN FORMAT=tree SELECT t1.col_int
-FROM t1
-LEFT JOIN t2
-LEFT JOIN t3
-JOIN t4
-ON t3.col_int  = t4.pk
-ON t2.col_varchar_10 = t3.col_varchar_10
-ON t2.col_int = t1.pk
-WHERE   t1.col_int_key IS NULL OR t4.pk < t3.col_int"
 "create table ti (k int, index using btree (k)) charset utf8mb4 engine=innodb"
 "create table th (k int, index using btree (k)) charset utf8mb4 engine=heap"
 "alter table ti add column l int, add index using btree (l)"
@@ -3466,85 +3035,6 @@ WINDOW w as (PARTITION BY SEX ORDER BY id DESC RANGE 2 PRECEDING)"
 "SELECT ADDTIME(LEAD(NULL, 1, time'18:00:00') OVER (ORDER BY NULL), '01:00:00')"
 "SELECT ADDDATE(LEAD(NULL, 1, date'1955-05-15') OVER (ORDER BY NULL), 1)"
 "SELECT ADDDATE(LEAD(date'1955-05-15', 0) OVER (ORDER BY NULL), 1)"
-"EXPLAIN FORMAT=JSON SELECT id, sex, LEAD(id, 1) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, LAG(id, 1) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, LEAD(id, 0) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, LEAD(id, 1, id) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, LAG(id, 1, id) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, LEAD(id, 0, 7) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT n, id, LEAD(id, 1, 3) OVER
-(ORDER BY id DESC ROWS BETWEEN  CURRENT ROW AND 2 FOLLOWING) L FROM t1"
-"EXPLAIN FORMAT=JSON SELECT n, id,  LAG(id, 0, n*n) OVER
-(ORDER BY id DESC ROWS BETWEEN  CURRENT ROW AND 2 FOLLOWING) L FROM t1"
-"EXPLAIN FORMAT=JSON SELECT n, id,  LAG(id, 1, n*n) OVER
-(ORDER BY id DESC ROWS BETWEEN  CURRENT ROW AND 2 FOLLOWING) L FROM t1"
-"EXPLAIN FORMAT=JSON SELECT n, id,  LEAD(id, 1, n*n) OVER
-(ORDER BY id DESC ROWS BETWEEN  CURRENT ROW AND 2 FOLLOWING) L FROM t1"
-"EXPLAIN FORMAT=JSON SELECT c1, c2, LEAD(c1, 0, c2) OVER () l0 FROM t"
-"EXPLAIN FORMAT=JSON SELECT c1, c2, LEAD(c1, 1, c2) OVER () l1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT c1, c2, LEAD(c2, 1, c1) OVER () l1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, j1) OVER () lcj, IFNULL(c1, j1) ifn_cj FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, g1) OVER () lcg, IFNULL(c1, g1) ifn_cg FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, i1) OVER () lci, IFNULL(c1, i1) ifn_ci FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, b1) OVER () lcb, IFNULL(c1, b1) ifn_cb FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, d1) OVER () lcd, IFNULL(c1, d1) ifn_cd FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, e1) OVER () lce1, IFNULL(c1, e1) ifn_ce1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(c1, 0, e2) OVER () lce2, IFNULL(c1, e2) ifn_ce2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, c1) OVER () ljc, IFNULL(j1, c1) ifn_jc FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, g1) OVER () ljg, IFNULL(j1, g1) ifn_jg FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, i1) OVER () lji, IFNULL(j1, i1) ifn_ji FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, b1) OVER () ljb, IFNULL(j1, b1) ifn_jb FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, d1) OVER () ljd, IFNULL(j1, d1) ifn_jd FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, e1) OVER () lje1, IFNULL(j1, e1) ifn_je1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(j1, 0, e2) OVER () lje2, IFNULL(j1, e2) ifn_je2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, c1) OVER () lgc, IFNULL(g1, c1) ifn_gc FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, j1) OVER () lgj, IFNULL(g1, j1) ifn_gj FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, i1) OVER () lgi, IFNULL(g1, i1) ifn_gi FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, b1) OVER () lgb, IFNULL(g1, b1) ifn_gb FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, d1) OVER () lgd, IFNULL(g1, d1) ifn_gd FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, e1) OVER () lge1, IFNULL(g1, e1) ifn_ge1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(g1, 0, e2) OVER () lge2, IFNULL(g1, e2) ifn_ge2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, c1) OVER () lic, IFNULL(i1, c1) ifn_ic FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, j1) OVER () lij, IFNULL(i1, j1) ifn_ij FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, g1) OVER () lig, IFNULL(i1, g1) ifn_ig FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, b1) OVER () lib, IFNULL(i1, b1) ifn_ib FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, d1) OVER () lid, IFNULL(i1, d1) ifn_id FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, e1) OVER () lie1, IFNULL(i1, e1) ifn_ie1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(i1, 0, e2) OVER () lie2, IFNULL(i1, e2) ifn_ie2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, c1) OVER () lbc, IFNULL(b1, c1) ifn_bc FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, j1) OVER () lbj, IFNULL(b1, j1) ifn_bj FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, g1) OVER () lbg, IFNULL(b1, g1) ifn_bg FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, i1) OVER () lbi, IFNULL(b1, i1) ifn_bi FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, d1) OVER () lbd, IFNULL(b1, d1) ifn_bd FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, e1) OVER () lbe1, IFNULL(b1, e1) ifn_be1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(b1, 0, e2) OVER () lbe2, IFNULL(b1, e2) ifn_be2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, c1) OVER () ldc, IFNULL(d1, c1) ifn_dc FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, j1) OVER () ldj, IFNULL(d1, j1) ifn_dj FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, g1) OVER () ldg, IFNULL(d1, g1) ifn_dg FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, i1) OVER () ldi, IFNULL(d1, i1) ifn_di FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, b1) OVER () ldd, IFNULL(d1, b1) ifn_db FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, e1) OVER () lde1, IFNULL(d1, e1) ifn_de1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(d1, 0, e2) OVER () lde2, IFNULL(d1, e2) ifn_de2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, c1) OVER () le1c, IFNULL(e1, c1) ifn_e1c FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, j1) OVER () le1j, IFNULL(e1, j1) ifn_e1j FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, g1) OVER () le1g, IFNULL(e1, g1) ifn_e1g FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, i1) OVER () le1i, IFNULL(e1, i1) ifn_e1i FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, b1) OVER () le1d, IFNULL(e1, b1) ifn_e1d FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, d1) OVER () le1d, IFNULL(e1, d1) ifn_e1d FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e1, 0, e2) OVER () le1e2, IFNULL(e1, e2) ifn_e1e2 FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, c1) OVER () le2c, IFNULL(e2, c1) ifn_e2c FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, j1) OVER () le2j, IFNULL(e2, j1) ifn_e2j FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, g1) OVER () le2g, IFNULL(e2, g1) ifn_e2g FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, i1) OVER () le2i, IFNULL(e2, i1) ifn_e2i FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, b1) OVER () le2d, IFNULL(e2, b1) ifn_e2d FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, d1) OVER () le2d, IFNULL(e2, d1) ifn_e2d FROM t"
-"EXPLAIN FORMAT=JSON SELECT LEAD(e2, 0, e1) OVER () le2e1, IFNULL(e2, e1) ifn_e2e1 FROM t"
-"EXPLAIN FORMAT=JSON SELECT id, sex, COUNT(*) OVER w cnt, NTILE(3) OVER w `ntile`,
-LEAD(id, 1) OVER w le1,
-LAG(id, 1) OVER w la1,
-LEAD(id, 100) OVER w le100,
-LAG(id, 2, 777) OVER w la2 FROM t1
-WINDOW w AS (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, COUNT(*) OVER w cnt, NTH_VALUE(id, 2) OVER w nth,
 LEAD(id, 1) OVER w le1,
 LAG(id, 1) OVER w la1,
@@ -3575,30 +3065,6 @@ WINDOW w as (PARTITION BY SEX ORDER BY d ROWS 2 PRECEDING)"
 LEAD(d, 2) OVER w le2,
 LAG(d, 2) OVER w la2 FROM t1
 WINDOW w as (PARTITION BY SEX ORDER BY d RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d ASC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d ASC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
 LEAD(d, 2) OVER w le2,
 LAG(d, 2) OVER w la2 FROM t1
@@ -3607,33 +3073,6 @@ WINDOW w as (PARTITION BY SEX ORDER BY d DESC ROWS 2 PRECEDING)"
 LEAD(d, 2) OVER w le2,
 LAG(d, 2) OVER w la2 FROM t1
 WINDOW w as (PARTITION BY SEX ORDER BY d DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d DESC ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d DESC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY d DESC RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, sex, COUNT(*) OVER w cnt, NTILE(3) OVER w `ntile`,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1 WINDOW w as (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, sex,
 LEAD(id, 2) OVER w le2,
 LAG(id, 2) OVER w la2 FROM t1
@@ -3642,30 +3081,6 @@ WINDOW w as (PARTITION BY SEX ORDER BY id ROWS 2 PRECEDING)"
 LEAD(id, 2) OVER w le2,
 LAG(id, 2) OVER w la2 FROM t1
 WINDOW w as (PARTITION BY SEX ORDER BY id RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id ASC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id ASC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
 LEAD(id, 2) OVER w le2,
 LAG(id, 2) OVER w la2 FROM t1
@@ -3674,56 +3089,6 @@ WINDOW w as (PARTITION BY SEX ORDER BY id DESC ROWS 2 PRECEDING)"
 LEAD(id, 2) OVER w le2,
 LAG(id, 2) OVER w la2 FROM t1
 WINDOW w as (PARTITION BY SEX ORDER BY id DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id DESC ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id DESC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt, sex,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w as (ORDER BY id DESC RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(d, 3) OVER w le3,
-FIRST_VALUE(d) OVER w fv,
-LEAD(d, 1) OVER w le1,
-LEAD(d, 2) OVER w le2,
-LAG(d, 2) OVER w la2 FROM t1
-WINDOW w AS (ORDER BY d ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt,
-LEAD(id, 3) OVER w le3,
-FIRST_VALUE(id) OVER w fv,
-LEAD(id, 1) OVER w le1,
-LEAD(id, 2) OVER w le2,
-LAG(id, 2) OVER w la2 FROM t1
-WINDOW w AS (ORDER BY id ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"
-"EXPLAIN FORMAT=JSON SELECT i, PERCENT_RANK() OVER w cd
-FROM t WINDOW w AS (ORDER BY i)"
-"EXPLAIN FORMAT=JSON SELECT i, PERCENT_RANK() OVER w cd FROM t
-WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT i, PERCENT_RANK() OVER w cd, NTILE(3) OVER w `ntile`, COUNT(*) OVER w cnt, SUM(i) OVER W `sum` FROM t
-WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT i, PERCENT_RANK() OVER w cd, NTILE(3) OVER w `ntile`, COUNT(*) OVER w cnt, SUM(i) OVER W `sum`,
-LEAD(i,2) OVER w le2,
-LAG(i) OVER w la FROM t
-WINDOW w AS (ORDER BY i ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t1 LIMIT 5 OFFSET 1"
-"EXPLAIN FORMAT=tree SELECT JSON_OBJECTAGG(NULL, '') FROM t1, t1 AS t2 GROUP BY t1.pk LIMIT 2 OFFSET 5"
 "load data from infile '../../std_data/loaddata1.dat'
 into table t1 fields terminated by ',' ignore 2 lines"
 "load data infile '../../std_data/loaddata1.dat' in primary key order
@@ -4275,61 +3640,19 @@ DROP TABLE b34999015_db.`KEY`"
 "SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID RANGE 2 PRECEDING)"
 "SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID DESC ROWS 2 PRECEDING)"
 "SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 1) RESPECT NULLS OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 1) OVER () FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 3) OVER () FROM t1"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY sex)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID ROWS UNBOUNDED PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID RANGE UNBOUNDED PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, sex, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY D ROWS 2 PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, sex, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY D RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D ASC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D ASC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, sex, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY D DESC ROWS 2 PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, sex, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY D DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D DESC ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D DESC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w, NTH_VALUE(d, 2) OVER w FROM t1 WINDOW w as (ORDER BY D DESC RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID ROWS 2 PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID ASC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID ASC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID DESC ROWS 2 PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT id, sex, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (PARTITION BY SEX ORDER BY ID DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID DESC ROWS 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID DESC ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID DESC ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, COUNT(*) OVER w, NTH_VALUE(id, 2) OVER w FROM t1 WINDOW w as (ORDER BY ID DESC RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=TREE SELECT id, COUNT(*) OVER w,
-NTH_VALUE(id, 3) OVER w,
-FIRST_VALUE(id) OVER w,
-NTH_VALUE(id, 1) OVER w,
-NTH_VALUE(id, 2) OVER w FROM t1
-WINDOW w AS (ORDER BY id ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"
-"EXPLAIN FORMAT=TREE SELECT id, SUM(d) OVER w, COUNT(*) OVER w,
-NTH_VALUE(id, 3) OVER w,
-FIRST_VALUE(id) OVER w,
-NTH_VALUE(id, 1) OVER w,
-NTH_VALUE(id, 2) OVER w FROM t1
-WINDOW w AS (ORDER BY id ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)"
 "SELECT a, b, a AS c, COUNT(*) AS count FROM t1 GROUP BY a, b, c WITH ROLLUP"
-"EXPLAIN FORMAT=tree
-SELECT a, b FROM t1, t2 GROUP BY a, b WITH ROLLUP"
 "SELECT 1 WHERE 1 =
 ANY (SELECT GROUPING(a) FROM t1 GROUP BY a WITH ROLLUP)"
 "SELECT IF(GROUPING(a)=1,'All Departments', a) as Department,
@@ -4350,115 +3673,8 @@ ORDER BY GROUPING(i),i, GROUPING(j),j, GROUPING(k),k"
 HAVING i+j is NULL ORDER BY GROUPING(i)"
 "SELECT i, j, i+j, AVG(j), AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
 HAVING GROUPING(j)+AVG(j) > 11 ORDER BY GROUPING(i)"
-"EXPLAIN FORMAT=JSON
-SELECT i1 FROM t1 WHERE i1 > 1"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_FIXED_ORDER() */ COUNT(*) FROM small_tab JOIN large_tab USING(val) JOIN medium_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_FIXED_ORDER() */ COUNT(*) FROM medium_tab JOIN small_tab USING(val) JOIN large_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM large_tab WHERE val IN
-(SELECT /*+ QB_NAME(subq1) JOIN_FIXED_ORDER(@subq1) */ val FROM small_tab JOIN medium_tab USING(val))"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_FIXED_ORDER() */ COUNT(*) FROM large_tab JOIN small_tab JOIN medium_tab"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM large_tab WHERE val IN
-(SELECT /*+ QB_NAME(subq1) JOIN_FIXED_ORDER(@subq1) */ small_tab.val FROM medium_tab JOIN small_tab)"
-"EXPLAIN FORMAT=TREE SELECT STRAIGHT_JOIN COUNT(*) FROM small_tab JOIN large_tab USING(val) JOIN medium_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT STRAIGHT_JOIN COUNT(*) FROM medium_tab JOIN small_tab USING(val) JOIN large_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT STRAIGHT_JOIN COUNT(*) FROM medium_tab JOIN large_tab USING(val) JOIN small_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT STRAIGHT_JOIN COUNT(*) FROM large_tab JOIN small_tab JOIN medium_tab"
-"EXPLAIN FORMAT=TREE SELECT STRAIGHT_JOIN COUNT(*) FROM large_tab JOIN medium_tab JOIN small_tab"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM small_tab STRAIGHT_JOIN large_tab USING(val) STRAIGHT_JOIN medium_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM medium_tab STRAIGHT_JOIN small_tab USING(val) STRAIGHT_JOIN large_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM medium_tab STRAIGHT_JOIN large_tab USING(val) STRAIGHT_JOIN small_tab USING(val)"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM large_tab STRAIGHT_JOIN small_tab STRAIGHT_JOIN medium_tab"
-"EXPLAIN FORMAT=TREE SELECT COUNT(*) FROM large_tab STRAIGHT_JOIN medium_tab STRAIGHT_JOIN small_tab"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t1,t3,t5) */ COUNT(*) FROM t1 JOIN t2 USING(val) JOIN t3 USING(val) JOIN t4 USING(val) JOIN t5 USING(val) JOIN t6 USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t5,t4) */ COUNT(*) FROM t1 JOIN t2 USING(val) JOIN t3 USING(val) JOIN t4 USING(val) JOIN t5 USING(val) JOIN t6 USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t2,t4,t6,t1,t3) */ COUNT(*) FROM t1 JOIN t2 USING(val) JOIN t3 USING(val) JOIN t4 USING(val) JOIN t5 USING(val) JOIN t6 USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t5,t2,t1) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t3,t4) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t5,t3,t1,t2,t4) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t1,t2,t6) */ COUNT(*) FROM t1 JOIN t2 USING(val) JOIN t3 USING(val) JOIN t4 USING(val) JOIN t5 USING(val) JOIN t6 USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t6,t3) */ COUNT(*) FROM t1 JOIN t2 USING(val) JOIN t3 USING(val) JOIN t4 USING(val) JOIN t5 USING(val) JOIN t6 USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t5,t4,t3,t6,t1) */ COUNT(*) FROM t1 JOIN t2 USING(val) JOIN t3 USING(val) JOIN t4 USING(val) JOIN t5 USING(val) JOIN t6 USING(val)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t4,t5,t2) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t3,t2) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t1,t3,t2,t5,t4) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t6,t1) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t4,t6,t3,t5,t1) */ COUNT(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ QB_NAME(q1) JOIN_PREFIX(t2,t1,t2@subq2) */ count(*) FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t2) AND
-t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t2)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t2,t1) JOIN_ORDER(t3,t4@subq1) JOIN_SUFFIX(t4@subq1) */ count(*) FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ t4.val FROM t4 JOIN t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t5@subq2) */ count(*)
-FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t5@subq2,t4@subq1) JOIN_PREFIX(t1) JOIN_SUFFIX(t2,t5@subq2,t4@subq1) */ count(*)
-FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ QB_NAME(q1) JOIN_ORDER(@q1 t2,t3,t1) */ count(*)
-FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ QB_NAME(q1) JOIN_PREFIX(@q1 t2,t3,t1) */ count(*)
-FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t1,t2,t3) */ count(*) FROM t1 JOIN t2 STRAIGHT_JOIN t3
-WHERE t1.val IN (SELECT val FROM t4) AND t2.val IN (SELECT val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t3) JOIN_ORDER(t1,t2,t5) */ count(*) FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE  SELECT /*+ JOIN_ORDER(t3,t2) JOIN_ORDER(t1,t2,t5) */ count(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5"
-"EXPLAIN FORMAT=TREE  SELECT /*+ JOIN_ORDER(t3,t2,t1,t6) JOIN_ORDER(t4,t2,t5,t1) */ count(*) FROM t1 JOIN t2 JOIN t3 JOIN t4 JOIN t5 JOIN t6"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t3,t2,t1) JOIN_PREFIX(t2,t1) */ count(*) FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_SUFFIX(t3,t2) JOIN_SUFFIX(t2) */ count(*) FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ val FROM t4)
-AND t2.val IN (SELECT /*+ QB_NAME(subq2) */ val FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_FIXED_ORDER() JOIN_ORDER(t2,t1) */ t2.val FROM t1 JOIN t2 ON t1.val = t2.val
-WHERE (t1.val > 5 AND t1.val <= 5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2) JOIN_ORDER(t2,t3) */ count(*) FROM t1 JOIN t2 JOIN t3"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t5@subq1,t4@subq1,t2) */ count(*)
-FROM t1 JOIN t2 JOIN t3
-WHERE t1.val IN (SELECT /*+ QB_NAME(subq1) */ t4.val FROM t4 JOIN t5)"
-"EXPLAIN FORMAT=TREE DELETE /*+ JOIN_PREFIX(t2,t3,ta2) */
-FROM ta1.* USING t1 AS ta1 JOIN t1 AS ta2 ON 1
-RIGHT OUTER JOIN t2 ON (ta1.val = t2.val)
-WHERE (9) IN (SELECT val FROM t3)"
-"EXPLAIN FORMAT=TREE DELETE /*+ JOIN_SUFFIX(ta2,t3,ta1) */
-FROM ta1.* USING t1 AS ta1 JOIN t1 AS ta2 ON 1
-RIGHT OUTER JOIN t2 ON (ta1.val = t2.val)
-WHERE (9) IN (SELECT val FROM t3)"
-"EXPLAIN FORMAT=TREE DELETE /*+ JOIN_PREFIX(ta1,t2,t3) JOIN_SUFFIX(t3,ta2) */
-FROM ta1.* USING t1 AS ta1 JOIN t1 AS ta2 ON 1
-RIGHT OUTER JOIN t2 ON (ta1.val = t2.val)
-WHERE (9) IN (SELECT val FROM t3)"
 "EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t1) */ 1 FROM t1,LATERAL (SELECT DISTINCT t2.val FROM t2 WHERE t1.val = t2.val) AS dt"
 "EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(dt) */ 1 FROM t1,LATERAL (SELECT DISTINCT t2.val FROM t2 WHERE t1.val = t2.val) AS dt"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2) JOIN_PREFIX(t3) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2) JOIN_SUFFIX(t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2,t4) JOIN_SUFFIX(t1,t4) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t1,t2,t4) JOIN_PREFIX(t1,t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t1,t2,t4) JOIN_SUFFIX(t2,t3,t4) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2) JOIN_PREFIX(t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2) JOIN_SUFFIX(t3) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2,t4) JOIN_PREFIX(t1,t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t3,t2,t4) JOIN_SUFFIX(t1,t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t1,t2,t4) JOIN_PREFIX(t1,t4) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t1,t2,t4) JOIN_SUFFIX(t4,t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t1,t3,t2) JOIN_SUFFIX(t3,t1,t2) */ count(*) FROM t1 JOIN t2 JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(t2,t4,t1) */ 1 FROM t1 JOIN t2 ON 1 RIGHT JOIN t3 ON 1 JOIN t4 ON 1"
-"explain format=tree SELECT /*+ JOIN_PREFIX(t3,t1) */ count(*) FROM t1 JOIN t2 STRAIGHT_JOIN t3 WHERE t1.f1 IN (SELECT f1 FROM t4) AND t2.f1 IN (SELECT f1 FROM t5)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(alias3,alias3,alias1) */  alias1.c1 AS field1 FROM t1 AS alias1 INNER JOIN t1 AS alias2 INNER JOIN t1 AS alias3 INNER JOIN t1 AS alias4 ON alias3.c2 >= alias4.c3 ON alias2.c4 != alias4.c5 ON alias1.c6 <= alias4.c7  LEFT OUTER JOIN t1 AS alias5 ON alias2.c8 = alias5.c9 WHERE alias3.pk <= 3 HAVING (field1 < 8 AND field1 != 8) ORDER BY field1"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_ORDER(alias11,alias8) */ 1
-FROM t4 AS alias4
-LEFT JOIN t5 AS alias5 JOIN t6 AS alias6 ON alias5.f2 = alias6.f1
-LEFT JOIN t7 AS alias7 JOIN t2 AS alias8 ON alias7.f1 = alias8.f1
-ON alias5.f1 = alias8.f2 ON alias4.f2 = alias6.f1
-JOIN t10 AS alias10 JOIN t11 AS alias11 ON alias10.f1 = alias11.f1
-ON alias4.f2 = alias11.f2"
 "EXPLAIN FORMAT=JSON SELECT
 id, AVG(id) over w `avg`, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt
 FROM t1 WINDOW w as (ORDER BY id RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
@@ -4627,13 +3843,6 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 AND t.c3 > TIMESTAMP'2011-04-26 19:18:44') "
 "ALTER TABLE t1 IMPORT TABLESPACE"
 "LET $MYSQL_DATA_DIR = `select @@datadir`"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 ORDER BY a DESC, b DESC"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 ORDER BY a, b"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 ORDER BY a, b DESC"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 ORDER BY a DESC, b"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 FORCE INDEX (`PRIMARY`) ORDER BY a, b"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 FORCE INDEX (`PRIMARY`) ORDER BY a DESC, b"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1 FORCE INDEX (`PRIMARY`) ORDER BY a, b DESC"
 "CREATE TABLE `t``\"""e` (a INT, PRIMARY KEY (a))
 ENGINE=InnoDB
 PARTITION BY RANGE (a)
@@ -5213,8 +4422,6 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "REVOKE ALL ON my_db.t1 FROM bar"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO b35471453@localhost"
 "REVOKE CREATE ROLE, DROP ROLE, SET_ANY_DEFINER, ALLOW_NONEXISTENT_DEFINER ON *.* FROM b35471453@localhost"
-"EXPLAIN FORMAT=tree SELECT * FROM t1,t2 WHERE t1.a=t2.a AND t1.b=t2.b"
-"EXPLAIN FORMAT=tree SELECT * FROM t1,t2 WHERE (t1.a,t1.b)=(t2.a,t2.b)"
 "my $mysqlbinlog= $ENV{'MYSQL_BINLOG'}"
 "my $port= $ENV{'MASTER_MYPORT'}"
 "my $binlog_file= $ENV{'BINLOG_FILE'}"
@@ -5239,9 +4446,6 @@ COMMIT"
 "DROP TABLE tц╕ц╦ц╔"
 "LET $MYSQL_TMP_DIR_UCASE= `SELECT upper('$MYSQL_TMP_DIR')`"
 "LET $MYSQL_TMP_DIR_LCASE= `SELECT lower('$MYSQL_TMP_DIR')`"
-"EXPLAIN FORMAT=tree SELECT COUNT(*) c FROM t_innodb HAVING c > 7"
-"EXPLAIN FORMAT=tree SELECT COUNT(*) c FROM t_myisam HAVING c > 7"
-"EXPLAIN FORMAT=tree select SQL_CALC_FOUND_ROWS * from t1 limit 10 offset 100"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
@@ -7511,19 +6715,6 @@ reset binary logs and gtids"
 "LET $ID= `SELECT connection_id()`"
 "ALTER INSTANCE RELOAD TLS"
 "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 ORDER BY a"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 JOIN t1 AS t2 ON t1.a=t2.a ORDER BY t1.a"
-"EXPLAIN FORMAT=JSON
-SELECT c1 FROM t1
-WHERE NOT EXISTS (SELECT /*+ NO_MERGE() */ c2
-FROM (SELECT c1 FROM t1) AS dt
-WHERE FALSE)"
-"explain format=tree select a from t where (not exists (select b from t))"
-"explain format=tree select a from t where 1 not in (select 1 from t)"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 WHERE pk IN ( SELECT pk FROM t1 LEFT JOIN v2 USING (pk) WHERE f1 >= 'o' )"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t1 AS t3 ON t1.pk = t3.pk AND t1.f2 IN ( SELECT f2 FROM t2 )
-WHERE EXISTS ( SELECT * FROM t1 AS t4, t2 AS t5 ) AND t1.f1 = 80 AND t1.pk > t1.f1"
-"EXPLAIN FORMAT=TREE SELECT d0.f1, d0.pk, t1.pk, t1.f1 FROM ( SELECT DISTINCT * FROM t1 ) AS d0 LEFT JOIN t1 ON d0.pk IN ( SELECT 1 FROM t1 ) ORDER BY d0.f1"
 "SELECT 1 FROM t1 AS table2 LEFT JOIN (SELECT 'c') AS table3(f1)
 ON table3.f1 = table2.f1 WHERE table2.f1
 IN (SELECT 1 FROM (SELECT 1314830897) AS t1(pk)
@@ -7532,12 +6723,6 @@ WHERE t1.pk <= ANY(SELECT 5)) AND FALSE"
 t AS upper JOIN LATERAL
 (SELECT DISTINCT ROW_NUMBER() OVER () AS rn FROM t
 WHERE (t.a > upper.a)) der "
-"EXPLAIN FORMAT=tree
-SELECT * FROM
-t1
-JOIN t2 ON t1.pk = t2.pk
-JOIN t3 ON t2.pk = t3.pk
-WHERE (t1.col_int + t2.pk) IN ( SELECT col_int FROM t4 )"
 "EXPLAIN FORMAT=tree
 SELECT /*+ JOIN_ORDER(t3,t2,t1) */ * FROM t1
 WHERE t1.col1 = ANY (
@@ -7561,21 +6746,13 @@ SELECT 1 FROM t WINDOW w1 AS (PARTITION BY a)
 ON 1 > 2
 ) AS z
 )"
-"EXPLAIN FORMAT=tree SELECT 1 FROM t1 WHERE d IN (SELECT a FROM t1)"
 "SELECT t1.a
 FROM
 t1,
 LATERAL ( SELECT t1.a FROM t1 AS inner_t1 LIMIT 1 ) AS d1
 WHERE 1 IN ( SELECT a FROM t1 )
 ORDER BY a"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t1 WHERE a IN
-(SELECT COUNT(*) FROM t2 LEFT JOIN t3
-ON t3.a IN (SELECT t2_a.a FROM t2 AS t2_a, t2 AS t2_b)
-WHERE t2.a = 0)"
 "SELECT CAST(NULL < ANY (VALUES ROW(1), ROW(2)) AS SIGNED)"
-"EXPLAIN FORMAT=TREE SELECT 1 FROM t1 x0 WHERE x0.c IN
-(SELECT MAX(x2.c) FROM t1 x1 JOIN t1 x2 ON x1.b=x2.a)"
-"EXPLAIN FORMAT=TREE SELECT * FROM t WHERE (SELECT x FROM t)"
 "SELECT AVG(a) OVER () AS `avg`,
 a + (SELECT SUM(a) + (SELECT COUNT(a) FROM t1)
 FROM (SELECT * from t1) t11) AS cnt FROM t2"
@@ -7602,15 +6779,6 @@ ON s1.avg_us <= s2.avg_us
 GROUP BY s2.avg_us
 HAVING IFNULL(SUM(s1.cnt)/ NULLIF((SELECT COUNT(*) FROM events_digest), 0), 0) > 0.95
 ORDER BY percentile LIMIT 1"
-"EXPLAIN FORMAT=tree
-SELECT
-AVG(cc.col_varchar_key),
-(
-SELECT SUM(cc.col_int_key)
-FROM cc,a
-)
-FROM cc STRAIGHT_JOIN bb ON bb.col_varchar = cc.col_varchar_key
-WHERE cc.col_varchar <> 'w'"
 "ANALYZE TABLES c, cc"
 "ANALYZE TABLES b, c, cc"
 "SELECT t2.i FROM t2
@@ -8224,7 +7392,6 @@ connection default"
 (SELECT                     * FROM t1 LIMIT 100) UNION SELECT * FROM t2) q"
 "SELECT COUNT(*) FROM (
 (SELECT                     * FROM t1 limit 2,2) UNION SELECT * FROM t2) q"
-"explain format=tree (select * from t1 where a=5) union (select * from t2 where a=1)"
 "select * from ((select * from t1 limit 1) union (select * from t1 limit 1)) a"
 "select * from ((select * from t1 limit 1) union (select * from t1 limit 1) union (select * from t1 limit 1)) a"
 "select * from ((((select * from t1))) union (select * from t1) union (select * from t1)) a"
@@ -8237,17 +7404,7 @@ UNION
 )
 ORDER BY c2 DESC, c1 ASC LIMIT 1
 ) AS res"
-"EXPLAIN FORMAT=tree SELECT a, SUM(a) FROM t2 UNION ALL SELECT a, MIN(a) FROM t1 "
-"EXPLAIN FORMAT=TREE SELECT 1 UNION SELECT 1 LIMIT 0"
 "((SELECT SQL_CALC_FOUND_ROWS * FROM r ORDER BY a LIMIT 5) ORDER BY -a LIMIT 4) ORDER BY a LIMIT 3"
-"EXPLAIN FORMAT=TREE (SELECT b FROM t1 UNION SELECT b FROM t1)
-UNION ALL SELECT b FROM t1"
-"explain format=tree update t1 set t1.a=3 where a=(select a from t2)"
-"explain format=tree delete from t1 where a=(select a from t2)"
-"explain format=tree update t1 set t1.a=3 where a in (select /*+ subquery(intoexists) */ a from t2)"
-"explain format=tree delete from t1 where a in (select /*+ subquery(intoexists) */ a from t2)"
-"explain format=tree update t1 set t1.a=3 where a in (select a from t2)"
-"explain format=tree delete from t1 where a in (select a from t2)"
 "CREATE TABLE t1(a INTEGER, b INTEGER AS (a))"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6"
 "ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2"
@@ -8801,7 +7958,6 @@ WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING)
 "SELECT i, j, SUM(j) OVER w FROM t
 WINDOW w AS (PARTITION BY i ORDER BY j
 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT t1_id, ROW_NUMBER() OVER () FROM t1"
 "SELECT SUM(1)   OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
 "SELECT SUM(1.2) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
 "SELECT SUM(CAST(4 as JSON)) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
@@ -8820,9 +7976,6 @@ ROWS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING)"
 WINDOW w AS (PARTITION BY j ORDER BY i ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
 "SELECT LAST_VALUE(1) OVER (PARTITION BY t1.j), t2.pk FROM t1 LEFT JOIN
 t1 as t2 ON t1.pk = t2.pk WHERE t1.pk=1"
-"EXPLAIN FORMAT=JSON SELECT a, RANK() OVER (ORDER BY a) rank_asc,
-RANK() OVER (ORDER BY a desc) rank_desc,
-RANK() OVER (ORDER BY a) + RANK() OVER (ORDER BY a desc) rank_asc_desc FROM t1"
 "SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i)
 ORDER BY SUM(i) OVER w"
 "SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i)
@@ -8835,12 +7988,9 @@ ORDER BY 1+SUM(SUM(i)) OVER w"
 ORDER BY SUM(i) OVER w"
 "SELECT SUM(2+SUM(i)) OVER W FROM t1 GROUP BY j WINDOW w AS (PARTITION BY j ORDER BY j)
 ORDER BY SUM(2+SUM(i)) OVER w DESC"
-"EXPLAIN FORMAT=JSON SELECT a,b, RANK() OVER (ORDER BY a), RANK() OVER (ORDER BY a) FROM t1"
-"EXPLAIN FORMAT=JSON SELECT * FROM t WHERE a IN (SELECT ROW_NUMBER() OVER () FROM t)"
 "SELECT * FROM t WHERE a = SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
 "SELECT * FROM t WHERE a = ANY(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
 "SELECT * FROM t WHERE a >= SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
-"EXPLAIN FORMAT=JSON SELECT * from t WHERE EXISTS(SELECT ROW_NUMBER() OVER () FROM t)"
 "SELECT (SELECT ROW_NUMBER() OVER (PARTITION BY upper.j) FROM t1 LIMIT 1)
 FROM t1 AS upper"
 "SELECT (SELECT ROW_NUMBER() OVER (PARTITION BY upper.j)
@@ -8861,17 +8011,10 @@ FROM t1 WINDOW w AS (PARTITION BY sex ORDER BY id DESC ROWS
 BETWEEN 1 PRECEDING AND CURRENT ROW)"
 "SELECT NTILE (3) OVER (ORDER BY alias1.a), AVG(alias1.a)  OVER ()
 FROM t AS alias1 RIGHT JOIN t AS alias2 ON (alias1.a = alias2.b)"
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (ORDER BY AVG(a)) AS rn FROM t ORDER BY rn "
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (ORDER BY AVG(a)) AS rn, SUM(AVG(a)) OVER (),
-CUME_DIST() OVER (ORDER BY AVG(a)) FROM t ORDER BY rn"
 "SELECT RANK() OVER (PARTITION BY a) FROM tno"
 "SELECT DENSE_RANK() OVER (PARTITION BY a) FROM tno"
 "SELECT PERCENT_RANK() OVER (PARTITION BY a) FROM tno"
 "SELECT CUME_DIST() OVER (PARTITION BY a) FROM tno"
-"EXPLAIN FORMAT=tree SELECT ROW_NUMBER() OVER (ORDER BY a.c)
-FROM  a LEFT JOIN b
-ON a.c = b.c
-WHERE (b.pk IS NULL AND a.pk IN (6))"
 "SELECT a, b, LEAD (b, 1) OVER (PARTITION BY NULL ORDER BY a,b ASC) AS c FROM t1 a ORDER BY a, b, c"
 "SELECT 2 FROM t1
 ORDER BY SUM(c1) OVER
@@ -9174,63 +8317,34 @@ WHERE cmp > 0 WINDOW w AS (PARTITION BY cmp)"
 "EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo"
 "EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo DESC"
 "EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo DESC LIMIT 3"
-"EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) foo FROM t"
-"EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo"
-"EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo DESC"
-"EXPLAIN FORMAT=JSON SELECT * FROM v"
-"EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ORDER BY j DESC ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo"
-"EXPLAIN FORMAT=JSON SELECT i, j, SUM(i+j) OVER (ORDER BY j DESC ROWS UNBOUNDED PRECEDING) foo FROM t ORDER BY foo DESC"
-"EXPLAIN FORMAT=JSON SELECT SUM(i) OVER () FROM t"
 "EXPLAIN FORMAT=JSON SELECT k, SUM(k) OVER (ROWS UNBOUNDED PRECEDING) wf FROM t"
 "EXPLAIN FORMAT=JSON SELECT k, MIN(i), SUM(j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) wf FROM t GROUP BY (k)"
 "EXPLAIN FORMAT=JSON SELECT k, MIN(i), SUM(j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) wf FROM t GROUP BY (k) ORDER BY wf DESC"
 "EXPLAIN FORMAT=JSON SELECT k, GROUP_CONCAT(j ORDER BY j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
 "EXPLAIN FORMAT=JSON SELECT k, AVG(DISTINCT j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
 "EXPLAIN FORMAT=JSON SELECT k, GROUP_CONCAT(j ORDER BY j), SUM(k+1) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
-"EXPLAIN FORMAT=JSON SELECT k, GROUP_CONCAT(j ORDER BY j), SUM(k+1) OVER (ORDER BY k DESC ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
-"EXPLAIN FORMAT=JSON SELECT RANK() OVER (ORDER BY user_id) r FROM t2"
-"EXPLAIN FORMAT=JSON SELECT DENSE_RANK() OVER (ORDER BY user_id) r FROM t2"
-"EXPLAIN FORMAT=JSON SELECT sex, SUM(DISTINCT id) AS uids FROM t1 u, t2
-WHERE t2.user_id = u.id GROUP BY sex ORDER BY uids"
-"EXPLAIN FORMAT=JSON SELECT id, sex, RANK() OVER (ORDER BY sex) FROM t1 ORDER BY id"
-"EXPLAIN FORMAT=JSON SELECT id, sex, DENSE_RANK() OVER (ORDER BY sex) FROM t1 ORDER BY id"
 "EXPLAIN FORMAT=JSON SELECT sex, RANK() OVER (ORDER BY sex DESC) `rank`, AVG(DISTINCT id) AS uids FROM t1 u, t2
 WHERE t2.user_id = u.id GROUP BY sex ORDER BY sex"
-"EXPLAIN FORMAT=JSON SELECT  sex, AVG(id) AS uids, RANK() OVER w `rank` FROM t1 u, t2
-WHERE t2.user_id = u.id GROUP BY sex
-WINDOW w AS (ORDER BY AVG(id))"
 "EXPLAIN FORMAT=JSON SELECT  sex, AVG(DISTINCT id) AS uids, RANK() OVER w `rank` FROM t1 u, t2
 WHERE t2.user_id = u.id GROUP BY sex
 WINDOW w AS (ORDER BY AVG(DISTINCT id) DESC) ORDER BY sex"
-"EXPLAIN FORMAT=JSON SELECT id, sex, RANK() OVER w, DENSE_RANK() OVER w FROM t1
-WINDOW w AS (ORDER BY sex) ORDER BY id"
-"EXPLAIN FORMAT=JSON SELECT id, sex, RANK() OVER (ORDER BY sex DESC) FROM t1 ORDER BY id"
 "EXPLAIN FORMAT=JSON SELECT id value,
 SUM(id) OVER (ROWS UNBOUNDED PRECEDING)
 FROM t1 u, t2 WHERE t2.user_id = u.id"
 "EXPLAIN FORMAT=JSON SELECT AVG(id) average,
 SUM(AVG(id)) OVER (ROWS UNBOUNDED PRECEDING)
 FROM t1 u, t2 WHERE t2.user_id = u.id GROUP BY sex"
-"EXPLAIN FORMAT=JSON SELECT sex, AVG(id), RANK() OVER (ORDER BY AVG(id) DESC) FROM t1 GROUP BY sex ORDER BY sex"
-"EXPLAIN FORMAT=JSON SELECT sex, RANK() OVER (ORDER BY AVG(id) DESC) FROM t1 GROUP BY sex ORDER BY sex"
-"EXPLAIN FORMAT=JSON SELECT          RANK() OVER (ORDER BY AVG(id)) FROM t1"
-"EXPLAIN FORMAT=JSON SELECT AVG(id), RANK() OVER (ORDER BY AVG(id)) FROM t1"
-"EXPLAIN FORMAT=JSON SELECT AVG(id), SUM(AVG(id)) OVER (ORDER BY AVG(id) ROWS UNBOUNDED PRECEDING) FROM t1"
 "EXPLAIN FORMAT=JSON SELECT sex, id, RANK() OVER (PARTITION BY sex ORDER BY id DESC) FROM t1"
 "EXPLAIN FORMAT=JSON SELECT sex, id, RANK() OVER (PARTITION BY sex ORDER BY id ASC) FROM t1"
 "EXPLAIN FORMAT=JSON SELECT sex, id, SUM(id) OVER w summ, RANK() OVER w `rank` FROM t1
 WINDOW w AS (PARTITION BY sex ORDER BY id ASC ROWS UNBOUNDED PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT sex, id, SUM(id) OVER w summ, RANK() OVER w `rank` FROM t1
 WINDOW w AS (PARTITION BY sex ORDER BY id ASC ROWS UNBOUNDED PRECEDING) ORDER BY summ"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT  RANK() OVER (ORDER BY d) AS `rank`, d, date FROM t) alias ORDER BY `rank`, d, date"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT RANK() OVER (ORDER BY date) AS `rank`, date, d FROM t) alias ORDER BY `rank`, d DESC"
 "EXPLAIN FORMAT=JSON SELECT i, j, SUM(j) OVER (PARTITION BY i  ORDER BY j ROWS UNBOUNDED PRECEDING) FROM t"
-"EXPLAIN FORMAT=JSON SELECT SUM(id), SUM(SUM(id)) OVER (ORDER BY sex ROWS UNBOUNDED PRECEDING) FROM t1,t2 WHERE t1.id=t2.user_id GROUP BY sex"
 "EXPLAIN FORMAT=JSON SELECT RANK() OVER w FROM t1,t2 WHERE t1.id=t2.user_id WINDOW w AS (PARTITION BY id ORDER BY sex)"
 "EXPLAIN FORMAT=JSON SELECT RANK() OVER w FROM (SELECT * FROM t1,t2 WHERE t1.id=t2.user_id) t WINDOW w AS (PARTITION BY id ORDER BY sex)"
 "EXPLAIN FORMAT=JSON SELECT  SUM(id) OVER (PARTITION BY sex ORDER BY id ROWS UNBOUNDED PRECEDING) summ, sex FROM t1"
 "EXPLAIN FORMAT=JSON SELECT user_id, ROW_NUMBER() OVER (PARTITION BY user_id) FROM t2"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1,t2 WHERE t1.id=t2.user_id"
 "EXPLAIN FORMAT=JSON SELECT sex, id, date, ROW_NUMBER() OVER w AS row_no, RANK() OVER w AS `rank` FROM t1,t2
 WHERE t1.id=t2.user_id
 WINDOW w AS (PARTITION BY id ORDER BY sex)"
@@ -9244,12 +8358,7 @@ WINDOW w AS (PARTITION BY date ORDER BY id)"
 WHERE t1.id=t2.user_id
 WINDOW w AS (PARTITION BY date ORDER BY id)
 ) AS t"
-"EXPLAIN FORMAT=JSON SELECT t1.*, RANK() OVER (ORDER BY sex), SUM(id) OVER (ORDER BY sex,id ROWS UNBOUNDED PRECEDING) FROM t1"
 "EXPLAIN FORMAT=JSON SELECT * from (SELECT t1.*, SUM(id) OVER (ROWS UNBOUNDED PRECEDING), RANK() OVER (ORDER BY sex) FROM t1) alias ORDER BY id"
-"EXPLAIN FORMAT=JSON SELECT t1.*, SUM(id) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING),
-RANK() OVER (ORDER BY sex,id),
-ROW_NUMBER() OVER (ORDER BY sex,id)
-FROM t1"
 "EXPLAIN FORMAT=JSON SELECT t.*, SUM(id + r00 + r01) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) AS s FROM (
 SELECT t1.*,
 RANK() OVER (ORDER BY sex) AS r00,
@@ -9318,22 +8427,6 @@ WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)"
 WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
 WINDOW w AS (ORDER BY d RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, NTILE(1) OVER w FROM t1 WINDOW w AS (ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, NTILE(2) OVER w FROM t1 WINDOW w AS (ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, NTILE(5) OVER w FROM t1 WINDOW w AS (ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, NTILE(11) OVER w FROM t1 WINDOW w AS (ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, ROW_NUMBER() OVER w, NTILE(4) OVER w, SUM(id) OVER w FROM t1
-WINDOW w AS (ORDER BY id ROWS 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, NTILE(3) OVER w FROM t1 WINDOW w AS (ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT (ROW_NUMBER() OVER w1 * 5 - 1) DIV (COUNT(*) OVER w2) + 1 AS cnt
-FROM t1 WINDOW w1 AS (ORDER BY id ASC),
-w2 AS ()"
-"EXPLAIN FORMAT=JSON SELECT  (ROW_NUMBER() OVER w1 * 5 - 1) DIV (COUNT(*) OVER w2) + 1 AS ntile_manually,
-COUNT(*) OVER w3
-FROM t1 WINDOW w1 AS (ORDER BY id ASC),
-w2 AS (), w3 AS ()"
-"EXPLAIN FORMAT=JSON SELECT id, ROW_NUMBER() OVER w, SUM(id) OVER w, NTILE(5) OVER w FROM t1
-WINDOW w AS (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER w, id, SUM(id) OVER w, sex FROM t1
 WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER w, SUM(id) OVER w FROM t1
@@ -9348,72 +8441,10 @@ ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 ROW_NUMBER() OVER w,
 RANK() OVER w  FROM t1
 WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS ()"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (PARTITION BY sex ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id DESC)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id ROWS  2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id ROWS  BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t1 WINDOW w AS (ORDER BY id RANGE BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS ()"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (PARTITION BY sex ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id DESC)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id ROWS  2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id ROWS  BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td1 WINDOW w AS (ORDER BY id RANGE BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS ()"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (PARTITION BY sex ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id DESC)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id ROWS  2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id ROWS  BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id RANGE BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS ()"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (ORDER BY id)"
 "EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (PARTITION BY sex ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (ORDER BY id DESC)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (ORDER BY id ROWS  2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (ORDER BY id ROWS  BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM td_str WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS ()"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id DESC)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id ROWS  2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id RANGE INTERVAL 2 DAY PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id RANGE BETWEEN INTERVAL 2 DAY PRECEDING AND INTERVAL 1 DAY PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id ROWS  BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT id, FIRST_VALUE(id) OVER w FROM t_date WINDOW w AS (ORDER BY id RANGE BETWEEN INTERVAL 2 DAY FOLLOWING AND INTERVAL 3 DAY FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS ()"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t DESC)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t ROWS  2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t RANGE INTERVAL 2 HOUR PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t ROWS  BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t RANGE BETWEEN INTERVAL 2 HOUR PRECEDING AND INTERVAL 1 HOUR PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t ROWS  BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT t, FIRST_VALUE(t) OVER w FROM t_time WINDOW w AS (ORDER BY t RANGE BETWEEN INTERVAL 2 HOUR FOLLOWING AND INTERVAL 3 HOUR FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT p, t, FIRST_VALUE(t) OVER w FROM t_time2 WINDOW w AS (PARTITION by p ORDER BY t)"
 "EXPLAIN FORMAT=JSON SELECT p, t, FIRST_VALUE(t) OVER w FROM t_time2 WINDOW w AS (PARTITION by p ORDER BY t DESC)"
 "EXPLAIN FORMAT=JSON SELECT p, t, FIRST_VALUE(t) OVER w FROM t_time2 WINDOW w AS (PARTITION by p ORDER BY t ROWS  2 PRECEDING)"
@@ -9424,10 +8455,6 @@ WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 PRECEDI
 "EXPLAIN FORMAT=JSON SELECT p, t, FIRST_VALUE(t) OVER w FROM t_time2 WINDOW w AS (PARTITION by p ORDER BY t RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT p, t, FIRST_VALUE(t) OVER w FROM t_time2 WINDOW w AS (PARTITION by p ORDER BY t ROWS  BETWEEN 2 FOLLOWING AND 3 FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT p, t, FIRST_VALUE(t) OVER w FROM t_time2 WINDOW w AS (PARTITION by p ORDER BY t RANGE BETWEEN INTERVAL 2 HOUR FOLLOWING AND INTERVAL 3 HOUR FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT * FROM t1"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER (ORDER BY id RANGE 2 PRECEDING) FROM t1 ORDER BY id"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t1 ORDER BY id"
-"EXPLAIN FORMAT=JSON SELECT id, SUM(id) OVER (ORDER BY id RANGE UNBOUNDED PRECEDING) FROM t1 ORDER BY id"
 "EXPLAIN FORMAT=JSON SELECT p, id, SUM(id) OVER (PARTITION BY p ORDER BY id RANGE 2 PRECEDING) FROM t11 ORDER BY p,id"
 "EXPLAIN FORMAT=JSON SELECT p, id, SUM(id) OVER (PARTITION BY p ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t11 ORDER BY p,id"
 "EXPLAIN FORMAT=JSON SELECT p, id, SUM(id) OVER (PARTITION BY p ORDER BY id RANGE UNBOUNDED PRECEDING) FROM t11 ORDER BY p,id"
@@ -9435,42 +8462,13 @@ WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 PRECEDI
 "EXPLAIN FORMAT=JSON SELECT p, user_id, SUM(user_id) OVER w, AVG(user_id) OVER w FROM t22 WINDOW w AS (PARTITION BY p ORDER BY user_id) ORDER BY p"
 "EXPLAIN FORMAT=JSON SELECT user_id, SUM(user_id) OVER w, AVG(user_id) OVER w1 FROM t2
 WINDOW w AS (ORDER BY user_id), w1 AS (ORDER BY user_id)"
-"EXPLAIN FORMAT=JSON SELECT NTILE(5) OVER w, ROW_NUMBER() OVER w, id, SUM(id) OVER w FROM t1
-WINDOW w AS (ORDER BY id DESC RANGE 2 PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT p, NTILE(5) OVER w, ROW_NUMBER() OVER w, id, SUM(id) OVER w FROM t11
 WINDOW w AS (PARTITION BY p ORDER BY id DESC RANGE 2 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT user_id, date, COUNT(*) OVER (ORDER BY date RANGE INTERVAL 1 DAY PRECEDING) FROM t2"
-"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, COUNT(*) OVER w FROM t3 WINDOW w AS (ORDER BY d RANGE BETWEEN 2.1 PRECEDING AND 1.1 FOLLOWING)"
-"EXPLAIN FORMAT=JSON SELECT CAST(SUM(j) OVER () AS JSON) FROM tj"
-"EXPLAIN FORMAT=JSON SELECT DISTINCT i,COUNT(*) OVER () FROM tj"
-"EXPLAIN FORMAT=JSON SELECT DISTINCT i,NTILE(3) OVER (ORDER BY i), SUM(i) OVER (), COUNT(*) OVER () FROM tj ORDER BY NTILE(3) OVER (ORDER BY i)"
-"EXPLAIN FORMAT=JSON SELECT * FROM tj2"
-"EXPLAIN FORMAT=JSON SELECT          COUNT(*) OVER (), MOD(SUM(i),2) FROM tj2 GROUP BY i"
-"EXPLAIN FORMAT=JSON SELECT DISTINCT COUNT(*) OVER (), MOD(SUM(i),2) FROM tj2 GROUP BY i"
-"EXPLAIN FORMAT=JSON SELECT i, SUM(i) OVER (), MOD(SUM(i),2) FROM tj2 GROUP BY i"
-"EXPLAIN FORMAT=JSON SELECT i, SUM(SUM(i)) OVER (), SUM(i) OVER (ORDER BY i), MOD(SUM(i),2), SUM(i) FROM tj2 GROUP BY i"
 "EXPLAIN FORMAT=JSON SELECT LAST_VALUE(j) OVER w, FIRST_VALUE(j) OVER w FROM tj WINDOW w AS (PARTITION BY i ORDER BY j ROWS UNBOUNDED PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT i, LAST_VALUE((CAST(j AS UNSIGNED))) OVER w, FIRST_VALUE(CAST(j AS UNSIGNED)) OVER w FROM tj
 WINDOW w AS (PARTITION BY i ORDER BY CAST(j AS UNSIGNED) RANGE UNBOUNDED PRECEDING)"
 "EXPLAIN FORMAT=JSON SELECT j,CAST(SUM(j) OVER (PARTITION BY i) AS JSON), CAST(SUM(j) OVER () AS JSON) FROM tj"
 "EXPLAIN FORMAT=JSON SELECT j,CAST(SUM(j) OVER (PARTITION BY i ROWS UNBOUNDED PRECEDING) AS JSON), CAST(SUM(j) OVER (PARTITION BY i ROWS UNBOUNDED PRECEDING) AS JSON) FROM tj"
-"EXPLAIN FORMAT=JSON SELECT i, ROW_NUMBER() OVER () FROM tj UNION ALL SELECT i, ROW_NUMBER() OVER () FROM tj"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT i, j, ROW_NUMBER() OVER (ORDER BY j) FROM tj UNION SELECT i, j, ROW_NUMBER() OVER (ORDER BY j) FROM tj) alias"
-"EXPLAIN FORMAT=JSON SELECT j, JSON_TYPE(j), SUM(j) OVER (ORDER BY j ROWS 3 PRECEDING) FROM tj"
-"EXPLAIN FORMAT=JSON SELECT j,
-JSON_TYPE(j),
-SUM(CASE WHEN JSON_TYPE(j) = 'ARRAY' THEN j->""$[0]"" ELSE j END)
-OVER (ORDER BY j ROWS 3 PRECEDING)
-FROM tj"
-"EXPLAIN FORMAT=JSON SELECT b, COUNT(*) OVER (ORDER BY b RANGE BETWEEN 1 FOLLOWING AND  100 FOLLOWING) bb FROM t5"
-"EXPLAIN FORMAT=JSON SELECT t, COUNT(*) OVER (ORDER BY t RANGE
-BETWEEN INTERVAL 1 HOUR PRECEDING AND INTERVAL '2:2' MINUTE_SECOND FOLLOWING) AS cnt FROM t6"
-"EXPLAIN FORMAT=JSON SELECT COUNT(*) OVER w0,
-COUNT(*) OVER w,
-COUNT(*) OVER w1 FROM t6
-WINDOW w0 AS (),
-w AS (w0 ORDER BY t),
-w1 AS (w RANGE BETWEEN INTERVAL 24 HOUR  PRECEDING AND INTERVAL '2:2' MINUTE_SECOND FOLLOWING)"
 "EXPLAIN FORMAT=JSON SELECT id, AVG(id) OVER (PARTITION BY id) summ FROM t1"
 "EXPLAIN FORMAT=JSON SELECT     AVG(id) OVER (PARTITION BY id) summ FROM t1"
 "EXPLAIN FORMAT=JSON SELECT id, AVG(id) OVER (PARTITION BY id) summ,
@@ -9479,47 +8477,9 @@ AVG(id) OVER (PARTITION BY id) summ2 FROM t1"
 AVG(id) OVER (PARTITION BY id) summ2 FROM t1"
 "EXPLAIN FORMAT=JSON SELECT COUNT(id) OVER w, id, AVG(id) OVER w, SUM(id) OVER w, FIRST_VALUE(id) OVER w FROM t1
 WINDOW w AS (ORDER BY id RANGE 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, count(id) over w, count(*) over w, FIRST_VALUE(id) OVER w FROM t1
-WINDOW w AS (ORDER BY id ASC  RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT id, count(id) over w, count(*) over w, FIRST_VALUE(id) OVER w FROM t1
-WINDOW w AS (ORDER BY id DESC RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT sex, NTILE(2) OVER w, SUM(ASCII(sex)) OVER w s FROM t1
-HAVING sex=(SELECT c FROM ss LIMIT 1)
-WINDOW w AS (ORDER BY id ROWS UNBOUNDED PRECEDING)"
-"EXPLAIN FORMAT=JSON SELECT sex, AVG(id), ROW_NUMBER() OVER w FROM t1
-GROUP BY sex HAVING sex='M' OR sex IS NULL
-WINDOW w AS (ORDER BY AVG(id)) ORDER BY sex DESC"
-"EXPLAIN FORMAT=JSON SELECT *, RANK() OVER (ORDER BY i,j,k) AS O_IJK,
-RANK() OVER (ORDER BY j) AS O_J,
-RANK() OVER (ORDER BY k,j) AS O_KJ FROM t ORDER BY i,j,k"
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER ()"
-"EXPLAIN FORMAT=JSON SELECT *, ABS(ROW_NUMBER() OVER (ORDER BY s1,s2))
-- ROW_NUMBER() OVER (ORDER BY s1,s2) AS X FROM t1"
-"EXPLAIN FORMAT=JSON SELECT RANK() OVER (ORDER BY AVG(s1)) FROM t1"
-"EXPLAIN FORMAT=JSON SELECT COUNT(*) OVER (ORDER BY s2) FROM t1 WHERE s2 IS NULL"
-"EXPLAIN FORMAT=JSON SELECT * FROM (
-SELECT *,DENSE_RANK() OVER (ORDER BY s2 DESC),
-DENSE_RANK() OVER (ORDER BY s2) FROM t1
-) alias ORDER BY s1,s2"
-"EXPLAIN FORMAT=JSON SELECT * FROM (
-SELECT *, SUM(s1) OVER (ORDER BY s1) FROM t1 ORDER BY s1
-) alias ORDER BY s1,s2"
 "EXPLAIN FORMAT=JSON SELECT *, AVG(s1) OVER () FROM t1"
 "EXPLAIN FORMAT=JSON SELECT *, AVG(s1) OVER (ROWS UNBOUNDED PRECEDING) FROM t1"
-"EXPLAIN FORMAT=JSON SELECT * FROM t ORDER BY RANK() OVER (ORDER BY a DESC,b,c)"
-"EXPLAIN FORMAT=JSON SELECT *, RANK() OVER (ORDER BY a DESC,b,c) AS `rank` FROM t ORDER BY `rank`"
-"EXPLAIN FORMAT=JSON SELECT * FROM (
-SELECT a,b,c, RANK() OVER (ORDER BY 1*1) FROM t
-) alias ORDER BY a,b,c"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT count(*) OVER (), sum(c) OVER () AS sum1, a from t) as alias"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT count(*) OVER () + sum(c) OVER () AS sum1, a from t) as alias"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT SUM(b) OVER (), a FROM t) AS alias"
-"EXPLAIN FORMAT=JSON SELECT * FROM (SELECT SUM(b) OVER (), b FROM t) AS alias"
-"EXPLAIN FORMAT=JSON SELECT SUM(a) OVER (ORDER BY b) FROM t"
-"EXPLAIN FORMAT=JSON SELECT COUNT(*) OVER (ORDER BY b) FROM t"
 "EXPLAIN FORMAT=JSON SELECT AVG(b) OVER (ORDER BY b) FROM t"
-"EXPLAIN FORMAT=JSON SELECT a,b,LAST_VALUE(a) OVER (ORDER BY b,a) FROM t"
-"EXPLAIN FORMAT=JSON SELECT NTILE(2) OVER (ORDER BY b) FROM t"
 "EXPLAIN FORMAT=JSON SELECT a, b, COUNT(a) OVER w count,
 SUM(a) OVER w sum,
 AVG(a) over w average,
@@ -9547,20 +8507,6 @@ AVG(j) OVER (w ORDER BY j), FIRST_VALUE(j) OVER w
 FROM t WINDOW w AS (PARTITION BY i)
 ORDER BY LAST_VALUE(j) OVER w, NTH_VALUE(j,1) OVER (),
 ROW_NUMBER() OVER (PARTITION BY j)"
-"EXPLAIN FORMAT=JSON
-SELECT ROW_NUMBER() OVER () AS rn
-FROM ( t1 LEFT JOIN t2 ON (t2.a <= t1 . a ) )
-WHERE t1.a = 3
-GROUP BY t1.a"
-"EXPLAIN FORMAT=JSON SELECT * FROM t"
-"EXPLAIN FORMAT=JSON SELECT * FROM t ORDER BY i"
-"EXPLAIN FORMAT=JSON SELECT * FROM t GROUP BY i"
-"EXPLAIN FORMAT=JSON SELECT * FROM t GROUP BY i ORDER BY i DESC"
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER () FROM t"
-"EXPLAIN FORMAT=JSON SELECT DISTINCT i FROM t"
-"EXPLAIN FORMAT=JSON SELECT DISTINCT ROW_NUMBER() OVER () FROM t"
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER () FROM t ORDER BY i"
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER () FROM t GROUP BY i"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (PARTITION BY i) FROM t"
 "EXPLAIN FORMAT=JSON SELECT DISTINCT ROW_NUMBER() OVER (PARTITION BY i) FROM t"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (PARTITION BY i) FROM t ORDER BY i"
@@ -9571,7 +8517,6 @@ GROUP BY t1.a"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (PARTITION BY i), SUM(i) OVER (ORDER BY i DESC) FROM t GROUP BY i"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (PARTITION BY i), SUM(i) OVER (ORDER BY i DESC) FROM t GROUP BY i ORDER BY i DESC"
 "EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (PARTITION BY i), SUM(i) OVER (ORDER BY i DESC) FROM t GROUP BY i ORDER BY i"
-"EXPLAIN FORMAT=JSON SELECT ROW_NUMBER() OVER (ORDER BY AVG(i)) AS rn FROM t"
 "SELECT ROW_NUMBER() OVER (PARTITION BY i), SUM(i) OVER (ORDER BY i DESC) FROM t GROUP BY i ORDER BY i"
 "EXPLAIN FORMAT=tree SELECT SUM(c) OVER (PARTITION BY a ORDER BY b) FROM t1"
 "EXPLAIN FORMAT=tree SELECT SUM(c) OVER (PARTITION BY a ORDER BY b), SUM(c) OVER (ORDER BY a,b) FROM t1"
@@ -9581,11 +8526,7 @@ GROUP BY t1.a"
 "EXPLAIN FORMAT=tree SELECT SUM(a) OVER (PARTITION BY a ORDER BY b) FROM t1"
 "EXPLAIN FORMAT=tree SELECT a, SUM(c) OVER (PARTITION BY a) FROM t1 ORDER BY a"
 "EXPLAIN FORMAT=tree SELECT a, SUM(c) OVER (ORDER BY b), AVG(c) OVER (ORDER BY a), SUM(c) OVER (PARTITION BY a) AS x FROM t1 ORDER BY b, x"
-"EXPLAIN FORMAT=tree SELECT SQL_BIG_RESULT DISTINCT a, SUM(c) OVER (ORDER BY b) FROM t1"
 "EXPLAIN FORMAT=tree SELECT DISTINCT a, b, SUM(b) OVER (PARTITION BY a) FROM t1 ORDER BY a"
-"EXPLAIN FORMAT=tree SELECT SQL_BIG_RESULT DISTINCT a, SUM(c) OVER (ORDER BY b) FROM t1 ORDER BY a"
-"EXPLAIN FORMAT=tree SELECT SUM(a) OVER (ORDER BY b) FROM t1 WHERE b=3"
-"EXPLAIN FORMAT=tree SELECT t1.a, SUM(t1.a) OVER (ORDER BY t1.a), SUM(t2.b) OVER (ORDER BY t2.b) FROM t1 JOIN t1 AS t2 ON t1.a = t2.b"
 "EXPLAIN FORMAT=TREE
 SELECT ROW_NUMBER() OVER (PARTITION BY t1.x)
 FROM t1, t2 WHERE t1.x = t2.pk

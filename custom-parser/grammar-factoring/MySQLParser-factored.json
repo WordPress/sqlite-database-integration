@@ -11536,26 +11536,6 @@
     ]
   },
   {
-    "name": "utilityStatement",
-    "bnf": [
-      [
-        "describeStatement"
-      ],
-      [
-        "explainStatement"
-      ],
-      [
-        "helpCommand"
-      ],
-      [
-        "useCommand"
-      ],
-      [
-        "restartServer"
-      ]
-    ]
-  },
-  {
     "name": "%describeStatement684",
     "bnf": [
       [
@@ -22197,6 +22177,26 @@
       ],
       [
         "YEAR_SYMBOL"
+      ]
+    ]
+  },
+  {
+    "name": "utilityStatement",
+    "bnf": [
+      [
+        "explainStatement"
+      ],
+      [
+        "describeStatement"
+      ],
+      [
+        "helpCommand"
+      ],
+      [
+        "useCommand"
+      ],
+      [
+        "restartServer"
       ]
     ]
   },

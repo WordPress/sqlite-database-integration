@@ -337,7 +337,7 @@ alterResourceGroup ::= ALTER_SYMBOL RESOURCE_SYMBOL GROUP_SYMBOL resourceGroupRe
 setResourceGroup ::= SET_SYMBOL RESOURCE_SYMBOL GROUP_SYMBOL identifier (FOR_SYMBOL threadIdList)?
 threadIdList ::= real_ulong_number (COMMA_SYMBOL? real_ulong_number)*
 dropResourceGroup ::= DROP_SYMBOL RESOURCE_SYMBOL GROUP_SYMBOL resourceGroupRef FORCE_SYMBOL?
-utilityStatement ::= describeStatement | explainStatement | helpCommand | useCommand | restartServer
+/* utilityStatement ::= describeStatement | explainStatement | helpCommand | useCommand | restartServer */
 describeStatement ::= (EXPLAIN_SYMBOL | DESCRIBE_SYMBOL | DESC_SYMBOL) tableRef (textString | columnRef)?
 explainStatement ::= (EXPLAIN_SYMBOL | DESCRIBE_SYMBOL | DESC_SYMBOL) (EXTENDED_SYMBOL | PARTITIONS_SYMBOL | (FORMAT_SYMBOL EQUAL_OPERATOR textOrIdentifier) | ANALYZE_SYMBOL | (ANALYZE_SYMBOL FORMAT_SYMBOL EQUAL_OPERATOR textOrIdentifier))? explainableStatement
 explainableStatement ::= selectStatement | (deleteStatement | insertStatement | replaceStatement | updateStatement) | (FOR_SYMBOL CONNECTION_SYMBOL real_ulong_number)
@@ -635,6 +635,18 @@ createUser ::= CREATE_SYMBOL USER_SYMBOL ifNotExists? createUserList defaultRole
  * The original grammar was missing the YEAR_SYMBOL in the "castType" rule.
  */
 castType ::= (BINARY_SYMBOL fieldLength?) | (CHAR_SYMBOL fieldLength? charsetWithOptBinary?) | (nchar fieldLength?) | (SIGNED_SYMBOL INT_SYMBOL?) | (UNSIGNED_SYMBOL INT_SYMBOL?) | DATE_SYMBOL | (TIME_SYMBOL typeDatetimePrecision?) | (DATETIME_SYMBOL typeDatetimePrecision?) | (DECIMAL_SYMBOL floatOptions?) | JSON_SYMBOL | realType | (FLOAT_SYMBOL standardFloatOptions?) | YEAR_SYMBOL
+
+/*
+ * Reorder "explainStatement" and "describeStatement".
+ * EXPLAIN can be followed by an identifier (matching a "describeStatement"),
+ * but identifiers can never take precedence over keywords in the grammar.
+ *
+ * E.g., in "EXPLAIN FORMAT=JSON ...", the "FORMAT" token needs to match as a keyword
+ * in the "explainStatement" rather than as an identifier in the "describeStatement".
+ * At the same time, "EXPLAIN FORMAT" is a valid "describeStatement" with the "FORMAT"
+ * token as an identifier.
+ */
+utilityStatement ::= explainStatement | describeStatement | helpCommand | useCommand | restartServer
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*
