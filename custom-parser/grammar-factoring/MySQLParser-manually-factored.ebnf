@@ -281,7 +281,7 @@ onTypeTo ::= (ON_SYMBOL aclType? grantIdentifier) | (ON_SYMBOL aclType? grantIde
 aclType ::= TABLE_SYMBOL | FUNCTION_SYMBOL | PROCEDURE_SYMBOL
 roleOrPrivilegesList ::= roleOrPrivilege (COMMA_SYMBOL roleOrPrivilege)*
 roleOrPrivilege ::= ((roleIdentifierOrText columnInternalRefList?) | (roleIdentifierOrText (AT_TEXT_SUFFIX | (AT_SIGN_SYMBOL textOrIdentifier)))) | ((SELECT_SYMBOL | INSERT_SYMBOL | UPDATE_SYMBOL | REFERENCES_SYMBOL) columnInternalRefList?) | (DELETE_SYMBOL | USAGE_SYMBOL | INDEX_SYMBOL | DROP_SYMBOL | EXECUTE_SYMBOL | RELOAD_SYMBOL | SHUTDOWN_SYMBOL | PROCESS_SYMBOL | FILE_SYMBOL | PROXY_SYMBOL | SUPER_SYMBOL | EVENT_SYMBOL | TRIGGER_SYMBOL) | (GRANT_SYMBOL OPTION_SYMBOL) | (SHOW_SYMBOL DATABASES_SYMBOL) | (CREATE_SYMBOL ((TEMPORARY_SYMBOL TABLES_SYMBOL) | (ROUTINE_SYMBOL | TABLESPACE_SYMBOL | USER_SYMBOL | VIEW_SYMBOL))?) | (LOCK_SYMBOL TABLES_SYMBOL) | (REPLICATION_SYMBOL (CLIENT_SYMBOL | SLAVE_SYMBOL)) | (SHOW_SYMBOL VIEW_SYMBOL) | (ALTER_SYMBOL ROUTINE_SYMBOL?) | ((CREATE_SYMBOL | DROP_SYMBOL) ROLE_SYMBOL)
-grantIdentifier ::= (MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?) | (schemaRef (DOT_SYMBOL MULT_OPERATOR)?) | tableRef | (schemaRef DOT_SYMBOL tableRef)
+/* grantIdentifier ::= (MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?) | (schemaRef (DOT_SYMBOL MULT_OPERATOR)?) | tableRef | (schemaRef DOT_SYMBOL tableRef) */
 requireList ::= requireListElement (AND_SYMBOL? requireListElement)*
 requireListElement ::= (CIPHER_SYMBOL textString) | (ISSUER_SYMBOL textString) | (SUBJECT_SYMBOL textString)
 grantOption ::= (GRANT_SYMBOL OPTION_SYMBOL) | (MAX_QUERIES_PER_HOUR_SYMBOL ulong_number) | (MAX_UPDATES_PER_HOUR_SYMBOL ulong_number) | (MAX_CONNECTIONS_PER_HOUR_SYMBOL ulong_number) | (MAX_USER_CONNECTIONS_SYMBOL ulong_number)
@@ -658,6 +658,13 @@ utilityStatement ::= explainStatement | describeStatement | helpCommand | useCom
  * with the "ROWS" token as an identifier.
  */
 windowSpecDetails ::= (PARTITION_SYMBOL BY_SYMBOL orderList orderClause? windowFrameClause?) | ((PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause windowFrameClause?) | ((PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause) | (windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause?)
+
+/**
+ * Rewrite "grantIdentifier" to solve conflicts between "schemaRef DOT_SYMBOL tableRef"
+ * and "schemaRef DOT_SYMBOL MULT_OPERATOR". Move them to a single branch, and order
+ * "schemaRef" and "tableRef" after to preserve precedence of keywords over identifiers.
+ */
+grantIdentifier ::= (MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?) | (schemaRef DOT_SYMBOL (MULT_OPERATOR | tableRef)) | schemaRef | tableRef
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*
