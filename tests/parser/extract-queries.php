@@ -148,7 +148,7 @@ $commandsPattern =
 	)
 	. ')(\s+|\()';
 
-$skipPattern = "/^($prefixesPattern|$commandsPattern)/";
+$skipPattern = "/^($prefixesPattern|$commandsPattern)/i";
 
 // Scan MySQL test files for SQL queries:
 $testsDir = __DIR__ . '/tmp/mysql-server-tests/mysql-test/t';

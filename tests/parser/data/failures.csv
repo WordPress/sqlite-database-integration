@@ -1,6 +1,5 @@
 "reset binary logs and gtids"
 "CHECK TABLES t1"
-"EVAL insert into t1 values (2,2),(2,2),(2,2),(2,2),(2,2)"
 "alter table t1 algorithm=inplace, rename key k to kk"
 "alter table t2 algorithm=inplace, rename key k to kk"
 "alter table t1 algorithm=copy, rename key kkk to kkkk"
@@ -193,21 +192,6 @@ CAST(TIMESTAMP'2000-01-01 23:59:59.123456' AS DOUBLE)"
 "CREATE PROCEDURE p_flush_status()
 BEGIN
 DECLARE x INT DEFAULT 3000"
-"WHILE x DO
-SET x = x-1"
-"END WHILE"
-"END |
-
-CREATE PROCEDURE p_processlist()
-BEGIN
-DECLARE x INT DEFAULT 3000"
-"END |
-
-
-
-
-
-let $i = 3000"
 "RESET PERSIST character_set_server"
 "CREATE TABLE 🐬(a INT)"
 "CREATE TABLE t1(🐬 INT)"
@@ -315,13 +299,6 @@ END IF;
 END;"
 "CREATE TABLE t1 (f1 INT, f2 INT, f3 INT, f4 FLOAT AS (f3 * 0.01), f5 INT,
 CHECK (f1 < f2))"
-"CONNECT (con1, localhost, root)"
-"CONNECT (con2, localhost, root)"
-"CONNECTION con1"
-"CONNECTION con2"
-"CONNECTION default"
-"DISCONNECT con1"
-"DISCONNECT con2"
 "my $mode = (stat($ENV{SESSION_FILE}))[2]"
 "my $perm = sprintf ""%04o"", ($mode & 07777)"
 "/* line with only comment */"
@@ -433,7 +410,6 @@ create table t1 as select 1"
 "CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
-"END "
 "|
 
 
@@ -1121,7 +1097,6 @@ end"
 "EOF
 
 DROP DATABASE bug19573998"
-"LET $MYSQLD_DATADIR = `SELECT @@datadir`"
 "my $file= $ENV{'GREP_FILE'} or die(""grep file not set"")"
 "my $pattern= $ENV{'GREP_PATTERN'} or die(""pattern is not set"")"
 "open(FILE, ""$file"") or die(""Unable to open $file: $!"")"
@@ -1158,12 +1133,6 @@ enable_query_log
 "insert into ��� (���0) values (2)"
 "explain select ���0 from ��� where ���0=1"
 "drop table ���"
-"CONNECT (c1,localhost,root,,)"
-"CONNECT (c2,localhost,root,,)"
-"CONNECTION c1"
-"CONNECTION c2"
-"DISCONNECT c1"
-"DISCONNECT c2"
 "EXPLAIN ((SELECT a FROM t ORDER BY 1 LIMIT 3) ORDER BY -a LIMIT 2) ORDER BY a"
 "CREATE TABLE t3 LIKE t2"
 "EXPLAIN
@@ -1310,16 +1279,7 @@ foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12+00:00' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast( a AT TIME ZONE '+00:00' AS DATETIME ) FROM t1"
-"LET $have_debug= `SELECT (version() LIKE '%debug%')`"
-"IF ($have_debug)
-{
-disable_query_log"
 enable_result_log
-"LET $c = 96"
-"WHILE ($c)
-{
-EVAL INSERT INTO r SELECT $c, HEX(@a << $c), HEX(@a >> $c)"
-"DEC $c"
 "SELECT ADDDATE(DATE'2021-01-01', INTERVAL 1 DAY)"
 "SELECT ADDDATE(DATE'2021-01-01', INTERVAL 1 HOUR)"
 "SELECT ADDDATE(TIMESTAMP'2021-01-01 00:00:00', INTERVAL 1 DAY)"
@@ -1561,8 +1521,6 @@ COALESCE(JSON_OBJECT('a', 1), NULL) AS c71"
 "select 1 from t1 where 1 < some (select cast(a as datetime) from t1)"
 "SELECT * FROM t1 WHERE TIMESTAMPDIFF(MONTH, a, TIMESTAMP'0000-00-01 00:00:00') IS NULL"
 "SELECT * FROM t1 WHERE TIMESTAMPDIFF(MONTH, a, DATE'0000-00-01') IS NULL"
-"EVAL $query"
-"EVAL CREATE TABLE t3 AS $query"
 "CREATE TABLE t1(col1 varchar(100), gcol2 binary(16) AS (uuid_to_bin(col1)) virtual, index(gcol2))"
 "CREATE TABLE t2(col1 binary(16), gcol2 varchar(36) AS (bin_to_uuid(col1)) virtual, index(col1), index(gcol2))"
 "select hex(weight_string('aa' as binary(3)))"
@@ -1656,26 +1614,6 @@ RESIGNAL SET MYSQL_ERRNO= 9999, MESSAGE_TEXT= 'Changed by resignal, for caller';
 END;
 SELECT 10 + 'a';
 END"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM performance_schema.events_waits_current
-WHERE event_name LIKE '%COND_open'"
-"LET $wait_condition=
-SELECT event_id != @first_wait_id
-FROM performance_schema.events_waits_current
-WHERE event_name LIKE '%COND_open'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for table flush' AND info LIKE 'FLUSH TABLES'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for table flush' AND info LIKE 'FLUSH TABLES tb'"
-"LET $wait_condition=
-SELECT COUNT(*) = 0 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for table flush' AND info LIKE 'FLUSH TABLES'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for table metadata lock'
-AND info LIKE 'CREATE TABLE tb%'"
 "DO ST_ASTEXT(ST_UNION(ST_GEOMFROMTEXT('POLYGON((525000 183300,525400
 183300,525400 18370, 525000 183700,525000 183300))'),
 ST_GeomFromText('POLYGON((525298.67 183511.53,525296.57
@@ -1833,7 +1771,6 @@ boundary POLYGON)"
 "DROP USER очень_длинный_юз@localhost"
 "DROP USER очень_очень_длинный_юзер@localhost"
 "DROP USER очень_очень_очень_длинный_юзер__@localhost"
-"CONNECT (conn_su,localhost,user_name_len_22_01234,,)"
 "REVOKE ALL PRIVILEGES ON mysqltest.v0 FROM mysqltest@localhost"
 "REVOKE ALL PRIVILEGES ON mysqltest.visible FROM mysqltest@localhost"
 "REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
@@ -1873,11 +1810,8 @@ bug20625566_user@localhost, bug20625566_dest@localhost"
 "ALTER USER u1@localhost DEFAULT ROLE r1"
 "REVOKE ALL ON *.* FROM u1@localhost"
 "REVOKE ALL ON *.* FROM u1"
-"DISCONNECT con_admin_test"
-"CONNECTION con_admin_test"
 "SHOW GRANTS FOR u1 using r1"
 "SHOW GRANTS FOR u1 using r2"
-"DISCONNECT con_rep_slave_test"
 "REVOKE ALL ON *.* FROM CURRENT_USER()"
 "RESET REPLICA ALL"
 enable_connect_log
@@ -2317,7 +2251,6 @@ SELECT /*+ SET_VAR(optimizer_max_subgraph_pairs = 1) */ COUNT(*)
 FROM t AS t1 LEFT JOIN t AS t2 ON TRUE,
 LATERAL (SELECT DISTINCT t2.a FROM t) AS t3
 WHERE t1.a = t3.a"
-"LET $OLD_DB= `SELECT DATABASE()`"
 "chdir $ENV{'MYSQL_TMP_DIR'}"
 "EOF
 let $EXPORT_DIR= $MYSQL_TMP_DIR/export"
@@ -2553,7 +2486,6 @@ connect
 into table t1 fields terminated by ',' ignore 2 lines"
 "load data infile '../../std_data/loaddata1.dat' in primary key order
 into table t1 fields terminated by ',' ignore 2 lines"
-"EVAL SELECT 0xE1C330 INTO OUTFILE 't1.dat'"
 "CREATE TABLE t1 (
 json_col JSON , KEY json_col ((CAST(json_col -> '$' AS UNSIGNED ARRAY)))
 )"
@@ -2800,50 +2732,8 @@ set names utf8mb3"
 
 
 drop table if exists t1Aa,t2Aa,v1Aa,v2Aa"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for tablespace metadata lock' AND
-info LIKE 'ALTER TABLESPACE%'"
-"LET $wait_condition=
-SELECT COUNT(*) = 2 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for tablespace metadata lock' AND
-info LIKE '%TABLESPACE%'"
-"LET $wait_condition=
-SELECT COUNT(*) = 0 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for tablespace metadata lock' AND
-info LIKE 'ALTER TABLESPACE%'"
-"LET $wait_condition=
-SELECT COUNT(*) = 2 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for tablespace metadata lock' AND
-info LIKE 'DROP TABLESPACE%'"
-"LET $wait_condition=
-SELECT COUNT(*) = 0 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for tablespace metadata lock' AND
-info LIKE 'DROP TABLESPACE%'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM information_schema.processlist
-WHERE state LIKE 'Waiting for tablespace metadata lock' AND
-info LIKE 'DROP TABLESPACE%'"
 "CREATE TABLE t1_new LIKE t1_src"
 "CREATE TABLE t2_new LIKE t2_src"
-"LET $wait_condition=
-SELECT COUNT(*) = 2 FROM performance_schema.metadata_locks
-WHERE object_type LIKE 'TABLESPACE'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM performance_schema.events_waits_current
-WHERE object_type LIKE 'TABLESPACE'"
-"LET $wait_condition=
-SELECT COUNT(*) = 0 FROM performance_schema.metadata_locks
-WHERE object_type LIKE 'TABLESPACE'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM performance_schema.events_waits_history_long
-WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts1'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM performance_schema.metadata_locks
-WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts1'"
-"LET $wait_condition=
-SELECT COUNT(*) = 1 FROM performance_schema.metadata_locks
-WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
 "CREATE TABLE m1 LIKE t1"
 "CREATE TABLE m1(a INT) ENGINE=MERGE UNION=()"
 "ALTER TABLE m1 UNION=()"
@@ -2860,10 +2750,6 @@ WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
 "SET @before:= (SELECT MAX_DATA_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='t1' AND TABLE_SCHEMA='test')"
 "SELECT @before=@after"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=MyISAM"
-"CONNECT (insertConn, localhost, root,,)"
-"SEND INSERT INTO t1(id) SELECT id  FROM t2"
-"CONNECTION insertConn"
-"DISCONNECT insertConn"
 "FLUSH TABLE mysql_db1.t1"
 "print FILE ""select\n"""
 "print FILE ""'a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a',\n"" x 3400"
@@ -3195,7 +3081,6 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 (SELECT c3 FROM t1 t WHERE t.c3 < TIMESTAMP'2011-04-26 19:19:44'
 AND t.c3 > TIMESTAMP'2011-04-26 19:18:44') "
 "ALTER TABLE t1 IMPORT TABLESPACE"
-"LET $MYSQL_DATA_DIR = `select @@datadir`"
 "CREATE TABLE `t``\"""e` (a INT, PRIMARY KEY (a))
 ENGINE=InnoDB
 PARTITION BY RANGE (a)
@@ -3209,16 +3094,6 @@ SUBPARTITION `sp3``\"""e`))"
 "INSERT INTO `t``\"""e` VALUES (0), (2), (6), (10), (14), (18), (22)"
 SEND
 "DROP TABLE `t``\"""e`"
-"LET $MYSQLD_DATADIR = `select @@datadir`"
-"LET $INNODB_PAGE_SIZE = `select @@innodb_page_size`"
-"LET $data_directory = DATA DIRECTORY='$MYSQL_TMP_DIR/alternate_dir/data'"
-"LET $data_directory2 = DATA DIRECTORY='$MYSQL_TMP_DIR/alternate_dir/data2'"
-"LET $index_directory = INDEX DIRECTORY='$MYSQL_TMP_DIR/alternate_dir/data'"
-"LET $innodb_file_per_table_orig=`select @@global.innodb_file_per_table`"
-"LET $innodb_strict_mode_orig=`select @@session.innodb_strict_mode`"
-"EVAL SET GLOBAL innodb_file_per_table=$innodb_file_per_table_orig"
-"EVAL SET SESSION innodb_strict_mode=$innodb_strict_mode_orig"
-"EVAL SET @@default_storage_engine=$old_default_storage_engine"
 "DELETE FROM t1 PARTITION (p0)
 WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
 "EXPLAIN DELETE FROM t1 PARTITION (p0)
@@ -3611,9 +3486,6 @@ ON *.* FROM u1, u2 IGNORE UNKNOWN USER"
 "REVOKE IF EXISTS r1 FROM u1"
 "REVOKE IF EXISTS r1 FROM r2"
 "REVOKE IF EXISTS r1 FROM u1,u2,u3,r2"
-"LET old_log_output=          `select @@global.log_output`"
-"LET old_general_log=         `select @@global.general_log`"
-"LET old_general_log_file=    `select @@global.general_log_file`"
 "CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='azundris3'"
 "SET PASSWORD = '' REPLACE ''"
 "ALTER USER u1 IDENTIFIED BY '123' REPLACE '', u2 IDENTIFIED BY '456'
@@ -3670,9 +3542,6 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "SHOW GRANTS FOR u1@localhost USING u1234567890123456789012345678901"
 "ALTER USER r2 DEFAULT ROLE r1"
 "ALTER USER baseuser default role r2"
-"DISCONNECT con_base"
-"DISCONNECT con_admin1"
-"DISCONNECT con_admin2"
 "ALTER USER u1 DEFAULT ROLE r1"
 "ALTER USER u1@localhost DEFAULT ROLE 'r1'"
 "SHOW GRANTS FOR CURRENT_USER() USING r1"
@@ -3711,8 +3580,6 @@ COMMIT"
 "ALTER TABLE dst_t2 IMPORT PARTITION p0 TABLESPACE"
 "CREATE TABLE tæøå(i INT)"
 "DROP TABLE tæøå"
-"LET $MYSQL_TMP_DIR_UCASE= `SELECT upper('$MYSQL_TMP_DIR')`"
-"LET $MYSQL_TMP_DIR_LCASE= `SELECT lower('$MYSQL_TMP_DIR')`"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
@@ -5526,12 +5393,6 @@ $$
 "
 "SELECT 1 AS $hi"
 "revoke all privileges on procedure sptest.p1 from userb@localhost"
-"CONNECT (con_tester,localhost,tester,,B48872)"
-"CONNECT (con_tester_denied,localhost,Tester,,B48872)"
-"CONNECTION con_tester"
-"CONNECTION con_tester_denied"
-"DISCONNECT con_tester"
-"DISCONNECT con_tester_denied"
 "CREATE PROCEDURE p2()
 BEGIN
 DECLARE i TINYINT DEFAULT 3;
@@ -5831,8 +5692,6 @@ CREATE FUNCTION f1(loops INT UNSIGNED)
 RETURNS INT
 BEGIN
 DECLARE tmp INT"
-"WHILE loops > 0 DO
-SELECT c1 INTO tmp FROM v1"
 "RETURN loops"
 "END|
 
@@ -5884,7 +5743,6 @@ insert into t1 values (null)"
 "end|
 
 reset binary logs and gtids"
-"LET $ID= `SELECT connection_id()`"
 "ALTER INSTANCE RELOAD TLS"
 "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
 "SELECT 1 FROM t1 AS table2 LEFT JOIN (SELECT 'c') AS table3(f1)
@@ -6066,18 +5924,6 @@ end"
 BEFORE INSERT ON t1 FOR EACH ROW SET @sum= @sum + NEW.f1"
 "SHOW CREATE TRIGGER очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP TRIGGER очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
-"CONNECT (rl_holder,    localhost, root,,)"
-"CONNECT (rl_acquirer,  localhost, root,,)"
-"CONNECT (wl_acquirer,  localhost, root,,)"
-"CONNECT (rl_contender, localhost, root,,)"
-"CONNECTION rl_holder"
-"CONNECTION rl_acquirer"
-"CONNECTION wl_acquirer"
-"CONNECTION rl_contender"
-"DISCONNECT rl_acquirer"
-"DISCONNECT wl_acquirer"
-"DISCONNECT rl_contender"
-"DISCONNECT rl_holder"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
 "SELECT * FROM t2 EXCEPT SELECT * FROM t3"
 "SELECT * FROM t3 EXCEPT SELECT * FROM t2"
@@ -6556,10 +6402,6 @@ ORDER BY c2 DESC, c1 ASC LIMIT 1
 "CREATE TRIGGER trig_t1_ins BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 SET @aux = GET_LOCK(2,1)"
-"IF @aux <> 1 THEN
-SIGNAL SQLSTATE '45000'
-SET MESSAGE_TEXT = 'LOCK 2 not got. Abort.', MYSQL_ERRNO = 9999"
-"END IF"
 END
 "|
 SELECT GET_LOCK(CAST(2 AS CHAR),0)"
@@ -6612,12 +6454,6 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "set @select=2,@t5=1.23456"
 "set @test_int=10,@test_double=1e-10,@test_string=""abcdeghi"",@test_string2=""abcdefghij"",@select=NULL"
 "select @test_int,@test_double,@test_string,@test_string2,@select"
-"CONNECT (con1,localhost,root,,test)"
-"CONNECT (vtcon1, localhost, u1, foo,)"
-"CONNECT (vtcon2, localhost, root,,)"
-"CONNECT (vtcon3, localhost, root,,)"
-"CONNECTION vtcon1"
-"CONNECTION vtcon2"
 "drop table if exists t1,t2,t3,t4,t9,`t1a``b`,v1,v2,v3,v4,v5,v6"
 "drop view if exists t1,t2,`t1a``b`,v1,v2,v3,v4,v5,v6"
 "create table `t1a``b` (col1 char(2))"
@@ -7165,5 +7001,4 @@ order by find_in_set(ln.n,eq.pivot_lines), ln.n;
 end
 
 "
-"SEND UPDATE t1 SET a=5 WHERE a=2"
 "SELECT AVG(DISTINCT EXTRACTVALUE((''),('$@k')))"
