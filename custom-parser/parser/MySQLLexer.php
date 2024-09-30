@@ -36,7 +36,14 @@ function safe_ctype_alnum($string) {
 }
 
 class MySQLLexer {
-    
+	// SQL modes
+	const SQL_MODE_NO_MODE = 0;
+	const SQL_MODE_ANSI_QUOTES = 1 << 0;
+	const SQL_MODE_HIGH_NOT_PRECEDENCE = 1 << 1;
+	const SQL_MODE_PIPES_AS_CONCAT = 1 << 2;
+	const SQL_MODE_IGNORE_SPACE = 1 << 3;
+	const SQL_MODE_NO_BACKSLASH_ESCAPES = 1 << 4;
+
     // Constants for token types.
     // Operators
     public const EQUAL_OPERATOR = 1;
@@ -923,10 +930,6 @@ class MySQLLexer {
         $this->serverVersion = $serverVersion;
         $this->sqlModes = $sqlModes;
     }
-
-    const PipesAsConcat = 1;
-    const HighNotPrecedence = 2;
-    const NoBackslashEscapes = 4;
 
     public function isSqlModeActive(int $mode): bool
     {
@@ -5157,7 +5160,7 @@ class MySQLLexer {
         do {
             $this->consume(); // Consume the first single quote.
             while ($this->c !== null) {
-                if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::NoBackslashEscapes)) {
+                if ($this->c === '\\' && !$this->isSqlModeActive(self::SQL_MODE_NO_BACKSLASH_ESCAPES)) {
                     // If it's an escape sequence, consume the backslash and the next character.
                     $this->consume();
                     $this->consume();
@@ -5178,7 +5181,7 @@ class MySQLLexer {
         do {
             $this->consume(); // Consume the first double quote.
             while ($this->c !== null) {
-                if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::NoBackslashEscapes)) {
+                if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::SQL_MODE_NO_BACKSLASH_ESCAPES)) {
                     // If it's an escape sequence, consume the backslash and the next character.
                     $this->consume();
                     $this->consume();
@@ -5198,7 +5201,7 @@ class MySQLLexer {
     {
         $this->consume(); // Consume the first back tick.
         while ($this->c !== null) {
-            if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::NoBackslashEscapes)) {
+            if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::SQL_MODE_NO_BACKSLASH_ESCAPES)) {
                 // If it's an escape sequence, consume the backslash and the next character.
                 $this->consume();
                 $this->consume();
@@ -5415,7 +5418,7 @@ class MySQLLexer {
         $this->consume(); // Consume the '|'.
         $this->consume(); // Consume the '|'.
 
-        if ($this->isSqlModeActive(MySQLLexer::PipesAsConcat)) {
+        if ($this->isSqlModeActive(self::SQL_MODE_PIPES_AS_CONCAT)) {
             $this->setType(self::CONCAT_PIPES_SYMBOL);
         } else {
             $this->setType(self::LOGICAL_OR_OPERATOR);
@@ -7556,7 +7559,7 @@ class MySQLLexer {
 
     protected function NOT_SYMBOL()
     {
-        if ($this->isSqlModeActive(MySQLLexer::HighNotPrecedence)) {
+        if ($this->isSqlModeActive(MySQLLexer::SQL_MODE_HIGH_NOT_PRECEDENCE)) {
             $this->setType(self::NOT2_SYMBOL);
         } else {
             $this->setType(self::NOT_SYMBOL);
@@ -9391,15 +9394,17 @@ class MySQLLexer {
         return self::INVALID_INPUT;
     }
 
-    /**
-     * This is a place holder to support features of MySQLBaseLexer which are not yet implemented
-     * in the PHP target.
-     *
-     * @return int
-     */
     protected function determineFunction(int $type): int
     {
-        return $type;
+		// Skip any whitespace character if the sql mode says they should be ignored,
+		// before actually trying to match the open parenthesis.
+		$i = 1;
+		if ($this->isSqlModeActive(self::SQL_MODE_IGNORE_SPACE)) {
+			while (safe_ctype_space($this->LA($i))) {
+				$i++;
+			}
+		}
+		return $this->LA($i) === '(' ? $type : self::IDENTIFIER;
     }
 }
 

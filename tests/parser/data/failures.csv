@@ -111,6 +111,8 @@ PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
 SOURCE_USER=     'plug_user',
 SOURCE_PASSWORD= 'plug_user',
 SOURCE_RETRY_COUNT= 0"
+"create table t1 (a int primary key auto_increment, b int, c int, d timestamp default current_timestamp, unique(b),unique(c))"
+"create table t1 (a int primary key auto_increment, b int, c int, e int, d timestamp default current_timestamp, unique(b),unique(c),unique(e))"
 SHUTDOWN
 "EOF
 
@@ -241,9 +243,6 @@ c2 INT,
 c3 INT GENERATED ALWAYS AS (c1 + c2),
 CONSTRAINT ck CHECK (c3 > 10)
 )"
-"CREATE TABLE t1(f1 INT CHECK (f1 < 10), f2 INT, CHECK (f2 < 10),
-CONSTRAINT min CHECK (f1 + f2 > 10),
-CONSTRAINT max CHECK (f1 + f2 < 929))"
 "CREATE TABLE t2 LIKE t1"
 "CREATE TEMPORARY TABLE tmp_t2 LIKE t2"
 "CREATE TABLE t3 LIKE tmp_t2"
@@ -290,6 +289,9 @@ c11 CHAR(6) CHECK (c11 IS NULL))"
 "CREATE TABLE t4(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
 "CREATE TABLE t5(a INTEGER CHECK (a > 0) NOT ENFORCED NOT NULL)"
 "CREATE TABLE t7(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
+"CREATE TABLE t1 (f1 INT PRIMARY KEY,
+f2 TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+CHECK (f2 < '2018-01-01 00:00:00'))"
 "CREATE TRIGGER t1_before_insert_trg BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 IF NEW.f1 = 1 THEN
@@ -395,6 +397,7 @@ ALTER TABLE t1 ALTER CONSTRAINT constraint_name NOT ENFORCED"
 "create temporary table t3 like mysqltest.t3"
 "create table t2 like t3"
 "create temporary table t3 like t1"
+"create table t1 (a tinyint, b smallint, c mediumint, d int, e bigint, f float(3,2), g double(4,3), h decimal(5,4), i year, j date, k timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, l datetime, m enum('a','b'), n set('a','b'), o char(10))"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1))"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1) USING HASH) ENGINE=MEMORY"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING HASH (c1) USING BTREE) ENGINE=MEMORY"
@@ -433,6 +436,7 @@ declare res int"
 create table t1 as select 1"
 "create table t1 like information_schema.processlist"
 "create temporary table t1 like information_schema.processlist"
+"CREATE TABLE t1(c1 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c2 TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00')"
 "CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
@@ -480,15 +484,6 @@ CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 "SELECT 1 as �, 2 as �, 3 as �, 4 as �, 5 as �, 6 as �, 7 as �, 8 as �"
 "INSERT INTO abc�def VALUES (2)"
 "SELECT * FROM abc�def"
-"CREATE VIEW v1 AS
-SELECT id, 'a' AS name, a AS val FROM t1
-UNION
-SELECT id, 'mn', HEX(LIKE_RANGE_MIN(a, 16)) AS min FROM t1
-UNION
-SELECT id, 'mx', HEX(LIKE_RANGE_MAX(a, 16)) AS max FROM t1
-UNION
-SELECT id, 'sp', REPEAT('-', 32) AS sep FROM t1
-ORDER BY id, name"
 "DROP TABLE IF EXISTS �������, t1, t2"
 "CREATE TABLE `�������`
 (
@@ -967,6 +962,7 @@ COLLATION(_koi8r    '�����') AS c4,
 @@character_set_client AS c6;
 END"
 "CREATE TABLE t3 LIKE t1"
+"ALTER TABLE t1 ADD COLUMN d TIMESTAMP DEFAULT (TIMESTAMPADD(MINUTE, 10,'2003-01-03')) ON UPDATE CURRENT_TIMESTAMP"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (sha2(i, 0)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
 d2 DOUBLE DEFAULT 0.0, c2 CHAR(255),
@@ -985,13 +981,14 @@ ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED,
 ADD COLUMN d INT DEFAULT (c),
 ADD COLUMN e INT GENERATED ALWAYS AS (-d) STORED,
 ALGORITHM=COPY"
+"CREATE TABLE t1 (created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
 "CREATE TABLE t (a INT,
 b INT,
 c INT DEFAULT 77,
 d INT GENERATED ALWAYS AS (DEFAULT(c)))"
 "CREATE TABLE t (a INT,
 b INT GENERATED ALWAYS AS (a*5))"
-"DROP PROCEDURE IF EXISTS count"
+"CREATE TABLE t1 (i int,a TIMESTAMP DEFAULT CURRENT_TIMESTAMP, b JSON DEFAULT (JSON_OBJECT(""key"", i)))"
 "CREATE TRIGGER tr1 AFTER DELETE ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 SELECT * FROM t1 AS A"
@@ -1010,7 +1007,6 @@ perl
 "print ""Deprecation warning count : $count_warnings\n"""
 "select * from (select * from t1 intersect all select * from t1 order by a,b limit 2) a"
 "select * from (select * from t1 except all select * from t1 limit 2) a"
-"SELECT MIN(price) min, MAX(price) max, AVG(price) avg FROM (SELECT SUBSTRING( MAX(concat(date_,"";"",price)), 12) price FROM t1 WHERE itemid=128 AND  grpid='rozn' GROUP BY itemid, grpid, vendor) lastprices"
 "SELECT  table1.col_date_key AS field1
 FROM
 C AS table1
@@ -1165,46 +1161,6 @@ SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
 "SHOW CREATE EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP EVENT очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "CREATE EVENT café ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
-"CREATE TABLE t1 (count INT, unix_time INT, local_time INT, comment CHAR(80))"
-"CREATE TABLE t2 (count INT)"
-"CREATE FUNCTION f1(comment CHAR(80)) RETURNS INT
-BEGIN
-DECLARE orig_tz CHAR(64);
-DECLARE unix_time INT;
-DECLARE local_now DATETIME;
-DECLARE utc_now DATETIME;
-DECLARE local_time INT;
-
-SET unix_time= UNIX_TIMESTAMP();
-SET local_now= FROM_UNIXTIME(unix_time);
-SET orig_tz= @@TIME_ZONE;
-SET TIME_ZONE = '+00:00';
-SET utc_now= FROM_UNIXTIME(unix_time);
-SET TIME_ZONE= orig_tz;
-SET local_time = unix_time + TIMESTAMPDIFF(SECOND, utc_now, local_now);
-
-SET unix_time= round_to_step(unix_time, 6);
-SET local_time= round_to_step(local_time, 6);
-
-INSERT INTO t1 VALUES ((SELECT count FROM t2),
-unix_time, local_time, comment);
-RETURN 0;
-END"
-"UPDATE t2 SET count= count + 1"
-"SELECT * FROM t1 ORDER BY count, comment"
-"SET @now= UNIX_TIMESTAMP()"
-"SET @offset_month_01= UNIX_TIMESTAMP('2030-01-31 12:00:00') - @now"
-"SET @offset_month_02= UNIX_TIMESTAMP('2030-02-28 12:00:00') - @now - 5*@step"
-"SET @offset_month_03= UNIX_TIMESTAMP('2030-03-31 12:00:00') - @now - 5*@step"
-"SET @offset_month_04= UNIX_TIMESTAMP('2030-04-30 12:00:00') - @now - 13*@step"
-"INSERT INTO mysql.time_zone_transition
-VALUES (@tzid, @now, 0)"
-"INSERT INTO mysql.time_zone_transition
-VALUES (@tzid, @now + 3 * @step, 1)"
-"INSERT INTO mysql.time_zone_transition
-VALUES (@tzid, @now + 7 * @step, 2)"
-"INSERT INTO mysql.time_zone_transition
-VALUES (@tzid, @now + 12 * @step, 3)"
 disable_result_log
 enable_query_log
 "create table ��� (���0 int, ���1 int, key ���0 (���0), key ���01 (���0,���1))"
@@ -1383,7 +1339,6 @@ FROM (SELECT ADDDATE(TIME'00:00:00', INTERVAL 1 DAY) AS ts) AS dt"
 "SELECT ADDDATE(TIME'00:00:00', INTERVAL 1 HOUR)"
 "DROP TABLE åäö, 日本語,  𩸽"
 "select sum(all a),count(all a),avg(all a),std(all a),variance(all a),bit_or(all a),bit_and(all a),min(all a),max(all a),min(all c),max(all c) from t1"
-"select grp, sum(a)+count(a)+avg(a)+std(a)+variance(a)+bit_or(a)+bit_and(a)+min(a)+max(a)+min(c)+max(c) as sum from t1 group by grp"
 "insert into t1 values('AME',0,'SEA',0.100,date'1942-02-19')"
 "insert into t1 values('HBR',1,'SEA',0.085,date'1948-03-05')"
 "insert into t1 values('BOT',2,'SEA',0.085,date'1951-11-29')"
@@ -1400,17 +1355,6 @@ FROM (SELECT ADDDATE(TIME'00:00:00', INTERVAL 1 DAY) AS ts) AS dt"
 select max(a5) from t1 where a5 < date'1970-01-01'"
 "select max(a5) from t1 where a5 < date'1970-01-01'"
 "SELECT a,AVG(DISTINCT b) AS average FROM t1 GROUP BY a HAVING average > 50"
-"SELECT MAX(pk) as max, i
-FROM t1
-ORDER BY max"
-"EXPLAIN
-SELECT MAX(pk) as max, i
-FROM t1
-ORDER BY max"
-"SELECT MAX(pk) as max, i
-FROM t1
-WHERE pk<2
-ORDER BY max"
 "SELECT AVG(DISTINCT col_int_nokey) FROM t1"
 "SELECT AVG(DISTINCT outr.col_int_nokey) FROM t1 AS outr LEFT JOIN t1 AS outr2 ON
 outr.col_int_nokey = outr2.col_int_nokey"
@@ -1821,19 +1765,6 @@ shores MULTIPOLYGON)"
 fid INTEGER NOT NULL PRIMARY KEY,
 name CHARACTER VARYING(64),
 boundary POLYGON)"
-"SELECT ST_X(position)
-FROM bridges
-WHERE name = 'Cam Bridge'"
-"SELECT ST_Y(position)
-FROM bridges
-WHERE name = 'Cam Bridge'"
-"SELECT ST_Distance(position, boundary)
-FROM bridges, named_places
-WHERE bridges.name = 'Cam Bridge'
-AND named_places.name = 'Ashton'"
-"SELECT count(*)
-FROM buildings, bridges
-WHERE ST_Contains(ST_Buffer(bridges.position, 15.0), buildings.footprint) = 1"
 "ALTER TABLE t1 ALGORITHM=COPY, MODIFY COLUMN b GEOMETRY NOT NULL"
 "CREATE TABLE t1 (g GEOMCOLLECTION)"
 "revoke all privileges on mysqltest.* from mysqltest_1@localhost"
@@ -1963,23 +1894,6 @@ enable_connect_log
 "REVOKE ALL PRIVILEGES ON t1 FROM wl14303@localhost"
 disable_connect_log
 "SHOW GRANTS FOR CURRENT_USER USING flusher"
-"CREATE EVENT wl15874_ev1
-ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
-DO SET @sum = @sum + 1"
-"CREATE DEFINER=wl15874_2@localhost TRIGGER t1_trg1 AFTER INSERT ON t1 FOR EACH ROW SET @sum = @sum + 1"
-"CREATE DEFINER=wl15874_2@localhost EVENT wl15874_ev1
-ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
-DO SET @sum = @sum + 1"
-"ALTER DEFINER=wl15874_2@localhost EVENT wl15874_ev1
-ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
-DO SET @sum = @sum + 2"
-"CREATE DEFINER=wl15874_na@localhost TRIGGER t1_trg1 AFTER INSERT ON t1 FOR EACH ROW SET @sum = @sum + 1"
-"CREATE DEFINER=wl15874_na@localhost EVENT wl15874_ev1
-ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
-DO SET @sum = @sum + 1"
-"ALTER DEFINER=wl15874_na@localhost EVENT wl15874_ev1
-ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 HOUR
-DO SET @sum = @sum + 2"
 "REVOKE ALL PRIVILEGES ON privtest_db.t1 FROM 'privtest'@'localhost'"
 "REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_user1"
 "REVOKE IF EXISTS CREATE, SELECT ON rngp_db.* FROM rngp_user1"
@@ -2458,29 +2372,6 @@ de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
 "ALTER TABLE t1 SECONDARY_ENGINE=myisam"
 "SET @table = 't1'"
 "EXECUTE ps1 USING @expected, @db, @table"
-"create procedure p1(out sum int)
-begin
-declare n int default 0;
-declare c cursor for select * from t1;
-declare exit handler for not found
-begin
-close c;
-set sum = n;
-end;
-
-open c;
-loop
-begin
-declare x int;
-
-fetch c into x;
-if x > 3 then
-set n = n + x;
-end if;
-end;
-end loop;
-end"
-"select @sum"
 "my $passwd_file= $ENV{'PASSWD_FILE'} or die"
 "my $FILE"
 "print ""password found\n"""
@@ -2533,6 +2424,7 @@ INSERT INTO t1 (id) SELECT id FROM t1"
 INSERT INTO t1 (id) SELECT id FROM t1"
 "/* 24 */
 INSERT INTO t1 SELECT id+1 FROM t1"
+"create table t1 (a int not null auto_increment, primary key (a), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c char(10) default ""hello"", i int)"
 "CREATE TABLE t1(a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
 c INT GENERATED ALWAYS AS (-a) STORED)"
@@ -2572,18 +2464,15 @@ ad INTEGER
 )"
 "INSERT INTO t1 (Ñ, N) VALUES (1, 2)"
 "CREATE TABLE t1 (f1 INTEGER, b INTEGER AS ((1)) INVISIBLE, KEY k1(b))"
-"CREATE TABLE t1(
-Month date NOT NULL,
-Type tinyint(3) unsigned NOT NULL auto_increment,
-Field int(10) unsigned NOT NULL,
-Count int(10) unsigned NOT NULL,
-UNIQUE KEY Month (Month,Type,Field)
-)engine=myisam"
-"Select null, Field, Count From t1 Where Month=20030901 and Type=2"
-"create table t2(No int not null, Field int not null, Count int not null)"
-"insert into t2 Select null, Field, Count From t1 Where Month=20030901 and Type=2"
 enable_info
 disable_info
+"CREATE TABLE `t1` (
+`id` int(11) PRIMARY KEY auto_increment,
+`f1` varchar(10) NOT NULL UNIQUE,
+tim1 timestamp default '2003-01-01 00:00:00' on update current_timestamp
+)"
+"create table t1(f1 int primary key,
+f2 timestamp NOT NULL default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP)"
 "CREATE TABLE t1(f1 INT INVISIBLE, f2 INT)"
 "CREATE TABLE t1 (f1 INT, f2 INT PRIMARY KEY INVISIBLE)"
 "CREATE TABLE t2 (f1 INT PRIMARY KEY INVISIBLE, f2 INT,
@@ -2615,22 +2504,6 @@ PARTITIONS 4"
 "CREATE TABLE t1 (f1 INT PRIMARY KEY INVISIBLE, f2 INT UNIQUE INVISIBLE,
 f3 INT, FOREIGN KEY (f2) REFERENCES t1(f1))"
 "CREATE TABLE t1 ( a INT GENERATED ALWAYS AS (1), KEY (a) INVISIBLE )"
-"CREATE TABLE t1 (
-id int(11) NOT NULL auto_increment,
-token varchar(100) DEFAULT '' NOT NULL,
-count int(11) DEFAULT '0' NOT NULL,
-qty int(11),
-phone char(1) DEFAULT '' NOT NULL,
-timestamp datetime DEFAULT '0000-00-00 00:00:00' NOT NULL,
-PRIMARY KEY (id),
-KEY token (token(15)),
-KEY timestamp (timestamp),
-UNIQUE token_2 (token(75),count,phone)
-)"
-"select a.id, b.category as catid, b.state as stateid, b.county as countyid from t1 a, t2 b ignore index (primary) where (a.token ='a71250b7ed780f6ef3185bfffe027983') and (a.count = b.id)"
-"select a.id, b.category as catid, b.state as stateid, b.county as
-countyid from t1 a, t2 b where (a.token =
-'a71250b7ed780f6ef3185bfffe027983') and (a.count = b.id) order by a.id"
 "SELECT *
 FROM t1
 NATURAL JOIN (
@@ -2660,41 +2533,19 @@ WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 "create table t6 like t5"
 "create table t7 like t6"
 "create table t3 like t2"
-"CREATE TABLE t2 (
-id INT unsigned NOT NULL DEFAULT 0,
-usr2_id INT unsigned NOT NULL DEFAULT 0,
-max INT unsigned NOT NULL DEFAULT 0,
-c_amount INT unsigned NOT NULL DEFAULT 0,
-d_max INT unsigned NOT NULL DEFAULT 0,
-d_num INT unsigned NOT NULL DEFAULT 0,
-orig_time INT unsigned NOT NULL DEFAULT 0,
-c_time INT unsigned NOT NULL DEFAULT 0,
-active ENUM (""no"",""yes"") NOT NULL,
-PRIMARY KEY (id,usr2_id),
-INDEX id_idx (id),
-INDEX usr2_idx (usr2_id)
-)"
-"SELECT t1.usr_id,t1.uniq_id,t1.increment,
-t2.usr2_id,t2.c_amount,t2.max
-FROM t1
-LEFT JOIN t2 ON t2.id = t1.uniq_id
-WHERE t1.uniq_id = 4
-ORDER BY t2.c_amount"
-"SELECT t1.usr_id,t1.uniq_id,t1.increment,
-t2.usr2_id,t2.c_amount,t2.max
-FROM t2
-RIGHT JOIN t1 ON t2.id = t1.uniq_id
-WHERE t1.uniq_id = 4
-ORDER BY t2.c_amount"
-"SELECT t1.usr_id,t1.uniq_id,t1.increment,t2.usr2_id,t2.c_amount,t2.max FROM t1 LEFT JOIN t2 ON t2.id = t1.uniq_id WHERE t1.uniq_id = 4 ORDER BY t2.c_amount"
-"SELECT t1.usr_id,t1.uniq_id,t1.increment,t2.usr2_id,t2.c_amount,t2.max FROM t1 LEFT JOIN t2 ON t2.id = t1.uniq_id WHERE t1.uniq_id = 4 GROUP BY t2.c_amount"
-"SELECT t1.usr_id,t1.uniq_id,t1.increment,t2.usr2_id,t2.c_amount,t2.max FROM t1 LEFT JOIN t2 ON t2.id = t1.uniq_id WHERE t1.uniq_id = 4"
-"create table t2 ( count int, color varchar(20) )"
-"select t2.count, t1.name from t2 natural join t1"
-"select t2.count, t1.name from t2 inner join t1 using (color)"
-"SELECT t1.pcode, IF(ISNULL(t2.pcode), 0, COUNT(*)) AS count FROM t1
-LEFT JOIN t2 ON t1.pcode = t2.pcode GROUP BY t1.pcode"
-"SELECT SQL_BIG_RESULT t1.pcode, IF(ISNULL(t2.pcode), 0, COUNT(*)) AS count FROM t1 LEFT JOIN t2 ON t1.pcode = t2.pcode GROUP BY t1.pcode"
+"create table t1 (
+c1 int,
+c2 char(12),
+c3 varchar(123),
+c4 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+index (c1),
+index i1 (c1),
+index i2 (c2),
+index i3 (c3),
+unique i4 (c4),
+index i5 (c1, c2, c3, c4),
+primary key (c2, c3),
+index (c2, c4)) charset utf8mb4"
 "create table ti (k int, index using btree (k)) charset utf8mb4 engine=innodb"
 "create table th (k int, index using btree (k)) charset utf8mb4 engine=heap"
 "alter table ti add column l int, add index using btree (l)"
@@ -2733,6 +2584,7 @@ connect
 into table t1 fields terminated by ',' ignore 2 lines"
 "load data infile '../../std_data/loaddata1.dat' in primary key order
 into table t1 fields terminated by ',' ignore 2 lines"
+"create table t1(f1 int, f2 timestamp not null default current_timestamp)"
 "EVAL SELECT 0xE1C330 INTO OUTFILE 't1.dat'"
 "CREATE TABLE t1 (
 json_col JSON , KEY json_col ((CAST(json_col -> '$' AS UNSIGNED ARRAY)))
@@ -2847,6 +2699,28 @@ print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'}
 "create table slow_log_new like slow_log"
 "FLUSH TABLE mysql.general_log"
 "FLUSH TABLE mysql.slow_log"
+"CREATE TABLE `db_17876.slow_log_data` (
+`start_time` timestamp  default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP,
+`user_host` mediumtext ,
+`query_time` time ,
+`lock_time` time ,
+`rows_sent` int(11) ,
+`rows_examined` int(11) ,
+`db` varchar(512) default NULL,
+`last_insert_id` int(11) default NULL,
+`insert_id` int(11) default NULL,
+`server_id` int(11) default NULL,
+`sql_text` mediumblob,
+`thread_id` bigint(21) unsigned not NULL
+)"
+"CREATE TABLE `db_17876.general_log_data` (
+`event_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`user_host` mediumtext,
+`thread_id` bigint(21) unsigned not NULL,
+`server_id` int(11) DEFAULT NULL,
+`command_type` varchar(64) DEFAULT NULL,
+`argument` mediumblob
+)"
 "set @lparam = ""000 001 002 003 004 005 006 007 008 009""
 ""010 011 012 013 014 015 016 017 018 019""
 ""020 021 022 023 024 025 026 027 028 029""
@@ -2947,9 +2821,6 @@ print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'}
 ""970 971 972 973 974 975 976 977 978 979""
 ""980 981 982 983 984 985 986 987 988 989""
 ""990 991 992 993 994 995 996 997 998 999"""
-"CREATE TABLE log_count (count BIGINT(21))"
-"INSERT INTO log_count (count) VALUES ((SELECT count(*) FROM mysql.slow_log))"
-"INSERT INTO log_count (count) VALUES ((SELECT count(*) FROM mysql.general_log))"
 "$conn_id= $ENV{'CONN_ID'}"
 "print ""Contents of log file:\n"""
 "seek(FILE, 0, 0)"
@@ -3027,11 +2898,55 @@ WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts1'"
 "LET $wait_condition=
 SELECT COUNT(*) = 1 FROM performance_schema.metadata_locks
 WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
+"CREATE TABLE t2( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP )"
 "CREATE TABLE m1 LIKE t1"
 "CREATE TABLE m1(a INT) ENGINE=MERGE UNION=()"
 "ALTER TABLE m1 UNION=()"
 "CREATE TABLE t4 LIKE t3"
 "CREATE TEMPORARY TABLE t4 LIKE t3"
+"create table t1(
+bool_col bool,
+boolean_col boolean,
+bit_col bit(5),
+tiny tinyint,
+tiny_uns tinyint unsigned,
+small smallint,
+small_uns smallint unsigned,
+medium mediumint,
+medium_uns mediumint unsigned,
+int_col int,
+int_col_uns int unsigned,
+big bigint,
+big_uns bigint unsigned,
+decimal_col decimal(10,5),
+numeric_col numeric(10),
+fixed_col fixed(10),
+dec_col dec(10),
+decimal_col_uns decimal(10,5) unsigned,
+fcol float,
+fcol_uns float unsigned,
+dcol double,
+double_precision_col double precision,
+dcol_uns double unsigned,
+date_col date,
+time_col time,
+timestamp_col timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+year_col year,
+datetime_col datetime,
+char_col char(5),
+varchar_col varchar(10),
+binary_col binary(10),
+varbinary_col varbinary(10),
+tinyblob_col tinyblob,
+blob_col blob,
+mediumblob_col mediumblob,
+longblob_col longblob,
+text_col text,
+mediumtext_col mediumtext,
+longtext_col longtext,
+enum_col enum(""A"",""B"",""C""),
+set_col set(""F"",""E"",""D"")
+)"
 "CALL mtr.add_suppression(""REVOKE/GRANT failed while storing table level ""
 ""and column level grants in the privilege ""
 ""tables. An incident event has been written to ""
@@ -3040,6 +2955,8 @@ WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
 ""privileges in databases. An incident event ""
 ""has been written to the binary log which ""
 ""will stop the slaves."")"
+"create table t1 (n int(10) not null primary key, d int(10), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"create table t2 (n int(10) not null primary key, d int(10), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "SET @before:= (SELECT MAX_DATA_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='t1' AND TABLE_SCHEMA='test')"
 "SELECT @before=@after"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=MyISAM"
@@ -3047,7 +2964,6 @@ WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
 "SEND INSERT INTO t1(id) SELECT id  FROM t2"
 "CONNECTION insertConn"
 "DISCONNECT insertConn"
-"CREATE TABLE t1(id int, name varchar(255), description varchar(255), count int, primary key(id)) ENGINE=myisam"
 "FLUSH TABLE mysql_db1.t1"
 "print FILE ""select\n"""
 "print FILE ""'a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a',\n"" x 3400"
@@ -3193,11 +3109,26 @@ print $line"
 `e``f` INT,
 PRIMARY KEY (`a b`, `c""d`, `e``f`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1"
+"create table t1 (`d` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, unique (`d`))"
 "/*!50003 CREATE FUNCTION `f`() RETURNS bigint(20)
 return 42 */"
 "/*!50003 CREATE PROCEDURE `p`()
 select 42 */"
 "revoke all privileges on mysqldump_myDB.* from myDB_User@localhost"
+"CREATE TABLE t1 (
+a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+b TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+c TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00' ON UPDATE CURRENT_TIMESTAMP,
+d TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+e TIMESTAMP NULL,
+f TIMESTAMP NOT NULL DEFAULT '2010-05-26 12:34:56',
+g DATETIME,
+h DATETIME DEFAULT CURRENT_TIMESTAMP,
+i DATETIME ON UPDATE CURRENT_TIMESTAMP,
+j DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+k DATETIME NULL,
+l DATETIME DEFAULT '2010-05-26 12:34:56'
+)"
 "CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
 sum INTEGER GENERATED ALWAYS AS (a+b),
 sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
@@ -3220,8 +3151,6 @@ PRIMARY KEY(my_row_id))"
 "CREATE DEFINER=view_u2@my.oracle.com VIEW v4 AS SELECT * FROM t1"
 "CREATE DEFINER=event_u2@192.1.1.140 EVENT e3 ON SCHEDULE AT '2037-01-01 00:00:00' DISABLE DO SET @a = 5"
 "CREATE DEFINER=event_u2@192.1.1.140 EVENT e4 ON SCHEDULE AT '2037-01-01 00:00:00' DISABLE DO SET @a = 5"
-"CREATE DEFINER=trig_u1 TRIGGER trig1 BEFORE INSERT ON t1 FOR EACH ROW SET @sum = 1"
-"CREATE DEFINER=trig_u1 TRIGGER trig2 BEFORE INSERT ON t1 FOR EACH ROW SET @sum = 1"
 "CREATE DEFINER=trig_u2@xyz.com TRIGGER trig3 BEFORE INSERT ON t1 FOR EACH ROW SET @sum = 1"
 "CREATE DEFINER=trig_u2@xyz.com TRIGGER trig4 BEFORE INSERT ON t1 FOR EACH ROW SET @sum = 1"
 "DROP USER view_u1, view_u2@my.oracle.com, event_u1, event_u2@192.1.1.140, trig_u1, trig_u2@xyz.com,
@@ -3256,23 +3185,13 @@ DROP TABLE b34999015_db.`KEY`"
 "REVOKE ALL PRIVILEGES ON *.* FROM user1"
 "CREATE TEMPORARY TABLE Temp3 LIKE Temp2"
 "CREATE TEMPORARY TABLE tt1 LIKE performance_schema.setup_consumers"
-"SELECT a, b, a AS c, COUNT(*) AS count FROM t1 GROUP BY a, b, c WITH ROLLUP"
 "SELECT 1 WHERE 1 =
 ANY (SELECT GROUPING(a) FROM t1 GROUP BY a WITH ROLLUP)"
-"SELECT IF(GROUPING(a)=1,'All Departments', a) as Department,
-IF(GROUPING(b)=1, 'All Employees', b) as Employees,
-SUM(c) as SUM
-FROM t1 GROUP BY a,b WITH ROLLUP"
 "SELECT a, b, a + COALESCE(b, 0), AVG(b) OVER () FROM t1 GROUP BY a, b WITH ROLLUP"
-"SELECT i, sum FROM (SELECT i, SUM(j) AS 'sum' FROM t1 GROUP BY i WITH ROLLUP
-ORDER BY i) AS tmp WHERE i is NULL"
-"SELECT i, j, i AS k, COUNT(*) AS count FROM t1 GROUP BY i, j, k WITH ROLLUP"
 "EXPLAIN FORMAT=tree SELECT i, j, i+j, AVG(j) over () from t1 GROUP BY i,j
 WITH ROLLUP HAVING i+j is NULL ORDER BY i"
 "SELECT i, j, i+j, AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
 HAVING i+j is NULL ORDER BY i"
-"SELECT i, j, i AS k, COUNT(*) AS count FROM t1 GROUP BY i, j, k WITH ROLLUP
-ORDER BY GROUPING(i),i, GROUPING(j),j, GROUPING(k),k"
 "SELECT i, j, i+j, AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
 HAVING i+j is NULL ORDER BY GROUPING(i)"
 "SELECT i, j, i+j, AVG(j), AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
@@ -3295,60 +3214,6 @@ PRIMARY KEY(id)) SECONDARY_ENGINE MOCK"
 "INSERT INTO t VALUES(1, x'4142434445464748494a414243444546', 'WRITEBACK',
 0, TIMESTAMP'2020-01-01 00:00:00.000000', NULL)"
 "revoke all privileges on *.* from user_1@localhost"
-"create table BIT_AND (a int)"
-"drop table BIT_AND"
-"create table BIT_OR (a int)"
-"drop table BIT_OR"
-"create table BIT_XOR (a int)"
-"drop table BIT_XOR"
-"create table CAST (a int)"
-"drop table CAST"
-"create table COUNT (a int)"
-"drop table COUNT"
-"create table CURDATE (a int)"
-"drop table CURDATE"
-"create table CURTIME (a int)"
-"drop table CURTIME"
-"create table DATE_ADD (a int)"
-"drop table DATE_ADD"
-"create table DATE_SUB (a int)"
-"drop table DATE_SUB"
-"create table EXTRACT (a int)"
-"drop table EXTRACT"
-"create table GROUP_CONCAT (a int)"
-"drop table GROUP_CONCAT"
-"create table MAX (a int)"
-"drop table MAX"
-"create table MIN (a int)"
-"drop table MIN"
-"create table NOW (a int)"
-"drop table NOW"
-"create table POSITION (a int)"
-"drop table POSITION"
-"create table STD (a int)"
-"drop table STD"
-"create table STDDEV (a int)"
-"drop table STDDEV"
-"create table STDDEV_POP (a int)"
-"drop table STDDEV_POP"
-"create table STDDEV_SAMP (a int)"
-"drop table STDDEV_SAMP"
-"create table SUBSTR (a int)"
-"drop table SUBSTR"
-"create table SUBSTRING (a int)"
-"drop table SUBSTRING"
-"create table SUM (a int)"
-"drop table SUM"
-"create table SYSDATE (a int)"
-"drop table SYSDATE"
-"create table TRIM (a int)"
-"drop table TRIM"
-"create table VARIANCE (a int)"
-"drop table VARIANCE"
-"create table VAR_POP (a int)"
-"drop table VAR_POP"
-"create table VAR_SAMP (a int)"
-"drop table VAR_SAMP"
 "((SELECT 1 FROM t1 ORDER BY 1) ORDER BY 1) ORDER BY 1"
 "((SELECT 1 FROM t1 LIMIT 1) LIMIT 1) LIMIT 1"
 "( (SELECT 1 UNION SELECT 1 ) UNION SELECT 1 ) UNION SELECT 1"
@@ -3402,6 +3267,15 @@ ORDER BY c LIMIT 1"
 "(SELECT 3 AS c) ORDER BY c LIMIT 1 INTO @var"
 "SELECT cast( NULL AT TIME ZONE 'UTC' AS DATETIME )"
 "((SELECT * FROM t1 ORDER BY i) ORDER BY i) ORDER BY i"
+"CREATE TABLE t1 (
+a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+b varchar(10),
+PRIMARY KEY (a)
+)
+PARTITION BY RANGE (UNIX_TIMESTAMP(a)) (
+PARTITION p1 VALUES LESS THAN (1199134800),
+PARTITION pmax VALUES LESS THAN MAXVALUE
+)"
 "ALTER TABLE t1 DROP PARTITION p0"
 "abcd
 EOF
@@ -3446,6 +3320,9 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 AND t.c3 > TIMESTAMP'2011-04-26 19:18:44') "
 "ALTER TABLE t1 IMPORT TABLESPACE"
 "LET $MYSQL_DATA_DIR = `select @@datadir`"
+"CREATE TABLE t(id INT(11) UNSIGNED NOT NULL AUTO_INCREMENT, dttm DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, msg
+TEXT,PRIMARY KEY (id,dttm))ENGINE=INNODB DEFAULT CHARSET=UTF8MB4 ROW_FORMAT=DYNAMIC PARTITION BY RANGE
+COLUMNS(dttm) (PARTITION pf_201612 VALUES LESS THAN ('20170101') ENGINE = INNODB)"
 "CREATE TABLE `t``\"""e` (a INT, PRIMARY KEY (a))
 ENGINE=InnoDB
 PARTITION BY RANGE (a)
@@ -3469,6 +3346,36 @@ SEND
 "EVAL SET GLOBAL innodb_file_per_table=$innodb_file_per_table_orig"
 "EVAL SET SESSION innodb_strict_mode=$innodb_strict_mode_orig"
 "EVAL SET @@default_storage_engine=$old_default_storage_engine"
+"CREATE TABLE t3
+(a timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+b char(10),
+PRIMARY KEY (a))
+PARTITION BY HASH (UNIX_TIMESTAMP(a)) PARTITIONS 3"
+"CREATE TABLE t3
+(a timestamp DEFAULT 0 ON UPDATE CURRENT_TIMESTAMP,
+b char(10),
+PRIMARY KEY (a))
+PARTITION BY HASH (UNIX_TIMESTAMP(a)) PARTITIONS 3"
+"CREATE TABLE t3
+(a timestamp DEFAULT CURRENT_TIMESTAMP,
+b char(10),
+PRIMARY KEY (a))
+PARTITION BY HASH (UNIX_TIMESTAMP(a)) PARTITIONS 3"
+"CREATE TABLE t3
+(a DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+b char(10),
+PRIMARY KEY (a))
+PARTITION BY KEY (a) PARTITIONS 3"
+"CREATE TABLE t3
+(a DATETIME DEFAULT 0 ON UPDATE CURRENT_TIMESTAMP,
+b char(10),
+PRIMARY KEY (a))
+PARTITION BY KEY (a) PARTITIONS 3"
+"CREATE TABLE t3
+(a DATETIME DEFAULT CURRENT_TIMESTAMP,
+b char(10),
+PRIMARY KEY (a))
+PARTITION BY KEY (a) PARTITIONS 3"
 "DELETE FROM t1 PARTITION (p0)
 WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
 "EXPLAIN DELETE FROM t1 PARTITION (p0)
@@ -3480,23 +3387,6 @@ of multi-line
 comment */
 PARTITIONS 5 */"
 "ALTER TABLE t1 DROP PARTITION x1"
-"CREATE TABLE t1 (a INT PRIMARY KEY)
-PARTITION BY RANGE (a) (
-PARTITION p0 VALUES LESS THAN (1),
-PARTITION p1 VALUES LESS THAN (2),
-PARTITION p2 VALUES LESS THAN (3),
-PARTITION p3 VALUES LESS THAN (4),
-PARTITION p4 VALUES LESS THAN (5),
-PARTITION p5 VALUES LESS THAN (6),
-PARTITION max VALUES LESS THAN MAXVALUE)"
-"CREATE TABLE t1 (a INT PRIMARY KEY)
-PARTITION BY RANGE (a) (
-PARTITION p0 VALUES LESS THAN (1),
-PARTITION p1 VALUES LESS THAN (2),
-PARTITION p2 VALUES LESS THAN (3),
-PARTITION p3 VALUES LESS THAN (4),
-PARTITION p4 VALUES LESS THAN (5),
-PARTITION max VALUES LESS THAN MAXVALUE)"
 "create table t9 (a date not null) partition by RANGE(TO_DAYS(a)) (
 partition p0 values less than (732299), -- 2004-12-19
 partition p1 values less than (732468), -- 2005-06-06
@@ -3527,17 +3417,6 @@ DROP TABLE t1, t2, t3, t4, t5"
 "ALTER TABLE t1 DROP PARTITION p3"
 "ALTER TABLE t1 DROP PARTITION p1"
 "ALTER TABLE t1 DROP PARTITION p2"
-"CREATE TABLE t2 (
-defid int(10) unsigned NOT NULL,
-day int(10) unsigned NOT NULL,
-count int(10) unsigned NOT NULL,
-filler char(200),
-KEY (defid,day)
-)
-PARTITION BY RANGE (day) (
-PARTITION p7 VALUES LESS THAN (20070401) ,
-PARTITION p8 VALUES LESS THAN (20070501))"
-"select sum(count) from t2 ch where ch.defid in (50,52) and ch.day between 20070320 and 20070401 group by defid"
 "open(FILE, "">"", ""$ENV{MYSQL_TMP_DIR}/perror_syslocale.inc"") or die $!"
 "EOF
 
@@ -3620,6 +3499,19 @@ cast(rand(10)*@precision as unsigned integer) from t1"
 "set @like=""%NDAN%"""
 "execute stmt using @like"
 "set @like=""%ER"""
+"CREATE TABLE t1(
+ID int(10) unsigned NOT NULL auto_increment,
+Member_ID varchar(15) NOT NULL default '',
+Action varchar(12) NOT NULL,
+Action_Date datetime NOT NULL,
+Track varchar(15) default NULL,
+User varchar(12) default NULL,
+Date_Updated timestamp NOT NULL default CURRENT_TIMESTAMP on update
+CURRENT_TIMESTAMP,
+PRIMARY KEY (ID),
+KEY Action (Action),
+KEY Action_Date (Action_Date)
+)"
 "set @offset=0, @limit=1"
 "execute stmt using @offset, @limit"
 "set @offset=3, @limit=2"
@@ -3638,6 +3530,34 @@ cast(rand(10)*@precision as unsigned integer) from t1"
 "set @dec=6"
 "set @dec=2"
 "SET @empty = ''"
+"create table t9
+(
+c1  tinyint, c2  smallint, c3  mediumint, c4  int,
+c5  integer, c6  bigint, c7  float, c8  double,
+c9  double precision, c10 real, c11 decimal(7, 4), c12 numeric(8, 4),
+c13 date, c14 datetime, c15 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 time,
+c17 year, c18 tinyint, c19 bool, c20 char,
+c21 char(10), c22 varchar(30), c23 tinyblob, c24 tinytext,
+c25 blob, c26 text, c27 mediumblob, c28 mediumtext,
+c29 longblob, c30 longtext, c31 enum('one', 'two', 'three'),
+c32 set('monday', 'tuesday', 'wednesday'),
+primary key(c1)
+)  ENGINE = MERGE UNION=(t9_1,t9_2)
+INSERT_METHOD=FIRST"
+"create table t9
+(
+c1  tinyint, c2  smallint, c3  mediumint, c4  int,
+c5  integer, c6  bigint, c7  float, c8  double,
+c9  double precision, c10 real, c11 decimal(7, 4), c12 numeric(8, 4),
+c13 date, c14 datetime, c15 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 time,
+c17 year, c18 tinyint, c19 bool, c20 char,
+c21 char(10), c22 varchar(30), c23 tinyblob, c24 tinytext,
+c25 blob, c26 text, c27 mediumblob, c28 mediumtext,
+c29 longblob, c30 longtext, c31 enum('one', 'two', 'three'),
+c32 set('monday', 'tuesday', 'wednesday'),
+primary key(c1)
+)  ENGINE = MERGE UNION=(t9_1,t9_2)
+INSERT_METHOD=LAST"
 "revoke all privileges on mysqltest.t1 from second_user@localhost"
 "revoke all privileges on test.t1 from drop_user@localhost "
 "set @a= timestamp ""2001-01-02 10:11:12.345"""
@@ -3646,6 +3566,34 @@ cast(rand(10)*@precision as unsigned integer) from t1"
 "set @a= time ""01:02:00"""
 "set @a= timestamp ""2001-01-02 01:02:00"""
 "set @a= date ""2001-01-02"""
+"CREATE TABLE t9
+(
+c1  TINYINT, c2  SMALLINT, c3  MEDIUMINT, c4  INT,
+c5  INTEGER, c6  BIGINT, c7  FLOAT, c8  DOUBLE,
+c9  DOUBLE PRECISION, c10 REAL, c11 DECIMAL(7, 4), c12 NUMERIC(8, 4),
+c13 DATE, c14 DATETIME, c15 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 TIME,
+c17 YEAR, c18 TINYINT, c19 BOOL, c20 CHAR,
+c21 CHAR(10), c22 VARCHAR(30), c23 TINYBLOB, c24 TINYTEXT,
+c25 BLOB, c26 TEXT, c27 MEDIUMBLOB, c28 MEDIUMTEXT,
+c29 LONGBLOB, c30 LONGTEXT, c31 ENUM('one', 'two', 'three'),
+c32 SET('monday', 'tuesday', 'wednesday'),
+PRIMARY KEY(c1)
+)  ENGINE = MERGE UNION=(t9_1,t9_2)
+INSERT_METHOD=FIRST"
+"CREATE TABLE t9
+(
+c1  TINYINT, c2  SMALLINT, c3  MEDIUMINT, c4  INT,
+c5  INTEGER, c6  BIGINT, c7  FLOAT, c8  DOUBLE,
+c9  DOUBLE PRECISION, c10 REAL, c11 DECIMAL(7, 4), c12 NUMERIC(8, 4),
+c13 DATE, c14 DATETIME, c15 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 TIME,
+c17 YEAR, c18 TINYINT, c19 BOOL, c20 CHAR,
+c21 CHAR(10), c22 VARCHAR(30), c23 TINYBLOB, c24 TINYTEXT,
+c25 BLOB, c26 TEXT, c27 MEDIUMBLOB, c28 MEDIUMTEXT,
+c29 LONGBLOB, c30 LONGTEXT, c31 ENUM('one', 'two', 'three'),
+c32 SET('monday', 'tuesday', 'wednesday'),
+PRIMARY KEY(c1)
+)  ENGINE = MERGE UNION=(t9_1,t9_2)
+INSERT_METHOD=LAST"
 "SELECT a, b, c, ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b,c) AS rnk
 FROM t1 QUALIFY rnk>1"
 "SELECT a, b, c
@@ -3993,6 +3941,30 @@ COMMIT"
 "LET $MYSQL_TMP_DIR_LCASE= `SELECT lower('$MYSQL_TMP_DIR')`"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
+"create table t1 (
+type_bool bool not null default 0,
+type_tiny tinyint not null auto_increment primary key,
+type_short smallint(3),
+type_mediumint mediumint,
+type_bigint bigint,
+type_decimal decimal(5,2),
+type_numeric numeric(5,2),
+empty_char char(0),
+type_char char(2),
+type_varchar varchar(10),
+type_timestamp timestamp not null default current_timestamp on update current_timestamp,
+type_date date not null default '0000-00-00',
+type_time time not null default '00:00:00',
+type_datetime datetime not null default '0000-00-00 00:00:00',
+type_year year,
+type_enum enum ('red', 'green', 'blue'),
+type_set enum ('red', 'green', 'blue'),
+type_tinyblob tinyblob,
+type_blob blob,
+type_medium_blob mediumblob,
+type_long_blob longblob,
+index(type_short)
+) AVG_ROW_LENGTH=10 CHECKSUM=1 COMMENT=""test"" ENGINE=MYISAM MIN_ROWS=10 MAX_ROWS=100 PACK_KEYS=1 DELAY_KEY_WRITE=1 ROW_FORMAT=fixed CHARSET=latin1"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MyISAM"
@@ -5026,33 +4998,6 @@ SET @@global.slow_query_log_file=@save_sqlf"
 "CREATE FUNCTION очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e() RETURNS INT return 15081947"
 "SHOW CREATE FUNCTION очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
 "DROP FUNCTION очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_é"
-"create procedure code_sample(x int, out err int, out nulls int)
-begin
-declare count int default 0;
-
-set nulls = 0;
-begin
-declare c cursor for select name from t1;
-declare exit handler for not found close c;
-
-open c;
-loop
-begin
-declare n varchar(20);
-declare continue handler for sqlexception set err=1;
-
-fetch c into n;
-if isnull(n) then
-set nulls = nulls + 1;
-else
-set count = count + 1;
-update t2 set idx = count where name=n;
-end if;
-end;
-end loop;
-end;
-select t.name, t.idx from t2 t order by idx asc;
-end"
 "create procedure sudoku_solve(p_naive boolean, p_all boolean)
 deterministic
 modifies sql data
@@ -6114,6 +6059,19 @@ end */"
 begin
 alter database character set koi8r;
 end"
+"CREATE TABLE t4 (
+ID int(10) unsigned NOT NULL auto_increment,
+Member_ID varchar(15) NOT NULL default '',
+Action varchar(12) NOT NULL,
+Action_Date datetime NOT NULL,
+Track varchar(15) default NULL,
+User varchar(12) default NULL,
+Date_Updated timestamp NOT NULL default CURRENT_TIMESTAMP on update
+CURRENT_TIMESTAMP,
+PRIMARY KEY (ID),
+KEY Action (Action),
+KEY Action_Date (Action_Date)
+)"
 "drop function if exists test.database"
 "drop function if exists test.current_user"
 "select test.database(), test.database ()"
@@ -6158,13 +6116,6 @@ DECLARE a int;
 SELECT 1 INTO a;
 RETURN a;
 END "
-"create function f1(p1 integer, p2 integer)
-returns int
-begin
-declare count int;
-set count= (select count(*) from (select * from t1 limit p1, p2) t_1);
-return count;
-end"
 "create procedure 15298_1 () sql security definer show grants for current_user"
 "create procedure 15298_2 () sql security definer show grants"
 "call 15298_1()"
@@ -6187,46 +6138,6 @@ BEGIN
 CREATE TEMPORARY TABLE n1 AS (SELECT * FROM t1 LIMIT _limit_val OFFSET _offset_val);
 SELECT * FROM n1;
 END "
-"CREATE PROCEDURE proc_19194_codegen(
-IN proc_name VARCHAR(50),
-IN count INTEGER,
-IN simple INTEGER,
-OUT body MEDIUMTEXT)
-BEGIN
-DECLARE code MEDIUMTEXT;
-DECLARE i INT DEFAULT 1;
-
-SET code = concat(""CREATE PROCEDURE "", proc_name, ""(i INT)\n"");
-SET code = concat(code, ""BEGIN\n"");
-SET code = concat(code, ""  DECLARE str CHAR(10);\n"");
-
-IF (simple)
-THEN
-SET code = concat(code, ""  CASE i\n"");
-ELSE
-SET code = concat(code, ""  CASE\n"");
-END IF;
-
-WHILE (i <= count)
-DO
-IF (simple)
-THEN
-SET code = concat(code, ""    WHEN "", i, "" THEN SET str=\""", i, ""\";\n"");
-ELSE
-SET code = concat(code, ""    WHEN i="", i, "" THEN SET str=\""", i, ""\";\n"");
-END IF;
-
-SET i = i + 1;
-END WHILE;
-
-SET code = concat(code, ""    ELSE SET str=\"unknown\";\n"");
-SET code = concat(code, ""  END CASE;\n"");
-SET code = concat(code, ""  SELECT str;\n"");
-
-SET code = concat(code, ""END\n"");
-
-SET body = code;
-END"
 "create function bug23333()
 RETURNS int(11)
 DETERMINISTIC
@@ -6236,9 +6147,13 @@ insert into t1 values (null)"
 "end|
 
 reset binary logs and gtids"
+"create table t1
+(f1 integer auto_increment primary key,
+f2 timestamp not null default current_timestamp on update current_timestamp)"
 "LET $ID= `SELECT connection_id()`"
 "ALTER INSTANCE RELOAD TLS"
 "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
+"create table t1(a int, b timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "SELECT 1 FROM t1 AS table2 LEFT JOIN (SELECT 'c') AS table3(f1)
 ON table3.f1 = table2.f1 WHERE table2.f1
 IN (SELECT 1 FROM (SELECT 1314830897) AS t1(pk)
@@ -6294,16 +6209,6 @@ WHERE ( false ) AND
 ( t2.i  IN ( SELECT t1.i FROM t1
 WHERE t1.i <= SOME ( SELECT 8 UNION  SELECT 3 ) ) )"
 "SELECT SUM(pk) FROM t1 WHERE ( pk >= ANY ( SELECT MAX(1) FROM DUAL) )"
-"SELECT (SELECT MIN(f1) AS min FROM t1 ) AS field1 FROM t1 GROUP BY
-field1 WITH ROLLUP"
-"SELECT /*+ SET_VAR(optimizer_switch='subquery_to_derived=OFF') */
-(SELECT MAX(dt.f1) AS max FROM t1 AS dt
-WHERE dt.f2 = dt1.f2 AND dt.f3 > 'h' ) AS field1
-FROM (t1 AS dt1, t1 AS dt2) GROUP BY field1"
-"SELECT
-(SELECT MAX(dt.f1) AS max FROM t1 AS dt
-WHERE dt.f2 = dt1.f2 AND dt.f3 > 'h' ) AS field1
-FROM (t1 AS dt1, t1 AS dt2) GROUP BY field1"
 "SELECT AVG(DISTINCT id) FROM t1 GROUP BY id % 13"
 "SELECT * FROM t1 WHERE int_key IN ( SELECT AVG(DISTINCT pk) FROM t2 WHERE time_nokey = datetime_key )"
 "FLUSH TABLE schema1.t1"
@@ -6347,6 +6252,37 @@ AND TIMESTAMP'2014-01-05 01:01:01'"
 "CREATE USER user1@"
 "GRANT UPDATE (a) ON t1 TO user1@"
 "DROP USER user1@"
+"CREATE TABLE IF NOT EXISTS mysql.tables_priv ( Host char(60) binary DEFAULT '' NOT NULL,
+Db char(64) binary DEFAULT '' NOT NULL, User char(16) binary DEFAULT '' NOT NULL,
+Table_name char(64) binary DEFAULT '' NOT NULL, Grantor char(77) DEFAULT '' NOT NULL,
+Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+Table_priv set('Select','Insert','Update','Delete','Create','Drop','Grant','References',
+'Index','Alter','Create View','Show view','Trigger') COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL,
+Column_priv set('Select','Insert','Update','References') COLLATE utf8mb3_general_ci DEFAULT ''
+NOT NULL, PRIMARY KEY (Host,Db,User,Table_name), KEY Grantor (Grantor) )
+engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin   comment='Table privileges'"
+"CREATE TABLE IF NOT EXISTS mysql.columns_priv ( Host char(60) binary DEFAULT '' NOT NULL,
+Db char(64) binary DEFAULT '' NOT NULL, User char(16) binary DEFAULT '' NOT NULL,
+Table_name char(64) binary DEFAULT '' NOT NULL, Column_name char(64) binary DEFAULT '' NOT NULL,
+Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+Column_priv set('Select','Insert','Update','References') COLLATE utf8mb3_general_ci
+DEFAULT '' NOT NULL, PRIMARY KEY (Host,Db,User,Table_name,Column_name) )
+engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin   comment='Column privileges'"
+"CREATE TABLE IF NOT EXISTS mysql.procs_priv ( Host char(60) binary DEFAULT '' NOT NULL,
+Db char(64) binary DEFAULT '' NOT NULL, User char(16) binary DEFAULT '' NOT NULL,
+Routine_name char(64) COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL,
+Routine_type enum('FUNCTION','PROCEDURE') NOT NULL, Grantor char(77) DEFAULT '' NOT NULL,
+Proc_priv set('Execute','Alter Routine','Grant') COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL,
+Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (Host,Db,User,Routine_name,Routine_type), KEY Grantor (Grantor) )
+engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin   comment='Procedure privileges'"
+"CREATE TABLE IF NOT EXISTS mysql.proxies_priv (Host char(60) binary DEFAULT '' NOT NULL,
+User char(16) binary DEFAULT '' NOT NULL, Proxied_host char(60) binary DEFAULT '' NOT NULL,
+Proxied_user char(16) binary DEFAULT '' NOT NULL, With_grant BOOL DEFAULT 0 NOT NULL,
+Grantor char(77) DEFAULT '' NOT NULL, Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY Host (Host,User,Proxied_host,Proxied_user),
+KEY Grantor (Grantor) ) engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin
+comment='User proxy privileges'"
 "TYPE=TRIGGERNAME
 trigger_table=t1
 EOF
@@ -6409,16 +6345,14 @@ set @a:=1/0;
 end"
 "set @check=0, @t4_bi_called=0, @t4_bu_called=0"
 "select @check, @t4_bi_called, @t4_bu_called"
-"create table t1 (id int, count int)"
-"create trigger trg_bug28502_au before update on t2
-for each row
-begin
-if (new.id is not null) then
-update t1 set count= count + 1 where id = old.id;
-end if;
-end"
-"insert into t1 (id, count) values (1, 0)"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
+"CREATE TABLE t1( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP )"
+"CREATE TABLE t1( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+ON UPDATE NOW(), b INT DEFAULT 1 )"
+"CREATE TABLE t1( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+b INT DEFAULT 1 )"
+"CREATE TABLE t1( a DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+ON UPDATE CURRENT_TIMESTAMP, b INT)"
 "CREATE TRIGGER _AI_1 AFTER INSERT ON t1 FOR EACH ROW SET
 @t1_var=concat(@t1_var,'_AI_1')"
 "CREATE TRIGGER _AI_2 AFTER INSERT ON t1 FOR EACH ROW SET
@@ -6431,7 +6365,6 @@ end"
 @t1_var=concat(@t1_var,'_AI_0')"
 "CREATE TRIGGER _AI_3 AFTER INSERT ON t1 FOR EACH ROW FOLLOWS _AI_2 SET
 @t1_var=concat(@t1_var,'_AI_3')"
-"CREATE TRIGGER cafe BEFORE INSERT ON t1 FOR EACH ROW SET @sum= @sum + NEW.f1"
 "SHOW CREATE TRIGGER cAfé"
 "DROP TRIGGER CaFé"
 "CREATE TRIGGER очень_очень_очень_очень_очень_очень_очень_очень_длинная_строка_e
@@ -6522,6 +6455,8 @@ KEY _field_166 (_field_166)
 "SELECT * FROM t1 WHERE a NOT IN (DATE'2001-01-01',DATE'2002-02-02')"
 "SELECT * FROM t WHERE a = DATE'2023-01-01'"
 "SELECT * FROM t WHERE a = b and b = DATE'2023-01-01'"
+"CREATE TABLE t1 (a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b date, c time, d datetime)"
+"create table t1 (f1 date, f2 datetime, f3 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "INSERT INTO t1 VALUES
 (1, TIME'08:00:00', TIME'12:00:00', TIMESTAMP'2020-01-01 00:00:00'),
 (2, TIME'12:00:00', TIME'12:00:00', TIMESTAMP'2020-01-01 00:00:00'),
@@ -6542,6 +6477,44 @@ KEY _field_166 (_field_166)
 "SET @decimal= 1.1"
 "CREATE TABLE t1 SELECT @decimal AS c1"
 "SELECT AVG(DISTINCT a) FROM t1"
+"CREATE TABLE t1 (
+auto int(5) unsigned NOT NULL auto_increment,
+string char(10) default ""hello"",
+tiny tinyint(4) DEFAULT '0' NOT NULL ,
+short smallint(6) DEFAULT '1' NOT NULL ,
+medium mediumint(8) DEFAULT '0' NOT NULL,
+long_int int(11) DEFAULT '0' NOT NULL,
+longlong bigint(13) DEFAULT '0' NOT NULL,
+real_float float(13,1) DEFAULT 0.0 NOT NULL,
+real_double double(16,4),
+utiny tinyint(3) unsigned DEFAULT '0' NOT NULL,
+ushort smallint(5) unsigned zerofill DEFAULT '00000' NOT NULL,
+umedium mediumint(8) unsigned DEFAULT '0' NOT NULL,
+ulong int(11) unsigned DEFAULT '0' NOT NULL,
+ulonglong bigint(13) unsigned DEFAULT '0' NOT NULL,
+time_stamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+date_field date,
+time_field time,
+date_time datetime,
+blob_col blob,
+tinyblob_col tinyblob,
+mediumblob_col mediumblob  not null default '',
+longblob_col longblob  not null default '',
+options enum('one','two','tree') not null ,
+flags set('one','two','tree') not null default '',
+PRIMARY KEY (auto),
+KEY (utiny),
+KEY (tiny),
+KEY (short),
+KEY any_name (medium),
+KEY (longlong),
+KEY (real_float),
+KEY (ushort),
+KEY (umedium),
+KEY (ulong),
+KEY (ulonglong,ulong),
+KEY (options,flags)
+)"
 "INSERT INTO t1 VALUES (TIME'01:59:59.499999')"
 "INSERT INTO t1 VALUES (TIME'01:59:59.500000')"
 "INSERT INTO t1 VALUES (TIME'01:02:03.123')"
@@ -6776,6 +6749,19 @@ DELIMITER "
 
 CREATE TABLE t1 (a DATETIME(6))"
 "SELECT * FROM t1 WHERE a BETWEEN TIMESTAMP'2000-01-01 01:02:03.456' AND '2000-01-01 01:02:03.45678'"
+"CREATE TABLE t2 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1 (t0 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, t3 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00', t6 TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00')"
+"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000')"
+"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00')"
+"CREATE TABLE t1 (
+t0 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+t1 TIMESTAMP(1) NOT NULL DEFAULT '0000-00-00 00:00:00.0',
+t3 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00.0',
+t4 TIMESTAMP(4) NOT NULL DEFAULT '0000-00-00 00:00:00.0',
+t6 TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00.0')"
+"CREATE TABLE t1 (t0 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, t1 TIMESTAMP(1) NOT NULL DEFAULT '0000-00-00 00:00:00.0', t3 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00.0', t4 TIMESTAMP(4) NOT NULL DEFAULT '0000-00-00 00:00:00.0')"
+"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00', c DATE NOT NULL, d DATETIME(6))"
 "CREATE PROCEDURE p1 ()
 BEGIN
 DECLARE a TIMESTAMP(6)"
@@ -6831,7 +6817,40 @@ WHERE timestamp'2006-11-14 10:22:27.009969' IN (LEAST(a, MAKETIME(24,8,0)))"
 "SELECT * FROM t1 WHERE a NOT IN (TIME'20:20:20',TIME'10:10:10')"
 "SELECT * FROM t WHERE a = TIME'01:02:03'"
 "SELECT * FROM t WHERE a = b and b = TIME'01:02:03'"
+"CREATE TABLE t1 (a int, t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1 (value TEXT NOT NULL, id VARCHAR(32) NOT NULL, stamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (id))"
+"create table t1 (a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"create table t1 (ix timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1 (date date, date_time datetime, time_stamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"create table t1 (t1 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, t2 datetime, t3 timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')"
+"create table t1 (t1 timestamp not null default current_timestamp on update current_timestamp, t2 datetime)"
+"create table t1 (pk int primary key, t1 timestamp not null default current_timestamp on update current_timestamp, bulk int)"
+"create table t1 (pk int primary key, t1 timestamp not null default '2003-01-01 00:00:00' on update current_timestamp, bulk int)"
+"create table t1 (t1 timestamp not null default current_timestamp on update current_timestamp)"
+"create table t1 (a timestamp null default current_timestamp on update current_timestamp, b timestamp null)"
+"alter table t1 modify a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, modify b timestamp NOT NULL DEFAULT '0000-00-00 00:00:0'"
+"create table t1 (a char(2), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"create table t1 (a int auto_increment primary key, b int, c timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, KEY (a))"
+"CREATE TABLE t1(a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1 (
+`c1` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`c2` TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00'
+)"
 "SELECT TIMESTAMP'2000-01-27 23:13:41' - TIMESTAMP'2003-05-16 23:53:29'"
+"ALTER TABLE t1 ADD COLUMN (f6 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+"CREATE TABLE t1(
+dummy INT,
+i1_null_const INT NULL DEFAULT 42,
+t1_null_now TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+t1_null_const TIMESTAMP NULL DEFAULT '2001-01-01 03:03:03',
+i2_not_null_const INT NOT NULL DEFAULT 42,
+t2_not_null_now TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+t2_not_null_const TIMESTAMP NOT NULL DEFAULT '2001-01-01 03:03:03',
+i3_null INT NULL,
+t3_null TIMESTAMP NULL,
+i4_not_null INT NOT NULL,
+t4_not_null TIMESTAMP NOT NULL)"
 "INSERT INTO t1 VALUES (TIME'15:44:00')"
 "INSERT INTO t1 VALUES (TIME'25:00:00')"
 "INSERT INTO t1 VALUES(1901, DATE'1901-01-01', 1, 'one')"
@@ -6839,9 +6858,6 @@ WHERE timestamp'2006-11-14 10:22:27.009969' IN (LEAST(a, MAKETIME(24,8,0)))"
 "SELECT x FROM (SELECT NULL FROM t1 GROUP BY t1.c0) AS x(x)
 INTERSECT
 SELECT t0.c0 FROM t0"
-"create table t1(sum int, price float(24))"
-"select avgcost(sum, price) from t1"
-"select distinct avgcost(sum,price) from t1 order by avgcost(sum,price)"
 "EOF
 
 
@@ -7354,141 +7370,16 @@ FROM t WINDOW w AS (PARTITION BY i)
 ORDER BY LAST_VALUE(j) OVER w, NTH_VALUE(j,1) OVER (),
 ROW_NUMBER() OVER (PARTITION BY j)"
 "EXPLAIN FORMAT=tree SELECT a, SUM(c) OVER (ORDER BY b), AVG(c) OVER (ORDER BY a), SUM(c) OVER (PARTITION BY a) AS x FROM t1 ORDER BY b, x"
-"SELECT i, f, MIN(i) OVER w min, JSON_ARRAYAGG(i) OVER w jarray_i FROM t1
-WINDOW w AS (PARTITION BY f)"
-"SELECT i, f, MAX(i) OVER w max, JSON_ARRAYAGG(i) OVER w jarray_i FROM t1
-WINDOW w AS (PARTITION BY i ROWS UNBOUNDED PRECEDING)"
-"SELECT i, j, f, JSON_OBJECTAGG(i,j) OVER w jobject_i, MIN(i)
-OVER w min FROM t1 WINDOW w AS (PARTITION BY i)"
-"SELECT i, j, f, JSON_OBJECTAGG(j,f) OVER w jobject_j, MAX(i)
-OVER w max FROM t1 WINDOW w AS (PARTITION BY f ROWS UNBOUNDED PRECEDING)"
-"SELECT i, j, f, JSON_OBJECTAGG(i,j) OVER w jobject_i, MAX(i) OVER w max FROM t1
-WINDOW w AS (PARTITION BY f ROWS UNBOUNDED PRECEDING)"
-"SELECT i, j, MIN(i) OVER (ROWS UNBOUNDED PRECEDING) min,
-MAX(j) OVER (ROWS UNBOUNDED PRECEDING) max FROM t"
-"SELECT i, j, MIN(i) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) min,
-MAX(j) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) max FROM t"
-"SELECT i, j, MIN(i+j) OVER (ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY j"
-"SELECT i, j, MAX(i+j) OVER (ROWS UNBOUNDED PRECEDING) max FROM t ORDER BY j"
-"SELECT i, j, MIN(i+j) OVER (ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY j DESC"
-"SELECT i, j, MAX(i+j) OVER (ROWS UNBOUNDED PRECEDING) max FROM t ORDER BY j DESC"
-"SELECT i, j, MIN(i) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) min,
-MAX(j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) max FROM t"
-"SELECT i, j, MIN(j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) min,
-MAX(i) OVER (ORDER BY i ROWS UNBOUNDED PRECEDING) max FROM t ORDER BY j "
-"SELECT i, j, MIN(i+j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY j DESC"
-"SELECT i, j, MAX(i+j) OVER (ORDER BY j ROWS UNBOUNDED PRECEDING) max FROM t ORDER BY j DESC"
-"SELECT i, j, MIN(i+j) OVER (ORDER BY j DESC ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY j DESC"
-"SELECT i, j, MAX(i+j) OVER (ORDER BY j DESC ROWS UNBOUNDED PRECEDING) max FROM t ORDER BY j DESC"
-"SELECT i, j, MIN(i+j) OVER (ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY NULL DESC"
-"EXPLAIN FORMAT=JSON SELECT i, j, MIN(i+j) OVER (ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY NULL DESC"
-"SELECT i, j, MIN(i+j) OVER (ROWS UNBOUNDED PRECEDING) min FROM t ORDER BY j DESC LIMIT 3"
-"CREATE VIEW v AS
-SELECT i, j, MIN(i+j) OVER (ORDER BY j DESC ROWS UNBOUNDED PRECEDING) min,
-MAX(i+j) OVER (ORDER BY j DESC ROWS UNBOUNDED PRECEDING) max FROM t"
-"SELECT k, MIN(k) OVER (ROWS UNBOUNDED PRECEDING) min,
-MAX(k) OVER (ROWS UNBOUNDED PRECEDING) max FROM t"
-"SELECT k, GROUP_CONCAT(j ORDER BY j), MIN(k) OVER (ROWS UNBOUNDED PRECEDING) min,
-MAX(k) OVER (ROWS UNBOUNDED PRECEDING) max FROM t GROUP BY (k)"
 "SELECT k, AVG(DISTINCT j), MIN(k) OVER (ROWS UNBOUNDED PRECEDING) min,
 MAX(k) OVER (ROWS UNBOUNDED PRECEDING) max FROM t GROUP BY (k)"
-"SELECT k, GROUP_CONCAT(j ORDER BY j), MIN(k+1) OVER (ROWS UNBOUNDED PRECEDING) min FROM t GROUP BY (k)"
-"SELECT k, GROUP_CONCAT(j ORDER BY j), MAX(k+1) OVER (ROWS UNBOUNDED PRECEDING) max FROM t GROUP BY (k)"
-"SELECT k, GROUP_CONCAT(j ORDER BY j), MIN(k+1) OVER (ORDER BY k DESC ROWS UNBOUNDED PRECEDING) min FROM t GROUP BY (k)"
-"SELECT k, GROUP_CONCAT(j ORDER BY j), MAX(k+1) OVER (ORDER BY k DESC ROWS UNBOUNDED PRECEDING) max FROM t GROUP BY (k)"
-"SELECT sex, AVG(id), MIN(AVG(id)) OVER w min, MAX(AVG(id)) OVER w max FROM t1
-GROUP BY sex HAVING sex='M' OR sex='F' OR sex IS NULL
-WINDOW w AS (ROWS UNBOUNDED PRECEDING) ORDER BY sex DESC"
-"SELECT sex, AVG(id), MIN(AVG(id)) OVER w min, MAX(AVG(id)) OVER w max FROM t1
-GROUP BY sex HAVING sex=(SELECT c FROM ss LIMIT 1) OR sex='F' OR sex IS NULL
-WINDOW w AS (ROWS UNBOUNDED PRECEDING) ORDER BY sex DESC"
-"SELECT sex, AVG(id), MIN(AVG(id)) OVER w min, MAX(AVG(id)) OVER w max, NTILE(2) OVER w FROM t1
-GROUP BY sex
-WINDOW w AS (ORDER BY sex ROWS UNBOUNDED PRECEDING) ORDER BY sex DESC"
-"SELECT sex, AVG(id), MIN(AVG(id)) OVER w min, MAX(AVG(id)) OVER w max, NTILE(2) OVER w FROM t1
-GROUP BY sex HAVING sex=(SELECT c FROM ss LIMIT 1) OR sex='F' OR sex IS NULL
-WINDOW w AS (ORDER BY sex ROWS UNBOUNDED PRECEDING) ORDER BY sex DESC"
-"SELECT sex, NTILE(2) OVER w , MIN(ASCII(sex)) OVER w min,
-MAX(ASCII(sex)) OVER w max FROM t1
-HAVING sex=(SELECT c FROM ss LIMIT 1)
-WINDOW w AS (ORDER BY sex ROWS UNBOUNDED PRECEDING)"
-"SELECT t3_id, MIN(t3_id) OVER w min,
-MAX(t3_id) OVER w max,
-CUME_DIST() OVER w c_dist,
-LEAD(t3_id, 2) OVER w lead2,
-NTH_VALUE(t3_id, 3) OVER w nth,
-k FROM t3
-WINDOW w AS (PARTITION BY k ORDER BY t3_id)"
-"SELECT t3_id, MIN(t3_id) OVER w min,
-MAX(t3_id) OVER w max,
-CUME_DIST() OVER w c_dist,
-LEAD(t3_id, 2) OVER w lead2,
-NTH_VALUE(t3_id, 3) OVER w nth,
-k FROM t3
-WINDOW w AS (PARTITION BY k ORDER BY t3_id RANGE UNBOUNDED PRECEDING)"
 "SELECT t.*, MIN(t.rank) OVER (ROWS UNBOUNDED PRECEDING) min,
 MAX(t.rank) OVER (ROWS UNBOUNDED PRECEDING) max FROM
 (SELECT sex, id, date, ROW_NUMBER() OVER w AS row_no, RANK() OVER w AS `rank` FROM t1,t2
 WHERE t1.id=t2.user_id
 WINDOW w AS (PARTITION BY date ORDER BY id)
 ) AS t"
-"SELECT t1.*, RANK() OVER (ORDER BY sex) `rank`, MIN(id) OVER (ORDER BY sex,id ROWS UNBOUNDED PRECEDING) min FROM t1"
-"SELECT t1.*, PERCENT_RANK() OVER (ORDER BY sex) p_rank, MAX(id) OVER (ORDER BY sex,id ROWS UNBOUNDED PRECEDING) max FROM t1"
-"SELECT t1.*, CUME_DIST() OVER (ORDER BY sex) c_dist, MIN(id) OVER (ORDER BY sex,id ROWS UNBOUNDED PRECEDING) min FROM t1"
-"SELECT * from (SELECT t1.*, MIN(id) OVER (ROWS UNBOUNDED PRECEDING) min, RANK() OVER (ORDER BY sex) `rank` FROM t1) alias ORDER BY id"
-"SELECT * from (SELECT t1.*, MAX(id) OVER (ROWS UNBOUNDED PRECEDING) max, PERCENT_RANK() OVER (ORDER BY sex) p_rank FROM t1) alias ORDER BY id"
-"SELECT * from (SELECT t1.*, MAX(id) OVER (ROWS UNBOUNDED PRECEDING) max, CUME_DIST() OVER (ORDER BY sex) c_dist FROM t1) alias ORDER BY id"
-"SELECT t1.*, MIN(id) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) min,
-MAX(id) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) max,
-RANK() OVER (ORDER BY sex,id) `rank`,
-ROW_NUMBER() OVER (ORDER BY sex,id) row_num
-FROM t1"
-"SELECT t.*, MIN(id + r00 + r01) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) AS min,
-MAX(id + r00 + r01) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) AS max FROM (
-SELECT t1.*,
-RANK() OVER (ORDER BY sex, id) AS r00,
-RANK() OVER (ORDER BY sex, id DESC) AS r01,
-RANK() OVER (ORDER BY sex, id DESC) AS r02,
-RANK() OVER (PARTITION BY id ORDER BY sex) AS r03,
-RANK() OVER (ORDER BY sex,id) AS r04,
-RANK() OVER (ORDER BY sex,id) AS r05,
-RANK() OVER (ORDER BY sex, id) AS r06,
-RANK() OVER (ORDER BY sex, id) AS r07,
-RANK() OVER (ORDER BY sex, id) AS r08,
-RANK() OVER (ORDER BY sex, id) AS r09,
-RANK() OVER (ORDER BY sex, id) AS r10,
-RANK() OVER (ORDER BY sex, id) AS r11,
-RANK() OVER (ORDER BY sex, id) AS r12,
-RANK() OVER (ORDER BY sex, id) AS r13,
-RANK() OVER (ORDER BY sex, id) AS r14
-FROM t1) t"
 "SELECT AVG(id) OVER w, MIN(id) OVER w min, MAX(id) OVER w max FROM t1
 WINDOW w AS (PARTITION BY sex)"
-"SELECT * FROM (
-SELECT id, SUM(id) OVER w, MIN(id) OVER w min, MAX(id) OVER w max, sex FROM t1
-WINDOW w AS (PARTITION BY sex)
-) alias ORDER BY id"
-"SELECT MIN(id) OVER w min FROM t1 WINDOW w AS (PARTITION BY sex)"
-"SELECT MAX(id) OVER w max FROM t1 WINDOW w AS (PARTITION BY sex)"
-"SELECT id, MIN(id) OVER w min, MAX(id) OVER w max, sex FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"CREATE VIEW v AS
-SELECT id, SUM(id) OVER w, MIN(id) OVER w min, MAX(id) OVER w max, sex FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"SELECT SUM(id) OVER w, MIN(id) OVER w min,
-MAX(id) OVER w max FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"SELECT id, SUM(id) OVER w, MIN(id) OVER w min,
-MAX(id) OVER w max, sex FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"SELECT SUM(id) OVER w, COUNT(*) OVER w, MIN(id) OVER w min,
-MAX(id) OVER w max FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 "SELECT id, AVG(id) OVER (ROWS UNBOUNDED PRECEDING) avg,
 MIN(id) OVER (ROWS UNBOUNDED PRECEDING) min FROM t1"
 "SELECT id, AVG(id) OVER (ROWS UNBOUNDED PRECEDING),
@@ -7496,60 +7387,6 @@ MAX(id) OVER (ROWS UNBOUNDED PRECEDING) max FROM t1"
 "SELECT id, AVG(id) OVER w avg, COUNT(id) OVER w count, MIN(id) OVER w min,
 MAX(id) OVER w max FROM t1
 WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"SELECT d, MIN(d) OVER (ORDER BY d) min, MAX(d) OVER (ORDER BY d) max FROM td"
-"SELECT d, MIN(d) OVER () min, MAX(d) OVER () max FROM td"
-"SELECT d, MIN(d) OVER (ORDER BY d ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING) min FROM td"
-"SELECT d, MAX(d) OVER (ORDER BY d ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING) max FROM td"
-"SELECT d, MIN(d) OVER w min, MAX(d) OVER w max FROM td
-WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)"
-"SELECT d, SUM(d) OVER w sum, MIN(d) OVER w min, MAX(d) OVER w max FROM td
-WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING)"
-"SELECT d, SUM(d) OVER w sum, MIN(d) OVER w min, MAX(d) OVER w max FROM td
-WINDOW w AS (ORDER BY d RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)"
-"SELECT d, SUM(d) OVER w sum, MAX(d) OVER w max, MIN(d) OVER w min FROM td
-WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)"
-"SELECT d, SUM(d) OVER w sum, MAX(d) OVER w max, MIN(d) OVER w min FROM td
-WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING)"
-"SELECT d, SUM(d) OVER w sum, MAX(d) OVER w max, MIN(d) OVER w min FROM td
-WINDOW w AS (ORDER BY d RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)"
-"SELECT ROW_NUMBER() OVER w `row_number`, id, MIN(id) OVER w min, MAX(id) OVER w max, sex FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)"
-"SELECT ROW_NUMBER() OVER w `row_number`, MIN(id) OVER w min,
-MAX(id) OVER w max FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"SELECT RANK() OVER w `rank`, id, MIN(id) OVER w min, MAX(id) OVER w max, sex FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id)"
-"SELECT RANK() OVER w `rank`, MIN(id) OVER w min,
-MAX(id) OVER w max FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id
-ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
-"SELECT id, sex, MIN(id) OVER w min,
-MAX(id) OVER w max,
-ROW_NUMBER() OVER w `row_number`,
-RANK() OVER w  `rank` FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"SELECT id, sex, MIN(id) OVER w min,
-MAX(id) OVER w max,
-ROW_NUMBER() OVER w `row_number`,
-CUME_DIST() OVER w  `cume_dist` FROM t1
-WINDOW w AS (PARTITION BY sex ORDER BY id ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING)"
-"SELECT id, MIN(id) OVER (ORDER BY id RANGE 2 PRECEDING) min FROM t1 ORDER BY id"
-"SELECT id, MIN(id) OVER (ORDER BY id RANGE 2 PRECEDING) max FROM t1 ORDER BY id"
-"SELECT id, MIN(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) min FROM t1 ORDER BY id"
-"SELECT id, MAX(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) max FROM t1 ORDER BY id"
-"SELECT id, MIN(id) OVER (ORDER BY id RANGE UNBOUNDED PRECEDING) min FROM t1 ORDER BY id"
-"SELECT id, MAX(id) OVER (ORDER BY id RANGE UNBOUNDED PRECEDING) max FROM t1 ORDER BY id"
-"SELECT p, id, MIN(id) OVER (PARTITION BY p ORDER BY id RANGE 2 PRECEDING) min FROM t11 ORDER BY p,id"
-"SELECT p, id, MAX(id) OVER (PARTITION BY p ORDER BY id RANGE 2 PRECEDING) max FROM t11 ORDER BY p,id"
-"SELECT p, id, MIN(id) OVER (PARTITION BY p ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) min FROM t11 ORDER BY p,id"
-"SELECT p, id, MAX(id) OVER (PARTITION BY p ORDER BY id RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) max FROM t11 ORDER BY p,id"
-"SELECT p, id, MIN(id) OVER (PARTITION BY p ORDER BY id RANGE UNBOUNDED PRECEDING) min FROM t11 ORDER BY p,id"
-"SELECT p, id, MAX(id) OVER (PARTITION BY p ORDER BY id RANGE UNBOUNDED PRECEDING) max FROM t11 ORDER BY p,id"
-"SELECT d, MIN(d) OVER w min, MAX(d) OVER w max, COUNT(*) OVER w
-FROM t3 WINDOW w AS (ORDER BY d RANGE BETWEEN 2.1 PRECEDING AND 1.1 FOLLOWING)"
-"SELECT a, MIN(a) OVER w min, MAX(a) OVER w max FROM t1 WINDOW w AS (ORDER BY a DESC RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
-"SELECT a, MIN(a) OVER w min, MAX(a) OVER w max FROM t1 WINDOW w AS (ORDER BY a RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)"
 "SELECT MIN(DATE'2000-01-01') OVER () AS c1,
 MIN(TIME'12:00:00') OVER () AS c2,
 MIN(TIMESTAMP'2000-01-01 12:00:00') OVER () AS c3,
