@@ -111,8 +111,6 @@ PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
 SOURCE_USER=     'plug_user',
 SOURCE_PASSWORD= 'plug_user',
 SOURCE_RETRY_COUNT= 0"
-"create table t1 (a int primary key auto_increment, b int, c int, d timestamp default current_timestamp, unique(b),unique(c))"
-"create table t1 (a int primary key auto_increment, b int, c int, e int, d timestamp default current_timestamp, unique(b),unique(c),unique(e))"
 SHUTDOWN
 "EOF
 
@@ -289,9 +287,6 @@ c11 CHAR(6) CHECK (c11 IS NULL))"
 "CREATE TABLE t4(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
 "CREATE TABLE t5(a INTEGER CHECK (a > 0) NOT ENFORCED NOT NULL)"
 "CREATE TABLE t7(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
-"CREATE TABLE t1 (f1 INT PRIMARY KEY,
-f2 TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-CHECK (f2 < '2018-01-01 00:00:00'))"
 "CREATE TRIGGER t1_before_insert_trg BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 IF NEW.f1 = 1 THEN
@@ -397,7 +392,6 @@ ALTER TABLE t1 ALTER CONSTRAINT constraint_name NOT ENFORCED"
 "create temporary table t3 like mysqltest.t3"
 "create table t2 like t3"
 "create temporary table t3 like t1"
-"create table t1 (a tinyint, b smallint, c mediumint, d int, e bigint, f float(3,2), g double(4,3), h decimal(5,4), i year, j date, k timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, l datetime, m enum('a','b'), n set('a','b'), o char(10))"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1))"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1) USING HASH) ENGINE=MEMORY"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING HASH (c1) USING BTREE) ENGINE=MEMORY"
@@ -436,7 +430,6 @@ declare res int"
 create table t1 as select 1"
 "create table t1 like information_schema.processlist"
 "create temporary table t1 like information_schema.processlist"
-"CREATE TABLE t1(c1 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c2 TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00')"
 "CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
@@ -962,7 +955,6 @@ COLLATION(_koi8r    'текст') AS c4,
 @@character_set_client AS c6;
 END"
 "CREATE TABLE t3 LIKE t1"
-"ALTER TABLE t1 ADD COLUMN d TIMESTAMP DEFAULT (TIMESTAMPADD(MINUTE, 10,'2003-01-03')) ON UPDATE CURRENT_TIMESTAMP"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (sha2(i, 0)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
 d2 DOUBLE DEFAULT 0.0, c2 CHAR(255),
@@ -981,14 +973,12 @@ ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED,
 ADD COLUMN d INT DEFAULT (c),
 ADD COLUMN e INT GENERATED ALWAYS AS (-d) STORED,
 ALGORITHM=COPY"
-"CREATE TABLE t1 (created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
 "CREATE TABLE t (a INT,
 b INT,
 c INT DEFAULT 77,
 d INT GENERATED ALWAYS AS (DEFAULT(c)))"
 "CREATE TABLE t (a INT,
 b INT GENERATED ALWAYS AS (a*5))"
-"CREATE TABLE t1 (i int,a TIMESTAMP DEFAULT CURRENT_TIMESTAMP, b JSON DEFAULT (JSON_OBJECT(""key"", i)))"
 "CREATE TRIGGER tr1 AFTER DELETE ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 SELECT * FROM t1 AS A"
@@ -2424,7 +2414,6 @@ INSERT INTO t1 (id) SELECT id FROM t1"
 INSERT INTO t1 (id) SELECT id FROM t1"
 "/* 24 */
 INSERT INTO t1 SELECT id+1 FROM t1"
-"create table t1 (a int not null auto_increment, primary key (a), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c char(10) default ""hello"", i int)"
 "CREATE TABLE t1(a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
 c INT GENERATED ALWAYS AS (-a) STORED)"
@@ -2466,13 +2455,6 @@ ad INTEGER
 "CREATE TABLE t1 (f1 INTEGER, b INTEGER AS ((1)) INVISIBLE, KEY k1(b))"
 enable_info
 disable_info
-"CREATE TABLE `t1` (
-`id` int(11) PRIMARY KEY auto_increment,
-`f1` varchar(10) NOT NULL UNIQUE,
-tim1 timestamp default '2003-01-01 00:00:00' on update current_timestamp
-)"
-"create table t1(f1 int primary key,
-f2 timestamp NOT NULL default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP)"
 "CREATE TABLE t1(f1 INT INVISIBLE, f2 INT)"
 "CREATE TABLE t1 (f1 INT, f2 INT PRIMARY KEY INVISIBLE)"
 "CREATE TABLE t2 (f1 INT PRIMARY KEY INVISIBLE, f2 INT,
@@ -2533,19 +2515,6 @@ WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 "create table t6 like t5"
 "create table t7 like t6"
 "create table t3 like t2"
-"create table t1 (
-c1 int,
-c2 char(12),
-c3 varchar(123),
-c4 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-index (c1),
-index i1 (c1),
-index i2 (c2),
-index i3 (c3),
-unique i4 (c4),
-index i5 (c1, c2, c3, c4),
-primary key (c2, c3),
-index (c2, c4)) charset utf8mb4"
 "create table ti (k int, index using btree (k)) charset utf8mb4 engine=innodb"
 "create table th (k int, index using btree (k)) charset utf8mb4 engine=heap"
 "alter table ti add column l int, add index using btree (l)"
@@ -2584,7 +2553,6 @@ connect
 into table t1 fields terminated by ',' ignore 2 lines"
 "load data infile '../../std_data/loaddata1.dat' in primary key order
 into table t1 fields terminated by ',' ignore 2 lines"
-"create table t1(f1 int, f2 timestamp not null default current_timestamp)"
 "EVAL SELECT 0xE1C330 INTO OUTFILE 't1.dat'"
 "CREATE TABLE t1 (
 json_col JSON , KEY json_col ((CAST(json_col -> '$' AS UNSIGNED ARRAY)))
@@ -2699,28 +2667,6 @@ print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'}
 "create table slow_log_new like slow_log"
 "FLUSH TABLE mysql.general_log"
 "FLUSH TABLE mysql.slow_log"
-"CREATE TABLE `db_17876.slow_log_data` (
-`start_time` timestamp  default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP,
-`user_host` mediumtext ,
-`query_time` time ,
-`lock_time` time ,
-`rows_sent` int(11) ,
-`rows_examined` int(11) ,
-`db` varchar(512) default NULL,
-`last_insert_id` int(11) default NULL,
-`insert_id` int(11) default NULL,
-`server_id` int(11) default NULL,
-`sql_text` mediumblob,
-`thread_id` bigint(21) unsigned not NULL
-)"
-"CREATE TABLE `db_17876.general_log_data` (
-`event_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-`user_host` mediumtext,
-`thread_id` bigint(21) unsigned not NULL,
-`server_id` int(11) DEFAULT NULL,
-`command_type` varchar(64) DEFAULT NULL,
-`argument` mediumblob
-)"
 "set @lparam = ""000 001 002 003 004 005 006 007 008 009""
 ""010 011 012 013 014 015 016 017 018 019""
 ""020 021 022 023 024 025 026 027 028 029""
@@ -2898,55 +2844,11 @@ WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts1'"
 "LET $wait_condition=
 SELECT COUNT(*) = 1 FROM performance_schema.metadata_locks
 WHERE object_type LIKE 'TABLESPACE' AND object_name LIKE 'ts2'"
-"CREATE TABLE t2( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP )"
 "CREATE TABLE m1 LIKE t1"
 "CREATE TABLE m1(a INT) ENGINE=MERGE UNION=()"
 "ALTER TABLE m1 UNION=()"
 "CREATE TABLE t4 LIKE t3"
 "CREATE TEMPORARY TABLE t4 LIKE t3"
-"create table t1(
-bool_col bool,
-boolean_col boolean,
-bit_col bit(5),
-tiny tinyint,
-tiny_uns tinyint unsigned,
-small smallint,
-small_uns smallint unsigned,
-medium mediumint,
-medium_uns mediumint unsigned,
-int_col int,
-int_col_uns int unsigned,
-big bigint,
-big_uns bigint unsigned,
-decimal_col decimal(10,5),
-numeric_col numeric(10),
-fixed_col fixed(10),
-dec_col dec(10),
-decimal_col_uns decimal(10,5) unsigned,
-fcol float,
-fcol_uns float unsigned,
-dcol double,
-double_precision_col double precision,
-dcol_uns double unsigned,
-date_col date,
-time_col time,
-timestamp_col timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-year_col year,
-datetime_col datetime,
-char_col char(5),
-varchar_col varchar(10),
-binary_col binary(10),
-varbinary_col varbinary(10),
-tinyblob_col tinyblob,
-blob_col blob,
-mediumblob_col mediumblob,
-longblob_col longblob,
-text_col text,
-mediumtext_col mediumtext,
-longtext_col longtext,
-enum_col enum(""A"",""B"",""C""),
-set_col set(""F"",""E"",""D"")
-)"
 "CALL mtr.add_suppression(""REVOKE/GRANT failed while storing table level ""
 ""and column level grants in the privilege ""
 ""tables. An incident event has been written to ""
@@ -2955,8 +2857,6 @@ set_col set(""F"",""E"",""D"")
 ""privileges in databases. An incident event ""
 ""has been written to the binary log which ""
 ""will stop the slaves."")"
-"create table t1 (n int(10) not null primary key, d int(10), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"create table t2 (n int(10) not null primary key, d int(10), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "SET @before:= (SELECT MAX_DATA_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='t1' AND TABLE_SCHEMA='test')"
 "SELECT @before=@after"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=MyISAM"
@@ -3109,26 +3009,11 @@ print $line"
 `e``f` INT,
 PRIMARY KEY (`a b`, `c""d`, `e``f`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1"
-"create table t1 (`d` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, unique (`d`))"
 "/*!50003 CREATE FUNCTION `f`() RETURNS bigint(20)
 return 42 */"
 "/*!50003 CREATE PROCEDURE `p`()
 select 42 */"
 "revoke all privileges on mysqldump_myDB.* from myDB_User@localhost"
-"CREATE TABLE t1 (
-a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-b TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-c TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00' ON UPDATE CURRENT_TIMESTAMP,
-d TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-e TIMESTAMP NULL,
-f TIMESTAMP NOT NULL DEFAULT '2010-05-26 12:34:56',
-g DATETIME,
-h DATETIME DEFAULT CURRENT_TIMESTAMP,
-i DATETIME ON UPDATE CURRENT_TIMESTAMP,
-j DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-k DATETIME NULL,
-l DATETIME DEFAULT '2010-05-26 12:34:56'
-)"
 "CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
 sum INTEGER GENERATED ALWAYS AS (a+b),
 sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
@@ -3267,15 +3152,6 @@ ORDER BY c LIMIT 1"
 "(SELECT 3 AS c) ORDER BY c LIMIT 1 INTO @var"
 "SELECT cast( NULL AT TIME ZONE 'UTC' AS DATETIME )"
 "((SELECT * FROM t1 ORDER BY i) ORDER BY i) ORDER BY i"
-"CREATE TABLE t1 (
-a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-b varchar(10),
-PRIMARY KEY (a)
-)
-PARTITION BY RANGE (UNIX_TIMESTAMP(a)) (
-PARTITION p1 VALUES LESS THAN (1199134800),
-PARTITION pmax VALUES LESS THAN MAXVALUE
-)"
 "ALTER TABLE t1 DROP PARTITION p0"
 "abcd
 EOF
@@ -3320,9 +3196,6 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 AND t.c3 > TIMESTAMP'2011-04-26 19:18:44') "
 "ALTER TABLE t1 IMPORT TABLESPACE"
 "LET $MYSQL_DATA_DIR = `select @@datadir`"
-"CREATE TABLE t(id INT(11) UNSIGNED NOT NULL AUTO_INCREMENT, dttm DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, msg
-TEXT,PRIMARY KEY (id,dttm))ENGINE=INNODB DEFAULT CHARSET=UTF8MB4 ROW_FORMAT=DYNAMIC PARTITION BY RANGE
-COLUMNS(dttm) (PARTITION pf_201612 VALUES LESS THAN ('20170101') ENGINE = INNODB)"
 "CREATE TABLE `t``\"""e` (a INT, PRIMARY KEY (a))
 ENGINE=InnoDB
 PARTITION BY RANGE (a)
@@ -3346,36 +3219,6 @@ SEND
 "EVAL SET GLOBAL innodb_file_per_table=$innodb_file_per_table_orig"
 "EVAL SET SESSION innodb_strict_mode=$innodb_strict_mode_orig"
 "EVAL SET @@default_storage_engine=$old_default_storage_engine"
-"CREATE TABLE t3
-(a timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-b char(10),
-PRIMARY KEY (a))
-PARTITION BY HASH (UNIX_TIMESTAMP(a)) PARTITIONS 3"
-"CREATE TABLE t3
-(a timestamp DEFAULT 0 ON UPDATE CURRENT_TIMESTAMP,
-b char(10),
-PRIMARY KEY (a))
-PARTITION BY HASH (UNIX_TIMESTAMP(a)) PARTITIONS 3"
-"CREATE TABLE t3
-(a timestamp DEFAULT CURRENT_TIMESTAMP,
-b char(10),
-PRIMARY KEY (a))
-PARTITION BY HASH (UNIX_TIMESTAMP(a)) PARTITIONS 3"
-"CREATE TABLE t3
-(a DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-b char(10),
-PRIMARY KEY (a))
-PARTITION BY KEY (a) PARTITIONS 3"
-"CREATE TABLE t3
-(a DATETIME DEFAULT 0 ON UPDATE CURRENT_TIMESTAMP,
-b char(10),
-PRIMARY KEY (a))
-PARTITION BY KEY (a) PARTITIONS 3"
-"CREATE TABLE t3
-(a DATETIME DEFAULT CURRENT_TIMESTAMP,
-b char(10),
-PRIMARY KEY (a))
-PARTITION BY KEY (a) PARTITIONS 3"
 "DELETE FROM t1 PARTITION (p0)
 WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
 "EXPLAIN DELETE FROM t1 PARTITION (p0)
@@ -3499,19 +3342,6 @@ cast(rand(10)*@precision as unsigned integer) from t1"
 "set @like=""%NDAN%"""
 "execute stmt using @like"
 "set @like=""%ER"""
-"CREATE TABLE t1(
-ID int(10) unsigned NOT NULL auto_increment,
-Member_ID varchar(15) NOT NULL default '',
-Action varchar(12) NOT NULL,
-Action_Date datetime NOT NULL,
-Track varchar(15) default NULL,
-User varchar(12) default NULL,
-Date_Updated timestamp NOT NULL default CURRENT_TIMESTAMP on update
-CURRENT_TIMESTAMP,
-PRIMARY KEY (ID),
-KEY Action (Action),
-KEY Action_Date (Action_Date)
-)"
 "set @offset=0, @limit=1"
 "execute stmt using @offset, @limit"
 "set @offset=3, @limit=2"
@@ -3530,34 +3360,6 @@ KEY Action_Date (Action_Date)
 "set @dec=6"
 "set @dec=2"
 "SET @empty = ''"
-"create table t9
-(
-c1  tinyint, c2  smallint, c3  mediumint, c4  int,
-c5  integer, c6  bigint, c7  float, c8  double,
-c9  double precision, c10 real, c11 decimal(7, 4), c12 numeric(8, 4),
-c13 date, c14 datetime, c15 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 time,
-c17 year, c18 tinyint, c19 bool, c20 char,
-c21 char(10), c22 varchar(30), c23 tinyblob, c24 tinytext,
-c25 blob, c26 text, c27 mediumblob, c28 mediumtext,
-c29 longblob, c30 longtext, c31 enum('one', 'two', 'three'),
-c32 set('monday', 'tuesday', 'wednesday'),
-primary key(c1)
-)  ENGINE = MERGE UNION=(t9_1,t9_2)
-INSERT_METHOD=FIRST"
-"create table t9
-(
-c1  tinyint, c2  smallint, c3  mediumint, c4  int,
-c5  integer, c6  bigint, c7  float, c8  double,
-c9  double precision, c10 real, c11 decimal(7, 4), c12 numeric(8, 4),
-c13 date, c14 datetime, c15 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 time,
-c17 year, c18 tinyint, c19 bool, c20 char,
-c21 char(10), c22 varchar(30), c23 tinyblob, c24 tinytext,
-c25 blob, c26 text, c27 mediumblob, c28 mediumtext,
-c29 longblob, c30 longtext, c31 enum('one', 'two', 'three'),
-c32 set('monday', 'tuesday', 'wednesday'),
-primary key(c1)
-)  ENGINE = MERGE UNION=(t9_1,t9_2)
-INSERT_METHOD=LAST"
 "revoke all privileges on mysqltest.t1 from second_user@localhost"
 "revoke all privileges on test.t1 from drop_user@localhost "
 "set @a= timestamp ""2001-01-02 10:11:12.345"""
@@ -3566,34 +3368,6 @@ INSERT_METHOD=LAST"
 "set @a= time ""01:02:00"""
 "set @a= timestamp ""2001-01-02 01:02:00"""
 "set @a= date ""2001-01-02"""
-"CREATE TABLE t9
-(
-c1  TINYINT, c2  SMALLINT, c3  MEDIUMINT, c4  INT,
-c5  INTEGER, c6  BIGINT, c7  FLOAT, c8  DOUBLE,
-c9  DOUBLE PRECISION, c10 REAL, c11 DECIMAL(7, 4), c12 NUMERIC(8, 4),
-c13 DATE, c14 DATETIME, c15 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 TIME,
-c17 YEAR, c18 TINYINT, c19 BOOL, c20 CHAR,
-c21 CHAR(10), c22 VARCHAR(30), c23 TINYBLOB, c24 TINYTEXT,
-c25 BLOB, c26 TEXT, c27 MEDIUMBLOB, c28 MEDIUMTEXT,
-c29 LONGBLOB, c30 LONGTEXT, c31 ENUM('one', 'two', 'three'),
-c32 SET('monday', 'tuesday', 'wednesday'),
-PRIMARY KEY(c1)
-)  ENGINE = MERGE UNION=(t9_1,t9_2)
-INSERT_METHOD=FIRST"
-"CREATE TABLE t9
-(
-c1  TINYINT, c2  SMALLINT, c3  MEDIUMINT, c4  INT,
-c5  INTEGER, c6  BIGINT, c7  FLOAT, c8  DOUBLE,
-c9  DOUBLE PRECISION, c10 REAL, c11 DECIMAL(7, 4), c12 NUMERIC(8, 4),
-c13 DATE, c14 DATETIME, c15 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c16 TIME,
-c17 YEAR, c18 TINYINT, c19 BOOL, c20 CHAR,
-c21 CHAR(10), c22 VARCHAR(30), c23 TINYBLOB, c24 TINYTEXT,
-c25 BLOB, c26 TEXT, c27 MEDIUMBLOB, c28 MEDIUMTEXT,
-c29 LONGBLOB, c30 LONGTEXT, c31 ENUM('one', 'two', 'three'),
-c32 SET('monday', 'tuesday', 'wednesday'),
-PRIMARY KEY(c1)
-)  ENGINE = MERGE UNION=(t9_1,t9_2)
-INSERT_METHOD=LAST"
 "SELECT a, b, c, ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b,c) AS rnk
 FROM t1 QUALIFY rnk>1"
 "SELECT a, b, c
@@ -3941,30 +3715,6 @@ COMMIT"
 "LET $MYSQL_TMP_DIR_LCASE= `SELECT lower('$MYSQL_TMP_DIR')`"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
-"create table t1 (
-type_bool bool not null default 0,
-type_tiny tinyint not null auto_increment primary key,
-type_short smallint(3),
-type_mediumint mediumint,
-type_bigint bigint,
-type_decimal decimal(5,2),
-type_numeric numeric(5,2),
-empty_char char(0),
-type_char char(2),
-type_varchar varchar(10),
-type_timestamp timestamp not null default current_timestamp on update current_timestamp,
-type_date date not null default '0000-00-00',
-type_time time not null default '00:00:00',
-type_datetime datetime not null default '0000-00-00 00:00:00',
-type_year year,
-type_enum enum ('red', 'green', 'blue'),
-type_set enum ('red', 'green', 'blue'),
-type_tinyblob tinyblob,
-type_blob blob,
-type_medium_blob mediumblob,
-type_long_blob longblob,
-index(type_short)
-) AVG_ROW_LENGTH=10 CHECKSUM=1 COMMENT=""test"" ENGINE=MYISAM MIN_ROWS=10 MAX_ROWS=100 PACK_KEYS=1 DELAY_KEY_WRITE=1 ROW_FORMAT=fixed CHARSET=latin1"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MyISAM"
@@ -6059,19 +5809,6 @@ end */"
 begin
 alter database character set koi8r;
 end"
-"CREATE TABLE t4 (
-ID int(10) unsigned NOT NULL auto_increment,
-Member_ID varchar(15) NOT NULL default '',
-Action varchar(12) NOT NULL,
-Action_Date datetime NOT NULL,
-Track varchar(15) default NULL,
-User varchar(12) default NULL,
-Date_Updated timestamp NOT NULL default CURRENT_TIMESTAMP on update
-CURRENT_TIMESTAMP,
-PRIMARY KEY (ID),
-KEY Action (Action),
-KEY Action_Date (Action_Date)
-)"
 "drop function if exists test.database"
 "drop function if exists test.current_user"
 "select test.database(), test.database ()"
@@ -6147,13 +5884,9 @@ insert into t1 values (null)"
 "end|
 
 reset binary logs and gtids"
-"create table t1
-(f1 integer auto_increment primary key,
-f2 timestamp not null default current_timestamp on update current_timestamp)"
 "LET $ID= `SELECT connection_id()`"
 "ALTER INSTANCE RELOAD TLS"
 "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
-"create table t1(a int, b timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "SELECT 1 FROM t1 AS table2 LEFT JOIN (SELECT 'c') AS table3(f1)
 ON table3.f1 = table2.f1 WHERE table2.f1
 IN (SELECT 1 FROM (SELECT 1314830897) AS t1(pk)
@@ -6252,37 +5985,6 @@ AND TIMESTAMP'2014-01-05 01:01:01'"
 "CREATE USER user1@"
 "GRANT UPDATE (a) ON t1 TO user1@"
 "DROP USER user1@"
-"CREATE TABLE IF NOT EXISTS mysql.tables_priv ( Host char(60) binary DEFAULT '' NOT NULL,
-Db char(64) binary DEFAULT '' NOT NULL, User char(16) binary DEFAULT '' NOT NULL,
-Table_name char(64) binary DEFAULT '' NOT NULL, Grantor char(77) DEFAULT '' NOT NULL,
-Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-Table_priv set('Select','Insert','Update','Delete','Create','Drop','Grant','References',
-'Index','Alter','Create View','Show view','Trigger') COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL,
-Column_priv set('Select','Insert','Update','References') COLLATE utf8mb3_general_ci DEFAULT ''
-NOT NULL, PRIMARY KEY (Host,Db,User,Table_name), KEY Grantor (Grantor) )
-engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin   comment='Table privileges'"
-"CREATE TABLE IF NOT EXISTS mysql.columns_priv ( Host char(60) binary DEFAULT '' NOT NULL,
-Db char(64) binary DEFAULT '' NOT NULL, User char(16) binary DEFAULT '' NOT NULL,
-Table_name char(64) binary DEFAULT '' NOT NULL, Column_name char(64) binary DEFAULT '' NOT NULL,
-Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-Column_priv set('Select','Insert','Update','References') COLLATE utf8mb3_general_ci
-DEFAULT '' NOT NULL, PRIMARY KEY (Host,Db,User,Table_name,Column_name) )
-engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin   comment='Column privileges'"
-"CREATE TABLE IF NOT EXISTS mysql.procs_priv ( Host char(60) binary DEFAULT '' NOT NULL,
-Db char(64) binary DEFAULT '' NOT NULL, User char(16) binary DEFAULT '' NOT NULL,
-Routine_name char(64) COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL,
-Routine_type enum('FUNCTION','PROCEDURE') NOT NULL, Grantor char(77) DEFAULT '' NOT NULL,
-Proc_priv set('Execute','Alter Routine','Grant') COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL,
-Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-PRIMARY KEY (Host,Db,User,Routine_name,Routine_type), KEY Grantor (Grantor) )
-engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin   comment='Procedure privileges'"
-"CREATE TABLE IF NOT EXISTS mysql.proxies_priv (Host char(60) binary DEFAULT '' NOT NULL,
-User char(16) binary DEFAULT '' NOT NULL, Proxied_host char(60) binary DEFAULT '' NOT NULL,
-Proxied_user char(16) binary DEFAULT '' NOT NULL, With_grant BOOL DEFAULT 0 NOT NULL,
-Grantor char(77) DEFAULT '' NOT NULL, Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY Host (Host,User,Proxied_host,Proxied_user),
-KEY Grantor (Grantor) ) engine=MyISAM CHARACTER SET utf8mb3 COLLATE utf8mb3_bin
-comment='User proxy privileges'"
 "TYPE=TRIGGERNAME
 trigger_table=t1
 EOF
@@ -6346,13 +6048,6 @@ end"
 "set @check=0, @t4_bi_called=0, @t4_bu_called=0"
 "select @check, @t4_bi_called, @t4_bu_called"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
-"CREATE TABLE t1( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP )"
-"CREATE TABLE t1( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-ON UPDATE NOW(), b INT DEFAULT 1 )"
-"CREATE TABLE t1( a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-b INT DEFAULT 1 )"
-"CREATE TABLE t1( a DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-ON UPDATE CURRENT_TIMESTAMP, b INT)"
 "CREATE TRIGGER _AI_1 AFTER INSERT ON t1 FOR EACH ROW SET
 @t1_var=concat(@t1_var,'_AI_1')"
 "CREATE TRIGGER _AI_2 AFTER INSERT ON t1 FOR EACH ROW SET
@@ -6455,8 +6150,6 @@ KEY _field_166 (_field_166)
 "SELECT * FROM t1 WHERE a NOT IN (DATE'2001-01-01',DATE'2002-02-02')"
 "SELECT * FROM t WHERE a = DATE'2023-01-01'"
 "SELECT * FROM t WHERE a = b and b = DATE'2023-01-01'"
-"CREATE TABLE t1 (a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b date, c time, d datetime)"
-"create table t1 (f1 date, f2 datetime, f3 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "INSERT INTO t1 VALUES
 (1, TIME'08:00:00', TIME'12:00:00', TIMESTAMP'2020-01-01 00:00:00'),
 (2, TIME'12:00:00', TIME'12:00:00', TIMESTAMP'2020-01-01 00:00:00'),
@@ -6477,44 +6170,6 @@ KEY _field_166 (_field_166)
 "SET @decimal= 1.1"
 "CREATE TABLE t1 SELECT @decimal AS c1"
 "SELECT AVG(DISTINCT a) FROM t1"
-"CREATE TABLE t1 (
-auto int(5) unsigned NOT NULL auto_increment,
-string char(10) default ""hello"",
-tiny tinyint(4) DEFAULT '0' NOT NULL ,
-short smallint(6) DEFAULT '1' NOT NULL ,
-medium mediumint(8) DEFAULT '0' NOT NULL,
-long_int int(11) DEFAULT '0' NOT NULL,
-longlong bigint(13) DEFAULT '0' NOT NULL,
-real_float float(13,1) DEFAULT 0.0 NOT NULL,
-real_double double(16,4),
-utiny tinyint(3) unsigned DEFAULT '0' NOT NULL,
-ushort smallint(5) unsigned zerofill DEFAULT '00000' NOT NULL,
-umedium mediumint(8) unsigned DEFAULT '0' NOT NULL,
-ulong int(11) unsigned DEFAULT '0' NOT NULL,
-ulonglong bigint(13) unsigned DEFAULT '0' NOT NULL,
-time_stamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-date_field date,
-time_field time,
-date_time datetime,
-blob_col blob,
-tinyblob_col tinyblob,
-mediumblob_col mediumblob  not null default '',
-longblob_col longblob  not null default '',
-options enum('one','two','tree') not null ,
-flags set('one','two','tree') not null default '',
-PRIMARY KEY (auto),
-KEY (utiny),
-KEY (tiny),
-KEY (short),
-KEY any_name (medium),
-KEY (longlong),
-KEY (real_float),
-KEY (ushort),
-KEY (umedium),
-KEY (ulong),
-KEY (ulonglong,ulong),
-KEY (options,flags)
-)"
 "INSERT INTO t1 VALUES (TIME'01:59:59.499999')"
 "INSERT INTO t1 VALUES (TIME'01:59:59.500000')"
 "INSERT INTO t1 VALUES (TIME'01:02:03.123')"
@@ -6749,19 +6404,6 @@ DELIMITER "
 
 CREATE TABLE t1 (a DATETIME(6))"
 "SELECT * FROM t1 WHERE a BETWEEN TIMESTAMP'2000-01-01 01:02:03.456' AND '2000-01-01 01:02:03.45678'"
-"CREATE TABLE t2 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1 (t0 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, t3 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00', t6 TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00')"
-"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000')"
-"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00')"
-"CREATE TABLE t1 (
-t0 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-t1 TIMESTAMP(1) NOT NULL DEFAULT '0000-00-00 00:00:00.0',
-t3 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00.0',
-t4 TIMESTAMP(4) NOT NULL DEFAULT '0000-00-00 00:00:00.0',
-t6 TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00.0')"
-"CREATE TABLE t1 (t0 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, t1 TIMESTAMP(1) NOT NULL DEFAULT '0000-00-00 00:00:00.0', t3 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00.0', t4 TIMESTAMP(4) NOT NULL DEFAULT '0000-00-00 00:00:00.0')"
-"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, b TIMESTAMP(6) NOT NULL DEFAULT '0000-00-00 00:00:00', c DATE NOT NULL, d DATETIME(6))"
 "CREATE PROCEDURE p1 ()
 BEGIN
 DECLARE a TIMESTAMP(6)"
@@ -6817,40 +6459,7 @@ WHERE timestamp'2006-11-14 10:22:27.009969' IN (LEAST(a, MAKETIME(24,8,0)))"
 "SELECT * FROM t1 WHERE a NOT IN (TIME'20:20:20',TIME'10:10:10')"
 "SELECT * FROM t WHERE a = TIME'01:02:03'"
 "SELECT * FROM t WHERE a = b and b = TIME'01:02:03'"
-"CREATE TABLE t1 (a int, t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1 (value TEXT NOT NULL, id VARCHAR(32) NOT NULL, stamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (id))"
-"create table t1 (a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"create table t1 (ix timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1 (date date, date_time datetime, time_stamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"create table t1 (t1 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, t2 datetime, t3 timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')"
-"create table t1 (t1 timestamp not null default current_timestamp on update current_timestamp, t2 datetime)"
-"create table t1 (pk int primary key, t1 timestamp not null default current_timestamp on update current_timestamp, bulk int)"
-"create table t1 (pk int primary key, t1 timestamp not null default '2003-01-01 00:00:00' on update current_timestamp, bulk int)"
-"create table t1 (t1 timestamp not null default current_timestamp on update current_timestamp)"
-"create table t1 (a timestamp null default current_timestamp on update current_timestamp, b timestamp null)"
-"alter table t1 modify a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, modify b timestamp NOT NULL DEFAULT '0000-00-00 00:00:0'"
-"create table t1 (a char(2), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"create table t1 (a int auto_increment primary key, b int, c timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1 (a TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, KEY (a))"
-"CREATE TABLE t1(a timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1 (
-`c1` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-`c2` TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00'
-)"
 "SELECT TIMESTAMP'2000-01-27 23:13:41' - TIMESTAMP'2003-05-16 23:53:29'"
-"ALTER TABLE t1 ADD COLUMN (f6 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
-"CREATE TABLE t1(
-dummy INT,
-i1_null_const INT NULL DEFAULT 42,
-t1_null_now TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-t1_null_const TIMESTAMP NULL DEFAULT '2001-01-01 03:03:03',
-i2_not_null_const INT NOT NULL DEFAULT 42,
-t2_not_null_now TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-t2_not_null_const TIMESTAMP NOT NULL DEFAULT '2001-01-01 03:03:03',
-i3_null INT NULL,
-t3_null TIMESTAMP NULL,
-i4_not_null INT NOT NULL,
-t4_not_null TIMESTAMP NOT NULL)"
 "INSERT INTO t1 VALUES (TIME'15:44:00')"
 "INSERT INTO t1 VALUES (TIME'25:00:00')"
 "INSERT INTO t1 VALUES(1901, DATE'1901-01-01', 1, 'one')"

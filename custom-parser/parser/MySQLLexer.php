@@ -2428,7 +2428,7 @@ class MySQLLexer {
                 $this->CURTIME_SYMBOL(); // Synonym
                 break;
             case 'CURRENT_TIMESTAMP':
-                $this->NOW_SYMBOL(); // Synonym
+                $this->CURRENT_TIMESTAMP_SYMBOL(); // Synonym
                 break;
             case 'CURRENT_USER':
                 $this->CURRENT_USER_SYMBOL();
@@ -3169,10 +3169,10 @@ class MySQLLexer {
                 $this->LOCAL_SYMBOL();
                 break;
             case 'LOCALTIME':
-                $this->NOW_SYMBOL(); // Synonym
+				$this->LOCALTIME_SYMBOL();
                 break;
             case 'LOCALTIMESTAMP':
-                $this->NOW_SYMBOL(); // Synonym
+				$this->LOCALTIMESTAMP_SYMBOL();
                 break;
             case 'LOCATOR':
                 $this->LOCATOR_SYMBOL();
