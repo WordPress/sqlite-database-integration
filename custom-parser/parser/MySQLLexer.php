@@ -861,6 +861,17 @@ class MySQLLexer {
     public const CONCAT_SYMBOL = 844;
     public const OVER_SYMBOL = 845;
 
+	// more missing symbols
+	public const BIN_NUM_SYMBOL = 846;
+	public const DECIMAL_NUM_SYMBOL = 847;
+	public const LONG_NUM_SYMBOL = 848;
+	public const MID_SYMBOL = 849;
+	public const NCHAR_STRING_SYMBOL = 850;
+	public const TABLE_REF_PRIORITY_SYMBOL = 851;
+	public const IO_AFTER_GTIDS_SYMBOL = 852;
+	public const IO_BEFORE_GTIDS_SYMBOL = 853;
+	public const IO_THREAD_SYMBOL = 854;
+
 
     public const EOF = -1;
     public const EMPTY_TOKEN = -2;
@@ -2073,7 +2084,1009 @@ class MySQLLexer {
 		self::FOUND_ROWS_SYMBOL => 'FOUND_ROWS_SYMBOL',
 		self::CONCAT_SYMBOL => 'CONCAT_SYMBOL',
 		self::OVER_SYMBOL => 'OVER_SYMBOL',
+
+		self::BIN_NUM_SYMBOL => 'BIN_NUM_SYMBOL',
+		self::DECIMAL_NUM_SYMBOL => 'DECIMAL_NUM_SYMBOL',
+		self::LONG_NUM_SYMBOL => 'LONG_NUM_SYMBOL',
+		self::MID_SYMBOL => 'MID_SYMBOL',
+		self::NCHAR_STRING_SYMBOL => 'NCHAR_STRING_SYMBOL',
+		self::TABLE_REF_PRIORITY_SYMBOL => 'TABLE_REF_PRIORITY_SYMBOL',
+		self::IO_AFTER_GTIDS_SYMBOL => 'IO_AFTER_GTIDS_SYMBOL',
+		self::IO_BEFORE_GTIDS_SYMBOL => 'IO_BEFORE_GTIDS_SYMBOL',
+		self::IO_THREAD_SYMBOL => 'IO_THREAD_SYMBOL',
     ];
+
+	const TOKENS = [
+		// Tokens from MySQL 5.7:
+        'ACCESSIBLE' => self::ACCESSIBLE_SYMBOL,
+        'ACCOUNT' => self::ACCOUNT_SYMBOL,
+        'ACTION' => self::ACTION_SYMBOL,
+        'ADD' => self::ADD_SYMBOL,
+        'ADDDATE' => self::ADDDATE_SYMBOL,
+        'AFTER' => self::AFTER_SYMBOL,
+        'AGAINST' => self::AGAINST_SYMBOL,
+        'AGGREGATE' => self::AGGREGATE_SYMBOL,
+        'ALGORITHM' => self::ALGORITHM_SYMBOL,
+        'ALL' => self::ALL_SYMBOL,
+        'ALTER' => self::ALTER_SYMBOL,
+        'ALWAYS' => self::ALWAYS_SYMBOL,
+        'ANALYSE' => self::ANALYSE_SYMBOL,
+        'ANALYZE' => self::ANALYZE_SYMBOL,
+        'AND' => self::AND_SYMBOL,
+        'ANY' => self::ANY_SYMBOL,
+        'AS' => self::AS_SYMBOL,
+        'ASC' => self::ASC_SYMBOL,
+        'ASCII' => self::ASCII_SYMBOL,
+        'ASENSITIVE' => self::ASENSITIVE_SYMBOL,
+        'AT' => self::AT_SYMBOL,
+        'AUTHORS' => self::AUTHORS_SYMBOL,
+        'AUTO_INCREMENT' => self::AUTO_INCREMENT_SYMBOL,
+        'AUTOEXTEND_SIZE' => self::AUTOEXTEND_SIZE_SYMBOL,
+        'AVG' => self::AVG_SYMBOL,
+        'AVG_ROW_LENGTH' => self::AVG_ROW_LENGTH_SYMBOL,
+        'BACKUP' => self::BACKUP_SYMBOL,
+        'BEFORE' => self::BEFORE_SYMBOL,
+        'BEGIN' => self::BEGIN_SYMBOL,
+        'BETWEEN' => self::BETWEEN_SYMBOL,
+        'BIGINT' => self::BIGINT_SYMBOL,
+        'BIN_NUM' => self::BIN_NUM_SYMBOL,
+        'BINARY' => self::BINARY_SYMBOL,
+        'BINLOG' => self::BINLOG_SYMBOL,
+        'BIT' => self::BIT_SYMBOL,
+        'BIT_AND' => self::BIT_AND_SYMBOL,
+        'BIT_OR' => self::BIT_OR_SYMBOL,
+        'BIT_XOR' => self::BIT_XOR_SYMBOL,
+        'BLOB' => self::BLOB_SYMBOL,
+        'BLOCK' => self::BLOCK_SYMBOL,
+        'BOOL' => self::BOOL_SYMBOL,
+        'BOOLEAN' => self::BOOLEAN_SYMBOL,
+        'BOTH' => self::BOTH_SYMBOL,
+        'BTREE' => self::BTREE_SYMBOL,
+        'BY' => self::BY_SYMBOL,
+        'BYTE' => self::BYTE_SYMBOL,
+        'CACHE' => self::CACHE_SYMBOL,
+        'CALL' => self::CALL_SYMBOL,
+        'CASCADE' => self::CASCADE_SYMBOL,
+        'CASCADED' => self::CASCADED_SYMBOL,
+        'CASE' => self::CASE_SYMBOL,
+        'CAST' => self::CAST_SYMBOL,
+        'CATALOG_NAME' => self::CATALOG_NAME_SYMBOL,
+        'CHAIN' => self::CHAIN_SYMBOL,
+        'CHANGE' => self::CHANGE_SYMBOL,
+        'CHANGED' => self::CHANGED_SYMBOL,
+        'CHANNEL' => self::CHANNEL_SYMBOL,
+        'CHAR' => self::CHAR_SYMBOL,
+        'CHARACTER' => self::CHARACTER_SYMBOL,
+        'CHARSET' => self::CHARSET_SYMBOL,
+        'CHECK' => self::CHECK_SYMBOL,
+        'CHECKSUM' => self::CHECKSUM_SYMBOL,
+        'CIPHER' => self::CIPHER_SYMBOL,
+        'CLASS_ORIGIN' => self::CLASS_ORIGIN_SYMBOL,
+        'CLIENT' => self::CLIENT_SYMBOL,
+        'CLOSE' => self::CLOSE_SYMBOL,
+        'COALESCE' => self::COALESCE_SYMBOL,
+        'CODE' => self::CODE_SYMBOL,
+        'COLLATE' => self::COLLATE_SYMBOL,
+        'COLLATION' => self::COLLATION_SYMBOL,
+        'COLUMN' => self::COLUMN_SYMBOL,
+        'COLUMN_FORMAT' => self::COLUMN_FORMAT_SYMBOL,
+        'COLUMN_NAME' => self::COLUMN_NAME_SYMBOL,
+        'COLUMNS' => self::COLUMNS_SYMBOL,
+        'COMMENT' => self::COMMENT_SYMBOL,
+        'COMMIT' => self::COMMIT_SYMBOL,
+        'COMMITTED' => self::COMMITTED_SYMBOL,
+        'COMPACT' => self::COMPACT_SYMBOL,
+        'COMPLETION' => self::COMPLETION_SYMBOL,
+        'COMPRESSED' => self::COMPRESSED_SYMBOL,
+        'COMPRESSION' => self::COMPRESSION_SYMBOL,
+        'CONCURRENT' => self::CONCURRENT_SYMBOL,
+        'CONDITION' => self::CONDITION_SYMBOL,
+        'CONNECTION' => self::CONNECTION_SYMBOL,
+        'CONSISTENT' => self::CONSISTENT_SYMBOL,
+        'CONSTRAINT' => self::CONSTRAINT_SYMBOL,
+        'CONSTRAINT_CATALOG' => self::CONSTRAINT_CATALOG_SYMBOL,
+        'CONSTRAINT_NAME' => self::CONSTRAINT_NAME_SYMBOL,
+        'CONSTRAINT_SCHEMA' => self::CONSTRAINT_SCHEMA_SYMBOL,
+        'CONTAINS' => self::CONTAINS_SYMBOL,
+        'CONTEXT' => self::CONTEXT_SYMBOL,
+        'CONTINUE' => self::CONTINUE_SYMBOL,
+        'CONTRIBUTORS' => self::CONTRIBUTORS_SYMBOL,
+        'CONVERT' => self::CONVERT_SYMBOL,
+        'COUNT' => self::COUNT_SYMBOL,
+        'CPU' => self::CPU_SYMBOL,
+        'CREATE' => self::CREATE_SYMBOL,
+        'CROSS' => self::CROSS_SYMBOL,
+        'CUBE' => self::CUBE_SYMBOL,
+        'CURDATE' => self::CURDATE_SYMBOL,
+        'CURRENT' => self::CURRENT_SYMBOL,
+        'CURRENT_DATE' => self::CURRENT_DATE_SYMBOL,
+        'CURRENT_TIME' => self::CURRENT_TIME_SYMBOL,
+        'CURRENT_TIMESTAMP' => self::CURRENT_TIMESTAMP_SYMBOL,
+        'CURRENT_USER' => self::CURRENT_USER_SYMBOL,
+        'CURSOR' => self::CURSOR_SYMBOL,
+        'CURSOR_NAME' => self::CURSOR_NAME_SYMBOL,
+        'CURTIME' => self::CURTIME_SYMBOL,
+        'DATA' => self::DATA_SYMBOL,
+        'DATABASE' => self::DATABASE_SYMBOL,
+        'DATABASES' => self::DATABASES_SYMBOL,
+        'DATAFILE' => self::DATAFILE_SYMBOL,
+        'DATE' => self::DATE_SYMBOL,
+        'DATE_ADD' => self::DATE_ADD_SYMBOL,
+        'DATE_SUB' => self::DATE_SUB_SYMBOL,
+        'DATETIME' => self::DATETIME_SYMBOL,
+        'DAY' => self::DAY_SYMBOL,
+        'DAY_HOUR' => self::DAY_HOUR_SYMBOL,
+        'DAY_MICROSECOND' => self::DAY_MICROSECOND_SYMBOL,
+        'DAY_MINUTE' => self::DAY_MINUTE_SYMBOL,
+        'DAY_SECOND' => self::DAY_SECOND_SYMBOL,
+        'DAYOFMONTH' => self::DAYOFMONTH_SYMBOL,
+        'DEALLOCATE' => self::DEALLOCATE_SYMBOL,
+        'DEC' => self::DEC_SYMBOL,
+        'DECIMAL' => self::DECIMAL_SYMBOL,
+        'DECIMAL_NUM' => self::DECIMAL_NUM_SYMBOL,
+        'DECLARE' => self::DECLARE_SYMBOL,
+        'DEFAULT' => self::DEFAULT_SYMBOL,
+        'DEFAULT_AUTH' => self::DEFAULT_AUTH_SYMBOL,
+        'DEFINER' => self::DEFINER_SYMBOL,
+        'DELAY_KEY_WRITE' => self::DELAY_KEY_WRITE_SYMBOL,
+        'DELAYED' => self::DELAYED_SYMBOL,
+        'DELETE' => self::DELETE_SYMBOL,
+        'DES_KEY_FILE' => self::DES_KEY_FILE_SYMBOL,
+        'DESC' => self::DESC_SYMBOL,
+        'DESCRIBE' => self::DESCRIBE_SYMBOL,
+        'DETERMINISTIC' => self::DETERMINISTIC_SYMBOL,
+        'DIAGNOSTICS' => self::DIAGNOSTICS_SYMBOL,
+        'DIRECTORY' => self::DIRECTORY_SYMBOL,
+        'DISABLE' => self::DISABLE_SYMBOL,
+        'DISCARD' => self::DISCARD_SYMBOL,
+        'DISK' => self::DISK_SYMBOL,
+        'DISTINCT' => self::DISTINCT_SYMBOL,
+        'DISTINCTROW' => self::DISTINCTROW_SYMBOL,
+        'DIV' => self::DIV_SYMBOL,
+        'DO' => self::DO_SYMBOL,
+        'DOUBLE' => self::DOUBLE_SYMBOL,
+        'DROP' => self::DROP_SYMBOL,
+        'DUAL' => self::DUAL_SYMBOL,
+        'DUMPFILE' => self::DUMPFILE_SYMBOL,
+        'DUPLICATE' => self::DUPLICATE_SYMBOL,
+        'DYNAMIC' => self::DYNAMIC_SYMBOL,
+        'EACH' => self::EACH_SYMBOL,
+        'ELSE' => self::ELSE_SYMBOL,
+        'ELSEIF' => self::ELSEIF_SYMBOL,
+        'ENABLE' => self::ENABLE_SYMBOL,
+        'ENCLOSED' => self::ENCLOSED_SYMBOL,
+        'ENCRYPTION' => self::ENCRYPTION_SYMBOL,
+        'END' => self::END_SYMBOL,
+        'END_OF_INPUT' => self::EOF,
+        'ENDS' => self::ENDS_SYMBOL,
+        'ENGINE' => self::ENGINE_SYMBOL,
+        'ENGINES' => self::ENGINES_SYMBOL,
+        'ENUM' => self::ENUM_SYMBOL,
+        'ERROR' => self::ERROR_SYMBOL,
+        'ERRORS' => self::ERRORS_SYMBOL,
+        'ESCAPE' => self::ESCAPE_SYMBOL,
+        'ESCAPED' => self::ESCAPED_SYMBOL,
+        'EVENT' => self::EVENT_SYMBOL,
+        'EVENTS' => self::EVENTS_SYMBOL,
+        'EVERY' => self::EVERY_SYMBOL,
+        'EXCHANGE' => self::EXCHANGE_SYMBOL,
+        'EXECUTE' => self::EXECUTE_SYMBOL,
+        'EXISTS' => self::EXISTS_SYMBOL,
+        'EXIT' => self::EXIT_SYMBOL,
+        'EXPANSION' => self::EXPANSION_SYMBOL,
+        'EXPIRE' => self::EXPIRE_SYMBOL,
+        'EXPLAIN' => self::EXPLAIN_SYMBOL,
+        'EXPORT' => self::EXPORT_SYMBOL,
+        'EXTENDED' => self::EXTENDED_SYMBOL,
+        'EXTENT_SIZE' => self::EXTENT_SIZE_SYMBOL,
+        'EXTRACT' => self::EXTRACT_SYMBOL,
+        'FALSE' => self::FALSE_SYMBOL,
+        'FAST' => self::FAST_SYMBOL,
+        'FAULTS' => self::FAULTS_SYMBOL,
+        'FETCH' => self::FETCH_SYMBOL,
+        'FIELDS' => self::FIELDS_SYMBOL,
+        'FILE' => self::FILE_SYMBOL,
+        'FILE_BLOCK_SIZE' => self::FILE_BLOCK_SIZE_SYMBOL,
+        'FILTER' => self::FILTER_SYMBOL,
+        'FIRST' => self::FIRST_SYMBOL,
+        'FIXED' => self::FIXED_SYMBOL,
+        'FLOAT' => self::FLOAT_SYMBOL,
+        'FLOAT4' => self::FLOAT4_SYMBOL,
+        'FLOAT8' => self::FLOAT8_SYMBOL,
+        'FLUSH' => self::FLUSH_SYMBOL,
+        'FOLLOWS' => self::FOLLOWS_SYMBOL,
+        'FOR' => self::FOR_SYMBOL,
+        'FORCE' => self::FORCE_SYMBOL,
+        'FOREIGN' => self::FOREIGN_SYMBOL,
+        'FORMAT' => self::FORMAT_SYMBOL,
+        'FOUND' => self::FOUND_SYMBOL,
+        'FROM' => self::FROM_SYMBOL,
+        'FULL' => self::FULL_SYMBOL,
+        'FULLTEXT' => self::FULLTEXT_SYMBOL,
+        'FUNCTION' => self::FUNCTION_SYMBOL,
+        'GENERAL' => self::GENERAL_SYMBOL,
+        'GENERATED' => self::GENERATED_SYMBOL,
+        'GEOMETRY' => self::GEOMETRY_SYMBOL,
+        'GEOMETRYCOLLECTION' => self::GEOMETRYCOLLECTION_SYMBOL,
+        'GET' => self::GET_SYMBOL,
+        'GET_FORMAT' => self::GET_FORMAT_SYMBOL,
+        'GLOBAL' => self::GLOBAL_SYMBOL,
+        'GRANT' => self::GRANT_SYMBOL,
+        'GRANTS' => self::GRANTS_SYMBOL,
+        'GROUP' => self::GROUP_SYMBOL,
+        'GROUP_CONCAT' => self::GROUP_CONCAT_SYMBOL,
+        'GROUP_REPLICATION' => self::GROUP_REPLICATION_SYMBOL,
+        'HANDLER' => self::HANDLER_SYMBOL,
+        'HASH' => self::HASH_SYMBOL,
+        'HAVING' => self::HAVING_SYMBOL,
+        'HELP' => self::HELP_SYMBOL,
+        'HIGH_PRIORITY' => self::HIGH_PRIORITY_SYMBOL,
+        'HOST' => self::HOST_SYMBOL,
+        'HOSTS' => self::HOSTS_SYMBOL,
+        'HOUR' => self::HOUR_SYMBOL,
+        'HOUR_MICROSECOND' => self::HOUR_MICROSECOND_SYMBOL,
+        'HOUR_MINUTE' => self::HOUR_MINUTE_SYMBOL,
+        'HOUR_SECOND' => self::HOUR_SECOND_SYMBOL,
+        'IDENTIFIED' => self::IDENTIFIED_SYMBOL,
+        'IF' => self::IF_SYMBOL,
+        'IGNORE' => self::IGNORE_SYMBOL,
+        'IGNORE_SERVER_IDS' => self::IGNORE_SERVER_IDS_SYMBOL,
+        'IMPORT' => self::IMPORT_SYMBOL,
+        'IN' => self::IN_SYMBOL,
+        'INDEX' => self::INDEX_SYMBOL,
+        'INDEXES' => self::INDEXES_SYMBOL,
+        'INFILE' => self::INFILE_SYMBOL,
+        'INITIAL_SIZE' => self::INITIAL_SIZE_SYMBOL,
+        'INNER' => self::INNER_SYMBOL,
+        'INOUT' => self::INOUT_SYMBOL,
+        'INSENSITIVE' => self::INSENSITIVE_SYMBOL,
+        'INSERT' => self::INSERT_SYMBOL,
+        'INSERT_METHOD' => self::INSERT_METHOD_SYMBOL,
+        'INSTALL' => self::INSTALL_SYMBOL,
+        'INSTANCE' => self::INSTANCE_SYMBOL,
+        'INT' => self::INT_SYMBOL,
+        'INT1' => self::INT1_SYMBOL,
+        'INT2' => self::INT2_SYMBOL,
+        'INT3' => self::INT3_SYMBOL,
+        'INT4' => self::INT4_SYMBOL,
+        'INT8' => self::INT8_SYMBOL,
+        'INTEGER' => self::INTEGER_SYMBOL,
+        'INTERVAL' => self::INTERVAL_SYMBOL,
+        'INTO' => self::INTO_SYMBOL,
+        'INVOKER' => self::INVOKER_SYMBOL,
+        'IO' => self::IO_SYMBOL,
+        'IO_AFTER_GTIDS' => self::IO_AFTER_GTIDS_SYMBOL,
+        'IO_BEFORE_GTIDS' => self::IO_BEFORE_GTIDS_SYMBOL,
+        'IO_THREAD' => self::IO_THREAD_SYMBOL,
+        'IPC' => self::IPC_SYMBOL,
+        'IS' => self::IS_SYMBOL,
+        'ISOLATION' => self::ISOLATION_SYMBOL,
+        'ISSUER' => self::ISSUER_SYMBOL,
+        'ITERATE' => self::ITERATE_SYMBOL,
+        'JOIN' => self::JOIN_SYMBOL,
+        'JSON' => self::JSON_SYMBOL,
+        'KEY' => self::KEY_SYMBOL,
+        'KEY_BLOCK_SIZE' => self::KEY_BLOCK_SIZE_SYMBOL,
+        'KEYS' => self::KEYS_SYMBOL,
+        'KILL' => self::KILL_SYMBOL,
+        'LANGUAGE' => self::LANGUAGE_SYMBOL,
+        'LAST' => self::LAST_SYMBOL,
+        'LEADING' => self::LEADING_SYMBOL,
+        'LEAVE' => self::LEAVE_SYMBOL,
+        'LEAVES' => self::LEAVES_SYMBOL,
+        'LEFT' => self::LEFT_SYMBOL,
+        'LESS' => self::LESS_SYMBOL,
+        'LEVEL' => self::LEVEL_SYMBOL,
+        'LIKE' => self::LIKE_SYMBOL,
+        'LIMIT' => self::LIMIT_SYMBOL,
+        'LINEAR' => self::LINEAR_SYMBOL,
+        'LINES' => self::LINES_SYMBOL,
+        'LINESTRING' => self::LINESTRING_SYMBOL,
+        'LIST' => self::LIST_SYMBOL,
+        'LOAD' => self::LOAD_SYMBOL,
+        'LOCAL' => self::LOCAL_SYMBOL,
+        'LOCALTIME' => self::LOCALTIME_SYMBOL,
+        'LOCALTIMESTAMP' => self::LOCALTIMESTAMP_SYMBOL,
+        'LOCATOR' => self::LOCATOR_SYMBOL,
+        'LOCK' => self::LOCK_SYMBOL,
+        'LOCKS' => self::LOCKS_SYMBOL,
+        'LOGFILE' => self::LOGFILE_SYMBOL,
+        'LOGS' => self::LOGS_SYMBOL,
+        'LONG' => self::LONG_SYMBOL,
+        'LONG_NUM' => self::LONG_NUM_SYMBOL,
+        'LONGBLOB' => self::LONGBLOB_SYMBOL,
+        'LONGTEXT' => self::LONGTEXT_SYMBOL,
+        'LOOP' => self::LOOP_SYMBOL,
+        'LOW_PRIORITY' => self::LOW_PRIORITY_SYMBOL,
+        'MASTER' => self::MASTER_SYMBOL,
+        'MASTER_AUTO_POSITION' => self::MASTER_AUTO_POSITION_SYMBOL,
+        'MASTER_BIND' => self::MASTER_BIND_SYMBOL,
+        'MASTER_CONNECT_RETRY' => self::MASTER_CONNECT_RETRY_SYMBOL,
+        'MASTER_DELAY' => self::MASTER_DELAY_SYMBOL,
+        'MASTER_HEARTBEAT_PERIOD' => self::MASTER_HEARTBEAT_PERIOD_SYMBOL,
+        'MASTER_HOST' => self::MASTER_HOST_SYMBOL,
+        'MASTER_LOG_FILE' => self::MASTER_LOG_FILE_SYMBOL,
+        'MASTER_LOG_POS' => self::MASTER_LOG_POS_SYMBOL,
+        'MASTER_PASSWORD' => self::MASTER_PASSWORD_SYMBOL,
+        'MASTER_PORT' => self::MASTER_PORT_SYMBOL,
+        'MASTER_RETRY_COUNT' => self::MASTER_RETRY_COUNT_SYMBOL,
+        'MASTER_SERVER_ID' => self::MASTER_SERVER_ID_SYMBOL,
+        'MASTER_SSL' => self::MASTER_SSL_SYMBOL,
+        'MASTER_SSL_CA' => self::MASTER_SSL_CA_SYMBOL,
+        'MASTER_SSL_CAPATH' => self::MASTER_SSL_CAPATH_SYMBOL,
+        'MASTER_SSL_CERT' => self::MASTER_SSL_CERT_SYMBOL,
+        'MASTER_SSL_CIPHER' => self::MASTER_SSL_CIPHER_SYMBOL,
+        'MASTER_SSL_CRL' => self::MASTER_SSL_CRL_SYMBOL,
+        'MASTER_SSL_CRLPATH' => self::MASTER_SSL_CRLPATH_SYMBOL,
+        'MASTER_SSL_KEY' => self::MASTER_SSL_KEY_SYMBOL,
+        'MASTER_SSL_VERIFY_SERVER_CERT' => self::MASTER_SSL_VERIFY_SERVER_CERT_SYMBOL,
+        'MASTER_TLS_VERSION' => self::MASTER_TLS_VERSION_SYMBOL,
+        'MASTER_USER' => self::MASTER_USER_SYMBOL,
+        'MATCH' => self::MATCH_SYMBOL,
+        'MAX' => self::MAX_SYMBOL,
+        'MAX_CONNECTIONS_PER_HOUR' => self::MAX_CONNECTIONS_PER_HOUR_SYMBOL,
+        'MAX_QUERIES_PER_HOUR' => self::MAX_QUERIES_PER_HOUR_SYMBOL,
+        'MAX_ROWS' => self::MAX_ROWS_SYMBOL,
+        'MAX_SIZE' => self::MAX_SIZE_SYMBOL,
+        'MAX_STATEMENT_TIME' => self::MAX_STATEMENT_TIME_SYMBOL,
+        'MAX_UPDATES_PER_HOUR' => self::MAX_UPDATES_PER_HOUR_SYMBOL,
+        'MAX_USER_CONNECTIONS' => self::MAX_USER_CONNECTIONS_SYMBOL,
+        'MAXVALUE' => self::MAXVALUE_SYMBOL,
+        'MEDIUM' => self::MEDIUM_SYMBOL,
+        'MEDIUMBLOB' => self::MEDIUMBLOB_SYMBOL,
+        'MEDIUMINT' => self::MEDIUMINT_SYMBOL,
+        'MEDIUMTEXT' => self::MEDIUMTEXT_SYMBOL,
+        'MEMORY' => self::MEMORY_SYMBOL,
+        'MERGE' => self::MERGE_SYMBOL,
+        'MESSAGE_TEXT' => self::MESSAGE_TEXT_SYMBOL,
+        'MICROSECOND' => self::MICROSECOND_SYMBOL,
+        'MID' => self::MID_SYMBOL,
+        'MIDDLEINT' => self::MIDDLEINT_SYMBOL,
+        'MIGRATE' => self::MIGRATE_SYMBOL,
+        'MIN' => self::MIN_SYMBOL,
+        'MIN_ROWS' => self::MIN_ROWS_SYMBOL,
+        'MINUTE' => self::MINUTE_SYMBOL,
+        'MINUTE_MICROSECOND' => self::MINUTE_MICROSECOND_SYMBOL,
+        'MINUTE_SECOND' => self::MINUTE_SECOND_SYMBOL,
+        'MOD' => self::MOD_SYMBOL,
+        'MODE' => self::MODE_SYMBOL,
+        'MODIFIES' => self::MODIFIES_SYMBOL,
+        'MODIFY' => self::MODIFY_SYMBOL,
+        'MONTH' => self::MONTH_SYMBOL,
+        'MULTILINESTRING' => self::MULTILINESTRING_SYMBOL,
+        'MULTIPOINT' => self::MULTIPOINT_SYMBOL,
+        'MULTIPOLYGON' => self::MULTIPOLYGON_SYMBOL,
+        'MUTEX' => self::MUTEX_SYMBOL,
+        'MYSQL_ERRNO' => self::MYSQL_ERRNO_SYMBOL,
+        'NAME' => self::NAME_SYMBOL,
+        'NAMES' => self::NAMES_SYMBOL,
+        'NATIONAL' => self::NATIONAL_SYMBOL,
+        'NATURAL' => self::NATURAL_SYMBOL,
+        'NCHAR' => self::NCHAR_SYMBOL,
+        'NCHAR_STRING' => self::NCHAR_STRING_SYMBOL,
+        'NDB' => self::NDB_SYMBOL,
+        'NDBCLUSTER' => self::NDBCLUSTER_SYMBOL,
+        'NEG' => self::NEG_SYMBOL,
+        'NEVER' => self::NEVER_SYMBOL,
+        'NEW' => self::NEW_SYMBOL,
+        'NEXT' => self::NEXT_SYMBOL,
+        'NO' => self::NO_SYMBOL,
+        'NO_WAIT' => self::NO_WAIT_SYMBOL,
+        'NO_WRITE_TO_BINLOG' => self::NO_WRITE_TO_BINLOG_SYMBOL,
+        'NODEGROUP' => self::NODEGROUP_SYMBOL,
+        'NONBLOCKING' => self::NONBLOCKING_SYMBOL,
+        'NONE' => self::NONE_SYMBOL,
+        'NOT' => self::NOT_SYMBOL,
+        'NOW' => self::NOW_SYMBOL,
+        'NULL' => self::NULL_SYMBOL,
+        'NUMBER' => self::NUMBER_SYMBOL,
+        'NUMERIC' => self::NUMERIC_SYMBOL,
+        'NVARCHAR' => self::NVARCHAR_SYMBOL,
+        'OFFLINE' => self::OFFLINE_SYMBOL,
+        'OFFSET' => self::OFFSET_SYMBOL,
+        'OLD_PASSWORD' => self::OLD_PASSWORD_SYMBOL,
+        'ON' => self::ON_SYMBOL,
+        'ONE' => self::ONE_SYMBOL,
+        'ONLINE' => self::ONLINE_SYMBOL,
+        'ONLY' => self::ONLY_SYMBOL,
+        'OPEN' => self::OPEN_SYMBOL,
+        'OPTIMIZE' => self::OPTIMIZE_SYMBOL,
+        'OPTIMIZER_COSTS' => self::OPTIMIZER_COSTS_SYMBOL,
+        'OPTION' => self::OPTION_SYMBOL,
+        'OPTIONALLY' => self::OPTIONALLY_SYMBOL,
+        'OPTIONS' => self::OPTIONS_SYMBOL,
+        'OR' => self::OR_SYMBOL,
+        'ORDER' => self::ORDER_SYMBOL,
+        'OUT' => self::OUT_SYMBOL,
+        'OUTER' => self::OUTER_SYMBOL,
+        'OUTFILE' => self::OUTFILE_SYMBOL,
+        'OWNER' => self::OWNER_SYMBOL,
+        'PACK_KEYS' => self::PACK_KEYS_SYMBOL,
+        'PAGE' => self::PAGE_SYMBOL,
+        'PARSER' => self::PARSER_SYMBOL,
+        'PARTIAL' => self::PARTIAL_SYMBOL,
+        'PARTITION' => self::PARTITION_SYMBOL,
+        'PARTITIONING' => self::PARTITIONING_SYMBOL,
+        'PARTITIONS' => self::PARTITIONS_SYMBOL,
+        'PASSWORD' => self::PASSWORD_SYMBOL,
+        'PHASE' => self::PHASE_SYMBOL,
+        'PLUGIN' => self::PLUGIN_SYMBOL,
+        'PLUGIN_DIR' => self::PLUGIN_DIR_SYMBOL,
+        'PLUGINS' => self::PLUGINS_SYMBOL,
+        'POINT' => self::POINT_SYMBOL,
+        'POLYGON' => self::POLYGON_SYMBOL,
+        'PORT' => self::PORT_SYMBOL,
+        'POSITION' => self::POSITION_SYMBOL,
+        'PRECEDES' => self::PRECEDES_SYMBOL,
+        'PRECISION' => self::PRECISION_SYMBOL,
+        'PREPARE' => self::PREPARE_SYMBOL,
+        'PRESERVE' => self::PRESERVE_SYMBOL,
+        'PREV' => self::PREV_SYMBOL,
+        'PRIMARY' => self::PRIMARY_SYMBOL,
+        'PRIVILEGES' => self::PRIVILEGES_SYMBOL,
+        'PROCEDURE' => self::PROCEDURE_SYMBOL,
+        'PROCESS' => self::PROCESS_SYMBOL,
+        'PROCESSLIST' => self::PROCESSLIST_SYMBOL,
+        'PROFILE' => self::PROFILE_SYMBOL,
+        'PROFILES' => self::PROFILES_SYMBOL,
+        'PROXY' => self::PROXY_SYMBOL,
+        'PURGE' => self::PURGE_SYMBOL,
+        'QUARTER' => self::QUARTER_SYMBOL,
+        'QUERY' => self::QUERY_SYMBOL,
+        'QUICK' => self::QUICK_SYMBOL,
+        'RANGE' => self::RANGE_SYMBOL,
+        'READ' => self::READ_SYMBOL,
+        'READ_ONLY' => self::READ_ONLY_SYMBOL,
+        'READ_WRITE' => self::READ_WRITE_SYMBOL,
+        'READS' => self::READS_SYMBOL,
+        'REAL' => self::REAL_SYMBOL,
+        'REBUILD' => self::REBUILD_SYMBOL,
+        'RECOVER' => self::RECOVER_SYMBOL,
+        'REDO_BUFFER_SIZE' => self::REDO_BUFFER_SIZE_SYMBOL,
+        'REDOFILE' => self::REDOFILE_SYMBOL,
+        'REDUNDANT' => self::REDUNDANT_SYMBOL,
+        'REFERENCES' => self::REFERENCES_SYMBOL,
+        'REGEXP' => self::REGEXP_SYMBOL,
+        'RELAY' => self::RELAY_SYMBOL,
+        'RELAY_LOG_FILE' => self::RELAY_LOG_FILE_SYMBOL,
+        'RELAY_LOG_POS' => self::RELAY_LOG_POS_SYMBOL,
+        'RELAY_THREAD' => self::RELAY_THREAD_SYMBOL,
+        'RELAYLOG' => self::RELAYLOG_SYMBOL,
+        'RELEASE' => self::RELEASE_SYMBOL,
+        'RELOAD' => self::RELOAD_SYMBOL,
+        'REMOVE' => self::REMOVE_SYMBOL,
+        'RENAME' => self::RENAME_SYMBOL,
+        'REORGANIZE' => self::REORGANIZE_SYMBOL,
+        'REPAIR' => self::REPAIR_SYMBOL,
+        'REPEAT' => self::REPEAT_SYMBOL,
+        'REPEATABLE' => self::REPEATABLE_SYMBOL,
+        'REPLACE' => self::REPLACE_SYMBOL,
+        'REPLICATE_DO_DB' => self::REPLICATE_DO_DB_SYMBOL,
+        'REPLICATE_DO_TABLE' => self::REPLICATE_DO_TABLE_SYMBOL,
+        'REPLICATE_IGNORE_DB' => self::REPLICATE_IGNORE_DB_SYMBOL,
+        'REPLICATE_IGNORE_TABLE' => self::REPLICATE_IGNORE_TABLE_SYMBOL,
+        'REPLICATE_REWRITE_DB' => self::REPLICATE_REWRITE_DB_SYMBOL,
+        'REPLICATE_WILD_DO_TABLE' => self::REPLICATE_WILD_DO_TABLE_SYMBOL,
+        'REPLICATE_WILD_IGNORE_TABLE' => self::REPLICATE_WILD_IGNORE_TABLE_SYMBOL,
+        'REPLICATION' => self::REPLICATION_SYMBOL,
+        'REQUIRE' => self::REQUIRE_SYMBOL,
+        'RESET' => self::RESET_SYMBOL,
+        'RESIGNAL' => self::RESIGNAL_SYMBOL,
+        'RESTORE' => self::RESTORE_SYMBOL,
+        'RESTRICT' => self::RESTRICT_SYMBOL,
+        'RESUME' => self::RESUME_SYMBOL,
+        'RETURN' => self::RETURN_SYMBOL,
+        'RETURNED_SQLSTATE' => self::RETURNED_SQLSTATE_SYMBOL,
+        'RETURNS' => self::RETURNS_SYMBOL,
+        'REVERSE' => self::REVERSE_SYMBOL,
+        'REVOKE' => self::REVOKE_SYMBOL,
+        'RIGHT' => self::RIGHT_SYMBOL,
+        'RLIKE' => self::RLIKE_SYMBOL,
+        'ROLLBACK' => self::ROLLBACK_SYMBOL,
+        'ROLLUP' => self::ROLLUP_SYMBOL,
+        'ROTATE' => self::ROTATE_SYMBOL,
+        'ROUTINE' => self::ROUTINE_SYMBOL,
+        'ROW' => self::ROW_SYMBOL,
+        'ROW_COUNT' => self::ROW_COUNT_SYMBOL,
+        'ROW_FORMAT' => self::ROW_FORMAT_SYMBOL,
+        'ROWS' => self::ROWS_SYMBOL,
+        'RTREE' => self::RTREE_SYMBOL,
+        'SAVEPOINT' => self::SAVEPOINT_SYMBOL,
+        'SCHEDULE' => self::SCHEDULE_SYMBOL,
+        'SCHEMA' => self::SCHEMA_SYMBOL,
+        'SCHEMA_NAME' => self::SCHEMA_NAME_SYMBOL,
+        'SCHEMAS' => self::SCHEMAS_SYMBOL,
+        'SECOND' => self::SECOND_SYMBOL,
+        'SECOND_MICROSECOND' => self::SECOND_MICROSECOND_SYMBOL,
+        'SECURITY' => self::SECURITY_SYMBOL,
+        'SELECT' => self::SELECT_SYMBOL,
+        'SENSITIVE' => self::SENSITIVE_SYMBOL,
+        'SEPARATOR' => self::SEPARATOR_SYMBOL,
+        'SERIAL' => self::SERIAL_SYMBOL,
+        'SERIALIZABLE' => self::SERIALIZABLE_SYMBOL,
+        'SERVER' => self::SERVER_SYMBOL,
+        'SERVER_OPTIONS' => self::SERVER_OPTIONS_SYMBOL,
+        'SESSION' => self::SESSION_SYMBOL,
+        'SESSION_USER' => self::SESSION_USER_SYMBOL,
+        'SET' => self::SET_SYMBOL,
+        'SET_VAR' => self::SET_VAR_SYMBOL,
+        'SHARE' => self::SHARE_SYMBOL,
+        'SHOW' => self::SHOW_SYMBOL,
+        'SHUTDOWN' => self::SHUTDOWN_SYMBOL,
+        'SIGNAL' => self::SIGNAL_SYMBOL,
+        'SIGNED' => self::SIGNED_SYMBOL,
+        'SIMPLE' => self::SIMPLE_SYMBOL,
+        'SLAVE' => self::SLAVE_SYMBOL,
+        'SLOW' => self::SLOW_SYMBOL,
+        'SMALLINT' => self::SMALLINT_SYMBOL,
+        'SNAPSHOT' => self::SNAPSHOT_SYMBOL,
+        'SOCKET' => self::SOCKET_SYMBOL,
+        'SOME' => self::SOME_SYMBOL,
+        'SONAME' => self::SONAME_SYMBOL,
+        'SOUNDS' => self::SOUNDS_SYMBOL,
+        'SOURCE' => self::SOURCE_SYMBOL,
+        'SPATIAL' => self::SPATIAL_SYMBOL,
+        'SPECIFIC' => self::SPECIFIC_SYMBOL,
+        'SQL' => self::SQL_SYMBOL,
+        'SQL_AFTER_GTIDS' => self::SQL_AFTER_GTIDS_SYMBOL,
+        'SQL_AFTER_MTS_GAPS' => self::SQL_AFTER_MTS_GAPS_SYMBOL,
+        'SQL_BEFORE_GTIDS' => self::SQL_BEFORE_GTIDS_SYMBOL,
+        'SQL_BIG_RESULT' => self::SQL_BIG_RESULT_SYMBOL,
+        'SQL_BUFFER_RESULT' => self::SQL_BUFFER_RESULT_SYMBOL,
+        'SQL_CACHE' => self::SQL_CACHE_SYMBOL,
+        'SQL_CALC_FOUND_ROWS' => self::SQL_CALC_FOUND_ROWS_SYMBOL,
+        'SQL_NO_CACHE' => self::SQL_NO_CACHE_SYMBOL,
+        'SQL_SMALL_RESULT' => self::SQL_SMALL_RESULT_SYMBOL,
+        'SQL_THREAD' => self::SQL_THREAD_SYMBOL,
+        'SQL_TSI_DAY' => self::SQL_TSI_DAY_SYMBOL,
+        'SQL_TSI_HOUR' => self::SQL_TSI_HOUR_SYMBOL,
+        'SQL_TSI_MINUTE' => self::SQL_TSI_MINUTE_SYMBOL,
+        'SQL_TSI_MONTH' => self::SQL_TSI_MONTH_SYMBOL,
+        'SQL_TSI_QUARTER' => self::SQL_TSI_QUARTER_SYMBOL,
+        'SQL_TSI_SECOND' => self::SQL_TSI_SECOND_SYMBOL,
+        'SQL_TSI_WEEK' => self::SQL_TSI_WEEK_SYMBOL,
+        'SQL_TSI_YEAR' => self::SQL_TSI_YEAR_SYMBOL,
+        'SQLEXCEPTION' => self::SQLEXCEPTION_SYMBOL,
+        'SQLSTATE' => self::SQLSTATE_SYMBOL,
+        'SQLWARNING' => self::SQLWARNING_SYMBOL,
+        'SSL' => self::SSL_SYMBOL,
+        'STACKED' => self::STACKED_SYMBOL,
+        'START' => self::START_SYMBOL,
+        'STARTING' => self::STARTING_SYMBOL,
+        'STARTS' => self::STARTS_SYMBOL,
+        'STATS_AUTO_RECALC' => self::STATS_AUTO_RECALC_SYMBOL,
+        'STATS_PERSISTENT' => self::STATS_PERSISTENT_SYMBOL,
+        'STATS_SAMPLE_PAGES' => self::STATS_SAMPLE_PAGES_SYMBOL,
+        'STATUS' => self::STATUS_SYMBOL,
+        'STD' => self::STD_SYMBOL,
+        'STDDEV' => self::STDDEV_SYMBOL,
+        'STDDEV_POP' => self::STDDEV_POP_SYMBOL,
+        'STDDEV_SAMP' => self::STDDEV_SAMP_SYMBOL,
+        'STOP' => self::STOP_SYMBOL,
+        'STORAGE' => self::STORAGE_SYMBOL,
+        'STORED' => self::STORED_SYMBOL,
+        'STRAIGHT_JOIN' => self::STRAIGHT_JOIN_SYMBOL,
+        'STRING' => self::STRING_SYMBOL,
+        'SUBCLASS_ORIGIN' => self::SUBCLASS_ORIGIN_SYMBOL,
+        'SUBDATE' => self::SUBDATE_SYMBOL,
+        'SUBJECT' => self::SUBJECT_SYMBOL,
+        'SUBPARTITION' => self::SUBPARTITION_SYMBOL,
+        'SUBPARTITIONS' => self::SUBPARTITIONS_SYMBOL,
+        'SUBSTR' => self::SUBSTR_SYMBOL,
+        'SUBSTRING' => self::SUBSTRING_SYMBOL,
+        'SUM' => self::SUM_SYMBOL,
+        'SUPER' => self::SUPER_SYMBOL,
+        'SUSPEND' => self::SUSPEND_SYMBOL,
+        'SWAPS' => self::SWAPS_SYMBOL,
+        'SWITCHES' => self::SWITCHES_SYMBOL,
+        'SYSDATE' => self::SYSDATE_SYMBOL,
+        'SYSTEM_USER' => self::SYSTEM_USER_SYMBOL,
+        'TABLE' => self::TABLE_SYMBOL,
+        'TABLE_CHECKSUM' => self::TABLE_CHECKSUM_SYMBOL,
+        'TABLE_NAME' => self::TABLE_NAME_SYMBOL,
+        'TABLE_REF_PRIORITY' => self::TABLE_REF_PRIORITY_SYMBOL,
+        'TABLES' => self::TABLES_SYMBOL,
+        'TABLESPACE' => self::TABLESPACE_SYMBOL,
+        'TEMPORARY' => self::TEMPORARY_SYMBOL,
+        'TEMPTABLE' => self::TEMPTABLE_SYMBOL,
+        'TERMINATED' => self::TERMINATED_SYMBOL,
+        'TEXT' => self::TEXT_SYMBOL,
+        'THAN' => self::THAN_SYMBOL,
+        'THEN' => self::THEN_SYMBOL,
+        'TIME' => self::TIME_SYMBOL,
+        'TIMESTAMP' => self::TIMESTAMP_SYMBOL,
+        'TIMESTAMP_ADD' => self::TIMESTAMP_ADD_SYMBOL,
+        'TIMESTAMP_DIFF' => self::TIMESTAMP_DIFF_SYMBOL,
+        'TINYBLOB' => self::TINYBLOB_SYMBOL,
+        'TINYINT' => self::TINYINT_SYMBOL,
+        'TINYTEXT' => self::TINYTEXT_SYMBOL,
+        'TO' => self::TO_SYMBOL,
+        'TRAILING' => self::TRAILING_SYMBOL,
+        'TRANSACTION' => self::TRANSACTION_SYMBOL,
+        'TRIGGER' => self::TRIGGER_SYMBOL,
+        'TRIGGERS' => self::TRIGGERS_SYMBOL,
+        'TRIM' => self::TRIM_SYMBOL,
+        'TRUE' => self::TRUE_SYMBOL,
+        'TRUNCATE' => self::TRUNCATE_SYMBOL,
+        'TYPE' => self::TYPE_SYMBOL,
+        'TYPES' => self::TYPES_SYMBOL,
+        'UDF_RETURNS' => self::UDF_RETURNS_SYMBOL,
+        'UNCOMMITTED' => self::UNCOMMITTED_SYMBOL,
+        'UNDEFINED' => self::UNDEFINED_SYMBOL,
+        'UNDO' => self::UNDO_SYMBOL,
+        'UNDO_BUFFER_SIZE' => self::UNDO_BUFFER_SIZE_SYMBOL,
+        'UNDOFILE' => self::UNDOFILE_SYMBOL,
+        'UNICODE' => self::UNICODE_SYMBOL,
+        'UNINSTALL' => self::UNINSTALL_SYMBOL,
+        'UNION' => self::UNION_SYMBOL,
+        'UNIQUE' => self::UNIQUE_SYMBOL,
+        'UNKNOWN' => self::UNKNOWN_SYMBOL,
+        'UNLOCK' => self::UNLOCK_SYMBOL,
+        'UNSIGNED' => self::UNSIGNED_SYMBOL,
+        'UNTIL' => self::UNTIL_SYMBOL,
+        'UPDATE' => self::UPDATE_SYMBOL,
+        'UPGRADE' => self::UPGRADE_SYMBOL,
+        'USAGE' => self::USAGE_SYMBOL,
+        'USE' => self::USE_SYMBOL,
+        'USE_FRM' => self::USE_FRM_SYMBOL,
+        'USER' => self::USER_SYMBOL,
+        'USER_RESOURCES' => self::USER_RESOURCES_SYMBOL,
+        'USING' => self::USING_SYMBOL,
+        'UTC_DATE' => self::UTC_DATE_SYMBOL,
+        'UTC_TIME' => self::UTC_TIME_SYMBOL,
+        'UTC_TIMESTAMP' => self::UTC_TIMESTAMP_SYMBOL,
+        'VALIDATION' => self::VALIDATION_SYMBOL,
+        'VALUE' => self::VALUE_SYMBOL,
+        'VALUES' => self::VALUES_SYMBOL,
+        'VAR_POP' => self::VAR_POP_SYMBOL,
+        'VAR_SAMP' => self::VAR_SAMP_SYMBOL,
+        'VARBINARY' => self::VARBINARY_SYMBOL,
+        'VARCHAR' => self::VARCHAR_SYMBOL,
+        'VARCHARACTER' => self::VARCHARACTER_SYMBOL,
+        'VARIABLES' => self::VARIABLES_SYMBOL,
+        'VARIANCE' => self::VARIANCE_SYMBOL,
+        'VARYING' => self::VARYING_SYMBOL,
+        'VIEW' => self::VIEW_SYMBOL,
+        'VIRTUAL' => self::VIRTUAL_SYMBOL,
+        'WAIT' => self::WAIT_SYMBOL,
+        'WARNINGS' => self::WARNINGS_SYMBOL,
+        'WEEK' => self::WEEK_SYMBOL,
+        'WEIGHT_STRING' => self::WEIGHT_STRING_SYMBOL,
+        'WHEN' => self::WHEN_SYMBOL,
+        'WHERE' => self::WHERE_SYMBOL,
+        'WHILE' => self::WHILE_SYMBOL,
+        'WITH' => self::WITH_SYMBOL,
+        'WITHOUT' => self::WITHOUT_SYMBOL,
+        'WORK' => self::WORK_SYMBOL,
+        'WRAPPER' => self::WRAPPER_SYMBOL,
+        'WRITE' => self::WRITE_SYMBOL,
+        'X509' => self::X509_SYMBOL,
+        'XA' => self::XA_SYMBOL,
+        'XID' => self::XID_SYMBOL,
+        'XML' => self::XML_SYMBOL,
+        'XOR' => self::XOR_SYMBOL,
+        'YEAR' => self::YEAR_SYMBOL,
+        'YEAR_MONTH' => self::YEAR_MONTH_SYMBOL,
+        'ZEROFILL' => self::ZEROFILL_SYMBOL,
+
+		// Tokens from MySQL 8.0:
+        'ACTIVE' => self::ACTIVE_SYMBOL,
+        'ADMIN' => self::ADMIN_SYMBOL,
+        'ARRAY' => self::ARRAY_SYMBOL,
+        'BUCKETS' => self::BUCKETS_SYMBOL,
+        'CLONE' => self::CLONE_SYMBOL,
+        'COMPONENT' => self::COMPONENT_SYMBOL,
+        'CUME_DIST' => self::CUME_DIST_SYMBOL,
+        'DEFINITION' => self::DEFINITION_SYMBOL,
+        'DENSE_RANK' => self::DENSE_RANK_SYMBOL,
+        'DESCRIPTION' => self::DESCRIPTION_SYMBOL,
+        'EMPTY' => self::EMPTY_SYMBOL,
+        'ENFORCED' => self::ENFORCED_SYMBOL,
+        'EXCEPT' => self::EXCEPT_SYMBOL,
+        'EXCLUDE' => self::EXCLUDE_SYMBOL,
+        'FAILED_LOGIN_ATTEMPTS' => self::FAILED_LOGIN_ATTEMPTS_SYMBOL,
+        'FIRST_VALUE' => self::FIRST_VALUE_SYMBOL,
+        'FOLLOWING' => self::FOLLOWING_SYMBOL,
+        'GET_MASTER_PUBLIC_KEY_SYM' => self::GET_MASTER_PUBLIC_KEY_SYMBOL,
+        'GROUPING' => self::GROUPING_SYMBOL,
+        'GROUPS' => self::GROUPS_SYMBOL,
+        'HISTOGRAM' => self::HISTOGRAM_SYMBOL,
+        'HISTORY' => self::HISTORY_SYMBOL,
+        'INACTIVE' => self::INACTIVE_SYMBOL,
+        'INVISIBLE' => self::INVISIBLE_SYMBOL,
+        'JSON_ARRAYAGG' => self::JSON_ARRAYAGG_SYMBOL,
+        'JSON_OBJECTAGG' => self::JSON_OBJECTAGG_SYMBOL,
+        'JSON_TABLE' => self::JSON_TABLE_SYMBOL,
+        'LAG' => self::LAG_SYMBOL,
+        'LAST_VALUE' => self::LAST_VALUE_SYMBOL,
+        'LATERAL' => self::LATERAL_SYMBOL,
+        'LEAD' => self::LEAD_SYMBOL,
+        'LOCKED' => self::LOCKED_SYMBOL,
+        'MASTER_COMPRESSION_ALGORITHM' => self::MASTER_COMPRESSION_ALGORITHM_SYMBOL,
+        'MASTER_PUBLIC_KEY_PATH' => self::MASTER_PUBLIC_KEY_PATH_SYMBOL,
+        'MASTER_TLS_CIPHERSUITES' => self::MASTER_TLS_CIPHERSUITES_SYMBOL,
+        'MASTER_ZSTD_COMPRESSION_LEVEL' => self::MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL,
+        'MEMBER' => self::MEMBER_SYMBOL,
+        'NESTED' => self::NESTED_SYMBOL,
+        'NETWORK_NAMESPACE' => self::NETWORK_NAMESPACE_SYMBOL,
+        'NOWAIT' => self::NOWAIT_SYMBOL,
+        'NTH_VALUE' => self::NTH_VALUE_SYMBOL,
+        'NTILE' => self::NTILE_SYMBOL,
+        'NULLS' => self::NULLS_SYMBOL,
+        'OF' => self::OF_SYMBOL,
+        'OFF' => self::OFF_SYMBOL,
+        'OJ' => self::OJ_SYMBOL,
+        'OLD' => self::OLD_SYMBOL,
+        'OPTIONAL' => self::OPTIONAL_SYMBOL,
+        'ORDINALITY' => self::ORDINALITY_SYMBOL,
+        'ORGANIZATION' => self::ORGANIZATION_SYMBOL,
+        'OTHERS' => self::OTHERS_SYMBOL,
+        'OVER' => self::OVER_SYMBOL,
+        'PASSWORD_LOCK_TIME' => self::PASSWORD_LOCK_TIME_SYMBOL,
+        'PATH' => self::PATH_SYMBOL,
+        'PERCENT_RANK' => self::PERCENT_RANK_SYMBOL,
+        'PERSIST' => self::PERSIST_SYMBOL,
+        'PERSIST_ONLY' => self::PERSIST_ONLY_SYMBOL,
+        'PRECEDING' => self::PRECEDING_SYMBOL,
+        'PRIVILEGE_CHECKS_USER' => self::PRIVILEGE_CHECKS_USER_SYMBOL,
+        'RANDOM' => self::RANDOM_SYMBOL,
+        'RANK' => self::RANK_SYMBOL,
+        'RECURSIVE' => self::RECURSIVE_SYMBOL,
+        'REFERENCE' => self::REFERENCE_SYMBOL,
+        'REMOTE' => self::REMOTE_SYMBOL,
+        'REQUIRE_ROW_FORMAT' => self::REQUIRE_ROW_FORMAT_SYMBOL,
+        'REQUIRE_TABLE_PRIMARY_KEY_CHECK' => self::REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL,
+        'RESOURCE' => self::RESOURCE_SYMBOL,
+        'RESPECT' => self::RESPECT_SYMBOL,
+        'RESTART' => self::RESTART_SYMBOL,
+        'RETAIN' => self::RETAIN_SYMBOL,
+        'REUSE' => self::REUSE_SYMBOL,
+        'ROLE' => self::ROLE_SYMBOL,
+        'ROW_NUMBER' => self::ROW_NUMBER_SYMBOL,
+        'SECONDARY' => self::SECONDARY_SYMBOL,
+        'SECONDARY_ENGINE' => self::SECONDARY_ENGINE_SYMBOL,
+        'SECONDARY_LOAD' => self::SECONDARY_LOAD_SYMBOL,
+        'SECONDARY_UNLOAD' => self::SECONDARY_UNLOAD_SYMBOL,
+        'SKIP' => self::SKIP_SYMBOL,
+        'SRID' => self::SRID_SYMBOL,
+        'STREAM' => self::STREAM_SYMBOL,
+        'SYSTEM' => self::SYSTEM_SYMBOL,
+        'THREAD_PRIORITY' => self::THREAD_PRIORITY_SYMBOL,
+        'TIES' => self::TIES_SYMBOL,
+        'UNBOUNDED' => self::UNBOUNDED_SYMBOL,
+        'VCPU' => self::VCPU_SYMBOL,
+        'VISIBLE' => self::VISIBLE_SYMBOL,
+        'WINDOW' => self::WINDOW_SYMBOL,
+	];
+
+	const SYNONYMS = [
+        self::CHARACTER_SYMBOL => self::CHAR_SYMBOL,
+        self::CURRENT_DATE_SYMBOL => self::CURDATE_SYMBOL,
+        self::CURRENT_TIME_SYMBOL => self::CURTIME_SYMBOL,
+        self::CURRENT_TIMESTAMP_SYMBOL => self::NOW_SYMBOL,
+        self::DAYOFMONTH_SYMBOL => self::DAY_SYMBOL,
+        self::DEC_SYMBOL => self::DECIMAL_SYMBOL,
+        self::DISTINCTROW_SYMBOL => self::DISTINCT_SYMBOL,
+        self::FIELDS_SYMBOL => self::COLUMNS_SYMBOL,
+        self::FLOAT4_SYMBOL => self::FLOAT_SYMBOL,
+        self::FLOAT8_SYMBOL => self::DOUBLE_SYMBOL,
+        self::INT1_SYMBOL => self::TINYINT_SYMBOL,
+        self::INT2_SYMBOL => self::SMALLINT_SYMBOL,
+        self::INT3_SYMBOL => self::MEDIUMINT_SYMBOL,
+        self::INT4_SYMBOL => self::INT_SYMBOL,
+        self::INT8_SYMBOL => self::BIGINT_SYMBOL,
+        self::INTEGER_SYMBOL => self::INT_SYMBOL,
+        self::IO_THREAD_SYMBOL => self::RELAY_THREAD_SYMBOL,
+        self::LOCALTIME_SYMBOL => self::NOW_SYMBOL,
+        self::LOCALTIMESTAMP_SYMBOL => self::NOW_SYMBOL,
+        self::MID_SYMBOL => self::SUBSTRING_SYMBOL,
+        self::MIDDLEINT_SYMBOL => self::MEDIUMINT_SYMBOL,
+        self::NDB_SYMBOL => self::NDBCLUSTER_SYMBOL,
+        self::RLIKE_SYMBOL => self::REGEXP_SYMBOL,
+        self::SCHEMA_SYMBOL => self::DATABASE_SYMBOL,
+        self::SCHEMAS_SYMBOL => self::DATABASES_SYMBOL,
+        self::SESSION_USER_SYMBOL => self::USER_SYMBOL,
+        self::SOME_SYMBOL => self::ANY_SYMBOL,
+        self::SQL_TSI_DAY_SYMBOL => self::DAY_SYMBOL,
+        self::SQL_TSI_HOUR_SYMBOL => self::HOUR_SYMBOL,
+        self::SQL_TSI_MINUTE_SYMBOL => self::MINUTE_SYMBOL,
+        self::SQL_TSI_MONTH_SYMBOL => self::MONTH_SYMBOL,
+        self::SQL_TSI_QUARTER_SYMBOL => self::QUARTER_SYMBOL,
+        self::SQL_TSI_SECOND_SYMBOL => self::SECOND_SYMBOL,
+        self::SQL_TSI_WEEK_SYMBOL => self::WEEK_SYMBOL,
+        self::SQL_TSI_YEAR_SYMBOL => self::YEAR_SYMBOL,
+        self::STDDEV_POP_SYMBOL => self::STD_SYMBOL,
+        self::STDDEV_SYMBOL => self::STD_SYMBOL,
+        self::SUBSTR_SYMBOL => self::SUBSTRING_SYMBOL,
+        self::SYSTEM_USER_SYMBOL => self::USER_SYMBOL,
+        self::VAR_POP_SYMBOL => self::VARIANCE_SYMBOL,
+        self::VARCHARACTER_SYMBOL => self::VARCHAR_SYMBOL,
+	];
+
+	const FUNCTIONS = [
+        self::ADDDATE_SYMBOL => true,
+        self::BIT_AND_SYMBOL => true,
+        self::BIT_OR_SYMBOL => true,
+        self::BIT_XOR_SYMBOL => true,
+        self::CAST_SYMBOL => true,
+        self::COUNT_SYMBOL => true,
+        self::CURDATE_SYMBOL => true,
+        self::CURRENT_DATE_SYMBOL => true,
+        self::CURRENT_TIME_SYMBOL => true,
+        self::CURTIME_SYMBOL => true,
+        self::DATE_ADD_SYMBOL => true,
+        self::DATE_SUB_SYMBOL => true,
+        self::EXTRACT_SYMBOL => true,
+        self::GROUP_CONCAT_SYMBOL => true,
+        self::MAX_SYMBOL => true,
+        self::MID_SYMBOL => true,
+        self::MIN_SYMBOL => true,
+        self::NOW_SYMBOL => true,
+        self::POSITION_SYMBOL => true,
+        self::SESSION_USER_SYMBOL => true,
+        self::STD_SYMBOL => true,
+        self::STDDEV_POP_SYMBOL => true,
+        self::STDDEV_SAMP_SYMBOL => true,
+        self::STDDEV_SYMBOL => true,
+        self::SUBDATE_SYMBOL => true,
+        self::SUBSTR_SYMBOL => true,
+        self::SUBSTRING_SYMBOL => true,
+        self::SUM_SYMBOL => true,
+        self::SYSDATE_SYMBOL => true,
+        self::SYSTEM_USER_SYMBOL => true,
+        self::TRIM_SYMBOL => true,
+        self::VAR_POP_SYMBOL => true,
+        self::VAR_SAMP_SYMBOL => true,
+        self::VARIANCE_SYMBOL => true,
+	];
+
+
+	/**
+	 * Positive number: >= <version>
+	 * Negative number: <  <version>
+	 */
+	const VERSIONS = [
+		// MySQL 5
+        self::ACCOUNT_SYMBOL => 50707,
+        self::ALWAYS_SYMBOL => 50707,
+        self::ANALYSE_SYMBOL => -80000,
+        self::AUTHORS_SYMBOL => -50700,
+        self::CHANNEL_SYMBOL => 50706,
+        self::COMPRESSION_SYMBOL => 50707,
+        self::CONTRIBUTORS_SYMBOL => -50700,
+        self::CURRENT_SYMBOL => 50604,
+        self::DEFAULT_AUTH_SYMBOL => 50604,
+        self::DES_KEY_FILE_SYMBOL < 80000,
+        self::ENCRYPTION_SYMBOL => 50711,
+        self::EXPIRE_SYMBOL => 50606,
+        self::EXPORT_SYMBOL => 50606,
+        self::FILE_BLOCK_SIZE_SYMBOL => 50707,
+        self::FILTER_SYMBOL => 50700,
+        self::FOLLOWS_SYMBOL => 50700,
+        self::GENERATED_SYMBOL => 50707,
+        self::GET_SYMBOL => 50604,
+        self::GROUP_REPLICATION_SYMBOL => 50707,
+        self::INSTANCE_SYMBOL => 50713,
+        self::JSON_SYMBOL => 50708,
+        self::MASTER_AUTO_POSITION_SYMBOL => 50605,
+        self::MASTER_BIND_SYMBOL => 50602,
+        self::MASTER_RETRY_COUNT_SYMBOL => 50601,
+        self::MASTER_SSL_CRL_SYMBOL => 50603,
+        self::MASTER_SSL_CRLPATH_SYMBOL => 50603,
+        self::MASTER_TLS_VERSION_SYMBOL => 50713,
+        self::NEVER_SYMBOL => 50704,
+        self::NUMBER_SYMBOL => 50606,
+        self::OLD_PASSWORD_SYMBOL => -50706,
+        self::ONLY_SYMBOL => 50605,
+        self::OPTIMIZER_COSTS_SYMBOL => 50706,
+        self::PLUGIN_DIR_SYMBOL => 50604,
+        self::PRECEDES_SYMBOL => 50700,
+        self::REDOFILE_SYMBOL => -80000,
+        self::REPLICATE_DO_DB_SYMBOL => 50700,
+        self::REPLICATE_DO_TABLE_SYMBOL => 50700,
+        self::REPLICATE_IGNORE_DB_SYMBOL => 50700,
+        self::REPLICATE_IGNORE_TABLE_SYMBOL => 50700,
+        self::REPLICATE_REWRITE_DB_SYMBOL => 50700,
+        self::REPLICATE_WILD_DO_TABLE_SYMBOL => 50700,
+        self::REPLICATE_WILD_IGNORE_TABLE_SYMBOL => 50700,
+        self::ROTATE_SYMBOL => 50713,
+        self::SQL_AFTER_MTS_GAPS_SYMBOL => 50606,
+        self::SQL_CACHE_SYMBOL => -80000,
+        self::STACKED_SYMBOL => 50700,
+        self::STORED_SYMBOL => 50707,
+        self::TABLE_REF_PRIORITY_SYMBOL => -80000,
+        self::VALIDATION_SYMBOL => 50706,
+        self::VIRTUAL_SYMBOL => 50707,
+        self::XID_SYMBOL => 50704,
+
+		// MySQL 8
+        self::ADMIN_SYMBOL => 80000,
+        self::BUCKETS_SYMBOL => 80000,
+        self::CLONE_SYMBOL => 80000,
+        self::COMPONENT_SYMBOL => 80000,
+        self::CUME_DIST_SYMBOL => 80000,
+        self::DENSE_RANK_SYMBOL => 80000,
+        self::GET_MASTER_PUBLIC_KEY_SYMBOL => 80000,
+        self::GROUPS_SYMBOL => 80000,
+        self::LOCKED_SYMBOL => 80000,
+        self::MASTER_PUBLIC_KEY_PATH_SYMBOL => 80000,
+        self::OJ_SYMBOL => 80017,
+        self::OVER_SYMBOL => 80000,
+        self::ACTIVE_SYMBOL => 80014,
+        self::ARRAY_SYMBOL => 80017,
+        self::DEFINITION_SYMBOL => 80011,
+        self::DESCRIPTION_SYMBOL => 80011,
+        self::EMPTY_SYMBOL => 80000,
+        self::ENFORCED_SYMBOL => 80017,
+        self::EXCEPT_SYMBOL => 80000,
+        self::EXCLUDE_SYMBOL => 80000,
+        self::FAILED_LOGIN_ATTEMPTS_SYMBOL => 80019,
+        self::FIRST_VALUE_SYMBOL => 80000,
+        self::FOLLOWING_SYMBOL => 80000,
+        self::GROUPING_SYMBOL => 80000,
+        self::HISTOGRAM_SYMBOL => 80000,
+        self::HISTORY_SYMBOL => 80000,
+        self::INACTIVE_SYMBOL => 80014,
+        self::INVISIBLE_SYMBOL => 80000,
+        self::JSON_ARRAYAGG_SYMBOL => 80000,
+        self::JSON_OBJECTAGG_SYMBOL => 80000,
+        self::JSON_TABLE_SYMBOL => 80000,
+        self::LAG_SYMBOL => 80000,
+        self::LAST_VALUE_SYMBOL => 80000,
+        self::LATERAL_SYMBOL => 80014,
+        self::LEAD_SYMBOL => 80000,
+        self::MASTER_COMPRESSION_ALGORITHM_SYMBOL => 80018,
+        self::MASTER_TLS_CIPHERSUITES_SYMBOL => 80018,
+        self::MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL => 80018,
+        self::MEMBER_SYMBOL => 80017,
+        self::NESTED_SYMBOL => 80000,
+        self::NETWORK_NAMESPACE_SYMBOL => 80017,
+        self::NOWAIT_SYMBOL => 80000,
+        self::NTH_VALUE_SYMBOL => 80000,
+        self::NTILE_SYMBOL => 80000,
+        self::NULLS_SYMBOL => 80000,
+        self::OF_SYMBOL => 80000,
+        self::OFF_SYMBOL => 80019,
+        self::OLD_SYMBOL => 80014,
+        self::OPTIONAL_SYMBOL => 80013,
+        self::ORDINALITY_SYMBOL => 80000,
+        self::ORGANIZATION_SYMBOL => 80011,
+        self::OTHERS_SYMBOL => 80000,
+        self::PASSWORD_LOCK_TIME_SYMBOL => 80019,
+        self::PATH_SYMBOL => 80000,
+        self::PERCENT_RANK_SYMBOL => 80000,
+        self::PERSIST_ONLY_SYMBOL => 80000,
+        self::PERSIST_SYMBOL => 80000,
+        self::PRECEDING_SYMBOL => 80000,
+        self::PRIVILEGE_CHECKS_USER_SYMBOL => 80018,
+        self::RANDOM_SYMBOL => 80018,
+        self::RANK_SYMBOL => 80000,
+        self::RECURSIVE_SYMBOL => 80000,
+        self::REFERENCE_SYMBOL => 80011,
+        self::REQUIRE_ROW_FORMAT_SYMBOL => 80019,
+        self::REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL => 80019,
+        self::RESOURCE_SYMBOL => 80000,
+        self::RESPECT_SYMBOL => 80000,
+        self::RESTART_SYMBOL => 80011,
+        self::RETAIN_SYMBOL => 80014,
+        self::REUSE_SYMBOL => 80000,
+        self::ROLE_SYMBOL => 80000,
+        self::ROW_NUMBER_SYMBOL => 80000,
+        self::SECONDARY_ENGINE_SYMBOL => 80013,
+        self::SECONDARY_LOAD_SYMBOL => 80013,
+        self::SECONDARY_SYMBOL => 80013,
+        self::SECONDARY_UNLOAD_SYMBOL => 80013,
+        self::SKIP_SYMBOL => 80000,
+        self::SRID_SYMBOL => 80000,
+        self::STREAM_SYMBOL => 80019,
+        self::SYSTEM_SYMBOL => 80000,
+        self::THREAD_PRIORITY_SYMBOL => 80000,
+        self::TIES_SYMBOL => 80000,
+        self::UNBOUNDED_SYMBOL => 80000,
+        self::VCPU_SYMBOL => 80000,
+        self::VISIBLE_SYMBOL => 80000,
+        self::WINDOW_SYMBOL => 80000,
+	];
 
     protected function IDENTIFIER_OR_KEYWORD()
     {
@@ -2081,2965 +3094,66 @@ class MySQLLexer {
         while (safe_ctype_alnum($this->LA(1)) || $this->LA(1) === '_' || $this->LA(1) === '$') {
             $this->consume();
         }
-        $text = $this->getText();
+        $text = strtoupper($this->getText());
 
-        // Check for keywords that are also identifiers.
-        switch (strtoupper($text)) {
-            case 'ACCESSIBLE':
-                $this->ACCESSIBLE_SYMBOL();
-                break;
-            case 'ACCOUNT':
-                if ($this->serverVersion >= 50707) {
-                    $this->ACCOUNT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ACTION':
-                $this->ACTION_SYMBOL();
-                break;
-            case 'ADD':
-                $this->ADD_SYMBOL();
-                break;
-            case 'ADDDATE':
-                $this->ADDDATE_SYMBOL();
-                break;
-            case 'AFTER':
-                $this->AFTER_SYMBOL();
-                break;
-            case 'AGAINST':
-                $this->AGAINST_SYMBOL();
-                break;
-            case 'AGGREGATE':
-                $this->AGGREGATE_SYMBOL();
-                break;
-            case 'ALGORITHM':
-                $this->ALGORITHM_SYMBOL();
-                break;
-            case 'ALL':
-                $this->ALL_SYMBOL();
-                break;
-            case 'ALTER':
-                $this->ALTER_SYMBOL();
-                break;
-            case 'ALWAYS':
-                if ($this->serverVersion >= 50707) {
-                    $this->ALWAYS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ANALYSE':
-                if ($this->serverVersion < 80000) {
-                    $this->ANALYSE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ANALYZE':
-                $this->ANALYZE_SYMBOL();
-                break;
-            case 'AND':
-                $this->AND_SYMBOL();
-                break;
-            case 'ANY':
-                $this->ANY_SYMBOL();
-                break;
-            case 'AS':
-                $this->AS_SYMBOL();
-                break;
-            case 'ASC':
-                $this->ASC_SYMBOL();
-                break;
-            case 'ASCII':
-                $this->ASCII_SYMBOL();
-                break;
-            case 'ASENSITIVE':
-                $this->ASENSITIVE_SYMBOL();
-                break;
-            case 'AT':
-                $this->AT_SYMBOL();
-                break;
-            case 'AUTHORS':
-                if ($this->serverVersion < 50700) {
-                    $this->AUTHORS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'AUTOEXTEND_SIZE':
-                $this->AUTOEXTEND_SIZE_SYMBOL();
-                break;
-            case 'AUTO_INCREMENT':
-                $this->AUTO_INCREMENT_SYMBOL();
-                break;
-            case 'AVG':
-                $this->AVG_SYMBOL();
-                break;
-            case 'AVG_ROW_LENGTH':
-                $this->AVG_ROW_LENGTH_SYMBOL();
-                break;
-            case 'BACKUP':
-                $this->BACKUP_SYMBOL();
-                break;
-            case 'BEFORE':
-                $this->BEFORE_SYMBOL();
-                break;
-            case 'BEGIN':
-                $this->BEGIN_SYMBOL();
-                break;
-            case 'BETWEEN':
-                $this->BETWEEN_SYMBOL();
-                break;
-            case 'BIGINT':
-                $this->BIGINT_SYMBOL();
-                break;
-            case 'BINARY':
-                $this->BINARY_SYMBOL();
-                break;
-            case 'BINLOG':
-                $this->BINLOG_SYMBOL();
-                break;
-            case 'BIT':
-                $this->BIT_SYMBOL();
-                break;
-            case 'BIT_AND':
-                $this->BIT_AND_SYMBOL();
-                break;
-            case 'BIT_OR':
-                $this->BIT_OR_SYMBOL();
-                break;
-            case 'BIT_XOR':
-                $this->BIT_XOR_SYMBOL();
-                break;
-            case 'BLOB':
-                $this->BLOB_SYMBOL();
-                break;
-            case 'BLOCK':
-                $this->BLOCK_SYMBOL();
-                break;
-            case 'BOOL':
-                $this->BOOL_SYMBOL();
-                break;
-            case 'BOOLEAN':
-                $this->BOOLEAN_SYMBOL();
-                break;
-            case 'BOTH':
-                $this->BOTH_SYMBOL();
-                break;
-            case 'BTREE':
-                $this->BTREE_SYMBOL();
-                break;
-            case 'BY':
-                $this->BY_SYMBOL();
-                break;
-            case 'BYTE':
-                $this->BYTE_SYMBOL();
-                break;
-            case 'CACHE':
-                $this->CACHE_SYMBOL();
-                break;
-            case 'CALL':
-                $this->CALL_SYMBOL();
-                break;
-            case 'CASCADE':
-                $this->CASCADE_SYMBOL();
-                break;
-            case 'CASCADED':
-                $this->CASCADED_SYMBOL();
-                break;
-            case 'CASE':
-                $this->CASE_SYMBOL();
-                break;
-            case 'CAST':
-                $this->CAST_SYMBOL();
-                break;
-            case 'CATALOG_NAME':
-                $this->CATALOG_NAME_SYMBOL();
-                break;
-            case 'CHAIN':
-                $this->CHAIN_SYMBOL();
-                break;
-            case 'CHANGE':
-                $this->CHANGE_SYMBOL();
-                break;
-            case 'CHANGED':
-                $this->CHANGED_SYMBOL();
-                break;
-            case 'CHANNEL':
-                if ($this->serverVersion >= 50706) {
-                    $this->CHANNEL_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'CHAR':
-                $this->CHAR_SYMBOL();
-                break;
-            case 'CHARSET':
-                $this->CHARSET_SYMBOL();
-                break;
-            case 'CHARACTER':
-                $this->CHAR_SYMBOL(); // Synonym
-                break;
-            case 'CHECK':
-                $this->CHECK_SYMBOL();
-                break;
-            case 'CHECKSUM':
-                $this->CHECKSUM_SYMBOL();
-                break;
-            case 'CIPHER':
-                $this->CIPHER_SYMBOL();
-                break;
-            case 'CLASS_ORIGIN':
-                $this->CLASS_ORIGIN_SYMBOL();
-                break;
-            case 'CLIENT':
-                $this->CLIENT_SYMBOL();
-                break;
-            case 'CLOSE':
-                $this->CLOSE_SYMBOL();
-                break;
-            case 'COALESCE':
-                $this->COALESCE_SYMBOL();
-                break;
-            case 'CODE':
-                $this->CODE_SYMBOL();
-                break;
-            case 'COLLATE':
-                $this->COLLATE_SYMBOL();
-                break;
-            case 'COLLATION':
-                $this->COLLATION_SYMBOL();
-                break;
-            case 'COLUMN':
-                $this->COLUMN_SYMBOL();
-                break;
-            case 'COLUMNS':
-                $this->COLUMNS_SYMBOL();
-                break;
-            case 'COLUMN_FORMAT':
-                $this->COLUMN_FORMAT_SYMBOL();
-                break;
-            case 'COLUMN_NAME':
-                $this->COLUMN_NAME_SYMBOL();
-                break;
-            case 'COMMENT':
-                $this->COMMENT_SYMBOL();
-                break;
-            case 'COMMITTED':
-                $this->COMMITTED_SYMBOL();
-                break;
-            case 'COMMIT':
-                $this->COMMIT_SYMBOL();
-                break;
-            case 'COMPACT':
-                $this->COMPACT_SYMBOL();
-                break;
-            case 'COMPLETION':
-                $this->COMPLETION_SYMBOL();
-                break;
-            case 'COMPRESSED':
-                $this->COMPRESSED_SYMBOL();
-                break;
-            case 'COMPRESSION':
-                if ($this->serverVersion >= 50707) {
-                    $this->COMPRESSION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'CONCURRENT':
-                $this->CONCURRENT_SYMBOL();
-                break;
-            case 'CONDITION':
-                $this->CONDITION_SYMBOL();
-                break;
-            case 'CONNECTION':
-                $this->CONNECTION_SYMBOL();
-                break;
-            case 'CONSISTENT':
-                $this->CONSISTENT_SYMBOL();
-                break;
-            case 'CONSTRAINT':
-                $this->CONSTRAINT_SYMBOL();
-                break;
-            case 'CONSTRAINT_CATALOG':
-                $this->CONSTRAINT_CATALOG_SYMBOL();
-                break;
-            case 'CONSTRAINT_NAME':
-                $this->CONSTRAINT_NAME_SYMBOL();
-                break;
-            case 'CONSTRAINT_SCHEMA':
-                $this->CONSTRAINT_SCHEMA_SYMBOL();
-                break;
-            case 'CONTAINS':
-                $this->CONTAINS_SYMBOL();
-                break;
-            case 'CONTEXT':
-                $this->CONTEXT_SYMBOL();
-                break;
-            case 'CONTINUE':
-                $this->CONTINUE_SYMBOL();
-                break;
-            case 'CONTRIBUTORS':
-                if ($this->serverVersion < 50700) {
-                    $this->CONTRIBUTORS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'CONVERT':
-                $this->CONVERT_SYMBOL();
-                break;
-            case 'COUNT':
-                $this->COUNT_SYMBOL();
-                break;
-            case 'CPU':
-                $this->CPU_SYMBOL();
-                break;
-            case 'CREATE':
-                $this->CREATE_SYMBOL();
-                break;
-            case 'CROSS':
-                $this->CROSS_SYMBOL();
-                break;
-            case 'CUBE':
-                if ($this->serverVersion < 80000) {
-                    $this->CUBE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'CURDATE':
-                $this->CURDATE_SYMBOL();
-                break;
-            case 'CURRENT':
-                if ($this->serverVersion >= 50604) {
-                    $this->CURRENT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'CURRENT_DATE':
-                $this->CURDATE_SYMBOL(); // Synonym
-                break;
-            case 'CURRENT_TIME':
-                $this->CURTIME_SYMBOL(); // Synonym
-                break;
-            case 'CURRENT_TIMESTAMP':
-                $this->CURRENT_TIMESTAMP_SYMBOL(); // Synonym
-                break;
-            case 'CURRENT_USER':
-                $this->CURRENT_USER_SYMBOL();
-                break;
-            case 'CURSOR':
-                $this->CURSOR_SYMBOL();
-                break;
-            case 'CURSOR_NAME':
-                $this->CURSOR_NAME_SYMBOL();
-                break;
-            case 'CURTIME':
-                $this->CURTIME_SYMBOL();
-                break;
-            case 'DATABASE':
-                $this->DATABASE_SYMBOL();
-                break;
-            case 'DATABASES':
-                $this->DATABASES_SYMBOL();
-                break;
-            case 'DATAFILE':
-                $this->DATAFILE_SYMBOL();
-                break;
-            case 'DATA':
-                $this->DATA_SYMBOL();
-                break;
-            case 'DATETIME':
-                $this->DATETIME_SYMBOL();
-                break;
-            case 'DATE':
-                $this->DATE_SYMBOL();
-                break;
-            case 'DATE_ADD':
-                $this->DATE_ADD_SYMBOL();
-                break;
-            case 'DATE_SUB':
-                $this->DATE_SUB_SYMBOL();
-                break;
-            case 'DAY':
-                $this->DAY_SYMBOL();
-                break;
-            case 'DAY_HOUR':
-                $this->DAY_HOUR_SYMBOL();
-                break;
-            case 'DAY_MICROSECOND':
-                $this->DAY_MICROSECOND_SYMBOL();
-                break;
-            case 'DAY_MINUTE':
-                $this->DAY_MINUTE_SYMBOL();
-                break;
-            case 'DAY_SECOND':
-                $this->DAY_SECOND_SYMBOL();
-                break;
-            case 'DAYOFMONTH':
-                $this->DAY_SYMBOL(); // Synonym
-                break;
-            case 'DEALLOCATE':
-                $this->DEALLOCATE_SYMBOL();
-                break;
-            case 'DEC':
-                $this->DECIMAL_SYMBOL(); // Synonym
-                break;
-            case 'DECIMAL':
-                $this->DECIMAL_SYMBOL();
-                break;
-            case 'DECLARE':
-                $this->DECLARE_SYMBOL();
-                break;
-            case 'DEFAULT':
-                $this->DEFAULT_SYMBOL();
-                break;
-            case 'DEFAULT_AUTH':
-                if ($this->serverVersion >= 50604) {
-                    $this->DEFAULT_AUTH_SYMBOL(); // Internal
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'DEFINER':
-                $this->DEFINER_SYMBOL();
-                break;
-            case 'DEFINITION':
-                if ($this->serverVersion >= 80011) {
-                    $this->DEFINITION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'DELAYED':
-                $this->DELAYED_SYMBOL();
-                break;
-            case 'DELAY_KEY_WRITE':
-                $this->DELAY_KEY_WRITE_SYMBOL();
-                break;
-            case 'DELETE':
-                $this->DELETE_SYMBOL();
-                break;
-            case 'DENSE_RANK':
-                if ($this->serverVersion >= 80000) {
-                    $this->DENSE_RANK_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'DESC':
-                $this->DESC_SYMBOL();
-                break;
-            case 'DESCRIBE':
-                $this->DESCRIBE_SYMBOL();
-                break;
-            case 'DESCRIPTION':
-                if ($this->serverVersion >= 80011) {
-                    $this->DESCRIPTION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'DES_KEY_FILE':
-                if ($this->serverVersion < 80000) {
-                    $this->DES_KEY_FILE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'DETERMINISTIC':
-                $this->DETERMINISTIC_SYMBOL();
-                break;
-            case 'DIAGNOSTICS':
-                $this->DIAGNOSTICS_SYMBOL();
-                break;
-            case 'DIRECTORY':
-                $this->DIRECTORY_SYMBOL();
-                break;
-            case 'DISABLE':
-                $this->DISABLE_SYMBOL();
-                break;
-            case 'DISCARD':
-                $this->DISCARD_SYMBOL();
-                break;
-            case 'DISK':
-                $this->DISK_SYMBOL();
-                break;
-            case 'DISTINCT':
-                $this->DISTINCT_SYMBOL();
-                break;
-            case 'DISTINCTROW':
-                $this->DISTINCT_SYMBOL(); // Synonym
-                break;
-            case 'DIV':
-                $this->DIV_SYMBOL();
-                break;
-            case 'DOUBLE':
-                $this->DOUBLE_SYMBOL();
-                break;
-            case 'DO':
-                $this->DO_SYMBOL();
-                break;
-            case 'DROP':
-                $this->DROP_SYMBOL();
-                break;
-            case 'DUAL':
-                $this->DUAL_SYMBOL();
-                break;
-            case 'DUMPFILE':
-                $this->DUMPFILE_SYMBOL();
-                break;
-            case 'DUPLICATE':
-                $this->DUPLICATE_SYMBOL();
-                break;
-            case 'DYNAMIC':
-                $this->DYNAMIC_SYMBOL();
-                break;
-            case 'EACH':
-                $this->EACH_SYMBOL();
-                break;
-            case 'ELSE':
-                $this->ELSE_SYMBOL();
-                break;
-            case 'ELSEIF':
-                $this->ELSEIF_SYMBOL();
-                break;
-            case 'EMPTY':
-                if ($this->serverVersion >= 80000) {
-                    $this->EMPTY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ENABLE':
-                $this->ENABLE_SYMBOL();
-                break;
-            case 'ENCLOSED':
-                $this->ENCLOSED_SYMBOL();
-                break;
-            case 'ENCRYPTION':
-                if ($this->serverVersion >= 50711) {
-                    $this->ENCRYPTION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'END':
-                $this->END_SYMBOL();
-                break;
-            case 'ENDS':
-                $this->ENDS_SYMBOL();
-                break;
-            case 'ENGINE':
-                $this->ENGINE_SYMBOL();
-                break;
-            case 'ENGINES':
-                $this->ENGINES_SYMBOL();
-                break;
-            case 'ENFORCED':
-                if ($this->serverVersion >= 80017) {
-                    $this->ENFORCED_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ENUM':
-                $this->ENUM_SYMBOL();
-                break;
-            case 'ERRORS':
-                $this->ERRORS_SYMBOL();
-                break;
-            case 'ERROR':
-                $this->ERROR_SYMBOL();
-                break;
-            case 'ESCAPED':
-                $this->ESCAPED_SYMBOL();
-                break;
-            case 'ESCAPE':
-                $this->ESCAPE_SYMBOL();
-                break;
-            case 'EVENT':
-                $this->EVENT_SYMBOL();
-                break;
-            case 'EVENTS':
-                $this->EVENTS_SYMBOL();
-                break;
-            case 'EVERY':
-                $this->EVERY_SYMBOL();
-                break;
-            case 'EXCEPT':
-                if ($this->serverVersion >= 80000) {
-                    $this->EXCEPT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'EXCHANGE':
-                $this->EXCHANGE_SYMBOL();
-                break;
-            case 'EXCLUDE':
-                if ($this->serverVersion >= 80000) {
-                    $this->EXCLUDE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'EXECUTE':
-                $this->EXECUTE_SYMBOL();
-                break;
-            case 'EXISTS':
-                $this->EXISTS_SYMBOL();
-                break;
-            case 'EXIT':
-                $this->EXIT_SYMBOL();
-                break;
-            case 'EXPANSION':
-                $this->EXPANSION_SYMBOL();
-                break;
-            case 'EXPIRE':
-                if ($this->serverVersion >= 50606) {
-                    $this->EXPIRE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'EXPLAIN':
-                $this->EXPLAIN_SYMBOL();
-                break;
-            case 'EXPORT':
-                if ($this->serverVersion >= 50606) {
-                    $this->EXPORT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'EXTENDED':
-                $this->EXTENDED_SYMBOL();
-                break;
-            case 'EXTENT_SIZE':
-                $this->EXTENT_SIZE_SYMBOL();
-                break;
-            case 'EXTRACT':
-                $this->EXTRACT_SYMBOL();
-                break;
-            case 'FALSE':
-                $this->FALSE_SYMBOL();
-                break;
-            case 'FAILED_LOGIN_ATTEMPTS':
-                if ($this->serverVersion >= 80019) {
-                    $this->FAILED_LOGIN_ATTEMPTS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'FAST':
-                $this->FAST_SYMBOL();
-                break;
-            case 'FAULTS':
-                $this->FAULTS_SYMBOL();
-                break;
-            case 'FETCH':
-                $this->FETCH_SYMBOL();
-                break;
-            case 'FIELDS':
-                $this->COLUMNS_SYMBOL(); // Synonym
-                break;
-            case 'FILE':
-                $this->FILE_SYMBOL();
-                break;
-            case 'FILE_BLOCK_SIZE':
-                if ($this->serverVersion >= 50707) {
-                    $this->FILE_BLOCK_SIZE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'FILTER':
-                if ($this->serverVersion >= 50700) {
-                    $this->FILTER_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'FIRST':
-                $this->FIRST_SYMBOL();
-                break;
-            case 'FIRST_VALUE':
-                if ($this->serverVersion >= 80000) {
-                    $this->FIRST_VALUE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'FIXED':
-                $this->FIXED_SYMBOL();
-                break;
-            case 'FLOAT':
-                $this->FLOAT_SYMBOL();
-                break;
-            case 'FLOAT4':
-                $this->FLOAT_SYMBOL(); // Synonym
-                break;
-            case 'FLOAT8':
-                $this->DOUBLE_SYMBOL(); // Synonym
-                break;
-            case 'FLUSH':
-                $this->FLUSH_SYMBOL();
-                break;
-            case 'FOLLOWS':
-                if ($this->serverVersion >= 50700) {
-                    $this->FOLLOWS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'FOLLOWING':
-                if ($this->serverVersion >= 80000) {
-                    $this->FOLLOWING_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'FORCE':
-                $this->FORCE_SYMBOL();
-                break;
-            case 'FOR':
-                $this->FOR_SYMBOL();
-                break;
-            case 'FOREIGN':
-                $this->FOREIGN_SYMBOL();
-                break;
-            case 'FORMAT':
-                $this->FORMAT_SYMBOL();
-                break;
-            case 'FOUND':
-                $this->FOUND_SYMBOL();
-                break;
-            case 'FROM':
-                $this->FROM_SYMBOL();
-                break;
-            case 'FULL':
-                $this->FULL_SYMBOL();
-                break;
-            case 'FULLTEXT':
-                $this->FULLTEXT_SYMBOL();
-                break;
-            case 'FUNCTION':
-				$this->FUNCTION_SYMBOL();
-                break;
-            case 'GENERATED':
-                if ($this->serverVersion >= 50707) {
-                    $this->GENERATED_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'GENERAL':
-                $this->GENERAL_SYMBOL();
-                break;
-            case 'GEOMETRYCOLLECTION':
-                $this->GEOMETRYCOLLECTION_SYMBOL();
-                break;
-            case 'GEOMETRY':
-                $this->GEOMETRY_SYMBOL();
-                break;
-            case 'GET':
-                if ($this->serverVersion >= 50604) {
-                    $this->GET_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'GET_FORMAT':
-                $this->GET_FORMAT_SYMBOL();
-                break;
-            case 'GLOBAL':
-                $this->GLOBAL_SYMBOL();
-                break;
-            case 'GRANT':
-                $this->GRANT_SYMBOL();
-                break;
-            case 'GRANTS':
-                $this->GRANTS_SYMBOL();
-                break;
-            case 'GROUP':
-                $this->GROUP_SYMBOL();
-                break;
-            case 'GROUP_CONCAT':
-                $this->GROUP_CONCAT_SYMBOL();
-                break;
-            case 'GROUP_REPLICATION':
-                if ($this->serverVersion >= 50707) {
-                    $this->GROUP_REPLICATION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'GROUPING':
-                if ($this->serverVersion >= 80000) {
-                    $this->GROUPING_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'GROUPS':
-                if ($this->serverVersion >= 80000) {
-                    $this->GROUPS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'HANDLER':
-                $this->HANDLER_SYMBOL();
-                break;
-            case 'HASH':
-                $this->HASH_SYMBOL();
-                break;
-            case 'HAVING':
-                $this->HAVING_SYMBOL();
-                break;
-            case 'HELP':
-                $this->HELP_SYMBOL();
-                break;
-            case 'HIGH_PRIORITY':
-                $this->HIGH_PRIORITY_SYMBOL();
-                break;
-            case 'HISTOGRAM':
-                if ($this->serverVersion >= 80000) {
-                    $this->HISTOGRAM_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'HISTORY':
-                if ($this->serverVersion >= 80000) {
-                    $this->HISTORY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'HOST':
-                $this->HOST_SYMBOL();
-                break;
-            case 'HOSTS':
-                $this->HOSTS_SYMBOL();
-                break;
-            case 'HOUR':
-                $this->HOUR_SYMBOL();
-                break;
-            case 'HOUR_MICROSECOND':
-                $this->HOUR_MICROSECOND_SYMBOL();
-                break;
-            case 'HOUR_MINUTE':
-                $this->HOUR_MINUTE_SYMBOL();
-                break;
-            case 'HOUR_SECOND':
-                $this->HOUR_SECOND_SYMBOL();
-                break;
-            case 'IDENTIFIED':
-                $this->IDENTIFIED_SYMBOL();
-                break;
-            case 'IF':
-                $this->IF_SYMBOL();
-                break;
-            case 'IGNORE':
-                $this->IGNORE_SYMBOL();
-                break;
-            case 'IGNORE_SERVER_IDS':
-                $this->IGNORE_SERVER_IDS_SYMBOL();
-                break;
-            case 'IMPORT':
-                if ($this->serverVersion < 80000) {
-                    $this->IMPORT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'IN':
-                $this->IN_SYMBOL();
-                break;
-            case 'INDEX':
-                $this->INDEX_SYMBOL();
-                break;
-            case 'INDEXES':
-                $this->INDEXES_SYMBOL();
-                break;
-            case 'INFILE':
-                $this->INFILE_SYMBOL();
-                break;
-            case 'INITIAL_SIZE':
-                $this->INITIAL_SIZE_SYMBOL();
-                break;
-            case 'INNER':
-                $this->INNER_SYMBOL();
-                break;
-            case 'INOUT':
-                $this->INOUT_SYMBOL();
-                break;
-            case 'INSENSITIVE':
-                $this->INSENSITIVE_SYMBOL();
-                break;
-            case 'INSERT':
-                $this->INSERT_SYMBOL();
-                break;
-            case 'INSERT_METHOD':
-                $this->INSERT_METHOD_SYMBOL();
-                break;
-            case 'INSTANCE':
-                if ($this->serverVersion >= 50713) {
-                    $this->INSTANCE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'INSTALL':
-                $this->INSTALL_SYMBOL();
-                break;
-            case 'INT':
-                $this->INT_SYMBOL();
-                break;
-            case 'INTEGER':
-                $this->INT_SYMBOL(); // Synonym
-                break;
-            case 'INTERVAL':
-                $this->INTERVAL_SYMBOL();
-                break;
-            case 'INTO':
-                $this->INTO_SYMBOL();
-                break;
-            case 'INVISIBLE':
-                if ($this->serverVersion >= 80000) {
-                    $this->INVISIBLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'INVOKER':
-                $this->INVOKER_SYMBOL();
-                break;
-            case 'IO_THREAD':
-                $this->RELAY_THREAD_SYMBOL(); // Synonym
-                break;
-            case 'IO_AFTER_GTIDS':
-                $this->IDENTIFIER(); // MYSQL, FUTURE-USE
-                break;
-            case 'IO_BEFORE_GTIDS':
-                $this->IDENTIFIER(); // MYSQL, FUTURE-USE
-                break;
-            case 'IO':
-                $this->IO_SYMBOL();
-                break;
-            case 'IPC':
-                $this->IPC_SYMBOL();
-                break;
-            case 'IS':
-                $this->IS_SYMBOL();
-                break;
-            case 'ISOLATION':
-                $this->ISOLATION_SYMBOL();
-                break;
-            case 'ISSUER':
-                $this->ISSUER_SYMBOL();
-                break;
-            case 'ITERATE':
-                $this->ITERATE_SYMBOL();
-                break;
-            case 'JOIN':
-                $this->JOIN_SYMBOL();
-                break;
-            case 'JSON':
-                if ($this->serverVersion >= 50708) {
-                    $this->JSON_SYMBOL(); // MYSQL
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'JSON_TABLE':
-                if ($this->serverVersion >= 80000) {
-                    $this->JSON_TABLE_SYMBOL(); // SQL-2016-R
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'JSON_ARRAYAGG':
-                if ($this->serverVersion >= 80000) {
-                    $this->JSON_ARRAYAGG_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'JSON_OBJECTAGG':
-                if ($this->serverVersion >= 80000) {
-                    $this->JSON_OBJECTAGG_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'KEY':
-                $this->KEY_SYMBOL();
-                break;
-            case 'KEYS':
-                $this->KEYS_SYMBOL();
-                break;
-            case 'KEY_BLOCK_SIZE':
-                $this->KEY_BLOCK_SIZE_SYMBOL();
-                break;
-            case 'KILL':
-                $this->KILL_SYMBOL();
-                break;
-            case 'LAG':
-                if ($this->serverVersion >= 80000) {
-                    $this->LAG_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'LANGUAGE':
-                $this->LANGUAGE_SYMBOL();
-                break;
-            case 'LAST':
-                $this->LAST_SYMBOL();
-                break;
-            case 'LAST_VALUE':
-                if ($this->serverVersion >= 80000) {
-                    $this->LAST_VALUE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'LATERAL':
-                if ($this->serverVersion >= 80014) {
-                    $this->LATERAL_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'LEAD':
-                if ($this->serverVersion >= 80000) {
-                    $this->LEAD_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'LEADING':
-                $this->LEADING_SYMBOL();
-                break;
-            case 'LEAVE':
-                $this->LEAVE_SYMBOL();
-                break;
-            case 'LEAVES':
-                $this->LEAVES_SYMBOL();
-                break;
-            case 'LEFT':
-                $this->LEFT_SYMBOL();
-                break;
-            case 'LESS':
-                $this->LESS_SYMBOL();
-                break;
-            case 'LEVEL':
-                $this->LEVEL_SYMBOL();
-                break;
-            case 'LIKE':
-                $this->LIKE_SYMBOL();
-                break;
-            case 'LIMIT':
-                $this->LIMIT_SYMBOL();
-                break;
-            case 'LINEAR':
-                $this->LINEAR_SYMBOL();
-                break;
-            case 'LINES':
-                $this->LINES_SYMBOL();
-                break;
-            case 'LINESTRING':
-                $this->LINESTRING_SYMBOL();
-                break;
-            case 'LIST':
-                $this->LIST_SYMBOL();
-                break;
-            case 'LOAD':
-                $this->LOAD_SYMBOL();
-                break;
-            case 'LOCAL':
-                $this->LOCAL_SYMBOL();
-                break;
-            case 'LOCALTIME':
-				$this->LOCALTIME_SYMBOL();
-                break;
-            case 'LOCALTIMESTAMP':
-				$this->LOCALTIMESTAMP_SYMBOL();
-                break;
-            case 'LOCATOR':
-                $this->LOCATOR_SYMBOL();
-                break;
-            case 'LOCK':
-                $this->LOCK_SYMBOL();
-                break;
-            case 'LOCKS':
-                $this->LOCKS_SYMBOL();
-                break;
-            case 'LOGFILE':
-                $this->LOGFILE_SYMBOL();
-                break;
-            case 'LOGS':
-                $this->LOGS_SYMBOL();
-                break;
-            case 'LONGBLOB':
-                $this->LONGBLOB_SYMBOL();
-                break;
-            case 'LONGTEXT':
-                $this->LONGTEXT_SYMBOL();
-                break;
-            case 'LONG':
-                $this->LONG_SYMBOL();
-                break;
-            case 'LOOP':
-                $this->LOOP_SYMBOL();
-                break;
-            case 'LOW_PRIORITY':
-                $this->LOW_PRIORITY_SYMBOL();
-                break;
-            case 'MASTER':
-                $this->MASTER_SYMBOL();
-                break;
-            case 'MASTER_AUTO_POSITION':
-                if ($this->serverVersion >= 50605) {
-                    $this->MASTER_AUTO_POSITION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_BIND':
-                if ($this->serverVersion >= 50602) {
-                    $this->MASTER_BIND_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_COMPRESSION_ALGORITHM':
-                if ($this->serverVersion >= 80018) {
-                    $this->MASTER_COMPRESSION_ALGORITHM_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_CONNECT_RETRY':
-                $this->MASTER_CONNECT_RETRY_SYMBOL();
-                break;
-            case 'MASTER_DELAY':
-                $this->MASTER_DELAY_SYMBOL();
-                break;
-            case 'MASTER_HEARTBEAT_PERIOD':
-                $this->MASTER_HEARTBEAT_PERIOD_SYMBOL();
-                break;
-            case 'MASTER_HOST':
-                $this->MASTER_HOST_SYMBOL();
-                break;
-            case 'MASTER_LOG_FILE':
-                $this->MASTER_LOG_FILE_SYMBOL();
-                break;
-            case 'MASTER_LOG_POS':
-                $this->MASTER_LOG_POS_SYMBOL();
-                break;
-            case 'MASTER_PASSWORD':
-                $this->MASTER_PASSWORD_SYMBOL();
-                break;
-            case 'MASTER_PORT':
-                $this->MASTER_PORT_SYMBOL();
-                break;
-            case 'MASTER_PUBLIC_KEY_PATH':
-                if ($this->serverVersion >= 80000) {
-                    $this->MASTER_PUBLIC_KEY_PATH_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_RETRY_COUNT':
-                if ($this->serverVersion >= 50601) {
-                    $this->MASTER_RETRY_COUNT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_SERVER_ID':
-                $this->MASTER_SERVER_ID_SYMBOL();
-                break;
-            case 'MASTER_SSL':
-                $this->MASTER_SSL_SYMBOL();
-                break;
-            case 'MASTER_SSL_CA':
-                $this->MASTER_SSL_CA_SYMBOL();
-                break;
-            case 'MASTER_SSL_CAPATH':
-                $this->MASTER_SSL_CAPATH_SYMBOL();
-                break;
-            case 'MASTER_SSL_CERT':
-                $this->MASTER_SSL_CERT_SYMBOL();
-                break;
-            case 'MASTER_SSL_CIPHER':
-                $this->MASTER_SSL_CIPHER_SYMBOL();
-                break;
-            case 'MASTER_SSL_CRL':
-                if ($this->serverVersion >= 50603) {
-                    $this->MASTER_SSL_CRL_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_SSL_CRLPATH':
-                if ($this->serverVersion >= 50603) {
-                    $this->MASTER_SSL_CRLPATH_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_SSL_KEY':
-                $this->MASTER_SSL_KEY_SYMBOL();
-                break;
-            case 'MASTER_SSL_VERIFY_SERVER_CERT':
-                $this->MASTER_SSL_VERIFY_SERVER_CERT_SYMBOL();
-                break;
-            case 'MASTER_TLS_CIPHERSUITES':
-                if ($this->serverVersion >= 80018) {
-                    $this->MASTER_TLS_CIPHERSUITES_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_TLS_VERSION':
-                if ($this->serverVersion >= 50713) {
-                    $this->MASTER_TLS_VERSION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MASTER_USER':
-                $this->MASTER_USER_SYMBOL();
-                break;
-            case 'MASTER_ZSTD_COMPRESSION_LEVEL':
-                if ($this->serverVersion >= 80018) {
-                    $this->MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MATCH':
-                $this->MATCH_SYMBOL();
-                break;
-            case 'MAX':
-                $this->MAX_SYMBOL();
-                break;
-            case 'MAX_CONNECTIONS_PER_HOUR':
-                $this->MAX_CONNECTIONS_PER_HOUR_SYMBOL();
-                break;
-            case 'MAX_QUERIES_PER_HOUR':
-                $this->MAX_QUERIES_PER_HOUR_SYMBOL();
-                break;
-            case 'MAX_ROWS':
-                $this->MAX_ROWS_SYMBOL();
-                break;
-            case 'MAX_SIZE':
-                $this->MAX_SIZE_SYMBOL();
-                break;
-            case 'MAX_STATEMENT_TIME':
-                if (50704 < $this->serverVersion && $this->serverVersion < 50708) {
-                    $this->MAX_STATEMENT_TIME_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MAX_UPDATES_PER_HOUR':
-                $this->MAX_UPDATES_PER_HOUR_SYMBOL();
-                break;
-            case 'MAX_USER_CONNECTIONS':
-                $this->MAX_USER_CONNECTIONS_SYMBOL();
-                break;
-            case 'MAXVALUE':
-                $this->MAXVALUE_SYMBOL();
-                break;
-            case 'MEDIUM':
-                $this->MEDIUM_SYMBOL();
-                break;
-            case 'MEDIUMBLOB':
-                $this->MEDIUMBLOB_SYMBOL();
-                break;
-            case 'MEDIUMINT':
-                $this->MEDIUMINT_SYMBOL();
-                break;
-            case 'MEDIUMTEXT':
-                $this->MEDIUMTEXT_SYMBOL();
-                break;
-            case 'MEMBER':
-                if ($this->serverVersion >= 80017) {
-                    $this->MEMBER_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'MEMORY':
-                $this->MEMORY_SYMBOL();
-                break;
-            case 'MERGE':
-                $this->MERGE_SYMBOL();
-                break;
-            case 'MESSAGE_TEXT':
-                $this->MESSAGE_TEXT_SYMBOL();
-                break;
-            case 'MICROSECOND':
-                $this->MICROSECOND_SYMBOL();
-                break;
-            case 'MIDDLEINT':
-                $this->MEDIUMINT_SYMBOL(); // Synonym
-                break;
-            case 'MIGRATE':
-                $this->MIGRATE_SYMBOL();
-                break;
-            case 'MINUTE':
-                $this->MINUTE_SYMBOL();
-                break;
-            case 'MINUTE_MICROSECOND':
-                $this->MINUTE_MICROSECOND_SYMBOL();
-                break;
-            case 'MINUTE_SECOND':
-                $this->MINUTE_SECOND_SYMBOL();
-                break;
-            case 'MIN':
-                $this->MIN_SYMBOL();
-                break;
-            case 'MIN_ROWS':
-                $this->MIN_ROWS_SYMBOL();
-                break;
-            case 'MODE':
-                $this->MODE_SYMBOL();
-                break;
-            case 'MODIFIES':
-                $this->MODIFIES_SYMBOL();
-                break;
-            case 'MODIFY':
-                $this->MODIFY_SYMBOL();
-                break;
-            case 'MOD':
-                $this->MOD_SYMBOL();
-                break;
-            case 'MONTH':
-                $this->MONTH_SYMBOL();
-                break;
-            case 'MULTILINESTRING':
-                $this->MULTILINESTRING_SYMBOL();
-                break;
-            case 'MULTIPOINT':
-                $this->MULTIPOINT_SYMBOL();
-                break;
-            case 'MULTIPOLYGON':
-                $this->MULTIPOLYGON_SYMBOL();
-                break;
-            case 'MUTEX':
-                $this->MUTEX_SYMBOL();
-                break;
-            case 'MYSQL_ERRNO':
-                $this->MYSQL_ERRNO_SYMBOL();
-                break;
-            case 'NAME':
-                $this->NAME_SYMBOL();
-                break;
-            case 'NAMES':
-                $this->NAMES_SYMBOL();
-                break;
-            case 'NATIONAL':
-                $this->NATIONAL_SYMBOL();
-                break;
-            case 'NATURAL':
-                $this->NATURAL_SYMBOL();
-                break;
-            case 'NCHAR':
-                $this->NCHAR_SYMBOL();
-                break;
-            case 'NDB':
-                $this->NDBCLUSTER_SYMBOL(); // Synonym
-                break;
-            case 'NDBCLUSTER':
-                $this->NDBCLUSTER_SYMBOL();
-                break;
-            case 'NETWORK_NAMESPACE':
-                if ($this->serverVersion >= 80017) {
-                    $this->NETWORK_NAMESPACE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NEG':
-                $this->NEG_SYMBOL();
-                break;
-            case 'NESTED':
-                if ($this->serverVersion >= 80000) {
-                    $this->NESTED_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NEVER':
-                if ($this->serverVersion >= 50704) {
-                    $this->NEVER_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NEW':
-                $this->NEW_SYMBOL();
-                break;
-            case 'NEXT':
-                $this->NEXT_SYMBOL();
-                break;
-            case 'NODEGROUP':
-                $this->NODEGROUP_SYMBOL();
-                break;
-            case 'NONE':
-                $this->NONE_SYMBOL();
-                break;
-            case 'NONBLOCKING':
-                if (50700 < $this->serverVersion && $this->serverVersion < 50706) {
-                    $this->NONBLOCKING_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NOT':
-                $this->NOT_SYMBOL();
-                break;
-            case 'NOW':
-                $this->NOW_SYMBOL();
-                break;
-            case 'NOWAIT':
-                if ($this->serverVersion >= 80000) {
-                    $this->NOWAIT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NO':
-                $this->NO_SYMBOL();
-                break;
-            case 'NO_WAIT':
-                $this->NO_WAIT_SYMBOL();
-                break;
-            case 'NO_WRITE_TO_BINLOG':
-                $this->NO_WRITE_TO_BINLOG_SYMBOL();
-                break;
-            case 'NULL':
-                $this->NULL_SYMBOL();
-                break;
-            case 'NULLS':
-                if ($this->serverVersion >= 80000) {
-                    $this->NULLS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NUMBER':
-                if ($this->serverVersion >= 50606) {
-                    $this->NUMBER_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NUMERIC':
-                $this->NUMERIC_SYMBOL();
-                break;
-            case 'NVARCHAR':
-                $this->NVARCHAR_SYMBOL();
-                break;
-            case 'NTH_VALUE':
-                if ($this->serverVersion >= 80000) {
-                    $this->NTH_VALUE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'NTILE':
-                if ($this->serverVersion >= 80000) {
-                    $this->NTILE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OFF':
-                if ($this->serverVersion >= 80019) {
-                    $this->OFF_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OF':
-                if ($this->serverVersion >= 80000) {
-                    $this->OF_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OFFLINE':
-                $this->OFFLINE_SYMBOL();
-                break;
-            case 'OFFSET':
-                $this->OFFSET_SYMBOL();
-                break;
-            case 'OJ':
-                if ($this->serverVersion >= 80017) {
-                    $this->OJ_SYMBOL(); // ODBC
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OLD':
-                if ($this->serverVersion >= 80014) {
-                    $this->OLD_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OLD_PASSWORD':
-                if ($this->serverVersion < 50706) {
-                    $this->OLD_PASSWORD_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ON':
-                $this->ON_SYMBOL();
-                break;
-            case 'ONE':
-                $this->ONE_SYMBOL();
-                break;
-            case 'ONLINE':
-                $this->ONLINE_SYMBOL();
-                break;
-            case 'ONLY':
-                if ($this->serverVersion >= 50605) {
-                    $this->ONLY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OPEN':
-                $this->OPEN_SYMBOL();
-                break;
-            case 'OPTIONAL':
-                if ($this->serverVersion >= 80013) {
-                    $this->OPTIONAL_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OPTIONALLY':
-                $this->OPTIONALLY_SYMBOL();
-                break;
-            case 'OPTION':
-                $this->OPTION_SYMBOL();
-                break;
-            case 'OPTIONS':
-                $this->OPTIONS_SYMBOL();
-                break;
-            case 'OPTIMIZE':
-                $this->OPTIMIZE_SYMBOL();
-                break;
-            case 'OPTIMIZER_COSTS':
-                if ($this->serverVersion >= 50706) {
-                    $this->OPTIMIZER_COSTS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OR':
-                $this->OR_SYMBOL();
-                break;
-            case 'ORDER':
-                $this->ORDER_SYMBOL();
-                break;
-            case 'ORDINALITY':
-                if ($this->serverVersion >= 80000) {
-                    $this->ORDINALITY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ORGANIZATION':
-                if ($this->serverVersion >= 80011) {
-                    $this->ORGANIZATION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OTHERS':
-                if ($this->serverVersion >= 80000) {
-                    $this->OTHERS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'OUTER':
-                $this->OUTER_SYMBOL();
-                break;
-            case 'OUTFILE':
-                $this->OUTFILE_SYMBOL();
-                break;
-            case 'OUT':
-                $this->OUT_SYMBOL();
-                break;
-            case 'OWNER':
-                $this->OWNER_SYMBOL();
-                break;
-            case 'PACK_KEYS':
-                $this->PACK_KEYS_SYMBOL();
-                break;
-            case 'PAGE':
-                $this->PAGE_SYMBOL();
-                break;
-            case 'PARSER':
-                $this->PARSER_SYMBOL();
-                break;
-            case 'PARTIAL':
-                $this->PARTIAL_SYMBOL();
-                break;
-            case 'PARTITION':
-                $this->PARTITION_SYMBOL();
-                break;
-            case 'PARTITIONING':
-                $this->PARTITIONING_SYMBOL();
-                break;
-            case 'PARTITIONS':
-                $this->PARTITIONS_SYMBOL();
-                break;
-            case 'PASSWORD':
-                $this->PASSWORD_SYMBOL();
-                break;
-            case 'PASSWORD_LOCK_TIME':
-                if ($this->serverVersion >= 80019) {
-                    $this->PASSWORD_LOCK_TIME_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PATH':
-                if ($this->serverVersion >= 80000) {
-                    $this->PATH_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PERCENT_RANK':
-                if ($this->serverVersion >= 80000) {
-                    $this->PERCENT_RANK_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PERSIST':
-                if ($this->serverVersion >= 80000) {
-                    $this->PERSIST_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PERSIST_ONLY':
-                if ($this->serverVersion >= 80000) {
-                    $this->PERSIST_ONLY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PHASE':
-                $this->PHASE_SYMBOL();
-                break;
-            case 'PLUGIN':
-                $this->PLUGIN_SYMBOL();
-                break;
-            case 'PLUGINS':
-                $this->PLUGINS_SYMBOL();
-                break;
-            case 'PLUGIN_DIR':
-                if ($this->serverVersion >= 50604) {
-                    $this->PLUGIN_DIR_SYMBOL(); // Internal
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'POINT':
-                $this->POINT_SYMBOL();
-                break;
-            case 'POLYGON':
-                $this->POLYGON_SYMBOL();
-                break;
-            case 'PORT':
-                $this->PORT_SYMBOL();
-                break;
-            case 'POSITION':
-                $this->POSITION_SYMBOL();
-                break;
-            case 'PRECEDES':
-                if ($this->serverVersion >= 50700) {
-                    $this->PRECEDES_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PRECEDING':
-                if ($this->serverVersion >= 80000) {
-                    $this->PRECEDING_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PRECISION':
-                $this->PRECISION_SYMBOL();
-                break;
-            case 'PREPARE':
-                $this->PREPARE_SYMBOL();
-                break;
-            case 'PRESERVE':
-                $this->PRESERVE_SYMBOL();
-                break;
-            case 'PREV':
-                $this->PREV_SYMBOL();
-                break;
-            case 'PRIMARY':
-                $this->PRIMARY_SYMBOL();
-                break;
-            case 'PRIVILEGE_CHECKS_USER':
-                if ($this->serverVersion >= 80018) {
-                    $this->PRIVILEGE_CHECKS_USER_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'PRIVILEGES':
-                $this->PRIVILEGES_SYMBOL();
-                break;
-            case 'PROCEDURE':
-                $this->PROCEDURE_SYMBOL();
-                break;
-            case 'PROCESS':
-                $this->PROCESS_SYMBOL();
-                break;
-            case 'PROCESSLIST':
-                $this->PROCESSLIST_SYMBOL();
-                break;
-            case 'PROFILE':
-                $this->PROFILE_SYMBOL();
-                break;
-            case 'PROFILES':
-                $this->PROFILES_SYMBOL();
-                break;
-            case 'PROXY':
-                $this->PROXY_SYMBOL();
-                break;
-            case 'PURGE':
-                $this->PURGE_SYMBOL();
-                break;
-            case 'QUARTER':
-                $this->QUARTER_SYMBOL();
-                break;
-            case 'QUERY':
-                $this->QUERY_SYMBOL();
-                break;
-            case 'QUICK':
-                $this->QUICK_SYMBOL();
-                break;
-            case 'RANDOM':
-                if ($this->serverVersion >= 80018) {
-                    $this->RANDOM_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RANGE':
-                $this->RANGE_SYMBOL();
-                break;
-            case 'RANK':
-                if ($this->serverVersion >= 80000) {
-                    $this->RANK_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'READ':
-                $this->READ_SYMBOL();
-                break;
-            case 'READS':
-                $this->READS_SYMBOL();
-                break;
-            case 'READ_ONLY':
-                $this->READ_ONLY_SYMBOL();
-                break;
-            case 'READ_WRITE':
-                $this->READ_WRITE_SYMBOL();
-                break;
-            case 'REAL':
-                $this->REAL_SYMBOL();
-                break;
-            case 'REBUILD':
-                $this->REBUILD_SYMBOL();
-                break;
-            case 'RECOVER':
-                $this->RECOVER_SYMBOL();
-                break;
-            case 'RECURSIVE':
-                if ($this->serverVersion >= 80000) {
-                    $this->RECURSIVE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REDOFILE':
-                if ($this->serverVersion < 80000) {
-                    $this->REDOFILE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REDO_BUFFER_SIZE':
-                $this->REDO_BUFFER_SIZE_SYMBOL();
-                break;
-            case 'REDUNDANT':
-                $this->REDUNDANT_SYMBOL();
-                break;
-            case 'REFERENCE':
-                if ($this->serverVersion >= 80011) {
-                    $this->REFERENCE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REFERENCES':
-                $this->REFERENCES_SYMBOL();
-                break;
-            case 'REGEXP':
-                $this->REGEXP_SYMBOL();
-                break;
-            case 'RELAY':
-                $this->RELAY_SYMBOL();
-                break;
-            case 'RELAYLOG':
-                $this->RELAYLOG_SYMBOL();
-                break;
-            case 'RELAY_LOG_FILE':
-                $this->RELAY_LOG_FILE_SYMBOL();
-                break;
-            case 'RELAY_LOG_POS':
-                $this->RELAY_LOG_POS_SYMBOL();
-                break;
-            case 'RELAY_THREAD':
-                $this->RELAY_THREAD_SYMBOL();
-                break;
-            case 'RELEASE':
-                $this->RELEASE_SYMBOL();
-                break;
-            case 'RELOAD':
-                $this->RELOAD_SYMBOL();
-                break;
-            case 'REMOTE':
-                if ($this->serverVersion >= 80003 && $this->serverVersion < 80014) {
-                    $this->REMOTE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REMOVE':
-                $this->REMOVE_SYMBOL();
-                break;
-            case 'RENAME':
-                $this->RENAME_SYMBOL();
-                break;
-            case 'REORGANIZE':
-                $this->REORGANIZE_SYMBOL();
-                break;
-            case 'REPAIR':
-                $this->REPAIR_SYMBOL();
-                break;
-            case 'REPEAT':
-                $this->REPEAT_SYMBOL();
-                break;
-            case 'REPEATABLE':
-                $this->REPEATABLE_SYMBOL();
-                break;
-            case 'REPLACE':
-                $this->REPLACE_SYMBOL();
-                break;
-            case 'REPLICATION':
-                $this->REPLICATION_SYMBOL();
-                break;
-            case 'REPLICATE_DO_DB':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_DO_DB_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REPLICATE_IGNORE_DB':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_IGNORE_DB_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REPLICATE_DO_TABLE':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_DO_TABLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REPLICATE_IGNORE_TABLE':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_IGNORE_TABLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REPLICATE_WILD_DO_TABLE':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_WILD_DO_TABLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REPLICATE_WILD_IGNORE_TABLE':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_WILD_IGNORE_TABLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REPLICATE_REWRITE_DB':
-                if ($this->serverVersion >= 50700) {
-                    $this->REPLICATE_REWRITE_DB_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REQUIRE':
-                $this->REQUIRE_SYMBOL();
-                break;
-            case 'REQUIRE_ROW_FORMAT':
-                if ($this->serverVersion >= 80019) {
-                    $this->REQUIRE_ROW_FORMAT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REQUIRE_TABLE_PRIMARY_KEY_CHECK':
-                if ($this->serverVersion >= 80019) {
-                    $this->REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RESOURCE':
-                if ($this->serverVersion >= 80000) {
-                    $this->RESOURCE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RESPECT':
-                if ($this->serverVersion >= 80000) {
-                    $this->RESPECT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RESTART':
-                if ($this->serverVersion >= 80011) {
-                    $this->RESTART_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RESTORE':
-                $this->RESTORE_SYMBOL();
-                break;
-            case 'RESTRICT':
-                $this->RESTRICT_SYMBOL();
-                break;
-            case 'RESUME':
-                $this->RESUME_SYMBOL();
-                break;
-            case 'RETAIN':
-                if ($this->serverVersion >= 80014) {
-                    $this->RETAIN_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RETURNED_SQLSTATE':
-                $this->RETURNED_SQLSTATE_SYMBOL();
-                break;
-            case 'RETURNS':
-                $this->RETURNS_SYMBOL();
-                break;
-            case 'RETURN':
-                $this->RETURN_SYMBOL();
-                break;
-            case 'REUSE':
-                if ($this->serverVersion >= 80000) {
-                    $this->REUSE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'REVERSE':
-                $this->REVERSE_SYMBOL();
-                break;
-            case 'REVOKE':
-                $this->REVOKE_SYMBOL();
-                break;
-            case 'RIGHT':
-                $this->RIGHT_SYMBOL();
-                break;
-            case 'RLIKE':
-                $this->REGEXP_SYMBOL(); // Synonym
-                break;
-            case 'ROLE':
-                if ($this->serverVersion >= 80000) {
-                    $this->ROLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ROLLBACK':
-                $this->ROLLBACK_SYMBOL();
-                break;
-            case 'ROLLUP':
-                $this->ROLLUP_SYMBOL();
-                break;
-            case 'ROTATE':
-                if ($this->serverVersion >= 50713) {
-                    $this->ROTATE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'ROW':
-				$this->ROW_SYMBOL();
-                break;
-            case 'ROWS':
-				$this->ROWS_SYMBOL();
-                break;
-            case 'ROW_COUNT':
-                $this->ROW_COUNT_SYMBOL();
-                break;
-            case 'ROW_FORMAT':
-                $this->ROW_FORMAT_SYMBOL();
-                break;
-            case 'ROW_NUMBER':
-                if ($this->serverVersion >= 80000) {
-                    $this->ROW_NUMBER_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'RTREE':
-                $this->RTREE_SYMBOL();
-                break;
-            case 'SAVEPOINT':
-                $this->SAVEPOINT_SYMBOL();
-                break;
-            case 'SCHEDULE':
-                $this->SCHEDULE_SYMBOL();
-                break;
-            case 'SCHEMA':
-                $this->DATABASE_SYMBOL(); // Synonym
-                break;
-            case 'SCHEMAS':
-                $this->DATABASES_SYMBOL(); // Synonym
-                break;
-            case 'SCHEMA_NAME':
-                $this->SCHEMA_NAME_SYMBOL();
-                break;
-            case 'SECOND':
-                $this->SECOND_SYMBOL();
-                break;
-            case 'SECOND_MICROSECOND':
-                $this->SECOND_MICROSECOND_SYMBOL();
-                break;
-            case 'SECONDARY':
-                if ($this->serverVersion >= 80013) {
-                    $this->SECONDARY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SECONDARY_ENGINE':
-                if ($this->serverVersion >= 80013) {
-                    $this->SECONDARY_ENGINE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SECONDARY_LOAD':
-                if ($this->serverVersion >= 80013) {
-                    $this->SECONDARY_LOAD_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SECONDARY_UNLOAD':
-                if ($this->serverVersion >= 80013) {
-                    $this->SECONDARY_UNLOAD_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SECURITY':
-                $this->SECURITY_SYMBOL();
-                break;
-            case 'SELECT':
-                $this->SELECT_SYMBOL();
-                break;
-            case 'SENSITIVE':
-                $this->SENSITIVE_SYMBOL();
-                break;
-            case 'SEPARATOR':
-                $this->SEPARATOR_SYMBOL();
-                break;
-            case 'SERIALIZABLE':
-                $this->SERIALIZABLE_SYMBOL();
-                break;
-            case 'SERIAL':
-                $this->SERIAL_SYMBOL();
-                break;
-            case 'SERVER':
-                $this->SERVER_SYMBOL();
-                break;
-            case 'SERVER_OPTIONS':
-                $this->SERVER_OPTIONS_SYMBOL();
-                break;
-            case 'SESSION':
-                $this->SESSION_SYMBOL();
-                break;
-            case 'SESSION_USER':
-                $this->USER_SYMBOL(); // Synonym
-                break;
-            case 'SET':
-                $this->SET_SYMBOL();
-                break;
-            case 'SET_VAR':
-                $this->SET_VAR_SYMBOL();
-                break;
-            case 'SHARE':
-                $this->SHARE_SYMBOL();
-                break;
-            case 'SHOW':
-                $this->SHOW_SYMBOL();
-                break;
-            case 'SHUTDOWN':
-                if ($this->serverVersion < 50709) {
-                    $this->SHUTDOWN_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SIGNAL':
-                $this->SIGNAL_SYMBOL();
-                break;
-            case 'SIGNED':
-                $this->SIGNED_SYMBOL();
-                break;
-            case 'SIMPLE':
-                $this->SIMPLE_SYMBOL();
-                break;
-            case 'SKIP':
-                if ($this->serverVersion >= 80000) {
-                    $this->SKIP_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SLAVE':
-                $this->SLAVE_SYMBOL();
-                break;
-            case 'SLOW':
-                $this->SLOW_SYMBOL();
-                break;
-            case 'SMALLINT':
-                $this->SMALLINT_SYMBOL();
-                break;
-            case 'SNAPSHOT':
-                $this->SNAPSHOT_SYMBOL();
-                break;
-            case 'SOME':
-                $this->ANY_SYMBOL(); // Synonym
-                break;
-            case 'SOCKET':
-                $this->SOCKET_SYMBOL();
-                break;
-            case 'SONAME':
-                $this->SONAME_SYMBOL();
-                break;
-            case 'SOUNDS':
-                $this->SOUNDS_SYMBOL();
-                break;
-            case 'SOURCE':
-                $this->SOURCE_SYMBOL();
-                break;
-            case 'SPATIAL':
-                $this->SPATIAL_SYMBOL();
-                break;
-            case 'SPECIFIC':
-                $this->SPECIFIC_SYMBOL();
-                break;
-            case 'SQL':
-                $this->SQL_SYMBOL();
-                break;
-            case 'SQLEXCEPTION':
-                $this->SQLEXCEPTION_SYMBOL();
-                break;
-            case 'SQLSTATE':
-                $this->SQLSTATE_SYMBOL();
-                break;
-            case 'SQLWARNING':
-                $this->SQLWARNING_SYMBOL();
-                break;
-            case 'SQL_AFTER_GTIDS':
-                $this->SQL_AFTER_GTIDS_SYMBOL();
-                break;
-            case 'SQL_AFTER_MTS_GAPS':
-                if ($this->serverVersion >= 50606) {
-                    $this->SQL_AFTER_MTS_GAPS_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SQL_BEFORE_GTIDS':
-                $this->SQL_BEFORE_GTIDS_SYMBOL();
-                break;
-            case 'SQL_BIG_RESULT':
-                $this->SQL_BIG_RESULT_SYMBOL();
-                break;
-            case 'SQL_BUFFER_RESULT':
-                $this->SQL_BUFFER_RESULT_SYMBOL();
-                break;
-            case 'SQL_CALC_FOUND_ROWS':
-                $this->SQL_CALC_FOUND_ROWS_SYMBOL();
-                break;
-            case 'SQL_CACHE':
-                if ($this->serverVersion < 80000) {
-                    $this->SQL_CACHE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SQL_NO_CACHE':
-                $this->SQL_NO_CACHE_SYMBOL();
-                break;
-            case 'SQL_SMALL_RESULT':
-                $this->SQL_SMALL_RESULT_SYMBOL();
-                break;
-            case 'SQL_THREAD':
-                $this->SQL_THREAD_SYMBOL();
-                break;
-            case 'SQL_TSI_SECOND':
-                $this->SECOND_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_MINUTE':
-                $this->MINUTE_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_HOUR':
-                $this->HOUR_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_DAY':
-                $this->DAY_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_WEEK':
-                $this->WEEK_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_MONTH':
-                $this->MONTH_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_QUARTER':
-                $this->QUARTER_SYMBOL(); // Synonym
-                break;
-            case 'SQL_TSI_YEAR':
-                $this->YEAR_SYMBOL(); // Synonym
-                break;
-            case 'SRID':
-                if ($this->serverVersion >= 80000) {
-                    $this->SRID_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SSL':
-                $this->SSL_SYMBOL();
-                break;
-            case 'STACKED':
-                if ($this->serverVersion >= 50700) {
-                    $this->STACKED_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'STARTING':
-                $this->STARTING_SYMBOL();
-                break;
-            case 'STARTS':
-                $this->STARTS_SYMBOL();
-                break;
-            case 'START':
-                $this->START_SYMBOL();
-                break;
-            case 'STATS_AUTO_RECALC':
-                $this->STATS_AUTO_RECALC_SYMBOL();
-                break;
-            case 'STATS_PERSISTENT':
-                $this->STATS_PERSISTENT_SYMBOL();
-                break;
-            case 'STATS_SAMPLE_PAGES':
-                $this->STATS_SAMPLE_PAGES_SYMBOL();
-                break;
-            case 'STATUS':
-                $this->STATUS_SYMBOL();
-                break;
-            case 'STD':
-                $this->STD_SYMBOL();
-                break;
-            case 'STDDEV':
-                $this->STD_SYMBOL(); // Synonym
-                break;
-            case 'STDDEV_POP':
-                $this->STD_SYMBOL(); // Synonym
-                break;
-            case 'STDDEV_SAMP':
-                $this->STDDEV_SAMP_SYMBOL();
-                break;
-            case 'STOP':
-                $this->STOP_SYMBOL();
-                break;
-            case 'STORAGE':
-                $this->STORAGE_SYMBOL();
-                break;
-            case 'STORED':
-                if ($this->serverVersion >= 50707) {
-                    $this->STORED_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'STRAIGHT_JOIN':
-                $this->STRAIGHT_JOIN_SYMBOL();
-                break;
-            case 'STREAM':
-                if ($this->serverVersion >= 80019) {
-                    $this->STREAM_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'STRING':
-                $this->STRING_SYMBOL();
-                break;
-            case 'SUBCLASS_ORIGIN':
-                $this->SUBCLASS_ORIGIN_SYMBOL();
-                break;
-            case 'SUBDATE':
-                $this->SUBDATE_SYMBOL();
-                break;
-            case 'SUBJECT':
-                $this->SUBJECT_SYMBOL();
-                break;
-            case 'SUBPARTITION':
-                $this->SUBPARTITION_SYMBOL();
-                break;
-            case 'SUBPARTITIONS':
-                $this->SUBPARTITIONS_SYMBOL();
-                break;
-            case 'SUBSTR':
-                $this->SUBSTRING_SYMBOL(); // Synonym
-                break;
-            case 'SUBSTRING':
-                $this->SUBSTRING_SYMBOL();
-                break;
-            case 'SUM':
-                $this->SUM_SYMBOL();
-                break;
-            case 'SUPER':
-                $this->SUPER_SYMBOL();
-                break;
-            case 'SUSPEND':
-                $this->SUSPEND_SYMBOL();
-                break;
-            case 'SWAPS':
-                $this->SWAPS_SYMBOL();
-                break;
-            case 'SWITCHES':
-                $this->SWITCHES_SYMBOL();
-                break;
-            case 'SYSDATE':
-                $this->SYSDATE_SYMBOL();
-                break;
-            case 'SYSTEM':
-                if ($this->serverVersion >= 80000) {
-                    $this->SYSTEM_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'SYSTEM_USER':
-                $this->USER_SYMBOL(); // Synonym
-                break;
-            case 'TABLE':
-                $this->TABLE_SYMBOL();
-                break;
-            case 'TABLES':
-                $this->TABLES_SYMBOL();
-                break;
-            case 'TABLESPACE':
-                $this->TABLESPACE_SYMBOL();
-                break;
-            case 'TABLE_CHECKSUM':
-                $this->TABLE_CHECKSUM_SYMBOL();
-                break;
-            case 'TABLE_NAME':
-                $this->TABLE_NAME_SYMBOL();
-                break;
-            case 'TEMPORARY':
-                $this->TEMPORARY_SYMBOL();
-                break;
-            case 'TEMPTABLE':
-                $this->TEMPTABLE_SYMBOL();
-                break;
-            case 'TERMINATED':
-                $this->TERMINATED_SYMBOL();
-                break;
-            case 'TEXT':
-                $this->TEXT_SYMBOL();
-                break;
-            case 'THAN':
-                $this->THAN_SYMBOL();
-                break;
-            case 'THEN':
-                $this->THEN_SYMBOL();
-                break;
-            case 'THREAD_PRIORITY':
-                if ($this->serverVersion >= 80000) {
-                    $this->THREAD_PRIORITY_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'TIES':
-                if ($this->serverVersion >= 80000) {
-                    $this->TIES_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'TIME':
-                $this->TIME_SYMBOL();
-                break;
-            case 'TIMESTAMP':
-                $this->TIMESTAMP_SYMBOL();
-                break;
-            case 'TIMESTAMPADD':
-                $this->TIMESTAMP_ADD_SYMBOL();
-                break;
-            case 'TIMESTAMPDIFF':
-                $this->TIMESTAMP_DIFF_SYMBOL();
-                break;
-            case 'TINYBLOB':
-                $this->TINYBLOB_SYMBOL();
-                break;
-            case 'TINYINT':
-                $this->TINYINT_SYMBOL();
-                break;
-            case 'TINYTEXT':
-                $this->TINYTEXT_SYMBOL();
-                break;
-            case 'TO':
-                $this->TO_SYMBOL();
-                break;
-            case 'TRAILING':
-                $this->TRAILING_SYMBOL();
-                break;
-            case 'TRANSACTION':
-                $this->TRANSACTION_SYMBOL();
-                break;
-            case 'TRIGGER':
-                $this->TRIGGER_SYMBOL();
-                break;
-            case 'TRIGGERS':
-                $this->TRIGGERS_SYMBOL();
-                break;
-            case 'TRIM':
-                $this->TRIM_SYMBOL();
-                break;
-            case 'TRUE':
-                $this->TRUE_SYMBOL();
-                break;
-            case 'TRUNCATE':
-                $this->TRUNCATE_SYMBOL();
-                break;
-            case 'TYPES':
-                $this->TYPES_SYMBOL();
-                break;
-            case 'TYPE':
-                $this->TYPE_SYMBOL();
-                break;
-            case 'UDF_RETURNS':
-                $this->UDF_RETURNS_SYMBOL();
-                break;
-            case 'UNBOUNDED':
-                if ($this->serverVersion >= 80000) {
-                    $this->UNBOUNDED_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'UNCOMMITTED':
-                $this->UNCOMMITTED_SYMBOL();
-                break;
-            case 'UNDEFINED':
-                $this->UNDEFINED_SYMBOL();
-                break;
-            case 'UNDO':
-                $this->UNDO_SYMBOL();
-                break;
-            case 'UNDO_BUFFER_SIZE':
-                $this->UNDO_BUFFER_SIZE_SYMBOL();
-                break;
-            case 'UNDOFILE':
-                $this->UNDOFILE_SYMBOL();
-                break;
-            case 'UNICODE':
-                $this->UNICODE_SYMBOL();
-                break;
-            case 'UNION':
-                $this->UNION_SYMBOL();
-                break;
-            case 'UNIQUE':
-                $this->UNIQUE_SYMBOL();
-                break;
-            case 'UNKNOWN':
-                $this->UNKNOWN_SYMBOL();
-                break;
-            case 'UNINSTALL':
-                $this->UNINSTALL_SYMBOL();
-                break;
-            case 'UNSIGNED':
-                $this->UNSIGNED_SYMBOL();
-                break;
-            case 'UPDATE':
-                $this->UPDATE_SYMBOL();
-                break;
-            case 'UPGRADE':
-                $this->UPGRADE_SYMBOL();
-                break;
-            case 'USAGE':
-                $this->USAGE_SYMBOL();
-                break;
-            case 'USER':
-                $this->USER_SYMBOL();
-                break;
-            case 'USER_RESOURCES':
-                $this->USER_RESOURCES_SYMBOL();
-                break;
-            case 'USE':
-                $this->USE_SYMBOL();
-                break;
-            case 'USE_FRM':
-                $this->USE_FRM_SYMBOL();
-                break;
-            case 'USING':
-                $this->USING_SYMBOL();
-                break;
-            case 'UTC_DATE':
-                $this->UTC_DATE_SYMBOL();
-                break;
-            case 'UTC_TIME':
-                $this->UTC_TIME_SYMBOL();
-                break;
-            case 'UTC_TIMESTAMP':
-                $this->UTC_TIMESTAMP_SYMBOL();
-                break;
-            case 'VALIDATION':
-                if ($this->serverVersion >= 50706) {
-                    $this->VALIDATION_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'VALUE':
-                $this->VALUE_SYMBOL();
-                break;
-            case 'VALUES':
-                $this->VALUES_SYMBOL();
-                break;
-            case 'VARBINARY':
-                $this->VARBINARY_SYMBOL();
-                break;
-            case 'VARCHAR':
-                $this->VARCHAR_SYMBOL();
-                break;
-            case 'VARCHARACTER':
-                $this->VARCHAR_SYMBOL(); // Synonym
-                break;
-            case 'VARIABLES':
-                $this->VARIABLES_SYMBOL();
-                break;
-            case 'VARIANCE':
-                $this->VARIANCE_SYMBOL();
-                break;
-            case 'VARYING':
-                $this->VARYING_SYMBOL();
-                break;
-            case 'VAR_POP':
-                $this->VARIANCE_SYMBOL(); // Synonym
-                break;
-            case 'VAR_SAMP':
-                $this->VAR_SAMP_SYMBOL();
-                break;
-            case 'VCPU':
-                if ($this->serverVersion >= 80000) {
-                    $this->VCPU_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'VIEW':
-                $this->VIEW_SYMBOL();
-                break;
-            case 'VIRTUAL':
-                if ($this->serverVersion >= 50707) {
-                    $this->VIRTUAL_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'VISIBLE':
-                if ($this->serverVersion >= 80000) {
-                    $this->VISIBLE_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'WAIT':
-                $this->WAIT_SYMBOL();
-                break;
-            case 'WARNINGS':
-                $this->WARNINGS_SYMBOL();
-                break;
-            case 'WEEK':
-                $this->WEEK_SYMBOL();
-                break;
-            case 'WHEN':
-                $this->WHEN_SYMBOL();
-                break;
-            case 'WEIGHT_STRING':
-                $this->WEIGHT_STRING_SYMBOL();
-                break;
-            case 'WHERE':
-                $this->WHERE_SYMBOL();
-                break;
-            case 'WHILE':
-                $this->WHILE_SYMBOL();
-                break;
-            case 'WINDOW':
-                if ($this->serverVersion >= 80000) {
-                    $this->WINDOW_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'WITH':
-                $this->WITH_SYMBOL();
-                break;
-            case 'WITHOUT':
-                if ($this->serverVersion >= 80000) {
-                    $this->WITHOUT_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'WORK':
-                $this->WORK_SYMBOL();
-                break;
-            case 'WRAPPER':
-                $this->WRAPPER_SYMBOL();
-                break;
-            case 'WRITE':
-                $this->WRITE_SYMBOL();
-                break;
-            case 'XA':
-                $this->XA_SYMBOL();
-                break;
-            case 'X509':
-                $this->X509_SYMBOL();
-                break;
-            case 'XID':
-                if ($this->serverVersion >= 50704) {
-                    $this->XID_SYMBOL();
-                } else {
-                    $this->IDENTIFIER();
-                }
-                break;
-            case 'XML':
-                $this->XML_SYMBOL();
-                break;
-            case 'XOR':
-                $this->XOR_SYMBOL();
-                break;
-            case 'YEAR':
-                $this->YEAR_SYMBOL();
-                break;
-            case 'YEAR_MONTH':
-                $this->YEAR_MONTH_SYMBOL();
-                break;
-            case 'ZEROFILL':
-                $this->ZEROFILL_SYMBOL();
-                break;
-            case 'INT1':
-                $this->INT1_SYMBOL();
-                break;
-            case 'INT2':
-                $this->INT2_SYMBOL();
-                break;
-            case 'INT3':
-                $this->INT3_SYMBOL();
-                break;
-            case 'INT4':
-                $this->INT4_SYMBOL();
-                break;
-            case 'INT8':
-                $this->INT8_SYMBOL();
-                break;
+		// Lookup the string in the token table.
+		$this->type = self::TOKENS[$text] ?? self::IDENTIFIER;
+		if ($this->type === self::IDENTIFIER) {
+			return;
+		}
 
-			// Missing from the generated lexer and added manually
-			case 'START':
-				$this->START_SYMBOL();
-				break;
-			case 'UNLOCK':
-				$this->UNLOCK_SYMBOL();
-				break;
-			case 'CLONE':
-				if ($this->serverVersion >= 80000) {
-					$this->CLONE_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'GET':
-				if ($this->serverVersion >= 50604) {
-					$this->GET_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'ASCII':
-				$this->ASCII_SYMBOL();
-				break;
-			case 'BIT':
-				$this->BIT_SYMBOL();
-				break;
-			case 'BUCKETS':
-				if ($this->serverVersion >= 80000) {
-					$this->BUCKETS_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'COMPONENT':
-				if ($this->serverVersion >= 80000) {
-					$this->COMPONENT_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'NOW':
-				$this->NOW_SYMBOL(); // Synonym
-				break;
-			case 'DEFINITION':
-				if ($this->serverVersion >= 80011) {
-					$this->DEFINITION_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'DENSE_RANK':
-				if ($this->serverVersion >= 80000) {
-					$this->DENSE_RANK_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'DESCRIPTION_SYMBOL':
-				if ($this->serverVersion >= 80011) {
-					$this->DESCRIPTION_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'FAILED_LOGIN_ATTEMPTS':
-				if ($this->serverVersion >= 80019) {
-					$this->FAILED_LOGIN_ATTEMPTS_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'FOLLOWING':
-				if ($this->serverVersion >= 80000) {
-					$this->FOLLOWING_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'GROUPING_SYMBOL':
-				if ($this->serverVersion >= 80000) {
-					$this->GROUPING_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'GROUPS':
-				if ($this->serverVersion >= 80000) {
-					$this->GROUPS_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-			case 'LAG':
-				if ($this->serverVersion >= 80000) {
-					$this->LAG_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'LONG':
-				$this->LONG_SYMBOL();
-				break;
-			case 'MASTER_COMPRESSION_ALGORITHM':
-				if ($this->serverVersion >= 80000) {
-					$this->MASTER_COMPRESSION_ALGORITHM_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'NOT2': // TODO: check what is this
-				$this->NOT2_SYMBOL();
-				break;
-			case 'NO':
-				$this->NO_SYMBOL();
-				break;
-			case 'REFERENCE':
-				if ($this->serverVersion >= 80011) {
-					$this->REFERENCE_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'RETURN': // TODO: check the question mark in the lexer grammar
-				$this->RETURN_SYMBOL();
-				break;
-			case 'SPECIFIC':
-				$this->SPECIFIC_SYMBOL();
-				break;
-			case 'AUTHORS':
-				if ($this->serverVersion < 50700) {
-					$this->AUTHORS_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'ADDDATE':
-				$this->ADDDATE_SYMBOL();
-				break;
-			case 'CONCAT_PIPES':
-				$this->CONCAT_PIPES_SYMBOL();
-				break;
+		// Apply MySQL server version specifics (positive number: >= <version>, negative number: < <version>).
+		if (isset(self::VERSIONS[$this->type])) {
+			$version = self::VERSIONS[$this->type];
+			if ($this->serverVersion < $version || -$version >= $this->serverVersion) {
+				$this->type = self::IDENTIFIER;
+				return;
+			}
+		}
 
-			// Unused in this class but present in MySQLParser, hmm
-			case 'ACTIVE':
-				if ($this->serverVersion >= 80014) {
-					$this->ACTIVE_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'ADMIN':
-				if ($this->serverVersion >= 80000) {
-					$this->ADMIN_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'EXCLUDE':
-				if ($this->serverVersion >= 80000) {
-					$this->EXCLUDE_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'INACTIVE':
-				if ($this->serverVersion >= 80014) {
-					$this->INACTIVE_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'LOCKED':
-				if ($this->serverVersion >= 80000) {
-					$this->LOCKED_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'ROUTINE':
-				$this->ROUTINE_SYMBOL();
-				break;
-			case 'UNTIL':
-				$this->UNTIL_SYMBOL();
-				break;
-			case 'ARRAY':
-				if ($this->serverVersion >= 80017) {
-					$this->ARRAY_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'PASSWORD_LOCK_TIME':
-				if ($this->serverVersion >= 80019) {
-					$this->PASSWORD_LOCK_TIME_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'CUME_DIST':
-				if ($this->serverVersion >= 80000) {
-					$this->CUME_DIST_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
-			case 'OVER':
-				if ($this->serverVersion >= 80000) {
-					$this->OVER_SYMBOL();
-				} else {
-					$this->IDENTIFIER();
-				}
-				break;
+		// Apply MySQL version ranges manually.
+		if (
+			$this->type === self::MAX_STATEMENT_TIME_SYMBOL
+			&& ($this->serverVersion <= 50704 || $this->serverVersion >= 50708)
+		) {
+			$this->type = self::IDENTIFIER;
+			return;
+		} elseif (
+			$this->type === self::NONBLOCKING_SYMBOL
+			&& ($this->serverVersion <= 50700 || $this->serverVersion >= 50706)
+		) {
+			$this->type = self::IDENTIFIER;
+			return;
+		} elseif (
+			$this->type === self::REMOTE_SYMBOL
+			&& ($this->serverVersion < 80003 || $this->serverVersion >= 80014)
+		) {
+			$this->type = self::IDENTIFIER;
+			return;
+		}
 
-			//@TODO: check these below
-			//case 'NCHAR':
-			//case 'LONG_NUMBER':
-			//case 'ULONG_NUMBER':
-			//case 'FOUND_ROWS':
-			//case 'CONCAT_SYMBOL':
+		// Determine function calls.
+		if (isset(self::FUNCTIONS[$this->type])) {
+			// Skip any whitespace character if the SQL mode says they should be ignored.
+			$i = 1;
+			if ($this->isSqlModeActive(self::SQL_MODE_IGNORE_SPACE)) {
+				while (safe_ctype_space($this->LA($i))) {
+					$i++;
+				}
+			}
+			if ($this->LA($i) !== '(') {
+				$this->type = self::IDENTIFIER;
+				return;
+			}
+		}
 
-            default:
-                // Not a keyword, emit as identifier.
-                $this->IDENTIFIER();
-        }
+		// With "SQL_MODE_HIGH_NOT_PRECEDENCE" enabled, "NOT" needs to be emitted as a higher priority NOT2 symbol.
+		if ($this->type === self::NOT_SYMBOL && $this->isSqlModeActive(MySQLLexer::SQL_MODE_HIGH_NOT_PRECEDENCE)) {
+			$this->type = self::NOT2_SYMBOL;
+		}
+
+		// Apply synonyms.
+		$this->type = self::SYNONYMS[$this->type] ?? $this->type;
     }
 
     protected function blockComment()
@@ -5103,7 +3217,7 @@ class MySQLLexer {
     {
         $this->consume(); // Consume the '.'.
         $this->IDENTIFIER();
-        $this->setType(self::DOT_SYMBOL);//@TODO: DOT_IDENTIFIER);        
+        $this->setType(self::DOT_SYMBOL);//@TODO: DOT_IDENTIFIER);
     }
 
     protected function NUMBER()
@@ -5592,3740 +3706,6 @@ class MySQLLexer {
         $this->channel = self::HIDDEN;
     }
 
-    protected function ACCESSIBLE_SYMBOL()
-    {
-        $this->setType(self::ACCESSIBLE_SYMBOL);
-    }
-
-    protected function ACCOUNT_SYMBOL()
-    {
-        $this->setType(self::ACCOUNT_SYMBOL);
-    }
-
-    protected function ACTION_SYMBOL()
-    {
-        $this->setType(self::ACTION_SYMBOL);
-    }
-
-    protected function ADD_SYMBOL()
-    {
-        $this->setType(self::ADD_SYMBOL);
-    }
-
-    protected function ADDDATE_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::ADDDATE_SYMBOL)); // MYSQL-FUNC
-    }
-
-    protected function AFTER_SYMBOL()
-    {
-        $this->setType(self::AFTER_SYMBOL);
-    }
-
-    protected function AGAINST_SYMBOL()
-    {
-        $this->setType(self::AGAINST_SYMBOL);
-    }
-
-    protected function AGGREGATE_SYMBOL()
-    {
-        $this->setType(self::AGGREGATE_SYMBOL);
-    }
-
-    protected function ALGORITHM_SYMBOL()
-    {
-        $this->setType(self::ALGORITHM_SYMBOL);
-    }
-
-    protected function ALL_SYMBOL()
-    {
-        $this->setType(self::ALL_SYMBOL);
-    }
-
-    protected function ALTER_SYMBOL()
-    {
-        $this->setType(self::ALTER_SYMBOL);
-    }
-
-    protected function ALWAYS_SYMBOL()
-    {
-        $this->setType(self::ALWAYS_SYMBOL);
-    }
-
-    protected function ANALYSE_SYMBOL()
-    {
-        $this->setType(self::ANALYSE_SYMBOL);
-    }
-
-    protected function ANALYZE_SYMBOL()
-    {
-        $this->setType(self::ANALYZE_SYMBOL);
-    }
-
-    protected function AND_SYMBOL()
-    {
-        $this->setType(self::AND_SYMBOL);
-    }
-
-    protected function ANY_SYMBOL()
-    {
-        $this->setType(self::ANY_SYMBOL);
-    }
-
-    protected function AS_SYMBOL()
-    {
-        $this->setType(self::AS_SYMBOL);
-    }
-
-    protected function ASC_SYMBOL()
-    {
-        $this->setType(self::ASC_SYMBOL);
-    }
-
-    protected function ASCII_SYMBOL()
-    {
-        $this->setType(self::ASCII_SYMBOL);
-    }
-
-    protected function ASENSITIVE_SYMBOL()
-    {
-        $this->setType(self::ASENSITIVE_SYMBOL);
-    }
-
-    protected function AT_SYMBOL()
-    {
-        $this->setType(self::AT_SYMBOL);
-    }
-
-    protected function AUTHORS_SYMBOL()
-    {
-        $this->setType(self::AUTHORS_SYMBOL);
-    }
-
-    protected function AUTOEXTEND_SIZE_SYMBOL()
-    {
-        $this->setType(self::AUTOEXTEND_SIZE_SYMBOL);
-    }
-
-    protected function AUTO_INCREMENT_SYMBOL()
-    {
-        $this->setType(self::AUTO_INCREMENT_SYMBOL);
-    }
-
-    protected function AVG_SYMBOL()
-    {
-        $this->setType(self::AVG_SYMBOL);
-    }
-
-    protected function AVG_ROW_LENGTH_SYMBOL()
-    {
-        $this->setType(self::AVG_ROW_LENGTH_SYMBOL);
-    }
-
-    protected function BACKUP_SYMBOL()
-    {
-        $this->setType(self::BACKUP_SYMBOL);
-    }
-
-    protected function BEFORE_SYMBOL()
-    {
-        $this->setType(self::BEFORE_SYMBOL);
-    }
-
-    protected function BEGIN_SYMBOL()
-    {
-        $this->setType(self::BEGIN_SYMBOL);
-    }
-
-    protected function BETWEEN_SYMBOL()
-    {
-        $this->setType(self::BETWEEN_SYMBOL);
-    }
-
-    protected function BIGINT_SYMBOL()
-    {
-        $this->setType(self::BIGINT_SYMBOL);
-    }
-
-    protected function BINARY_SYMBOL()
-    {
-        $this->setType(self::BINARY_SYMBOL);
-    }
-
-    protected function BINLOG_SYMBOL()
-    {
-        $this->setType(self::BINLOG_SYMBOL);
-    }
-
-    protected function BIT_AND_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::BIT_AND_SYMBOL)); // MYSQL-FUNC
-    }
-
-    protected function BIT_OR_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::BIT_OR_SYMBOL)); // MYSQL-FUNC
-    }
-
-    protected function BIT_SYMBOL()
-    {
-        $this->setType(self::BIT_SYMBOL);
-    }
-
-    protected function BIT_XOR_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::BIT_XOR_SYMBOL)); // MYSQL-FUNC
-    }
-
-    protected function BLOB_SYMBOL()
-    {
-        $this->setType(self::BLOB_SYMBOL);
-    }
-
-    protected function BLOCK_SYMBOL()
-    {
-        $this->setType(self::BLOCK_SYMBOL);
-    }
-
-    protected function BOOLEAN_SYMBOL()
-    {
-        $this->setType(self::BOOLEAN_SYMBOL);
-    }
-
-    protected function BOOL_SYMBOL()
-    {
-        $this->setType(self::BOOL_SYMBOL);
-    }
-
-    protected function BOTH_SYMBOL()
-    {
-        $this->setType(self::BOTH_SYMBOL);
-    }
-
-    protected function BTREE_SYMBOL()
-    {
-        $this->setType(self::BTREE_SYMBOL);
-    }
-
-    protected function BUCKETS_SYMBOL()
-    {
-        $this->setType(self::BUCKETS_SYMBOL);
-    }
-
-    protected function BY_SYMBOL()
-    {
-        $this->setType(self::BY_SYMBOL);
-    }
-
-    protected function BYTE_SYMBOL()
-    {
-        $this->setType(self::BYTE_SYMBOL);
-    }
-
-    protected function CACHE_SYMBOL()
-    {
-        $this->setType(self::CACHE_SYMBOL);
-    }
-
-    protected function CALL_SYMBOL()
-    {
-        $this->setType(self::CALL_SYMBOL);
-    }
-
-    protected function CASCADE_SYMBOL()
-    {
-        $this->setType(self::CASCADE_SYMBOL);
-    }
-
-    protected function CASCADED_SYMBOL()
-    {
-        $this->setType(self::CASCADED_SYMBOL);
-    }
-
-    protected function CASE_SYMBOL()
-    {
-        $this->setType(self::CASE_SYMBOL);
-    }
-
-    protected function CAST_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::CAST_SYMBOL)); // SQL-2003-R
-    }
-
-    protected function CATALOG_NAME_SYMBOL()
-    {
-        $this->setType(self::CATALOG_NAME_SYMBOL);
-    }
-
-    protected function CHAIN_SYMBOL()
-    {
-        $this->setType(self::CHAIN_SYMBOL);
-    }
-
-    protected function CHANGE_SYMBOL()
-    {
-        $this->setType(self::CHANGE_SYMBOL);
-    }
-
-    protected function CHANGED_SYMBOL()
-    {
-        $this->setType(self::CHANGED_SYMBOL);
-    }
-
-    protected function CHANNEL_SYMBOL()
-    {
-        $this->setType(self::CHANNEL_SYMBOL);
-    }
-
-    protected function CHAR_SYMBOL()
-    {
-        $this->setType(self::CHAR_SYMBOL);
-    }
-
-    protected function CHARSET_SYMBOL()
-    {
-        $this->setType(self::CHARSET_SYMBOL);
-    }
-
-    protected function CHECK_SYMBOL()
-    {
-        $this->setType(self::CHECK_SYMBOL);
-    }
-
-    protected function CHECKSUM_SYMBOL()
-    {
-        $this->setType(self::CHECKSUM_SYMBOL);
-    }
-
-    protected function CIPHER_SYMBOL()
-    {
-        $this->setType(self::CIPHER_SYMBOL);
-    }
-
-    protected function CLASS_ORIGIN_SYMBOL()
-    {
-        $this->setType(self::CLASS_ORIGIN_SYMBOL);
-    }
-
-    protected function CLIENT_SYMBOL()
-    {
-        $this->setType(self::CLIENT_SYMBOL);
-    }
-
-    protected function CLONE_SYMBOL()
-    {
-        $this->setType(self::CLONE_SYMBOL);
-    }
-
-    protected function CLOSE_SYMBOL()
-    {
-        $this->setType(self::CLOSE_SYMBOL);
-    }
-
-    protected function COALESCE_SYMBOL()
-    {
-        $this->setType(self::COALESCE_SYMBOL);
-    }
-
-    protected function CODE_SYMBOL()
-    {
-        $this->setType(self::CODE_SYMBOL);
-    }
-
-    protected function COLLATE_SYMBOL()
-    {
-        $this->setType(self::COLLATE_SYMBOL);
-    }
-
-    protected function COLLATION_SYMBOL()
-    {
-        $this->setType(self::COLLATION_SYMBOL);
-    }
-
-    protected function COLUMN_FORMAT_SYMBOL()
-    {
-        $this->setType(self::COLUMN_FORMAT_SYMBOL);
-    }
-
-    protected function COLUMN_NAME_SYMBOL()
-    {
-        $this->setType(self::COLUMN_NAME_SYMBOL);
-    }
-
-    protected function COLUMNS_SYMBOL()
-    {
-        $this->setType(self::COLUMNS_SYMBOL);
-    }
-
-    protected function COLUMN_SYMBOL()
-    {
-        $this->setType(self::COLUMN_SYMBOL);
-    }
-
-    protected function COMMENT_SYMBOL()
-    {
-        $this->setType(self::COMMENT_SYMBOL);
-    }
-
-    protected function COMMIT_SYMBOL()
-    {
-        $this->setType(self::COMMIT_SYMBOL);
-    }
-
-    protected function COMMITTED_SYMBOL()
-    {
-        $this->setType(self::COMMITTED_SYMBOL);
-    }
-
-    protected function COMPACT_SYMBOL()
-    {
-        $this->setType(self::COMPACT_SYMBOL);
-    }
-
-    protected function COMPLETION_SYMBOL()
-    {
-        $this->setType(self::COMPLETION_SYMBOL);
-    }
-
-    protected function COMPONENT_SYMBOL()
-    {
-        $this->setType(self::COMPONENT_SYMBOL);
-    }
-
-    protected function COMPRESSED_SYMBOL()
-    {
-        $this->setType(self::COMPRESSED_SYMBOL);
-    }
-
-    protected function COMPRESSION_SYMBOL()
-    {
-        $this->setType(self::COMPRESSION_SYMBOL);
-    }
-
-    protected function CONCURRENT_SYMBOL()
-    {
-        $this->setType(self::CONCURRENT_SYMBOL);
-    }
-
-    protected function CONDITION_SYMBOL()
-    {
-        $this->setType(self::CONDITION_SYMBOL);
-    }
-
-    protected function CONNECTION_SYMBOL()
-    {
-        $this->setType(self::CONNECTION_SYMBOL);
-    }
-
-    protected function CONSISTENT_SYMBOL()
-    {
-        $this->setType(self::CONSISTENT_SYMBOL);
-    }
-
-    protected function CONSTRAINT_SYMBOL()
-    {
-        $this->setType(self::CONSTRAINT_SYMBOL);
-    }
-
-    protected function CONSTRAINT_CATALOG_SYMBOL()
-    {
-        $this->setType(self::CONSTRAINT_CATALOG_SYMBOL);
-    }
-
-    protected function CONSTRAINT_NAME_SYMBOL()
-    {
-        $this->setType(self::CONSTRAINT_NAME_SYMBOL);
-    }
-
-    protected function CONSTRAINT_SCHEMA_SYMBOL()
-    {
-        $this->setType(self::CONSTRAINT_SCHEMA_SYMBOL);
-    }
-
-    protected function CONTAINS_SYMBOL()
-    {
-        $this->setType(self::CONTAINS_SYMBOL);
-    }
-
-    protected function CONTEXT_SYMBOL()
-    {
-        $this->setType(self::CONTEXT_SYMBOL);
-    }
-
-    protected function CONTINUE_SYMBOL()
-    {
-        $this->setType(self::CONTINUE_SYMBOL);
-    }
-
-    protected function CONTRIBUTORS_SYMBOL()
-    {
-        $this->setType(self::CONTRIBUTORS_SYMBOL);
-    }
-
-    protected function CONVERT_SYMBOL()
-    {
-        $this->setType(self::CONVERT_SYMBOL);
-    }
-
-    protected function COUNT_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::COUNT_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function CPU_SYMBOL()
-    {
-        $this->setType(self::CPU_SYMBOL);
-    }
-
-    protected function CREATE_SYMBOL()
-    {
-        $this->setType(self::CREATE_SYMBOL);
-    }
-
-    protected function CROSS_SYMBOL()
-    {
-        $this->setType(self::CROSS_SYMBOL);
-    }
-
-    protected function CUBE_SYMBOL()
-    {
-        $this->setType(self::CUBE_SYMBOL);
-    }
-
-    protected function CURDATE_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::CURDATE_SYMBOL)); // MYSQL-FUNC
-    }
-
-    protected function CURRENT_SYMBOL()
-    {
-        $this->setType(self::CURRENT_SYMBOL);
-    }
-
-    protected function CURRENT_DATE_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::CURDATE_SYMBOL)); // Synonym, MYSQL-FUNC
-    }
-
-    protected function CURRENT_TIME_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::CURTIME_SYMBOL)); // Synonym, MYSQL-FUNC
-    }
-
-    protected function CURRENT_TIMESTAMP_SYMBOL()
-    {
-        $this->setType(self::NOW_SYMBOL); // Synonym
-    }
-
-    protected function CURRENT_USER_SYMBOL()
-    {
-        $this->setType(self::CURRENT_USER_SYMBOL);
-    }
-
-    protected function CURSOR_SYMBOL()
-    {
-        $this->setType(self::CURSOR_SYMBOL);
-    }
-
-    protected function CURSOR_NAME_SYMBOL()
-    {
-        $this->setType(self::CURSOR_NAME_SYMBOL);
-    }
-
-    protected function CURTIME_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::CURTIME_SYMBOL)); // MYSQL-FUNC
-    }
-
-    protected function DATABASE_SYMBOL()
-    {
-        $this->setType(self::DATABASE_SYMBOL);
-    }
-
-    protected function DATABASES_SYMBOL()
-    {
-        $this->setType(self::DATABASES_SYMBOL);
-    }
-
-    protected function DATAFILE_SYMBOL()
-    {
-        $this->setType(self::DATAFILE_SYMBOL);
-    }
-
-    protected function DATA_SYMBOL()
-    {
-        $this->setType(self::DATA_SYMBOL);
-    }
-
-    protected function DATETIME_SYMBOL()
-    {
-        $this->setType(self::DATETIME_SYMBOL);
-    }
-
-    protected function DATE_ADD_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::DATE_ADD_SYMBOL));
-    }
-
-    protected function DATE_SUB_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::DATE_SUB_SYMBOL));
-    }
-
-    protected function DATE_SYMBOL()
-    {
-        $this->setType(self::DATE_SYMBOL);
-    }
-
-    protected function DAY_HOUR_SYMBOL()
-    {
-        $this->setType(self::DAY_HOUR_SYMBOL);
-    }
-
-    protected function DAY_MICROSECOND_SYMBOL()
-    {
-        $this->setType(self::DAY_MICROSECOND_SYMBOL);
-    }
-
-    protected function DAY_MINUTE_SYMBOL()
-    {
-        $this->setType(self::DAY_MINUTE_SYMBOL);
-    }
-
-    protected function DAY_SECOND_SYMBOL()
-    {
-        $this->setType(self::DAY_SECOND_SYMBOL);
-    }
-
-    protected function DAY_SYMBOL()
-    {
-        $this->setType(self::DAY_SYMBOL);
-    }
-
-    protected function DAYOFMONTH_SYMBOL()
-    {
-        $this->setType(self::DAY_SYMBOL); // Synonym
-    }
-
-    protected function DEALLOCATE_SYMBOL()
-    {
-        $this->setType(self::DEALLOCATE_SYMBOL);
-    }
-
-    protected function DECIMAL_SYMBOL()
-    {
-        $this->setType(self::DECIMAL_SYMBOL);
-    }
-
-    protected function DEC_SYMBOL()
-    {
-        $this->setType(self::DECIMAL_SYMBOL); // Synonym
-    }
-
-    protected function DECLARE_SYMBOL()
-    {
-        $this->setType(self::DECLARE_SYMBOL);
-    }
-
-    protected function DEFAULT_SYMBOL()
-    {
-        $this->setType(self::DEFAULT_SYMBOL);
-    }
-
-    protected function DEFAULT_AUTH_SYMBOL()
-    {
-        $this->setType(self::DEFAULT_AUTH_SYMBOL);
-    }
-
-    protected function DEFINER_SYMBOL()
-    {
-        $this->setType(self::DEFINER_SYMBOL);
-    }
-
-    protected function DEFINITION_SYMBOL()
-    {
-        $this->setType(self::DEFINITION_SYMBOL);
-    }
-
-    protected function DELAYED_SYMBOL()
-    {
-        $this->setType(self::DELAYED_SYMBOL);
-    }
-
-    protected function DELAY_KEY_WRITE_SYMBOL()
-    {
-        $this->setType(self::DELAY_KEY_WRITE_SYMBOL);
-    }
-
-    protected function DELETE_SYMBOL()
-    {
-        $this->setType(self::DELETE_SYMBOL);
-    }
-
-    protected function DENSE_RANK_SYMBOL()
-    {
-        $this->setType(self::DENSE_RANK_SYMBOL);
-    }
-
-    protected function DESC_SYMBOL()
-    {
-        $this->setType(self::DESC_SYMBOL);
-    }
-
-    protected function DESCRIBE_SYMBOL()
-    {
-        $this->setType(self::DESCRIBE_SYMBOL);
-    }
-
-    protected function DESCRIPTION_SYMBOL()
-    {
-        $this->setType(self::DESCRIPTION_SYMBOL);
-    }
-
-    protected function DES_KEY_FILE_SYMBOL()
-    {
-        $this->setType(self::DES_KEY_FILE_SYMBOL);
-    }
-
-    protected function DETERMINISTIC_SYMBOL()
-    {
-        $this->setType(self::DETERMINISTIC_SYMBOL);
-    }
-
-    protected function DIAGNOSTICS_SYMBOL()
-    {
-        $this->setType(self::DIAGNOSTICS_SYMBOL);
-    }
-
-    protected function DIRECTORY_SYMBOL()
-    {
-        $this->setType(self::DIRECTORY_SYMBOL);
-    }
-
-    protected function DISABLE_SYMBOL()
-    {
-        $this->setType(self::DISABLE_SYMBOL);
-    }
-
-    protected function DISCARD_SYMBOL()
-    {
-        $this->setType(self::DISCARD_SYMBOL);
-    }
-
-    protected function DISK_SYMBOL()
-    {
-        $this->setType(self::DISK_SYMBOL);
-    }
-
-    protected function DISTINCT_SYMBOL()
-    {
-        $this->setType(self::DISTINCT_SYMBOL);
-    }
-
-    protected function DISTINCTROW_SYMBOL()
-    {
-        $this->setType(self::DISTINCT_SYMBOL); // Synonym
-    }
-
-    protected function DIV_SYMBOL()
-    {
-        $this->setType(self::DIV_SYMBOL);
-    }
-
-    protected function DOUBLE_SYMBOL()
-    {
-        $this->setType(self::DOUBLE_SYMBOL);
-    }
-
-    protected function DO_SYMBOL()
-    {
-        $this->setType(self::DO_SYMBOL);
-    }
-
-    protected function DROP_SYMBOL()
-    {
-        $this->setType(self::DROP_SYMBOL);
-    }
-
-    protected function DUAL_SYMBOL()
-    {
-        $this->setType(self::DUAL_SYMBOL);
-    }
-
-    protected function DUMPFILE_SYMBOL()
-    {
-        $this->setType(self::DUMPFILE_SYMBOL);
-    }
-
-    protected function DUPLICATE_SYMBOL()
-    {
-        $this->setType(self::DUPLICATE_SYMBOL);
-    }
-
-    protected function DYNAMIC_SYMBOL()
-    {
-        $this->setType(self::DYNAMIC_SYMBOL);
-    }
-
-    protected function EACH_SYMBOL()
-    {
-        $this->setType(self::EACH_SYMBOL);
-    }
-
-    protected function ELSE_SYMBOL()
-    {
-        $this->setType(self::ELSE_SYMBOL);
-    }
-
-    protected function ELSEIF_SYMBOL()
-    {
-        $this->setType(self::ELSEIF_SYMBOL);
-    }
-
-    protected function EMPTY_SYMBOL()
-    {
-        $this->setType(self::EMPTY_SYMBOL);
-    }
-
-    protected function ENABLE_SYMBOL()
-    {
-        $this->setType(self::ENABLE_SYMBOL);
-    }
-
-    protected function ENCLOSED_SYMBOL()
-    {
-        $this->setType(self::ENCLOSED_SYMBOL);
-    }
-
-    protected function ENCRYPTION_SYMBOL()
-    {
-        $this->setType(self::ENCRYPTION_SYMBOL);
-    }
-
-    protected function END_SYMBOL()
-    {
-        $this->setType(self::END_SYMBOL);
-    }
-
-    protected function ENDS_SYMBOL()
-    {
-        $this->setType(self::ENDS_SYMBOL);
-    }
-
-    protected function ENFORCED_SYMBOL()
-    {
-        $this->setType(self::ENFORCED_SYMBOL);
-    }
-
-    protected function ENGINE_SYMBOL()
-    {
-        $this->setType(self::ENGINE_SYMBOL);
-    }
-
-    protected function ENGINES_SYMBOL()
-    {
-        $this->setType(self::ENGINES_SYMBOL);
-    }
-
-    protected function ENUM_SYMBOL()
-    {
-        $this->setType(self::ENUM_SYMBOL);
-    }
-
-    protected function ERROR_SYMBOL()
-    {
-        $this->setType(self::ERROR_SYMBOL);
-    }
-
-    protected function ERRORS_SYMBOL()
-    {
-        $this->setType(self::ERRORS_SYMBOL);
-    }
-
-    protected function ESCAPED_SYMBOL()
-    {
-        $this->setType(self::ESCAPED_SYMBOL);
-    }
-
-    protected function ESCAPE_SYMBOL()
-    {
-        $this->setType(self::ESCAPE_SYMBOL);
-    }
-
-    protected function EVENT_SYMBOL()
-    {
-        $this->setType(self::EVENT_SYMBOL);
-    }
-
-    protected function EVENTS_SYMBOL()
-    {
-        $this->setType(self::EVENTS_SYMBOL);
-    }
-
-    protected function EVERY_SYMBOL()
-    {
-        $this->setType(self::EVERY_SYMBOL);
-    }
-
-    protected function EXCHANGE_SYMBOL()
-    {
-        $this->setType(self::EXCHANGE_SYMBOL);
-    }
-
-    protected function EXCEPT_SYMBOL()
-    {
-        $this->setType(self::EXCEPT_SYMBOL);
-    }
-
-    protected function EXECUTE_SYMBOL()
-    {
-        $this->setType(self::EXECUTE_SYMBOL);
-    }
-
-    protected function EXISTS_SYMBOL()
-    {
-        $this->setType(self::EXISTS_SYMBOL);
-    }
-
-    protected function EXIT_SYMBOL()
-    {
-        $this->setType(self::EXIT_SYMBOL);
-    }
-
-    protected function EXPANSION_SYMBOL()
-    {
-        $this->setType(self::EXPANSION_SYMBOL);
-    }
-
-    protected function EXPIRE_SYMBOL()
-    {
-        $this->setType(self::EXPIRE_SYMBOL);
-    }
-
-    protected function EXPLAIN_SYMBOL()
-    {
-        $this->setType(self::EXPLAIN_SYMBOL);
-    }
-
-    protected function EXPORT_SYMBOL()
-    {
-        $this->setType(self::EXPORT_SYMBOL);
-    }
-
-    protected function EXTENDED_SYMBOL()
-    {
-        $this->setType(self::EXTENDED_SYMBOL);
-    }
-
-    protected function EXTENT_SIZE_SYMBOL()
-    {
-        $this->setType(self::EXTENT_SIZE_SYMBOL);
-    }
-
-    protected function EXTRACT_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::EXTRACT_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function FALSE_SYMBOL()
-    {
-        $this->setType(self::FALSE_SYMBOL);
-    }
-
-    protected function FAILED_LOGIN_ATTEMPTS_SYMBOL()
-    {
-        $this->setType(self::FAILED_LOGIN_ATTEMPTS_SYMBOL);
-    }
-
-    protected function FAST_SYMBOL()
-    {
-        $this->setType(self::FAST_SYMBOL);
-    }
-
-    protected function FAULTS_SYMBOL()
-    {
-        $this->setType(self::FAULTS_SYMBOL);
-    }
-
-    protected function FETCH_SYMBOL()
-    {
-        $this->setType(self::FETCH_SYMBOL);
-    }
-
-    protected function FIELDS_SYMBOL()
-    {
-        $this->setType(self::COLUMNS_SYMBOL); // Synonym
-    }
-
-    protected function FILE_BLOCK_SIZE_SYMBOL()
-    {
-        $this->setType(self::FILE_BLOCK_SIZE_SYMBOL);
-    }
-
-    protected function FILE_SYMBOL()
-    {
-        $this->setType(self::FILE_SYMBOL);
-    }
-
-    protected function FILTER_SYMBOL()
-    {
-        $this->setType(self::FILTER_SYMBOL);
-    }
-
-    protected function FIRST_SYMBOL()
-    {
-        $this->setType(self::FIRST_SYMBOL);
-    }
-
-    protected function FIRST_VALUE_SYMBOL()
-    {
-        $this->setType(self::FIRST_VALUE_SYMBOL);
-    }
-
-    protected function FIXED_SYMBOL()
-    {
-        $this->setType(self::FIXED_SYMBOL);
-    }
-
-    protected function FLOAT4_SYMBOL()
-    {
-        $this->setType(self::FLOAT_SYMBOL); // Synonym
-    }
-
-    protected function FLOAT8_SYMBOL()
-    {
-        $this->setType(self::DOUBLE_SYMBOL); // Synonym
-    }
-
-    protected function FLOAT_SYMBOL()
-    {
-        $this->setType(self::FLOAT_SYMBOL);
-    }
-
-    protected function FLUSH_SYMBOL()
-    {
-        $this->setType(self::FLUSH_SYMBOL);
-    }
-
-    protected function FOLLOWS_SYMBOL()
-    {
-        $this->setType(self::FOLLOWS_SYMBOL);
-    }
-
-    protected function FOLLOWING_SYMBOL()
-    {
-        $this->setType(self::FOLLOWING_SYMBOL);
-    }
-
-    protected function FORCE_SYMBOL()
-    {
-        $this->setType(self::FORCE_SYMBOL);
-    }
-
-    protected function FOR_SYMBOL()
-    {
-        $this->setType(self::FOR_SYMBOL);
-    }
-
-    protected function FOREIGN_SYMBOL()
-    {
-        $this->setType(self::FOREIGN_SYMBOL);
-    }
-
-    protected function FORMAT_SYMBOL()
-    {
-        $this->setType(self::FORMAT_SYMBOL);
-    }
-
-    protected function FOUND_SYMBOL()
-    {
-        $this->setType(self::FOUND_SYMBOL);
-    }
-
-    protected function FROM_SYMBOL()
-    {
-        $this->setType(self::FROM_SYMBOL);
-    }
-
-    protected function FULLTEXT_SYMBOL()
-    {
-        $this->setType(self::FULLTEXT_SYMBOL);
-    }
-
-    protected function FULL_SYMBOL()
-    {
-        $this->setType(self::FULL_SYMBOL);
-    }
-
-    protected function FUNCTION_SYMBOL()
-    {
-        $this->setType(self::FUNCTION_SYMBOL);
-    }
-
-    protected function GENERATED_SYMBOL()
-    {
-        $this->setType(self::GENERATED_SYMBOL);
-    }
-
-    protected function GENERAL_SYMBOL()
-    {
-        $this->setType(self::GENERAL_SYMBOL);
-    }
-
-    protected function GEOMETRYCOLLECTION_SYMBOL()
-    {
-        $this->setType(self::GEOMETRYCOLLECTION_SYMBOL);
-    }
-
-    protected function GEOMETRY_SYMBOL()
-    {
-        $this->setType(self::GEOMETRY_SYMBOL);
-    }
-
-    protected function GET_SYMBOL()
-    {
-        $this->setType(self::GET_SYMBOL);
-    }
-
-    protected function GET_FORMAT_SYMBOL()
-    {
-        $this->setType(self::GET_FORMAT_SYMBOL);
-    }
-
-    protected function GET_MASTER_PUBLIC_KEY_SYMBOL()
-    {
-        $this->setType(self::GET_MASTER_PUBLIC_KEY_SYMBOL);
-    }
-
-    protected function GLOBAL_SYMBOL()
-    {
-        $this->setType(self::GLOBAL_SYMBOL);
-    }
-
-    protected function GRANT_SYMBOL()
-    {
-        $this->setType(self::GRANT_SYMBOL);
-    }
-
-    protected function GRANTS_SYMBOL()
-    {
-        $this->setType(self::GRANTS_SYMBOL);
-    }
-
-    protected function GROUP_CONCAT_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::GROUP_CONCAT_SYMBOL));
-    }
-
-    protected function GROUP_SYMBOL()
-    {
-        $this->setType(self::GROUP_SYMBOL);
-    }
-
-    protected function GROUP_REPLICATION_SYMBOL()
-    {
-        $this->setType(self::GROUP_REPLICATION_SYMBOL);
-    }
-
-    protected function GROUPING_SYMBOL()
-    {
-        $this->setType(self::GROUPING_SYMBOL);
-    }
-
-    protected function GROUPS_SYMBOL()
-    {
-        $this->setType(self::GROUPS_SYMBOL);
-    }
-
-    protected function HANDLER_SYMBOL()
-    {
-        $this->setType(self::HANDLER_SYMBOL);
-    }
-
-    protected function HASH_SYMBOL()
-    {
-        $this->setType(self::HASH_SYMBOL);
-    }
-
-    protected function HAVING_SYMBOL()
-    {
-        $this->setType(self::HAVING_SYMBOL);
-    }
-
-    protected function HELP_SYMBOL()
-    {
-        $this->setType(self::HELP_SYMBOL);
-    }
-
-    protected function HIGH_PRIORITY_SYMBOL()
-    {
-        $this->setType(self::HIGH_PRIORITY_SYMBOL);
-    }
-
-    protected function HISTOGRAM_SYMBOL()
-    {
-        $this->setType(self::HISTOGRAM_SYMBOL);
-    }
-
-    protected function HISTORY_SYMBOL()
-    {
-        $this->setType(self::HISTORY_SYMBOL);
-    }
-
-    protected function HOSTS_SYMBOL()
-    {
-        $this->setType(self::HOSTS_SYMBOL);
-    }
-
-    protected function HOST_SYMBOL()
-    {
-        $this->setType(self::HOST_SYMBOL);
-    }
-
-    protected function HOUR_SYMBOL()
-    {
-        $this->setType(self::HOUR_SYMBOL);
-    }
-
-    protected function HOUR_MICROSECOND_SYMBOL()
-    {
-        $this->setType(self::HOUR_MICROSECOND_SYMBOL);
-    }
-
-    protected function HOUR_MINUTE_SYMBOL()
-    {
-        $this->setType(self::HOUR_MINUTE_SYMBOL);
-    }
-
-    protected function HOUR_SECOND_SYMBOL()
-    {
-        $this->setType(self::HOUR_SECOND_SYMBOL);
-    }
-
-    protected function IDENTIFIED_SYMBOL()
-    {
-        $this->setType(self::IDENTIFIED_SYMBOL);
-    }
-
-    protected function IF_SYMBOL()
-    {
-        $this->setType(self::IF_SYMBOL);
-    }
-
-    protected function IGNORE_SYMBOL()
-    {
-        $this->setType(self::IGNORE_SYMBOL);
-    }
-
-    protected function IGNORE_SERVER_IDS_SYMBOL()
-    {
-        $this->setType(self::IGNORE_SERVER_IDS_SYMBOL);
-    }
-
-    protected function IMPORT_SYMBOL()
-    {
-        $this->setType(self::IMPORT_SYMBOL);
-    }
-
-    protected function IN_SYMBOL()
-    {
-        $this->setType(self::IN_SYMBOL);
-    }
-
-    protected function INDEX_SYMBOL()
-    {
-        $this->setType(self::INDEX_SYMBOL);
-    }
-
-    protected function INDEXES_SYMBOL()
-    {
-        $this->setType(self::INDEXES_SYMBOL);
-    }
-
-    protected function INFILE_SYMBOL()
-    {
-        $this->setType(self::INFILE_SYMBOL);
-    }
-
-    protected function INITIAL_SIZE_SYMBOL()
-    {
-        $this->setType(self::INITIAL_SIZE_SYMBOL);
-    }
-
-    protected function INNER_SYMBOL()
-    {
-        $this->setType(self::INNER_SYMBOL);
-    }
-
-    protected function INOUT_SYMBOL()
-    {
-        $this->setType(self::INOUT_SYMBOL);
-    }
-
-    protected function INSENSITIVE_SYMBOL()
-    {
-        $this->setType(self::INSENSITIVE_SYMBOL);
-    }
-
-    protected function INSERT_SYMBOL()
-    {
-        $this->setType(self::INSERT_SYMBOL);
-    }
-
-    protected function INSERT_METHOD_SYMBOL()
-    {
-        $this->setType(self::INSERT_METHOD_SYMBOL);
-    }
-
-    protected function INSTANCE_SYMBOL()
-    {
-        $this->setType(self::INSTANCE_SYMBOL);
-    }
-
-    protected function INSTALL_SYMBOL()
-    {
-        $this->setType(self::INSTALL_SYMBOL);
-    }
-
-    protected function INT_SYMBOL()
-    {
-        $this->setType(self::INT_SYMBOL);
-    }
-
-    protected function INTEGER_SYMBOL()
-    {
-        $this->setType(self::INT_SYMBOL); // Synonym
-    }
-
-    protected function INTERVAL_SYMBOL()
-    {
-        $this->setType(self::INTERVAL_SYMBOL);
-    }
-
-    protected function INTO_SYMBOL()
-    {
-        $this->setType(self::INTO_SYMBOL);
-    }
-
-    protected function INVISIBLE_SYMBOL()
-    {
-        $this->setType(self::INVISIBLE_SYMBOL);
-    }
-
-    protected function INVOKER_SYMBOL()
-    {
-        $this->setType(self::INVOKER_SYMBOL);
-    }
-
-    protected function IO_SYMBOL()
-    {
-        $this->setType(self::IO_SYMBOL);
-    }
-
-    protected function IPC_SYMBOL()
-    {
-        $this->setType(self::IPC_SYMBOL);
-    }
-
-    protected function IS_SYMBOL()
-    {
-        $this->setType(self::IS_SYMBOL);
-    }
-
-    protected function ISOLATION_SYMBOL()
-    {
-        $this->setType(self::ISOLATION_SYMBOL);
-    }
-
-    protected function ISSUER_SYMBOL()
-    {
-        $this->setType(self::ISSUER_SYMBOL);
-    }
-
-    protected function ITERATE_SYMBOL()
-    {
-        $this->setType(self::ITERATE_SYMBOL);
-    }
-
-    protected function JOIN_SYMBOL()
-    {
-        $this->setType(self::JOIN_SYMBOL);
-    }
-
-    protected function JSON_SYMBOL()
-    {
-        $this->setType(self::JSON_SYMBOL);
-    }
-
-    protected function JSON_TABLE_SYMBOL()
-    {
-        $this->setType(self::JSON_TABLE_SYMBOL);
-    }
-
-    protected function JSON_ARRAYAGG_SYMBOL()
-    {
-        $this->setType(self::JSON_ARRAYAGG_SYMBOL);
-    }
-
-    protected function JSON_OBJECTAGG_SYMBOL()
-    {
-        $this->setType(self::JSON_OBJECTAGG_SYMBOL);
-    }
-
-    protected function KEYS_SYMBOL()
-    {
-        $this->setType(self::KEYS_SYMBOL);
-    }
-
-    protected function KEY_SYMBOL()
-    {
-        $this->setType(self::KEY_SYMBOL);
-    }
-
-    protected function KEY_BLOCK_SIZE_SYMBOL()
-    {
-        $this->setType(self::KEY_BLOCK_SIZE_SYMBOL);
-    }
-
-    protected function KILL_SYMBOL()
-    {
-        $this->setType(self::KILL_SYMBOL);
-    }
-
-    protected function LAG_SYMBOL()
-    {
-        $this->setType(self::LAG_SYMBOL);
-    }
-
-    protected function LANGUAGE_SYMBOL()
-    {
-        $this->setType(self::LANGUAGE_SYMBOL);
-    }
-
-    protected function LAST_SYMBOL()
-    {
-        $this->setType(self::LAST_SYMBOL);
-    }
-
-    protected function LAST_VALUE_SYMBOL()
-    {
-        $this->setType(self::LAST_VALUE_SYMBOL);
-    }
-
-    protected function LATERAL_SYMBOL()
-    {
-        $this->setType(self::LATERAL_SYMBOL);
-    }
-
-    protected function LEAD_SYMBOL()
-    {
-        $this->setType(self::LEAD_SYMBOL);
-    }
-
-    protected function LEADING_SYMBOL()
-    {
-        $this->setType(self::LEADING_SYMBOL);
-    }
-
-    protected function LEAVE_SYMBOL()
-    {
-        $this->setType(self::LEAVE_SYMBOL);
-    }
-
-    protected function LEAVES_SYMBOL()
-    {
-        $this->setType(self::LEAVES_SYMBOL);
-    }
-
-    protected function LEFT_SYMBOL()
-    {
-        $this->setType(self::LEFT_SYMBOL);
-    }
-
-    protected function LESS_SYMBOL()
-    {
-        $this->setType(self::LESS_SYMBOL);
-    }
-
-    protected function LEVEL_SYMBOL()
-    {
-        $this->setType(self::LEVEL_SYMBOL);
-    }
-
-    protected function LIKE_SYMBOL()
-    {
-        $this->setType(self::LIKE_SYMBOL);
-    }
-
-    protected function LIMIT_SYMBOL()
-    {
-        $this->setType(self::LIMIT_SYMBOL);
-    }
-
-    protected function LINEAR_SYMBOL()
-    {
-        $this->setType(self::LINEAR_SYMBOL);
-    }
-
-    protected function LINES_SYMBOL()
-    {
-        $this->setType(self::LINES_SYMBOL);
-    }
-
-    protected function LINESTRING_SYMBOL()
-    {
-        $this->setType(self::LINESTRING_SYMBOL);
-    }
-
-    protected function LIST_SYMBOL()
-    {
-        $this->setType(self::LIST_SYMBOL);
-    }
-
-    protected function LOAD_SYMBOL()
-    {
-        $this->setType(self::LOAD_SYMBOL);
-    }
-
-    protected function LOCALTIME_SYMBOL()
-    {
-        $this->setType(self::NOW_SYMBOL); // Synonym
-    }
-
-    protected function LOCALTIMESTAMP_SYMBOL()
-    {
-        $this->setType(self::NOW_SYMBOL); // Synonym
-    }
-
-    protected function LOCAL_SYMBOL()
-    {
-        $this->setType(self::LOCAL_SYMBOL);
-    }
-
-    protected function LOCATOR_SYMBOL()
-    {
-        $this->setType(self::LOCATOR_SYMBOL);
-    }
-
-    protected function LOCK_SYMBOL()
-    {
-        $this->setType(self::LOCK_SYMBOL);
-    }
-
-    protected function LOCKS_SYMBOL()
-    {
-        $this->setType(self::LOCKS_SYMBOL);
-    }
-
-    protected function LOGFILE_SYMBOL()
-    {
-        $this->setType(self::LOGFILE_SYMBOL);
-    }
-
-    protected function LOGS_SYMBOL()
-    {
-        $this->setType(self::LOGS_SYMBOL);
-    }
-
-    protected function LONGBLOB_SYMBOL()
-    {
-        $this->setType(self::LONGBLOB_SYMBOL);
-    }
-
-    protected function LONGTEXT_SYMBOL()
-    {
-        $this->setType(self::LONGTEXT_SYMBOL);
-    }
-
-    protected function LONG_SYMBOL()
-    {
-        $this->setType(self::LONG_SYMBOL);
-    }
-
-    protected function LOOP_SYMBOL()
-    {
-        $this->setType(self::LOOP_SYMBOL);
-    }
-
-    protected function LOW_PRIORITY_SYMBOL()
-    {
-        $this->setType(self::LOW_PRIORITY_SYMBOL);
-    }
-
-    protected function MASTER_SYMBOL()
-    {
-        $this->setType(self::MASTER_SYMBOL);
-    }
-
-    protected function MASTER_AUTO_POSITION_SYMBOL()
-    {
-        $this->setType(self::MASTER_AUTO_POSITION_SYMBOL);
-    }
-
-    protected function MASTER_BIND_SYMBOL()
-    {
-        $this->setType(self::MASTER_BIND_SYMBOL);
-    }
-
-    protected function MASTER_COMPRESSION_ALGORITHM_SYMBOL()
-    {
-        $this->setType(self::MASTER_COMPRESSION_ALGORITHM_SYMBOL);
-    }
-
-    protected function MASTER_CONNECT_RETRY_SYMBOL()
-    {
-        $this->setType(self::MASTER_CONNECT_RETRY_SYMBOL);
-    }
-
-    protected function MASTER_DELAY_SYMBOL()
-    {
-        $this->setType(self::MASTER_DELAY_SYMBOL);
-    }
-
-    protected function MASTER_HEARTBEAT_PERIOD_SYMBOL()
-    {
-        $this->setType(self::MASTER_HEARTBEAT_PERIOD_SYMBOL);
-    }
-
-    protected function MASTER_HOST_SYMBOL()
-    {
-        $this->setType(self::MASTER_HOST_SYMBOL);
-    }
-
-    protected function NETWORK_NAMESPACE_SYMBOL()
-    {
-        $this->setType(self::NETWORK_NAMESPACE_SYMBOL);
-    }
-
-    protected function MASTER_LOG_FILE_SYMBOL()
-    {
-        $this->setType(self::MASTER_LOG_FILE_SYMBOL);
-    }
-
-    protected function MASTER_LOG_POS_SYMBOL()
-    {
-        $this->setType(self::MASTER_LOG_POS_SYMBOL);
-    }
-
-    protected function MASTER_PASSWORD_SYMBOL()
-    {
-        $this->setType(self::MASTER_PASSWORD_SYMBOL);
-    }
-
-    protected function MASTER_PORT_SYMBOL()
-    {
-        $this->setType(self::MASTER_PORT_SYMBOL);
-    }
-
-    protected function MASTER_PUBLIC_KEY_PATH_SYMBOL()
-    {
-        $this->setType(self::MASTER_PUBLIC_KEY_PATH_SYMBOL);
-    }
-
-    protected function MASTER_RETRY_COUNT_SYMBOL()
-    {
-        $this->setType(self::MASTER_RETRY_COUNT_SYMBOL);
-    }
-
-    protected function MASTER_SERVER_ID_SYMBOL()
-    {
-        $this->setType(self::MASTER_SERVER_ID_SYMBOL);
-    }
-
-    protected function MASTER_SSL_CAPATH_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_CAPATH_SYMBOL);
-    }
-
-    protected function MASTER_SSL_CA_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_CA_SYMBOL);
-    }
-
-    protected function MASTER_SSL_CERT_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_CERT_SYMBOL);
-    }
-
-    protected function MASTER_SSL_CIPHER_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_CIPHER_SYMBOL);
-    }
-
-    protected function MASTER_SSL_CRL_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_CRL_SYMBOL);
-    }
-
-    protected function MASTER_SSL_CRLPATH_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_CRLPATH_SYMBOL);
-    }
-
-    protected function MASTER_SSL_KEY_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_KEY_SYMBOL);
-    }
-
-    protected function MASTER_SSL_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_SYMBOL);
-    }
-
-    protected function MASTER_SSL_VERIFY_SERVER_CERT_SYMBOL()
-    {
-        $this->setType(self::MASTER_SSL_VERIFY_SERVER_CERT_SYMBOL);
-    }
-
-    protected function MASTER_TLS_VERSION_SYMBOL()
-    {
-        $this->setType(self::MASTER_TLS_VERSION_SYMBOL);
-    }
-
-    protected function MASTER_TLS_CIPHERSUITES_SYMBOL()
-    {
-        $this->setType(self::MASTER_TLS_CIPHERSUITES_SYMBOL);
-    }
-
-    protected function MASTER_USER_SYMBOL()
-    {
-        $this->setType(self::MASTER_USER_SYMBOL);
-    }
-
-    protected function MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL()
-    {
-        $this->setType(self::MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL);
-    }
-
-    protected function MATCH_SYMBOL()
-    {
-        $this->setType(self::MATCH_SYMBOL);
-    }
-
-    protected function MAX_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::MAX_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function MAX_CONNECTIONS_PER_HOUR_SYMBOL()
-    {
-        $this->setType(self::MAX_CONNECTIONS_PER_HOUR_SYMBOL);
-    }
-
-    protected function MAX_QUERIES_PER_HOUR_SYMBOL()
-    {
-        $this->setType(self::MAX_QUERIES_PER_HOUR_SYMBOL);
-    }
-
-    protected function MAX_ROWS_SYMBOL()
-    {
-        $this->setType(self::MAX_ROWS_SYMBOL);
-    }
-
-    protected function MAX_SIZE_SYMBOL()
-    {
-        $this->setType(self::MAX_SIZE_SYMBOL);
-    }
-
-    protected function MAX_STATEMENT_TIME_SYMBOL()
-    {
-        $this->setType(self::MAX_STATEMENT_TIME_SYMBOL);
-    }
-
-    protected function MAX_UPDATES_PER_HOUR_SYMBOL()
-    {
-        $this->setType(self::MAX_UPDATES_PER_HOUR_SYMBOL);
-    }
-
-    protected function MAX_USER_CONNECTIONS_SYMBOL()
-    {
-        $this->setType(self::MAX_USER_CONNECTIONS_SYMBOL);
-    }
-
-    protected function MAXVALUE_SYMBOL()
-    {
-        $this->setType(self::MAXVALUE_SYMBOL);
-    }
-
-    protected function MEDIUM_SYMBOL()
-    {
-        $this->setType(self::MEDIUM_SYMBOL);
-    }
-
-    protected function MEDIUMBLOB_SYMBOL()
-    {
-        $this->setType(self::MEDIUMBLOB_SYMBOL);
-    }
-
-    protected function MEDIUMINT_SYMBOL()
-    {
-        $this->setType(self::MEDIUMINT_SYMBOL);
-    }
-
-    protected function MEDIUMTEXT_SYMBOL()
-    {
-        $this->setType(self::MEDIUMTEXT_SYMBOL);
-    }
-
-    protected function MEMBER_SYMBOL()
-    {
-        $this->setType(self::MEMBER_SYMBOL);
-    }
-
-    protected function MEMORY_SYMBOL()
-    {
-        $this->setType(self::MEMORY_SYMBOL);
-    }
-
-    protected function MERGE_SYMBOL()
-    {
-        $this->setType(self::MERGE_SYMBOL);
-    }
-
-    protected function MESSAGE_TEXT_SYMBOL()
-    {
-        $this->setType(self::MESSAGE_TEXT_SYMBOL);
-    }
-
-    protected function MICROSECOND_SYMBOL()
-    {
-        $this->setType(self::MICROSECOND_SYMBOL);
-    }
-
-    protected function MIDDLEINT_SYMBOL()
-    {
-        $this->setType(self::MEDIUMINT_SYMBOL); // Synonym
-    }
-
-    protected function MIGRATE_SYMBOL()
-    {
-        $this->setType(self::MIGRATE_SYMBOL);
-    }
-
-    protected function MINUTE_SYMBOL()
-    {
-        $this->setType(self::MINUTE_SYMBOL);
-    }
-
-    protected function MINUTE_MICROSECOND_SYMBOL()
-    {
-        $this->setType(self::MINUTE_MICROSECOND_SYMBOL);
-    }
-
-    protected function MINUTE_SECOND_SYMBOL()
-    {
-        $this->setType(self::MINUTE_SECOND_SYMBOL);
-    }
-
-    protected function MIN_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::MIN_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function MIN_ROWS_SYMBOL()
-    {
-        $this->setType(self::MIN_ROWS_SYMBOL);
-    }
-
-    protected function MODE_SYMBOL()
-    {
-        $this->setType(self::MODE_SYMBOL);
-    }
-
-    protected function MODIFIES_SYMBOL()
-    {
-        $this->setType(self::MODIFIES_SYMBOL);
-    }
-
-    protected function MODIFY_SYMBOL()
-    {
-        $this->setType(self::MODIFY_SYMBOL);
-    }
-
-    protected function MOD_SYMBOL()
-    {
-        $this->setType(self::MOD_SYMBOL);
-    }
-
-    protected function MONTH_SYMBOL()
-    {
-        $this->setType(self::MONTH_SYMBOL);
-    }
-
-    protected function MULTILINESTRING_SYMBOL()
-    {
-        $this->setType(self::MULTILINESTRING_SYMBOL);
-    }
-
-    protected function MULTIPOINT_SYMBOL()
-    {
-        $this->setType(self::MULTIPOINT_SYMBOL);
-    }
-
-    protected function MULTIPOLYGON_SYMBOL()
-    {
-        $this->setType(self::MULTIPOLYGON_SYMBOL);
-    }
-
-    protected function MUTEX_SYMBOL()
-    {
-        $this->setType(self::MUTEX_SYMBOL);
-    }
-
-    protected function MYSQL_ERRNO_SYMBOL()
-    {
-        $this->setType(self::MYSQL_ERRNO_SYMBOL);
-    }
-
-    protected function NAME_SYMBOL()
-    {
-        $this->setType(self::NAME_SYMBOL);
-    }
-
-    protected function NAMES_SYMBOL()
-    {
-        $this->setType(self::NAMES_SYMBOL);
-    }
-
-    protected function NATIONAL_SYMBOL()
-    {
-        $this->setType(self::NATIONAL_SYMBOL);
-    }
-
-    protected function NATURAL_SYMBOL()
-    {
-        $this->setType(self::NATURAL_SYMBOL);
-    }
-
-    protected function NCHAR_SYMBOL()
-    {
-        $this->setType(self::NCHAR_SYMBOL);
-    }
-
-    protected function NDBCLUSTER_SYMBOL()
-    {
-        $this->setType(self::NDBCLUSTER_SYMBOL);
-    }
-
-    protected function NDB_SYMBOL()
-    {
-        $this->setType(self::NDBCLUSTER_SYMBOL); // Synonym
-    }
-
-    protected function NEG_SYMBOL()
-    {
-        $this->setType(self::NEG_SYMBOL);
-    }
-
-    protected function NESTED_SYMBOL()
-    {
-        $this->setType(self::NESTED_SYMBOL);
-    }
-
-    protected function NEVER_SYMBOL()
-    {
-        $this->setType(self::NEVER_SYMBOL);
-    }
-
-    protected function NEW_SYMBOL()
-    {
-        $this->setType(self::NEW_SYMBOL);
-    }
-
-    protected function NEXT_SYMBOL()
-    {
-        $this->setType(self::NEXT_SYMBOL);
-    }
-
-    protected function NODEGROUP_SYMBOL()
-    {
-        $this->setType(self::NODEGROUP_SYMBOL);
-    }
-
-    protected function NONE_SYMBOL()
-    {
-        $this->setType(self::NONE_SYMBOL);
-    }
-
-    protected function NONBLOCKING_SYMBOL()
-    {
-        $this->setType(self::NONBLOCKING_SYMBOL);
-    }
-
-    protected function NOT2_SYMBOL()
-    {
-        $this->setType(self::NOT2_SYMBOL);
-    }
-
-    protected function NOT_SYMBOL()
-    {
-        if ($this->isSqlModeActive(MySQLLexer::SQL_MODE_HIGH_NOT_PRECEDENCE)) {
-            $this->setType(self::NOT2_SYMBOL);
-        } else {
-            $this->setType(self::NOT_SYMBOL);
-        }
-    }
-
-    protected function NOW_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::NOW_SYMBOL));
-    }
-
-    protected function NOWAIT_SYMBOL()
-    {
-        $this->setType(self::NOWAIT_SYMBOL);
-    }
-
-    protected function NO_SYMBOL()
-    {
-        $this->setType(self::NO_SYMBOL);
-    }
-
-    protected function NO_WAIT_SYMBOL()
-    {
-        $this->setType(self::NO_WAIT_SYMBOL);
-    }
-
-    protected function NO_WRITE_TO_BINLOG_SYMBOL()
-    {
-        $this->setType(self::NO_WRITE_TO_BINLOG_SYMBOL);
-    }
-
-    protected function NULL_SYMBOL()
-    {
-        $this->setType(self::NULL_SYMBOL);
-    }
-
-    protected function NULLS_SYMBOL()
-    {
-        $this->setType(self::NULLS_SYMBOL);
-    }
-
-    protected function NUMBER_SYMBOL()
-    {
-        $this->setType(self::NUMBER_SYMBOL);
-    }
-
-    protected function NUMERIC_SYMBOL()
-    {
-        $this->setType(self::NUMERIC_SYMBOL);
-    }
-
-    protected function NVARCHAR_SYMBOL()
-    {
-        $this->setType(self::NVARCHAR_SYMBOL);
-    }
-
-    protected function NTH_VALUE_SYMBOL()
-    {
-        $this->setType(self::NTH_VALUE_SYMBOL);
-    }
-
-    protected function NTILE_SYMBOL()
-    {
-        $this->setType(self::NTILE_SYMBOL);
-    }
-
-    protected function OF_SYMBOL()
-    {
-        $this->setType(self::OF_SYMBOL);
-    }
-
-    protected function OFF_SYMBOL()
-    {
-        $this->setType(self::OFF_SYMBOL);
-    }
-
-    protected function OFFLINE_SYMBOL()
-    {
-        $this->setType(self::OFFLINE_SYMBOL);
-    }
-
-    protected function OFFSET_SYMBOL()
-    {
-        $this->setType(self::OFFSET_SYMBOL);
-    }
-
-    protected function OJ_SYMBOL()
-    {
-        $this->setType(self::OJ_SYMBOL);
-    }
-
-    protected function OLD_PASSWORD_SYMBOL()
-    {
-        $this->setType(self::OLD_PASSWORD_SYMBOL);
-    }
-
-    protected function OLD_SYMBOL()
-    {
-        $this->setType(self::OLD_SYMBOL);
-    }
-
-    protected function ON_SYMBOL()
-    {
-        $this->setType(self::ON_SYMBOL);
-    }
-
-    protected function ONLINE_SYMBOL()
-    {
-        $this->setType(self::ONLINE_SYMBOL);
-    }
-
-    protected function ONE_SYMBOL()
-    {
-        $this->setType(self::ONE_SYMBOL);
-    }
-
-    protected function ONLY_SYMBOL()
-    {
-        $this->setType(self::ONLY_SYMBOL);
-    }
-
-    protected function OPEN_SYMBOL()
-    {
-        $this->setType(self::OPEN_SYMBOL);
-    }
-
-    protected function OPTIONAL_SYMBOL()
-    {
-        $this->setType(self::OPTIONAL_SYMBOL);
-    }
-
-    protected function OPTIONALLY_SYMBOL()
-    {
-        $this->setType(self::OPTIONALLY_SYMBOL);
-    }
-
-    protected function OPTION_SYMBOL()
-    {
-        $this->setType(self::OPTION_SYMBOL);
-    }
-
-    protected function OPTIONS_SYMBOL()
-    {
-        $this->setType(self::OPTIONS_SYMBOL);
-    }
-
-    protected function OPTIMIZE_SYMBOL()
-    {
-        $this->setType(self::OPTIMIZE_SYMBOL);
-    }
-
-    protected function OPTIMIZER_COSTS_SYMBOL()
-    {
-        $this->setType(self::OPTIMIZER_COSTS_SYMBOL);
-    }
-
-    protected function ORDER_SYMBOL()
-    {
-        $this->setType(self::ORDER_SYMBOL);
-    }
-
-    protected function ORDINALITY_SYMBOL()
-    {
-        $this->setType(self::ORDINALITY_SYMBOL);
-    }
-
-    protected function ORGANIZATION_SYMBOL()
-    {
-        $this->setType(self::ORGANIZATION_SYMBOL);
-    }
-
-    protected function OR_SYMBOL()
-    {
-        $this->setType(self::OR_SYMBOL);
-    }
-
-    protected function OTHERS_SYMBOL()
-    {
-        $this->setType(self::OTHERS_SYMBOL);
-    }
-
-    protected function OUTER_SYMBOL()
-    {
-        $this->setType(self::OUTER_SYMBOL);
-    }
-
-    protected function OUTFILE_SYMBOL()
-    {
-        $this->setType(self::OUTFILE_SYMBOL);
-    }
-
-    protected function OUT_SYMBOL()
-    {
-        $this->setType(self::OUT_SYMBOL);
-    }
-
-    protected function OWNER_SYMBOL()
-    {
-        $this->setType(self::OWNER_SYMBOL);
-    }
-
-    protected function PACK_KEYS_SYMBOL()
-    {
-        $this->setType(self::PACK_KEYS_SYMBOL);
-    }
-
-    protected function PAGE_SYMBOL()
-    {
-        $this->setType(self::PAGE_SYMBOL);
-    }
-
-    protected function PARSER_SYMBOL()
-    {
-        $this->setType(self::PARSER_SYMBOL);
-    }
-
-    protected function PARTITIONS_SYMBOL()
-    {
-        $this->setType(self::PARTITIONS_SYMBOL);
-    }
-
-    protected function PARTITION_SYMBOL()
-    {
-        $this->setType(self::PARTITION_SYMBOL);
-    }
-
-    protected function PARTIAL_SYMBOL()
-    {
-        $this->setType(self::PARTIAL_SYMBOL);
-    }
-
-    protected function PARTITIONING_SYMBOL()
-    {
-        $this->setType(self::PARTITIONING_SYMBOL);
-    }
-
-    protected function PASSWORD_SYMBOL()
-    {
-        $this->setType(self::PASSWORD_SYMBOL);
-    }
-
-    protected function PATH_SYMBOL()
-    {
-        $this->setType(self::PATH_SYMBOL);
-    }
-
-    protected function PERCENT_RANK_SYMBOL()
-    {
-        $this->setType(self::PERCENT_RANK_SYMBOL);
-    }
-
-    protected function PERSIST_SYMBOL()
-    {
-        $this->setType(self::PERSIST_SYMBOL);
-    }
-
-    protected function PERSIST_ONLY_SYMBOL()
-    {
-        $this->setType(self::PERSIST_ONLY_SYMBOL);
-    }
-
-    protected function PHASE_SYMBOL()
-    {
-        $this->setType(self::PHASE_SYMBOL);
-    }
-
-    protected function PLUGIN_SYMBOL()
-    {
-        $this->setType(self::PLUGIN_SYMBOL);
-    }
-
-    protected function PLUGINS_SYMBOL()
-    {
-        $this->setType(self::PLUGINS_SYMBOL);
-    }
-
-    protected function PLUGIN_DIR_SYMBOL()
-    {
-        $this->setType(self::PLUGIN_DIR_SYMBOL);
-    }
-
-    protected function POINT_SYMBOL()
-    {
-        $this->setType(self::POINT_SYMBOL);
-    }
-
-    protected function POLYGON_SYMBOL()
-    {
-        $this->setType(self::POLYGON_SYMBOL);
-    }
-
-    protected function PORT_SYMBOL()
-    {
-        $this->setType(self::PORT_SYMBOL);
-    }
-
-    protected function POSITION_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::POSITION_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function PRECEDES_SYMBOL()
-    {
-        $this->setType(self::PRECEDES_SYMBOL);
-    }
-
-    protected function PRECEDING_SYMBOL()
-    {
-        $this->setType(self::PRECEDING_SYMBOL);
-    }
-
-    protected function PRECISION_SYMBOL()
-    {
-        $this->setType(self::PRECISION_SYMBOL);
-    }
-
-    protected function PREPARE_SYMBOL()
-    {
-        $this->setType(self::PREPARE_SYMBOL);
-    }
-
-    protected function PRESERVE_SYMBOL()
-    {
-        $this->setType(self::PRESERVE_SYMBOL);
-    }
-
-    protected function PREV_SYMBOL()
-    {
-        $this->setType(self::PREV_SYMBOL);
-    }
-
-    protected function PRIMARY_SYMBOL()
-    {
-        $this->setType(self::PRIMARY_SYMBOL);
-    }
-
-    protected function PRIVILEGES_SYMBOL()
-    {
-        $this->setType(self::PRIVILEGES_SYMBOL);
-    }
-
-    protected function PRIVILEGE_CHECKS_USER_SYMBOL()
-    {
-        $this->setType(self::PRIVILEGE_CHECKS_USER_SYMBOL);
-    }
-
-    protected function PROCEDURE_SYMBOL()
-    {
-        $this->setType(self::PROCEDURE_SYMBOL);
-    }
-
-    protected function PROCESS_SYMBOL()
-    {
-        $this->setType(self::PROCESS_SYMBOL);
-    }
-
-    protected function PROCESSLIST_SYMBOL()
-    {
-        $this->setType(self::PROCESSLIST_SYMBOL);
-    }
-
-    protected function PROFILE_SYMBOL()
-    {
-        $this->setType(self::PROFILE_SYMBOL);
-    }
-
-    protected function PROFILES_SYMBOL()
-    {
-        $this->setType(self::PROFILES_SYMBOL);
-    }
-
-    protected function PROXY_SYMBOL()
-    {
-        $this->setType(self::PROXY_SYMBOL);
-    }
-
-    protected function PURGE_SYMBOL()
-    {
-        $this->setType(self::PURGE_SYMBOL);
-    }
-
-    protected function QUARTER_SYMBOL()
-    {
-        $this->setType(self::QUARTER_SYMBOL);
-    }
-
-    protected function QUERY_SYMBOL()
-    {
-        $this->setType(self::QUERY_SYMBOL);
-    }
-
-    protected function QUICK_SYMBOL()
-    {
-        $this->setType(self::QUICK_SYMBOL);
-    }
-
-    protected function RANDOM_SYMBOL()
-    {
-        $this->setType(self::RANDOM_SYMBOL);
-    }
-
-    protected function RANGE_SYMBOL()
-    {
-        $this->setType(self::RANGE_SYMBOL);
-    }
-
-    protected function RANK_SYMBOL()
-    {
-        $this->setType(self::RANK_SYMBOL);
-    }
-
-    protected function READS_SYMBOL()
-    {
-        $this->setType(self::READS_SYMBOL);
-    }
-
-    protected function READ_ONLY_SYMBOL()
-    {
-        $this->setType(self::READ_ONLY_SYMBOL);
-    }
-
-    protected function READ_SYMBOL()
-    {
-        $this->setType(self::READ_SYMBOL);
-    }
-
-    protected function READ_WRITE_SYMBOL()
-    {
-        $this->setType(self::READ_WRITE_SYMBOL);
-    }
-
-    protected function REAL_SYMBOL()
-    {
-        $this->setType(self::REAL_SYMBOL);
-    }
-
-    protected function REBUILD_SYMBOL()
-    {
-        $this->setType(self::REBUILD_SYMBOL);
-    }
-
-    protected function RECOVER_SYMBOL()
-    {
-        $this->setType(self::RECOVER_SYMBOL);
-    }
-
-    protected function REDOFILE_SYMBOL()
-    {
-        $this->setType(self::REDOFILE_SYMBOL);
-    }
-
-    protected function REDO_BUFFER_SIZE_SYMBOL()
-    {
-        $this->setType(self::REDO_BUFFER_SIZE_SYMBOL);
-    }
-
-    protected function REDUNDANT_SYMBOL()
-    {
-        $this->setType(self::REDUNDANT_SYMBOL);
-    }
-
-    protected function REFERENCES_SYMBOL()
-    {
-        $this->setType(self::REFERENCES_SYMBOL);
-    }
-
-    protected function REFERENCE_SYMBOL()
-    {
-        $this->setType(self::REFERENCE_SYMBOL);
-    }
-
-    protected function RECURSIVE_SYMBOL()
-    {
-        $this->setType(self::RECURSIVE_SYMBOL);
-    }
-
-    protected function REGEXP_SYMBOL()
-    {
-        $this->setType(self::REGEXP_SYMBOL);
-    }
-
-    protected function RELAY_SYMBOL()
-    {
-        $this->setType(self::RELAY_SYMBOL);
-    }
-
-    protected function RELAYLOG_SYMBOL()
-    {
-        $this->setType(self::RELAYLOG_SYMBOL);
-    }
-
-    protected function RELAY_LOG_FILE_SYMBOL()
-    {
-        $this->setType(self::RELAY_LOG_FILE_SYMBOL);
-    }
-
-    protected function RELAY_LOG_POS_SYMBOL()
-    {
-        $this->setType(self::RELAY_LOG_POS_SYMBOL);
-    }
-
-    protected function RELAY_THREAD_SYMBOL()
-    {
-        $this->setType(self::RELAY_THREAD_SYMBOL);
-    }
-
-    protected function RELEASE_SYMBOL()
-    {
-        $this->setType(self::RELEASE_SYMBOL);
-    }
-
-    protected function RELOAD_SYMBOL()
-    {
-        $this->setType(self::RELOAD_SYMBOL);
-    }
-
-    protected function REMOTE_SYMBOL()
-    {
-        $this->setType(self::REMOTE_SYMBOL);
-    }
-
-    protected function REMOVE_SYMBOL()
-    {
-        $this->setType(self::REMOVE_SYMBOL);
-    }
-
-    protected function RENAME_SYMBOL()
-    {
-        $this->setType(self::RENAME_SYMBOL);
-    }
-
-    protected function REORGANIZE_SYMBOL()
-    {
-        $this->setType(self::REORGANIZE_SYMBOL);
-    }
-
-    protected function REPAIR_SYMBOL()
-    {
-        $this->setType(self::REPAIR_SYMBOL);
-    }
-
-    protected function REPEAT_SYMBOL()
-    {
-        $this->setType(self::REPEAT_SYMBOL);
-    }
-
-    protected function REPEATABLE_SYMBOL()
-    {
-        $this->setType(self::REPEATABLE_SYMBOL);
-    }
-
-    protected function REPLACE_SYMBOL()
-    {
-        $this->setType(self::REPLACE_SYMBOL);
-    }
-
-    protected function REPLICATION_SYMBOL()
-    {
-        $this->setType(self::REPLICATION_SYMBOL);
-    }
-
-    protected function REPLICATE_DO_DB_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_DO_DB_SYMBOL);
-    }
-
-    protected function REPLICATE_DO_TABLE_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_DO_TABLE_SYMBOL);
-    }
-
-    protected function REPLICATE_IGNORE_DB_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_IGNORE_DB_SYMBOL);
-    }
-
-    protected function REPLICATE_IGNORE_TABLE_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_IGNORE_TABLE_SYMBOL);
-    }
-
-    protected function REPLICATE_REWRITE_DB_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_REWRITE_DB_SYMBOL);
-    }
-
-    protected function REPLICATE_WILD_DO_TABLE_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_WILD_DO_TABLE_SYMBOL);
-    }
-
-    protected function REPLICATE_WILD_IGNORE_TABLE_SYMBOL()
-    {
-        $this->setType(self::REPLICATE_WILD_IGNORE_TABLE_SYMBOL);
-    }
-
-    protected function REQUIRE_SYMBOL()
-    {
-        $this->setType(self::REQUIRE_SYMBOL);
-    }
-
-    protected function REQUIRE_ROW_FORMAT_SYMBOL()
-    {
-        $this->setType(self::REQUIRE_ROW_FORMAT_SYMBOL);
-    }
-
-    protected function REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL()
-    {
-        $this->setType(self::REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL);
-    }
-
-    protected function RESOURCE_SYMBOL()
-    {
-        $this->setType(self::RESOURCE_SYMBOL);
-    }
-
-    protected function RESPECT_SYMBOL()
-    {
-        $this->setType(self::RESPECT_SYMBOL);
-    }
-
-    protected function RESTART_SYMBOL()
-    {
-        $this->setType(self::RESTART_SYMBOL);
-    }
-
-    protected function RESTORE_SYMBOL()
-    {
-        $this->setType(self::RESTORE_SYMBOL);
-    }
-
-    protected function RESTRICT_SYMBOL()
-    {
-        $this->setType(self::RESTRICT_SYMBOL);
-    }
-
-    protected function RESUME_SYMBOL()
-    {
-        $this->setType(self::RESUME_SYMBOL);
-   }
-
-    protected function RETAIN_SYMBOL()
-    {
-        $this->setType(self::RETAIN_SYMBOL);
-    }
-
-    protected function RETURN_SYMBOL()
-    {
-        $this->setType(self::RETURN_SYMBOL);
-    }
-
-    protected function RETURNED_SQLSTATE_SYMBOL()
-    {
-        $this->setType(self::RETURNED_SQLSTATE_SYMBOL);
-    }
-
-    protected function RETURNS_SYMBOL()
-    {
-        $this->setType(self::RETURNS_SYMBOL);
-    }
-
-    protected function REUSE_SYMBOL()
-    {
-        $this->setType(self::REUSE_SYMBOL);
-    }
-
-    protected function REVERSE_SYMBOL()
-    {
-        $this->setType(self::REVERSE_SYMBOL);
-    }
-
-    protected function REVOKE_SYMBOL()
-    {
-        $this->setType(self::REVOKE_SYMBOL);
-    }
-
-    protected function RIGHT_SYMBOL()
-    {
-        $this->setType(self::RIGHT_SYMBOL);
-    }
-
-    protected function RLIKE_SYMBOL()
-    {
-        $this->setType(self::REGEXP_SYMBOL); // Synonym
-    }
-
-    protected function ROLE_SYMBOL()
-    {
-        $this->setType(self::ROLE_SYMBOL);
-    }
-
-    protected function ROLLBACK_SYMBOL()
-    {
-        $this->setType(self::ROLLBACK_SYMBOL);
-    }
-
-    protected function ROLLUP_SYMBOL()
-    {
-        $this->setType(self::ROLLUP_SYMBOL);
-    }
-
-    protected function ROTATE_SYMBOL()
-    {
-        $this->setType(self::ROTATE_SYMBOL);
-    }
-
-    protected function ROW_SYMBOL()
-    {
-        $this->setType(self::ROW_SYMBOL);
-    }
-
-    protected function ROWS_SYMBOL()
-    {
-        $this->setType(self::ROWS_SYMBOL);
-    }
-
-    protected function ROW_COUNT_SYMBOL()
-    {
-        $this->setType(self::ROW_COUNT_SYMBOL);
-    }
-
-    protected function ROW_FORMAT_SYMBOL()
-    {
-        $this->setType(self::ROW_FORMAT_SYMBOL);
-    }
-
-    protected function ROW_NUMBER_SYMBOL()
-    {
-        $this->setType(self::ROW_NUMBER_SYMBOL);
-    }
-
-    protected function RTREE_SYMBOL()
-    {
-        $this->setType(self::RTREE_SYMBOL);
-    }
-
-    protected function SAVEPOINT_SYMBOL()
-    {
-        $this->setType(self::SAVEPOINT_SYMBOL);
-    }
-
-    protected function SCHEMA_NAME_SYMBOL()
-    {
-        $this->setType(self::SCHEMA_NAME_SYMBOL);
-    }
-
-    protected function SCHEMAS_SYMBOL()
-    {
-        $this->setType(self::DATABASES_SYMBOL); // Synonym
-    }
-
-    protected function SCHEMA_SYMBOL()
-    {
-        $this->setType(self::DATABASE_SYMBOL); // Synonym
-    }
-
-    protected function SCHEDULE_SYMBOL()
-    {
-        $this->setType(self::SCHEDULE_SYMBOL);
-    }
-
-    protected function SECOND_SYMBOL()
-    {
-        $this->setType(self::SECOND_SYMBOL);
-    }
-
-    protected function SECOND_MICROSECOND_SYMBOL()
-    {
-        $this->setType(self::SECOND_MICROSECOND_SYMBOL);
-    }
-
-    protected function SECONDARY_SYMBOL()
-    {
-        $this->setType(self::SECONDARY_SYMBOL);
-    }
-
-    protected function SECONDARY_ENGINE_SYMBOL()
-    {
-        $this->setType(self::SECONDARY_ENGINE_SYMBOL);
-    }
-
-    protected function SECONDARY_LOAD_SYMBOL()
-    {
-        $this->setType(self::SECONDARY_LOAD_SYMBOL);
-    }
-
-    protected function SECONDARY_UNLOAD_SYMBOL()
-    {
-        $this->setType(self::SECONDARY_UNLOAD_SYMBOL);
-    }
-
-    protected function SECURITY_SYMBOL()
-    {
-        $this->setType(self::SECURITY_SYMBOL);
-    }
-
-    protected function SELECT_SYMBOL()
-    {
-        $this->setType(self::SELECT_SYMBOL);
-    }
-
-    protected function SENSITIVE_SYMBOL()
-    {
-        $this->setType(self::SENSITIVE_SYMBOL);
-    }
-
-    protected function SEPARATOR_SYMBOL()
-    {
-        $this->setType(self::SEPARATOR_SYMBOL);
-    }
-
-    protected function SERIALIZABLE_SYMBOL()
-    {
-        $this->setType(self::SERIALIZABLE_SYMBOL);
-    }
-
-    protected function SERIAL_SYMBOL()
-    {
-        $this->setType(self::SERIAL_SYMBOL);
-    }
-
-    protected function SERVER_SYMBOL()
-    {
-        $this->setType(self::SERVER_SYMBOL);
-    }
-
-    protected function SERVER_OPTIONS_SYMBOL()
-    {
-        $this->setType(self::SERVER_OPTIONS_SYMBOL);
-    }
-
-    protected function SESSION_SYMBOL()
-    {
-        $this->setType(self::SESSION_SYMBOL);
-    }
-
-    protected function SESSION_USER_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::USER_SYMBOL)); // Synonym
-    }
-
-    protected function SET_SYMBOL()
-    {
-        $this->setType(self::SET_SYMBOL);
-    }
-
-    protected function SET_VAR_SYMBOL()
-    {
-        $this->setType(self::SET_VAR_SYMBOL);
-    }
-
-    protected function SHARE_SYMBOL()
-    {
-        $this->setType(self::SHARE_SYMBOL);
-    }
-
-    protected function SHOW_SYMBOL()
-    {
-        $this->setType(self::SHOW_SYMBOL);
-    }
-
-    protected function SHUTDOWN_SYMBOL()
-    {
-        $this->setType(self::SHUTDOWN_SYMBOL);
-    }
-
-    protected function SIGNAL_SYMBOL()
-    {
-        $this->setType(self::SIGNAL_SYMBOL);
-    }
-
-    protected function SIGNED_SYMBOL()
-    {
-        $this->setType(self::SIGNED_SYMBOL);
-    }
-
-    protected function SIMPLE_SYMBOL()
-    {
-        $this->setType(self::SIMPLE_SYMBOL);
-    }
-
-    protected function SKIP_SYMBOL()
-    {
-        $this->setType(self::SKIP_SYMBOL);
-    }
-
-    protected function SLAVE_SYMBOL()
-    {
-        $this->setType(self::SLAVE_SYMBOL);
-    }
-
-    protected function SLOW_SYMBOL()
-    {
-        $this->setType(self::SLOW_SYMBOL);
-    }
-
-    protected function SMALLINT_SYMBOL()
-    {
-        $this->setType(self::SMALLINT_SYMBOL);
-    }
-
-    protected function SNAPSHOT_SYMBOL()
-    {
-        $this->setType(self::SNAPSHOT_SYMBOL);
-    }
-
-    protected function SOME_SYMBOL()
-    {
-        $this->setType(self::ANY_SYMBOL); // Synonym
-    }
-
-    protected function SOCKET_SYMBOL()
-    {
-        $this->setType(self::SOCKET_SYMBOL);
-    }
-
-    protected function SONAME_SYMBOL()
-    {
-        $this->setType(self::SONAME_SYMBOL);
-    }
-
-    protected function SOUNDS_SYMBOL()
-    {
-        $this->setType(self::SOUNDS_SYMBOL);
-    }
-
-    protected function SOURCE_SYMBOL()
-    {
-        $this->setType(self::SOURCE_SYMBOL);
-    }
-
-    protected function SPATIAL_SYMBOL()
-    {
-        $this->setType(self::SPATIAL_SYMBOL);
-    }
-
-    protected function SPECIFIC_SYMBOL()
-    {
-        $this->setType(self::SPECIFIC_SYMBOL);
-    }
-
-    protected function SQLEXCEPTION_SYMBOL()
-    {
-        $this->setType(self::SQLEXCEPTION_SYMBOL);
-    }
-
-    protected function SQLSTATE_SYMBOL()
-    {
-        $this->setType(self::SQLSTATE_SYMBOL);
-    }
-
-    protected function SQLWARNING_SYMBOL()
-    {
-        $this->setType(self::SQLWARNING_SYMBOL);
-    }
-
-    protected function SQL_AFTER_GTIDS_SYMBOL()
-    {
-        $this->setType(self::SQL_AFTER_GTIDS_SYMBOL);
-    }
-
-    protected function SQL_AFTER_MTS_GAPS_SYMBOL()
-    {
-        $this->setType(self::SQL_AFTER_MTS_GAPS_SYMBOL);
-    }
-
-    protected function SQL_BEFORE_GTIDS_SYMBOL()
-    {
-        $this->setType(self::SQL_BEFORE_GTIDS_SYMBOL);
-    }
-
-    protected function SQL_BIG_RESULT_SYMBOL()
-    {
-        $this->setType(self::SQL_BIG_RESULT_SYMBOL);
-    }
-
-    protected function SQL_BUFFER_RESULT_SYMBOL()
-    {
-        $this->setType(self::SQL_BUFFER_RESULT_SYMBOL);
-    }
-
-    protected function SQL_CALC_FOUND_ROWS_SYMBOL()
-    {
-        $this->setType(self::SQL_CALC_FOUND_ROWS_SYMBOL);
-    }
-
-    protected function SQL_CACHE_SYMBOL()
-    {
-        $this->setType(self::SQL_CACHE_SYMBOL);
-    }
-
-    protected function SQL_NO_CACHE_SYMBOL()
-    {
-        $this->setType(self::SQL_NO_CACHE_SYMBOL);
-    }
-
-    protected function SQL_SMALL_RESULT_SYMBOL()
-    {
-        $this->setType(self::SQL_SMALL_RESULT_SYMBOL);
-    }
-
-    protected function SQL_SYMBOL()
-    {
-        $this->setType(self::SQL_SYMBOL);
-    }
-
-    protected function SQL_THREAD_SYMBOL()
-    {
-        $this->setType(self::SQL_THREAD_SYMBOL);
-    }
-
-    protected function SQL_TSI_SECOND_SYMBOL()
-    {
-        $this->setType(self::SECOND_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_MINUTE_SYMBOL()
-    {
-        $this->setType(self::MINUTE_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_HOUR_SYMBOL()
-    {
-        $this->setType(self::HOUR_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_DAY_SYMBOL()
-    {
-        $this->setType(self::DAY_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_WEEK_SYMBOL()
-    {
-        $this->setType(self::WEEK_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_MONTH_SYMBOL()
-    {
-        $this->setType(self::MONTH_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_QUARTER_SYMBOL()
-    {
-        $this->setType(self::QUARTER_SYMBOL); // Synonym
-    }
-
-    protected function SQL_TSI_YEAR_SYMBOL()
-    {
-        $this->setType(self::YEAR_SYMBOL); // Synonym
-    }
-
-    protected function SRID_SYMBOL()
-    {
-        $this->setType(self::SRID_SYMBOL);
-    }
-
-    protected function SSL_SYMBOL()
-    {
-        $this->setType(self::SSL_SYMBOL);
-    }
-
-    protected function STACKED_SYMBOL()
-    {
-        $this->setType(self::STACKED_SYMBOL);
-    }
-
-    protected function STARTING_SYMBOL()
-    {
-        $this->setType(self::STARTING_SYMBOL);
-    }
-
-    protected function STARTS_SYMBOL()
-    {
-        $this->setType(self::STARTS_SYMBOL);
-    }
-
-    protected function START_SYMBOL()
-    {
-        $this->setType(self::START_SYMBOL);
-    }
-
-    protected function STATS_AUTO_RECALC_SYMBOL()
-    {
-        $this->setType(self::STATS_AUTO_RECALC_SYMBOL);
-    }
-
-    protected function STATS_PERSISTENT_SYMBOL()
-    {
-        $this->setType(self::STATS_PERSISTENT_SYMBOL);
-    }
-
-    protected function STATS_SAMPLE_PAGES_SYMBOL()
-    {
-        $this->setType(self::STATS_SAMPLE_PAGES_SYMBOL);
-    }
-
-    protected function STATUS_SYMBOL()
-    {
-        $this->setType(self::STATUS_SYMBOL);
-    }
-
-    protected function STD_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::STD_SYMBOL));
-    }
-
-    protected function STDDEV_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::STD_SYMBOL)); // Synonym
-    }
-
-    protected function STDDEV_POP_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::STD_SYMBOL)); // Synonym
-    }
-
-    protected function STDDEV_SAMP_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::STDDEV_SAMP_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function STOP_SYMBOL()
-    {
-        $this->setType(self::STOP_SYMBOL);
-    }
-
-    protected function STORAGE_SYMBOL()
-    {
-        $this->setType(self::STORAGE_SYMBOL);
-    }
-
-    protected function STORED_SYMBOL()
-    {
-        $this->setType(self::STORED_SYMBOL);
-    }
-
-    protected function STRAIGHT_JOIN_SYMBOL()
-    {
-        $this->setType(self::STRAIGHT_JOIN_SYMBOL);
-    }
-
-    protected function STREAM_SYMBOL()
-    {
-        $this->setType(self::STREAM_SYMBOL);
-    }
-
-    protected function STRING_SYMBOL()
-    {
-        $this->setType(self::STRING_SYMBOL);
-    }
-
-    protected function SUBCLASS_ORIGIN_SYMBOL()
-    {
-        $this->setType(self::SUBCLASS_ORIGIN_SYMBOL);
-    }
-
-    protected function SUBDATE_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::SUBDATE_SYMBOL));
-    }
-
-    protected function SUBJECT_SYMBOL()
-    {
-        $this->setType(self::SUBJECT_SYMBOL);
-    }
-
-    protected function SUBPARTITION_SYMBOL()
-    {
-        $this->setType(self::SUBPARTITION_SYMBOL);
-    }
-
-    protected function SUBPARTITIONS_SYMBOL()
-    {
-        $this->setType(self::SUBPARTITIONS_SYMBOL);
-    }
-
-    protected function SUBSTR_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::SUBSTRING_SYMBOL)); // Synonym
-    }
-
-    protected function SUBSTRING_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::SUBSTRING_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function SUM_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::SUM_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function SUPER_SYMBOL()
-    {
-        $this->setType(self::SUPER_SYMBOL);
-    }
-
-    protected function SUSPEND_SYMBOL()
-    {
-        $this->setType(self::SUSPEND_SYMBOL);
-    }
-
-    protected function SWAPS_SYMBOL()
-    {
-        $this->setType(self::SWAPS_SYMBOL);
-    }
-
-    protected function SWITCHES_SYMBOL()
-    {
-        $this->setType(self::SWITCHES_SYMBOL);
-    }
-
-    protected function SYSDATE_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::SYSDATE_SYMBOL));
-    }
-
-    protected function SYSTEM_SYMBOL()
-    {
-        $this->setType(self::SYSTEM_SYMBOL);
-    }
-
-    protected function SYSTEM_USER_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::USER_SYMBOL));
-    }
-
-    protected function TABLE_CHECKSUM_SYMBOL()
-    {
-        $this->setType(self::TABLE_CHECKSUM_SYMBOL);
-    }
-
-    protected function TABLE_SYMBOL()
-    {
-        $this->setType(self::TABLE_SYMBOL);
-    }
-
-    protected function TABLES_SYMBOL()
-    {
-        $this->setType(self::TABLES_SYMBOL);
-    }
-
-    protected function TABLESPACE_SYMBOL()
-    {
-        $this->setType(self::TABLESPACE_SYMBOL);
-    }
-
-    protected function TABLE_NAME_SYMBOL()
-    {
-        $this->setType(self::TABLE_NAME_SYMBOL);
-    }
-
-    protected function TEMPORARY_SYMBOL()
-    {
-        $this->setType(self::TEMPORARY_SYMBOL);
-    }
-
-    protected function TEMPTABLE_SYMBOL()
-    {
-        $this->setType(self::TEMPTABLE_SYMBOL);
-    }
-
-    protected function TERMINATED_SYMBOL()
-    {
-        $this->setType(self::TERMINATED_SYMBOL);
-    }
-
-    protected function TEXT_SYMBOL()
-    {
-        $this->setType(self::TEXT_SYMBOL);
-    }
-
-    protected function THAN_SYMBOL()
-    {
-        $this->setType(self::THAN_SYMBOL);
-    }
-
-    protected function THEN_SYMBOL()
-    {
-        $this->setType(self::THEN_SYMBOL);
-    }
-
-    protected function THREAD_PRIORITY_SYMBOL()
-    {
-        $this->setType(self::THREAD_PRIORITY_SYMBOL);
-    }
-
-    protected function TIES_SYMBOL()
-    {
-        $this->setType(self::TIES_SYMBOL);
-    }
-
-    protected function TIME_SYMBOL()
-    {
-        $this->setType(self::TIME_SYMBOL);
-    }
-
-    protected function TIMESTAMP_SYMBOL()
-    {
-        $this->setType(self::TIMESTAMP_SYMBOL);
-    }
-
-    protected function TIMESTAMP_ADD_SYMBOL()
-    {
-        $this->setType(self::TIMESTAMP_ADD_SYMBOL);
-    }
-
-    protected function TIMESTAMP_DIFF_SYMBOL()
-    {
-        $this->setType(self::TIMESTAMP_DIFF_SYMBOL);
-    }
-
-    protected function TINYBLOB_SYMBOL()
-    {
-        $this->setType(self::TINYBLOB_SYMBOL);
-    }
-
-    protected function TINYINT_SYMBOL()
-    {
-        $this->setType(self::TINYINT_SYMBOL);
-    }
-
-    protected function TINYTEXT_SYMBOL()
-    {
-        $this->setType(self::TINYTEXT_SYMBOL);
-    }
-
-    protected function TO_SYMBOL()
-    {
-        $this->setType(self::TO_SYMBOL);
-    }
-
-    protected function TRAILING_SYMBOL()
-    {
-        $this->setType(self::TRAILING_SYMBOL);
-    }
-
-    protected function TRANSACTION_SYMBOL()
-    {
-        $this->setType(self::TRANSACTION_SYMBOL);
-    }
-
-    protected function TRIGGERS_SYMBOL()
-    {
-        $this->setType(self::TRIGGERS_SYMBOL);
-    }
-
-    protected function TRIGGER_SYMBOL()
-    {
-        $this->setType(self::TRIGGER_SYMBOL);
-    }
-
-    protected function TRIM_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::TRIM_SYMBOL)); // SQL-2003-N
-    }
-
-    protected function TRUE_SYMBOL()
-    {
-        $this->setType(self::TRUE_SYMBOL);
-    }
-
-    protected function TRUNCATE_SYMBOL()
-    {
-        $this->setType(self::TRUNCATE_SYMBOL);
-    }
-
-    protected function TYPES_SYMBOL()
-    {
-        $this->setType(self::TYPES_SYMBOL);
-    }
-
-    protected function TYPE_SYMBOL()
-    {
-        $this->setType(self::TYPE_SYMBOL);
-    }
-
-    protected function UDF_RETURNS_SYMBOL()
-    {
-        $this->setType(self::UDF_RETURNS_SYMBOL);
-    }
-
-    protected function UNBOUNDED_SYMBOL()
-    {
-        $this->setType(self::UNBOUNDED_SYMBOL);
-    }
-
-    protected function UNCOMMITTED_SYMBOL()
-    {
-        $this->setType(self::UNCOMMITTED_SYMBOL);
-    }
-
-    protected function UNDEFINED_SYMBOL()
-    {
-        $this->setType(self::UNDEFINED_SYMBOL);
-    }
-
-    protected function UNDO_BUFFER_SIZE_SYMBOL()
-    {
-        $this->setType(self::UNDO_BUFFER_SIZE_SYMBOL);
-    }
-
-    protected function UNDOFILE_SYMBOL()
-    {
-        $this->setType(self::UNDOFILE_SYMBOL);
-    }
-
-    protected function UNDO_SYMBOL()
-    {
-        $this->setType(self::UNDO_SYMBOL);
-    }
-
-    protected function UNICODE_SYMBOL()
-    {
-        $this->setType(self::UNICODE_SYMBOL);
-    }
-
-    protected function UNION_SYMBOL()
-    {
-        $this->setType(self::UNION_SYMBOL);
-    }
-
-    protected function UNIQUE_SYMBOL()
-    {
-        $this->setType(self::UNIQUE_SYMBOL);
-    }
-
-    protected function UNKNOWN_SYMBOL()
-    {
-        $this->setType(self::UNKNOWN_SYMBOL);
-    }
-
-    protected function UNINSTALL_SYMBOL()
-    {
-        $this->setType(self::UNINSTALL_SYMBOL);
-    }
-
-    protected function UNSIGNED_SYMBOL()
-    {
-        $this->setType(self::UNSIGNED_SYMBOL);
-    }
-
-    protected function UPDATE_SYMBOL()
-    {
-        $this->setType(self::UPDATE_SYMBOL);
-    }
-
-    protected function UPGRADE_SYMBOL()
-    {
-        $this->setType(self::UPGRADE_SYMBOL);
-    }
-
-    protected function USAGE_SYMBOL()
-    {
-        $this->setType(self::USAGE_SYMBOL);
-    }
-
-    protected function USER_RESOURCES_SYMBOL()
-    {
-        $this->setType(self::USER_RESOURCES_SYMBOL);
-    }
-
-    protected function USER_SYMBOL()
-    {
-        $this->setType(self::USER_SYMBOL);
-    }
-
-    protected function USE_FRM_SYMBOL()
-    {
-        $this->setType(self::USE_FRM_SYMBOL);
-    }
-
-    protected function USE_SYMBOL()
-    {
-        $this->setType(self::USE_SYMBOL);
-    }
-
-    protected function USING_SYMBOL()
-    {
-        $this->setType(self::USING_SYMBOL);
-    }
-
-    protected function UTC_DATE_SYMBOL()
-    {
-        $this->setType(self::UTC_DATE_SYMBOL);
-    }
-
-    protected function UTC_TIME_SYMBOL()
-    {
-        $this->setType(self::UTC_TIME_SYMBOL);
-    }
-
-    protected function UTC_TIMESTAMP_SYMBOL()
-    {
-        $this->setType(self::UTC_TIMESTAMP_SYMBOL);
-    }
-
-    protected function VALIDATION_SYMBOL()
-    {
-        $this->setType(self::VALIDATION_SYMBOL);
-    }
-
-    protected function VALUE_SYMBOL()
-    {
-        $this->setType(self::VALUE_SYMBOL);
-    }
-
-    protected function VALUES_SYMBOL()
-    {
-        $this->setType(self::VALUES_SYMBOL);
-    }
-
-    protected function VARBINARY_SYMBOL()
-    {
-        $this->setType(self::VARBINARY_SYMBOL);
-    }
-
-    protected function VARCHAR_SYMBOL()
-    {
-        $this->setType(self::VARCHAR_SYMBOL);
-    }
-
-    protected function VARCHARACTER_SYMBOL()
-    {
-        $this->setType(self::VARCHAR_SYMBOL); // Synonym
-    }
-
-    protected function VARIABLES_SYMBOL()
-    {
-        $this->setType(self::VARIABLES_SYMBOL);
-    }
-
-    protected function VARIANCE_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::VARIANCE_SYMBOL));
-    }
-
-    protected function VARYING_SYMBOL()
-    {
-        $this->setType(self::VARYING_SYMBOL);
-    }
-
-    protected function VAR_POP_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::VARIANCE_SYMBOL)); // Synonym
-    }
-
-    protected function VAR_SAMP_SYMBOL()
-    {
-        $this->setType($this->determineFunction(self::VAR_SAMP_SYMBOL));
-    }
-
-    protected function VCPU_SYMBOL()
-    {
-        $this->setType(self::VCPU_SYMBOL);
-    }
-
-    protected function VIEW_SYMBOL()
-    {
-        $this->setType(self::VIEW_SYMBOL);
-    }
-
-    protected function VIRTUAL_SYMBOL()
-    {
-        $this->setType(self::VIRTUAL_SYMBOL);
-    }
-
-    protected function VISIBLE_SYMBOL()
-    {
-        $this->setType(self::VISIBLE_SYMBOL);
-    }
-
-    protected function WAIT_SYMBOL()
-    {
-        $this->setType(self::WAIT_SYMBOL);
-    }
-
-    protected function WARNINGS_SYMBOL()
-    {
-        $this->setType(self::WARNINGS_SYMBOL);
-    }
-
-    protected function WEEK_SYMBOL()
-    {
-        $this->setType(self::WEEK_SYMBOL);
-    }
-
-    protected function WHEN_SYMBOL()
-    {
-        $this->setType(self::WHEN_SYMBOL);
-    }
-
-    protected function WEIGHT_STRING_SYMBOL()
-    {
-        $this->setType(self::WEIGHT_STRING_SYMBOL);
-    }
-
-    protected function WHERE_SYMBOL()
-    {
-        $this->setType(self::WHERE_SYMBOL);
-    }
-
-    protected function WHILE_SYMBOL()
-    {
-        $this->setType(self::WHILE_SYMBOL);
-    }
-
-    protected function WINDOW_SYMBOL()
-    {
-        $this->setType(self::WINDOW_SYMBOL);
-    }
-
-    protected function WITH_SYMBOL()
-    {
-        $this->setType(self::WITH_SYMBOL);
-    }
-
-    protected function WITHOUT_SYMBOL()
-    {
-        $this->setType(self::WITHOUT_SYMBOL);
-    }
-
-    protected function WORK_SYMBOL()
-    {
-        $this->setType(self::WORK_SYMBOL);
-    }
-
-    protected function WRAPPER_SYMBOL()
-    {
-        $this->setType(self::WRAPPER_SYMBOL);
-    }
-
-    protected function WRITE_SYMBOL()
-    {
-        $this->setType(self::WRITE_SYMBOL);
-    }
-
-    protected function XA_SYMBOL()
-    {
-        $this->setType(self::XA_SYMBOL);
-    }
-
-    protected function X509_SYMBOL()
-    {
-        $this->setType(self::X509_SYMBOL);
-    }
-
-    protected function XID_SYMBOL()
-    {
-        $this->setType(self::XID_SYMBOL);
-    }
-
-    protected function XML_SYMBOL()
-    {
-        $this->setType(self::XML_SYMBOL);
-    }
-
-    protected function XOR_SYMBOL()
-    {
-        $this->setType(self::XOR_SYMBOL);
-    }
-
-    protected function YEAR_MONTH_SYMBOL()
-    {
-        $this->setType(self::YEAR_MONTH_SYMBOL);
-    }
-
-    protected function YEAR_SYMBOL()
-    {
-        $this->setType(self::YEAR_SYMBOL);
-    }
-
-    protected function ZEROFILL_SYMBOL()
-    {
-        $this->setType(self::ZEROFILL_SYMBOL);
-    }
-
-    protected function INT1_SYMBOL()
-    {
-        $this->setType(self::TINYINT_SYMBOL); // Synonym
-    }
-
-    protected function INT2_SYMBOL()
-    {
-        $this->setType(self::SMALLINT_SYMBOL); // Synonym
-    }
-
-    protected function INT3_SYMBOL()
-    {
-        $this->setType(self::MEDIUMINT_SYMBOL); // Synonym
-    }
-
-    protected function INT4_SYMBOL()
-    {
-        $this->setType(self::INT_SYMBOL); // Synonym
-    }
-
-    protected function INT8_SYMBOL()
-    {
-        $this->setType(self::BIGINT_SYMBOL); // Synonym
-    }
-
-    protected function EXCLUDE_SYMBOL()
-    {
-        $this->setType(self::EXCLUDE_SYMBOL);
-    }
-
-    protected function UNLOCK_SYMBOL()
-    {
-        $this->setType(self::UNLOCK_SYMBOL);
-    }
-
-    protected function CONCAT_PIPES_SYMBOL()
-    {
-        $this->setType(self::CONCAT_PIPES_SYMBOL);
-    }
-
-    protected function ACTIVE_SYMBOL()
-    {
-        $this->setType(self::ACTIVE_SYMBOL);
-    }
-
-    protected function ADMIN_SYMBOL()
-    {
-        $this->setType(self::ADMIN_SYMBOL);
-    }
-
-    protected function INACTIVE_SYMBOL()
-    {
-        $this->setType(self::INACTIVE_SYMBOL);
-    }
-
-    protected function LOCKED_SYMBOL()
-    {
-        $this->setType(self::LOCKED_SYMBOL);
-    }
-
-    protected function ROUTINE_SYMBOL()
-    {
-        $this->setType(self::ROUTINE_SYMBOL);
-    }
-
-    protected function UNTIL_SYMBOL()
-    {
-        $this->setType(self::UNTIL_SYMBOL);
-    }
-
-    protected function ARRAY_SYMBOL()
-    {
-        $this->setType(self::ARRAY_SYMBOL);
-    }
-
-    protected function PASSWORD_LOCK_TIME_SYMBOL()
-    {
-        $this->setType(self::PASSWORD_LOCK_TIME_SYMBOL);
-    }
-
-    protected function CUME_DIST_SYMBOL()
-    {
-        $this->setType(self::CUME_DIST_SYMBOL);
-    }
-
-    protected function OVER_SYMBOL()
-    {
-        $this->setType(self::OVER_SYMBOL);
-    }
-
     protected function IDENTIFIER()
     {
         $this->setType(self::IDENTIFIER);
@@ -9392,19 +3772,6 @@ class MySQLLexer {
             return self::LONG_NUMBER;
         }
         return self::INVALID_INPUT;
-    }
-
-    protected function determineFunction(int $type): int
-    {
-		// Skip any whitespace character if the sql mode says they should be ignored,
-		// before actually trying to match the open parenthesis.
-		$i = 1;
-		if ($this->isSqlModeActive(self::SQL_MODE_IGNORE_SPACE)) {
-			while (safe_ctype_space($this->LA($i))) {
-				$i++;
-			}
-		}
-		return $this->LA($i) === '(' ? $type : self::IDENTIFIER;
     }
 }
 
