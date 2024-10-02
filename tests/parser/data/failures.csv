@@ -3834,29 +3834,6 @@ let b = $x + $y;
 $$
 "
 "revoke all privileges on procedure sptest.p1 from userb@localhost"
-"CREATE PROCEDURE p2()
-BEGIN
-DECLARE i TINYINT DEFAULT 3;
-
-WHILE i > 0 DO
-IF MOD(i, 2) = 0 THEN
-SET @_test_session_var = 10;
-ELSE
-SET @_test_session_var = 'test';
-END IF;
-
-CASE @_test_session_var
-WHEN 10 THEN
-INSERT INTO t1 VALUES('p2: case: numerical type');
-WHEN 'test' THEN
-INSERT INTO t1 VALUES('p2: case: string type');
-ELSE
-INSERT INTO t1 VALUES('p2: case: ERROR');
-END CASE;
-
-SET i = i - 1;
-END WHILE;
-END"
 "create procedure h_ee()
 deterministic
 begin
@@ -4157,11 +4134,6 @@ SELECT RELEASE_LOCK('e1_lock');
 
 INSERT INTO t2 SELECT * FROM t1;
 END"
-"CREATE PROCEDURE `v1`(_limit_val BIGINT, _offset_val BIGINT)
-BEGIN
-CREATE TEMPORARY TABLE n1 AS (SELECT * FROM t1 LIMIT _limit_val OFFSET _offset_val);
-SELECT * FROM n1;
-END "
 "create function bug23333()
 RETURNS int(11)
 DETERMINISTIC
@@ -4334,79 +4306,9 @@ end"
 "set @check=0, @t4_bi_called=0, @t4_bu_called=0"
 "select @check, @t4_bi_called, @t4_bu_called"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
-"CREATE TRIGGER _AI_1 AFTER INSERT ON t1 FOR EACH ROW SET
-@t1_var=concat(@t1_var,'_AI_1')"
-"CREATE TRIGGER _AI_2 AFTER INSERT ON t1 FOR EACH ROW SET
-@t1_var=concat(@t1_var,'_AI_2')"
-"CREATE TRIGGER _BU_2 BEFORE UPDATE ON t1 FOR EACH ROW SET
-@t1_var=concat(@t1_var,'_BU_2')"
-"CREATE TRIGGER _BD_2 BEFORE DELETE ON t1 FOR EACH ROW SET
-@t1_var=concat(@t1_var,'_BD_2')"
-"CREATE TRIGGER _AI_0 AFTER INSERT ON t1 FOR EACH ROW PRECEDES _AI_1 SET
-@t1_var=concat(@t1_var,'_AI_0')"
-"CREATE TRIGGER _AI_3 AFTER INSERT ON t1 FOR EACH ROW FOLLOWS _AI_2 SET
-@t1_var=concat(@t1_var,'_AI_3')"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
 "SELECT * FROM t2 EXCEPT SELECT * FROM t3"
 "SELECT * FROM t3 EXCEPT SELECT * FROM t2"
-"CREATE TABLE t1 (
-t1_id bigint(21) NOT NULL auto_increment,
-_field_72 varchar(128) DEFAULT '' NOT NULL,
-_field_95 varchar(32),
-_field_115 tinyint(4) DEFAULT '0' NOT NULL,
-_field_122 tinyint(4) DEFAULT '0' NOT NULL,
-_field_126 tinyint(4),
-_field_134 tinyint(4),
-PRIMARY KEY (t1_id),
-UNIQUE _field_72 (_field_72),
-KEY _field_115 (_field_115),
-KEY _field_122 (_field_122)
-)"
-"CREATE TABLE t3 (
-t3_id bigint(21) NOT NULL auto_increment,
-_field_131 varchar(128),
-_field_133 tinyint(4) DEFAULT '0' NOT NULL,
-_field_135 datetime DEFAULT '0000-00-00 00:00:00' NOT NULL,
-_field_137 tinyint(4),
-_field_139 datetime DEFAULT '0000-00-00 00:00:00' NOT NULL,
-_field_140 blob,
-_field_142 tinyint(4) DEFAULT '0' NOT NULL,
-_field_145 tinyint(4) DEFAULT '0' NOT NULL,
-_field_148 tinyint(4) DEFAULT '0' NOT NULL,
-PRIMARY KEY (t3_id),
-KEY _field_133 (_field_133),
-KEY _field_135 (_field_135),
-KEY _field_139 (_field_139),
-KEY _field_142 (_field_142),
-KEY _field_145 (_field_145),
-KEY _field_148 (_field_148)
-)"
-"CREATE TABLE t5 (
-t5_id bigint(21) NOT NULL auto_increment,
-_field_149 tinyint(4),
-_field_156 varchar(128) DEFAULT '' NOT NULL,
-_field_157 varchar(128) DEFAULT '' NOT NULL,
-_field_158 varchar(128) DEFAULT '' NOT NULL,
-_field_159 varchar(128) DEFAULT '' NOT NULL,
-_field_160 varchar(128) DEFAULT '' NOT NULL,
-_field_161 varchar(128) DEFAULT '' NOT NULL,
-PRIMARY KEY (t5_id),
-KEY _field_156 (_field_156),
-KEY _field_157 (_field_157),
-KEY _field_158 (_field_158),
-KEY _field_159 (_field_159),
-KEY _field_160 (_field_160),
-KEY _field_161 (_field_161)
-)"
-"CREATE TABLE t7 (
-t7_id bigint(21) NOT NULL auto_increment,
-_field_143 tinyint(4),
-_field_165 varchar(32),
-_field_166 smallint(6) DEFAULT '0' NOT NULL,
-PRIMARY KEY (t7_id),
-KEY _field_166 (_field_166)
-)"
-"select replace(t3._field_140, ""\r"",""^M""),t3_id,min(t3._field_131), min(t3._field_135), min(t3._field_139), min(t3._field_137), min(link_alias_142._field_165), min(link_alias_133._field_72), min(t3._field_145), min(link_alias_148._field_156), replace(min(t3._field_140), ""\r"",""^M""),t3.t3_id from t3 left join t4 on t4.seq_0_id = t3.t3_id left join t7 link_alias_142 on t4.seq_1_id = link_alias_142.t7_id left join t6 on t6.seq_0_id = t3.t3_id left join t1 link_alias_133 on t6.seq_1_id = link_alias_133.t1_id left join t2 on t2.seq_0_id = t3.t3_id left join t5 link_alias_148 on t2.seq_1_id = link_alias_148.t5_id where t3.t3_id in (1) group by t3.t3_id order by link_alias_142._field_166, _field_139, link_alias_133._field_72, _field_135, link_alias_148._field_156"
 "INSERT INTO t1 VALUES (TIMESTAMP'2001-01-01 23:59:59.4')"
 "INSERT INTO t1 VALUES (TIME'23:59:59.4')"
 "INSERT INTO t1 VALUES

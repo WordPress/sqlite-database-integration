@@ -21,20 +21,6 @@ function safe_ctype_space($string) {
     return ctype_space($string);
 }
 
-function safe_ctype_alpha($string) {
-    if (null === $string || strlen($string) === 0) {
-        return false;
-    }
-    return ctype_alpha($string);
-}
-
-function safe_ctype_alnum($string) {
-    if (null === $string || strlen($string) === 0) {
-        return false;
-    }
-    return ctype_alnum($string);
-}
-
 class MySQLLexer {
 	// SQL modes
 	const SQL_MODE_NO_MODE = 0;
@@ -86,7 +72,6 @@ class MySQLLexer {
     public const CLOSE_PAR_SYMBOL = 28;
     public const OPEN_CURLY_SYMBOL = 29;
     public const CLOSE_CURLY_SYMBOL = 30;
-    public const UNDERLINE_SYMBOL = 31;
     public const JSON_SEPARATOR_SYMBOL = 32;
     public const JSON_UNQUOTED_SEPARATOR_SYMBOL = 33;
     public const AT_SIGN_SYMBOL = 34;
@@ -1113,8 +1098,6 @@ class MySQLLexer {
                 $this->OPEN_CURLY_SYMBOL();
             } elseif ($la === '}') {
                 $this->CLOSE_CURLY_SYMBOL();
-            } elseif ($la === '_') {
-                $this->UNDERLINE_SYMBOL();
             } elseif ($la === '@') {
                 if ($this->LA(2) === '@') {
                     $this->AT_AT_SIGN_SYMBOL();
@@ -1144,7 +1127,11 @@ class MySQLLexer {
 				$this->position += strlen($this->text);
 				$this->c = $this->input[$this->position] ?? null;
 				$this->n = $this->input[$this->position + 1] ?? null;
-                $this->IDENTIFIER_OR_KEYWORD();
+				if ($la === '_') {
+					$this->type = $this->checkCharset($this->text);
+				} else {
+					$this->IDENTIFIER_OR_KEYWORD();
+				}
             } elseif ($la === null) {
                 $this->matchEOF();
                 $this->tokenInstance = new MySQLToken(self::EOF, self::$tokenNames[self::EOF], '<EOF>');
@@ -1317,7 +1304,6 @@ class MySQLLexer {
         self::CLOSE_PAR_SYMBOL => 'CLOSE_PAR_SYMBOL',
         self::OPEN_CURLY_SYMBOL => 'OPEN_CURLY_SYMBOL',
         self::CLOSE_CURLY_SYMBOL => 'CLOSE_CURLY_SYMBOL',
-        self::UNDERLINE_SYMBOL => 'UNDERLINE_SYMBOL',
         self::JSON_SEPARATOR_SYMBOL => 'JSON_SEPARATOR_SYMBOL',
         self::JSON_UNQUOTED_SEPARATOR_SYMBOL => 'JSON_UNQUOTED_SEPARATOR_SYMBOL',
         self::AT_SIGN_SYMBOL => 'AT_SIGN_SYMBOL',
@@ -3601,22 +3587,6 @@ class MySQLLexer {
     {
         $this->consume();
         $this->setType(self::CLOSE_CURLY_SYMBOL);
-    }
-
-    protected function UNDERLINE_SYMBOL()
-    {
-        $this->consume();
-
-        if (safe_ctype_alpha($this->LA(1))) {
-            // If the next character is a letter, it's a charset.
-            while (safe_ctype_alnum($this->LA(1))) {
-                $this->consume();
-            }
-
-            $this->setType($this->checkCharset($this->getText()));
-        } else {
-            $this->setType(self::UNDERLINE_SYMBOL);
-        }
     }
 
     protected function JSON_SEPARATOR_SYMBOL()
