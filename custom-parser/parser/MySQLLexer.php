@@ -40,6 +40,22 @@ class MySQLLexer {
 	 */
 	const PATTERN_UNQUOTED_IDENTIFIER = '(?=\D)[\w_$\x{80}-\x{ffff}]+';
 
+    /**
+     * Quoted literals and identifiers:
+     *   https://dev.mysql.com/doc/refman/8.4/en/string-literals.html
+     *   https://dev.mysql.com/doc/refman/8.4/en/identifiers.html
+     *
+     * Rules:
+     *   1. Quotes can be escaped by doubling them ('', "", ``).
+     *   2. Backslashes escape the next character, unless NO_BACKSLASH_ESCAPES is set.
+     */
+    const PATTERN_SINGLE_QUOTED_TEXT = "'(?:''|\\\\.|[^'])*'";
+    const PATTERN_DOUBLE_QUOTED_TEXT = '"(?:""|\\\\.|[^"])*"';
+    const PATTERN_BACKTICK_QUOTED_ID = '`(?:``|\\\\.|[^`])*`';
+    const PATTERN_SINGLE_QUOTED_TEXT_NO_BACKSLASH_ESCAPES = "'(?:''|[^'])*'";
+    const PATTERN_DOUBLE_QUOTED_TEXT_NO_BACKSLASH_ESCAPES = '"(?:""|[^"])*"';
+    const PATTERN_BACKTICK_QUOTED_ID_NO_BACKSLASH_ESCAPES = '`(?:``|[^`])*`';
+
     // Constants for token types.
     // Operators
     public const EQUAL_OPERATOR = 1;
@@ -886,48 +902,48 @@ class MySQLLexer {
     protected const DEFAULT_TOKEN_CHANNEL = 0;
     protected const HIDDEN = 99;
 
-	const CHARSETS = [
-		'armscii8',
-		'ascii',
-		'big5',
-		'binary',
-		'cp1250',
-		'cp1251',
-		'cp1256',
-		'cp1257',
-		'cp850',
-		'cp852',
-		'cp866',
-		'cp932',
-		'dec8',
-		'eucjpms',
-		'euckr',
-		'gb18030',
-		'gb2312',
-		'gbk',
-		'geostd8',
-		'greek',
-		'hebrew',
-		'hp8',
-		'keybcs2',
-		'koi8r',
-		'koi8u',
-		'latin1',
-		'latin2',
-		'latin5',
-		'latin7',
-		'macce',
-		'macroman',
-		'sjis',
-		'swe7',
-		'tis620',
-		'ucs2',
-		'ujis',
-		'utf16',
-		'utf16le',
-		'utf32',
-		'utf8mb3',
-		'utf8mb4',
+	const UNDERSCORE_CHARSETS = [
+		'_armscii8' => true,
+		'_ascii' => true,
+		'_big5' => true,
+		'_binary' => true,
+		'_cp1250' => true,
+		'_cp1251' => true,
+		'_cp1256' => true,
+		'_cp1257' => true,
+		'_cp850' => true,
+		'_cp852' => true,
+		'_cp866' => true,
+		'_cp932' => true,
+		'_dec8' => true,
+		'_eucjpms' => true,
+		'_euckr' => true,
+		'_gb18030' => true,
+		'_gb2312' => true,
+		'_gbk' => true,
+		'_geostd8' => true,
+		'_greek' => true,
+		'_hebrew' => true,
+		'_hp8' => true,
+		'_keybcs2' => true,
+		'_koi8r' => true,
+		'_koi8u' => true,
+		'_latin1' => true,
+		'_latin2' => true,
+		'_latin5' => true,
+		'_latin7' => true,
+		'_macce' => true,
+		'_macroman' => true,
+		'_sjis' => true,
+		'_swe7' => true,
+		'_tis620' => true,
+		'_ucs2' => true,
+		'_ujis' => true,
+		'_utf16' => true,
+		'_utf16le' => true,
+		'_utf32' => true,
+		'_utf8mb3' => true,
+		'_utf8mb4' => true,
 	];
 
     public function __construct(string $input, int $serverVersion = 80000, int $sqlModes = 0)
@@ -1127,8 +1143,8 @@ class MySQLLexer {
 				$this->position += strlen($this->text);
 				$this->c = $this->input[$this->position] ?? null;
 				$this->n = $this->input[$this->position + 1] ?? null;
-				if ($la === '_') {
-					$this->type = $this->checkCharset($this->text);
+				if ($la === '_' && isset(self::UNDERSCORE_CHARSETS[strtolower($this->text)])) {
+					$this->type = self::UNDERSCORE_CHARSET;
 				} else {
 					$this->IDENTIFIER_OR_KEYWORD();
 				}
@@ -1250,14 +1266,6 @@ class MySQLLexer {
     protected function checkVersion(string $text): bool
     {
         return false;
-    }
-
-    protected function checkCharset(string $text): int
-    {
-		if (in_array(strtolower(substr($text, 1)), self::CHARSETS)) {
-			return self::UNDERSCORE_CHARSET;
-		}
-        return self::IDENTIFIER;
     }
 
     /**
@@ -3266,65 +3274,55 @@ class MySQLLexer {
     }
 
     protected function SINGLE_QUOTED_TEXT()
-    {
-        do {
-            $this->consume(); // Consume the first single quote.
-            while ($this->c !== null) {
-                if ($this->c === '\\' && !$this->isSqlModeActive(self::SQL_MODE_NO_BACKSLASH_ESCAPES)) {
-                    // If it's an escape sequence, consume the backslash and the next character.
-                    $this->consume();
-                    $this->consume();
-                } elseif ($this->c === "'") {
-                    $this->consume(); // Consume the second single quote.
-                    break;
-                } else {
-                    $this->consume();
-                }
-            }
-        } while ($this->c === "'"); // Continue if there's another single quote.
+	{
+		$pattern = $this->isSqlModeActive(self::SQL_MODE_NO_BACKSLASH_ESCAPES)
+			? self::PATTERN_SINGLE_QUOTED_TEXT_NO_BACKSLASH_ESCAPES
+			: self::PATTERN_SINGLE_QUOTED_TEXT;
 
-        $this->setType(self::SINGLE_QUOTED_TEXT);
-    }
+	    if (preg_match('/\G' . $pattern . '/u', $this->input, $matches, 0, $this->position)) {
+			$this->text = $matches[0];
+			$this->position += strlen($this->text);
+			$this->c = $this->input[$this->position] ?? null;
+			$this->n = $this->input[$this->position + 1] ?? null;
+			$this->type = self::SINGLE_QUOTED_TEXT;
+		} else {
+			$this->INVALID_INPUT();
+		}
+	}
 
     protected function DOUBLE_QUOTED_TEXT()
     {
-        do {
-            $this->consume(); // Consume the first double quote.
-            while ($this->c !== null) {
-                if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::SQL_MODE_NO_BACKSLASH_ESCAPES)) {
-                    // If it's an escape sequence, consume the backslash and the next character.
-                    $this->consume();
-                    $this->consume();
-                } elseif ($this->c === '"') {
-                    $this->consume(); // Consume the second double quote.
-                    break;
-                } else {
-                    $this->consume();
-                }
-            }
-        } while ($this->c === '"'); // Continue if there's another double quote.
+		$pattern = $this->isSqlModeActive(self::SQL_MODE_NO_BACKSLASH_ESCAPES)
+			? self::PATTERN_DOUBLE_QUOTED_TEXT_NO_BACKSLASH_ESCAPES
+			: self::PATTERN_DOUBLE_QUOTED_TEXT;
 
-        $this->setType(self::DOUBLE_QUOTED_TEXT);
-    }
+		if (preg_match('/\G' . $pattern . '/u', $this->input, $matches, 0, $this->position)) {
+			$this->text = $matches[0];
+			$this->position += strlen($this->text);
+			$this->c = $this->input[$this->position] ?? null;
+			$this->n = $this->input[$this->position + 1] ?? null;
+			$this->type = self::DOUBLE_QUOTED_TEXT;
+		} else {
+			$this->INVALID_INPUT();
+		}
+	}
 
     protected function BACK_TICK_QUOTED_ID()
     {
-        $this->consume(); // Consume the first back tick.
-        while ($this->c !== null) {
-            if ($this->c === '\\' && !$this->isSqlModeActive(MySQLLexer::SQL_MODE_NO_BACKSLASH_ESCAPES)) {
-                // If it's an escape sequence, consume the backslash and the next character.
-                $this->consume();
-                $this->consume();
-            } elseif ($this->c === '`') {
-                $this->consume(); // Consume the second back tick.
-                break;
-            } else {
-                $this->consume();
-            }
-        }
+		$pattern = $this->isSqlModeActive(self::SQL_MODE_NO_BACKSLASH_ESCAPES)
+			? self::PATTERN_BACKTICK_QUOTED_ID_NO_BACKSLASH_ESCAPES
+			: self::PATTERN_BACKTICK_QUOTED_ID;
 
-        $this->setType(self::BACK_TICK_QUOTED_ID);
-    }
+		if (preg_match('/\G' . $pattern . '/u', $this->input, $matches, 0, $this->position)) {
+			$this->text = $matches[0];
+			$this->position += strlen($this->text);
+			$this->c = $this->input[$this->position] ?? null;
+			$this->n = $this->input[$this->position + 1] ?? null;
+			$this->type = self::BACK_TICK_QUOTED_ID;
+		} else {
+			$this->INVALID_INPUT();
+		}
+	}
 
 	protected function HEX_NUMBER()
 	{

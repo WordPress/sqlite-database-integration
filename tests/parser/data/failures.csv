@@ -423,8 +423,6 @@ CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 4
 
 SET NAMES gb18030"
-"SELECT HEX('²@\') FROM DUAL"
-"SELECT QUOTE('\')"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
 "INSERT INTO t1 VALUES (N'\\')"
@@ -629,7 +627,6 @@ WHERE dt1.x = dt2.x"
 "prepare dynamic_stmt from @sql"
 "create role $username@$hostname.$domainname.com"
 "drop role $username@$hostname.$domainname.com"
-"create table `#mysql50#abc``def` ( id int )"
 "EOF
 
 DROP DATABASE bug19573998"
@@ -2233,13 +2230,10 @@ let $wait_condition= SELECT id from information_schema.processlist where process
 "$binlog= $ENV{'MYSQL_TMP_DIR'} . '/binlog.000003'"
 "$binlog_exists= 0"
 $timeout--
-"DROP TABLE IF EXISTS t1, `t``1`, `t 1`"
 "SET @create = IF(@have_ndb = 0, @create_cmd, 'SET @dummy = 0')"
 "SET @drop = IF(@have_ndb = 0, @drop_cmd, 'SET @dummy = 0')"
 "PREPARE create_stmt FROM @create"
 "PREPARE drop_stmt FROM @drop"
-"create table `t``1`(a int) engine=myisam"
-"drop table `t``1`, `t 1`"
 "EOF
 CREATE TABLE db2.t2 (a INT)"
 "my $mysqld_log= $ENV{'MDF_LOG'}"
@@ -2275,14 +2269,6 @@ connection default"
 "foreach $line (@lines) {
 if ($line =~ /^select/) {
 print $line"
-"create table ```a` (i int)"
-"drop table ```a`"
-"CREATE TABLE `t1` (
-`a b` INT,
-`c""d` INT,
-`e``f` INT,
-PRIMARY KEY (`a b`, `c""d`, `e``f`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1"
 "/*!50003 CREATE FUNCTION `f`() RETURNS bigint(20)
 return 42 */"
 "/*!50003 CREATE PROCEDURE `p`()
@@ -2468,19 +2454,7 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 "SELECT count(*) FROM t1 p where c3 in
 (SELECT c3 FROM t1 t WHERE t.c3 < TIMESTAMP'2011-04-26 19:19:44'
 AND t.c3 > TIMESTAMP'2011-04-26 19:18:44') "
-"CREATE TABLE `t``\"""e` (a INT, PRIMARY KEY (a))
-ENGINE=InnoDB
-PARTITION BY RANGE (a)
-SUBPARTITION BY HASH (a)
-(PARTITION `p0``\"""e` VALUES LESS THAN (100)
-(SUBPARTITION `sp0``\"""e`,
-SUBPARTITION `sp1``\"""e`),
-PARTITION `p1``\"""e` VALUES LESS THAN (MAXVALUE)
-(SUBPARTITION `sp2``\"""e`,
-SUBPARTITION `sp3``\"""e`))"
-"INSERT INTO `t``\"""e` VALUES (0), (2), (6), (10), (14), (18), (22)"
 SEND
-"DROP TABLE `t``\"""e`"
 "DELETE FROM t1 PARTITION (p0)
 WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
 "EXPLAIN DELETE FROM t1 PARTITION (p0)
@@ -4778,13 +4752,6 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "set @select=2,@t5=1.23456"
 "set @test_int=10,@test_double=1e-10,@test_string=""abcdeghi"",@test_string2=""abcdefghij"",@select=NULL"
 "select @test_int,@test_double,@test_string,@test_string2,@select"
-"drop table if exists t1,t2,t3,t4,t9,`t1a``b`,v1,v2,v3,v4,v5,v6"
-"drop view if exists t1,t2,`t1a``b`,v1,v2,v3,v4,v5,v6"
-"create table `t1a``b` (col1 char(2))"
-"drop table `t1a``b`"
-"create function `f``1` () returns int return 5"
-"create view v1 as select test.`f``1` ()"
-"drop function `f``1`"
 "create view  v1 as select avg(distinct s1) from t1"
 "ALTER DEFINER=s@1 VIEW v1 AS SELECT * FROM t1"
 "revoke all privileges on test.* from mysqltest_1@localhost"
