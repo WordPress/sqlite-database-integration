@@ -163,8 +163,6 @@ foreach (scandir($testsDir) as $i => $file) {
 		continue;
 	}
 
-	$handle = fopen($testsDir . '/' . $file, 'r');
-
 	// MySQL query or mysqltest command delimiter.
 	// It can be set dynamically using "DELIMITER <delimiter>" command.
 	$delimiter = ';';
@@ -177,7 +175,8 @@ foreach (scandir($testsDir) as $i => $file) {
 
 	$lines = 0;
 	$query = '';
-	while (($line = fgets($handle)) !== false) {
+	$contents = utf8_encode(file_get_contents($testsDir . '/' . $file));
+	foreach (preg_split('/\R/u', $contents) as $line) {
 		$lines += 1;
 
 		// Skip queries that are expected to result in parse errors for now.
