@@ -192,9 +192,6 @@ CAST(TIMESTAMP'2000-01-01 23:59:59.123456' AS DOUBLE)"
 BEGIN
 DECLARE x INT DEFAULT 3000"
 "RESET PERSIST character_set_server"
-"CREATE TABLE ð¬(a INT)"
-"CREATE TABLE t1(ð¬ INT)"
-"DROP TABLE ð¬"
 "my $input_file= $ENV{'_INPUT_FILE_'}"
 "my $mode = (stat($input_file))[2]"
 "open(FILE, "">"", ""$ENV{MYSQL_TMP_DIR}/permissions.inc"") or die"
@@ -216,9 +213,6 @@ use strict"
 "$binary= basename($binary)"
 "$ENV{'PATH'}=""$bindir$Config{'path_sep'}$ENV{'PATH'}"""
 "my $syscmd= ""$binary $ENV{'HVARGS'}"""
-"create table t1 (f1 int,
-CONSTRAINT cafe CHECK (f1 < 10),
-CONSTRAINT cafÃ© CHECK (f1 < 10))"
 "CREATE TABLE t1(c1 INT,
 c2 INT,
 c3 INT GENERATED ALWAYS AS (c1 + c2),
@@ -370,33 +364,6 @@ ALTER TABLE t1 ALTER CONSTRAINT constraint_name NOT ENFORCED"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1))"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1) USING HASH) ENGINE=MEMORY"
 "CREATE TABLE t1(c1 VARCHAR(33), KEY USING HASH (c1) USING BTREE) ENGINE=MEMORY"
-"create database Ð¸Ð¼Ñ_Ð±Ð°Ð·Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_45"
-"use Ð¸Ð¼Ñ_Ð±Ð°Ð·Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_45"
-"drop database Ð¸Ð¼Ñ_Ð±Ð°Ð·Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_45"
-"create table Ð¸Ð¼Ñ_ÑÐ°Ð±Ð»Ð¸ÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48
-(
-Ð¸Ð¼Ñ_Ð¿Ð¾Ð»Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_45 int,
-index Ð¸Ð¼Ñ_Ð¸Ð½Ð´ÐµÐºÑÐ°_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48 (Ð¸Ð¼Ñ_Ð¿Ð¾Ð»Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_45)
-)"
-"create view Ð¸Ð¼Ñ_Ð²ÑÑ_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_42 as
-select Ð¸Ð¼Ñ_Ð¿Ð¾Ð»Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_45
-from Ð¸Ð¼Ñ_ÑÐ°Ð±Ð»Ð¸ÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48"
-"select * from Ð¸Ð¼Ñ_ÑÐ°Ð±Ð»Ð¸ÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48"
-"show create table Ð¸Ð¼Ñ_ÑÐ°Ð±Ð»Ð¸ÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48"
-"show create view Ð¸Ð¼Ñ_Ð²ÑÑ_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_42"
-"create trigger Ð¸Ð¼Ñ_ÑÑÐ¸Ð³Ð³ÐµÑÐ°_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_49
-before insert on Ð¸Ð¼Ñ_ÑÐ°Ð±Ð»Ð¸ÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48 for each row set @a:=1"
-"drop trigger Ð¸Ð¼Ñ_ÑÑÐ¸Ð³Ð³ÐµÑÐ°_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_49"
-"create procedure Ð¸Ð¼Ñ_Ð¿ÑÐ¾ÑÐµÐ´ÑÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_50()
-begin
-end"
-"drop procedure Ð¸Ð¼Ñ_Ð¿ÑÐ¾ÑÐµÐ´ÑÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_50"
-"create function Ð¸Ð¼Ñ_ÑÑÐ½ÐºÑÐ¸Ð¸_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_49()
-returns int
-return 0"
-"drop function Ð¸Ð¼Ñ_ÑÑÐ½ÐºÑÐ¸Ð¸_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_49"
-"drop view Ð¸Ð¼Ñ_Ð²ÑÑ_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_42"
-"drop table Ð¸Ð¼Ñ_ÑÐ°Ð±Ð»Ð¸ÑÑ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48"
 "create function f1() returns int
 begin
 declare res int"
@@ -456,26 +423,6 @@ CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 4
 
 SET NAMES gb18030"
-"SELECT 1 as , 2 as , 3 as , 4 as , 5 as , 6 as , 7 as , 8 as "
-"INSERT INTO abcÿdef VALUES (2)"
-"SELECT * FROM abcÿdef"
-"DROP TABLE IF EXISTS ÔÁÂÌÉÃÁ, t1, t2"
-"CREATE TABLE `ÔÁÂÌÉÃÁ`
-(
-ÐÏÌÅ CHAR(32) CHARACTER SET koi8r NOT NULL COMMENT ""ËÏÍÍÅÎÔÁÒÉÊ ÐÏÌÑ""
-) COMMENT ""ËÏÍÍÅÎÔÁÒÉÊ ÔÁÂÌÉÃÙ"""
-"SHOW CREATE TABLE ÔÁÂÌÉÃÁ"
-"SHOW FIELDS FROM ÔÁÂÌÉÃÁ"
-"SHOW CREATE TABLE òàáëèöà"
-"SHOW FIELDS FROM òàáëèöà"
-"SHOW CREATE TABLE ÑÐ°Ð±Ð»Ð¸ÑÐ°"
-"SHOW FIELDS FROM ÑÐ°Ð±Ð»Ð¸ÑÐ°"
-"DROP TABLE ÔÁÂÌÉÃÁ"
-"CREATE DATABASE ÔÅÓÔ"
-"USE ÔÅÓÔ"
-"SHOW TABLES IN ÔÅÓÔ"
-"SHOW TABLES IN òåñò"
-"DROP DATABASE ÔÅÓÔ"
 "SELECT HEX('²@\') FROM DUAL"
 "SELECT QUOTE('\')"
 "CREATE VIEW v1 AS SELECT 1 from t1
@@ -544,398 +491,6 @@ h TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
 "REVOKE ALL ON db1.v1 FROM testuser1@localhost"
 "REVOKE ALL ON db1.t1 FROM testuser1@localhost"
-"CREATE TABLE t1(ËÏÌ INT)"
-"CREATE VIEW v1 AS
-SELECT 'ÔÅÓÔ' AS c1, ËÏÌ AS c2
-FROM t1"
-"CREATE PROCEDURE p1(
-INOUT ÐÁÒÁÍ1 CHAR(10),
-OUT ÐÁÒÁÍ2 CHAR(10))
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE PROCEDURE p2(
-INOUT ÐÁÒÁÍ1 CHAR(10) CHARACTER SET utf8mb3,
-OUT ÐÁÒÁÍ2 CHAR(10) CHARACTER SET utf8mb3)
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p3(
-INOUT ÐÁÒÁÍ1 CHAR(10),
-OUT ÐÁÒÁÍ2 CHAR(10))
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p4(
-INOUT ÐÁÒÁÍ1 CHAR(10) CHARACTER SET utf8mb3,
-OUT ÐÁÒÁÍ2 CHAR(10) CHARACTER SET utf8mb3)
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÔÅËÓÔ';
-SET @a1 = _koi8r    'ÔÅËÓÔ';
-SET @a2 = _utf8mb3 'ÑÐµÐºÑÑ';
-END"
-"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÔÅËÓÔ';
-SET @b1 = _koi8r    'ÔÅËÓÔ';
-SET @b2 = _utf8mb3 'ÑÐµÐºÑÑ';
-END"
-"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÔÅËÓÔ';
-SET @a1 = _koi8r    'ÔÅËÓÔ';
-SET @a2 = _utf8mb3 'ÑÐµÐºÑÑ';
-END"
-"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÔÅËÓÔ';
-SET @b1 = _koi8r    'ÔÅËÓÔ';
-SET @b2 = _utf8mb3 'ÑÐµÐºÑÑ';
-END"
-"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE TABLE t1(ÐºÐ¾Ð» INT)"
-"CREATE VIEW v1 AS
-SELECT 'ÑÐµÑÑ' AS c1, ÐºÐ¾Ð» AS c2
-FROM t1"
-"CREATE PROCEDURE p1(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10),
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10))
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE PROCEDURE p2(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10) CHARACTER SET utf8mb3,
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10) CHARACTER SET utf8mb3)
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p3(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10),
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10))
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p4(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10) CHARACTER SET utf8mb3,
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10) CHARACTER SET utf8mb3)
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÑÐµÐºÑÑ';
-SET @a2 = _utf8mb3 'ÑÐµÐºÑÑ';
-SET @a3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÑÐµÐºÑÑ';
-SET @b2 = _utf8mb3 'ÑÐµÐºÑÑ';
-SET @b3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÑÐµÐºÑÑ';
-SET @a2 = _utf8mb3 'ÑÐµÐºÑÑ';
-SET @a3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8mb3 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÑÐµÐºÑÑ';
-SET @b2 = _utf8mb3 'ÑÐµÐºÑÑ';
-SET @b3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8mb3;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8mb3 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
 "CREATE TABLE t3 LIKE t1"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (sha2(i, 0)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
@@ -1068,37 +623,12 @@ WHERE dt1.x = dt2.x"
 "SHOW REPLICA STATUS"
 "SHOW BINARY LOG STATUS"
 "SHOW REPLICAS"
-"create table $t(id int)"
-"drop table $t"
 "create table t(id int, $id int, $id2 int, `$$id` int, $ int, $1 int,
 `$$$` int, id$$$ int, 1$ int, `$$` int, _$ int, b$$lit$$ int)"
-"select id+$id+$id from t"
-"create view $view as select id, $id2 from t"
-"select * from $view"
-"prepare $stmt from 'select `$$id`, $id, `$$` from t'"
-"execute $stmt"
 "set @sql:=concat('select `$$id`, $id, `$$` from ', @table_name)"
 "prepare dynamic_stmt from @sql"
-"create schema $s"
-"create table $s.$t($id int)"
-"select $s.$t.$id from $s.$t"
-"select $s.`$t`.`$id` from $s.`$t`"
-"create procedure $p(in $i int)
-begin
-declare $id1 int;
-select b$$lit$$ into $id1 from t where id = $i;
-end"
-"call $p(3)"
-"create function $f($i int) returns int no sql
-begin
-return `$i` * 2;
-end"
-"select $f(2)"
 "create role $username@$hostname.$domainname.com"
 "drop role $username@$hostname.$domainname.com"
-"set @$myvar = true"
-"select count(*) from t where @$myvar"
-"select 8.0 $p, 8.4$p, .0$p, 8.$p, 8.p"
 "create table `#mysql50#abc``def` ( id int )"
 "EOF
 
@@ -1111,34 +641,8 @@ DROP DATABASE bug19573998"
 "EOF
 
 SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
-"create event ðóóò21 on schedule every '50:23:59:95' day_second COMMENT 'òîâà å 1251 êîìåíòàð' do select 1"
-"SHOW CREATE EVENT ðóóò21"
-"create event Ð·Ð°Ð´Ð°ÑÐºÐ° on schedule every 123 minute starts now() ends now() + interval 1 month do select 1"
-"drop event Ð·Ð°Ð´Ð°ÑÐºÐ°"
-"create event Ð·Ð°ÐºÐ°ÑÐºÐ° on schedule every 10 hour do select get_lock(""test_lock1"", 20)"
-"drop event Ð·Ð°ÐºÐ°ÑÐºÐ°"
-"create event Ð·Ð°ÐºÐ°ÑÐºÐ° on schedule every 10 hour do select get_lock(""test_lock2"", 20)"
-"create event Ð·Ð°ÐºÐ°ÑÐºÐ°21 on schedule every 10 hour do select get_lock(""test_lock2_1"", 20)"
-"drop event Ð·Ð°ÐºÐ°ÑÐºÐ°21"
-"create event Ð¸Ð¼Ñ_ÑÐ¾Ð±ÑÑÐ¸Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48 on schedule every 2 year do select 1"
-"drop event Ð¸Ð¼Ñ_ÑÐ¾Ð±ÑÑÐ¸Ñ_Ð²_ÐºÐ¾Ð´Ð¸ÑÐ¾Ð²ÐºÐµ_ÑÑÑ8_Ð´Ð»Ð¸Ð½Ð¾Ð¹_Ð±Ð¾Ð»ÑÑÐµ_ÑÐµÐ¼_48"
-"CREATE EVENT äîëåí_ðåãèñòúð_1251 ON SCHEDULE EVERY 1 YEAR DO SELECT 100"
-"DROP EVENT ÄîËåÍ_ðåãèñòúð_1251"
-"CREATE EVENT Ð´Ð¾Ð»ÐµÐ½_ÑÐµÐ³Ð¸ÑÑÑÑ_ÑÑÑ8 ON SCHEDULE EVERY 3 YEAR DO SELECT 300"
-"DROP EVENT ÐÐÐÐÐ_ÑÐµÐ³Ð¸ÑÑÑÑ_ÑÑÑ8"
-"SHOW CREATE EVENT CaFÃ©"
-"DROP EVENT CaFÃ©"
-"CREATE EVENT Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_e ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
-"SHOW CREATE EVENT Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
-"DROP EVENT Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
-"CREATE EVENT cafÃ© ON SCHEDULE EVERY 2 YEAR DO SELECT 1"
 disable_result_log
 enable_query_log
-"create table ÔÁÂ (ËÏÌ0 int, ËÏÌ1 int, key ÉÎÄ0 (ËÏÌ0), key ÉÎÄ01 (ËÏÌ0,ËÏÌ1))"
-"insert into ÔÁÂ (ËÏÌ0) values (1)"
-"insert into ÔÁÂ (ËÏÌ0) values (2)"
-"explain select ËÏÌ0 from ÔÁÂ where ËÏÌ0=1"
-"drop table ÔÁÂ"
 "EXPLAIN ((SELECT a FROM t ORDER BY 1 LIMIT 3) ORDER BY -a LIMIT 2) ORDER BY a"
 "CREATE TABLE t3 LIKE t2"
 "EXPLAIN
@@ -1293,7 +797,6 @@ enable_result_log
 "SELECT DATE(ts) = CURRENT_DATE + INTERVAL '1' DAY AS is_tomorrow, TIME(ts)
 FROM (SELECT ADDDATE(TIME'00:00:00', INTERVAL 1 DAY) AS ts) AS dt"
 "SELECT ADDDATE(TIME'00:00:00', INTERVAL 1 HOUR)"
-"DROP TABLE Ã¥Ã¤Ã¶, æ¥æ¬èª,  ð©¸½"
 "select sum(all a),count(all a),avg(all a),std(all a),variance(all a),bit_or(all a),bit_and(all a),min(all a),max(all a),min(all c),max(all c) from t1"
 "insert into t1 values('AME',0,'SEA',0.100,date'1942-02-19')"
 "insert into t1 values('HBR',1,'SEA',0.085,date'1948-03-05')"
@@ -1680,19 +1183,6 @@ boundary POLYGON)"
 "revoke all privileges on mysqltest.* from mysqltest_1@localhost"
 "revoke all on test.* from mysqltest_3@localhost"
 "revoke all on test.t1 from mysqltest_2@localhost"
-"CREATE DATABASE ÂÄ"
-"USE ÂÄ"
-"CREATE TABLE ÔÁÂ (ËÏÌ INT)"
-"CREATE USER ÀÚÅÒ@localhost"
-"GRANT SELECT ON ÂÄ.* TO ÀÚÅÒ@localhost"
-"SHOW GRANTS FOR ÀÚÅÒ@localhost"
-"REVOKE SELECT ON ÂÄ.* FROM ÀÚÅÒ@localhost"
-"GRANT SELECT ON ÂÄ.ÔÁÂ TO ÀÚÅÒ@localhost"
-"REVOKE SELECT ON ÂÄ.ÔÁÂ FROM ÀÚÅÒ@localhost"
-"GRANT SELECT (ËÏÌ) ON ÂÄ.ÔÁÂ TO ÀÚÅÒ@localhost"
-"REVOKE SELECT (ËÏÌ) ON ÂÄ.ÔÁÂ FROM ÀÚÅÒ@localhost"
-"DROP USER ÀÚÅÒ@localhost"
-"DROP DATABASE ÂÄ"
 "CREATE TABLE t4 LIKE t1"
 "CREATE TABLE t5 LIKE t1"
 "CREATE TABLE t6 LIKE t1"
@@ -1706,10 +1196,6 @@ boundary POLYGON)"
 "revoke all on mysqltest_2.t1 from mysqltest_3@localhost"
 "revoke all on mysqltest_2.t2 from mysqltest_3@localhost"
 "revoke all privileges on mysqltest.t1 from mysqltest_1@localhost"
-"create database ÂÄ"
-"grant select on ÂÄ.* to root@localhost"
-"drop database ÂÄ"
-"revoke select on ÂÄ.* from root@localhost"
 "create user mysqltest_7@"
 "alter user mysqltest_7@ identified by 'systpass'"
 "show grants for mysqltest_7@"
@@ -1717,42 +1203,9 @@ boundary POLYGON)"
 "grant select on mysqltest.* to mysqltest_8@"
 "show grants for mysqltest_8@"
 "REVOKE ALL ON db27878.* FROM 'mysqltest_1'@'localhost'"
-"create user ÑÐ·ÐµÑ_ÑÐ·ÐµÑ@localhost"
-"grant select on test.* to ÑÐ·ÐµÑ_ÑÐ·ÐµÑ@localhost"
 "revoke all on test.* from ÑÐ·ÐµÑ_ÑÐ·ÐµÑ@localhost"
-"drop user ÑÐ·ÐµÑ_ÑÐ·ÐµÑ@localhost"
 "REVOKE ALL ON db1.* FROM 'user1'@'localhost'"
 "REVOKE ALL ON db1.* FROM 'user2'@'%'"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"GRANT CREATE ON mysqltest.* TO Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"GRANT CREATE ON mysqltest.* TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"GRANT CREATE ON mysqltest.* TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"REVOKE CREATE ON mysqltest.* FROM Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"REVOKE CREATE ON mysqltest.* FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"REVOKE CREATE ON mysqltest.* FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"GRANT CREATE ON t1 TO Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"GRANT CREATE ON t1 TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"GRANT CREATE ON t1 TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"REVOKE CREATE ON t1 FROM Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"REVOKE CREATE ON t1 FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"REVOKE CREATE ON t1 FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"GRANT SELECT ON t1 TO Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"GRANT SELECT ON t1 TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"GRANT SELECT ON t1 TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"REVOKE SELECT ON t1 FROM Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"REVOKE SELECT ON t1 FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"REVOKE SELECT ON t1 FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"GRANT EXECUTE ON PROCEDURE p1 TO Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"GRANT EXECUTE ON PROCEDURE p1 TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"GRANT EXECUTE ON PROCEDURE p1 TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"REVOKE EXECUTE ON PROCEDURE p1 FROM Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"REVOKE EXECUTE ON PROCEDURE p1 FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"REVOKE EXECUTE ON PROCEDURE p1 FROM Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
-"DROP USER Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·@localhost"
-"DROP USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ@localhost"
-"DROP USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
 "REVOKE ALL PRIVILEGES ON mysqltest.v0 FROM mysqltest@localhost"
 "REVOKE ALL PRIVILEGES ON mysqltest.visible FROM mysqltest@localhost"
 "REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
@@ -2266,7 +1719,6 @@ IMPORT TABLE FROM 't_case.sdi'"
 IMPORT TABLE FROM 't_case.sdi'"
 "CREATE TABLE t1 (i INT DEFAULT 42, dt DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
 de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
-"GRANT SELECT ON *.* TO Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost"
 "CREATE TABLE t1 (f1 DATE NOT SECONDARY)"
 "ALTER TABLE  t1 MODIFY f1 DATE NOT SECONDARY"
 "CREATE TABLE t1 (f1 INT) SECONDARY_ENGINE=myisam"
@@ -2328,41 +1780,6 @@ INSERT INTO t1 SELECT id+1 FROM t1"
 "CREATE TABLE t1(a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
 c INT GENERATED ALWAYS AS (-a) STORED)"
-"CREATE TABLE t1 (
-Ã INTEGER,
-N INTEGER,
-a INTEGER,
-b INTEGER,
-c INTEGER,
-d INTEGER,
-e INTEGER,
-f INTEGER,
-g INTEGER,
-h INTEGER,
-i INTEGER,
-j INTEGER,
-k INTEGER,
-l INTEGER,
-m INTEGER,
-na INTEGER,
-o INTEGER,
-p INTEGER,
-q INTEGER,
-r INTEGER,
-s INTEGER,
-t INTEGER,
-u INTEGER,
-v INTEGER,
-w INTEGER,
-x INTEGER,
-y INTEGER,
-z INTEGER,
-aa INTEGER,
-ab INTEGER,
-ac INTEGER,
-ad INTEGER
-)"
-"INSERT INTO t1 (Ã, N) VALUES (1, 2)"
 "CREATE TABLE t1 (f1 INTEGER, b INTEGER AS ((1)) INVISIBLE, KEY k1(b))"
 enable_info
 disable_info
@@ -2690,13 +2107,6 @@ SELECT @@session.long_query_time INTO @old_long_query_time"
 "my $c_w= grep(/Different lower_case_table_names settings/gi,<FILE>)"
 "print ""#    Found lower_case_table_names error $c_w times.\n"""
 "create table t2 like T1"
-"drop table if exists Ä°,Ä°Ä°"
-"create table Ä° (s1 int)"
-"show create table Ä°"
-"drop table Ä°"
-"create table Ä°Ä° (s1 int)"
-"show create table Ä°Ä°"
-"drop table Ä°Ä°"
 "CREATE TABLE TestTable2 LIKE TestTable1"
 "CREATE TABLE T2 LIKE T1"
 "EOF
@@ -3172,22 +2582,7 @@ FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
 "RESET PERSIST validate_password_length"
 "RESET PERSIST gtid_mode"
 "RESET PERSIST enforce_gtid_consistency"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__ IDENTIFIED WITH 'test_plugin_server' AS 'Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_Ð´ÐµÑÑ__'"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_Ð´ÐµÑÑ__ IDENTIFIED BY 'plug_dest_passwd'"
-"DROP USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__"
-"DROP USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_Ð´ÐµÑÑ__"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string'"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string'"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost IDENTIFIED WITH 'cleartext_plugin_server' AS 'auth_string'"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost IDENTIFIED WITH 'sha256_password' BY 'auth_string' REQUIRE SSL"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'auth_string' REQUIRE SSL"
-"CREATE USER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½ÑÐ¹_ÑÐ·ÐµÑ__@localhost IDENTIFIED WITH 'cleartext_plugin_server' AS 'auth_string' REQUIRE SSL"
 "REVOKE ALL PRIVILEGES ON test_user_db.* FROM plug"
-"CREATE USER plÃ¼g IDENTIFIED WITH 'test_plugin_server' AS 'plÃ¼g_dest'"
-"DROP USER plÃ¼g"
-"CREATE USER plÃ¼g_dest IDENTIFIED BY 'plug_dest_passwd'"
-"DROP USER plÃ¼g_dest"
-"CREATE USER plÃ¼g IDENTIFIED WITH test_plugin_server AS 'plÃ¼g_dest'"
 "set @precision=10000000000"
 "select rand(),
 cast(rand(10)*@precision as unsigned integer) from t1"
@@ -3407,8 +2802,6 @@ create user nonsuper@localhost"
 "SHOW GRANTS FOR u2@localhost USING r1"
 "ALTER USER u5 DEFAULT ROLE r2,r3"
 "ALTER USER u2 DEFAULT ROLE r1, r2, r3"
-"CREATE RESOURCE GROUP cafÃ© TYPE=USER VCPU=1-3 THREAD_PRIORITY=5"
-"DROP RESOURCE GROUP CaFÃ©"
 "EOF
 
 
@@ -3549,8 +2942,6 @@ ATTR_NAME IN ('program_name', '_client_replication_channel_name', '_client_role'
 "EOF
 COMMIT"
 "ALTER SCHEMA s1 READ ONLY DEFAULT"
-"CREATE TABLE tÃ¦Ã¸Ã¥(i INT)"
-"DROP TABLE tÃ¦Ã¸Ã¥"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
@@ -3662,15 +3053,6 @@ $line =~ s/Thread_id: \d* Errno:/Thread_id: 0 Errno:/"
 "EOF
 
 SET @@global.slow_query_log_file=@save_sqlf"
-"DROP PROCEDURE CaFÃ©"
-"CREATE PROCEDURE Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_e() BEGIN END"
-"SHOW CREATE PROCEDURE Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
-"DROP PROCEDURE Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
-"SHOW CREATE FUNCTION CaFÃ©"
-"DROP FUNCTION CaFÃ©"
-"CREATE FUNCTION Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_e() RETURNS INT return 15081947"
-"SHOW CREATE FUNCTION Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
-"DROP FUNCTION Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
 "create procedure sudoku_solve(p_naive boolean, p_all boolean)
 deterministic
 modifies sql data
@@ -4451,7 +3833,6 @@ const $y = 1
 let b = $x + $y;
 $$
 "
-"SELECT 1 AS $hi"
 "revoke all privileges on procedure sptest.p1 from userb@localhost"
 "CREATE PROCEDURE p2()
 BEGIN
@@ -4709,14 +4090,6 @@ end"
 "call bug1656(@1, @2)"
 "select @1, @2"
 "show binary log status"
-"create procedure bug6063()
-begin
-lÃ¢bel: begin end;
-label: begin end;
-label1: begin end;
-end"
-"create procedure bug7088_2()
-lÃ¤bel1: begin end"
 "/*!50003 create function bug14723()
 returns bigint(20)
 main_loop: begin
@@ -4759,11 +4132,6 @@ DELIMITER "
 "|
 
 eval CALL p1($p1_cnt)"
-"CREATE PROCEDURE p1()
-BEGIN
-DECLARE áâä INT;
-SELECT áâä;
-END"
 "CREATE TEMPORARY TABLE t3 LIKE t1"
 "CREATE FUNCTION f1() RETURNS INT DETERMINISTIC
 BEGIN
@@ -4978,12 +4346,6 @@ end"
 @t1_var=concat(@t1_var,'_AI_0')"
 "CREATE TRIGGER _AI_3 AFTER INSERT ON t1 FOR EACH ROW FOLLOWS _AI_2 SET
 @t1_var=concat(@t1_var,'_AI_3')"
-"SHOW CREATE TRIGGER cAfÃ©"
-"DROP TRIGGER CaFÃ©"
-"CREATE TRIGGER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_e
-BEFORE INSERT ON t1 FOR EACH ROW SET @sum= @sum + NEW.f1"
-"SHOW CREATE TRIGGER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
-"DROP TRIGGER Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð¾ÑÐµÐ½Ñ_Ð´Ð»Ð¸Ð½Ð½Ð°Ñ_ÑÑÑÐ¾ÐºÐ°_Ã©"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
 "SELECT * FROM t2 EXCEPT SELECT * FROM t3"
 "SELECT * FROM t3 EXCEPT SELECT * FROM t2"
@@ -5521,12 +4883,6 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "create function `f``1` () returns int return 5"
 "create view v1 as select test.`f``1` ()"
 "drop function `f``1`"
-"create table tÃ¼ (cÃ¼ char)"
-"create view vÃ¼ as select cÃ¼ from tÃ¼"
-"insert into vÃ¼ values ('Ã¼')"
-"select * from vÃ¼"
-"drop view vÃ¼"
-"drop table tÃ¼"
 "create view  v1 as select avg(distinct s1) from t1"
 "ALTER DEFINER=s@1 VIEW v1 AS SELECT * FROM t1"
 "revoke all privileges on test.* from mysqltest_1@localhost"

@@ -44,6 +44,16 @@ class MySQLLexer {
 	const SQL_MODE_IGNORE_SPACE = 1 << 3;
 	const SQL_MODE_NO_BACKSLASH_ESCAPES = 1 << 4;
 
+	/**
+	 * Unquoted identifiers:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/identifiers.html
+	 *
+	 * Rules:
+	 *   1. Allowed characters are ASCII a-z, A-Z, 0-9, $, _ and Unicode \x{0080}-\x{ffff}.
+	 *   2. Unquoted identifiers may begin with a digit but may not consist solely of digits.
+	 */
+	const PATTERN_UNQUOTED_IDENTIFIER = '(?=\D)[\w_$\x{80}-\x{ffff}]+';
+
     // Constants for token types.
     // Operators
     public const EQUAL_OPERATOR = 1;
@@ -1129,7 +1139,11 @@ class MySQLLexer {
                 $this->NUMBER();
 			} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $this->LA(2) === "'") {
 				$this->NUMBER();
-            } elseif (safe_ctype_alpha($la)) {
+            } elseif (preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
+				$this->text = $matches[0];
+				$this->position += strlen($this->text);
+				$this->c = $this->input[$this->position] ?? null;
+				$this->n = $this->input[$this->position + 1] ?? null;
                 $this->IDENTIFIER_OR_KEYWORD();
             } elseif ($la === null) {
                 $this->matchEOF();
@@ -3090,11 +3104,7 @@ class MySQLLexer {
 
     protected function IDENTIFIER_OR_KEYWORD()
     {
-        // Match the longest possible keyword.
-        while (safe_ctype_alnum($this->LA(1)) || $this->LA(1) === '_' || $this->LA(1) === '$') {
-            $this->consume();
-        }
-        $text = strtoupper($this->getText());
+		$text = strtoupper($this->getText());
 
 		// Lookup the string in the token table.
 		$this->type = self::TOKENS[$text] ?? self::IDENTIFIER;
