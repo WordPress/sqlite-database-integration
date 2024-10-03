@@ -1995,237 +1995,233 @@ class MySQLLexer {
 
     public function getNextToken()
     {
-        $this->nextToken();
-        return $this->tokenInstance;
+        do {
+			$this->nextToken();
+		} while ($this->tokenInstance === null);
+		return $this->tokenInstance;
     }
 
     private function nextToken()
     {
-        while (true) {
-            $this->text = '';
-            $this->type = null;
-            $this->tokenInstance = null;
-            $this->channel = self::CHANNEL_DEFAULT;
+		$this->text = '';
+		$this->type = null;
+		$this->tokenInstance = null;
+		$this->channel = self::CHANNEL_DEFAULT;
 
-            $la = $this->LA(1);
-            
-            if ($la === "'") {
-                $this->SINGLE_QUOTED_TEXT();
-            } elseif ($la === '"') {
-                $this->DOUBLE_QUOTED_TEXT();
-            } elseif ($la === '`') {
-                $this->BACK_TICK_QUOTED_ID();
-            } elseif ($this->isDigit($la)) {
-                $this->NUMBER();
-            } elseif ($la === '.') {
-                if ($this->isDigit($this->LA(2))) {
-                    $this->NUMBER();
-                } else {
-                    $this->DOT_IDENTIFIER();
-                }
-            } elseif ($la === '=') {
-                $this->consume();
-                $this->type = self::EQUAL_OPERATOR;
-            } elseif ($la === ':') {
-                if ($this->LA(2) === '=') {
-                    $this->consume(); // Consume the ':'.
-                    $this->consume(); // Consume the '='.
-                    $this->type = self::ASSIGN_OPERATOR;
-                } else {
-                    $this->consume();
-                    $this->type = self::COLON_SYMBOL;
-                }
-            } elseif ($la === '<') {
-                if ($this->LA(2) === '=') {
-                    if ($this->LA(3) === '>') {
-                        $this->consume(); // Consume the '<'.
-                        $this->consume(); // Consume the '='.
-                        $this->consume(); // Consume the '>'.
-                        $this->type = self::NULL_SAFE_EQUAL_OPERATOR;
-                    } else {
-                        $this->consume(); // Consume the '<'.
-                        $this->consume(); // Consume the '='.
-                        $this->type = self::LESS_OR_EQUAL_OPERATOR;
-                    }
-                } elseif ($this->LA(2) === '>') {
-                    $this->consume(); // Consume the '<'.
-                    $this->consume(); // Consume the '>'.
-                    $this->type = self::NOT_EQUAL_OPERATOR;
-                } elseif ($this->LA(2) === '<') {
-                    $this->consume(); // Consume the '<'.
-                    $this->consume(); // Consume the '<'.
-                    $this->type = self::SHIFT_LEFT_OPERATOR;
-                } else {
-                    $this->consume();
-                    $this->type = self::LESS_THAN_OPERATOR;
-                }
-            } elseif ($la === '>') {
-                if ($this->LA(2) === '=') {
-                    $this->consume(); // Consume the '>'.
-                    $this->consume(); // Consume the '='.
-                    $this->type = self::GREATER_OR_EQUAL_OPERATOR;
-                } elseif ($this->LA(2) === '>') {
-                    $this->consume(); // Consume the '>'.
-                    $this->consume(); // Consume the '>'.
-                    $this->type = self::SHIFT_RIGHT_OPERATOR;
-                } else {
-                    $this->consume();
-                    $this->type = self::GREATER_THAN_OPERATOR;
-                }
-            } elseif ($la === '!') {
-                if ($this->LA(2) === '=') {
-                    $this->consume(); // Consume the '!'.
-                    $this->consume(); // Consume the '='.
-                    $this->type = self::NOT_EQUAL_OPERATOR;
-                } else {
-                    $this->consume();
-                    $this->type = self::LOGICAL_NOT_OPERATOR;
-                }
-            } elseif ($la === '+') {
-                $this->consume();
-                $this->type = self::PLUS_OPERATOR;
-            } elseif ($la === '-') {
-                if ($this->LA(2) === '>') {
-                    if ($this->LA(3) === '>') {
-                        if ($this->serverVersion >= 50713) {
-                            $this->consume(); // Consume the '-'.
-                            $this->consume(); // Consume the '>'.
-                            $this->consume(); // Consume the '>'.
-                            $this->type = self::JSON_UNQUOTED_SEPARATOR_SYMBOL;
-                        } else {
-                            $this->consume();
-                            $this->type = self::INVALID_INPUT;
-                        }
-                    } else {
-                        if ($this->serverVersion >= 50708) {
-                            $this->consume(); // Consume the '-'.
-                            $this->consume(); // Consume the '>'.
-                            $this->type = self::JSON_SEPARATOR_SYMBOL;
-                        } else {
-                            $this->consume();
-                            $this->type = self::INVALID_INPUT;
-                        }
-                    }
-                } else {
-                    $this->consume();
-                    $this->type = self::MINUS_OPERATOR;
-                }
-            } elseif ($la === '*') {
-                $this->consume();
-                $this->type = self::MULT_OPERATOR;
-            } elseif ($la === '/') {
-                if ($this->LA(2) === '*') {
-                    $this->blockComment();
-                } else {
-                    $this->consume();
-                    $this->type = self::DIV_OPERATOR;
-                }
-            } elseif ($la === '%') {
-                $this->consume();
-                $this->type = self::MOD_OPERATOR;
-            } elseif ($la === '&') {
-                if ($this->LA(2) === '&') {
-                    $this->consume(); // Consume the '&'.
-                    $this->consume(); // Consume the '&'.
-                    $this->type = self::LOGICAL_AND_OPERATOR;
-                } else {
-                    $this->consume();
-                    $this->type = self::BITWISE_AND_OPERATOR;
-                }
-            } elseif ($la === '^') {
-                $this->consume();
-                $this->type = self::BITWISE_XOR_OPERATOR;
-            } elseif ($la === '|') {
-                if ($this->LA(2) === '|') {
-                    $this->consume(); // Consume the '|'.
-                    $this->consume(); // Consume the '|'.
-                    $this->type = $this->isSqlModeActive(self::SQL_MODE_PIPES_AS_CONCAT)
-                        ? self::CONCAT_PIPES_SYMBOL
-                        : self::LOGICAL_OR_OPERATOR;
-                } else {
-                    $this->consume();
-                    $this->type = self::BITWISE_OR_OPERATOR;
-                }
-            } elseif ($la === '~') {
-                $this->consume();
-                $this->type = self::BITWISE_NOT_OPERATOR;
-            } elseif ($la === ',') {
-                $this->consume();
-                $this->type = self::COMMA_SYMBOL;
-            } elseif ($la === ';') {
-                $this->consume();
-                $this->type = self::SEMICOLON_SYMBOL;
-            } elseif ($la === '(') {
-                $this->consume();
-                $this->type = self::OPEN_PAR_SYMBOL;
-            } elseif ($la === ')') {
-                $this->consume();
-                $this->type = self::CLOSE_PAR_SYMBOL;
-            } elseif ($la === '{') {
-                $this->consume();
-                $this->type = self::OPEN_CURLY_SYMBOL;
-            } elseif ($la === '}') {
-                $this->consume();
-                $this->type = self::CLOSE_CURLY_SYMBOL;
-            } elseif ($la === '@') {
-                if ($this->LA(2) === '@') {
-                    $this->consume(); // Consume the '@'.
-                    $this->consume(); // Consume the '@'.
-                    $this->type = self::AT_AT_SIGN_SYMBOL;
-                } else {
-                    $this->consume();
-                    $this->type = self::AT_SIGN_SYMBOL;
-                }
-            } elseif ($la === '?') {
-                $this->consume();
-                $this->type = self::PARAM_MARKER;
-            } elseif ($la === '\\') {
-                if ($this->LA(2) === 'N') {
-                    $this->consume(); // Consume the '\'.
-                    $this->consume(); // Consume the 'N'.
-                    $this->type = self::NULL2_SYMBOL;
-                } else {
-                    $this->consume();
-                    $this->type = self::INVALID_INPUT;
-                }
-            } elseif ($la === '#') {
-                $this->POUND_COMMENT();
-            } elseif ($la === '-' && $this->LA(2) === '-') {
-                $this->DASHDASH_COMMENT();
-            } elseif ($this->isWhitespace($la)) {
-                while ($this->isWhitespace($this->c)) {
-                    $this->consume();
-                }
-                $this->channel = self::CHANNEL_HIDDEN;
-            } elseif ($la === '0' && ($this->LA(2) === 'x' || $this->LA(2) === 'b')) {
-                $this->NUMBER();
-			} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $this->LA(2) === "'") {
+		$la = $this->LA(1);
+
+		if ($la === "'") {
+			$this->SINGLE_QUOTED_TEXT();
+		} elseif ($la === '"') {
+			$this->DOUBLE_QUOTED_TEXT();
+		} elseif ($la === '`') {
+			$this->BACK_TICK_QUOTED_ID();
+		} elseif ($this->isDigit($la)) {
+			$this->NUMBER();
+		} elseif ($la === '.') {
+			if ($this->isDigit($this->LA(2))) {
 				$this->NUMBER();
-            } elseif (preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
-				$this->text = $matches[0];
-				$this->position += strlen($this->text);
-				$this->c = $this->input[$this->position] ?? null;
-				$this->n = $this->input[$this->position + 1] ?? null;
-				if ($la === '_' && isset(self::UNDERSCORE_CHARSETS[strtolower($this->text)])) {
-					$this->type = self::UNDERSCORE_CHARSET;
+			} else {
+				$this->DOT_IDENTIFIER();
+			}
+		} elseif ($la === '=') {
+			$this->consume();
+			$this->type = self::EQUAL_OPERATOR;
+		} elseif ($la === ':') {
+			if ($this->LA(2) === '=') {
+				$this->consume(); // Consume the ':'.
+				$this->consume(); // Consume the '='.
+				$this->type = self::ASSIGN_OPERATOR;
+			} else {
+				$this->consume();
+				$this->type = self::COLON_SYMBOL;
+			}
+		} elseif ($la === '<') {
+			if ($this->LA(2) === '=') {
+				if ($this->LA(3) === '>') {
+					$this->consume(); // Consume the '<'.
+					$this->consume(); // Consume the '='.
+					$this->consume(); // Consume the '>'.
+					$this->type = self::NULL_SAFE_EQUAL_OPERATOR;
 				} else {
-					$this->IDENTIFIER_OR_KEYWORD();
+					$this->consume(); // Consume the '<'.
+					$this->consume(); // Consume the '='.
+					$this->type = self::LESS_OR_EQUAL_OPERATOR;
 				}
-            } elseif ($la === null) {
-                $this->matchEOF();
-                $this->tokenInstance = new MySQLToken(self::EOF, '<EOF>');
-                return false;
-            } else {
-                $this->consume();
-                $this->type = self::INVALID_INPUT;
-            }
+			} elseif ($this->LA(2) === '>') {
+				$this->consume(); // Consume the '<'.
+				$this->consume(); // Consume the '>'.
+				$this->type = self::NOT_EQUAL_OPERATOR;
+			} elseif ($this->LA(2) === '<') {
+				$this->consume(); // Consume the '<'.
+				$this->consume(); // Consume the '<'.
+				$this->type = self::SHIFT_LEFT_OPERATOR;
+			} else {
+				$this->consume();
+				$this->type = self::LESS_THAN_OPERATOR;
+			}
+		} elseif ($la === '>') {
+			if ($this->LA(2) === '=') {
+				$this->consume(); // Consume the '>'.
+				$this->consume(); // Consume the '='.
+				$this->type = self::GREATER_OR_EQUAL_OPERATOR;
+			} elseif ($this->LA(2) === '>') {
+				$this->consume(); // Consume the '>'.
+				$this->consume(); // Consume the '>'.
+				$this->type = self::SHIFT_RIGHT_OPERATOR;
+			} else {
+				$this->consume();
+				$this->type = self::GREATER_THAN_OPERATOR;
+			}
+		} elseif ($la === '!') {
+			if ($this->LA(2) === '=') {
+				$this->consume(); // Consume the '!'.
+				$this->consume(); // Consume the '='.
+				$this->type = self::NOT_EQUAL_OPERATOR;
+			} else {
+				$this->consume();
+				$this->type = self::LOGICAL_NOT_OPERATOR;
+			}
+		} elseif ($la === '+') {
+			$this->consume();
+			$this->type = self::PLUS_OPERATOR;
+		} elseif ($la === '-') {
+			if ($this->LA(2) === '>') {
+				if ($this->LA(3) === '>') {
+					if ($this->serverVersion >= 50713) {
+						$this->consume(); // Consume the '-'.
+						$this->consume(); // Consume the '>'.
+						$this->consume(); // Consume the '>'.
+						$this->type = self::JSON_UNQUOTED_SEPARATOR_SYMBOL;
+					} else {
+						$this->consume();
+						$this->type = self::INVALID_INPUT;
+					}
+				} else {
+					if ($this->serverVersion >= 50708) {
+						$this->consume(); // Consume the '-'.
+						$this->consume(); // Consume the '>'.
+						$this->type = self::JSON_SEPARATOR_SYMBOL;
+					} else {
+						$this->consume();
+						$this->type = self::INVALID_INPUT;
+					}
+				}
+			} else {
+				$this->consume();
+				$this->type = self::MINUS_OPERATOR;
+			}
+		} elseif ($la === '*') {
+			$this->consume();
+			$this->type = self::MULT_OPERATOR;
+		} elseif ($la === '/') {
+			if ($this->LA(2) === '*') {
+				$this->blockComment();
+			} else {
+				$this->consume();
+				$this->type = self::DIV_OPERATOR;
+			}
+		} elseif ($la === '%') {
+			$this->consume();
+			$this->type = self::MOD_OPERATOR;
+		} elseif ($la === '&') {
+			if ($this->LA(2) === '&') {
+				$this->consume(); // Consume the '&'.
+				$this->consume(); // Consume the '&'.
+				$this->type = self::LOGICAL_AND_OPERATOR;
+			} else {
+				$this->consume();
+				$this->type = self::BITWISE_AND_OPERATOR;
+			}
+		} elseif ($la === '^') {
+			$this->consume();
+			$this->type = self::BITWISE_XOR_OPERATOR;
+		} elseif ($la === '|') {
+			if ($this->LA(2) === '|') {
+				$this->consume(); // Consume the '|'.
+				$this->consume(); // Consume the '|'.
+				$this->type = $this->isSqlModeActive(self::SQL_MODE_PIPES_AS_CONCAT)
+					? self::CONCAT_PIPES_SYMBOL
+					: self::LOGICAL_OR_OPERATOR;
+			} else {
+				$this->consume();
+				$this->type = self::BITWISE_OR_OPERATOR;
+			}
+		} elseif ($la === '~') {
+			$this->consume();
+			$this->type = self::BITWISE_NOT_OPERATOR;
+		} elseif ($la === ',') {
+			$this->consume();
+			$this->type = self::COMMA_SYMBOL;
+		} elseif ($la === ';') {
+			$this->consume();
+			$this->type = self::SEMICOLON_SYMBOL;
+		} elseif ($la === '(') {
+			$this->consume();
+			$this->type = self::OPEN_PAR_SYMBOL;
+		} elseif ($la === ')') {
+			$this->consume();
+			$this->type = self::CLOSE_PAR_SYMBOL;
+		} elseif ($la === '{') {
+			$this->consume();
+			$this->type = self::OPEN_CURLY_SYMBOL;
+		} elseif ($la === '}') {
+			$this->consume();
+			$this->type = self::CLOSE_CURLY_SYMBOL;
+		} elseif ($la === '@') {
+			if ($this->LA(2) === '@') {
+				$this->consume(); // Consume the '@'.
+				$this->consume(); // Consume the '@'.
+				$this->type = self::AT_AT_SIGN_SYMBOL;
+			} else {
+				$this->consume();
+				$this->type = self::AT_SIGN_SYMBOL;
+			}
+		} elseif ($la === '?') {
+			$this->consume();
+			$this->type = self::PARAM_MARKER;
+		} elseif ($la === '\\') {
+			if ($this->LA(2) === 'N') {
+				$this->consume(); // Consume the '\'.
+				$this->consume(); // Consume the 'N'.
+				$this->type = self::NULL2_SYMBOL;
+			} else {
+				$this->consume();
+				$this->type = self::INVALID_INPUT;
+			}
+		} elseif ($la === '#') {
+			$this->POUND_COMMENT();
+		} elseif ($la === '-' && $this->LA(2) === '-') {
+			$this->DASHDASH_COMMENT();
+		} elseif ($this->isWhitespace($la)) {
+			while ($this->isWhitespace($this->c)) {
+				$this->consume();
+			}
+			$this->channel = self::CHANNEL_HIDDEN;
+		} elseif ($la === '0' && ($this->LA(2) === 'x' || $this->LA(2) === 'b')) {
+			$this->NUMBER();
+		} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $this->LA(2) === "'") {
+			$this->NUMBER();
+		} elseif (preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
+			$this->text = $matches[0];
+			$this->position += strlen($this->text);
+			$this->c = $this->input[$this->position] ?? null;
+			$this->n = $this->input[$this->position + 1] ?? null;
+			if ($la === '_' && isset(self::UNDERSCORE_CHARSETS[strtolower($this->text)])) {
+				$this->type = self::UNDERSCORE_CHARSET;
+			} else {
+				$this->IDENTIFIER_OR_KEYWORD();
+			}
+		} elseif ($la === null) {
+			$this->matchEOF();
+			$this->tokenInstance = new MySQLToken(self::EOF, '<EOF>');
+			return false;
+		} else {
+			$this->consume();
+			$this->type = self::INVALID_INPUT;
+		}
 
-            if(null !== $this->type) {
-                break;
-            }
-        }
-
-        $this->tokenInstance = new MySQLToken($this->type, $this->text, $this->channel);
+        $this->tokenInstance = $this->type === null ? null : new MySQLToken($this->type, $this->text, $this->channel);
         return true;
     }
 
