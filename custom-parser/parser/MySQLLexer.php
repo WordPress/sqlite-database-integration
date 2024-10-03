@@ -1993,16 +1993,6 @@ class MySQLLexer {
         return $this->text;
     }
 
-    public function getType(): int
-    {
-        return $this->type;
-    }
-
-    public function setType(int $type): void
-    {
-        $this->type = $type;
-    }
-
     public function getNextToken()
     {
         $this->nextToken();
@@ -2034,111 +2024,179 @@ class MySQLLexer {
                     $this->DOT_IDENTIFIER();
                 }
             } elseif ($la === '=') {
-                $this->EQUAL_OPERATOR();
+                $this->consume();
+                $this->type = self::EQUAL_OPERATOR;
             } elseif ($la === ':') {
                 if ($this->LA(2) === '=') {
-                    $this->ASSIGN_OPERATOR();
+                    $this->consume(); // Consume the ':'.
+                    $this->consume(); // Consume the '='.
+                    $this->type = self::ASSIGN_OPERATOR;
                 } else {
-                    $this->COLON_SYMBOL();
+                    $this->consume();
+                    $this->type = self::COLON_SYMBOL;
                 }
             } elseif ($la === '<') {
                 if ($this->LA(2) === '=') {
                     if ($this->LA(3) === '>') {
-                        $this->NULL_SAFE_EQUAL_OPERATOR();
+                        $this->consume(); // Consume the '<'.
+                        $this->consume(); // Consume the '='.
+                        $this->consume(); // Consume the '>'.
+                        $this->type = self::NULL_SAFE_EQUAL_OPERATOR;
                     } else {
-                        $this->LESS_OR_EQUAL_OPERATOR();
+                        $this->consume(); // Consume the '<'.
+                        $this->consume(); // Consume the '='.
+                        $this->type = self::LESS_OR_EQUAL_OPERATOR;
                     }
                 } elseif ($this->LA(2) === '>') {
-                    $this->NOT_EQUAL2_OPERATOR();
+                    $this->consume(); // Consume the '<'.
+                    $this->consume(); // Consume the '>'.
+                    $this->type = self::NOT_EQUAL_OPERATOR;
                 } elseif ($this->LA(2) === '<') {
-                    $this->SHIFT_LEFT_OPERATOR();
+                    $this->consume(); // Consume the '<'.
+                    $this->consume(); // Consume the '<'.
+                    $this->type = self::SHIFT_LEFT_OPERATOR;
                 } else {
-                    $this->LESS_THAN_OPERATOR();
+                    $this->consume();
+                    $this->type = self::LESS_THAN_OPERATOR;
                 }
             } elseif ($la === '>') {
                 if ($this->LA(2) === '=') {
-                    $this->GREATER_OR_EQUAL_OPERATOR();
+                    $this->consume(); // Consume the '>'.
+                    $this->consume(); // Consume the '='.
+                    $this->type = self::GREATER_OR_EQUAL_OPERATOR;
                 } elseif ($this->LA(2) === '>') {
-                    $this->SHIFT_RIGHT_OPERATOR();
+                    $this->consume(); // Consume the '>'.
+                    $this->consume(); // Consume the '>'.
+                    $this->type = self::SHIFT_RIGHT_OPERATOR;
                 } else {
-                    $this->GREATER_THAN_OPERATOR();
+                    $this->consume();
+                    $this->type = self::GREATER_THAN_OPERATOR;
                 }
             } elseif ($la === '!') {
                 if ($this->LA(2) === '=') {
-                    $this->NOT_EQUAL_OPERATOR();
+                    $this->consume(); // Consume the '!'.
+                    $this->consume(); // Consume the '='.
+                    $this->type = self::NOT_EQUAL_OPERATOR;
                 } else {
-                    $this->LOGICAL_NOT_OPERATOR();
+                    $this->consume();
+                    $this->type = self::LOGICAL_NOT_OPERATOR;
                 }
             } elseif ($la === '+') {
-                $this->PLUS_OPERATOR();
+                $this->consume();
+                $this->type = self::PLUS_OPERATOR;
             } elseif ($la === '-') {
                 if ($this->LA(2) === '>') {
                     if ($this->LA(3) === '>') {
-                        $this->JSON_UNQUOTED_SEPARATOR_SYMBOL();
+                        if ($this->serverVersion >= 50713) {
+                            $this->consume(); // Consume the '-'.
+                            $this->consume(); // Consume the '>'.
+                            $this->consume(); // Consume the '>'.
+                            $this->type = self::JSON_UNQUOTED_SEPARATOR_SYMBOL;
+                        } else {
+                            $this->consume();
+                            $this->type = self::INVALID_INPUT;
+                        }
                     } else {
-                        $this->JSON_SEPARATOR_SYMBOL();
+                        if ($this->serverVersion >= 50708) {
+                            $this->consume(); // Consume the '-'.
+                            $this->consume(); // Consume the '>'.
+                            $this->type = self::JSON_SEPARATOR_SYMBOL;
+                        } else {
+                            $this->consume();
+                            $this->type = self::INVALID_INPUT;
+                        }
                     }
                 } else {
-                    $this->MINUS_OPERATOR();
+                    $this->consume();
+                    $this->type = self::MINUS_OPERATOR;
                 }
             } elseif ($la === '*') {
-                $this->MULT_OPERATOR();
+                $this->consume();
+                $this->type = self::MULT_OPERATOR;
             } elseif ($la === '/') {
                 if ($this->LA(2) === '*') {
                     $this->blockComment();
                 } else {
-                    $this->DIV_OPERATOR();
+                    $this->consume();
+                    $this->type = self::DIV_OPERATOR;
                 }
             } elseif ($la === '%') {
-                $this->MOD_OPERATOR();
+                $this->consume();
+                $this->type = self::MOD_OPERATOR;
             } elseif ($la === '&') {
                 if ($this->LA(2) === '&') {
-                    $this->LOGICAL_AND_OPERATOR();
+                    $this->consume(); // Consume the '&'.
+                    $this->consume(); // Consume the '&'.
+                    $this->type = self::LOGICAL_AND_OPERATOR;
                 } else {
-                    $this->BITWISE_AND_OPERATOR();
+                    $this->consume();
+                    $this->type = self::BITWISE_AND_OPERATOR;
                 }
             } elseif ($la === '^') {
-                $this->BITWISE_XOR_OPERATOR();
+                $this->consume();
+                $this->type = self::BITWISE_XOR_OPERATOR;
             } elseif ($la === '|') {
                 if ($this->LA(2) === '|') {
-                    $this->LOGICAL_OR_OPERATOR();
+                    $this->consume(); // Consume the '|'.
+                    $this->consume(); // Consume the '|'.
+                    $this->type = $this->isSqlModeActive(self::SQL_MODE_PIPES_AS_CONCAT)
+                        ? self::CONCAT_PIPES_SYMBOL
+                        : self::LOGICAL_OR_OPERATOR;
                 } else {
-                    $this->BITWISE_OR_OPERATOR();
+                    $this->consume();
+                    $this->type = self::BITWISE_OR_OPERATOR;
                 }
             } elseif ($la === '~') {
-                $this->BITWISE_NOT_OPERATOR();
+                $this->consume();
+                $this->type = self::BITWISE_NOT_OPERATOR;
             } elseif ($la === ',') {
-                $this->COMMA_SYMBOL();
+                $this->consume();
+                $this->type = self::COMMA_SYMBOL;
             } elseif ($la === ';') {
-                $this->SEMICOLON_SYMBOL();
+                $this->consume();
+                $this->type = self::SEMICOLON_SYMBOL;
             } elseif ($la === '(') {
-                $this->OPEN_PAR_SYMBOL();
+                $this->consume();
+                $this->type = self::OPEN_PAR_SYMBOL;
             } elseif ($la === ')') {
-                $this->CLOSE_PAR_SYMBOL();
+                $this->consume();
+                $this->type = self::CLOSE_PAR_SYMBOL;
             } elseif ($la === '{') {
-                $this->OPEN_CURLY_SYMBOL();
+                $this->consume();
+                $this->type = self::OPEN_CURLY_SYMBOL;
             } elseif ($la === '}') {
-                $this->CLOSE_CURLY_SYMBOL();
+                $this->consume();
+                $this->type = self::CLOSE_CURLY_SYMBOL;
             } elseif ($la === '@') {
                 if ($this->LA(2) === '@') {
-                    $this->AT_AT_SIGN_SYMBOL();
+                    $this->consume(); // Consume the '@'.
+                    $this->consume(); // Consume the '@'.
+                    $this->type = self::AT_AT_SIGN_SYMBOL;
                 } else {
-                    $this->AT_SIGN_SYMBOL();
+                    $this->consume();
+                    $this->type = self::AT_SIGN_SYMBOL;
                 }
             } elseif ($la === '?') {
-                $this->PARAM_MARKER();
+                $this->consume();
+                $this->type = self::PARAM_MARKER;
             } elseif ($la === '\\') {
                 if ($this->LA(2) === 'N') {
-                    $this->NULL2_SYMBOL();
+                    $this->consume(); // Consume the '\'.
+                    $this->consume(); // Consume the 'N'.
+                    $this->type = self::NULL2_SYMBOL;
                 } else {
-                    $this->INVALID_INPUT();
+                    $this->consume();
+                    $this->type = self::INVALID_INPUT;
                 }
             } elseif ($la === '#') {
                 $this->POUND_COMMENT();
             } elseif ($la === '-' && $this->LA(2) === '-') {
                 $this->DASHDASH_COMMENT();
             } elseif ($this->isWhitespace($la)) {
-                $this->WHITESPACE();
+                while ($this->isWhitespace($this->c)) {
+                    $this->consume();
+                }
+                $this->channel = self::CHANNEL_HIDDEN;
             } elseif ($la === '0' && ($this->LA(2) === 'x' || $this->LA(2) === 'b')) {
                 $this->NUMBER();
 			} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $this->LA(2) === "'") {
@@ -2158,7 +2216,8 @@ class MySQLLexer {
                 $this->tokenInstance = new MySQLToken(self::EOF, '<EOF>');
                 return false;
             } else {
-                $this->INVALID_INPUT();
+                $this->consume();
+                $this->type = self::INVALID_INPUT;
             }
 
             if(null !== $this->type) {
@@ -2168,43 +2227,6 @@ class MySQLLexer {
 
         $this->tokenInstance = new MySQLToken($this->type, $this->text, $this->channel);
         return true;
-    }
-
-    public function getToken()
-    {
-        return $this->tokenInstance;
-    }
-
-    public function peekNextToken(int $k=1)
-    {
-        if ($k <= 0) {
-            throw new \InvalidArgumentException('k must be greater than 0.');
-        }
-
-        $pos = $this->position;
-        $c = $this->c;
-        $n = $this->n;
-        $token = $this->token;
-        $text = $this->text;
-        $type = $this->type;
-        $channel = $this->channel;
-        $tokenInstance = $this->tokenInstance;
-
-        $token = null;
-        for ($i = 1; $i <= $k; ++$i) {
-            $token = $this->getNextToken();
-        }
-
-        $this->position = $pos;
-        $this->c = $c;
-        $this->n = $n;
-        $this->token = $token;
-        $this->text = $text;
-        $this->type = $type;
-        $this->channel = $channel;
-        $this->tokenInstance = $tokenInstance;
-
-        return $token;
     }
 
     protected function LA(int $i): ?string
@@ -2242,23 +2264,9 @@ class MySQLLexer {
     protected function matchEOF(): void
     {
         if ($this->c === null) {
-            $this->matchAny();
-        } else {
-            throw new \RuntimeException('Current character is not EOF.');
-        }
-    }
-
-    protected function matchAny(): void
-    {
-        $this->consume();
-    }
-
-    protected function match(string $x): void
-    {
-        if ($this->c === $x) {
             $this->consume();
         } else {
-            throw new \RuntimeException(sprintf("Expecting '%s', found '%s'", $x, $this->c));
+            throw new \RuntimeException('Current character is not EOF.');
         }
     }
 
@@ -2408,8 +2416,8 @@ class MySQLLexer {
     protected function DOT_IDENTIFIER()
     {
         $this->consume(); // Consume the '.'.
-        $this->IDENTIFIER();
-        $this->setType(self::DOT_SYMBOL);//@TODO: DOT_IDENTIFIER);
+        $this->type = self::IDENTIFIER;
+        $this->type = self::DOT_SYMBOL;//@TODO: DOT_IDENTIFIER);
     }
 
     protected function NUMBER()
@@ -2439,14 +2447,14 @@ class MySQLLexer {
                         while ($this->isDigit($this->c)) {
                             $this->consume();
                         }
-                        $this->setType(self::FLOAT_NUMBER);
+                        $this->type = self::FLOAT_NUMBER;
                     } else {
-                        $this->setType(self::DECIMAL_NUMBER);
+                        $this->type = self::DECIMAL_NUMBER;
                     }
                 } else {
                     // If there is no digit after the '.', it's a DOT_IDENTIFIER.
                     $this->emitDot();
-                    $this->setType(self::IDENTIFIER);
+                    $this->type = self::IDENTIFIER;
                 }
             } elseif ($this->c === 'e' || $this->c === 'E') {
                 $this->consume();
@@ -2456,7 +2464,7 @@ class MySQLLexer {
                 while ($this->isDigit($this->c)) {
                     $this->consume();
                 }
-                $this->setType(self::FLOAT_NUMBER);
+                $this->type = self::FLOAT_NUMBER;
             }
         }
     }
@@ -2474,7 +2482,8 @@ class MySQLLexer {
 			$this->n = $this->input[$this->position + 1] ?? null;
 			$this->type = self::SINGLE_QUOTED_TEXT;
 		} else {
-			$this->INVALID_INPUT();
+			$this->consume();
+			$this->type = self::INVALID_INPUT;
 		}
 	}
 
@@ -2491,7 +2500,8 @@ class MySQLLexer {
 			$this->n = $this->input[$this->position + 1] ?? null;
 			$this->type = self::DOUBLE_QUOTED_TEXT;
 		} else {
-			$this->INVALID_INPUT();
+			$this->consume();
+			$this->type = self::INVALID_INPUT;
 		}
 	}
 
@@ -2508,7 +2518,8 @@ class MySQLLexer {
 			$this->n = $this->input[$this->position + 1] ?? null;
 			$this->type = self::BACK_TICK_QUOTED_ID;
 		} else {
-			$this->INVALID_INPUT();
+			$this->consume();
+			$this->type = self::INVALID_INPUT;
 		}
 	}
 
@@ -2532,7 +2543,7 @@ class MySQLLexer {
 			$this->consume(); // Consume the "'".
 		}
 
-		$this->setType(self::HEX_NUMBER);
+		$this->type = self::HEX_NUMBER;
 	}
 
     protected function BIN_NUMBER()
@@ -2551,7 +2562,7 @@ class MySQLLexer {
 			$this->consume(); // Consume the "'".
 		}
 
-        $this->setType(self::BIN_NUMBER);
+        $this->type = self::BIN_NUMBER;
     }
 
     protected function INT_NUMBER()
@@ -2559,7 +2570,7 @@ class MySQLLexer {
         while ($this->isDigit($this->c)) {
             $this->consume();
         }
-        $this->setType(self::INT_NUMBER);
+        $this->type = self::INT_NUMBER;
     }
 
     protected function DECIMAL_NUMBER()
@@ -2568,279 +2579,7 @@ class MySQLLexer {
         while ($this->isDigit($this->c)) {
             $this->consume();
         }
-        $this->setType(self::DECIMAL_NUMBER);
-    }
-
-    protected function FLOAT_NUMBER()
-    {
-        // This rule is never actually called, as FLOAT_NUMBER tokens are emitted by NUMBER().
-        throw new \BadMethodCallException('FLOAT_NUMBER() should never be called directly.');
-    }
-
-    protected function EQUAL_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::EQUAL_OPERATOR);
-    }
-
-    protected function ASSIGN_OPERATOR()
-    {
-        $this->consume(); // Consume the ':'.
-        $this->consume(); // Consume the '='.
-        $this->setType(self::ASSIGN_OPERATOR);
-    }
-
-    protected function NULL_SAFE_EQUAL_OPERATOR()
-    {
-        $this->consume(); // Consume the '<'.
-        $this->consume(); // Consume the '='.
-        $this->consume(); // Consume the '>'.
-        $this->setType(self::NULL_SAFE_EQUAL_OPERATOR);
-    }
-
-    protected function GREATER_OR_EQUAL_OPERATOR()
-    {
-        $this->consume(); // Consume the '>'.
-        $this->consume(); // Consume the '='.
-        $this->setType(self::GREATER_OR_EQUAL_OPERATOR);
-    }
-
-    protected function GREATER_THAN_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::GREATER_THAN_OPERATOR);
-    }
-
-    protected function LESS_OR_EQUAL_OPERATOR()
-    {
-        $this->consume(); // Consume the '<'.
-        $this->consume(); // Consume the '='.
-        $this->setType(self::LESS_OR_EQUAL_OPERATOR);
-    }
-
-    protected function LESS_THAN_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::LESS_THAN_OPERATOR);
-    }
-
-    protected function NOT_EQUAL_OPERATOR()
-    {
-        $this->consume(); // Consume the '!'.
-        $this->consume(); // Consume the '='.
-        $this->setType(self::NOT_EQUAL_OPERATOR);
-    }
-
-    protected function NOT_EQUAL2_OPERATOR()
-    {
-        $this->consume(); // Consume the '<'.
-        $this->consume(); // Consume the '>'.
-        $this->setType(self::NOT_EQUAL_OPERATOR);
-    }
-
-    protected function PLUS_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::PLUS_OPERATOR);
-    }
-
-    protected function MINUS_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::MINUS_OPERATOR);
-    }
-
-    protected function MULT_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::MULT_OPERATOR);
-    }
-
-    protected function DIV_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::DIV_OPERATOR);
-    }
-
-    protected function MOD_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::MOD_OPERATOR);
-    }
-
-    protected function LOGICAL_NOT_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::LOGICAL_NOT_OPERATOR);
-    }
-
-    protected function BITWISE_NOT_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::BITWISE_NOT_OPERATOR);
-    }
-
-    protected function SHIFT_LEFT_OPERATOR()
-    {
-        $this->consume(); // Consume the '<'.
-        $this->consume(); // Consume the '<'.
-        $this->setType(self::SHIFT_LEFT_OPERATOR);
-    }
-
-    protected function SHIFT_RIGHT_OPERATOR()
-    {
-        $this->consume(); // Consume the '>'.
-        $this->consume(); // Consume the '>'.
-        $this->setType(self::SHIFT_RIGHT_OPERATOR);
-    }
-
-    protected function LOGICAL_AND_OPERATOR()
-    {
-        $this->consume(); // Consume the '&'.
-        $this->consume(); // Consume the '&'.
-        $this->setType(self::LOGICAL_AND_OPERATOR);
-    }
-
-    protected function BITWISE_AND_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::BITWISE_AND_OPERATOR);
-    }
-
-    protected function BITWISE_XOR_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::BITWISE_XOR_OPERATOR);
-    }
-
-    protected function LOGICAL_OR_OPERATOR()
-    {
-        $this->consume(); // Consume the '|'.
-        $this->consume(); // Consume the '|'.
-
-        if ($this->isSqlModeActive(self::SQL_MODE_PIPES_AS_CONCAT)) {
-            $this->setType(self::CONCAT_PIPES_SYMBOL);
-        } else {
-            $this->setType(self::LOGICAL_OR_OPERATOR);
-        }
-    }
-
-    protected function BITWISE_OR_OPERATOR()
-    {
-        $this->consume();
-        $this->setType(self::BITWISE_OR_OPERATOR);
-    }
-
-    protected function DOT_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::DOT_SYMBOL);
-    }
-
-    protected function COMMA_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::COMMA_SYMBOL);
-    }
-
-    protected function SEMICOLON_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::SEMICOLON_SYMBOL);
-    }
-
-    protected function COLON_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::COLON_SYMBOL);
-    }
-
-    protected function OPEN_PAR_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::OPEN_PAR_SYMBOL);
-    }
-
-    protected function CLOSE_PAR_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::CLOSE_PAR_SYMBOL);
-    }
-
-    protected function OPEN_CURLY_SYMBOL()
-    {
-        $this       ->consume();
-        $this->setType(self::OPEN_CURLY_SYMBOL);
-    }
-
-    protected function CLOSE_CURLY_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::CLOSE_CURLY_SYMBOL);
-    }
-
-    protected function JSON_SEPARATOR_SYMBOL()
-    {
-        if ($this->serverVersion >= 50708) {
-            $this->consume(); // Consume the '-'.
-            $this->consume(); // Consume the '>'.
-            $this->setType(self::JSON_SEPARATOR_SYMBOL);
-        } else {
-            $this->setType(self::INVALID_INPUT);
-        }
-    }
-
-    protected function JSON_UNQUOTED_SEPARATOR_SYMBOL()
-    {
-        if ($this->serverVersion >= 50713) {
-            $this->consume(); // Consume the '-'.
-            $this->consume(); // Consume the '>'.
-            $this->consume(); // Consume the '>'.
-            $this->setType(self::JSON_UNQUOTED_SEPARATOR_SYMBOL);
-        } else {
-            $this->setType(self::INVALID_INPUT);
-        }
-    }
-
-    protected function AT_SIGN_SYMBOL()
-    {
-        $this->consume();
-        $this->setType(self::AT_SIGN_SYMBOL);
-    }
-
-    protected function AT_AT_SIGN_SYMBOL()
-    {
-        $this->consume(); // Consume the '@'.
-        $this->consume(); // Consume the '@'.
-        $this->setType(self::AT_AT_SIGN_SYMBOL);
-    }
-
-    protected function NULL2_SYMBOL()
-    {
-        $this->consume(); // Consume the '\'.
-        $this->consume(); // Consume the 'N'.
-        $this->setType(self::NULL2_SYMBOL);
-    }
-
-    protected function PARAM_MARKER()
-    {
-        $this->consume();
-        $this->setType(self::PARAM_MARKER);
-    }
-
-    protected function WHITESPACE()
-    {
-        while ($this->isWhitespace($this->c)) {
-            $this->consume();
-        }
-
-        $this->channel = self::CHANNEL_HIDDEN;
-    }
-
-    protected function INVALID_INPUT()
-    {
-        $this->consume();
-        $this->setType(self::INVALID_INPUT);
+        $this->type = self::DECIMAL_NUMBER;
     }
 
     protected function POUND_COMMENT()
@@ -2874,11 +2613,6 @@ class MySQLLexer {
         }
 
         $this->channel = self::CHANNEL_HIDDEN;
-    }
-
-    protected function IDENTIFIER()
-    {
-        $this->setType(self::IDENTIFIER);
     }
 
     protected function MYSQL_COMMENT_START()
