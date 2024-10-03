@@ -1,26 +1,5 @@
 <?php
 
-function safe_ctype_digit($string) {
-    if (null === $string || strlen($string) === 0) {
-        return false;
-    }
-    return ctype_digit($string);
-}
-
-function safe_ctype_xdigit($string) {
-	if (null === $string || strlen($string) === 0) {
-		return false;
-	}
-	return ctype_xdigit($string);
-}
-
-function safe_ctype_space($string) {
-    if (null === $string || strlen($string) === 0) {
-        return false;
-    }
-    return ctype_space($string);
-}
-
 class MySQLLexer {
 	// SQL modes
 	const SQL_MODE_NO_MODE = 0;
@@ -29,6 +8,8 @@ class MySQLLexer {
 	const SQL_MODE_PIPES_AS_CONCAT = 1 << 2;
 	const SQL_MODE_IGNORE_SPACE = 1 << 3;
 	const SQL_MODE_NO_BACKSLASH_ESCAPES = 1 << 4;
+
+	const WHITESPACES = [' ' => true, "\t" => true, "\n" => true, "\r" => true, "\f" => true];
 
 	/**
 	 * Unquoted identifiers:
@@ -1020,10 +1001,10 @@ class MySQLLexer {
                 $this->DOUBLE_QUOTED_TEXT();
             } elseif ($la === '`') {
                 $this->BACK_TICK_QUOTED_ID();
-            } elseif (safe_ctype_digit($la)) {
+            } elseif ($this->isDigit($la)) {
                 $this->NUMBER();
             } elseif ($la === '.') {
-                if (safe_ctype_digit($this->LA(2))) {
+                if ($this->isDigit($this->LA(2))) {
                     $this->NUMBER();
                 } else {
                     $this->DOT_IDENTIFIER();
@@ -1132,7 +1113,7 @@ class MySQLLexer {
                 $this->POUND_COMMENT();
             } elseif ($la === '-' && $this->LA(2) === '-') {
                 $this->DASHDASH_COMMENT();
-            } elseif (safe_ctype_space($la)) {
+            } elseif ($this->isWhitespace($la)) {
                 $this->WHITESPACE();
             } elseif ($la === '0' && ($this->LA(2) === 'x' || $this->LA(2) === 'b')) {
                 $this->NUMBER();
@@ -3141,7 +3122,7 @@ class MySQLLexer {
 			// Skip any whitespace character if the SQL mode says they should be ignored.
 			$i = 1;
 			if ($this->isSqlModeActive(self::SQL_MODE_IGNORE_SPACE)) {
-				while (safe_ctype_space($this->LA($i))) {
+				while ($this->isWhitespace($this->LA($i))) {
 					$i++;
 				}
 			}
@@ -3170,9 +3151,9 @@ class MySQLLexer {
             $this->consume(); // Consume the '!'.
 
             // If the next character is a digit, it's a version comment.
-            if (safe_ctype_digit($this->c)) {
+            if ($this->isDigit($this->c)) {
                 // Consume all digits.
-                while (safe_ctype_digit($this->c)) {
+                while ($this->isDigit($this->c)) {
                     $this->consume();
                 }
 
@@ -3230,7 +3211,7 @@ class MySQLLexer {
             $this->HEX_NUMBER();
         } elseif (($this->c === '0' && $this->n === 'b') || (strtolower($this->c) === 'b' && $this->n === "'")) {
             $this->BIN_NUMBER();
-        } elseif ($this->c === '.' && safe_ctype_digit($this->LA(2))) {
+        } elseif ($this->c === '.' && $this->isDigit($this->LA(2))) {
             $this->DECIMAL_NUMBER();
         } else {
             $this->INT_NUMBER();
@@ -3238,8 +3219,8 @@ class MySQLLexer {
             if ($this->c === '.') {
                 $this->consume();
 
-                if (safe_ctype_digit($this->c)) {
-                    while (safe_ctype_digit($this->c)) {
+                if ($this->isDigit($this->c)) {
+                    while ($this->isDigit($this->c)) {
                         $this->consume();
                     }
 
@@ -3248,7 +3229,7 @@ class MySQLLexer {
                         if ($this->c === '+' || $this->c === '-') {
                             $this->consume();
                         }
-                        while (safe_ctype_digit($this->c)) {
+                        while ($this->isDigit($this->c)) {
                             $this->consume();
                         }
                         $this->setType(self::FLOAT_NUMBER);
@@ -3265,7 +3246,7 @@ class MySQLLexer {
                 if ($this->c === '+' || $this->c === '-') {
                     $this->consume();
                 }
-                while (safe_ctype_digit($this->c)) {
+                while ($this->isDigit($this->c)) {
                     $this->consume();
                 }
                 $this->setType(self::FLOAT_NUMBER);
@@ -3332,7 +3313,11 @@ class MySQLLexer {
 		$this->consume();
 		$this->consume();
 
-		while (safe_ctype_xdigit($this->c)) {
+		while (
+			($this->c >= '0' && $this->c <= '9')
+			|| ($this->c >= 'a' && $this->c <= 'f')
+			|| ($this->c >= 'A' && $this->c <= 'F')
+		) {
 			$this->consume();
 		}
 
@@ -3364,7 +3349,7 @@ class MySQLLexer {
 
     protected function INT_NUMBER()
     {
-        while (safe_ctype_digit($this->c)) {
+        while ($this->isDigit($this->c)) {
             $this->consume();
         }
         $this->setType(self::DECIMAL_NUMBER);
@@ -3373,7 +3358,7 @@ class MySQLLexer {
     protected function DECIMAL_NUMBER()
     {
         $this->consume(); // Consume the '.'.
-        while (safe_ctype_digit($this->c)) {
+        while ($this->isDigit($this->c)) {
             $this->consume();
         }
         $this->setType(self::DECIMAL_NUMBER);
@@ -3638,7 +3623,7 @@ class MySQLLexer {
 
     protected function WHITESPACE()
     {
-        while (safe_ctype_space($this->c)) {
+        while ($this->isWhitespace($this->c)) {
             $this->consume();
         }
 
@@ -3670,7 +3655,7 @@ class MySQLLexer {
         $this->consume(); // Consume the '-'.
         $this->consume(); // Consume the '-'.
 
-        while (safe_ctype_space($this->c)) {
+        while ($this->isWhitespace($this->c)) {
             $this->consume();
         }
 
@@ -3706,7 +3691,7 @@ class MySQLLexer {
     {
         $this->consume(); // Consume the '/*'.
         $this->consume(); // Consume the '!'.
-        while (safe_ctype_digit($this->c)) {
+        while ($this->isDigit($this->c)) {
             $this->consume();
         }
         if ($this->checkVersion($this->getText())) {
@@ -3736,6 +3721,14 @@ class MySQLLexer {
     }
 
     // Helper functions -----------------------------------------------------------------------------------------------------
+
+	private function isWhitespace($char) {
+		return isset(self::WHITESPACES[$char]);
+	}
+
+	private function isDigit($char) {
+		return $char >= '0' && $char <= '9';
+	}
 
     private function determineNumericType($text): int
     {
