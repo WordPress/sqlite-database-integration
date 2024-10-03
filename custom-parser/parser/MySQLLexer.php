@@ -2559,7 +2559,7 @@ class MySQLLexer {
         while ($this->isDigit($this->c)) {
             $this->consume();
         }
-        $this->setType(self::DECIMAL_NUMBER);
+        $this->setType(self::INT_NUMBER);
     }
 
     protected function DECIMAL_NUMBER()
