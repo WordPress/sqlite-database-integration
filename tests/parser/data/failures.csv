@@ -294,7 +294,6 @@ END;"
 CHECK (f1 < f2))"
 "my $mode = (stat($ENV{SESSION_FILE}))[2]"
 "my $perm = sprintf ""%04o"", ($mode & 07777)"
-"/* line with only comment */"
 "SELECT 1 /*!99999 /* */ */"
 "SELECT 2 /*!12345 /* */ */"
 "SELECT 3 /*! /* */ */"
@@ -697,8 +696,6 @@ JOIN t1 ON 1 WHERE (CAST(""1"" AS JSON) MEMBER OF( t1.col_json->'$[*]'))"
 pk INT PRIMARY KEY,
 vc VARCHAR(1) NOT NULL,
 gc INT GENERATED ALWAYS AS (1))"
-"/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */"
-"/*!40101 SET SQL_MODE=@OLD_SQL_MODE */"
 echo
 "REVOKE ALL PRIVILEGES ON db35380295.* FROM u1b35380295"
 "FLUSH LOCAL TABLES test.t1, test.t2 for ExPoRt"
@@ -731,8 +728,6 @@ UNIQUE KEY(pk))"
 "CREATE TABLE self (base INT, pk INT GENERATED ALWAYS AS (base+1) STORED, fk INT,
 UNIQUE KEY(pk), FOREIGN KEY (fk) REFERENCES self(pk))"
 "CREATE TABLE parent0 (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
-"/*!50101 CREATE TABLE child (fk INT, FOREIGN KEY (fk) REFERENCES parent(pk)) */"
-"/*! ALTER TABLE child ADD FOREIGN KEY (fk) REFERENCES parent(pk) */"
 "CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT, F3 INT AS (f1+1) VIRTUAL,
 FOREIGN KEY(f2) REFERENCES t2(f3))"
 "CREATE TABLE t1 (f1 VARCHAR(10), f2 VARCHAR(10),
@@ -1764,16 +1759,6 @@ SELECT * FROM information_schema.schemata"
 
 
 connect(root_con,localhost,root,,mysql)"
-"/* 8 */
-INSERT INTO t1 (id) SELECT id FROM t1"
-"/* 12 */
-INSERT INTO t1 (id) SELECT id FROM t1"
-"/* 16 */
-INSERT INTO t1 (id) SELECT id FROM t1"
-"/* 20 */
-INSERT INTO t1 (id) SELECT id FROM t1"
-"/* 24 */
-INSERT INTO t1 SELECT id+1 FROM t1"
 "CREATE TABLE t1(a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
 c INT GENERATED ALWAYS AS (-a) STORED)"
@@ -2269,10 +2254,6 @@ connection default"
 "foreach $line (@lines) {
 if ($line =~ /^select/) {
 print $line"
-"/*!50003 CREATE FUNCTION `f`() RETURNS bigint(20)
-return 42 */"
-"/*!50003 CREATE PROCEDURE `p`()
-select 42 */"
 "revoke all privileges on mysqldump_myDB.* from myDB_User@localhost"
 "CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
 sum INTEGER GENERATED ALWAYS AS (a+b),
@@ -2326,7 +2307,6 @@ EOF
 
 echo # cleanup
 DROP TABLE b34999015_db.`KEY`"
-"/*!99999 SET @@SESSION.non_supported_session_variable = 1*/"
 "REVOKE ALL PRIVILEGES ON *.* FROM user1"
 "CREATE TEMPORARY TABLE Temp3 LIKE Temp2"
 "CREATE TEMPORARY TABLE tt1 LIKE performance_schema.setup_consumers"
@@ -2963,12 +2943,6 @@ ELSE f END"
 "SHOW PARSE_TREE SELECT * FROM t JOIN t2 NATURAL JOIN (t3 LEFT JOIN t4 USING (col1, col2))"
 "SHOW PARSE_TREE SELECT * FROM t JOIN t2 JOIN t3 USING (col1, col2) JOIN (SELECT * FROM tab) AS t4"
 "SHOW PARSE_TREE SELECT db.func(), char(col1), char(col1 USING utf8mb4), concat(a,b), concat(a,b) COLLATE utf8mb4_turkish_ci"
-"/* John Doe wants 1 table and 4 chairs */
-call po_create_order(""P"", 1, @my_po)"
-"/* Marry Smith wants a coffee table */
-call po_create_order(""P"", 2, @my_po)"
-"/* The local school wants 10 class tables and 20 chairs */
-call po_create_order(""M"", 4, @my_po)"
 "my $filename = $ENV{""MYSQLD_PIDFILE""} or die(""pidfile not set"")"
 "my $pid"
 "my $wait_cnt=60"
@@ -4041,15 +4015,6 @@ end"
 "call bug1656(@1, @2)"
 "select @1, @2"
 "show binary log status"
-"/*!50003 create function bug14723()
-returns bigint(20)
-main_loop: begin
-return 42;
-end */"
-"/*!50003 create procedure bug14723()
-main_loop: begin
-select 42;
-end */"
 "create procedure mysqltest1.p1()
 begin
 alter database character set koi8r;

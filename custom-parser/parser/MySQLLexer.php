@@ -1960,6 +1960,8 @@ class MySQLLexer {
         $this->input = $input;
         $this->serverVersion = $serverVersion;
         $this->sqlModes = $sqlModes;
+        $this->c = $this->input[$this->position] ?? null;
+        $this->n = $this->input[$this->position + 1] ?? null;
     }
 
     public function isSqlModeActive(int $mode): bool
@@ -2008,7 +2010,8 @@ class MySQLLexer {
 		$this->tokenInstance = null;
 		$this->channel = self::CHANNEL_DEFAULT;
 
-		$la = $this->LA(1);
+		$la = $this->c;
+		$la2 = $this->n;
 
 		if ($la === "'") {
 			$this->SINGLE_QUOTED_TEXT();
@@ -2019,7 +2022,7 @@ class MySQLLexer {
 		} elseif ($this->isDigit($la)) {
 			$this->NUMBER();
 		} elseif ($la === '.') {
-			if ($this->isDigit($this->LA(2))) {
+			if ($this->isDigit($la2)) {
 				$this->NUMBER();
 			} else {
 				$this->DOT_IDENTIFIER();
@@ -2028,7 +2031,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::EQUAL_OPERATOR;
 		} elseif ($la === ':') {
-			if ($this->LA(2) === '=') {
+			if ($la2 === '=') {
 				$this->consume(); // Consume the ':'.
 				$this->consume(); // Consume the '='.
 				$this->type = self::ASSIGN_OPERATOR;
@@ -2037,7 +2040,7 @@ class MySQLLexer {
 				$this->type = self::COLON_SYMBOL;
 			}
 		} elseif ($la === '<') {
-			if ($this->LA(2) === '=') {
+			if ($la2 === '=') {
 				if ($this->LA(3) === '>') {
 					$this->consume(); // Consume the '<'.
 					$this->consume(); // Consume the '='.
@@ -2048,11 +2051,11 @@ class MySQLLexer {
 					$this->consume(); // Consume the '='.
 					$this->type = self::LESS_OR_EQUAL_OPERATOR;
 				}
-			} elseif ($this->LA(2) === '>') {
+			} elseif ($la2 === '>') {
 				$this->consume(); // Consume the '<'.
 				$this->consume(); // Consume the '>'.
 				$this->type = self::NOT_EQUAL_OPERATOR;
-			} elseif ($this->LA(2) === '<') {
+			} elseif ($la2 === '<') {
 				$this->consume(); // Consume the '<'.
 				$this->consume(); // Consume the '<'.
 				$this->type = self::SHIFT_LEFT_OPERATOR;
@@ -2061,11 +2064,11 @@ class MySQLLexer {
 				$this->type = self::LESS_THAN_OPERATOR;
 			}
 		} elseif ($la === '>') {
-			if ($this->LA(2) === '=') {
+			if ($la2 === '=') {
 				$this->consume(); // Consume the '>'.
 				$this->consume(); // Consume the '='.
 				$this->type = self::GREATER_OR_EQUAL_OPERATOR;
-			} elseif ($this->LA(2) === '>') {
+			} elseif ($la2 === '>') {
 				$this->consume(); // Consume the '>'.
 				$this->consume(); // Consume the '>'.
 				$this->type = self::SHIFT_RIGHT_OPERATOR;
@@ -2074,7 +2077,7 @@ class MySQLLexer {
 				$this->type = self::GREATER_THAN_OPERATOR;
 			}
 		} elseif ($la === '!') {
-			if ($this->LA(2) === '=') {
+			if ($la2 === '=') {
 				$this->consume(); // Consume the '!'.
 				$this->consume(); // Consume the '='.
 				$this->type = self::NOT_EQUAL_OPERATOR;
@@ -2086,7 +2089,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::PLUS_OPERATOR;
 		} elseif ($la === '-') {
-			if ($this->LA(2) === '>') {
+			if ($la2 === '>') {
 				if ($this->LA(3) === '>') {
 					if ($this->serverVersion >= 50713) {
 						$this->consume(); // Consume the '-'.
@@ -2115,7 +2118,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::MULT_OPERATOR;
 		} elseif ($la === '/') {
-			if ($this->LA(2) === '*') {
+			if ($la2 === '*') {
 				$this->blockComment();
 			} else {
 				$this->consume();
@@ -2125,7 +2128,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::MOD_OPERATOR;
 		} elseif ($la === '&') {
-			if ($this->LA(2) === '&') {
+			if ($la2 === '&') {
 				$this->consume(); // Consume the '&'.
 				$this->consume(); // Consume the '&'.
 				$this->type = self::LOGICAL_AND_OPERATOR;
@@ -2137,7 +2140,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::BITWISE_XOR_OPERATOR;
 		} elseif ($la === '|') {
-			if ($this->LA(2) === '|') {
+			if ($la2 === '|') {
 				$this->consume(); // Consume the '|'.
 				$this->consume(); // Consume the '|'.
 				$this->type = $this->isSqlModeActive(self::SQL_MODE_PIPES_AS_CONCAT)
@@ -2169,7 +2172,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::CLOSE_CURLY_SYMBOL;
 		} elseif ($la === '@') {
-			if ($this->LA(2) === '@') {
+			if ($la2 === '@') {
 				$this->consume(); // Consume the '@'.
 				$this->consume(); // Consume the '@'.
 				$this->type = self::AT_AT_SIGN_SYMBOL;
@@ -2181,7 +2184,7 @@ class MySQLLexer {
 			$this->consume();
 			$this->type = self::PARAM_MARKER;
 		} elseif ($la === '\\') {
-			if ($this->LA(2) === 'N') {
+			if ($la2 === 'N') {
 				$this->consume(); // Consume the '\'.
 				$this->consume(); // Consume the 'N'.
 				$this->type = self::NULL2_SYMBOL;
@@ -2191,16 +2194,16 @@ class MySQLLexer {
 			}
 		} elseif ($la === '#') {
 			$this->POUND_COMMENT();
-		} elseif ($la === '-' && $this->LA(2) === '-') {
+		} elseif ($la === '-' && $la2 === '-') {
 			$this->DASHDASH_COMMENT();
 		} elseif ($this->isWhitespace($la)) {
 			while ($this->isWhitespace($this->c)) {
 				$this->consume();
 			}
 			$this->channel = self::CHANNEL_HIDDEN;
-		} elseif ($la === '0' && ($this->LA(2) === 'x' || $this->LA(2) === 'b')) {
+		} elseif ($la === '0' && ($la2 === 'x' || $la2 === 'b')) {
 			$this->NUMBER();
-		} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $this->LA(2) === "'") {
+		} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $la2 === "'") {
 			$this->NUMBER();
 		} elseif (preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
 			$this->text = $matches[0];
@@ -2227,34 +2230,15 @@ class MySQLLexer {
 
     protected function LA(int $i): ?string
     {
-        if(null === $this->c) {
-            $this->c = $this->input[$this->position] ?? null;
-        }
-        if ($i === 1) {
-            return $this->c;
-        } elseif ($i === 2) {
-            return $this->n;
-        } else {
-            if ($this->position + $i - 1 >= strlen($this->input)) {
-                return null;
-            } else {
-                return $this->input[$this->position + $i - 1];
-            }
-        }
+        return $this->input[$this->position + $i - 1] ?? null;
     }
 
     protected function consume(): void
     {
         $this->text .= $this->c;
-
-        if ($this->position < strlen($this->input)) {
-            ++$this->position;
-            $this->c = $this->input[$this->position] ?? null;
-            $this->n = $this->input[$this->position + 1] ?? null;
-        } else {
-            $this->c = null;
-            $this->n = null;
-        }
+        $this->position += 1;
+        $this->c = $this->input[$this->position] ?? null;
+        $this->n = $this->input[$this->position + 1] ?? null;
     }
 
     protected function matchEOF(): void
@@ -2422,7 +2406,7 @@ class MySQLLexer {
             $this->HEX_NUMBER();
         } elseif (($this->c === '0' && $this->n === 'b') || (strtolower($this->c) === 'b' && $this->n === "'")) {
             $this->BIN_NUMBER();
-        } elseif ($this->c === '.' && $this->isDigit($this->LA(2))) {
+        } elseif ($this->c === '.' && $this->isDigit($this->n)) {
             $this->DECIMAL_NUMBER();
         } else {
             $this->INT_NUMBER();
