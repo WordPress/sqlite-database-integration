@@ -22903,6 +22903,9 @@
     "name": "%simpleExpr_factored",
     "bnf": [
       [
+        "literal"
+      ],
+      [
         "%%simpleExpr_factored1158"
       ],
       [
@@ -22913,9 +22916,6 @@
       ],
       [
         "%%simpleExpr_factored1160"
-      ],
-      [
-        "literal"
       ],
       [
         "PARAM_MARKER"
