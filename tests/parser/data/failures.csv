@@ -328,10 +328,7 @@ ALTER TABLE t1 ALTER CONSTRAINT f2_check NOT ENFORCED"
 ALTER TABLE t1 ALTER CONSTRAINT constraint_name NOT ENFORCED"
 "ALTER TABLE tmp ALTER CONSTRAINT f2_check NOT ENFORCED"
 "create table t1 like `a/a`"
-"create table 1ea10 (1a20 int,1e int)"
-"insert into 1ea10 values(1,1)"
 "select 1ea10.1a20,1e+ 1e+10 from 1ea10"
-"drop table 1ea10"
 "create table t3 like t1"
 "create table if not exists t3 like t1"
 "create temporary table t3 like t2"
@@ -594,8 +591,6 @@ WHERE dt1.x = dt2.x"
 "SHOW REPLICA STATUS"
 "SHOW BINARY LOG STATUS"
 "SHOW REPLICAS"
-"create table t(id int, $id int, $id2 int, `$$id` int, $ int, $1 int,
-`$$$` int, id$$$ int, 1$ int, `$$` int, _$ int, b$$lit$$ int)"
 "EOF
 
 DROP DATABASE bug19573998"
@@ -757,18 +752,6 @@ WHERE innr1.col_int_key= 4)"
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
 exit
 "SELECT r FROM t LEFT JOIN LATERAL (SELECT i, RAND(0) AS r) AS dt ON TRUE"
-"SELECT TIMEDIFF(TIME('17:00:00'),TIME('17:00:00'))=TIME('00:00:00') AS 1Eq,
-TIMEDIFF(TIME('17:59:00'),TIME('17:00:00'))=TIME('00:00:00') AS 1NEq1,
-TIMEDIFF(TIME('18:00:00'),TIME('17:00:00'))=TIME('00:00:00') AS 1NEq2,
-TIMEDIFF(TIME('17:00:00'),TIME('17:00:00'))=     '00:00:00'  AS 2Eq,
-TIMEDIFF(TIME('17:59:00'),TIME('17:00:00'))=     '00:00:00'  AS 2NEq1,
-TIMEDIFF(TIME('18:00:00'),TIME('17:00:00'))=     '00:00:00'  AS 2NEq2,
-TIMEDIFF(TIME('17:00:00'),TIME('17:00:00'))=TIME(0)          AS 3Eq,
-TIMEDIFF(TIME('17:59:00'),TIME('17:00:00'))=TIME(0)          AS 3NEq1,
-TIMEDIFF(TIME('18:00:00'),TIME('17:00:00'))=TIME(0)          AS 3NEq2,
-TIME(0) AS Time0, TIME('00:00:00') AS Time00, '00:00:00' AS Literal0000,
-TIMEDIFF(TIME('17:59:00'),TIME('17:00:00')),
-TIMEDIFF(TIME('17:00:00'),TIME('17:59:00'))"
 """',repeat('a',60),repeat('b',60),repeat('c',60),repeat('d',100)), '""');
 
 select insert('txs',2,1,'hi'),insert('is ',4,0,'a'),insert('txxxxt',2,4,'es');
@@ -1060,14 +1043,6 @@ boundary POLYGON)"
 "create table test.t_duplicated like mysqltest_db1.t_select_priv"
 "flush table mysqltest_db1.t1"
 "ALTER USER user() IDENTIFIED BY 'abc'"
-"CREATE USER 20553132_u1@localhost"
-"CREATE USER 20553132_u2@localhost"
-"GRANT ALL ON *.* TO 20553132_u1@localhost"
-"ALTER USER 20553132_u1@localhost PASSWORD EXPIRE"
-"ALTER USER 20553132_u2@localhost IDENTIFIED BY 'abcd', 20553132_u1@localhost IDENTIFIED BY 'defg' PASSWORD EXPIRE NEVER"
-"ALTER USER 20553132_u2@localhost IDENTIFIED BY 'abcd', 20553132_u1@localhost IDENTIFIED WITH 'caching_sha2_password' BY 'hijk' PASSWORD EXPIRE DEFAULT"
-"DROP USER 20553132_u1@localhost"
-"DROP USER 20553132_u2@localhost"
 "EOF
 
 
@@ -1508,10 +1483,6 @@ KEY k4 (f,g) -- 'f' and 'g' are independet.
 "EXPLAIN FORMAT=JSON INTO @explain_output
 SELECT a FROM t1 x2 WHERE x2.b IN
 (SELECT a FROM t1 x1 WHERE x1.b IN (SELECT a FROM t1 x0))"
-"INSERT INTO t (a)
-WITH RECURSIVE 150tup(n) AS
-(SELECT 1 UNION ALL SELECT n + 1 FROM 150tup WHERE n < 150)
-SELECT n FROM 150tup"
 "EXPLAIN FORMAT=TREE
 SELECT /*+ SET_VAR(optimizer_max_subgraph_pairs = 1) */ COUNT(*)
 FROM t AS t1 LEFT JOIN t AS t2 ON TRUE,
@@ -3735,12 +3706,6 @@ DECLARE a int;
 SELECT 1 INTO a;
 RETURN a;
 END "
-"create procedure 15298_1 () sql security definer show grants for current_user"
-"create procedure 15298_2 () sql security definer show grants"
-"call 15298_1()"
-"call 15298_2()"
-"drop procedure 15298_1"
-"drop procedure 15298_2"
 "CREATE EVENT e1 ON SCHEDULE EVERY 1 SECOND STARTS NOW() DO
 BEGIN
 DECLARE EXIT HANDLER FOR 1136 BEGIN

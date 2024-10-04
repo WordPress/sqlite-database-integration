@@ -2452,7 +2452,7 @@ class MySQLLexer {
                     $this->emitDot();
                     $this->type = self::IDENTIFIER;
                 }
-            } elseif ($this->c === 'e' || $this->c === 'E') {
+            } elseif (($this->c === 'e' || $this->c === 'E') && ($this->n === '+' || $this->n === '-' || $this->isDigit($this->n))) {
                 $this->consume();
                 if ($this->c === '+' || $this->c === '-') {
                     $this->consume();
@@ -2462,6 +2462,21 @@ class MySQLLexer {
                 }
                 $this->type = self::FLOAT_NUMBER;
             }
+        }
+
+        // In MySQL, when an input matches both a number and an identifier, the number always wins.
+        // However, when the number is followed by a non-numeric identifier-like character, it is
+        // considered an identifier... unless it's a float number, which ignores subsequent input.
+        $possibleIdentifierPrefix =
+            $this->type === self::INT_NUMBER
+            || ($this->text[0] === '0' && ($this->text[1] === 'b' || $this->text[1] === 'x'));
+
+        if ($possibleIdentifierPrefix && preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
+            $this->text .= $matches[0];
+            $this->position += strlen($matches[0]);
+            $this->c = $this->input[$this->position] ?? null;
+            $this->n = $this->input[$this->position + 1] ?? null;
+            $this->type = self::IDENTIFIER;
         }
     }
 
