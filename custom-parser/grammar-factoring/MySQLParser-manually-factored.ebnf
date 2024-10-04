@@ -288,7 +288,7 @@ grantOption ::= (GRANT_SYMBOL OPTION_SYMBOL) | (MAX_QUERIES_PER_HOUR_SYMBOL ulon
 setRole ::= (SET_SYMBOL ROLE_SYMBOL roleList) | (SET_SYMBOL ROLE_SYMBOL (NONE_SYMBOL | DEFAULT_SYMBOL)) | (SET_SYMBOL DEFAULT_SYMBOL ROLE_SYMBOL (roleList | NONE_SYMBOL | ALL_SYMBOL) TO_SYMBOL roleList) | (SET_SYMBOL ROLE_SYMBOL ALL_SYMBOL (EXCEPT_SYMBOL roleList)?)
 roleList ::= role (COMMA_SYMBOL role)*
 role ::= roleIdentifierOrText ((AT_SIGN_SYMBOL textOrIdentifier) | AT_TEXT_SUFFIX)?
-tableAdministrationStatement ::= (ANALYZE_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList histogram?) | (CHECK_SYMBOL TABLE_SYMBOL tableRefList checkOption*) | (CHECKSUM_SYMBOL TABLE_SYMBOL tableRefList (QUICK_SYMBOL | EXTENDED_SYMBOL)?) | (OPTIMIZE_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList) | (REPAIR_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList repairType*)
+/* tableAdministrationStatement ::= (ANALYZE_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList histogram?) | (CHECK_SYMBOL TABLE_SYMBOL tableRefList checkOption*) | (CHECKSUM_SYMBOL TABLE_SYMBOL tableRefList (QUICK_SYMBOL | EXTENDED_SYMBOL)?) | (OPTIMIZE_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList) | (REPAIR_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList repairType*) */
 histogram ::= (UPDATE_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList (WITH_SYMBOL INT_NUMBER BUCKETS_SYMBOL)?) | (DROP_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList)
 checkOption ::= (FOR_SYMBOL UPGRADE_SYMBOL) | (QUICK_SYMBOL | FAST_SYMBOL | MEDIUM_SYMBOL | EXTENDED_SYMBOL | CHANGED_SYMBOL)
 repairType ::= QUICK_SYMBOL | EXTENDED_SYMBOL | USE_FRM_SYMBOL
@@ -665,6 +665,12 @@ windowSpecDetails ::= (PARTITION_SYMBOL BY_SYMBOL orderList orderClause? windowF
  * "schemaRef" and "tableRef" after to preserve precedence of keywords over identifiers.
  */
 grantIdentifier ::= (MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?) | (schemaRef DOT_SYMBOL (MULT_OPERATOR | tableRef)) | schemaRef | tableRef
+
+/**
+ * Fix administration statements to support both "TABLE" and "TABLES" keywords.
+ * The original rule only supported "TABLE".
+ */
+tableAdministrationStatement ::= (ANALYZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList histogram?) | (CHECK_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList checkOption*) | (CHECKSUM_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList (QUICK_SYMBOL | EXTENDED_SYMBOL)?) | (OPTIMIZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList) | (REPAIR_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList repairType*)
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*

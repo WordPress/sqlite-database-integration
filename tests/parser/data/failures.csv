@@ -1,5 +1,4 @@
 "reset binary logs and gtids"
-"CHECK TABLES t1"
 "alter table t1 algorithm=inplace, rename key k to kk"
 "alter table t2 algorithm=inplace, rename key k to kk"
 "alter table t1 algorithm=copy, rename key kkk to kkkk"
@@ -1673,7 +1672,6 @@ vbidxcol CHAR(3) AS (substr(b,1,3)) VIRTUAL
 )
 "
 "ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
-"OPTIMIZE TABLES columns_priv, db, user"
 "SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
 "SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
 "my $file_trad= $ENV{'LOG_FILE_TRAD'}"
@@ -3762,8 +3760,6 @@ ON s1.avg_us <= s2.avg_us
 GROUP BY s2.avg_us
 HAVING IFNULL(SUM(s1.cnt)/ NULLIF((SELECT COUNT(*) FROM events_digest), 0), 0) > 0.95
 ORDER BY percentile LIMIT 1"
-"ANALYZE TABLES c, cc"
-"ANALYZE TABLES b, c, cc"
 "SELECT t2.i FROM t2
 WHERE ( false ) AND
 ( t2.i  IN ( SELECT t1.i FROM t1
