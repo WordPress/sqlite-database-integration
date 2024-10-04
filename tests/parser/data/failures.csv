@@ -400,12 +400,6 @@ CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 SET NAMES gb18030"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
-"INSERT INTO t1 VALUES (N'\\')"
-"INSERT INTO t1 VALUES (N'Cote d\'Ivoire');
-INSERT INTO t1 VALUES (_utf8mb3'Cote d\'Ivoire')"
-"select concat(a, if(b>10, N'x', N'y')) from t1"
-"INSERT INTO t1 VALUES (N'Cote d\'Ivoire');
-INSERT INTO t1 VALUES (_utf8mb4'Cote d\'Ivoire')"
 "my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
 "EOF
 

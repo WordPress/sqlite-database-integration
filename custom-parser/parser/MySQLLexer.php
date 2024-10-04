@@ -2222,6 +2222,14 @@ class MySQLLexer {
 			$this->NUMBER();
 		} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $la2 === "'") {
 			$this->NUMBER();
+		} elseif (($la === 'n' || $la === 'N') && $la2 === "'") {
+			$prefix = $la;
+			$this->consume(); // n/N
+			$this->SINGLE_QUOTED_TEXT();
+			if ($this->type === self::SINGLE_QUOTED_TEXT) {
+				$this->text = $prefix . $this->text;
+				$this->type = self::NCHAR_TEXT;
+			}
 		} elseif (preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
 			$p = $this->position - 1;
 			$this->text = $matches[0];
