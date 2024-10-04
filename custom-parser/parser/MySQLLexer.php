@@ -2035,7 +2035,8 @@ class MySQLLexer {
 			if ($this->isDigit($la2)) {
 				$this->NUMBER();
 			} else {
-				$this->DOT_IDENTIFIER();
+				$this->consume();
+				$this->type = self::DOT_SYMBOL;
 			}
 		} elseif ($la === '=') {
 			$this->consume();
@@ -2222,11 +2223,16 @@ class MySQLLexer {
 		} elseif (($la === 'x' || $la === 'X' || $la === 'b' || $la === 'B') && $la2 === "'") {
 			$this->NUMBER();
 		} elseif (preg_match('/\G' . self::PATTERN_UNQUOTED_IDENTIFIER . '/u', $this->input, $matches, 0, $this->position)) {
+			$p = $this->position - 1;
 			$this->text = $matches[0];
 			$this->position += strlen($this->text);
 			$this->c = $this->input[$this->position] ?? null;
 			$this->n = $this->input[$this->position + 1] ?? null;
-			if ($la === '_' && isset(self::UNDERSCORE_CHARSETS[strtolower($this->text)])) {
+
+			// When preceded by a dot, it is always an identifier.
+			if ($p >= 0 && $this->input[$p] === '.') {
+				$this->type = self::IDENTIFIER;
+			} elseif ($la === '_' && isset(self::UNDERSCORE_CHARSETS[strtolower($this->text)])) {
 				$this->type = self::UNDERSCORE_CHARSET;
 			} else {
 				$this->IDENTIFIER_OR_KEYWORD();
@@ -2275,17 +2281,6 @@ class MySQLLexer {
     protected function checkVersion(string $text): bool
     {
         return false;
-    }
-
-    /**
-     * This is a place holder to support features of MySQLBaseLexer which are not yet implemented
-     * in the PHP target.
-     *
-     * @return void
-     */
-    protected function emitDot(): void
-    {
-        return;
     }
 
     protected function IDENTIFIER_OR_KEYWORD()
@@ -2409,13 +2404,6 @@ class MySQLLexer {
         $this->VERSION_COMMENT_END();
     }
 
-    protected function DOT_IDENTIFIER()
-    {
-        $this->consume(); // Consume the '.'.
-        $this->type = self::IDENTIFIER;
-        $this->type = self::DOT_SYMBOL;//@TODO: DOT_IDENTIFIER);
-    }
-
     protected function NUMBER()
     {
         if (($this->c === '0' && $this->n === 'x') || (strtolower($this->c) === 'x' && $this->n === "'")) {
@@ -2447,10 +2435,6 @@ class MySQLLexer {
                     } else {
                         $this->type = self::DECIMAL_NUMBER;
                     }
-                } else {
-                    // If there is no digit after the '.', it's a DOT_IDENTIFIER.
-                    $this->emitDot();
-                    $this->type = self::IDENTIFIER;
                 }
             } elseif (($this->c === 'e' || $this->c === 'E') && ($this->n === '+' || $this->n === '-' || $this->isDigit($this->n))) {
                 $this->consume();
