@@ -7,5 +7,6 @@ cd tmp/mysql-server-tests
 git config core.sparseCheckout true
 touch .git/info/sparse-checkout
 echo "mysql-test/" >> .git/info/sparse-checkout
-git checkout
+git fetch --depth 1 origin tag mysql-8.0.38
+git checkout tags/mysql-8.0.38
 rm -rf .git

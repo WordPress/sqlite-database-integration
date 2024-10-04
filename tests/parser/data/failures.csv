@@ -1,4 +1,3 @@
-"reset binary logs and gtids"
 "alter table t1 algorithm=inplace, rename key k to kk"
 "alter table t2 algorithm=inplace, rename key k to kk"
 "alter table t1 algorithm=copy, rename key kkk to kkkk"
@@ -64,7 +63,6 @@ c4 VARCHAR(2) GENERATED ALWAYS AS (CONCAT(c2,c3)) virtual)"
 "ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, EXCHANGE PARTITION p0 WITH TABLE t"
 "ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, EXCHANGE PARTITION p0 WITH TABLE t"
 reap
-"CREATE TABLE ta (pk INT, embedding VECTOR(4)) ENGINE=ARCHIVE"
 "create table t1 (
 dummyKey INTEGER NOT NULL AUTO_INCREMENT,
 a001 TINYINT,
@@ -154,14 +152,12 @@ use strict"
 die ""system failed on '$mysqld $init_file_args_d': $!"""
 "print ""# Look for output (there should be none):\n"""
 "print ""# Supressing output for initialize:\n"""
-"print ""# Supressing output for server shutdown\n"""
 "EOF
 
 
 SHOW DATABASES"
 disable_query_log
 "SELECT 1 FROM t1 WHERE a = ANY (SELECT a FROM t2)"
-"CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=BLACKHOLE"
 send
 REAP
 "SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"" USING latin1)"
@@ -244,6 +240,17 @@ c8 DECIMAL(6,2) CHECK(c8 > 10.1),
 c9 FLOAT(6,2) CHECK(c9 > 10.1),
 c10 DOUBLE(6,2) CHECK(c10 > 10.1),
 c11 CHAR(6) CHECK (c11 IS NULL))"
+"CREATE TABLE t2 (
+c1 BIT(7) CHECK(c1 < B'1111100'),
+c2 BOOLEAN CHECK(c2 > 0),
+c3 TINYINT CHECK(c3 > 10),
+c4 SMALLINT CHECK(c4 > 10),
+c5 MEDIUMINT CHECK(c5 > 10),
+c6 INT CHECK(c6 > 10) NOT ENFORCED,
+c7 BIGINT CHECK(c7 > 10) NOT ENFORCED,
+c8 DECIMAL(6,2) CHECK(c8 > 10.1) NOT ENFORCED,
+c9 FLOAT(6,2) CHECK(c9 > 10.1) NOT ENFORCED,
+c10 DOUBLE(6,2) CHECK(c10 > 10.1) NOT ENFORCED)"
 "CREATE TABLE t4(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
 "CREATE TABLE t5(a INTEGER CHECK (a > 0) NOT ENFORCED NOT NULL)"
 "CREATE TABLE t7(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
@@ -275,8 +282,6 @@ END IF;
 END;"
 "CREATE TABLE t1 (f1 INT, f2 INT, f3 INT, f4 FLOAT AS (f3 * 0.01), f5 INT,
 CHECK (f1 < f2))"
-"my $mode = (stat($ENV{SESSION_FILE}))[2]"
-"my $perm = sprintf ""%04o"", ($mode & 07777)"
 "SELECT 1 /*!99999 /* */ */"
 "SELECT 2 /*!12345 /* */ */"
 "SELECT 3 /*! /* */ */"
@@ -388,7 +393,6 @@ INSERT INTO t4 VALUES (ins1, ins2, ind)"
 "END|
 CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 "ALTER DATABASE DEFAULT CHARACTER SET latin2"
-"RESET BINARY LOGS AND GTIDS"
 " ¡¢£¤¥±º»¼½¾ 
 05
 15
@@ -397,8 +401,44 @@ CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 4
 
 SET NAMES gb18030"
+"UPDATE t1 SET utf8_f=CONVERT(ucs2_f USING utf8) WHERE utf8_f=_utf8''"
+"CREATE TABLE t1 SELECT _utf8'test' as c1, _utf8'ÑÐµÑÑ' as c2"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
+"select left(_utf8 0xD0B0D0B1D0B2,1)"
+"select right(_utf8 0xD0B0D0B2D0B2,1)"
+"select locate(_utf8 0xD0B1, _utf8 0xD0B0D0B1D0B2)"
+"select locate(_utf8 0xD091, _utf8 0xD0B0D0B1D0B2)"
+"select locate(_utf8 0xD0B1, _utf8 0xD0B0D091D0B2)"
+"select locate(_utf8 0xD091, _utf8 0xD0B0D0B1D0B2 collate utf8_bin)"
+"select locate(_utf8 0xD0B1, _utf8 0xD0B0D091D0B2 collate utf8_bin)"
+"select length(_utf8 0xD0B1), bit_length(_utf8 0xD0B1), char_length(_utf8 0xD0B1)"
+"select _utf8 0xD0B0D0B1D0B2 like concat(_utf8'%',_utf8 0xD0B1,_utf8 '%')"
+"select soundex(_utf8 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB)"
+"select hex(soundex(_utf8 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB))"
+"select soundex(_utf8 0xD091D092D093)"
+"select hex(soundex(_utf8 0xD091D092D093))"
+"select repeat(_utf8'+',3) as h union select NULL"
+"insert into t1 values (_utf8 0xe880bd)"
+"insert into t1 values (_utf8 0x5b)"
+"INSERT INTO t1 VALUES (_utf8'\\')"
+"select concat(a, if(b>10, _utf8'x', _utf8'y')) from t1"
+"select concat(a, if(b>10, _utf8 0x78, _utf8 0x79)) from t1"
+"SELECT HEX(RPAD(0x20, 2, _utf8 0xD18F))"
+"SELECT HEX(RPAD(0x20, 4, _utf8 0xD18F))"
+"SELECT HEX(LPAD(0x20, 2, _utf8 0xD18F))"
+"SELECT HEX(LPAD(0x20, 4, _utf8 0xD18F))"
+"SELECT HEX(RPAD(_utf8 0xD18F, 3, 0x20))"
+"SELECT HEX(LPAD(_utf8 0xD18F, 3, 0x20))"
+"SELECT HEX(INSERT(_utf8 0xD18F, 2, 1, 0x20))"
+"SELECT HEX(INSERT(_utf8 0xD18FD18E, 2, 1, 0x20))"
+"EXPLAIN SELECT 'abcdÃÃÃÃÃ
+', _latin1'abcdÃÃÃÃÃ
+', _utf8'abcdÃÃÃÃÃ
+' AS u"
+"SELECT hex(convert( substr(_utf8 0xE5A4A7E4B88DE58897E9A2A0E58F8AE58C97E788B1E5B094E585B0E88194E59088E78E8BE59BBD, 1, 15), BINARY)) FROM t1"
+"SELECT HEX(CONCAT(utf8mb4_encoding, _utf8 x'ea9da8')) FROM t1"
+"SELECT CONCAT(utf8mb4, _utf8 x'ea9da8') FROM t1 LIMIT 0"
 "my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
 "EOF
 
@@ -408,17 +448,10 @@ WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
 perl"
 "my $log= $ENV{'MYSQLD_LOG'} or die"
 "open(FILE, ""$log"") or die"
-"print ""#     DD initialization error found $c_e times.\n"""
-close(FILE)
-"EOF
-
-remove_file $MYSQLD_LOG"
-"my $c_e= grep(/\[ERROR\] \[[^]]*\] \[[^]]*\] failed to set datadir/gi,<FILE>)"
-"print ""#     Datadir error found $c_e times.\n"""
-"my $c_e= grep(/File \..ibdata1: \'open\' returned OS error 71/gi,<FILE>)"
 "my $log= $ENV{'ENV_MYSQLD_LOG'} or die"
 "my $c_w= grep(/No data dictionary version number found./gi,<FILE>)"
 "print ""#     Data Dictionary initialization error found $c_w times.\n"""
+close(FILE)
 "EOF
 
 remove_file $BOOTSTRAP_SQL"
@@ -455,8 +488,427 @@ h TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
 "REVOKE ALL ON db1.v1 FROM testuser1@localhost"
 "REVOKE ALL ON db1.t1 FROM testuser1@localhost"
+"TYPE=TRIGGERS
+triggers='CREATE DEFINER=`root`@`localhost` TRIGGER tr1_bi BEFORE INSERT ON vt2 FOR EACH ROW SET @a:=1'
+sql_modes=1073741824 1073741824
+definers='root@localhost' 'root@localhost'
+client_cs_names='latin1' 'latin1'
+connection_cl_names='latin1_swedish_ci' 'latin1_swedish_ci'
+db_cl_names='latin1_swedish_ci' 'latin1_swedish_ci'
+EOF
+
+TYPE=TRIGGERNAME
+trigger_table=vt2
+EOF
+
+
+SET sql_mode=''"
+"default-character-set=koi8r
+default-collation=koi8r_bin
+EOF
+
+
+let $MYSQLD_LOG= $MYSQLTEST_VARDIR/log/save_dd_upgrade_1.log"
+perl
+"my $c_e= grep(/\[Warning\] Parsing \'sys\.diagnostics\' routine body failed\. Creating routine without parsing routine body/gi,<FILE>)"
+"print ""# Sys Schema routine parsing warning found : $c_e times.\n"""
+"seek(FILE,0,0)"
+"$c_e= grep(/\[ERROR\] .* Unknown system variable \'show_compatibility_56\'/gi,<FILE>)"
+"print ""# Sys Schema routine parsing error found : $c_e times.\n"""
+"$c_e= grep(/\[Warning\] Resolving dependency for the view \'sys\.innodb_lock_waits\' failed\. View is no more valid to use/gi,<FILE>)"
+"print ""# Sys Schema view parsing warning found : $c_e times.\n"""
+"$c_e= grep(/\[ERROR\] .* Unknown table \'INNODB_LOCK_WAITS\' in information_schema/gi,<FILE>)"
+"print ""# Sys Schema view parsing error found : $c_e times.\n"""
+"EOF
+
+CREATE SCHEMA test123"
+"CREATE VIEW v2 AS SELECT _utf8'ÑÐµÑÑ' as c1"
+"CREATE PROCEDURE p1(
+INOUT ÐÁÒÁÍ1 CHAR(10),
+OUT ÐÁÒÁÍ2 CHAR(10))
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10);
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION(ÐÁÒÁÍ1) AS c2,
+COLLATION(ÐÁÒÁÍ2) AS c3;
+
+SELECT
+COLLATION('ÔÅËÓÔ') AS c4,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET ÐÁÒÁÍ1 = 'a';
+SET ÐÁÒÁÍ2 = 'b';
+END"
+"CREATE PROCEDURE p2(
+INOUT ÐÁÒÁÍ1 CHAR(10) CHARACTER SET utf8,
+OUT ÐÁÒÁÍ2 CHAR(10) CHARACTER SET utf8)
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION(ÐÁÒÁÍ1) AS c2,
+COLLATION(ÐÁÒÁÍ2) AS c3;
+
+SELECT
+COLLATION('ÔÅËÓÔ') AS c4,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET ÐÁÒÁÍ1 = 'a';
+SET ÐÁÒÁÍ2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p3(
+INOUT ÐÁÒÁÍ1 CHAR(10),
+OUT ÐÁÒÁÍ2 CHAR(10))
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10);
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION(ÐÁÒÁÍ1) AS c2,
+COLLATION(ÐÁÒÁÍ2) AS c3;
+
+SELECT
+COLLATION('ÔÅËÓÔ') AS c4,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET ÐÁÒÁÍ1 = 'a';
+SET ÐÁÒÁÍ2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p4(
+INOUT ÐÁÒÁÍ1 CHAR(10) CHARACTER SET utf8,
+OUT ÐÁÒÁÍ2 CHAR(10) CHARACTER SET utf8)
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION(ÐÁÒÁÍ1) AS c2,
+COLLATION(ÐÁÒÁÍ2) AS c3;
+
+SELECT
+COLLATION('ÔÅËÓÔ') AS c4,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET ÐÁÒÁÍ1 = 'a';
+SET ÐÁÒÁÍ2 = 'b';
+END"
+"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
+INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = 'ÔÅËÓÔ';
+SET @a1 = _koi8r    'ÔÅËÓÔ';
+SET @a2 = _utf8 'ÑÐµÐºÑÑ';
+END"
+"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
+INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = 'ÔÅËÓÔ';
+SET @b1 = _koi8r    'ÔÅËÓÔ';
+SET @b2 = _utf8 'ÑÐµÐºÑÑ';
+END"
+"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
+INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = 'ÔÅËÓÔ';
+SET @a1 = _koi8r    'ÔÅËÓÔ';
+SET @a2 = _utf8 'ÑÐµÐºÑÑ';
+END"
+"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
+INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = 'ÔÅËÓÔ';
+SET @b1 = _koi8r    'ÔÅËÓÔ';
+SET @b2 = _utf8 'ÑÐµÐºÑÑ';
+END"
+"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10);
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION('ÔÅËÓÔ') AS c2,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION('ÔÅËÓÔ') AS c2,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION('ÔÅËÓÔ') AS c2,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(ÐÅÒÅÍ1) AS c1,
+COLLATION('ÔÅËÓÔ') AS c2,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE PROCEDURE p1(
+INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10),
+OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10))
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
+
+SELECT
+COLLATION('ÑÐµÐºÑÑ') AS c4,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
+SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
+END"
+"CREATE PROCEDURE p2(
+INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10) CHARACTER SET utf8,
+OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10) CHARACTER SET utf8)
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
+
+SELECT
+COLLATION('ÑÐµÐºÑÑ') AS c4,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
+SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p3(
+INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10),
+OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10))
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
+
+SELECT
+COLLATION('ÑÐµÐºÑÑ') AS c4,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
+SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
+END"
+"CREATE PROCEDURE mysqltest2.p4(
+INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10) CHARACTER SET utf8,
+OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10) CHARACTER SET utf8)
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
+COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
+
+SELECT
+COLLATION('ÑÐµÐºÑÑ') AS c4,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
+@@collation_connection AS c7,
+@@character_set_client AS c8;
+
+SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
+SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
+END"
+"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
+INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = 'ÑÐµÐºÑÑ';
+SET @a2 = _utf8 'ÑÐµÐºÑÑ';
+SET @a3 = _koi8r    'ÔÅËÓÔ';
+END"
+"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
+INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = 'ÑÐµÐºÑÑ';
+SET @b2 = _utf8 'ÑÐµÐºÑÑ';
+SET @b3 = _koi8r    'ÔÅËÓÔ';
+END"
+"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
+
+INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
+INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @a1 = 'ÑÐµÐºÑÑ';
+SET @a2 = _utf8 'ÑÐµÐºÑÑ';
+SET @a3 = _koi8r    'ÔÅËÓÔ';
+END"
+"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
+INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
+INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
+INSERT INTO log VALUES(@@collation_connection);
+INSERT INTO log VALUES(@@character_set_client);
+
+SET @b1 = 'ÑÐµÐºÑÑ';
+SET @b2 = _utf8 'ÑÐµÐºÑÑ';
+SET @b3 = _koi8r    'ÔÅËÓÔ';
+END"
+"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION('ÑÐµÐºÑÑ') AS c2,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION('ÑÐµÐºÑÑ') AS c2,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION('ÑÐµÐºÑÑ') AS c2,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
+"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
+BEGIN
+DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
+
+SELECT
+COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
+COLLATION('ÑÐµÐºÑÑ') AS c2,
+COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
+COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
+@@collation_connection AS c5,
+@@character_set_client AS c6;
+END"
 "CREATE TABLE t3 LIKE t1"
-"CREATE TABLE t1 (i INT, b char(255) DEFAULT (sha2(i, 0)), j INT GENERATED ALWAYS AS (i*2))"
+"CREATE TABLE t1 (i INT, b char(255) DEFAULT (md5(i)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
 d2 DOUBLE DEFAULT 0.0, c2 CHAR(255),
 def2 DOUBLE DEFAULT( i2 DIV d2 ),
@@ -490,7 +942,7 @@ c TIMESTAMP GENERATED ALWAYS AS (65),
 UNIQUE KEY (a, b),
 UNIQUE KEY (c, a)
 )"
-perl
+"CREATE TABLE testdb.l1 LIKE testdb.t1"
 "my $logf= $ENV{'LOGF'} or die ""LOGF not set"""
 "open(FILE, ""$logf"") or die(""Unable to open $logf: $!\n"")"
 "my $count_warnings= grep(/\[Warning\] \[[^]]*\] \[[^]]*\] The syntax 'plugin-validate-password-length' is deprecated and will be removed in a future release\. Please use validate-password-length instead\./gi,<FILE>)"
@@ -509,16 +961,6 @@ WHERE SUBQUERY1_t1.col_varchar_10_key <= table1.col_varchar_10_key
 )
 )
 "
-"CREATE TABLE t (
-a INTEGER GENERATED ALWAYS AS (1) VIRTUAL,
-KEY (a)
-) ENGINE = InnoDB"
-"SELECT f1
-FROM t1 JOIN
-LATERAL (SELECT (t1.f1 + t2.f1) AS f2
-FROM t1 AS t2
-GROUP BY f2) AS dt
-WHERE f2 = 9"
 "create table t12 like t11"
 "explain select dt.a from t1, lateral (select t1.a from t2) dt"
 "explain SELECT * FROM t1
@@ -581,9 +1023,6 @@ t1,
 LATERAL (SELECT DISTINCT t1.x) AS dt1,
 LATERAL (SELECT DISTINCT dt1.x) AS dt2
 WHERE dt1.x = dt2.x"
-"SHOW REPLICA STATUS"
-"SHOW BINARY LOG STATUS"
-"SHOW REPLICAS"
 "EOF
 
 DROP DATABASE bug19573998"
@@ -606,19 +1045,6 @@ WHERE c1 > 0
 ORDER BY c2
 LIMIT 10"
 "EXPLAIN analyze FORMAT=TREE SELECT t1.a, GROUP_CONCAT(t2.b) AS b FROM t1 LEFT JOIN t2 ON t1.a=t2.a GROUP BY t1.a ORDER BY t1.b"
-"EXPLAIN FORMAT=JSON INTO @var
-SELECT 1 + 1 AS x FROM t GROUP BY x WITH ROLLUP HAVING x = 1"
-"EXPLAIN FORMAT=JSON INTO @v1 SELECT * FROM t1 JOIN t2 ON i1 = i3 WHERE i2 = 2"
-"EXPLAIN FORMAT=JSON INTO @v1 SELECT * FROM t1"
-"EXPLAIN FORMAT=JSON INTO @v1 INSERT INTO t1 VALUES (4,5)"
-"EXPLAIN FORMAT=JSON INTO @v1 INSERT INTO t1 SELECT * FROM t2"
-"EXPLAIN FORMAT=JSON INTO @v1 UPDATE t1 SET i2 = i2 + 1 WHERE i1 = 1"
-"EXPLAIN FORMAT=JSON INTO @v1 REPLACE t1 SELECT * FROM t2"
-"EXPLAIN FORMAT=JSON INTO @v1 DELETE FROM t1"
-"EXPLAIN FORMAT=JSON INTO @v1 UPDATE t1, t2 SET i1 = i1 - 1, i3 = i3 + 1"
-"EXPLAIN FORMAT=JSON INTO @v1 DELETE t1, t2 FROM t1, t2"
-"EXPLAIN FORMAT=JSON INTO @v1 SELECT /*+ SET_VAR(optimizer_switch='hypergraph_optimizer=OFF')*/ * FROM t1"
-"EXPLAIN FORMAT=JSON INTO @v1 SELECT /*+ SET_VAR(optimizer_switch='hypergraph_optimizer=ON')*/ * FROM t1"
 "EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t2 USING ( a ),
 LATERAL ( SELECT * FROM t3 WHERE t3.a = t2.a LIMIT 1 ) t3d,
 LATERAL ( SELECT * FROM t3 WHERE t3.a > t1.a LIMIT 1 ) t4d"
@@ -650,12 +1076,7 @@ JOIN t1 ON 1 WHERE (CAST(""1"" AS JSON) MEMBER OF( t1.col_json->'$[*]'))"
 "$found_features = ""No line 'Feature flags'"""
 "open(I_BIN,""<"",""$dir_docs/INFO_BIN"") or print ""Cannot open 'INFO_BIN' in '$dir_docs' (starting from bindir '$dir_bin')\n"""
 "print ""INFO_BIN: $found_compiler / $found_features\n"""
-"CREATE TABLE t2 (
-pk INT PRIMARY KEY,
-vc VARCHAR(1) NOT NULL,
-gc INT GENERATED ALWAYS AS (1))"
 echo
-"REVOKE ALL PRIVILEGES ON db35380295.* FROM u1b35380295"
 "FLUSH LOCAL TABLES test.t1, test.t2 for ExPoRt"
 "FLUSH TABLE db1.t1 FOR EXPORT"
 "FLUSH LOCAL TABLES test.t1 FOR EXPORT"
@@ -688,20 +1109,6 @@ UNIQUE KEY(pk), FOREIGN KEY (fk) REFERENCES self(pk))"
 "CREATE TABLE parent0 (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
 "CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT, F3 INT AS (f1+1) VIRTUAL,
 FOREIGN KEY(f2) REFERENCES t2(f3))"
-"CREATE TABLE t1 (f1 VARCHAR(10), f2 VARCHAR(10),
-f3 VARCHAR(30) AS (CONCAT(f1, f2)) VIRTUAL,
-UNIQUE INDEX(f3))"
-"CREATE TABLE referencing (f1 VARCHAR(10), f2 VARCHAR(10),
-f3 VARCHAR(30) AS (CONCAT(f1, f2)) STORED REFERENCES referenced(f1))"
-"CREATE TABLE referenced (f1 VARCHAR(10) PRIMARY KEY, f2 VARCHAR(10),
-f3 VARCHAR(30) AS (CONCAT(f1, f2)) VIRTUAL, UNIQUE KEY(f3))"
-"CREATE TABLE referenced (f1 VARCHAR(10) PRIMARY KEY, f2 VARCHAR(10),
-f3 VARCHAR(30) AS (CONCAT(f1, f2)) STORED, UNIQUE KEY(f3))"
-"CREATE TABLE referencing (f1 VARCHAR(10),
-f2 VARCHAR(10) REFERENCES referenced(f1) ON DELETE SET NULL,
-f3 VARCHAR(30) AS (CONCAT(f1, f2)) VIRTUAL)"
-"CREATE TABLE referenced (f1 VARCHAR(10), f2 VARCHAR(10),
-f3 VARCHAR(30) AS (CONCAT(f1, f2)) STORED, PRIMARY KEY(f3))"
 "CREATE TABLE child_copy LIKE child"
 "CREATE TABLE parent LIKE parent_base"
 "CREATE TABLE parent (i INT, j INT,
@@ -727,6 +1134,7 @@ foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12+00:00' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast( a AT TIME ZONE '+00:00' AS DATETIME ) FROM t1"
 enable_result_log
+"insert into t1 values (repeat('a', 1022), 0), (repeat(_utf8 0xc3b7, 4), 0)"
 "select sum(all a),count(all a),avg(all a),std(all a),variance(all a),bit_or(all a),bit_and(all a),min(all a),max(all a),min(all c),max(all c) from t1"
 "SELECT a,AVG(DISTINCT b) AS average FROM t1 GROUP BY a HAVING average > 50"
 "SELECT AVG(DISTINCT col_int_nokey) FROM t1"
@@ -737,12 +1145,9 @@ JSON_SET(outr1.col_date, CONCAT('$','[',1,']','.','cdate'), '2007-07-12')
 WHERE outr1.pk <= ANY ( SELECT DISTINCT innr1.col_int_key AS y FROM bb4
 AS innr2 LEFT JOIN bb4 AS innr1 ON (innr2.col_int_key <> innr1.col_int_key)
 WHERE innr1.col_int_key= 4)"
-"SELECT NULLIF(COALESCE(x, NULL), 0) FROM t EXCEPT SELECT 1"
-"SELECT COALESCE(IF(x, NULL, NULL), x) FROM t EXCEPT SELECT 1"
-"SELECT COALESCE(CASE WHEN x THEN NULL ELSE NULL END, x) FROM t EXCEPT SELECT 1"
-"SELECT COALESCE(COALESCE(NULL, NULL), x) FROM t EXCEPT SELECT 1"
 "CREATE TABLE t(x VARCHAR(10),
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
+"select length(uuid()), charset(uuid()), length(unhex(replace(uuid(),_utf8'-',_utf8'')))"
 exit
 "SELECT r FROM t LEFT JOIN LATERAL (SELECT i, RAND(0) AS r) AS dt ON TRUE"
 """',repeat('a',60),repeat('b',60),repeat('c',60),repeat('d',100)), '""');
@@ -756,6 +1161,7 @@ select 'Glazgo' sounds like 'Liverpool';
 select null sounds like 'null';
 select 'null' sounds like null;
 select null sounds like null;
+select md5('hello');
 select crc32(""123"");
 select sha('abc');
 select sha1('abc');
@@ -784,6 +1190,7 @@ select quote('\'\"\\test')"
 "', 2),substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
 "', -2);
 
+explain select md5('hello');
 explain select sha('abc');
 explain select sha1('abc');
 explain select soundex('');
@@ -842,6 +1249,9 @@ repeat('c',60),
 repeat ('d',100)),'""');
 SELECT
 CONCAT('""',CONCAT('"""
+"select charset(charset(_utf8'a')), charset(collation(_utf8'a'))"
+"select collation(charset(_utf8'a')), collation(collation(_utf8'a'))"
+"create table t1 select charset(_utf8'a'), collation(_utf8'a')"
 "select 1 from t1 where 1 < some (select cast(a as datetime) from t1)"
 "CREATE TABLE t1(col1 varchar(100), gcol2 binary(16) AS (uuid_to_bin(col1)) virtual, index(gcol2))"
 "CREATE TABLE t2(col1 binary(16), gcol2 varchar(36) AS (bin_to_uuid(col1)) virtual, index(col1), index(gcol2))"
@@ -1045,45 +1455,17 @@ SELECT 1"
 "ALTER USER USER() IDENTIFIED BY 'new_pwd_string'"
 "ALTER USER USER() IDENTIFIED BY 'new-auth'"
 "REVOKE ALL ON *.* FROM user1@localhost"
+"SHOW GRANTS FOR u1@localhost USING r1"
 "ALTER USER u1@localhost DEFAULT ROLE r1"
 "REVOKE ALL ON *.* FROM u1@localhost"
 "REVOKE ALL ON *.* FROM u1"
 "SHOW GRANTS FOR u1 using r1"
 "SHOW GRANTS FOR u1 using r2"
 "REVOKE ALL ON *.* FROM CURRENT_USER()"
-"RESET REPLICA ALL"
 enable_connect_log
 "REVOKE ALL PRIVILEGES ON t1 FROM wl14303@localhost"
 disable_connect_log
-"SHOW GRANTS FOR CURRENT_USER USING flusher"
 "REVOKE ALL PRIVILEGES ON privtest_db.t1 FROM 'privtest'@'localhost'"
-"REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_user1"
-"REVOKE IF EXISTS CREATE, SELECT ON rngp_db.* FROM rngp_user1"
-"REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_role1"
-"REVOKE IF EXISTS CREATE, SELECT ON rngp_db.* FROM rngp_role1"
-"REVOKE ALL PRIVILEGES ON rngp_db.* FROM rngp_user1"
-"REVOKE ALL PRIVILEGES ON rngp_db.* FROM rngp_role1"
-"REVOKE ALL ON *.* FROM rngp_user1"
-"REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_user1, rngp_user2"
-"REVOKE ALL ON *.* FROM rngp_role1"
-"REVOKE IF EXISTS SELECT ON rngp_db.* FROM rngp_role1, rngp_role2"
-"REVOKE IF EXISTS GRANT OPTION ON PROCEDURE rngp_db.rngp_proc FROM rngp_role"
-"REVOKE IF EXISTS ALTER ROUTINE, EXECUTE ON PROCEDURE rngp_db.rngp_proc FROM rngp_role"
-"REVOKE IF EXISTS GRANT OPTION ON PROCEDURE rngp_db.rngp_proc FROM rngp_user"
-"REVOKE IF EXISTS ALTER ROUTINE, EXECUTE ON PROCEDURE rngp_db.rngp_proc FROM rngp_user"
-"REVOKE ALL PRIVILEGES ON PROCEDURE rngp_db.rngp_proc FROM rngp_role"
-"REVOKE ALL PRIVILEGES ON PROCEDURE rngp_db.rngp_proc FROM rngp_user"
-"REVOKE IF EXISTS SELECT ON rngp_db.tb1 FROM rngp_role"
-"REVOKE IF EXISTS SELECT (no) ON rngp_db.tb2 FROM rngp_role"
-"REVOKE IF EXISTS INSERT, SELECT ON rngp_db.tb1 FROM rngp_role"
-"REVOKE IF EXISTS INSERT (no), SELECT (no) ON rngp_db.tb2 FROM rngp_role"
-"REVOKE IF EXISTS UPDATE, INSERT, SELECT (x), REFERENCES (x) ON rngp_db.tb1 FROM rngp_role"
-"REVOKE IF EXISTS SELECT ON rngp_db.tb1 FROM rngp_user"
-"REVOKE IF EXISTS SELECT (no) ON rngp_db.tb2 FROM rngp_user"
-"REVOKE IF EXISTS INSERT, SELECT ON rngp_db.tb1 FROM rngp_user"
-"REVOKE IF EXISTS INSERT (no), SELECT (no) ON rngp_db.tb2 FROM rngp_user"
-"REVOKE ALL PRIVILEGES ON rngp_db.tb1 FROM rngp_role"
-"REVOKE ALL PRIVILEGES ON rngp_db.tb1 FROM rngp_user"
 "CREATE TABLE mysql.temp_user LIKE mysql.user"
 "CREATE TABLE t100 LIKE t10"
 "CREATE TABLE t10000 LIKE t10"
@@ -1123,14 +1505,10 @@ a INT GENERATED ALWAYS AS (1) VIRTUAL,
 b INT GENERATED ALWAYS AS (a) VIRTUAL,
 c INT GENERATED ALWAYS AS (1) VIRTUAL
 )"
-"SELECT COUNT(DISTINCT f), COUNT(DISTINCT d), AVG(DISTINCT f), AVG(DISTINCT d) FROM t"
-"select * from (select * from tb1 where id %3 = 0) even,
-lateral (select sql_small_result avg(id2) a from tb1 where id > even.id group by id2 ) l
-where even.id != l.a"
-"SELECT MIN(t1.f1) AS field1 FROM (t1 JOIN (t1 t2) ON (TRUE),
-LATERAL (SELECT t2.f3 AS field2 FROM t1 t3 WHERE (t2.f3 <=> t2.f4)
-GROUP BY field2 ORDER BY t1.f2) AS t4)
-GROUP BY field2 ORDER BY field1"
+"EXPLAIN SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT a) FROM t2"
+"SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT a) FROM t2"
+"EXPLAIN SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT f) FROM t2"
+"SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT f) FROM t2"
 "SELECT EMPNUM, GRADE*1000
 FROM HU.STAFF WHERE GRADE * 1000 >
 ANY (SELECT SUM(BUDGET) FROM HU.PROJ
@@ -1157,11 +1535,11 @@ KEY USING BTREE(c2)
 "CREATE TABLE t1 (
 c1 ENUM('1', '2'),
 UNIQUE USING BTREE(c1)
-) ENGINE= MEMORY DEFAULT CHARSET= utf8mb3"
+) ENGINE= MEMORY DEFAULT CHARSET= utf8"
 "CREATE TABLE t1 (
 c1 SET('1', '2'),
 UNIQUE USING BTREE(c1)
-) ENGINE= MEMORY DEFAULT CHARSET= utf8mb3"
+) ENGINE= MEMORY DEFAULT CHARSET= utf8"
 "CREATE TABLE t1 (a INT, KEY USING BTREE(a)) ENGINE=MEMORY"
 "CREATE TABLE t1(val INT, KEY USING BTREE(val)) ENGINE=memory"
 "CREATE TABLE t1 (a INT, UNIQUE USING BTREE(a)) ENGINE=MEMORY"
@@ -1192,185 +1570,172 @@ id INT AUTO_INCREMENT PRIMARY KEY,
 c1 INT NOT NULL,
 c2 INT NOT NULL,
 UNIQUE KEY USING HASH (c2,c1)) ENGINE = MEMORY"
-"ANALYZE TABLE t1 UPDATE HISTOGRAM ON x MANUAL UPDATE"
-"ANALYZE TABLE t1 UPDATE HISTOGRAM ON x AUTO UPDATE"
-"ANALYZE TABLE t1 UPDATE HISTOGRAM ON c1, c3 AUTO UPDATE"
-"ANALYZE TABLE t1 UPDATE HISTOGRAM ON c2 MANUAL UPDATE"
-"ANALYZE TABLE t1 UPDATE HISTOGRAM ON x WITH 3 BUCKETS AUTO UPDATE"
-"EXPLAIN FORMAT=JSON INTO @v SELECT x FROM t1 WHERE x > 0"
-"EXPLAIN FORMAT=JSON INTO @v SELECT x FROM t1 WHERE x = 1"
-"EXPLAIN FORMAT=JSON INTO @v SELECT x FROM t1 WHERE x = 2"
-"ANALYZE TABLE t2 UPDATE HISTOGRAM ON x AUTO UPDATE"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75], ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75], ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA ''"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA 'a'"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '1'"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA 'null'"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '[]'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": 1, ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""blob"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": ""0.25"", ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": -0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 1.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": ""true"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": 123, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": ""yes"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": ""utf8mb3"", ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 2048, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": -1, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 9300000000000000000, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": ""1.0"", ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": -0.1, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.1, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": 1, ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""single"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton""}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": ""4""}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": -1}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 1025}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": ""[[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]]"", ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": null, ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [4, 0.25], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, ""0.5""], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, -0.01], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 1.1]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.7], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.26, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.24, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23.0, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [9300000000000000000, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [2200000000, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [32, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": 3, ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""text"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": ""[[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]]"", ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [4, 4, 0.3333333333333333, 1], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.4, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, ""0.6666666666666666"", 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, -0.01, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.01, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.01, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.7333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1.0], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 0], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, -1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, ""12"", 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[9300000000000000000, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 9300000000000000000, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 2200000000, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 2200000000, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [13, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 42, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23.0, 0.625], [52, 0.75]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [20000000000000000000, 0.75]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [-1, 0.75]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [32, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12.0, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, ""12"", 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1, 4, 0.25, 1], [12, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, 12, 0.5, 1], [23, 20000000000000000000, 0.75, 2]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [13, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, 42, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [12.0, 0.5], [""23.0"", 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1e330, 0.25], [12.0, 0.5], [23.0, 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [12.0, 0.5], [23.0, 0.625], [1E330, 0.75]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [32.0, 0.5], [23.0, 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4.0, 0.25, 1], [12.0, 12.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [12.0, ""12.0"", 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [13.0, 12.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [12.0, 32.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[12345, 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""QmlsbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA"", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:Q2hhcmxlcw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[12345, ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", 12345, 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""QmlsbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA"", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsbA"", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:VmluY2VudA=="", ""base64:type254:TWFyaw=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:TWFyaw=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206, 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 14:48:11"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""14:48:11"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", 0.125], [""2017-02-10"", 0.375], [""2018-04-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""0000-00-00"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206, ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", 20170210, 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 14:48:11"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12 14:48:11"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""14:48:11"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""14:48:11"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-12"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2019-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[170418, 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10 07:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""-839:00:00.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""839:00:00.000000"", 0.75]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""09:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[170418, ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", 181518, 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""2017-02-10"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10 07:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""-839:00:00.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""839:00:00.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""09:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""17:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170216162223, 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""16:22:23.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00 00:00:00.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-16 16:22:23.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206162223, ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", 20170210081518, 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00 00:00:00.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""0000-00-00 00:00:00.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-16 16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""2019-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [""12.00"", 0.5], [23.00, 0.625], [52.00, 0.75]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [9300000000000000000, 0.75]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [1e100, 0.75]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [5555.00, 0.75]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [32.00, 0.5], [23.00, 0.625], [52.00, 0.75]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""4.00"", 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, ""12.00"", 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1e100, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1e100, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1000.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1000.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [13.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
-"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 32.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""auto-update"": false, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": 1, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""blob"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": ""0.25"", ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": -0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 1.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": ""utf8"", ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 2048, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": -1, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 9300000000000000000, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": ""1.0"", ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": -0.1, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.1, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": 1, ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""single"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton""}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": ""4""}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": -1}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 1025}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": ""[[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]]"", ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": null, ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [4, 0.25], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, ""0.5""], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, -0.01], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 1.1]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.7], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.26, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.24, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23.0, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [9300000000000000000, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [2200000000, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [32, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": 3, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""text"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": ""[[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]]"", ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [4, 4, 0.3333333333333333, 1], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.4, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, ""0.6666666666666666"", 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, -0.01, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.01, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.01, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.7333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1.0], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 0], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, -1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, ""12"", 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[9300000000000000000, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 9300000000000000000, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 2200000000, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 2200000000, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [13, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 42, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23.0, 0.625], [52, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [20000000000000000000, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [-1, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [32, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12.0, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, ""12"", 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1, 4, 0.25, 1], [12, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, 12, 0.5, 1], [23, 20000000000000000000, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [13, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, 42, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [12.0, 0.5], [""23.0"", 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1e330, 0.25], [12.0, 0.5], [23.0, 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [12.0, 0.5], [23.0, 0.625], [1E330, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [32.0, 0.5], [23.0, 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4.0, 0.25, 1], [12.0, 12.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [12.0, ""12.0"", 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [13.0, 12.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [12.0, 32.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[12345, 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""QmlsbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA"", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:Q2hhcmxlcw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[12345, ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", 12345, 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""QmlsbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA"", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsbA"", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:VmluY2VudA=="", ""base64:type254:TWFyaw=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:TWFyaw=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206, 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 14:48:11"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""14:48:11"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", 0.125], [""2017-02-10"", 0.375], [""2018-04-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""0000-00-00"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206, ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", 20170210, 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 14:48:11"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12 14:48:11"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""14:48:11"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""14:48:11"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-12"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2019-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[170418, 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10 07:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""-839:00:00.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""839:00:00.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""09:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[170418, ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", 181518, 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""2017-02-10"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10 07:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""-839:00:00.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""839:00:00.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""09:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""17:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170216162223, 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""16:22:23.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00 00:00:00.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-16 16:22:23.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206162223, ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", 20170210081518, 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00 00:00:00.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""0000-00-00 00:00:00.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-16 16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""2019-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [""12.00"", 0.5], [23.00, 0.625], [52.00, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [9300000000000000000, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [1e100, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [5555.00, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [32.00, 0.5], [23.00, 0.625], [52.00, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""4.00"", 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, ""12.00"", 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1e100, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1e100, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1000.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1000.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [13.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 32.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
 "ALTER TABLE t1 ADD COLUMN virtual_generated INT AS (col_integer + 10) VIRTUAL,
 ADD COLUMN stored_generated INT AS (col_integer + 20) STORED"
 "CREATE TABLE t1 (
@@ -1448,39 +1813,9 @@ col_varchar_key varchar(2) GENERATED ALWAYS AS (concat(col_varchar,col_varchar))
 PRIMARY KEY (pk),
 KEY col_date_key (col_date_key)
 ) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4"
-"ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[""base64:type254:MA=="", 0.3333333333333333], [""base64:type254:MQ=="", 0.6666666666666666], [""base64:type254:Mg=="", 1.0]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 255, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[""base64:type254:MA=="", ""base64:type254:MQ=="", 0.6666666666666666, 2], [""base64:type254:Mg=="", ""base64:type254:Mg=="", 1.0, 1]], ""data-type"": ""string"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 255, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
-"ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[0, 0.3333333333333333], [1, 0.6666666666666666], [2, 1.0]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
-"ANALYZE TABLE t UPDATE HISTOGRAM ON x USING DATA '{""buckets"": [[0, 1, 0.6666666666666666, 2], [2, 2, 1.0, 1]], ""data-type"": ""int"", ""auto-update"": false, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
 "GRANT some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 TO root@localhost"
 "GRANT u1@localhost TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "REVOKE ALL ON *.* FROM some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
-"EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1, t1 x2, t1 x3
-WHERE x1.a=x2.a AND x2.b=x3.b AND x3.c=x1.c"
-"CREATE TABLE t1 (
-a INT,
-b INT,
-c INT,
-d INT,
-e INT,
-f INT,
-g INT,
-PRIMARY KEY(a),
-KEY k1 (b,d), --  'b' and 'd' are indepdendent.
-KEY k2 (b,e), -- 'b' is funtionally dependent on 'e'.
-KEY k3 (b,g), -- 'b' is funtionally dependent on 'g'.
-KEY k4 (f,g) -- 'f' and 'g' are independet.
-)"
-"EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1 WHERE d =
-(SELECT MIN(g) FROM t1 x2 WHERE x1.b<>x2.b)"
-"EXPLAIN FORMAT=JSON INTO @explain_output
-SELECT a FROM t1 x2 WHERE x2.b IN
-(SELECT a FROM t1 x1 WHERE x1.b IN (SELECT a FROM t1 x0))"
-"EXPLAIN FORMAT=TREE
-SELECT /*+ SET_VAR(optimizer_max_subgraph_pairs = 1) */ COUNT(*)
-FROM t AS t1 LEFT JOIN t AS t2 ON TRUE,
-LATERAL (SELECT DISTINCT t2.a FROM t) AS t3
-WHERE t1.a = t3.a"
 "chdir $ENV{'MYSQL_TMP_DIR'}"
 "EOF
 let $EXPORT_DIR= $MYSQL_TMP_DIR/export"
@@ -1547,19 +1882,21 @@ closedir($dh)
 "EOF
 
 
-remove_file $MYSQL_TMP_DIR/bug35254025init.sql"
+
+
+connect(root_con,localhost,root,,mysql)"
 "my $log= $ENV{'MYSQLD_LOG'} || die ""Failed to read MYSQLD_LOG from env: $!"""
 "open(FILE, ""$log"") || die ""Failed to open error log: $!"""
 "EOF
 
 
 SELECT * FROM information_schema.schemata"
-"EOF
-
-
-
-
-connect(root_con,localhost,root,,mysql)"
+"my $search_file=     $ENV{'SEARCH_FILE'}     or die ""SEARCH_FILE not set"""
+"my $search_pattern=  $ENV{'SEARCH_PATTERN'}  or die ""SEARCH_PATTERN not set"""
+"my $search_pattern1= $ENV{'SEARCH_PATTERN1'}  or die ""SEARCH_PATTERN1 not set"""
+"my $minimum_matches= $ENV{'MINIMUM_MATCHES'} or die ""MINIMUM_MATCHES not set"""
+"open(FILE, ""$search_file"") or die(""Unable to open '$search_file': $!\n"")"
+"my $count = 0"
 "CREATE TABLE t1(a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
 c INT GENERATED ALWAYS AS (-a) STORED)"
@@ -1626,6 +1963,9 @@ WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 "create table t6 like t5"
 "create table t7 like t6"
 "create table t3 like t2"
+"select i from t1 where a=repeat(_utf8 'a',200)"
+"select i from t1 where a=repeat(_utf8 0xD0B1,200)"
+"select i from t1 where b=repeat(_utf8 'b',310)"
 "create table ti (k int, index using btree (k)) charset utf8mb4 engine=innodb"
 "create table th (k int, index using btree (k)) charset utf8mb4 engine=heap"
 "alter table ti add column l int, add index using btree (l)"
@@ -1653,24 +1993,11 @@ $texp->log_stdout(0)
 "$texp->expect(15,' -re ',[ 'Enter password:' => sub {
 $texp->send(""a\n"")"
 $texp->soft_close()
-connect
-"load data from infile '../../std_data/loaddata1.dat'
-into table t1 fields terminated by ',' ignore 2 lines"
-"load data infile '../../std_data/loaddata1.dat' in primary key order
-into table t1 fields terminated by ',' ignore 2 lines"
+disable_reconnect
+enable_reconnect
 "CREATE TABLE t1 (
 json_col JSON , KEY json_col ((CAST(json_col -> '$' AS UNSIGNED ARRAY)))
 )"
-"CREATE TABLE ibstd_03 (
-a INT NOT NULL,
-d INT NOT NULL,
-b BLOB NOT NULL,
-c TEXT,
-vadcol INT AS (a+length(d)) STORED,
-vbcol CHAR(2) AS (substr(b,2,2)) VIRTUAL,
-vbidxcol CHAR(3) AS (substr(b,1,3)) VIRTUAL
-)
-"
 "ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
 "SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
 "SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
@@ -1736,7 +2063,6 @@ SET @@global.log_error_services=""log_filter_dragnet"
 "print $line"
 "my $pattern= ""Turning logging off for the server"""
 "open(FILE, ""$file"") or die(""Unable to open $file: $!\n"")"
-"my $count = 0"
 break
 "RESET PERSIST `dragnet.log_error_filter_rules`"
 "RESET PERSIST `log_error_suppression_list`"
@@ -1789,7 +2115,7 @@ SELECT @@session.long_query_time INTO @old_long_query_time"
 
 
 
-set names utf8mb3"
+set names utf8"
 "EOF
 
 
@@ -1803,7 +2129,7 @@ drop table if exists t1Aa,t2Aa,v1Aa,v2Aa"
 "ALTER TABLE m1 UNION=()"
 "CREATE TABLE t4 LIKE t3"
 "CREATE TEMPORARY TABLE t4 LIKE t3"
-"CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=MyISAM"
+"INSERT INTO t1 VALUES(REPEAT(_utf8 x'e0ae85',43), 'b')"
 "FLUSH TABLE mysql_db1.t1"
 "print FILE ""select\n"""
 "print FILE ""'a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a',\n"" x 3400"
@@ -1958,7 +2284,6 @@ PRIMARY KEY(my_row_id))"
 "CREATE TABLE x6 (c1 INT, c0 BLOB AS ('a') STORED)"
 "CREATE TABLE x7 (c0 BLOB AS ('a') STORED INVISIBLE, c1 INT)"
 "CREATE TABLE x8 (c1 INT, c0 BLOB AS ('a') STORED INVISIBLE)"
-"CREATE EVENT mysqldump_test_db.replica_event ON SCHEDULE EVERY 3 SECOND DISABLE ON REPLICA DO SELECT 1"
 "CREATE TABLE t1 (a INT) SECONDARY_ENGINE=gizmo"
 "1
 2
@@ -1975,6 +2300,42 @@ EOF
 
 echo # cleanup
 DROP TABLE b34999015_db.`KEY`"
+"CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
+sum INTEGER GENERATED ALWAYS AS (a+b),
+sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
+key k1(sum),
+key k2(sub)
+)"
+"CREATE TABLE t2 (pk INTEGER, a INTEGER, b INTEGER,
+sum INTEGER GENERATED ALWAYS AS (a+b),
+c VARCHAR(16),
+key k1(sum)
+)"
+"CREATE TABLE t3 (sum INTEGER GENERATED ALWAYS AS (a+(EXTRACT(YEAR from pk))),
+pk TIMESTAMP, a INTEGER,
+c VARCHAR(16)
+)"
+"CREATE TABLE t1(f1 INT INVISIBLE, f2 INT,
+f3 INT AS (f1 + 10), f4 INT AS (f2 + 10) INVISIBLE)"
+"CREATE TABLE t2(f1 INT INVISIBLE, f2 INT)"
+"CREATE TABLE B32340208.test (
+`pk` int NOT NULL AUTO_INCREMENT,
+`a1` smallint GENERATED ALWAYS AS (((0 <> `c1`) and (_utf8mb4'0000-00-00
+00:00:00' <> `d1`))) VIRTUAL NOT SECONDARY,
+`b1` char(8) DEFAULT NULL,
+`c1` longblob NOT NULL NOT SECONDARY,
+`d1` timestamp NOT NULL,
+PRIMARY KEY (`pk`),
+KEY `functional_index` ((radians(`c1`))) USING BTREE COMMENT 'you''re'
+) ENGINE=InnoDB DEFAULT CHARSET=euckr"
+"[mysqlpump]
+exclude_databases=db1,mysql,mtr
+EOF
+
+
+use strict"
+"$texp->log_file(""$ENV{MYSQLPUMP_LOG}"", ""w"")"
+"$texp->spawn(""$ENV{MYSQLPUMP} $ENV{MYSQLPUMP_ARGS}"")"
 "REVOKE ALL PRIVILEGES ON *.* FROM user1"
 "CREATE TEMPORARY TABLE Temp3 LIKE Temp2"
 "CREATE TEMPORARY TABLE tt1 LIKE performance_schema.setup_consumers"
@@ -1989,8 +2350,6 @@ HAVING i+j is NULL ORDER BY i"
 HAVING i+j is NULL ORDER BY GROUPING(i)"
 "SELECT i, j, i+j, AVG(j), AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
 HAVING GROUPING(j)+AVG(j) > 11 ORDER BY GROUPING(i)"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(t1) */ 1 FROM t1,LATERAL (SELECT DISTINCT t2.val FROM t2 WHERE t1.val = t2.val) AS dt"
-"EXPLAIN FORMAT=TREE SELECT /*+ JOIN_PREFIX(dt) */ 1 FROM t1,LATERAL (SELECT DISTINCT t2.val FROM t2 WHERE t1.val = t2.val) AS dt"
 "EXPLAIN FORMAT=JSON SELECT
 id, AVG(id) over w `avg`, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt
 FROM t1 WINDOW w as (ORDER BY id RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
@@ -2158,7 +2517,6 @@ source $MYSQL_TMP_DIR/perror_syslocale.inc"
 "RESET PERSIST default.key_buffer_size"
 "RESET PERSIST test_component.str_sys_var"
 "RESET PERSIST event_scheduler"
-"RESET REPLICA"
 "RESET PERSIST ft_query_expansion_limit"
 "RESET PERSIST sql_mode"
 "[mysqld]
@@ -2200,12 +2558,6 @@ FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
 "RESET PERSIST gtid_mode"
 "RESET PERSIST enforce_gtid_consistency"
 "REVOKE ALL PRIVILEGES ON test_user_db.* FROM plug"
-"create procedure proc_1() reset binary logs and gtids"
-"create procedure proc_1() RESET REPLICA"
-"create procedure proc_1() START REPLICA"
-"create procedure proc_1() STOP REPLICA"
-"create procedure proc_1() SHOW REPLICA STATUS"
-"create procedure proc_1() show binary log status"
 "revoke all privileges on mysqltest.t1 from second_user@localhost"
 "revoke all privileges on test.t1 from drop_user@localhost "
 "set @a= timestamp ""2001-01-02 10:11:12.345"""
@@ -2214,154 +2566,6 @@ FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
 "set @a= time ""01:02:00"""
 "set @a= timestamp ""2001-01-02 01:02:00"""
 "set @a= date ""2001-01-02"""
-"SELECT a, b, c, ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b,c) AS rnk
-FROM t1 QUALIFY rnk>1"
-"SELECT a, b, c
-FROM t1 QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b,c)>1"
-"SELECT a, b, c
-FROM t1
-QUALIFY (MIN(a) OVER () + RANK() OVER () ) > 5"
-"SELECT a, b, c,
-MIN(b) OVER (PARTITION BY b ORDER BY a DESC,b ASC,c DESC) AS mn
-FROM t1
-QUALIFY ( RANK() OVER () + mn) >5"
-"SELECT a, b, c,
-MIN(b) OVER (PARTITION BY b ORDER BY a DESC,b ASC,c DESC) AS mn,
-RANK() OVER (PARTITION BY b ORDER BY a DESC,b ASC,c DESC) AS rnk
-FROM t1
-QUALIFY ( rnk + mn) >5"
-"SELECT a, b,
-MIN(b) OVER (PARTITION BY b ORDER BY a DESC,b ASC,c DESC) AS mn,
-RANK() OVER (PARTITION BY b ORDER BY a DESC,b ASC,c DESC) AS rnk
-FROM t1
-QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY b)>1"
-"SELECT
-a, b, ( SELECT sum(rnk)
-FROM ( SELECT ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b,c) AS rnk
-FROM t1 qualify rnk > t0.a
-) as z
-)
-FROM (values row(1,10), row(2,20)) as t0(a,b)"
-"SELECT  b
-FROM t1
-QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY a)>1"
-"SELECT  b
-FROM t1
-QUALIFY ROW_NUMBER() OVER ()>1 and 2*b>2"
-"SELECT  b
-FROM t1
-QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY a)>1 and c>2"
-"SELECT  b
-FROM t1
-QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY a)>1 and a>2"
-"SELECT a, b, c, ROW_NUMBER() OVER () AS rnk
-FROM t1
-QUALIFY 2*rnk>1"
-"SELECT a, b, c, ROW_NUMBER() OVER () AS rnk
-FROM t1
-QUALIFY a+rnk>5"
-"SELECT a, b, ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b) AS rnk
-FROM t1
-QUALIFY c>1"
-"SELECT a, b, ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b) AS rnk
-FROM t1
-QUALIFY 2*a>1"
-"SELECT a
-FROM t1
-QUALIFY ROW_NUMBER() OVER (PARTITION BY a) + b > 0"
-"SELECT a, b, ROW_NUMBER() OVER (PARTITION BY a ORDER BY a,b,c) AS rnk
-FROM t1
-QUALIFY rnk>1 and c>2"
-"SELECT MAX(a) FROM t1
-GROUP BY b, 2*c WITH ROLLUP
-HAVING AVG(c)>1
-QUALIFY MIN(2*b) OVER () + RANK() OVER () > 3"
-"SELECT 1 FROM t1
-GROUP BY b, 2*c WITH ROLLUP
-HAVING AVG(c)>1
-QUALIFY MIN(2*b) OVER () + RANK() OVER () + MAX(a) > 4"
-"SELECT MAX(b) FROM t1
-GROUP BY b, 2*c WITH ROLLUP
-HAVING AVG(c)>1
-QUALIFY MIN(2*b) OVER () + RANK() OVER () + MAX(a) > 4"
-"SELECT MAX(a)
-FROM t1 GROUP BY b WITH ROLLUP
-QUALIFY (MIN(c) OVER () + RANK() OVER () ) >= 2"
-"SELECT MAX(a)
-FROM t1 GROUP BY b,c WITH ROLLUP
-QUALIFY (MIN(a) OVER () + RANK() OVER () ) >= 2"
-"SELECT MAX(a)
-FROM t1 GROUP BY b,c WITH ROLLUP
-QUALIFY (MIN(a) OVER () + RANK() OVER () ) > 5"
-"SELECT MAX(a) FROM t1
-GROUP BY b,c WITH ROLLUP
-QUALIFY (MIN(a) OVER ()) > 1"
-"SELECT MAX(a)
-FROM t1
-GROUP BY b,c WITH ROLLUP
-QUALIFY (MIN(a) OVER () + RANK() OVER () ) > 5"
-"SELECT a FROM t1 GROUP BY b, 2*c WITH ROLLUP
-HAVING AVG(c)>1
-QUALIFY ROW_NUMBER() OVER () + MAX(a) > 4"
-"SELECT a FROM t1
-GROUP BY b, 2*c WITH ROLLUP
-QUALIFY LEAD(c,2) OVER () > 4"
-"SELECT a FROM t1
-GROUP BY b, 2*c WITH ROLLUP
-QUALIFY LAG(c,6) OVER () > 4"
-"SELECT b,c, MAX(a)
-FROM t1 GROUP BY b,c WITH ROLLUP
-QUALIFY LEAD(b) OVER(ORDER BY a,b,c) >1 AND b IS NULL"
-"SELECT RANK() OVER () AS sales_rank
-FROM sales QUALIFY SUM(sale_amount) > 300"
-"CREATE VIEW v1 as
-SELECT salesperson_id,   SUM(sale_amount) AS total_sales,
-RANK() OVER (ORDER BY SUM(sale_amount) DESC) AS sales_rank
-FROM sales GROUP BY salesperson_id
-QUALIFY SUM(sale_amount) > 3000"
-"CREATE VIEW v2 as
-SELECT SUM(sale_amount) AS total_sales,
-RANK() OVER (ORDER BY SUM(sale_amount) DESC) AS sales_rank
-FROM sales GROUP BY salesperson_id
-QUALIFY SUM(sale_amount) > 3000"
-"SELECT  RANK() OVER () AS field3
-FROM t1
-WHERE ( SELECT  MAX( t2.col_decimal_10_8 ) AS derived_1
-FROM  t2) IS NOT NULL
-QUALIFY field3 <=> 'a'"
-"SELECT CUME_DIST() OVER () AS field1
-FROM t1
-WHERE
-EXISTS ( SELECT LEAST(t2.col_varchar132, t2.col_timestamp_key) AS SQ1_field1
-FROM  t2
-)
-AND ( FLOOR(ATAN(t1.col_float_key) ) IS NULL )
-QUALIFY field1 = 'V' COLLATE utf8mb4_icelandic_ci"
-"SELECT SUM( col_time + CAST(col_year AS FLOAT) ) AS field1,
-ROW_NUMBER() OVER () AS field2
-FROM cc
-WHERE (12, 'H') IN ( SELECT
-DENSE_RANK() OVER ( ORDER BY col_double_key ),
-FIRST_VALUE(col_char_255)
-OVER ( ROWS BETWEEN CURRENT ROW
-AND UNBOUNDED FOLLOWING )
-FROM cc )
-QUALIFY field1 <=> 'M'"
-"SELECT id, b FROM t GROUP BY id WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT id, b, ROW_NUMBER() OVER w FROM t
-GROUP BY id WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT id, b, ROW_NUMBER() OVER w FROM t
-WINDOW w AS (ORDER BY id) QUALIFY x + SUM(x) OVER w <> 4"
-"SELECT id, x, ROW_NUMBER() OVER w FROM t GROUP BY id, x
-WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT id, x, ROW_NUMBER() OVER w FROM t GROUP BY id, x WITH ROLLUP
-WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT id FROM t GROUP BY id, x WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT id, x, ROW_NUMBER() OVER w FROM (SELECT * FROM t) AS dt
-GROUP BY id, x WITH ROLLUP WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT id, ROW_NUMBER() OVER w FROM (SELECT * FROM t) AS dt
-GROUP BY id, x WITH ROLLUP WINDOW w AS (ORDER BY id) QUALIFY x <> 1"
-"SELECT NTILE(1) OVER() FROM (SELECT * FROM t1) as dt QUALIFY f1 AND FALSE"
 "query_attributes a b"
 "query_attributes a b c d"
 "query_attributes 'a' ""b c"""
@@ -2372,24 +2576,184 @@ exec $MYSQL < $MYSQLTEST_VARDIR/tmp/wl12542.sql"
 "query_attributes a"
 "query_attributes 'a' 'b c'"
 resetconnection
-"EOF
-exec $MYSQL < $MYSQLTEST_VARDIR/tmp/wl12542.sql 2>&1"
 reset_connection
-"SELECT MAX( c1 ) OVER ( ORDER BY c2 ROWS CURRENT ROW ) FROM t1
-INTERSECT DISTINCT
-SELECT ""can't"" OR 447938560 FROM t1"
-"SELECT pk FROM c WHERE pk IN (SELECT 2 EXCEPT SELECT 4)"
-"SELECT pk FROM c WHERE pk IN (SELECT 2 EXCEPT SELECT 4) ORDER BY pk"
-"(SELECT 2 AS two UNION ALL SELECT 2)
-EXCEPT ALL
-SELECT 2"
-"SELECT SUBSTRING(t.rep, 1, 4) AS sub, LENGTH(t.rep) AS len
-FROM
-( SELECT REPEAT(c1, c2) AS rep FROM view_t1
-EXCEPT DISTINCT
-SELECT DISTINCT RANK() OVER () FROM t1 ) AS t
-ORDER BY len"
-"SELECT * FROM (SELECT * FROM t INTERSECT SELECT * FROM t) AS derived ORDER BY i LIMIT 2"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r UNION ALL SELECT * FROM s) INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r UNION ALL SELECT * FROM s INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT ALL SELECT * FROM s) INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT ALL SELECT * FROM s INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT ALL SELECT * FROM s) UNION ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT ALL SELECT * FROM s UNION ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r UNION DISTINCT SELECT * FROM s) INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r UNION DISTINCT SELECT * FROM s INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s UNION DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r UNION SELECT * FROM s) INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r UNION SELECT * FROM s INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT SELECT * FROM s) INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT SELECT * FROM s INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT SELECT * FROM s) UNION SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT SELECT * FROM s UNION SELECT * FROM t"
+"EXPLAIN SELECT * FROM r EXCEPT ALL SELECT * FROM s"
+"EXPLAIN SELECT * FROM r INTERSECT ALL SELECT * FROM s"
+"EXPLAIN SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s"
+"EXPLAIN SELECT * FROM r INTERSECT DISTINCT SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r EXCEPT ALL SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r INTERSECT ALL SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r INTERSECT DISTINCT SELECT * FROM s"
+"EXPLAIN FORMAT=json SELECT * FROM (SELECT 1 INTERSECT SELECT 2) AS dt"
+"EXPLAIN FORMAT=json SELECT * FROM (SELECT 1 EXCEPT SELECT 2) AS dt"
+"EXPLAIN (SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT SELECT * FROM t"
+"EXPLAIN (SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT
+(SELECT * FROM t INTERSECT DISTINCT SELECT * FROM t)"
+"EXPLAIN FORMAT = json
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = json
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT
+(SELECT * FROM t INTERSECT DISTINCT SELECT * FROM t)"
+"WITH RECURSIVE qn AS
+( SELECT * FROM t INTERSECT
+VALUES ROW(1, 1, 1) UNION ALL
+SELECT 1+n, unp1, un+unp1 FROM qn WHERE n<10)
+SELECT * FROM qn"
+"WITH RECURSIVE cte AS
+( ( (SELECT 1 AS n UNION SELECT 2) EXCEPT SELECT 2)  UNION ALL
+SELECT n+1  FROM cte WHERE n<100)
+SELECT n FROM cte LIMIT 10"
+"SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t3"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t3"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t2"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t1"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t3"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t3"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t2"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t1"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT 2,2"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT null, null"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 INTERSECT SELECT 2,2"
+"CREATE TABLE t4 AS SELECT null AS c1, null AS c2 INTERSECT SELECT null, null"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT 2,2"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT null, null"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 EXCEPT SELECT 2,2"
+"CREATE TABLE t4 AS SELECT null AS c1, null AS c2 EXCEPT SELECT null, null"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 EXCEPT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 EXCEPT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 INTERSECT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 INTERSECT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT null AS c1, null AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 UNION
+(SELECT null AS c1, null AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT null AS c1, null AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 UNION
+(SELECT null AS c1, null AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT 2,2)"
+"CREATE TABLE t1 AS ((VALUES ROW (1, 1), ROW (2,2) ORDER BY column_0 LIMIT 2)
+ORDER BY column_1 LIMIT 1)"
+"CREATE TABLE t2 AS ((VALUES ROW (null, null), ROW (2,2)
+ORDER BY column_0 LIMIT 2) ORDER BY column_1 LIMIT 1)"
+"EXPLAIN FORMAT=tree
+SELECT * FROM t1 INTERSECT (SELECT * FROM t1 ORDER BY 1 LIMIT 3)"
+"EXPLAIN FORMAT=tree
+SELECT * FROM t1 EXCEPT    (SELECT * FROM t1 ORDER BY 1 LIMIT 3)"
 "EOF
 
 create user nonsuper@localhost"
@@ -2397,7 +2761,6 @@ create user nonsuper@localhost"
 "RESET PERSIST replica_type_conversions"
 "ALTER USER u11 DEFAULT ROLE ALL"
 "ALTER USER u1@localhost DEFAULT ROLE r1,r2"
-"SHOW GRANTS FOR u1@localhost USING r1"
 "SHOW GRANTS FOR u2@localhost USING r1"
 "ALTER USER u5 DEFAULT ROLE r2,r3"
 "ALTER USER u2 DEFAULT ROLE r1, r2, r3"
@@ -2482,6 +2845,7 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "SHOW GRANTS FOR u_worldrou@localhost USING r_worldrou"
 "GRANT role1, `role2`@`host2`, role3 TO user1, user2, `user3`@`host3`"
 "GRANT `engineering`@`US` TO `engineering`@`INDIA`"
+"SHOW GRANTS FOR current_user() USING `engineering`@`%`,`role`@`%`"
 "REVOKE role1, `role2`@`host2`, role3 FROM user1, user2, `user3`@`host3`"
 "ALTER USER `joe`@`localhost` DEFAULT ROLE wp_administrators"
 "ALTER USER CURRENT_USER() DEFAULT ROLE NONE"
@@ -2520,7 +2884,7 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "REVOKE ALL ON my_db.t1 FROM foo_role"
 "REVOKE ALL ON my_db.t1 FROM bar"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO b35471453@localhost"
-"REVOKE CREATE ROLE, DROP ROLE, SET_ANY_DEFINER, ALLOW_NONEXISTENT_DEFINER ON *.* FROM b35471453@localhost"
+"REVOKE CREATE ROLE, DROP ROLE, SET_USER_ID ON *.* FROM b35471453@localhost"
 "my $mysqlbinlog= $ENV{'MYSQL_BINLOG'}"
 "my $port= $ENV{'MASTER_MYPORT'}"
 "my $binlog_file= $ENV{'BINLOG_FILE'}"
@@ -2543,48 +2907,11 @@ COMMIT"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MyISAM"
-"SHOW PARSE_TREE SELECT t3.col3, t1.col1 / t2. col2 FROM tab t1
-JOIN tab t2 ON t1.col1=t2.col2 JOIN tab t3 ON t1.col1 <= t3.col3"
-"SHOW PARSE_TREE SELECT a, b, func(c), SUM(c) OVER (PARTITION BY a,b ) FROM Y"
-"SHOW PARSE_TREE SELECT a, b, c, SUM(c) OVER
-(PARTITION BY a,b
-OrDER              BY a,b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-FROM Y"
-"SHOW PARSE_TREE SELECT id, FIRST_VALUE(id) OVER w FROM t_date
-WINDOW w AS (ORDER BY id RANGE BETWEEN INTERVAL col1 DAY PRECEDING AND INTERVAL 1 DAY PRECEDING)"
-"SHOW PARSE_TREE select (select 1) from t ORDER BY 1 DESC, 2"
-"SHOW PARSE_TREE SELECT 1 < 2, col1 NOT between 1 and 2, 1 IN (1, 2), 1 IN (1), 1 NOT IN (1)"
-"SHOW PARSE_TREE SELECT avg(distinct col1) from tab GROUP BY col2, col3"
-"SHOW PARSE_TREE SELECT not 1 or 2 is true or 0 is not false alias_name"
-"SHOW PARSE_TREE select 1 and 2 or 3 and 4, {u '2022/22/2' }, 1 < all (select 1)"
-"SHOW PARSE_TREE SELECT 1 - INTERVAL 2 HOUR_MINUTE, curtime(4), utc_time(2)"
-"SHOW PARSE_TREE SELECT * FROM t1 WHERE
-MATCH(a,b) AGAINST (""collections"" IN BOOLEAN MODE ) OR
-MATCH(a,b) AGAINST (""indexes"" IN NATURAL LANGUAGE MODE WITH QUERY EXPANSION)"
-"SHOW PARSE_TREE SELECT cast('30' as time(2)), cast(30 as decimal(6, 3)),
-cast(30 as decimal), cast(30 as float), cast('30' as char(40) charset utf8mb3),
-cast(30 as decimal array)"
-"SHOW PARSE_TREE SELECT CASE a WHEN b THEN c WHEN d THEN e ELSE f END,
-CASE a WHEN b THEN c END,
-CASE WHEN a THEN b ELSE c END"
-"SHOW PARSE_TREE SELECT
-CASE a
-WHEN
-CASE WHEN a1 THEN b2 END
-THEN c
-ELSE f END"
-"SHOW PARSE_TREE SELECT 1 union (select 2 intersect ALL select 3 limit 2 offset 10) limit 1, 5"
-"SHOW PARSE_TREE select SQL_SMALL_RESULT STRAIGHT_JOIN SQL_BUFFER_RESULT 1 and 2 and 3"
-"SHOW PARSE_TREE WITH der(col1, col2) AS (SELECT 1, 2), der1 AS (SELECT 2) SELECT * FROM der"
-"SHOW PARSE_TREE SELECT * FROM t STRAIGHT_JOIN t2 USING (col1, col2)"
-"SHOW PARSE_TREE SELECT * FROM t RIGHT OUTER JOIN t3 on col1/col2"
-"SHOW PARSE_TREE SELECT * FROM LATERAL (SELECT * FROM mydb.bar bar_alias) AS t(i, j)"
-"SHOW PARSE_TREE SELECT * FROM t JOIN t2 JOIN t3 JOIN t4"
-"SHOW PARSE_TREE SELECT * FROM t JOIN t2 JOIN (t3 JOIN t4)"
-"SHOW PARSE_TREE SELECT * FROM t JOIN t2 NATURAL JOIN t3 LEFT JOIN t4 USING (col1, col2)"
-"SHOW PARSE_TREE SELECT * FROM t JOIN t2 NATURAL JOIN (t3 LEFT JOIN t4 USING (col1, col2))"
-"SHOW PARSE_TREE SELECT * FROM t JOIN t2 JOIN t3 USING (col1, col2) JOIN (SELECT * FROM tab) AS t4"
-"SHOW PARSE_TREE SELECT db.func(), char(col1), char(col1 USING utf8mb4), concat(a,b), concat(a,b) COLLATE utf8mb4_turkish_ci"
+"create procedure test_signal()
+begin
+DECLARE something CONDITION FOR SQLSTATE ""01000"";
+SIGNAL something SET MESSAGE_TEXT = _utf8 ""This is a UTF8 text"";
+end "
 "my $filename = $ENV{""MYSQLD_PIDFILE""} or die(""pidfile not set"")"
 "my $pid"
 "my $wait_cnt=60"
@@ -2605,12 +2932,6 @@ SET @@global.slow_query_log=0"
 
 SET @@global.general_log=0"
 "REVOKE ALL ON test.* FROM mysqltest_1@'127.0.0.1/255.255.255.255'"
-"SELECT SUM(table1.pk )AS field1 , COUNT(table2.col_varchar_key ) AS field2
-FROM (t1 AS table1 JOIN (t2 AS table2))
-WHERE (table2.col_varchar_key <> SOME (SELECT SUBQUERY2_t1. col_varchar_key AS SUBQUERY2_field1
-FROM t1 AS SUBQUERY2_t1
-WHERE (SUBQUERY2_t1.pk < 4
-AND SUBQUERY2_t1. pk IN (SELECT 2 EXCEPT SELECT 9))))"
 "my $file= $ENV{'SLOW_LOG'} or die(""slow log not set"")"
 "$result++ if ($line =~ /SET timestamp=10"
 /)
@@ -2785,645 +3106,8 @@ declare continue handler for 1436 -- ER_STACK_OVERRUN_NEED_MORE
 select 'exception';
 call p1(a+1);
 end"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION JAVASCRIPT(x INTEGER) RETURNS INTEGER DETERMINISTIC
-LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE PYTHON
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE RUBY
-AS $$
-x-1
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE javascript
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE jAvaScRIpt
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVA1
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE $NOLANG
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE 123j
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE __
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS INTEGER
-LANGUAGE JAVASCRIPT DETERMINISTIC LANGUAGE SQL
-BEGIN RETURN a-1; END "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-LANGUAGE SQL DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-LANGUAGE
-JAVASCRIPT
-
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-LANGUAGE
-JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-LANGUAGE	  	 JAVASCRIPT  DETERMINISTIC
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC NO SQL
-LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
-CONTAINS SQL
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC READS SQL DATA
-LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
-MODIFIES SQL DATA
-AS $$
-return x-1;
-$$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER NOT DETERMINISTIC
-LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$
-"
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE JAVASCRIPT(a INTEGER) DETERMINISTIC
-LANGUAGE JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE PYTHON
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE RUBY
-AS $$ b = a $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE javascript
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE jAvaScRIpt
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVA1
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE $NOLANG
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE 123j
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE __
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER)
-LANGUAGE JAVASCRIPT DETERMINISTIC LANGUAGE SQL
-BEGIN DECLARE b INTEGER DEFAULT a; END "
-"CREATE PROCEDURE bar(a INTEGER)
-LANGUAGE SQL DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER)
-LANGUAGE
-JAVASCRIPT
-
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER)
-LANGUAGE
-JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER)
-LANGUAGE	  	 JAVASCRIPT  DETERMINISTIC
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC NO SQL
-LANGUAGE JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVASCRIPT
-CONTAINS SQL
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC READS SQL DATA
-LANGUAGE JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVASCRIPT
-MODIFIES SQL DATA
-AS $$ let b = a; $$ "
-"CREATE PROCEDURE bar(a INTEGER) NOT DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$ let b = a; $$ "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-return x-1;
-$$ "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS 'return x-1;' "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS ""return x-1;"" "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS '
-return x-1;
-' "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-""
-return x-1;
-"" "
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-'
-return ""$$"" + a + ""$$"";
-'
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$code$
-return ""$$"" + a + ""$$"";
-$code$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$coDE$
-return ""$$"" + a + ""$$"";
-$coDE$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$CODE$
-return ""$$"" + a + ""$$"";
-$CODE$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$tag$
-return ""$$"" + a + ""$$"";
-$tag$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$TAG$
-return ""$$"" + a + ""$$"";
-$TAG$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$NULL$
-return ""$$"" + a + ""$$"";
-$NULL$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$abdc_1234$
-return ""$$"" + a + ""$$"";
-$abdc_1234$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$_a$
-return ""$$"" + a + ""$$"";
-$_a$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$_$
-return ""$$"" + a + ""$$"";
-$_$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$0$
-return ""$$"" + a + ""$$"";
-$0$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$100$
-return ""$$"" + a + ""$$"";
-$100$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$12345678901234$
-return ""$$"" + a + ""$$"";
-$12345678901234$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
-return ""$$"" + a + ""$$"";
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$Â¡$
-return ""$$"" + a + ""$$"";
-$Â¡$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
-return ""$$"" + a + ""$$"";
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS	      $$
-const $x = 3;
-const $y$ = 4;
-return $x + $y$ + a;
-$$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$code$
-const x$$ = 3;
-const $y$$z = 4;
-return x$$ + $y$$z + a;
-
-$code$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-return ""â"" + a + ""$â$"";
-$$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $code$
-return ""â"" + a + ""$â$$"";
-$code$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $code$
-return ""â"" + a + ""$â$$â"";
-$code$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$â
-return ""â"" + a + ""$â$"";
-$$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $â$
-return ""â"" + a + ""â$"";
-$â$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $coâe$
-return ""â"" + a + ""$â$$"";
-$coâe$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ð$
-return ""ð$ð"" + a + ""ð$ð$"";
-$ð$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðð$
-return ""ð$ð"" + a + ""ð$ð$"";
-$ðð$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xð$
-return ""$xðð"" + a + ""$xðð$"";
-$xð$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðx$
-return ""$ðxð$"" + a + ""$ððx$"";
-$ðx$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðy$
-return ""$xððy$"" + a + ""$xðyð$"";
-$xðy$
-"
-"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðyð$
-return ""ðð$"" + a + ""ð$ð$"";
-$xðyð$
-"
-"CREATE FUNCTION foo(x INTEGER) RETURNS VARCHAR(20)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $code$ rtrn ""$$"" + x + ""$foo$""; $code$ "
-"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-const $x = x,
-const $y = 1
-return $x + $y;
-$$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-let b = a;
-$$ "
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS 'let b = a;' "
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS ""let b = a;"" "
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS '
-let b = a;
-' "
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-""
-let b = a;
-"" "
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-'
-let b = ""$$"" + a + ""$$"";
-'
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$code$
-let b = ""$$"" + a + ""$$"";
-$code$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$coDE$
-let b = ""$$"" + a + ""$$"";
-$coDE$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$CODE$
-let b = ""$$"" + a + ""$$"";
-$CODE$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$tag$
-let b = ""$$"" + a + ""$$"";
-$tag$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$TAG$
-let b = ""$$"" + a + ""$$"";
-$TAG$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$NULL$
-let b = ""$$"" + a + ""$$"";
-$NULL$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$abdc_1234$
-let b = ""$$"" + a + ""$$"";
-$abdc_1234$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$_a$
-let b = ""$$"" + a + ""$$"";
-$_a$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$_$
-let b = ""$$"" + a + ""$$"";
-$_$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$0$
-let b = ""$$"" + a + ""$$"";
-$0$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$100$
-let b = ""$$"" + a + ""$$"";
-$100$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$12345678901234$
-let b = ""$$"" + a + ""$$"";
-$12345678901234$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
-let b = ""$$"" + a + ""$$"";
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$Â¡$
-let b = ""$$"" + a + ""$$"";
-$Â¡$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
-let b = ""$$"" + a + ""$$"";
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS	      $$
-const $x = 3;
-const $y$ = 4;
-let b = $x + $y$ + a;
-$$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS
-$code$
-const x$$ = 3;
-const $y$$z = 4;
-let b = x$$ + $y$$z + a;
-
-$code$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-let b = ""â"" + a + ""$â$"";
-$$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $code$
-let b = ""â"" + a + ""$â$$"";
-$code$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $code$
-let b = ""â"" + a + ""$â$$â"";
-$code$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$â
-let b = ""â"" + a + ""$â$"";
-$$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $â$
-let b = ""â"" + a + ""â$"";
-$â$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $coâe$
-let b = ""â"" + a + ""$â$$"";
-$coâe$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ð$
-let b = ""ð$ð"" + a + ""ð$ð$"";
-$ð$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðð$
-let b = ""ð$ð"" + a + ""ð$ð$"";
-$ðð$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xð$
-let b = ""$xðð"" + a + ""$xðð$"";
-$xð$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðx$
-let b = ""$ðxð$"" + a + ""$ððx$"";
-$ðx$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðy$
-let b = ""$xððy$"" + a + ""$xðyð$"";
-$xðy$
-"
-"CREATE PROCEDURE bar(a INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðyð$
-let b = ""ðð$"" + a + ""ð$ð$"";
-$xðyð$
-"
-"CREATE PROCEDURE bar(x INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $code$ let b := ""$$"" + x + ""$foo$""; $code$ "
-"CREATE PROCEDURE bar(x INTEGER)
-DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$
-const $x = x,
-const $y = 1
-let b = $x + $y;
-$$
-"
 "revoke all privileges on procedure sptest.p1 from userb@localhost"
+"CALL p1(_UTF8 't')"
 "create procedure h_ee()
 deterministic
 begin
@@ -3654,7 +3338,6 @@ select 'Inner (good)' as 'h_xs';
 insert into t3 values (1);
 end;
 end"
-"show binary log status"
 "create procedure mysqltest1.p1()
 begin
 alter database character set koi8r;
@@ -3690,6 +3373,31 @@ DECLARE a int;
 SELECT 1 INTO a;
 RETURN a;
 END "
+"CREATE PROCEDURE p1(dt DATETIME, i INT)
+BEGIN
+SELECT
+CASE
+WHEN i = 1 THEN 2
+ELSE dt
+END AS x1;
+
+SELECT
+CASE _latin1'a'
+WHEN _utf8'a' THEN 'A'
+END AS x2;
+
+SELECT
+CASE _utf8'a'
+WHEN _latin1'a' THEN _utf8'A'
+END AS x3;
+
+SELECT
+CASE s1
+WHEN _latin1'a' THEN _latin1'b'
+ELSE _latin1'c'
+END AS x4
+FROM t1;
+END"
 "CREATE EVENT e1 ON SCHEDULE EVERY 1 SECOND STARTS NOW() DO
 BEGIN
 DECLARE EXIT HANDLER FOR 1136 BEGIN
@@ -3709,7 +3417,7 @@ insert into t1 values (null)"
 "return @a"
 "end|
 
-reset binary logs and gtids"
+reset master"
 "ALTER INSTANCE RELOAD TLS"
 "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
 "SELECT 1 FROM t1 AS table2 LEFT JOIN (SELECT 'c') AS table3(f1)
@@ -3733,7 +3441,6 @@ t1,
 LATERAL ( SELECT t1.a FROM t1 AS inner_t1 LIMIT 1 ) AS d1
 WHERE 1 IN ( SELECT a FROM t1 )
 ORDER BY a"
-"SELECT CAST(NULL < ANY (VALUES ROW(1), ROW(2)) AS SIGNED)"
 "SELECT AVG(a) OVER () AS `avg`,
 a + (SELECT SUM(a) + (SELECT COUNT(a) FROM t1)
 FROM (SELECT * from t1) t11) AS cnt FROM t2"
@@ -3768,6 +3475,10 @@ WHERE t1.i <= SOME ( SELECT 8 UNION  SELECT 3 ) ) )"
 "SELECT AVG(DISTINCT id) FROM t1 GROUP BY id % 13"
 "SELECT * FROM t1 WHERE int_key IN ( SELECT AVG(DISTINCT pk) FROM t2 WHERE time_nokey = datetime_key )"
 "FLUSH TABLE schema1.t1"
+"SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1))"
+"SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1), ROW(2))"
+"WITH v1(x) AS (VALUES ROW (1), ROW (2), ROW (3))
+SELECT * FROM v1, LATERAL (VALUES ROW(v1.x)) AS v2"
 "REVOKE ALL ON *.* FROM noprivs@localhost"
 "CREATE TABLESPACE ts1 ENGINE_ATTRIBUTE=''"
 "CREATE TABLESPACE ts2 ENGINE_ATTRIBUTE='{""c"": ""v""}'"
@@ -3813,8 +3524,6 @@ definers='root@localhost'
 EOF
 
 FLUSH TABLE t1"
-"create procedure p1() reset binary logs and gtids"
-"create procedure p1() RESET REPLICA"
 "create trigger t1_whoupdated before update on t1 for each row
 begin
 declare user varchar(32);
@@ -3826,14 +3535,6 @@ end"
 "load data infile '../../std_data/words.dat' into table t1 (a) set b:= f1()"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
-"SELECT * FROM t2 EXCEPT SELECT * FROM t3"
-"SELECT * FROM t3 EXCEPT SELECT * FROM t2"
-"SELECT LEAD(e) OVER () FROM t GROUP BY ROLLUP(e) EXCEPT SELECT 1"
-"SELECT LAG(e) OVER () FROM t GROUP BY ROLLUP(e) EXCEPT SELECT 1"
-"SELECT LEAST(e, NULL) FROM t GROUP BY ROLLUP(e) EXCEPT SELECT 1"
-"SELECT GREATEST(e, NULL) FROM t GROUP BY ROLLUP(e) EXCEPT SELECT 1"
-"SELECT IF(e='a', e, NULL) FROM t GROUP BY ROLLUP(e) EXCEPT SELECT 1"
-"SELECT COALESCE(e, NULL) FROM t GROUP BY ROLLUP(e) EXCEPT SELECT 1"
 "SELECT 10,10.0,10.,.1e+2,100.0e-1"
 "create table t1 (c nchar varchar(10))"
 "create table t1 (c national character varying(10))"
@@ -3941,10 +3642,6 @@ RETURN a"
 "//
 
 CREATE TABLE t1 (a TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6))"
-"CREATE TABLE t5 (c1 YEAR AS (CAST(1985 AS YEAR)))"
-"SELECT x FROM (SELECT NULL FROM t1 GROUP BY t1.c0) AS x(x)
-INTERSECT
-SELECT t0.c0 FROM t0"
 "EOF
 
 
@@ -3955,8 +3652,8 @@ connection default"
 "ALTER UNDO TABLESPACE undo_003 SET INACTIVE ENGINE InnoDB"
 "select count(*) from (
 (select                      a,b from t1 limit 2)  union all (select a,b from t2 order by a)) q"
-"(select * from t1 limit 3) intersect (select * from t1 limit 3) order by a"
-"(select * from t1 limit 4) except (select * from t1 limit 1) order by a"
+"(select * from t1 limit 3) intersect (select * from t1 limit 3)"
+"(select * from t1 limit 4) except (select * from t1 limit 1)"
 "SELECT COUNT(*) FROM (
 (SELECT                     * FROM t1) UNION all (SELECT * FROM t2)) q"
 "SELECT COUNT(*) FROM (
@@ -3995,8 +3692,8 @@ ORDER BY c2 DESC, c1 ASC LIMIT 1
 "ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 0"
 "ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 0"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3 ACCOUNT LOCK"
-"CREATE USER proxied_to_user@localhost IDENTIFIED WITH 'caching_sha2_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
-"CREATE USER proxy_user@localhost IDENTIFIED WITH 'caching_sha2_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"CREATE USER proxied_to_user@localhost IDENTIFIED WITH 'mysql_native_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"CREATE USER proxy_user@localhost IDENTIFIED WITH 'mysql_native_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 2"
 "ALTER USER u1 FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
 "ALTER USER u1 FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0"
@@ -4037,9 +3734,9 @@ SET @aux = GET_LOCK(2,1)"
 END
 "|
 SELECT GET_LOCK(CAST(2 AS CHAR),0)"
-"select sql_small_result
-distinct @var:=id2, @var1:=cast((avg(id) over(partition by id2)) as signed)
-from tb1 order by 1 limit 1"
+"SELECT GET_LOCK(_utf8 0xd182d0b5d181d182, 0)"
+"SELECT IS_FREE_LOCK(_utf8 0xd182d0b5d181d182)"
+"SELECT RELEASE_LOCK(_utf8 0xd182d0b5d181d182)"
 "password
 validate
 EOF
@@ -4054,6 +3751,8 @@ CREATE USER 'user1'@'localhost' IDENTIFIED BY 'passWORD123#'"
 "my $outer = 100000"
 "open(DICT_FILE, "">"", $dict_file) or die ""Can't open $dict_file for write: $!"""
 "EOF
+
+
 
 
 
@@ -4356,14 +4055,6 @@ r
 , SUM(r)   OVER w / COUNT(*) OVER w AS ""sum(r)/count(r)""
 FROM t WINDOW w AS (ORDER BY n ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING)
 ORDER BY n"
-"SELECT AVG( @A := c1 ) OVER (ROWS 1 PRECEDING) FROM t1"
-"SELECT DISTINCT
-pow( COUNT(*), @a:=(SELECT 1 FROM t1 LEFT JOIN
-t1 t2
-ON @a)
-) AS `pow`,
-AVG( @a:= a ) OVER (ROWS 1 PRECEDING) AS `avg`
-FROM t1 GROUP BY a"
 "EXPLAIN FORMAT=JSON SELECT k, AVG(DISTINCT j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
 "EXPLAIN FORMAT=JSON SELECT sex, RANK() OVER (ORDER BY sex DESC) `rank`, AVG(DISTINCT id) AS uids FROM t1 u, t2
 WHERE t2.user_id = u.id GROUP BY sex ORDER BY sex"
