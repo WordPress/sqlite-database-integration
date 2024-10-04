@@ -33,6 +33,16 @@ class MySQLLexer {
 	 */
 	const PATTERN_UNQUOTED_IDENTIFIER = '(?=\D)[\w_$\x{80}-\x{ffff}]+';
 
+	/**
+	 * Unquoted user-defined variables:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/user-variables.html
+	 *
+	 * Rules:
+	 *   1. Starts with a '@'.
+	 *   2. Allowed following characters are ASCII a-z, A-Z, 0-9, ., $, _.
+	 */
+	const PATTER_UNQUOTED_USER_VARIABLE = '@[\w\d$.]+';
+
     /**
      * Quoted literals and identifiers:
      *   https://dev.mysql.com/doc/refman/8.4/en/string-literals.html
@@ -2176,6 +2186,12 @@ class MySQLLexer {
 				$this->consume(); // Consume the '@'.
 				$this->consume(); // Consume the '@'.
 				$this->type = self::AT_AT_SIGN_SYMBOL;
+			} elseif (preg_match('/\G' . self::PATTER_UNQUOTED_USER_VARIABLE . '/u', $this->input, $matches, 0, $this->position)) {
+				$this->text = $matches[0];
+				$this->position += strlen($this->text);
+				$this->c = $this->input[$this->position] ?? null;
+				$this->n = $this->input[$this->position + 1] ?? null;
+				$this->type = self::AT_TEXT_SUFFIX;
 			} else {
 				$this->consume();
 				$this->type = self::AT_SIGN_SYMBOL;

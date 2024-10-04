@@ -316,9 +316,6 @@ SET GLOBAL validate_password.length = 60, validate_password.number_count = 50"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = 12"
 "EOF
 SELECT COUNT(*) FROM wl12475.t1"
-"create user test@127.0.0.1 identified by ""gambling"""
-"grant ALL on *.* to test@127.0.0.1"
-"drop user test@127.0.0.1"
 "CREATE TABLE t3 (col1 INT, col2 INT GENERATED ALWAYS AS (col1) STORED)"
 "ALTER TABLE t1 ADD COLUMN f3 INT GENERATED ALWAYS AS (f1) STORED"
 "ALTER TABLE t1 ALTER CONSTRAINT f2_check NOT ENFORCED"
@@ -413,8 +410,6 @@ INSERT INTO t1 VALUES (_utf8mb3'Cote d\'Ivoire')"
 "INSERT INTO t1 VALUES (N'Cote d\'Ivoire');
 INSERT INTO t1 VALUES (_utf8mb4'Cote d\'Ivoire')"
 "my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
-"SET @null = NULL"
-"EXECUTE ps USING @null"
 "EOF
 
 
@@ -596,18 +591,11 @@ t1,
 LATERAL (SELECT DISTINCT t1.x) AS dt1,
 LATERAL (SELECT DISTINCT dt1.x) AS dt2
 WHERE dt1.x = dt2.x"
-"CREATE USER u1@192.129.12.11"
-"CREATE DEFINER = u1@192.129.12.11 VIEW v3 as SELECT * FROM t1"
-"DROP USER u1@192.129.12.11"
 "SHOW REPLICA STATUS"
 "SHOW BINARY LOG STATUS"
 "SHOW REPLICAS"
 "create table t(id int, $id int, $id2 int, `$$id` int, $ int, $1 int,
 `$$$` int, id$$$ int, 1$ int, `$$` int, _$ int, b$$lit$$ int)"
-"set @sql:=concat('select `$$id`, $id, `$$` from ', @table_name)"
-"prepare dynamic_stmt from @sql"
-"create role $username@$hostname.$domainname.com"
-"drop role $username@$hostname.$domainname.com"
 "EOF
 
 DROP DATABASE bug19573998"
@@ -746,19 +734,6 @@ on update no action,
 foreign key (a,b) references t3 (c,d) on update cascade,
 foreign key (a,b) references t3 (c,d) on delete set default,
 foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
-"SET @KEYS=REPEAT('c', 16)"
-"SELECT AES_DECRYPT(AES_ENCRYPT(@ENCSTR, @KEYS), @KEYS)=@ENCSTR"
-"SELECT AES_DECRYPT(AES_ENCRYPT(@ENCSTR, @KEYS, @IV), @KEYS, @IV)=@ENCSTR"
-"SELECT AES_DECRYPT(AES_ENCRYPT(@ENCSTR, @KEYS), @KEYS)=@ENCSTR FROM t1"
-"SELECT AES_DECRYPT(AES_ENCRYPT(@ENCSTR, @KEYS, @IV), @KEYS, @IV)=@ENCSTR FROM t1"
-"SET @KEYS=RANDOM_BYTES(1)"
-"SET @KEYS=RANDOM_BYTES(1024)"
-"SET @KEYS='helloworld'"
-"select AES_ENCRYPT(@ENCSTR, @KEYS, @IV)=AES_ENCRYPT(@ENCSTR, @KEYS, @IV1)"
-"SET @KEYS='helloworld1234567890'"
-"INSERT INTO t1 values(AES_ENCRYPT(@ENCSTR, @KEYS, @IV))"
-"SELECT AES_DECRYPT(f1, @KEYS, @IV)=@ENCSTR FROM t1"
-"SELECT COALESCE (AES_DECRYPT(f1, @KEYS, @IV)=@ENCSTR,0) FROM t1"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12' AT TIME ZONE 'UTC' AS DATETIME)"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12+00:00' AT TIME ZONE '+00:00' AS DATETIME)"
@@ -778,21 +753,6 @@ WHERE innr1.col_int_key= 4)"
 "SELECT COALESCE(IF(x, NULL, NULL), x) FROM t EXCEPT SELECT 1"
 "SELECT COALESCE(CASE WHEN x THEN NULL ELSE NULL END, x) FROM t EXCEPT SELECT 1"
 "SELECT COALESCE(COALESCE(NULL, NULL), x) FROM t EXCEPT SELECT 1"
-"set @null = NULL"
-"EXECUTE ps USING @null, @int_two, @int_five"
-"EXECUTE ps USING @str_one, @null, @str_five"
-"EXECUTE ps USING @null, @null, @null"
-"EXECUTE ps USING @null, @dec_two, @dec_five"
-"EXECUTE ps USING @null, @dbl_two, @dbl_five"
-"EXECUTE ps USING @null, @str_two, @str_five"
-"EXECUTE ps USING @null, @date_two, @date_five"
-"EXECUTE ps USING @null, @time_two, @time_five"
-"EXECUTE ps USING @null, @dt_two, @dt_five"
-"EXECUTE ps USING @null, @json_two, @json_five"
-"EXECUTE ps USING @null, @null, @null, @int_two, @dec_two, @str_two,
-@int_five, @dec_five, @str_five"
-"EXECUTE ps USING @null, @dec_one, @str_one, @int_two, @null, @str_two,
-@int_five, @dec_five, @null"
 "CREATE TABLE t(x VARCHAR(10),
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
 exit
@@ -1116,11 +1076,7 @@ SELECT 1"
 "ALTER USER USER() IDENTIFIED BY 'abc'"
 "ALTER USER USER() IDENTIFIED BY 'new_pwd_string'"
 "ALTER USER USER() IDENTIFIED BY 'new-auth'"
-"CREATE USER user1@47.9.9.9 IDENTIFIED BY 'pass1'"
-"SHOW CREATE USER user1@47.9.9.9"
 "REVOKE ALL ON *.* FROM user1@localhost"
-"DROP USER user1@localhost, user1@47.9.9.9, user2,
-bug20625566_user@localhost, bug20625566_dest@localhost"
 "ALTER USER u1@localhost DEFAULT ROLE r1"
 "REVOKE ALL ON *.* FROM u1@localhost"
 "REVOKE ALL ON *.* FROM u1"
@@ -1212,7 +1168,6 @@ FROM HU.STAFF WHERE GRADE * 1000 >
 ANY (SELECT SUM(BUDGET) FROM HU.PROJ
 GROUP BY CITY, PTYPE
 HAVING HU.PROJ.CITY = HU.STAFF.CITY)"
-"insert into t1 values(concat(@char,@space),concat(@char,@space),concat(@char,@space))"
 "create table t1 (v varchar(10), c char(10), t varchar(50), key using btree (v), key using btree (c), key using btree (t(10))) charset latin1"
 "create table t1 (a char(10), unique using btree (a)) charset latin1 engine=heap"
 "create table t1 (a int not null,b int not null, primary key using BTREE (a)) engine=heap comment=""testing heaps"" avg_row_length=100 min_rows=1 max_rows=100"
@@ -1599,8 +1554,6 @@ de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
 "ALTER TABLE  t1 MODIFY f1 DATE NOT SECONDARY"
 "CREATE TABLE t1 (f1 INT) SECONDARY_ENGINE=myisam"
 "ALTER TABLE t1 SECONDARY_ENGINE=myisam"
-"SET @table = 't1'"
-"EXECUTE ps1 USING @expected, @db, @table"
 "my $passwd_file= $ENV{'PASSWD_FILE'} or die"
 "my $FILE"
 "print ""password found\n"""
@@ -1889,8 +1842,6 @@ drop table if exists t1Aa,t2Aa,v1Aa,v2Aa"
 "ALTER TABLE m1 UNION=()"
 "CREATE TABLE t4 LIKE t3"
 "CREATE TEMPORARY TABLE t4 LIKE t3"
-"SET @before:= (SELECT MAX_DATA_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='t1' AND TABLE_SCHEMA='test')"
-"SELECT @before=@after"
 "CREATE TABLE ta (pk INT, embedding VECTOR(4), PRIMARY KEY (pk)) ENGINE=MyISAM"
 "FLUSH TABLE mysql_db1.t1"
 "print FILE ""select\n"""
@@ -1987,10 +1938,6 @@ let $wait_condition= SELECT id from information_schema.processlist where process
 "$binlog= $ENV{'MYSQL_TMP_DIR'} . '/binlog.000003'"
 "$binlog_exists= 0"
 $timeout--
-"SET @create = IF(@have_ndb = 0, @create_cmd, 'SET @dummy = 0')"
-"SET @drop = IF(@have_ndb = 0, @drop_cmd, 'SET @dummy = 0')"
-"PREPARE create_stmt FROM @create"
-"PREPARE drop_stmt FROM @drop"
 "EOF
 CREATE TABLE db2.t2 (a INT)"
 "my $mysqld_log= $ENV{'MDF_LOG'}"
@@ -2042,17 +1989,6 @@ key k1(sum)
 "CREATE TABLE t1 (my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE, f INT,
 PRIMARY KEY(my_row_id))"
 "CREATE TABLE t2 (f1 INT, f2 INT INVISIBLE DEFAULT 10)"
-"CREATE USER IF NOT EXISTS view_u2@my.oracle.com"
-"CREATE USER IF NOT EXISTS event_u2@192.1.1.140"
-"CREATE USER IF NOT EXISTS trig_u2@xyz.com"
-"CREATE DEFINER=view_u2@my.oracle.com VIEW v3 AS SELECT * FROM t1"
-"CREATE DEFINER=view_u2@my.oracle.com VIEW v4 AS SELECT * FROM t1"
-"CREATE DEFINER=event_u2@192.1.1.140 EVENT e3 ON SCHEDULE AT '2037-01-01 00:00:00' DISABLE DO SET @a = 5"
-"CREATE DEFINER=event_u2@192.1.1.140 EVENT e4 ON SCHEDULE AT '2037-01-01 00:00:00' DISABLE DO SET @a = 5"
-"CREATE DEFINER=trig_u2@xyz.com TRIGGER trig3 BEFORE INSERT ON t1 FOR EACH ROW SET @sum = 1"
-"CREATE DEFINER=trig_u2@xyz.com TRIGGER trig4 BEFORE INSERT ON t1 FOR EACH ROW SET @sum = 1"
-"DROP USER view_u1, view_u2@my.oracle.com, event_u1, event_u2@192.1.1.140, trig_u1, trig_u2@xyz.com,
-proc_u1, proc_u2@localhost, func_u1, func_u2, user_not_referenced_as_definer"
 "CREATE TABLE x1 (c0 BLOB AS ('a') VIRTUAL, c1 INT)"
 "CREATE TABLE x2 (c1 INT, c0 BLOB AS ('a') VIRTUAL)"
 "CREATE TABLE x3 (c0 BLOB AS ('a') VIRTUAL INVISIBLE, c1 INT)"
@@ -2303,30 +2239,12 @@ FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
 "RESET PERSIST gtid_mode"
 "RESET PERSIST enforce_gtid_consistency"
 "REVOKE ALL PRIVILEGES ON test_user_db.* FROM plug"
-"set @precision=10000000000"
-"select rand(),
-cast(rand(10)*@precision as unsigned integer) from t1"
-"set @like=""%NDAN%"""
-"execute stmt using @like"
-"set @like=""%ER"""
-"set @offset=0, @limit=1"
-"execute stmt using @offset, @limit"
-"set @offset=3, @limit=2"
-"execute stmt using @limit"
-"set @limit=2"
-"execute stmt using @offset, @limit, @offset, @limit, @limit"
 "create procedure proc_1() reset binary logs and gtids"
 "create procedure proc_1() RESET REPLICA"
 "create procedure proc_1() START REPLICA"
 "create procedure proc_1() STOP REPLICA"
 "create procedure proc_1() SHOW REPLICA STATUS"
 "create procedure proc_1() show binary log status"
-"set @dec=0"
-"execute stmt2 using @to_format, @dec"
-"set @dec=4"
-"set @dec=6"
-"set @dec=2"
-"SET @empty = ''"
 "revoke all privileges on mysqltest.t1 from second_user@localhost"
 "revoke all privileges on test.t1 from drop_user@localhost "
 "set @a= timestamp ""2001-01-02 10:11:12.345"""
@@ -2578,9 +2496,6 @@ ON *.* FROM u1, u2 IGNORE UNKNOWN USER"
 "ALTER USER u1 IDENTIFIED BY '123' REPLACE '', u2 IDENTIFIED BY '456'
 PASSWORD REQUIRE CURRENT OPTIONAL"
 "ALTER USER u2 IDENTIFIED BY 'xyz', u1 IDENTIFIED BY 'abc' REPLACE '123'"
-"SET @sql='SELECT command_type, argument FROM mysql.general_log WHERE argument LIKE ""%Bug#16953758%""'"
-"PREPARE stmt FROM @sql"
-"SET @sql='DROP TABLE 18616826_does_not_exist'"
 "ALTER USER plaintext_test IDENTIFIED BY '' REPLACE 'pwd'"
 "SET PASSWORD='789' REPLACE '456'"
 "ALTER USER test_user2 IDENTIFIED BY 'azundris2' REPLACE 'azundris2'"
@@ -3778,8 +3693,6 @@ select 'Inner (good)' as 'h_xs';
 insert into t3 values (1);
 end;
 end"
-"call bug1656(@1, @2)"
-"select @1, @2"
 "show binary log status"
 "create procedure mysqltest1.p1()
 begin
@@ -3964,24 +3877,6 @@ set NEW.username = user;
 select count(*) from ((select 1) union (select 2)) as d1 into i;
 end"
 "load data infile '../../std_data/words.dat' into table t1 (a) set b:= f1()"
-"create trigger t1_bi before insert on t1 for each row
-begin
-insert into t2 values (new.id, new.v);
-update t2 set v=v+1 where id= new.id;
-replace t3 values (new.id, 0);
-update t2, t3 set t2.v=new.v, t3.v=new.v where t2.id=t3.id;
-create temporary table t5 select * from t1;
-delete from t5;
-insert into t5 select * from t1;
-insert into t4 values (0);
-set @check= (select count(*) from t5);
-update t4 set c= @check;
-drop temporary table t5;
-
-set @a:=1/0;
-end"
-"set @check=0, @t4_bi_called=0, @t4_bu_called=0"
-"select @check, @t4_bi_called, @t4_bu_called"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
 "CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
 "SELECT * FROM t2 EXCEPT SELECT * FROM t3"
@@ -3997,8 +3892,6 @@ end"
 "create table t1 (c nchar varchar(10))"
 "create table t1 (c national character varying(10))"
 "create table t1 (c nchar varying(10))"
-"SET @decimal= 1.1"
-"CREATE TABLE t1 SELECT @decimal AS c1"
 "SELECT AVG(DISTINCT a) FROM t1"
 "CREATE PROCEDURE p1 ()
 BEGIN
@@ -4201,11 +4094,6 @@ SELECT GET_LOCK(CAST(2 AS CHAR),0)"
 "select sql_small_result
 distinct @var:=id2, @var1:=cast((avg(id) over(partition by id2)) as signed)
 from tb1 order by 1 limit 1"
-"set @rank := 0"
-"select @rownum := @rownum + 1 as `row`,
-@rank := IF(@prev_score!=a, @rownum, @rank) as `rank`,
-@prev_score := a as score
-from t1 order by score desc"
 "password
 validate
 EOF
@@ -4244,11 +4132,7 @@ eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dict
 "SET PASSWORD FOR 'usr1'@'localhost' TO RANDOM"
 "create table table_28127_a(0b02 int)"
 "create table table_28127_b(0b2 int)"
-"set @select=2,@t5=1.23456"
-"set @test_int=10,@test_double=1e-10,@test_string=""abcdeghi"",@test_string2=""abcdefghij"",@select=NULL"
-"select @test_int,@test_double,@test_string,@test_string2,@select"
 "create view  v1 as select avg(distinct s1) from t1"
-"ALTER DEFINER=s@1 VIEW v1 AS SELECT * FROM t1"
 "revoke all privileges on test.* from mysqltest_1@localhost"
 "revoke all privileges on mysqltest.v1 from mysqltest_1@localhost"
 "REVOKE ALL ON mysqltest_db1.* FROM mysqltest_u1@localhost"
@@ -4343,7 +4227,6 @@ DECLARE ret char(255);
 SELECT  AVG(c2)  OVER ( ) AS res FROM  te2 INTO ret;
 RETURN ret;
 END"
-"SET @sav_big= (SELECT COALESCE(@session.big_tables, 0))"
 "CREATE TABLE `C` (
 `pk` int(11) NOT NULL AUTO_INCREMENT,
 `col_int` int(11) NOT NULL,
