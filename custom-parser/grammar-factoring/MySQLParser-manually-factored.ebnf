@@ -60,7 +60,7 @@ routineCreateOption ::= routineOption | (NOT_SYMBOL? DETERMINISTIC_SYMBOL)
 routineAlterOptions ::= routineCreateOption+
 routineOption ::= (COMMENT_SYMBOL textLiteral) | (LANGUAGE_SYMBOL SQL_SYMBOL) | (NO_SYMBOL SQL_SYMBOL) | (CONTAINS_SYMBOL SQL_SYMBOL) | (READS_SYMBOL SQL_SYMBOL DATA_SYMBOL) | (MODIFIES_SYMBOL SQL_SYMBOL DATA_SYMBOL) | (SQL_SYMBOL SECURITY_SYMBOL (DEFINER_SYMBOL | INVOKER_SYMBOL))
 createIndex ::= onlineOption? ((UNIQUE_SYMBOL? INDEX_SYMBOL ((indexName indexTypeClause?) | indexNameAndType?) createIndexTarget indexOption*) | (FULLTEXT_SYMBOL INDEX_SYMBOL indexName createIndexTarget fulltextIndexOption*) | (SPATIAL_SYMBOL INDEX_SYMBOL indexName createIndexTarget spatialIndexOption*)) indexLockAndAlgorithm?
-indexNameAndType ::= (indexName (USING_SYMBOL indexType)?) | (indexName TYPE_SYMBOL indexType)
+/* indexNameAndType ::= (indexName (USING_SYMBOL indexType)?) | (indexName TYPE_SYMBOL indexType) */
 createIndexTarget ::= ON_SYMBOL tableRef keyListVariants
 createLogfileGroup ::= LOGFILE_SYMBOL GROUP_SYMBOL logfileGroupName ADD_SYMBOL (UNDOFILE_SYMBOL | REDOFILE_SYMBOL) textLiteral logfileGroupOptions?
 logfileGroupOptions ::= logfileGroupOption (COMMA_SYMBOL? logfileGroupOption)*
@@ -671,6 +671,12 @@ grantIdentifier ::= (MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?) | (schemaRef DOT
  * The original rule only supported "TABLE".
  */
 tableAdministrationStatement ::= (ANALYZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList histogram?) | (CHECK_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList checkOption*) | (CHECKSUM_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList (QUICK_SYMBOL | EXTENDED_SYMBOL)?) | (OPTIMIZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList) | (REPAIR_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList repairType*)
+
+/**
+ * Fix "indexNameAndType" to solve conflicts between "indexName USING_SYMBOL"
+ * and "indexName TYPE_SYMBOL" prefix by moving them to a single branch.
+ */
+indexNameAndType ::= indexName? ((USING_SYMBOL | TYPE_SYMBOL) indexType)?
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*

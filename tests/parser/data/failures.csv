@@ -63,46 +63,6 @@ c4 VARCHAR(2) GENERATED ALWAYS AS (CONCAT(c2,c3)) virtual)"
 "ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, EXCHANGE PARTITION p0 WITH TABLE t"
 "ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, EXCHANGE PARTITION p0 WITH TABLE t"
 reap
-"create table t1 (
-dummyKey INTEGER NOT NULL AUTO_INCREMENT,
-a001 TINYINT,
-a010 TINYINT,
-a012 TINYINT,
-a015 TINYINT,
-a016 TINYINT,
-a017 TINYINT,
-a019 TINYINT,
-a029 TINYINT,
-a030 TINYINT,
-a031 TINYINT,
-a032 TINYINT,
-a042 TINYINT,
-a043 TINYINT,
-a044 TINYINT,
-a3001 TINYINT,
-a3002 TINYINT,
-a3003 TINYINT,
-a3004 TINYINT,
-a3005 TINYINT,
-a3021 TINYINT,
-a3022 TINYINT,
-a BIT(6),
-b BIT(6),
-c BIT(6),
-d TINYINT,
-e TINYINT,
-f TINYINT,
-g TINYINT,
-h TINYINT,
-i TINYINT,
-j TINYINT,
-k TINYINT,
-l TINYINT,
-m TINYINT,
-n TINYINT,
-o TINYINT,
-a034 TINYINT,
-PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
 "CHANGE REPLICATION SOURCE TO
 SOURCE_USER=     'plug_user',
 SOURCE_PASSWORD= 'plug_user',
@@ -277,9 +237,6 @@ SELECT COUNT(*) FROM wl12475.t1"
 "create temporary table t3 like mysqltest.t3"
 "create table t2 like t3"
 "create temporary table t3 like t1"
-"CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1))"
-"CREATE TABLE t1(c1 VARCHAR(33), KEY USING BTREE (c1) USING HASH) ENGINE=MEMORY"
-"CREATE TABLE t1(c1 VARCHAR(33), KEY USING HASH (c1) USING BTREE) ENGINE=MEMORY"
 "create function f1() returns int
 begin
 declare res int"
@@ -371,12 +328,6 @@ connect(root_con,localhost,root,,mysql)"
 a2 INTEGER GENERATED ALWAYS AS (a1 * 2) STORED,
 a3 INTEGER GENERATED ALWAYS AS (a1 * 3) VIRTUAL,
 KEY (a1) )"
-"CREATE TABLE t1 (a INT NOT NULL,b INT NOT NULL, PRIMARY KEY USING BTREE (a))
-ENGINE=MYISAM COMMENT=""TESTING"" PACK_KEYS=1 DELAY_KEY_WRITE=1
-STATS_PERSISTENT=1 CHECKSUM=1 MIN_ROWS=1 MAX_ROWS=100"
-"CREATE TABLE t2 (a INT NOT NULL,b INT NOT NULL, PRIMARY KEY USING BTREE (a))
-ENGINE=MYISAM COMMENT=""TESTING"" PACK_KEYS=0 DELAY_KEY_WRITE=1
-STATS_PERSISTENT=1 CHECKSUM=1 MIN_ROWS=1 MAX_ROWS=100"
 "CREATE TEMPORARY TABLE t1 (
 a INTEGER NOT NULL DEFAULT 1,
 b INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -951,62 +902,6 @@ FROM HU.STAFF WHERE GRADE * 1000 >
 ANY (SELECT SUM(BUDGET) FROM HU.PROJ
 GROUP BY CITY, PTYPE
 HAVING HU.PROJ.CITY = HU.STAFF.CITY)"
-"create table t1 (v varchar(10), c char(10), t varchar(50), key using btree (v), key using btree (c), key using btree (t(10))) charset latin1"
-"create table t1 (a char(10), unique using btree (a)) charset latin1 engine=heap"
-"create table t1 (a int not null,b int not null, primary key using BTREE (a)) engine=heap comment=""testing heaps"" avg_row_length=100 min_rows=1 max_rows=100"
-"alter table t1 add c int not null, add key using BTREE (c,a)"
-"create table t1 (a int not null,b int not null, primary key using BTREE (a)) engine=heap comment=""testing heaps"""
-"CREATE TABLE t1 ( a int not null default 0, b int not null default 0,  key  using BTREE (a,b),  key  using BTREE (b)  ) ENGINE=HEAP"
-"create table t1 (id int unsigned not null, primary key  using BTREE (id)) engine=HEAP"
-"create table t1 (btn char(10) not null, key using BTREE (btn)) charset utf8mb4 engine=heap"
-"alter table t1 add column new_col char(1) not null, add key using BTREE (btn,new_col), drop key btn"
-"CREATE TABLE t1 (a int, b int, c int, key using BTREE (a, b, c)) engine=heap"
-"CREATE TABLE t1 (a int not null, primary key using BTREE (a)) engine=heap"
-"create table t1(a int not null, key using btree(a)) engine=heap"
-"CREATE TABLE t1 (
-c1 CHAR(3),
-c2 INTEGER,
-KEY USING BTREE(c1),
-KEY USING BTREE(c2)
-) ENGINE= MEMORY"
-"CREATE TABLE t1 (
-c1 ENUM('1', '2'),
-UNIQUE USING BTREE(c1)
-) ENGINE= MEMORY DEFAULT CHARSET= utf8"
-"CREATE TABLE t1 (
-c1 SET('1', '2'),
-UNIQUE USING BTREE(c1)
-) ENGINE= MEMORY DEFAULT CHARSET= utf8"
-"CREATE TABLE t1 (a INT, KEY USING BTREE(a)) ENGINE=MEMORY"
-"CREATE TABLE t1(val INT, KEY USING BTREE(val)) ENGINE=memory"
-"CREATE TABLE t1 (a INT, UNIQUE USING BTREE(a)) ENGINE=MEMORY"
-"create table t1(a varchar(255), b varchar(255),
-key using btree (a,b)) engine=memory"
-"CREATE TABLE t1(a INT, KEY USING BTREE (a)) ENGINE=MEMORY"
-"CREATE TABLE t1(
-id INT AUTO_INCREMENT PRIMARY KEY,
-c1 INT NOT NULL,
-c2 INT NOT NULL,
-UNIQUE KEY USING BTREE (c2,c1)) ENGINE = MEMORY"
-"create table t1 (a int not null,b int not null, primary key using HASH (a)) engine=heap comment=""testing heaps"" avg_row_length=100 min_rows=1 max_rows=100"
-"alter table t1 add c int not null, add key using HASH (c,a)"
-"create table t1 (a int not null,b int not null, primary key using HASH (a)) engine=heap comment=""testing heaps"""
-"CREATE TABLE t1 ( a int not null default 0, b int not null default 0,  key  using HASH (a),  key  using HASH (b)  ) ENGINE=HEAP"
-"create table t1 (id int unsigned not null, primary key  using HASH (id)) engine=HEAP"
-"create table t1 (btn char(10) not null, key using HASH (btn)) charset utf8mb4 engine=heap"
-"alter table t1 add column new_col char(1) not null, add key using HASH (btn,new_col), drop key btn"
-"CREATE TABLE t1 (a int not null, primary key using HASH (a)) engine=heap"
-"CREATE TABLE t1
-(
-pk INT PRIMARY KEY,
-val INT,
-UNIQUE KEY USING HASH(val)
-) ENGINE=MEMORY"
-"CREATE TABLE t1(
-id INT AUTO_INCREMENT PRIMARY KEY,
-c1 INT NOT NULL,
-c2 INT NOT NULL,
-UNIQUE KEY USING HASH (c2,c1)) ENGINE = MEMORY"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75], ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA ''"
 "ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA 'a'"
@@ -1386,24 +1281,7 @@ WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 "create table t6 like t5"
 "create table t7 like t6"
 "create table t3 like t2"
-"create table ti (k int, index using btree (k)) charset utf8mb4 engine=innodb"
-"create table th (k int, index using btree (k)) charset utf8mb4 engine=heap"
-"alter table ti add column l int, add index using btree (l)"
-"alter table th add column l int, add index using hash (l)"
-"create table ti (k int, index using hash (k)) charset utf8mb4 engine=innodb"
-"alter table ti add column l int, add index using hash (l)"
-"create table t1 (k int, index using btree (k)) charset utf8mb4 engine=innodb"
-"create table t1 (k int, index using hash (k)) charset utf8mb4 engine=heap"
-"create table t1 (k int, index using btree (k), index using hash (k)) engine=heap"
-"create table t1 (k int, index (k), index using hash (k)) engine=heap"
-"create table t1 (k int, index using btree (k), index (k)) engine=innodb"
-"create table t1 (k int, index using btree (k), index using hash (k)) engine=innodb"
 "create table t3 (like t1)"
-"create table tm (k int, index using btree (k)) charset utf8mb4 engine=myisam"
-"alter table tm add column l int, add index using btree (l)"
-"alter table t1 drop key k, add index using btree (k), algorithm=inplace"
-"alter table t1 drop key k, add index using hash (k), algorithm=inplace"
-"alter table t1 drop key k, add index using btree (k), algorithm=copy"
 "require Expect"
 "my $texp = new Expect()"
 $texp->raw_pty(1)
@@ -2315,9 +2193,6 @@ COMMIT"
 "ALTER SCHEMA s1 READ ONLY DEFAULT"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
-"CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
-"CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MEMORY"
-"CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MyISAM"
 "my $filename = $ENV{""MYSQLD_PIDFILE""} or die(""pidfile not set"")"
 "my $pid"
 "my $wait_cnt=60"
@@ -2370,108 +2245,6 @@ $line =~ s/Thread_id: \d* Errno:/Thread_id: 0 Errno:/"
 "EOF
 
 SET @@global.slow_query_log_file=@save_sqlf"
-"create procedure sudoku_solve(p_naive boolean, p_all boolean)
-deterministic
-modifies sql data
-begin
-drop temporary table if exists sudoku_work, sudoku_schedule;
-
-create temporary table sudoku_work
-(
-`row` smallint not null,
-col smallint not null,
-dig smallint not null,
-cnt smallint,
-key using btree (cnt),
-key using btree (`row`),
-key using btree (col),
-unique key using hash (`row`,col)
-);
-
-create temporary table sudoku_schedule
-(
-idx int not null auto_increment primary key,
-`row` smallint not null,
-col smallint not null
-);
-
-call sudoku_init();
-
-if p_naive then
-update sudoku_work set cnt = 0 where dig = 0;
-else
-call sudoku_count();
-end if;
-insert into sudoku_schedule (`row`,col)
-select `row`,col from sudoku_work where cnt is not null order by cnt desc;
-
-begin
-declare v_scounter bigint default 0;
-declare v_i smallint default 1;
-declare v_dig smallint;
-declare v_schedmax smallint;
-
-select count(*) into v_schedmax from sudoku_schedule;
-
-more:
-loop
-begin
-declare v_tcounter bigint default 0;
-
-sched:
-while v_i <= v_schedmax do
-begin
-declare v_row, v_col smallint;
-
-select `row`,col into v_row,v_col from sudoku_schedule where v_i = idx;
-
-select dig into v_dig from sudoku_work
-where v_row = `row` and v_col = col;
-
-case v_dig
-when 0 then
-set v_dig = 1;
-update sudoku_work set dig = 1
-where v_row = `row` and v_col = col;
-when 9 then
-if v_i > 0 then
-update sudoku_work set dig = 0
-where v_row = `row` and v_col = col;
-set v_i = v_i - 1;
-iterate sched;
-else
-select v_scounter as 'Solutions';
-leave more;
-end if;
-else
-set v_dig = v_dig + 1;
-update sudoku_work set dig = v_dig
-where v_row = `row` and v_col = col;
-end case;
-
-set v_tcounter = v_tcounter + 1;
-if not sudoku_digit_ok(v_row, v_col, v_dig) then
-iterate sched;
-end if;
-set v_i = v_i + 1;
-end;
-end while sched;
-
-select dig from sudoku_work;
-select v_tcounter as 'Tests';
-set v_scounter = v_scounter + 1;
-
-if p_all and v_i > 0 then
-set v_i = v_i - 1;
-else
-leave more;
-end if;
-end;
-end loop more;
-end;
-
-drop temporary table sudoku_work, sudoku_schedule;
-end"
 "FLUSH TABLE mysql.procs_priv"
 "create procedure p1()
 begin

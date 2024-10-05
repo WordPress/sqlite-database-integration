@@ -1,1 +1,1 @@
-Total: 66896  |  Failures: 1617 /  2%  |  Exceptions:    0 /  0%
+Total: 66896  |  Failures: 1559 /  2%  |  Exceptions:    0 /  0%
