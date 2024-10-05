@@ -338,44 +338,8 @@ CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
 4
 
 SET NAMES gb18030"
-"UPDATE t1 SET utf8_f=CONVERT(ucs2_f USING utf8) WHERE utf8_f=_utf8''"
-"CREATE TABLE t1 SELECT _utf8'test' as c1, _utf8'ÑÐµÑÑ' as c2"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
-"select left(_utf8 0xD0B0D0B1D0B2,1)"
-"select right(_utf8 0xD0B0D0B2D0B2,1)"
-"select locate(_utf8 0xD0B1, _utf8 0xD0B0D0B1D0B2)"
-"select locate(_utf8 0xD091, _utf8 0xD0B0D0B1D0B2)"
-"select locate(_utf8 0xD0B1, _utf8 0xD0B0D091D0B2)"
-"select locate(_utf8 0xD091, _utf8 0xD0B0D0B1D0B2 collate utf8_bin)"
-"select locate(_utf8 0xD0B1, _utf8 0xD0B0D091D0B2 collate utf8_bin)"
-"select length(_utf8 0xD0B1), bit_length(_utf8 0xD0B1), char_length(_utf8 0xD0B1)"
-"select _utf8 0xD0B0D0B1D0B2 like concat(_utf8'%',_utf8 0xD0B1,_utf8 '%')"
-"select soundex(_utf8 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB)"
-"select hex(soundex(_utf8 0xE99885E8A788E99A8FE697B6E69BB4E696B0E79A84E696B0E997BB))"
-"select soundex(_utf8 0xD091D092D093)"
-"select hex(soundex(_utf8 0xD091D092D093))"
-"select repeat(_utf8'+',3) as h union select NULL"
-"insert into t1 values (_utf8 0xe880bd)"
-"insert into t1 values (_utf8 0x5b)"
-"INSERT INTO t1 VALUES (_utf8'\\')"
-"select concat(a, if(b>10, _utf8'x', _utf8'y')) from t1"
-"select concat(a, if(b>10, _utf8 0x78, _utf8 0x79)) from t1"
-"SELECT HEX(RPAD(0x20, 2, _utf8 0xD18F))"
-"SELECT HEX(RPAD(0x20, 4, _utf8 0xD18F))"
-"SELECT HEX(LPAD(0x20, 2, _utf8 0xD18F))"
-"SELECT HEX(LPAD(0x20, 4, _utf8 0xD18F))"
-"SELECT HEX(RPAD(_utf8 0xD18F, 3, 0x20))"
-"SELECT HEX(LPAD(_utf8 0xD18F, 3, 0x20))"
-"SELECT HEX(INSERT(_utf8 0xD18F, 2, 1, 0x20))"
-"SELECT HEX(INSERT(_utf8 0xD18FD18E, 2, 1, 0x20))"
-"EXPLAIN SELECT 'abcdÃÃÃÃÃ
-', _latin1'abcdÃÃÃÃÃ
-', _utf8'abcdÃÃÃÃÃ
-' AS u"
-"SELECT hex(convert( substr(_utf8 0xE5A4A7E4B88DE58897E9A2A0E58F8AE58C97E788B1E5B094E585B0E88194E59088E78E8BE59BBD, 1, 15), BINARY)) FROM t1"
-"SELECT HEX(CONCAT(utf8mb4_encoding, _utf8 x'ea9da8')) FROM t1"
-"SELECT CONCAT(utf8mb4, _utf8 x'ea9da8') FROM t1 LIMIT 0"
 "my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
 "EOF
 
@@ -459,391 +423,6 @@ perl
 "EOF
 
 CREATE SCHEMA test123"
-"CREATE VIEW v2 AS SELECT _utf8'ÑÐµÑÑ' as c1"
-"CREATE PROCEDURE p1(
-INOUT ÐÁÒÁÍ1 CHAR(10),
-OUT ÐÁÒÁÍ2 CHAR(10))
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE PROCEDURE p2(
-INOUT ÐÁÒÁÍ1 CHAR(10) CHARACTER SET utf8,
-OUT ÐÁÒÁÍ2 CHAR(10) CHARACTER SET utf8)
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p3(
-INOUT ÐÁÒÁÍ1 CHAR(10),
-OUT ÐÁÒÁÍ2 CHAR(10))
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p4(
-INOUT ÐÁÒÁÍ1 CHAR(10) CHARACTER SET utf8,
-OUT ÐÁÒÁÍ2 CHAR(10) CHARACTER SET utf8)
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION(ÐÁÒÁÍ1) AS c2,
-COLLATION(ÐÁÒÁÍ2) AS c3;
-
-SELECT
-COLLATION('ÔÅËÓÔ') AS c4,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c5,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET ÐÁÒÁÍ1 = 'a';
-SET ÐÁÒÁÍ2 = 'b';
-END"
-"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÔÅËÓÔ';
-SET @a1 = _koi8r    'ÔÅËÓÔ';
-SET @a2 = _utf8 'ÑÐµÐºÑÑ';
-END"
-"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÔÅËÓÔ';
-SET @b1 = _koi8r    'ÔÅËÓÔ';
-SET @b2 = _utf8 'ÑÐµÐºÑÑ';
-END"
-"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÔÅËÓÔ';
-SET @a1 = _koi8r    'ÔÅËÓÔ';
-SET @a2 = _utf8 'ÑÐµÐºÑÑ';
-END"
-"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-INSERT INTO log VALUES(COLLATION(ÐÅÒÅÍ1));
-INSERT INTO log VALUES(COLLATION('ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÔÅËÓÔ';
-SET @b1 = _koi8r    'ÔÅËÓÔ';
-SET @b2 = _utf8 'ÑÐµÐºÑÑ';
-END"
-"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10);
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE ÐÅÒÅÍ1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(ÐÅÒÅÍ1) AS c1,
-COLLATION('ÔÅËÓÔ') AS c2,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c3,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE PROCEDURE p1(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10),
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10))
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE PROCEDURE p2(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10) CHARACTER SET utf8,
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10) CHARACTER SET utf8)
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p3(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10),
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10))
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE PROCEDURE mysqltest2.p4(
-INOUT Ð¿Ð°ÑÐ°Ð¼1 CHAR(10) CHARACTER SET utf8,
-OUT Ð¿Ð°ÑÐ°Ð¼2 CHAR(10) CHARACTER SET utf8)
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼1) AS c2,
-COLLATION(Ð¿Ð°ÑÐ°Ð¼2) AS c3;
-
-SELECT
-COLLATION('ÑÐµÐºÑÑ') AS c4,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c5,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c6,
-@@collation_connection AS c7,
-@@character_set_client AS c8;
-
-SET Ð¿Ð°ÑÐ°Ð¼1 = 'a';
-SET Ð¿Ð°ÑÐ°Ð¼2 = 'b';
-END"
-"CREATE TRIGGER trg1 BEFORE INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÑÐµÐºÑÑ';
-SET @a2 = _utf8 'ÑÐµÐºÑÑ';
-SET @a3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE TRIGGER trg2 AFTER INSERT ON t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÑÐµÐºÑÑ';
-SET @b2 = _utf8 'ÑÐµÐºÑÑ';
-SET @b3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE TRIGGER mysqltest2.trg3 BEFORE INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @a1 = 'ÑÐµÐºÑÑ';
-SET @a2 = _utf8 'ÑÐµÐºÑÑ';
-SET @a3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE TRIGGER mysqltest2.trg4 AFTER INSERT ON mysqltest2.t1 FOR EACH ROW
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-INSERT INTO log VALUES(COLLATION(Ð¿ÐµÑÐµÐ¼1));
-INSERT INTO log VALUES(COLLATION('ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_utf8 'ÑÐµÐºÑÑ'));
-INSERT INTO log VALUES(COLLATION(_koi8r    'ÔÅËÓÔ'));
-INSERT INTO log VALUES(@@collation_connection);
-INSERT INTO log VALUES(@@character_set_client);
-
-SET @b1 = 'ÑÐµÐºÑÑ';
-SET @b2 = _utf8 'ÑÐµÐºÑÑ';
-SET @b3 = _koi8r    'ÔÅËÓÔ';
-END"
-"CREATE EVENT ev1 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10);
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT ev2 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev3 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
-"CREATE EVENT mysqltest2.ev4 ON SCHEDULE AT '2030-01-01 00:00:00' DO
-BEGIN
-DECLARE Ð¿ÐµÑÐµÐ¼1 CHAR(10) CHARACTER SET utf8;
-
-SELECT
-COLLATION(Ð¿ÐµÑÐµÐ¼1) AS c1,
-COLLATION('ÑÐµÐºÑÑ') AS c2,
-COLLATION(_utf8 'ÑÐµÐºÑÑ') AS c3,
-COLLATION(_koi8r    'ÔÅËÓÔ') AS c4,
-@@collation_connection AS c5,
-@@character_set_client AS c6;
-END"
 "CREATE TABLE t3 LIKE t1"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (md5(i)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
@@ -999,7 +578,6 @@ foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
 "SELECT cast(TIMESTAMP'2019-10-10 10:11:12+00:00' AT TIME ZONE '+00:00' AS DATETIME)"
 "SELECT cast( a AT TIME ZONE '+00:00' AS DATETIME ) FROM t1"
 enable_result_log
-"insert into t1 values (repeat('a', 1022), 0), (repeat(_utf8 0xc3b7, 4), 0)"
 "select sum(all a),count(all a),avg(all a),std(all a),variance(all a),bit_or(all a),bit_and(all a),min(all a),max(all a),min(all c),max(all c) from t1"
 "SELECT a,AVG(DISTINCT b) AS average FROM t1 GROUP BY a HAVING average > 50"
 "SELECT AVG(DISTINCT col_int_nokey) FROM t1"
@@ -1012,7 +590,6 @@ AS innr2 LEFT JOIN bb4 AS innr1 ON (innr2.col_int_key <> innr1.col_int_key)
 WHERE innr1.col_int_key= 4)"
 "CREATE TABLE t(x VARCHAR(10),
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
-"select length(uuid()), charset(uuid()), length(unhex(replace(uuid(),_utf8'-',_utf8'')))"
 exit
 """',repeat('a',60),repeat('b',60),repeat('c',60),repeat('d',100)), '""');
 
@@ -1113,9 +690,6 @@ repeat('c',60),
 repeat ('d',100)),'""');
 SELECT
 CONCAT('""',CONCAT('"""
-"select charset(charset(_utf8'a')), charset(collation(_utf8'a'))"
-"select collation(charset(_utf8'a')), collation(collation(_utf8'a'))"
-"create table t1 select charset(_utf8'a'), collation(_utf8'a')"
 "select 1 from t1 where 1 < some (select cast(a as datetime) from t1)"
 "CREATE TABLE t1(col1 varchar(100), gcol2 binary(16) AS (uuid_to_bin(col1)) virtual, index(gcol2))"
 "CREATE TABLE t2(col1 binary(16), gcol2 varchar(36) AS (bin_to_uuid(col1)) virtual, index(col1), index(gcol2))"
@@ -1812,9 +1386,6 @@ WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 "create table t6 like t5"
 "create table t7 like t6"
 "create table t3 like t2"
-"select i from t1 where a=repeat(_utf8 'a',200)"
-"select i from t1 where a=repeat(_utf8 0xD0B1,200)"
-"select i from t1 where b=repeat(_utf8 'b',310)"
 "create table ti (k int, index using btree (k)) charset utf8mb4 engine=innodb"
 "create table th (k int, index using btree (k)) charset utf8mb4 engine=heap"
 "alter table ti add column l int, add index using btree (l)"
@@ -1975,7 +1546,6 @@ drop table if exists t1Aa,t2Aa,v1Aa,v2Aa"
 "ALTER TABLE m1 UNION=()"
 "CREATE TABLE t4 LIKE t3"
 "CREATE TEMPORARY TABLE t4 LIKE t3"
-"INSERT INTO t1 VALUES(REPEAT(_utf8 x'e0ae85',43), 'b')"
 "FLUSH TABLE mysql_db1.t1"
 "print FILE ""select\n"""
 "print FILE ""'a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a',\n"" x 3400"
@@ -2748,11 +2318,6 @@ COMMIT"
 "CREATE TABLE t1 (i int, KEY USING HASH (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MEMORY"
 "CREATE TABLE t1 (i int, KEY USING BTREE (i)) ENGINE=MyISAM"
-"create procedure test_signal()
-begin
-DECLARE something CONDITION FOR SQLSTATE ""01000"";
-SIGNAL something SET MESSAGE_TEXT = _utf8 ""This is a UTF8 text"";
-end "
 "my $filename = $ENV{""MYSQLD_PIDFILE""} or die(""pidfile not set"")"
 "my $pid"
 "my $wait_cnt=60"
@@ -2948,7 +2513,6 @@ select 'exception';
 call p1(a+1);
 end"
 "revoke all privileges on procedure sptest.p1 from userb@localhost"
-"CALL p1(_UTF8 't')"
 "create procedure h_ee()
 deterministic
 begin
@@ -3214,31 +2778,6 @@ DECLARE a int;
 SELECT 1 INTO a;
 RETURN a;
 END "
-"CREATE PROCEDURE p1(dt DATETIME, i INT)
-BEGIN
-SELECT
-CASE
-WHEN i = 1 THEN 2
-ELSE dt
-END AS x1;
-
-SELECT
-CASE _latin1'a'
-WHEN _utf8'a' THEN 'A'
-END AS x2;
-
-SELECT
-CASE _utf8'a'
-WHEN _latin1'a' THEN _utf8'A'
-END AS x3;
-
-SELECT
-CASE s1
-WHEN _latin1'a' THEN _latin1'b'
-ELSE _latin1'c'
-END AS x4
-FROM t1;
-END"
 "CREATE EVENT e1 ON SCHEDULE EVERY 1 SECOND STARTS NOW() DO
 BEGIN
 DECLARE EXIT HANDLER FOR 1136 BEGIN
@@ -3548,9 +3087,6 @@ SET @aux = GET_LOCK(2,1)"
 END
 "|
 SELECT GET_LOCK(CAST(2 AS CHAR),0)"
-"SELECT GET_LOCK(_utf8 0xd182d0b5d181d182, 0)"
-"SELECT IS_FREE_LOCK(_utf8 0xd182d0b5d181d182)"
-"SELECT RELEASE_LOCK(_utf8 0xd182d0b5d181d182)"
 "password
 validate
 EOF

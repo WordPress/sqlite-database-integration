@@ -1907,7 +1907,10 @@ class MySQLLexer {
 
 	/**
 	 * Identifier-like strings that may represent underscore-prefixed charset names.
-	 * In MySQL, these are OS-specific; here we'll try to match the most common ones.
+	 *
+	 * Includes charsets from both MySQL 5 and 8; via "SHOW CHARACTER SET"/docs:
+	 *   https://dev.mysql.com/doc/refman/5.7/en/charset-charsets.html
+	 *   https://dev.mysql.com/doc/refman/8.4/en/charset-charsets.html
 	 */
 	const UNDERSCORE_CHARSETS = [
 		'_armscii8' => true,
@@ -1949,6 +1952,7 @@ class MySQLLexer {
 		'_utf16' => true,
 		'_utf16le' => true,
 		'_utf32' => true,
+		'_utf8' => true,
 		'_utf8mb3' => true,
 		'_utf8mb4' => true,
 	];
