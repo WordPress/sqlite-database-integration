@@ -1965,7 +1965,7 @@ class MySQLLexer {
     protected $serverVersion;
     protected $sqlModes;
 
-    public function __construct(string $input, int $serverVersion = 80000, int $sqlModes = 0)
+    public function __construct(string $input, int $serverVersion = 80038, int $sqlModes = 0)
     {
         $this->input = $input;
         $this->serverVersion = $serverVersion;

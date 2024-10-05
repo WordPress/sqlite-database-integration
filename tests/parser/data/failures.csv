@@ -200,60 +200,6 @@ CONSTRAINT ck CHECK (c3 > 10)
 "CREATE TABLE t2 LIKE t1"
 "CREATE TEMPORARY TABLE tmp_t2 LIKE t2"
 "CREATE TABLE t3 LIKE tmp_t2"
-"ALTER TABLE t1 ADD f3 INT CHECK (f3 < 10) NOT ENFORCED, ALGORITHM=INPLACE"
-"ALTER TABLE t1 ADD CONSTRAINT CHECK (f2 < 10) NOT ENFORCED, ALGORITHM=INPLACE"
-"ALTER TABLE t1 ALTER CHECK t1_chk_1 NOT ENFORCED, ALGORITHM=INPLACE"
-"ALTER TABLE t1 ALTER CHECK t1_chk_1 ENFORCED, ALGORITHM=COPY"
-"ALTER TABLE t1 ALTER CHECK t1_chk_1 ENFORCED, ALGORITHM=INPLACE"
-"CREATE TABLE t1(f1 INT,
-f2 INT CHECK (f2 < 10),
-f3 INT CHECK (f3 < 10) NOT ENFORCED,
-CONSTRAINT ck CHECK (f1 > 10),
-CONSTRAINT CHECK (f1 > 10) NOT ENFORCED)"
-"ALTER TABLE t1 ALTER CHECK ck NOT ENFORCED"
-"ALTER TABLE t1 ALTER CHECK ck ENFORCED"
-"ALTER TABLE t1 ADD CONSTRAINT ck1 CHECK(f1<10) NOT ENFORCED"
-"ALTER TABLE t1 ALTER CHECK ck1 ENFORCED"
-"ALTER TABLE t1 ALTER CHECK t1_chk_2 ENFORCED"
-"ALTER TABLE t1 ADD f4 INT CONSTRAINT t1_f4_chk CHECK (f4 < 10) NOT ENFORCED"
-"ALTER TABLE t1 ALTER CHECK t1_f4_chk ENFORCED"
-"ALTER TABLE t1
-DROP CHECK ck21, ADD CONSTRAINT ck21 CHECK (c1 > 10),
-DROP CHECK ck22, ADD CONSTRAINT ck22 CHECK (c1 < 10),
-DROP CHECK ck31, ADD CONSTRAINT ck31 CHECK (c1 > 10),
-DROP CHECK ck32, ADD CONSTRAINT ck32 CHECK (c1 < 10),
-DROP CHECK ck41, ADD CONSTRAINT ck41 CHECK (c1 > 10),
-DROP CHECK ck42, ADD CONSTRAINT ck42 CHECK (c1 < 10),
-ALTER CHECK ck11 NOT ENFORCED,
-ALTER CHECK ck12 NOT ENFORCED,
-ALTER CHECK ck11 ENFORCED"
-"ALTER TABLE t1 MODIFY COLUMN c1 FLOAT(10.3), DROP CHECK t1_chk_1, ADD CONSTRAINT CHECK(C1 > 10.1) ENFORCED"
-"CREATE TABLE t1 (
-c1 BIT(7) CHECK(c1 < B'1111100') NOT ENFORCED,
-c2 BOOLEAN CHECK(c2 > 0) NOT ENFORCED,
-c3 TINYINT CHECK(c3 > 10) NOT ENFORCED,
-c4 SMALLINT CHECK(c4 > 10) NOT ENFORCED,
-c5 MEDIUMINT CHECK(c5 > 10) NOT ENFORCED,
-c6 INT CHECK(c6 > 10),
-c7 BIGINT CHECK(c7 > 10),
-c8 DECIMAL(6,2) CHECK(c8 > 10.1),
-c9 FLOAT(6,2) CHECK(c9 > 10.1),
-c10 DOUBLE(6,2) CHECK(c10 > 10.1),
-c11 CHAR(6) CHECK (c11 IS NULL))"
-"CREATE TABLE t2 (
-c1 BIT(7) CHECK(c1 < B'1111100'),
-c2 BOOLEAN CHECK(c2 > 0),
-c3 TINYINT CHECK(c3 > 10),
-c4 SMALLINT CHECK(c4 > 10),
-c5 MEDIUMINT CHECK(c5 > 10),
-c6 INT CHECK(c6 > 10) NOT ENFORCED,
-c7 BIGINT CHECK(c7 > 10) NOT ENFORCED,
-c8 DECIMAL(6,2) CHECK(c8 > 10.1) NOT ENFORCED,
-c9 FLOAT(6,2) CHECK(c9 > 10.1) NOT ENFORCED,
-c10 DOUBLE(6,2) CHECK(c10 > 10.1) NOT ENFORCED)"
-"CREATE TABLE t4(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
-"CREATE TABLE t5(a INTEGER CHECK (a > 0) NOT ENFORCED NOT NULL)"
-"CREATE TABLE t7(a INTEGER CHECK (a > 0) ENFORCED NOT NULL)"
 "CREATE TRIGGER t1_before_insert_trg BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 IF NEW.f1 = 1 THEN
@@ -322,15 +268,6 @@ SET GLOBAL validate_password.length = 60, validate_password.number_count = 50"
 SELECT COUNT(*) FROM wl12475.t1"
 "CREATE TABLE t3 (col1 INT, col2 INT GENERATED ALWAYS AS (col1) STORED)"
 "ALTER TABLE t1 ADD COLUMN f3 INT GENERATED ALWAYS AS (f1) STORED"
-"ALTER TABLE t1 ALTER CONSTRAINT f2_check NOT ENFORCED"
-"ALTER TABLE t1 ALTER CHECK f2_check NOT ENFORCED, ALTER CHECK f2_check ENFORCED"
-"ALTER TABLE t1 ALTER CONSTRAINT f2_check NOT ENFORCED, ALTER CONSTRAINT f2_check ENFORCED"
-"ALTER TABLE t1 ALTER CHECK f2_check NOT ENFORCED, ALTER CONSTRAINT f2_check ENFORCED"
-"CREATE PROCEDURE alter_constraint_proc()
-ALTER TABLE t1 ALTER CONSTRAINT f2_check NOT ENFORCED"
-"CREATE PROCEDURE alter_constraint_proc()
-ALTER TABLE t1 ALTER CONSTRAINT constraint_name NOT ENFORCED"
-"ALTER TABLE tmp ALTER CONSTRAINT f2_check NOT ENFORCED"
 "create table t1 like `a/a`"
 "select 1ea10.1a20,1e+ 1e+10 from 1ea10"
 "create table t3 like t1"
@@ -962,67 +899,9 @@ WHERE SUBQUERY1_t1.col_varchar_10_key <= table1.col_varchar_10_key
 )
 "
 "create table t12 like t11"
-"explain select dt.a from t1, lateral (select t1.a from t2) dt"
-"explain SELECT * FROM t1
-JOIN
-lateral (select t1.a) as dt ON t1.a=dt.a
-JOIN
-lateral (select dt.a) as dt1 ON dt.a=dt1.a"
-"select t1.a, dt.a from t1, lateral (select t1.a+t2.a as a from t2) dt"
-"select t1.a, dt.a from t1, lateral (select t2.a as a from t2 having t1.a) dt"
-"create view v1 as
-select t1.a as f1, dt.a as f2
-from t1, lateral (select t1.a+t2.a as a from t2) dt"
-"SELECT COUNT(*) FROM t1 GROUP BY t1.a  HAVING t1.a IN (SELECT t3.a
-FROM t1 AS t3 WHERE t3.b IN (SELECT b FROM t2, lateral (select t1.a) dt))"
-"select vq1.b,dt.b from v1 vq1, lateral (select vq1.b) dt"
-"select b from v1 vq1, lateral (select count(*) from v1 vq2 having vq1.b = 3) dt"
 "SELECT
 /*+ SET_VAR(optimizer_switch = 'materialization=off,semijoin=off') */
 * FROM t1 AS ta, lateral (select 1 WHERE ta.a IN (SELECT b FROM t2 AS tb                WHERE tb.b >= SOME(SELECT SUM(tc.a) as sg FROM t1 as tc                                   GROUP BY tc.b                                   HAVING ta.a=tc.b))) dt"
-"select (select f from lateral (select max(t1.a) as f) as dt) as g from t1"
-"select t1.a, f from t1, lateral (select max(t1.a) as f) as dt"
-"select * from t1,
-lateral (with qn as (select t1.a) select (select max(a) from qn)) as dt"
-"SELECT * FROM t1, LATERAL ( SELECT MAX(1) FROM t2 GROUP BY t1.f1 ) AS l1"
-"SELECT STD(0) FROM t2, LATERAL ( SELECT f1 FROM t1 GROUP BY f2,f1 ) AS d1"
-"SELECT * FROM t1 JOIN LATERAL (
-SELECT GROUP_CONCAT(t.id) AS c FROM t2 t WHERE (t.id = t1.id)
-) d0 ON (1)"
-"EXPLAIN SELECT * FROM t1 JOIN LATERAL (SELECT a+t1.a from t2 GROUP BY a) AS dt"
-"SELECT * FROM t1 JOIN LATERAL (SELECT a+t1.a from t2 GROUP BY a) AS dt"
-"SELECT *
-FROM
-t1
-LEFT JOIN (
-t1 AS t2
-LEFT JOIN t1 AS t3 ON TRUE
-) ON TRUE,
-LATERAL (
-SELECT SUM(t1.a), t2.a FROM t1
-) AS d1"
-"SELECT * FROM t1 AS tbl1
-LEFT JOIN t1 AS tbl3 ON FALSE WHERE tbl1.id NOT IN
-(SELECT id FROM t1 AS tbl2 JOIN LATERAL
-(SELECT 1 FROM t2 WHERE id = tbl2.id LIMIT 10) AS d1)"
-"SELECT /*+ JOIN_PREFIX(tbl1, tbl2) */ * FROM t1 AS tbl1
-LEFT JOIN t1 AS tbl3 ON FALSE WHERE tbl1.id NOT IN
-(SELECT id FROM t1 AS tbl2 JOIN LATERAL
-(SELECT 1 FROM t2 WHERE id = tbl2.id LIMIT 10) AS d1)"
-"SELECT t3.b
-FROM
-t AS t1,
-t AS t2,
-LATERAL (SELECT DISTINCT * FROM t WHERE t2.x <> 0) AS t3
-WHERE t1.x = t2.x AND t2.x = t3.x ORDER BY t3.x"
-"EXPLAIN FORMAT=TREE
-SELECT 1 FROM t1, LATERAL (SELECT DISTINCT t1.x) AS dt, t2
-WHERE t2.pk = dt.x"
-"SELECT 1 FROM
-t1,
-LATERAL (SELECT DISTINCT t1.x) AS dt1,
-LATERAL (SELECT DISTINCT dt1.x) AS dt2
-WHERE dt1.x = dt2.x"
 "EOF
 
 DROP DATABASE bug19573998"
@@ -1045,24 +924,10 @@ WHERE c1 > 0
 ORDER BY c2
 LIMIT 10"
 "EXPLAIN analyze FORMAT=TREE SELECT t1.a, GROUP_CONCAT(t2.b) AS b FROM t1 LEFT JOIN t2 ON t1.a=t2.a GROUP BY t1.a ORDER BY t1.b"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN t2 USING ( a ),
-LATERAL ( SELECT * FROM t3 WHERE t3.a = t2.a LIMIT 1 ) t3d,
-LATERAL ( SELECT * FROM t3 WHERE t3.a > t1.a LIMIT 1 ) t4d"
-"EXPLAIN FORMAT=tree SELECT * FROM t1 LEFT JOIN (
-t2 LEFT JOIN t3 USING ( a ) CROSS JOIN
-LATERAL ( SELECT * FROM t4 WHERE t4.a = t3.a LIMIT 1 ) t4d
-) ON t1.a = t4d.a"
 "EXPLAIN FORMAT=TREE SELECT * FROM ( SELECT * FROM t1 LIMIT 2 OFFSET 1 ) AS alias1
 WHERE f1 <= ANY ( SELECT f1 FROM t1 ) ORDER BY f1"
 "EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a = ANY ( SELECT a FROM t1 WHERE b = 2 )"
 "EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a = ANY ( SELECT MAX(a) FROM t1 WHERE b = 2 )"
-"CREATE TABLE t1 (
-col_int_key INTEGER,
-col_json JSON,
-KEY mv_idx ((CAST(col_json->'$[*]' AS CHAR(40) ARRAY)))
-)"
-"EXPLAIN FORMAT=tree SELECT /*+ NO_BNL(t1, t2) */ * FROM t2
-JOIN t1 ON 1 WHERE (CAST(""1"" AS JSON) MEMBER OF( t1.col_json->'$[*]'))"
 "EXPLAIN ANALYZE FORMAT=TREE SELECT 1"
 "EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1, t1 x2 WHERE x1.c=x2.d AND x1.d>900 AND x2.a=x2.b"
 "print ""\nChecking 'INFO_SRC' and 'INFO_BIN'\n"""
@@ -1149,7 +1014,6 @@ WHERE innr1.col_int_key= 4)"
 gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
 "select length(uuid()), charset(uuid()), length(unhex(replace(uuid(),_utf8'-',_utf8'')))"
 exit
-"SELECT r FROM t LEFT JOIN LATERAL (SELECT i, RAND(0) AS r) AS dt ON TRUE"
 """',repeat('a',60),repeat('b',60),repeat('c',60),repeat('d',100)), '""');
 
 select insert('txs',2,1,'hi'),insert('is ',4,0,'a'),insert('txxxxt',2,4,'es');
@@ -1261,7 +1125,6 @@ CONCAT('""',CONCAT('"""
 "CREATE VIEW v6 AS SELECT WEIGHT_STRING(a AS BINARY(6)) AS b FROM t1"
 "SELECT HEX(WEIGHT_STRING(a AS BINARY(2))) FROM t1"
 "SELECT HEX(WEIGHT_STRING(a AS BINARY(6))) FROM t1"
-"CREATE TABLE t1(j json, INDEX mv_idx((CAST(j AS UNSIGNED ARRAY))))"
 "ALTER TABLE t2 ALTER my_row_id SET VISIBLE"
 "ALTER TABLE t1 ENGINE='MYISAM',
 ADD COLUMN my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE FIRST,
@@ -1849,10 +1712,6 @@ IMPORT TABLE FROM 't_case.sdi'"
 IMPORT TABLE FROM 't_case.sdi'"
 "CREATE TABLE t1 (i INT DEFAULT 42, dt DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
 de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
-"CREATE TABLE t1 (f1 DATE NOT SECONDARY)"
-"ALTER TABLE  t1 MODIFY f1 DATE NOT SECONDARY"
-"CREATE TABLE t1 (f1 INT) SECONDARY_ENGINE=myisam"
-"ALTER TABLE t1 SECONDARY_ENGINE=myisam"
 "my $passwd_file= $ENV{'PASSWD_FILE'} or die"
 "my $FILE"
 "print ""password found\n"""
@@ -1941,16 +1800,6 @@ SELECT t2.*
 FROM t1 AS t2 JOIN t1 AS t3 ON t3.c1 = t2.c1
 WHERE t2.c3 <> ANY (SELECT c3 FROM t1)
 ) AS d1"
-"EXPLAIN SELECT * FROM t1 AS x3 WHERE EXISTS
-(SELECT * FROM t1 AS x1 JOIN t1 AS x2 ON x1.b=x2.b
-JOIN LATERAL (SELECT COUNT(a) AS c FROM t1
-WHERE t1.b=x1.b) AS d3 ON x1.b=c)"
-"SELECT *
-FROM t1, t2, LATERAL (
-SELECT pk, blobfield
-GROUP BY pk, blobfield WITH ROLLUP
-) AS d1
-ORDER BY t1.f1, t2.pk"
 "SELECT MIN(t3.f1)
 FROM (t2 JOIN (t3 JOIN (SELECT t1.*
 FROM t1
@@ -1995,9 +1844,6 @@ $texp->send(""a\n"")"
 $texp->soft_close()
 disable_reconnect
 enable_reconnect
-"CREATE TABLE t1 (
-json_col JSON , KEY json_col ((CAST(json_col -> '$' AS UNSIGNED ARRAY)))
-)"
 "ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
 "SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
 "SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
@@ -2284,7 +2130,6 @@ PRIMARY KEY(my_row_id))"
 "CREATE TABLE x6 (c1 INT, c0 BLOB AS ('a') STORED)"
 "CREATE TABLE x7 (c0 BLOB AS ('a') STORED INVISIBLE, c1 INT)"
 "CREATE TABLE x8 (c1 INT, c0 BLOB AS ('a') STORED INVISIBLE)"
-"CREATE TABLE t1 (a INT) SECONDARY_ENGINE=gizmo"
 "1
 2
 3
@@ -2360,9 +2205,6 @@ FROM t1 WINDOW w as (ORDER BY d RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
 select COUNT(*)
 FROM v1 WHERE f1 IN
 (SELECT f1 FROM t2 WHERE f1 = ANY (SELECT f1 FROM v1))"
-"CREATE TABLE t1(id INT AUTO_INCREMENT,
-c1 VARCHAR(10), c2 VARCHAR(10), c3 VARCHAR(10),
-PRIMARY KEY(id)) SECONDARY_ENGINE MOCK"
 "revoke all privileges on *.* from user_1@localhost"
 "((SELECT 1 FROM t1 ORDER BY 1) ORDER BY 1) ORDER BY 1"
 "((SELECT 1 FROM t1 LIMIT 1) LIMIT 1) LIMIT 1"
@@ -2771,7 +2613,6 @@ create user nonsuper@localhost"
 
 
 connection default"
-RESTART
 "REVOKE ALL ON *.* FROM unknown_user IGNORE UNKNOWN USER"
 "REVOKE SELECT ON *.* FROM unknown_user IGNORE UNKNOWN USER"
 "REVOKE ALL PRIVILEGES, GRANT OPTION FROM unknown_user IGNORE UNKNOWN USER"
@@ -3424,10 +3265,6 @@ reset master"
 ON table3.f1 = table2.f1 WHERE table2.f1
 IN (SELECT 1 FROM (SELECT 1314830897) AS t1(pk)
 WHERE t1.pk <= ANY(SELECT 5)) AND FALSE"
-"SELECT * FROM
-t AS upper JOIN LATERAL
-(SELECT DISTINCT ROW_NUMBER() OVER () AS rn FROM t
-WHERE (t.a > upper.a)) der "
 "EXPLAIN FORMAT=tree
 SELECT /*+ JOIN_ORDER(t3,t2,t1) */ * FROM t1
 WHERE t1.col1 = ANY (
@@ -3435,26 +3272,9 @@ SELECT t1.col1 + t2.col2
 FROM t2 JOIN t3 ON t2.col2 = t3.col2 AND t2.col1 =  t3.col1
 WHERE t2.col2 BETWEEN 2 AND 9
 )"
-"SELECT t1.a
-FROM
-t1,
-LATERAL ( SELECT t1.a FROM t1 AS inner_t1 LIMIT 1 ) AS d1
-WHERE 1 IN ( SELECT a FROM t1 )
-ORDER BY a"
 "SELECT AVG(a) OVER () AS `avg`,
 a + (SELECT SUM(a) + (SELECT COUNT(a) FROM t1)
 FROM (SELECT * from t1) t11) AS cnt FROM t2"
-"SELECT (derived_1.`COUNT(*) + outer_t.a` +
-IFNULL(derived_0.`MAX(b)`,0)) + 1 + 5 AS mx
-FROM (SELECT STRAIGHT_JOIN MAX(outer_t.b) AS `MAX(b)`,
-outer_t.a AS d_1
-FROM t1 outer_t
-GROUP BY outer_t.a) derived_0
-LEFT JOIN LATERAL (SELECT (COUNT(0) + derived_0.d_1)
-AS `COUNT(*) + outer_t.a`
-FROM t1) derived_1
-ON(true)
-WHERE true"
 "SELECT AVG(s2.avg_us) OVER () + 3 AS avgsum,
 s2.avg_us avg_us,
 s2.avg_us avg_us2,
@@ -3477,8 +3297,6 @@ WHERE t1.i <= SOME ( SELECT 8 UNION  SELECT 3 ) ) )"
 "FLUSH TABLE schema1.t1"
 "SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1))"
 "SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1), ROW(2))"
-"WITH v1(x) AS (VALUES ROW (1), ROW (2), ROW (3))
-SELECT * FROM v1, LATERAL (VALUES ROW(v1.x)) AS v2"
 "REVOKE ALL ON *.* FROM noprivs@localhost"
 "CREATE TABLESPACE ts1 ENGINE_ATTRIBUTE=''"
 "CREATE TABLESPACE ts2 ENGINE_ATTRIBUTE='{""c"": ""v""}'"
@@ -3487,7 +3305,6 @@ SELECT * FROM v1, LATERAL (VALUES ROW(v1.x)) AS v2"
 "SELECT JSON_VALUE('{""data"": ""2019-01-01 11:11::11""}', '$.data' RETURNING DATETIME) AS v"
 "SELECT JSON_VALUE('{""data"": ""2019-01/01""}', '$.data' RETURNING DATE) AS v"
 "SELECT JSON_VALUE('{""data"": ""10:11:12.098700    ""}', '$.data' RETURNING TIME) AS v"
-"CREATE TABLE diffs (i INT, CONSTRAINT i CHECK (1200 = i) ENFORCED)"
 "CREATE USER user1@"
 "GRANT UPDATE (a) ON t1 TO user1@"
 "DROP USER user1@"
@@ -3534,7 +3351,6 @@ select count(*) from ((select 1) union (select 2)) as d1 into i;
 end"
 "load data infile '../../std_data/words.dat' into table t1 (a) set b:= f1()"
 "REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
-"CREATE TABLE t1(a INT, b TEXT, KEY (a)) SECONDARY_ENGINE=MOCK"
 "SELECT 10,10.0,10.,.1e+2,100.0e-1"
 "create table t1 (c nchar varchar(10))"
 "create table t1 (c national character varying(10))"
@@ -3648,8 +3464,6 @@ CREATE TABLE t1 (a TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE 
 
 
 connection default"
-"ALTER UNDO TABLESPACE undo_003 SET ACTIVE ENGINE InnoDB"
-"ALTER UNDO TABLESPACE undo_003 SET INACTIVE ENGINE InnoDB"
 "select count(*) from (
 (select                      a,b from t1 limit 2)  union all (select a,b from t2 order by a)) q"
 "(select * from t1 limit 3) intersect (select * from t1 limit 3)"
@@ -3770,11 +3584,6 @@ EOF
 eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dictionary.txt"""
 "REVOKE ALL PRIVILEGES ON test.* FROM ""base_user""@localhost"
 "REVOKE ALL PRIVILEGES ON test.* FROM """"@localhost"
-"CREATE USER 'usr1'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
-"CREATE USER 'usr2'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
-"CREATE USER 'usr3'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
-"ALTER USER 'usr1'@'localhost' IDENTIFIED BY RANDOM PASSWORD"
-"SET PASSWORD FOR 'usr1'@'localhost' TO RANDOM"
 "create table table_28127_a(0b02 int)"
 "create table table_28127_b(0b2 int)"
 "create view  v1 as select avg(distinct s1) from t1"
@@ -4124,165 +3933,4 @@ MAX(id) OVER (ROWS UNBOUNDED PRECEDING) max FROM t1"
 "SELECT id, AVG(id) OVER w avg, COUNT(id) OVER w count, MIN(id) OVER w min,
 MAX(id) OVER w max FROM t1
 WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
-"create procedure solver(initial_leftm varchar(200), initial_rightm varchar(200))
-
-begin
-declare initial_leftm_j  json;
-declare initial_rightm_j json;
-set initial_leftm_j  = cast(initial_leftm as json),
-initial_rightm_j = cast(initial_rightm as json);
-
-with recursive
-
-number_of_lines (value) as
-(select json_length(initial_rightm_j)),
-
-number_of_columns (value) as
-(select json_length(json_extract(initial_leftm_j,""$[0]""))),
-
-line_numbers (n) as
-(
-select 0
-union all
-select n+1 from line_numbers, number_of_lines where n<(value-1)
-),
-
-column_numbers (n) as
-(
-select 0
-union all
-select n+1 from line_numbers, number_of_columns where n<(value-1)
-),
-
-
-equations (null_if_done, leftm, rightm, pivot_lines, pivot_columns) as
-(
-select 0, initial_leftm_j, initial_rightm_j,
-cast("""" as char(200)), cast("""" as char(200))
-
-union all
-
-select
-
-cur_pivot.cur_pivot_line
-,
-
-(
-
-select
-""["" ||
-
-group_concat(
-
-(
-select
-""["" ||
-
-group_concat(
-
-
-json_extract(json_extract(eq.leftm, ""$["" || ln.n || ""]""),
-""$["" || cn.n || ""]"")
--
-
-(case when find_in_set(ln.n,eq.pivot_lines)=0 and ln.n<>cur_pivot.cur_pivot_line
-then json_extract(json_extract(eq.leftm, ""$["" || ln.n || ""]""),
-""$["" || cur_pivot.cur_pivot_column || ""]"") *
-json_extract(json_extract(eq.leftm, ""$["" || cur_pivot.cur_pivot_line || ""]""),
-""$["" || cn.n || ""]"") /
-cur_pivot.cur_pivot_value
-else 0 end)
-
-
-order by cn.n separator ',')
-|| ""]""
-
-from column_numbers cn
-
-)
-
-
-order by ln.n separator ',')
-|| ""]""
-
-from line_numbers ln
-),
-
-(
-
-select
-""["" ||
-
-group_concat(
-json_extract(eq.rightm, ""$["" || ln.n || ""]"")
--
-(case when find_in_set(ln.n,eq.pivot_lines)=0 and ln.n<>cur_pivot.cur_pivot_line
-then json_extract(json_extract(eq.leftm, ""$["" || ln.n || ""]""),
-""$["" || cur_pivot.cur_pivot_column || ""]"") *
-json_extract(eq.rightm, ""$["" || cur_pivot.cur_pivot_line || ""]"") /
-cur_pivot.cur_pivot_value
-else 0 end)
-
-order by ln.n separator ',')
-|| ""]""
-
-from line_numbers
-ln
-),
-
-coalesce(cur_pivot.cur_pivot_line, """") || "","" || eq.pivot_lines,
-
-coalesce(cur_pivot.cur_pivot_column, """") || "","" || eq.pivot_columns
-
-from equations eq
-left join
-lateral
-(
-select
-ln.n as cur_pivot_line,
-cn.n as cur_pivot_column,
-(
-# Extract the ln.n-th line of the left member, and from it, extract the
-# cn.n-th column, getting a number
-json_extract(json_extract(eq.leftm, ""$["" || ln.n || ""]""),
-""$["" || cn.n || ""]"")
-) as cur_pivot_value
-from line_numbers ln join column_numbers cn
-where
-find_in_set(ln.n,eq.pivot_lines)=0 and
-json_extract(json_extract(eq.leftm, ""$["" || ln.n || ""]""),
-""$["" || cn.n || ""]"") <> 0
-order by cur_pivot_line,cur_pivot_column
-limit 1
-) as cur_pivot
-
-on 1
-
-where eq.null_if_done is not null
-
-),
-
-
-final_equations as
-(
-select * from equations where null_if_done is null
-)
-
-
-select
-json_extract(eq.leftm, ""$["" || ln.n || ""]"")  as left_member,
-json_extract(eq.rightm, ""$["" || ln.n || ""]"") as right_member,
-free.value as list_of_free_unknowns
-from final_equations eq, line_numbers ln,
-(
-select group_concat(cn.n+1) as value
-from final_equations eq, column_numbers cn
-where find_in_set(cn.n,eq.pivot_columns)=0
-) as free
-
-order by find_in_set(ln.n,eq.pivot_lines), ln.n;
-
-end
-
-"
 "SELECT AVG(DISTINCT EXTRACTVALUE((''),('$@k')))"
