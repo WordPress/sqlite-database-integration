@@ -1,0 +1,3245 @@
+"alter table t1 algorithm=inplace, rename key k to kk"
+"alter table t2 algorithm=inplace, rename key k to kk"
+"alter table t1 algorithm=copy, rename key kkk to kkkk"
+"alter table t2 algorithm=copy, rename key kkk to kkkk"
+"alter table t1 algorithm=inplace, rename key kkkk to k, alter column i set default 100"
+"alter table t2 algorithm=inplace, rename key kkkk to k, alter column i set default 100"
+"alter table t1 algorithm=copy, rename key kk to kkk"
+"ALTER TABLE t1 ALGORITHM=INPLACE, DROP INDEX fld1,
+ADD FULLTEXT INDEX fld1(fld1)"
+"CREATE TABLE t3(a POINT GENERATED ALWAYS AS (POINT(1,1)) VIRTUAL NOT NULL)
+ENGINE=INNODB"
+"CREATE TABLE t4 (a BLOB, b BLOB GENERATED ALWAYS AS (a) VIRTUAL NOT NULL) ENGINE=INNODB"
+"CREATE TABLE t (a TIMESTAMP(1) GENERATED ALWAYS AS (1) VIRTUAL,
+b INT GENERATED ALWAYS AS (1) VIRTUAL
+) ENGINE=INNODB"
+"CREATE TABLE t_gen(a INT, b DOUBLE GENERATED ALWAYS AS (SQRT(a)))"
+"ALTER TABLE t_gen RENAME COLUMN a TO c, CHANGE COLUMN b b DOUBLE GENERATED ALWAYS AS (SQRT(c))"
+"ALTER TABLE t
+ADD COLUMN b DATE GENERATED ALWAYS AS ('1999-09-09') VIRTUAL NOT NULL"
+"ALTER TABLE t
+ADD COLUMN c DATE GENERATED ALWAYS AS ('1999-09-09') STORED NOT NULL"
+"ALTER TABLE t
+ADD COLUMN d DATE GENERATED ALWAYS AS (NULL) VIRTUAL NOT NULL"
+"CREATE TABLE t1(fld1 INT, fld2 INT GENERATED ALWAYS AS (-fld1) VIRTUAL,
+fld3 INT GENERATED ALWAYS AS (-fld1) STORED)"
+"CREATE TABLE t1(c1 int,
+c2 VARCHAR(1) CHARSET UTF8MB3,
+c3 VARCHAR(1) CHARSET UTF8MB3,
+c4 VARCHAR(2) GENERATED ALWAYS AS (CONCAT(c2,c3)) virtual)"
+"ALTER TABLE t1 ADD gcol INT AS (b + 1) VIRTUAL FIRST, ADD COLUMN a INT"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, DROP PARTITION p4"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = EXCLUSIVE, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = EXCLUSIVE, DROP PARTITION p4"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, REORGANIZE PARTITION p3 INTO
+(PARTITION p31 VALUES LESS THAN (2003), PARTITION p32 VALUES LESS THAN (2005))"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = EXCLUSIVE, REORGANIZE PARTITION p31, p32 INTO (PARTITION p3 VALUES LESS THAN (2005))"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, REBUILD PARTITION p1"
+"ALTER TABLE t2 ALGORITHM = COPY, LOCK = EXCLUSIVE, REBUILD PARTITION p2"
+"ALTER TABLE t2 ALGORITHM = COPY, LOCK = SHARED, ADD PARTITION PARTITIONS 1"
+"ALTER TABLE t2 ALGORITHM = COPY, LOCK = SHARED, COALESCE PARTITION 1"
+"ALTER TABLE t2 ALGORITHM = COPY, LOCK = EXCLUSIVE, ADD PARTITION PARTITIONS 1"
+"ALTER TABLE t2 ALGORITHM = COPY, LOCK = EXCLUSIVE, COALESCE PARTITION 1"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = NONE, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = NONE, DROP PARTITION p4"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, DROP PARTITION p4"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, DROP PARTITION p4"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, REORGANIZE PARTITION p3 INTO
+(PARTITION p31 VALUES LESS THAN (2003), PARTITION p32 VALUES LESS THAN (2005))"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, REORGANIZE PARTITION p31, p32 INTO (PARTITION p3 VALUES LESS THAN (2005))"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, REBUILD PARTITION p1"
+"ALTER TABLE t2 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, REBUILD PARTITION p2"
+"ALTER TABLE t2 ALGORITHM = INPLACE, LOCK = SHARED, ADD PARTITION PARTITIONS 1"
+"ALTER TABLE t2 ALGORITHM = INPLACE, LOCK = SHARED, COALESCE PARTITION 1"
+"ALTER TABLE t2 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, ADD PARTITION PARTITIONS 1"
+"ALTER TABLE t2 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, COALESCE PARTITION 1"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = NONE, EXCHANGE PARTITION p0 WITH TABLE t"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, EXCHANGE PARTITION p0 WITH TABLE t"
+"ALTER TABLE t1 ALGORITHM = COPY, LOCK = EXCLUSIVE, EXCHANGE PARTITION p0 WITH TABLE t"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = NONE, EXCHANGE PARTITION p0 WITH TABLE t"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = SHARED, EXCHANGE PARTITION p0 WITH TABLE t"
+"ALTER TABLE t1 ALGORITHM = INPLACE, LOCK = EXCLUSIVE, EXCHANGE PARTITION p0 WITH TABLE t"
+reap
+"CHANGE REPLICATION SOURCE TO
+SOURCE_USER=     'plug_user',
+SOURCE_PASSWORD= 'plug_user',
+SOURCE_RETRY_COUNT= 0"
+"EOF
+
+
+
+
+use strict"
+"my $mysqld_log= $ENV{'MYSQLD_LOG'}"
+"open(MYSQLD_LOG, $mysqld_log) || die ""Failed to open '$mysqld_log': $!"""
+"print ""# Look for [ERROR] in error log (there should be none):\n"""
+"EOF
+
+use strict"
+"my $bdir= $ENV{'BDIR'}"
+"chdir $bdir"
+"my $binary= $ENV{'MYSQLD'}"
+"$binary =~ s|$bdir/||"
+"my $init_file_args= $ENV{'INIT_FILE_ARGS'}"
+"(system(""$binary $init_file_args"") == 0) ||
+die ""system failed on '$binary $init_file_args': $!"""
+"open(MYSQLD_LOG, $ENV{'MYSQLD_LOG'}) ||
+die ""Failed to open '$mysqld_log': $!"""
+"use File::Basename"
+"my $bindir= dirname($ENV{'MYSQLD'})"
+"$ENV{'PATH'}=""$bindir:$ENV{'PATH'}"""
+"(system(""$binary $init_file_args"") == 0) ||
+die ""system failed on 'mysqld $init_file_args': $!"""
+"my $mysqld_out= $ENV{'MYSQLD_OUT'}"
+"open(MYSQLD_OUT, $mysqld_out) || die ""Failed to open '$mysqld_out': $!"""
+"my $found_expected_error= 0"
+"$found_expected_error= 1"
+"my $found_expected_errors= 0"
+++$found_expected_errors
+"EOF
+
+
+
+use strict"
+"my $mysqld= $ENV{'MYSQLD'}"
+"my $mysql_tmp_dir= $ENV{'MYSQL_TMP_DIR'}"
+"my $init_file_args_d= $ENV{'INIT_FILE_ARGS_D'}"
+"chdir($mysql_tmp_dir) || die ""# Could not chdir to '$mysql_tmp_dir': $!"""
+"(system(""$mysqld $init_file_args_d >$mysqld_out 2>&1"") == 0) ||
+die ""system failed on '$mysqld $init_file_args_d': $!"""
+"print ""# Look for output (there should be none):\n"""
+"print ""# Supressing output for initialize:\n"""
+"EOF
+
+
+SHOW DATABASES"
+disable_query_log
+"SELECT 1 FROM t1 WHERE a = ANY (SELECT a FROM t2)"
+send
+REAP
+"SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"" USING latin1)"
+"SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", CHAR)"
+"SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", CHAR(4))"
+"SELECT CONVERT(TIMESTAMP ""2004-01-22 21:45:33"", BINARY(4))"
+"select CAST(TIMESTAMP ""2004-01-22 21:45:33"" AS BINARY(4))"
+"SELECT CAST(1/3 AS FLOAT(10)), CAST(1/3 AS FLOAT(53))"
+"CREATE VIEW v1 AS SELECT CAST(1/3 AS REAL), CAST(1/3 AS FLOAT(2)), CAST(1/3 AS FLOAT(50))"
+"CREATE PROCEDURE p_flush_status()
+BEGIN
+DECLARE x INT DEFAULT 3000"
+"RESET PERSIST character_set_server"
+"my $input_file= $ENV{'_INPUT_FILE_'}"
+"my $mode = (stat($input_file))[2]"
+"open(FILE, "">"", ""$ENV{MYSQL_TMP_DIR}/permissions.inc"") or die"
+"my $perm= $mode & 07777"
+"print FILE ""let \$FILE_PERMISSIONS= $perm;\n"""
+"close FILE"
+"use File::Spec"
+"my $bindir= dirname($binary)"
+"my $binary= basename($binary)"
+"chdir(""$bindir/.."") || die ""Cannot chdir to $bindir/..; $!"""
+"my $relbindir= basename($bindir)"
+"my $exe= File::Spec->catfile($relbindir, $binary)"
+"my $syscmd= ""$exe $ENV{'HVARGS'}"""
+"(system($syscmd) == 0) || die ""system($syscmd) failed: $!"""
+"EOF
+
+
+use strict"
+"$binary= basename($binary)"
+"$ENV{'PATH'}=""$bindir$Config{'path_sep'}$ENV{'PATH'}"""
+"my $syscmd= ""$binary $ENV{'HVARGS'}"""
+"CREATE TABLE t1(c1 INT,
+c2 INT,
+c3 INT GENERATED ALWAYS AS (c1 + c2),
+CONSTRAINT ck CHECK (c3 > 10)
+)"
+"CREATE TABLE t2 LIKE t1"
+"CREATE TEMPORARY TABLE tmp_t2 LIKE t2"
+"CREATE TABLE t3 LIKE tmp_t2"
+"CREATE TRIGGER t1_before_insert_trg BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+IF NEW.f1 = 1 THEN
+-- Valid value case.
+SET NEW.f2 = '2017-06-06 00:00:00';
+ELSEIF NEW.f1 = 2 THEN
+-- Check option failure case.
+SET NEW.f2 = '2019-06-06 00:00:00';
+ELSEIF NEW.f1 = 3 THEN
+-- Check constraint failure case.
+SET NEW.f2 = '2018-06-06 00:00:00';
+END IF;
+END;"
+"CREATE TRIGGER t1_before_update_trg BEFORE UPDATE ON t1 FOR EACH ROW
+BEGIN
+IF OLD.f1 = 4 THEN
+-- Valid value case.
+SET NEW.f2 = '2017-06-06 00:00:00';
+ELSEIF OLD.f1 = 5 THEN
+-- Check option failure case.
+SET NEW.f2 = '2019-06-06 00:00:00';
+ELSEIF OLD.f1 = 6 THEN
+-- Check constraint failure case.
+SET NEW.f2 = '2018-06-06 00:00:00';
+END IF;
+END;"
+"CREATE TABLE t1 (f1 INT, f2 INT, f3 INT, f4 FLOAT AS (f3 * 0.01), f5 INT,
+CHECK (f1 < f2))"
+"SELECT 1 /*!99999 /* */ */"
+"SELECT 2 /*!12345 /* */ */"
+"SELECT 3 /*! /* */ */"
+"START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT"
+"START TRANSACTION READ WRITE, WITH CONSISTENT SNAPSHOT"
+"START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY"
+"START TRANSACTION WITH CONSISTENT SNAPSHOT, READ WRITE"
+"SET TRANSACTION READ ONLY, ISOLATION LEVEL READ COMMITTED"
+"SET TRANSACTION READ WRITE, ISOLATION LEVEL READ COMMITTED"
+"SET SESSION TRANSACTION READ ONLY, ISOLATION LEVEL REPEATABLE READ"
+"CREATE PROCEDURE p1() SET SESSION TRANSACTION READ ONLY,
+ISOLATION LEVEL SERIALIZABLE"
+"SET SESSION TRANSACTION READ WRITE, ISOLATION LEVEL REPEATABLE READ"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = 8 + 8"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = @gizmo"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = @@global.max_connections"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = DAYOFMONTH('1972-07-29')"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = CAST(RAND() * 10 AS SIGNED)"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = 1024 * 1024 * 1024 * 1024"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = -100"
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = ON"
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = ""ON"""
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = OFF"
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = ""OFF"""
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = gizmo"
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = 1"
+"INSTALL COMPONENT ""file://component_validate_password"" SET check_user_name = 11"
+"INSTALL COMPONENT ""file://component_validate_password""
+SET GLOBAL validate_password.length = 16"
+"INSTALL COMPONENT ""file://component_validate_password""
+SET validate_password.length = 16, PERSIST validate_password.number_count = 13"
+"INSTALL COMPONENT ""file://component_validate_password""
+SET validate_password.length = 16"
+"INSTALL COMPONENT ""file://component_validate_password""
+SET GLOBAL validate_password.length = 60, validate_password.number_count = 50"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = 12"
+"EOF
+SELECT COUNT(*) FROM wl12475.t1"
+"CREATE TABLE t3 (col1 INT, col2 INT GENERATED ALWAYS AS (col1) STORED)"
+"ALTER TABLE t1 ADD COLUMN f3 INT GENERATED ALWAYS AS (f1) STORED"
+"create table t1 like `a/a`"
+"select 1ea10.1a20,1e+ 1e+10 from 1ea10"
+"create table t3 like t1"
+"create table if not exists t3 like t1"
+"create temporary table t3 like t2"
+"create table mysqltest.t3 like t1"
+"create temporary table t3 like mysqltest.t3"
+"create table t2 like t3"
+"create temporary table t3 like t1"
+"create function f1() returns int
+begin
+declare res int"
+"return res"
+"end|
+create table t1 as select 1"
+"create table t1 like information_schema.processlist"
+"create temporary table t1 like information_schema.processlist"
+"CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
+"|
+
+
+DROP TABLE t1"
+"create table t2 like t1"
+"CREATE PROCEDURE IF NOT EXISTS sp1() BEGIN END"
+"CREATE FUNCTION IF NOT EXISTS sf1() RETURNS INT DETERMINISTIC return 0"
+"CREATE FUNCTION IF NOT EXISTS abs() RETURNS INT DETERMINISTIC return 0"
+"CREATE FUNCTION IF NOT EXISTS metaphon() RETURNS INT DETERMINISTIC return 0"
+"CREATE TRIGGER IF NOT EXISTS trg1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN END"
+"CREATE TABLE t1 (f1 INT) START TRANSACTION"
+"CREATE PROCEDURE proc1()
+BEGIN
+CREATE TABLE t1 (f1 INT) START TRANSACTION;
+ROLLBACK;
+CREATE TABLE t1 (f1 INT) START TRANSACTION;
+COMMIT;
+END"
+"SELECT MAX(k COLLATE latin1_german2_ci)
+FROM t1
+WHERE
+SELECT *
+FROM t1
+WHERE (_latin1'Mu""ller' COLLATE latin1_german2_ci) = k
+HAVING
+SELECT *
+FROM t1
+HAVING (_latin1'Mu""ller' COLLATE latin1_german2_ci) = k"
+"CREATE TABLE t4 (s1 CHAR(50) CHARACTER SET latin1,
+s2 CHAR(50) CHARACTER SET cp932,
+d DECIMAL(10,2))|
+CREATE PROCEDURE bug18293 (IN ins1 CHAR(50),
+IN ins2 CHAR(50) CHARACTER SET cp932,
+IN ind DECIMAL(10,2))
+BEGIN
+INSERT INTO t4 VALUES (ins1, ins2, ind)"
+"END|
+CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
+"ALTER DATABASE DEFAULT CHARACTER SET latin2"
+" ¡¢£¤¥±º»¼½¾ 
+05
+15
+25
+35
+4
+
+SET NAMES gb18030"
+"CREATE VIEW v1 AS SELECT 1 from t1
+WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
+"my $ddir_perms= (stat($ENV{'DDIR'}))[2]"
+"EOF
+
+
+
+
+perl"
+"my $log= $ENV{'MYSQLD_LOG'} or die"
+"open(FILE, ""$log"") or die"
+"my $log= $ENV{'ENV_MYSQLD_LOG'} or die"
+"my $c_w= grep(/No data dictionary version number found./gi,<FILE>)"
+"print ""#     Data Dictionary initialization error found $c_w times.\n"""
+close(FILE)
+"EOF
+
+remove_file $BOOTSTRAP_SQL"
+"my $c_w= grep(/The used command is not allowed with this MySQL version/gi,<FILE>)"
+"EOF
+
+
+
+connect(root_con,localhost,root,,mysql)"
+"my $c_w= grep(/Access to data dictionary table \'mysql.st_spatial_reference_systems\' is rejected/gi,<FILE>)"
+"print ""#     Data Dictionary table access error found $c_w times.\n"""
+"my $c_w= grep(/Access to data dictionary table \'mysql.tables\' is rejected/gi,<FILE>)"
+"CREATE TABLE t1 LIKE information_schema.processlist"
+"FLUSH TABLES mysql.events"
+"CREATE TABLE t1 (a1 INTEGER,
+a2 INTEGER GENERATED ALWAYS AS (a1 * 2) STORED,
+a3 INTEGER GENERATED ALWAYS AS (a1 * 3) VIRTUAL,
+KEY (a1) )"
+"CREATE TEMPORARY TABLE t1 (
+a INTEGER NOT NULL DEFAULT 1,
+b INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY,
+c INTEGER,
+d INTEGER GENERATED ALWAYS AS (a * 2) STORED,
+e POINT NOT NULL SRID 0,
+f CHAR(30),
+g INT,
+h TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
+"REVOKE ALL ON db1.v1 FROM testuser1@localhost"
+"REVOKE ALL ON db1.t1 FROM testuser1@localhost"
+"TYPE=TRIGGERS
+triggers='CREATE DEFINER=`root`@`localhost` TRIGGER tr1_bi BEFORE INSERT ON vt2 FOR EACH ROW SET @a:=1'
+sql_modes=1073741824 1073741824
+definers='root@localhost' 'root@localhost'
+client_cs_names='latin1' 'latin1'
+connection_cl_names='latin1_swedish_ci' 'latin1_swedish_ci'
+db_cl_names='latin1_swedish_ci' 'latin1_swedish_ci'
+EOF
+
+TYPE=TRIGGERNAME
+trigger_table=vt2
+EOF
+
+
+SET sql_mode=''"
+"default-character-set=koi8r
+default-collation=koi8r_bin
+EOF
+
+
+let $MYSQLD_LOG= $MYSQLTEST_VARDIR/log/save_dd_upgrade_1.log"
+perl
+"my $c_e= grep(/\[Warning\] Parsing \'sys\.diagnostics\' routine body failed\. Creating routine without parsing routine body/gi,<FILE>)"
+"print ""# Sys Schema routine parsing warning found : $c_e times.\n"""
+"seek(FILE,0,0)"
+"$c_e= grep(/\[ERROR\] .* Unknown system variable \'show_compatibility_56\'/gi,<FILE>)"
+"print ""# Sys Schema routine parsing error found : $c_e times.\n"""
+"$c_e= grep(/\[Warning\] Resolving dependency for the view \'sys\.innodb_lock_waits\' failed\. View is no more valid to use/gi,<FILE>)"
+"print ""# Sys Schema view parsing warning found : $c_e times.\n"""
+"$c_e= grep(/\[ERROR\] .* Unknown table \'INNODB_LOCK_WAITS\' in information_schema/gi,<FILE>)"
+"print ""# Sys Schema view parsing error found : $c_e times.\n"""
+"EOF
+
+CREATE SCHEMA test123"
+"CREATE TABLE t3 LIKE t1"
+"CREATE TABLE t1 (i INT, b char(255) DEFAULT (md5(i)), j INT GENERATED ALWAYS AS (i*2))"
+"CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
+d2 DOUBLE DEFAULT 0.0, c2 CHAR(255),
+def2 DOUBLE DEFAULT( i2 DIV d2 ),
+v1 INT AS ( d2 = c2 % ASIN( d1 ) > i2 ) VIRTUAL)"
+"CREATE TABLE IF NOT EXISTS D1 (def2 DOUBLE DEFAULT( 100 DIV 0 ),
+v1 INT AS (1) VIRTUAL)"
+"ALTER TABLE t1 ADD COLUMN b INT DEFAULT (a), ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED"
+"ALTER TABLE t2 ADD COLUMN b INT DEFAULT (a), ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED, ALGORITHM=COPY"
+"ALTER TABLE t1 ADD COLUMN b INT DEFAULT (a),
+ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED,
+ADD COLUMN d INT DEFAULT (c),
+ADD COLUMN e INT GENERATED ALWAYS AS (-d) STORED"
+"ALTER TABLE t2 ADD COLUMN b INT DEFAULT (a),
+ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED,
+ADD COLUMN d INT DEFAULT (c),
+ADD COLUMN e INT GENERATED ALWAYS AS (-d) STORED,
+ALGORITHM=COPY"
+"CREATE TABLE t (a INT,
+b INT,
+c INT DEFAULT 77,
+d INT GENERATED ALWAYS AS (DEFAULT(c)))"
+"CREATE TABLE t (a INT,
+b INT GENERATED ALWAYS AS (a*5))"
+"CREATE TRIGGER tr1 AFTER DELETE ON t1 FOR EACH ROW
+BEGIN
+INSERT INTO t1 SELECT * FROM t1 AS A"
+"CREATE TABLE t (
+a INT,
+b INT,
+c TIMESTAMP GENERATED ALWAYS AS (65),
+UNIQUE KEY (a, b),
+UNIQUE KEY (c, a)
+)"
+"CREATE TABLE testdb.l1 LIKE testdb.t1"
+"my $logf= $ENV{'LOGF'} or die ""LOGF not set"""
+"open(FILE, ""$logf"") or die(""Unable to open $logf: $!\n"")"
+"my $count_warnings= grep(/\[Warning\] \[[^]]*\] \[[^]]*\] The syntax 'plugin-validate-password-length' is deprecated and will be removed in a future release\. Please use validate-password-length instead\./gi,<FILE>)"
+"my $count_warnings= $count_warnings"
+"print ""Deprecation warning count : $count_warnings\n"""
+"select * from (select * from t1 intersect all select * from t1 order by a,b limit 2) a"
+"select * from (select * from t1 except all select * from t1 limit 2) a"
+"SELECT  table1.col_date_key AS field1
+FROM
+C AS table1
+WHERE
+(table1.col_int_key <=ANY
+( SELECT SUBQUERY1_t1.col_int_key
+FROM viewC AS SUBQUERY1_t1
+WHERE SUBQUERY1_t1.col_varchar_10_key <= table1.col_varchar_10_key
+)
+)
+"
+"create table t12 like t11"
+"SELECT
+/*+ SET_VAR(optimizer_switch = 'materialization=off,semijoin=off') */
+* FROM t1 AS ta, lateral (select 1 WHERE ta.a IN (SELECT b FROM t2 AS tb                WHERE tb.b >= SOME(SELECT SUM(tc.a) as sg FROM t1 as tc                                   GROUP BY tc.b                                   HAVING ta.a=tc.b))) dt"
+"EOF
+
+DROP DATABASE bug19573998"
+"my $file= $ENV{'GREP_FILE'} or die(""grep file not set"")"
+"my $pattern= $ENV{'GREP_PATTERN'} or die(""pattern is not set"")"
+"open(FILE, ""$file"") or die(""Unable to open $file: $!"")"
+"rename $file, ""$file~"""
+"open(FILE, "">"", ""$file"") or die(""Unable to open file: $!"")"
+"EOF
+
+SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
+disable_result_log
+enable_query_log
+"EXPLAIN ((SELECT a FROM t ORDER BY 1 LIMIT 3) ORDER BY -a LIMIT 2) ORDER BY a"
+"CREATE TABLE t3 LIKE t2"
+"EXPLAIN
+DELETE LOW_PRIORITY QUICK IGNORE
+FROM t1 PARTITION (p1)
+WHERE c1 > 0
+ORDER BY c2
+LIMIT 10"
+"EXPLAIN analyze FORMAT=TREE SELECT t1.a, GROUP_CONCAT(t2.b) AS b FROM t1 LEFT JOIN t2 ON t1.a=t2.a GROUP BY t1.a ORDER BY t1.b"
+"EXPLAIN FORMAT=TREE SELECT * FROM ( SELECT * FROM t1 LIMIT 2 OFFSET 1 ) AS alias1
+WHERE f1 <= ANY ( SELECT f1 FROM t1 ) ORDER BY f1"
+"EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a = ANY ( SELECT a FROM t1 WHERE b = 2 )"
+"EXPLAIN FORMAT=tree SELECT a FROM t1 WHERE a = ANY ( SELECT MAX(a) FROM t1 WHERE b = 2 )"
+"EXPLAIN ANALYZE FORMAT=TREE SELECT 1"
+"EXPLAIN ANALYZE FORMAT=TREE SELECT * FROM t1 x1, t1 x2 WHERE x1.c=x2.d AND x1.d>900 AND x2.a=x2.b"
+"print ""\nChecking 'INFO_SRC' and 'INFO_BIN'\n"""
+"$dir_bin = $ENV{'MYSQL_BINDIR'}"
+"$dir_docs =~ s|/lib|/share/doc|"
+"$dir_docs = $dir_docs[0]"
+"$found_revision = ""No line 'revision-id: .....'"""
+"open(I_SRC,""<"",""$dir_docs/INFO_SRC"") or print ""Cannot open 'INFO_SRC' in '$dir_docs' (starting from bindir '$dir_bin')\n"""
+"print ""INFO_SRC: $found_version / $found_revision\n"""
+"$found_compiler = ""No line about compiler information"""
+"$found_features = ""No line 'Feature flags'"""
+"open(I_BIN,""<"",""$dir_docs/INFO_BIN"") or print ""Cannot open 'INFO_BIN' in '$dir_docs' (starting from bindir '$dir_bin')\n"""
+"print ""INFO_BIN: $found_compiler / $found_features\n"""
+echo
+"FLUSH LOCAL TABLES test.t1, test.t2 for ExPoRt"
+"FLUSH TABLE db1.t1 FOR EXPORT"
+"FLUSH LOCAL TABLES test.t1 FOR EXPORT"
+"CREATE TABLE t1(a INT PRIMARY KEY,
+b INT GENERATED ALWAYS AS (a+1) VIRTUAL UNIQUE)"
+"CREATE TABLE t2(a INT, b INT GENERATED ALWAYS AS (a+1) STORED UNIQUE)"
+"CREATE TABLE t3(a INT, b INT GENERATED ALWAYS AS (a+1) STORED UNIQUE,
+FOREIGN KEY (b) REFERENCES t1(a))"
+"CREATE TABLE t3(a INT, b INT GENERATED ALWAYS AS (a+1) STORED UNIQUE,
+FOREIGN KEY (a) REFERENCES t1(a))"
+"CREATE TABLE t2(a INT, b INT GENERATED ALWAYS AS (a+1) VIRTUAL UNIQUE)"
+"CREATE TABLE t2(fld1 INT NOT NULL, fld2 INT AS (fld1) VIRTUAL, KEY(fld2),
+FOREIGN KEY(fld1) REFERENCES t1(fld1) ON UPDATE CASCADE)"
+"CREATE TABLE child2 LIKE child"
+"CREATE TABLE IF NOT EXISTS parent LIKE parent_source"
+"CREATE TABLE child (base INT, fk INT GENERATED ALWAYS AS (base+1) VIRTUAL)"
+"CREATE TABLE self (pk INT PRIMARY KEY, base INT,
+fk INT GENERATED ALWAYS AS (base+1) VIRTUAL)"
+"CREATE TABLE child (base INT, fk INT GENERATED ALWAYS AS (base+1) STORED,
+FOREIGN KEY (fk) REFERENCES parent(pk))"
+"CREATE TABLE self (pk INT PRIMARY KEY, base INT,
+fk INT GENERATED ALWAYS AS (base+1) STORED,
+FOREIGN KEY (fk) REFERENCES self(pk))"
+"CREATE TABLE parent (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
+"CREATE TABLE self (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, fk INT,
+UNIQUE KEY(pk))"
+"CREATE TABLE parent (base INT, pk INT GENERATED ALWAYS AS (base+1) STORED, UNIQUE KEY(pk))"
+"CREATE TABLE self (base INT, pk INT GENERATED ALWAYS AS (base+1) STORED, fk INT,
+UNIQUE KEY(pk), FOREIGN KEY (fk) REFERENCES self(pk))"
+"CREATE TABLE parent0 (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
+"CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT, F3 INT AS (f1+1) VIRTUAL,
+FOREIGN KEY(f2) REFERENCES t2(f3))"
+"CREATE TABLE child_copy LIKE child"
+"CREATE TABLE parent LIKE parent_base"
+"CREATE TABLE parent (i INT, j INT,
+d INT GENERATED ALWAYS AS (i) VIRTUAL,
+e INT GENERATED ALWAYS AS (j) VIRTUAL,
+PRIMARY KEY (i), UNIQUE u(i,d), UNIQUE u1(i,j,e))"
+"CREATE TABLE self (i INT, j INT, i2 INT, j2 INT,
+d INT GENERATED ALWAYS AS (i) VIRTUAL,
+e INT GENERATED ALWAYS AS (j) VIRTUAL,
+PRIMARY KEY (i), UNIQUE u(i,d), UNIQUE u1(i,j,e),
+FOREIGN KEY (i2, j2) REFERENCES self (i, j))"
+"create table t1 (
+a int not null,
+b int not null references t2 (c),
+primary key (a,b),
+foreign key (a,b) references t3 (c,d) on delete no action
+on update no action,
+foreign key (a,b) references t3 (c,d) on update cascade,
+foreign key (a,b) references t3 (c,d) on delete set default,
+foreign key (a,b) references t3 (c,d) on update set null) engine=myisam"
+"SELECT cast(TIMESTAMP'2019-10-10 10:11:12' AT TIME ZONE 'UTC' AS DATETIME)"
+"SELECT cast(TIMESTAMP'2019-10-10 10:11:12' AT TIME ZONE '+00:00' AS DATETIME)"
+"SELECT cast(TIMESTAMP'2019-10-10 10:11:12+00:00' AT TIME ZONE '+00:00' AS DATETIME)"
+"SELECT cast( a AT TIME ZONE '+00:00' AS DATETIME ) FROM t1"
+enable_result_log
+"select sum(all a),count(all a),avg(all a),std(all a),variance(all a),bit_or(all a),bit_and(all a),min(all a),max(all a),min(all c),max(all c) from t1"
+"SELECT a,AVG(DISTINCT b) AS average FROM t1 GROUP BY a HAVING average > 50"
+"SELECT AVG(DISTINCT col_int_nokey) FROM t1"
+"SELECT AVG(DISTINCT outr.col_int_nokey) FROM t1 AS outr LEFT JOIN t1 AS outr2 ON
+outr.col_int_nokey = outr2.col_int_nokey"
+"UPDATE IGNORE e1 AS outr1, b1 AS outr2 SET outr1.col_date =
+JSON_SET(outr1.col_date, CONCAT('$','[',1,']','.','cdate'), '2007-07-12')
+WHERE outr1.pk <= ANY ( SELECT DISTINCT innr1.col_int_key AS y FROM bb4
+AS innr2 LEFT JOIN bb4 AS innr1 ON (innr2.col_int_key <> innr1.col_int_key)
+WHERE innr1.col_int_key= 4)"
+"CREATE TABLE t(x VARCHAR(10),
+gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
+exit
+"""',repeat('a',60),repeat('b',60),repeat('c',60),repeat('d',100)), '""');
+
+select insert('txs',2,1,'hi'),insert('is ',4,0,'a'),insert('txxxxt',2,4,'es');
+select replace('aaaa','a','b'),replace('aaaa','aa','b'),replace('aaaa','a','bb'),replace('aaaa','','b'),replace('bbbb','a','c');
+select replace(concat(lcase(concat('THIS',' ','IS',' ','A',' ')),ucase('false'),' ','test'),'FALSE','REAL') ;
+select soundex(''),soundex('he'),soundex('hello all folks'),soundex('#3556 in bugdb');
+select 'mood' sounds like 'mud';
+select 'Glazgo' sounds like 'Liverpool';
+select null sounds like 'null';
+select 'null' sounds like null;
+select null sounds like null;
+select md5('hello');
+select crc32(""123"");
+select sha('abc');
+select sha1('abc');
+select aes_decrypt(aes_encrypt('abc','1'),'1');
+select aes_decrypt(aes_encrypt('abc','1'),1);
+select aes_encrypt(NULL,""a"");
+select aes_encrypt(""a"",NULL);
+select aes_decrypt(NULL,""a"");
+select aes_decrypt(""a"",NULL);
+select aes_decrypt(""a"",""a"");
+select aes_decrypt(aes_encrypt("""",""a""),""a"");
+select repeat('monty',5),concat('*',space(5),'*');
+select reverse('abc'),reverse('abcd');
+select rpad('a',4,'1'),rpad('a',4,'12'),rpad('abcd',3,'12'), rpad(11, 10 , 22), rpad(""ab"", 10, 22);
+select lpad('a',4,'1'),lpad('a',4,'12'),lpad('abcd',3,'12'), lpad(11, 10 , 22);
+select rpad(741653838,17,'0'),lpad(741653838,17,'0');
+select rpad('abcd',7,'ab'),lpad('abcd',7,'ab');
+select rpad('abcd',1,'ab'),lpad('abcd',1,'ab');
+select rpad('STRING', 20, CONCAT('p','a','d') );
+select lpad('STRING', 20, CONCAT('p','a','d') );
+
+select LEAST(NULL,'HARRY','HARRIOT',NULL,'HAROLD'),GREATEST(NULL,'HARRY','HARRIOT',NULL,'HAROLD');
+select least(1,2,3) | greatest(16,32,8), least(5,4)*1,greatest(-1.0,1.0)*1,least(3,2,1)*1.0,greatest(1,1.1,1.0),least(""10"",9),greatest(""A"",""B"",""0"");
+
+select quote('\'\"\\test')"
+"', 2),substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
+"', -2);
+
+explain select md5('hello');
+explain select sha('abc');
+explain select sha1('abc');
+explain select soundex('');
+explain select 'mood' sounds like 'mud';
+explain select aes_decrypt(aes_encrypt('abc','1'),'1');
+explain select concat('*',space(5),'*');
+explain select reverse('abc');
+explain select rpad('a',4,'1');
+explain select lpad('a',4,'1');
+explain select concat_ws(',','',NULL,'a');
+explain select make_set(255,_latin2'a', _latin2'b', _latin2'c');
+explain select elt(2,1);
+explain select locate(""a"",""b"",2);
+explain select format(130,10);
+explain select char(0);
+explain select conv(130,16,10);
+explain select hex(130);
+explain select binary 'HE';
+explain select export_set(255,_latin2'y', _latin2'n', _latin2' ');
+explain select FIELD('b' COLLATE latin1_bin,'A','B');
+explain select FIND_IN_SET(_latin1'B', _latin1'a,b,c,d');
+explain select collation(conv(130,16,10));
+explain select coercibility(conv(130,16,10));
+explain select length('\n\t\r\b\0\_\%\\');
+explain select bit_length('\n\t\r\b\0\_\%\\');
+explain select bit_length('\n\t\r\b\0\_\%\\');
+explain select concat('monty',' was here ','again');
+explain select length('hello');
+explain select char(ascii('h'));
+explain select ord('h');
+explain select quote(1/0);
+explain select crc32(""123"");
+explain select replace('aaaa','a','b');
+explain select insert('txs',2,1,'hi');
+explain select left(_latin2'a',1);
+explain select right(_latin2'a',1);
+explain select lcase(_latin2'a');
+explain select ucase(_latin2'a');
+explain select SUBSTR('abcdefg',3,2);
+explain select substring_index(""1abcd;2abcd;3abcd;4abcd"", '"
+"""',repeat('a',60),
+repeat('b',60),
+repeat('c',60),
+repeat ('d',100)),'""');
+SELECT
+CONCAT('""',CONCAT_WS('"""
+"""',repeat('a',60),
+repeat('b',60),
+repeat('c',60),
+repeat ('d',100)),'""');
+SELECT
+CONCAT_WS('""',CONCAT_WS('"""
+"""',repeat('a',60),
+repeat('b',60),
+repeat('c',60),
+repeat ('d',100)),'""');
+SELECT
+CONCAT('""',CONCAT('"""
+"select 1 from t1 where 1 < some (select cast(a as datetime) from t1)"
+"CREATE TABLE t1(col1 varchar(100), gcol2 binary(16) AS (uuid_to_bin(col1)) virtual, index(gcol2))"
+"CREATE TABLE t2(col1 binary(16), gcol2 varchar(36) AS (bin_to_uuid(col1)) virtual, index(col1), index(gcol2))"
+"select hex(weight_string('aa' as binary(3)))"
+"SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000)))"
+"CREATE VIEW v5 AS SELECT WEIGHT_STRING(a AS BINARY(2)) AS b FROM t1"
+"CREATE VIEW v6 AS SELECT WEIGHT_STRING(a AS BINARY(6)) AS b FROM t1"
+"SELECT HEX(WEIGHT_STRING(a AS BINARY(2))) FROM t1"
+"SELECT HEX(WEIGHT_STRING(a AS BINARY(6))) FROM t1"
+"ALTER TABLE t2 ALTER my_row_id SET VISIBLE"
+"ALTER TABLE t1 ENGINE='MYISAM',
+ADD COLUMN my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE FIRST,
+ADD PRIMARY KEY(my_row_id)"
+"CREATE TABLE t1(my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE,
+f1 INT, primary key(my_row_id)) ENGINE = 'MyISAM'"
+"ALTER TABLE t1 ENGINE='MYISAM', ALTER my_row_id SET VISIBLE"
+"ALTER TABLE t1 ENGINE='InnoDB', ALTER my_row_id SET INVISIBLE"
+"CREATE TEMPORARY TABLE t1(my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE,
+f1 INT, primary key(my_row_id)) ENGINE = 'MyISAM'"
+"ALTER TABLE t1 ALTER my_row_id SET VISIBLE"
+"ALTER TABLE t1 ALTER my_row_id SET INVISIBLE"
+"ALTER TABLE t1 DROP COLUMN f0, MODIFY my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE"
+"ALTER TABLE t2 ALTER my_row_id SET INVISIBLE"
+"ALTER TABLE t2 DROP COLUMN f0, MODIFY my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE"
+"ALTER TABLE t1 ADD COLUMN my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE FIRST,
+ADD PRIMARY KEY(my_row_id)"
+"CREATE PROCEDURE run_show_and_i_s_stmts() BEGIN
+SHOW CREATE TABLE t1;
+SHOW COLUMNS FROM t1;
+SHOW EXTENDED COLUMNS FROM t1;
+SHOW KEYS FROM t1;
+
+-- I_S.TABLES
+SELECT TABLE_NAME, AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_NAME='t1';
+-- I_S.COLUMNS
+SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, EXTRA
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME='t1' ORDER BY ORDINAL_POSITION;
+-- I_S.COLUMN_EXTENSIONS
+SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS_EXTENSIONS
+WHERE TABLE_NAME='t1' ORDER BY COLUMN_NAME;
+-- I_S.STATISTICS
+SELECT INDEX_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_NAME='t1' ORDER BY INDEX_NAME, COLUMN_NAME;
+-- I_S.KEY_COLUMN_USAGE
+SELECT CONSTRAINT_NAME, COLUMN_NAME
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME='t1'
+ORDER BY CONSTRAINT_NAME, COLUMN_NAME;
+-- I_S.TABLE_CONSTRAINTS
+SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME='t1'
+ORDER BY CONSTRAINT_NAME;
+-- I_S.TABLE_CONSTRAINTS_EXTENSIONS
+SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS_EXTENSIONS
+WHERE TABLE_NAME='t1' ORDER BY CONSTRAINT_NAME;
+END;
+"
+"ALTER TABLE t1 ALTER my_row_id SET VISIBLE, ALGORITHM=INSTANT"
+"ALTER TABLE t1 ALTER my_row_id SET INVISIBLE, ALGORITHM=INSTANT"
+"ALTER TABLE t1 ALTER my_row_id SET VISIBLE, RENAME COLUMN f1 to f2,
+ALGORITHM=INSTANT"
+"ALTER TABLE t1 ALTER my_row_id SET INVISIBLE, RENAME COLUMN f2 to f1,
+ALGORITHM=INSTANT"
+"ALTER TABLE t1 ALTER my_row_id SET VISIBLE, ALGORITHM=INPLACE"
+"ALTER TABLE t1 ALTER my_row_id SET INVISIBLE, ALGORITHM=INPLACE"
+"ALTER TABLE t1 ALTER my_row_id SET VISIBLE, ADD INDEX (f1), ALGORITHM=INPLACE"
+"ALTER TABLE t1 ALTER my_row_id SET INVISIBLE, ADD INDEX(f1),
+ALGORITHM=INPLACE"
+"ALTER TABLE t1 ALTER my_row_id SET VISIBLE, ALGORITHM=COPY"
+"ALTER TABLE t1 ALTER my_row_id SET INVISIBLE, ALGORITHM=COPY"
+"DO ST_ASTEXT(ST_UNION(ST_GEOMFROMTEXT('POLYGON((525000 183300,525400
+183300,525400 18370, 525000 183700,525000 183300))'),
+ST_GeomFromText('POLYGON((525298.67 183511.53,525296.57
+183510.39,525296.42 183510.31,525289.11 183506.62,525283.17
+183503.47,525280.98 183502.26,525278.63 183500.97,525278.39
+183500.84,525276.79 183500,525260.7 183491.55,525263.95
+183484.75,525265.58 183481.95,525278.97 183488.73,525276.5
+183493.45,525275.5 183495.7,525280.35 183498.2,525282.3
+183499.1,525282.2 183499.3,525283.55 183500,525301.75
+183509.35,525304.45 183504.25,525307.85 183504.95,525304.5
+183510.83,525302.81 183513.8,525298.67 183511.53),(525275.06
+183489.89,525272.06 183488.37,525268.94 183494.51,525271.94
+183496.03,525275.06 183489.89),(525263.26 183491.55,525266.15
+183493.04,525269.88 183485.82,525266.99 183484.33,525263.26
+183491.55))'))) st_u"
+"DO ST_AsText(@centroid_point) as centroid"
+"DO MBRWITHIN(@centroid_point, ST_INTERSECTION(ST_GEOMFROMTEXT('MULTILINESTRING((541 -927,-414 316,-429 -444,212 260,-125 104,445 563,-713 -975,-976 514),(-830 882,-377 914,-915 919,-535 -23,-508 979),(806 347,-87 220,226 -22,-12 468,707 598,83 951,-592 701,833 964,270 -932,743 -514,231 469,-575 -122,-99 -245,416 465,801 -587))'), ST_GEOMFROMTEXT('LINESTRING(-96 -182,-373 75,697 687,-881 -463,-557 -959,-493 810)'))) as result"
+"DO ST_ASTEXT(ST_UNION(ST_GEOMFROMTEXT('GEOMETRYCOLLECTION(POLYGON((4 -10,-3 0,-5 6,9 9,5 7,9 -6,9 -10,7 9,0 -4,-6 10,0 -3,9 3, 4 -10)),
+GEOMETRYCOLLECTION(),
+GEOMETRYCOLLECTION(MULTIPOLYGON(((-8 0,-2 -6,-10 -9,-9 7,-2 -10,7 -9,3 -6,-5 -8,-10 -7,-6 10,4 -10,-7 -8,6 -1, -8 0)),((-4 -3,7 -10,-4 -1,-10 -3,3 -3,-10 -4,-1 2,-2 -10,6 -7,-9 -8, -4 -3))),
+POINT(5 0),
+MULTIPOINT(-3 0,-4 -8,-3 -4,10 4,0 7,-7 2,4 -8,1 -6),
+MULTILINESTRING((-10 10,-10 5,9 -9,2 2,-7 2,0 -3,2 3,-6 -4,0 -2),(5 -9,0 -9,6 -4,1 -4,-1 6,2 -9,5 -7,8 10)),
+MULTILINESTRING((-10 10,-10 5,9 -9,2 2,-7 2,0 -3,2 3,-6 -4,0 -2),(5 -9,0 -9,6 -4,1 -4,-1 6,2 -9,5 -7,8 10)),
+LINESTRING(10 5,-4 7,-5 -8,-4 4,-4 6,-5 9,-1 6,0 -5)),
+GEOMETRYCOLLECTION(MULTILINESTRING((-8 5,9 -10,-9 9,-9 4,3 -2,4 -6),(3 -10,3 8,-10 4,6 -3,8 -2,3 3,4 -7,-8 6,-3 2,5 3,0 10,2 4,1 -5,-6 1),(10 3,-4 2,4 -4,3 -1,-8 0,-7 -2,10 9,-5 5,-3 6),(0 3,3 7,0 2,4 -1,8 8,-10 -4,2 7,-4 5)),
+POINT(2 -1),
+MULTIPOLYGON(((-10 8,1 -4,0 -8,9 2,-8 -6,-3 -7,-10 -1,-10 -9,10 -3, -10 8)),((-6 7,-1 3,2 8,10 -6,-8 4,-9 -10,-8 -8,-2 -1,-9 7,6 -9,5 1,-1 -6, -6 7)),((8 9,0 1,-5 -8,0 8,-3 -6,-9 -2,9 -6,-5 5,-1 -3,-8 2,2 -9,5 -5,7 -7,-9 3,0 -3, 8 9)),((1 -4,-7 -10,10 10,5 3,8 -9,-6 5,2 2,-5 5,-1 5, 1 -4))),
+MULTIPOLYGON(((-10 8,1 -4,0 -8,9 2,-8 -6,-3 -7,-10 -1,-10 -9,10 -3, -10 8)),((-6 7,-1 3,2 8,10 -6,-8 4,-9 -10,-8 -8,-2 -1,-9 7,6 -9,5 1,-1 -6, -6 7)),((8 9,0 1,-5 -8,0 8,-3 -6,-9 -2,9 -6,-5 5,-1 -3,-8 2,2 -9,5 -5,7 -7,-9 3,0 -3, 8 9)),((1 -4,-7 -10,10 10,5 3,8 -9,-6 5,2 2,-5 5,-1 5, 1 -4)))),
+MULTIPOLYGON(((8 0,7 -6,7 -2,-7 -9,-3 10,-4 -3,3 -10, 8 0)),((7 3,7 6,1 8,4 6,-8 -7,-6 -7,9 -4,-1 3,-7 10, 7 3)),((3 -6,5 4,-3 -6,-5 1,-6 0,0 0,0 -7,-2 -10,-4 8,9 9,4 6, 3 -6)),((7 -7,3 4,-5 0, 7 -7)),((4 -9,-2 -9,-2 10, 4 -9))),
+POLYGON((-3 -6,-3 0,3 -10,3 10,1 -4,-6 -10,8 -5,-9 -8,2 -4,9 10,1 -3, -3 -6)),
+POLYGON((2 -5,0 -2,-3 9,0 4,6 -6,5 -4,-4 2,-6 6,3 -4,1 0,-10 -7,1 6,-7 2, 2 -5)),
+MULTIPOINT(7 8,-6 -3,-1 -7,0 7,-2 1,-8 -8))'),
+ST_GEOMFROMTEXT('GEOMETRYCOLLECTION()'))) as result"
+"DO ST_ASTEXT(ST_UNION(ST_INTERSECTION(ST_GEOMFROMTEXT('MULTIPOINT(7 2,-4 -5,6 -9,-7 3,-10 5,8 -6,0 -10,10 -4,8 -10,2 6,8 -4,-8 2,-4 2)'),
+ST_GEOMFROMTEXT('MULTIPOLYGON(((6 2,1 1,-4 5,1 4,-3 -4,-7 9,-10 2,-6 1,10 -7,0 1,9 4, 6 2)))')),
+ST_UNION(ST_GEOMFROMTEXT('LINESTRING(-1 -5,0 -6,4 6,3 3,2 8,-2 6,-4 5,6 -7,-1 -1,-8 6,4 -2)'),
+ST_GEOMFROMTEXT('MULTIPOLYGON(((5 -4,-5 -9,-1 -6,-3 0,5 -2, 5 -4)),((-5 -10,-8 -2,-3 7,1 5,5 -10,1 -5,0 10,3 2,1 1, -5 -10)),((4 -2,6 3,7 5,1 2,8 -9,-10 -5,7 -10,-2 -9,-2 0,2 -8,-8 3,5 0, 4 -2)),((6 -4,0 4,-8 -2,10 -10,-6 5, 6 -4)))')))) as result"
+"CREATE TABLE lakes (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+shore POLYGON)"
+"CREATE TABLE road_segments (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+aliases CHARACTER VARYING(64),
+num_lanes INTEGER,
+centerline LINESTRING)"
+"CREATE TABLE divided_routes (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+num_lanes INTEGER,
+centerlines MULTILINESTRING)"
+"CREATE TABLE forests (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+boundary MULTIPOLYGON)"
+"CREATE TABLE bridges (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+position POINT)"
+"CREATE TABLE streams (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+centerline LINESTRING)"
+"CREATE TABLE buildings (
+fid INTEGER NOT NULL PRIMARY KEY,
+address CHARACTER VARYING(64),
+position POINT,
+footprint POLYGON)"
+"CREATE TABLE ponds (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+type CHARACTER VARYING(64),
+shores MULTIPOLYGON)"
+"CREATE TABLE named_places (
+fid INTEGER NOT NULL PRIMARY KEY,
+name CHARACTER VARYING(64),
+boundary POLYGON)"
+"ALTER TABLE t1 ALGORITHM=COPY, MODIFY COLUMN b GEOMETRY NOT NULL"
+"CREATE TABLE t1 (g GEOMCOLLECTION)"
+"revoke all privileges on mysqltest.* from mysqltest_1@localhost"
+"revoke all on test.* from mysqltest_3@localhost"
+"revoke all on test.t1 from mysqltest_2@localhost"
+"CREATE TABLE t4 LIKE t1"
+"CREATE TABLE t5 LIKE t1"
+"CREATE TABLE t6 LIKE t1"
+"CREATE TABLE t7 LIKE t1"
+"CREATE TABLE t8 LIKE t1"
+"CREATE TABLE t9 LIKE t1"
+"CREATE TABLE t10 LIKE t1"
+"revoke ALL PRIVILEGES on t1 from grant_user@localhost"
+"revoke all on mysqltest_1.t1 from mysqltest_3@localhost"
+"revoke all on mysqltest_1.t2 from mysqltest_3@localhost"
+"revoke all on mysqltest_2.t1 from mysqltest_3@localhost"
+"revoke all on mysqltest_2.t2 from mysqltest_3@localhost"
+"revoke all privileges on mysqltest.t1 from mysqltest_1@localhost"
+"create user mysqltest_7@"
+"alter user mysqltest_7@ identified by 'systpass'"
+"show grants for mysqltest_7@"
+"drop user mysqltest_7@"
+"grant select on mysqltest.* to mysqltest_8@"
+"show grants for mysqltest_8@"
+"REVOKE ALL ON db27878.* FROM 'mysqltest_1'@'localhost'"
+"revoke all on test.* from ÑÐ·ÐµÑ_ÑÐ·ÐµÑ@localhost"
+"REVOKE ALL ON db1.* FROM 'user1'@'localhost'"
+"REVOKE ALL ON db1.* FROM 'user2'@'%'"
+"REVOKE ALL PRIVILEGES ON mysqltest.v0 FROM mysqltest@localhost"
+"REVOKE ALL PRIVILEGES ON mysqltest.visible FROM mysqltest@localhost"
+"REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
+"revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.1'"
+"revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.0/255.0.0.0'"
+"create table t1 like mysqltest_2.t1"
+"CREATE TEMPORARY TABLE t2 LIKE t1"
+"CREATE TEMPORARY TABLE t6(a INT) ENGINE = MERGE UNION = ()"
+"ALTER TABLE t6 UNION = ()"
+"ALTER TABLE mysqltest_db2.t2_2 UNION = ()"
+"create table t_select_priv like t_column_priv_only"
+"create table t_no_priv like t_column_priv_only"
+"create table test.t_duplicated like mysqltest_db1.t_select_priv"
+"flush table mysqltest_db1.t1"
+"ALTER USER user() IDENTIFIED BY 'abc'"
+"EOF
+
+
+
+SELECT 1"
+"ALTER USER USER() IDENTIFIED BY 'abc'"
+"ALTER USER USER() IDENTIFIED BY 'new_pwd_string'"
+"ALTER USER USER() IDENTIFIED BY 'new-auth'"
+"REVOKE ALL ON *.* FROM user1@localhost"
+"SHOW GRANTS FOR u1@localhost USING r1"
+"ALTER USER u1@localhost DEFAULT ROLE r1"
+"REVOKE ALL ON *.* FROM u1@localhost"
+"REVOKE ALL ON *.* FROM u1"
+"SHOW GRANTS FOR u1 using r1"
+"SHOW GRANTS FOR u1 using r2"
+"REVOKE ALL ON *.* FROM CURRENT_USER()"
+enable_connect_log
+"REVOKE ALL PRIVILEGES ON t1 FROM wl14303@localhost"
+disable_connect_log
+"REVOKE ALL PRIVILEGES ON privtest_db.t1 FROM 'privtest'@'localhost'"
+"CREATE TABLE mysql.temp_user LIKE mysql.user"
+"CREATE TABLE t100 LIKE t10"
+"CREATE TABLE t10000 LIKE t10"
+"insert into t2 select
+x3.a,  -- 3
+concat('val-', x3.a + 3*x4.a), -- 12
+concat('val-', @a:=x3.a + 3*x4.a + 12*C.a), -- 120
+concat('val-', @a + 120*D.a)
+from t1 x3, t1 x4, t1 C, t1 D where x3.a < 3 and x4.a < 4 and D.a < 4
+order by x3.a, x4.a, C.a, D.a"
+"EXPLAIN SELECT a FROM t1 IGNORE INDEX FOR ORDER BY (PRIMARY)
+IGNORE INDEX FOR GROUP BY (i2) GROUP BY a"
+"EXPLAIN SELECT a FROM t1 IGNORE INDEX (PRIMARY) IGNORE INDEX FOR ORDER BY (i2)"
+"EXPLAIN SELECT a FROM t1 USE INDEX () USE INDEX (i2)"
+"EXPLAIN SELECT a FROM t1 USE INDEX (i2) USE INDEX ()"
+"EXPLAIN SELECT a FROM t1 USE INDEX FOR JOIN (i2)
+USE INDEX FOR GROUP BY (i2) GROUP BY a"
+"EXPLAIN SELECT a FROM t1 FORCE INDEX FOR JOIN (i2)
+FORCE INDEX FOR GROUP BY (i2) GROUP BY a"
+"EXPLAIN SELECT a FROM t1 USE INDEX () IGNORE INDEX (i2)"
+"EXPLAIN SELECT a FROM t1 IGNORE INDEX (i2) USE INDEX ()"
+"EXPLAIN SELECT a FROM t1
+USE INDEX FOR GROUP BY (i2)
+USE INDEX FOR ORDER BY (i2)
+USE INDEX FOR JOIN (i2)"
+"EXPLAIN SELECT a FROM t1
+USE INDEX FOR JOIN (i2)
+USE INDEX FOR JOIN (i2)
+USE INDEX FOR JOIN (i2,i2)"
+"EXPLAIN SELECT 1 FROM t1 WHERE a IN
+(SELECT a FROM t1 USE INDEX (i2) IGNORE INDEX (i2))"
+"EXPLAIN SELECT 1 FROM t2 WHERE a IN
+(SELECT a FROM t1 USE INDEX (i2) IGNORE INDEX (i2))"
+"CREATE TABLE t1
+(
+a INT GENERATED ALWAYS AS (1) VIRTUAL,
+b INT GENERATED ALWAYS AS (a) VIRTUAL,
+c INT GENERATED ALWAYS AS (1) VIRTUAL
+)"
+"EXPLAIN SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT a) FROM t2"
+"SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT a) FROM t2"
+"EXPLAIN SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT f) FROM t2"
+"SELECT COUNT(DISTINCT a), SUM(DISTINCT a), AVG(DISTINCT f) FROM t2"
+"SELECT EMPNUM, GRADE*1000
+FROM HU.STAFF WHERE GRADE * 1000 >
+ANY (SELECT SUM(BUDGET) FROM HU.PROJ
+GROUP BY CITY, PTYPE
+HAVING HU.PROJ.CITY = HU.STAFF.CITY)"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75], ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA ''"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA 'a'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '1'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA 'null'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '[]'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": 1, ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""blob"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": ""0.25"", ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": -0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 1.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": ""utf8"", ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 2048, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": -1, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 9300000000000000000, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": ""1.0"", ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": -0.1, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.1, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": 1, ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""single"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton""}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": ""4""}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": -1}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 1025}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": ""[[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]]"", ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": null, ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [4, 0.25], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, ""0.5""], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, -0.01], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 1.1]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.7], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.26, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.24, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23.0, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [9300000000000000000, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [2200000000, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [32, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""int"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": 3, ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""text"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": ""[[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]]"", ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [4, 4, 0.3333333333333333, 1], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.4, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 2}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, ""0.6666666666666666"", 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, -0.01, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.01, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.01, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.7333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.01, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1.0], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 0], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, -1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, ""12"", 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[9300000000000000000, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 9300000000000000000, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 2200000000, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 12, 0.6666666666666666, 1], [23, 2200000000, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [13, 12, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_int UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.3333333333333333, 1], [12, 42, 0.6666666666666666, 1], [23, 52, 1.0, 2]], ""data-type"": ""int"", ""null-values"": 0.0, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23.0, 0.625], [52, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [20000000000000000000, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [12, 0.5], [23, 0.625], [-1, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 0.25], [32, 0.5], [23, 0.625], [52, 0.75]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12.0, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, ""12"", 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1, 4, 0.25, 1], [12, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, 12, 0.5, 1], [23, 20000000000000000000, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [13, 12, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_uint UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4, 0.25, 1], [12, 42, 0.5, 1], [23, 52, 0.75, 2]], ""data-type"": ""uint"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [12.0, 0.5], [""23.0"", 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1e330, 0.25], [12.0, 0.5], [23.0, 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [12.0, 0.5], [23.0, 0.625], [1E330, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 0.25], [32.0, 0.5], [23.0, 0.625], [52.0, 0.75]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4, 4.0, 0.25, 1], [12.0, 12.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [12.0, ""12.0"", 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [13.0, 12.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_double UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.0, 4.0, 0.25, 1], [12.0, 32.0, 0.5, 1], [23.0, 52.0, 0.75, 2]], ""data-type"": ""double"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[12345, 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""QmlsbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA"", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:TWFyaw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", 0.25], [""base64:type254:Q2hhcmxlcw=="", 0.5], [""base64:type254:Q2hhcmxlcw=="", 0.625], [""base64:type254:VmluY2VudA=="", 0.75]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[12345, ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", 12345, 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""QmlsbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA"", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsbA"", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsTWFyVmluY2VuQ2hhcmxlbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:QmlsbA=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:VmluY2VudA=="", ""base64:type254:TWFyaw=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_string UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""base64:type254:QmlsbA=="", ""base64:type254:TWFyaw=="", 0.25, 1], [""base64:type254:Q2hhcmxlcw=="", ""base64:type254:Q2hhcmxlcw=="", 0.5, 1], [""base64:type254:TWFyaw=="", ""base64:type254:VmluY2VudA=="", 0.75, 2]], ""data-type"": ""string"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206, 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 14:48:11"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""14:48:11"", 0.125], [""2017-02-10"", 0.375], [""2018-02-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", 0.125], [""2017-02-10"", 0.375], [""2018-04-12"", 0.5], [""2018-03-21"", 0.75]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""0000-00-00"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206, ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", 20170210, 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 14:48:11"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12 14:48:11"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""14:48:11"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""14:48:11"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-12"", ""2017-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_date UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""2019-02-10"", 0.375, 2], [""2018-02-12"", ""2018-02-12"", 0.5, 1], [""2018-03-21"", ""2018-03-21"", 0.75, 1]], ""data-type"": ""date"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[170418, 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10 07:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""-839:00:00.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""839:00:00.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""09:04:18.000000"", 0.125], [""08:15:18.000000"", 0.375], [""16:22:23.000000"", 0.5], [""21:12:42.000000"", 0.75]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[170418, ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", 181518, 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""2017-02-10"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-10 07:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""-839:00:00.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""839:00:00.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""09:04:18.000000"", ""08:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_time UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""07:04:18.000000"", ""17:15:18.000000"", 0.375, 2], [""16:22:23.000000"", ""16:22:23.000000"", 0.5, 1], [""21:12:42.000000"", ""21:12:42.000000"", 0.75, 1]], ""data-type"": ""time"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170216162223, 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""16:22:23.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00 00:00:00.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-16 16:22:23.000000"", 0.125], [""2017-02-10 08:15:18.000000"", 0.375], [""2018-02-12 07:04:18.000000"", 0.5], [""2018-03-21 21:12:42.000000"", 0.75]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[20170206162223, ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", 20170210081518, 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""0000-00-00 00:00:00.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""0000-00-00 00:00:00.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-16 16:22:23.000000"", ""2017-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_datetime UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""2017-02-06 16:22:23.000000"", ""2019-02-10 08:15:18.000000"", 0.375, 2], [""2018-02-12 07:04:18.000000"", ""2018-02-12 07:04:18.000000"", 0.5, 1], [""2018-03-21 21:12:42.000000"", ""2018-03-21 21:12:42.000000"", 0.75, 1]], ""data-type"": ""datetime"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [""12.00"", 0.5], [23.00, 0.625], [52.00, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [9300000000000000000, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [1e100, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [12.00, 0.5], [23.00, 0.625], [5555.00, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 0.25], [32.00, 0.5], [23.00, 0.625], [52.00, 0.75]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""singleton"", ""number-of-buckets-specified"": 4}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[""4.00"", 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, ""12.00"", 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1e100, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1e100, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[-1000.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 12.00, 0.5, 1], [23.00, 1000.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [13.00, 12.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ANALYZE TABLE tbl_decimal UPDATE HISTOGRAM ON col1 USING DATA '{""buckets"": [[4.00, 4.00, 0.25, 1], [12.00, 32.00, 0.5, 1], [23.00, 52.00, 0.75, 2]], ""data-type"": ""decimal"", ""null-values"": 0.25, ""collation-id"": 8, ""sampling-rate"": 1.0, ""histogram-type"": ""equi-height"", ""number-of-buckets-specified"": 3}'"
+"ALTER TABLE t1 ADD COLUMN virtual_generated INT AS (col_integer + 10) VIRTUAL,
+ADD COLUMN stored_generated INT AS (col_integer + 20) STORED"
+"CREATE TABLE t1 (
+c1 int(11) DEFAULT NULL,
+c2 int(11) GENERATED ALWAYS AS ((c1 * 2)) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+"CREATE TABLE foo (col1 INT,
+col2 INT AS (col1 + 1) VIRTUAL,
+col3 INT AS (col2 + 1) VIRTUAL)"
+"CREATE TABLE t1 (
+pk int(11) NOT NULL AUTO_INCREMENT,
+col_int int(11) NOT NULL,
+col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
+col_date date NOT NULL,
+col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day))
+VIRTUAL,
+col_datetime datetime NOT NULL,
+col_time time NOT NULL,
+col_datetime_key datetime GENERATED ALWAYS AS
+(addtime(col_datetime,col_time)) VIRTUAL,
+col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time))
+VIRTUAL,
+col_varchar varchar(1) NOT NULL,
+col_varchar_key varchar(2) GENERATED ALWAYS AS
+(concat(col_varchar,col_varchar)) VIRTUAL,
+PRIMARY KEY (pk),
+KEY col_date_key (col_date_key)
+) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARSET=utf8mb4"
+"CREATE TABLE t2 (
+pk int(11) NOT NULL AUTO_INCREMENT,
+col_int int(11) NOT NULL,
+col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
+col_date date NOT NULL,
+col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day))
+VIRTUAL,
+col_datetime datetime NOT NULL,
+col_time time NOT NULL,
+col_datetime_key datetime GENERATED ALWAYS AS
+(addtime(col_datetime,col_time)) VIRTUAL,
+col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time))
+VIRTUAL,
+col_varchar varchar(1) NOT NULL,
+col_varchar_key varchar(2) GENERATED ALWAYS AS
+(concat(col_varchar,col_varchar)) VIRTUAL,
+PRIMARY KEY (pk),
+KEY col_date_key (col_date_key)
+) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4"
+"CREATE TABLE t1 (
+pk int(11) NOT NULL AUTO_INCREMENT,
+col_int int(11) DEFAULT NULL,
+col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
+col_date date DEFAULT NULL,
+col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day)) VIRTUAL,
+col_datetime datetime DEFAULT NULL,
+col_time time DEFAULT NULL,
+col_datetime_key datetime GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
+col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
+col_varchar varchar(1) DEFAULT NULL,
+col_varchar_key varchar(2) GENERATED ALWAYS AS (concat(col_varchar,col_varchar)) VIRTUAL,
+PRIMARY KEY (pk),
+KEY col_date_key (col_date_key) /*!80000 INVISIBLE */
+) ENGINE=InnoDB AUTO_INCREMENT=20 DEFAULT CHARSET=utf8mb4"
+"CREATE TABLE t2 (
+pk int(11) NOT NULL AUTO_INCREMENT,
+col_int int(11) DEFAULT NULL,
+col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
+col_date date DEFAULT NULL,
+col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day)) VIRTUAL,
+col_datetime datetime DEFAULT NULL,
+col_time time DEFAULT NULL,
+col_datetime_key datetime GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
+col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
+col_varchar varchar(1) DEFAULT NULL,
+col_varchar_key varchar(2) GENERATED ALWAYS AS (concat(col_varchar,col_varchar)) VIRTUAL,
+PRIMARY KEY (pk),
+KEY col_date_key (col_date_key)
+) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4"
+"GRANT some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 TO root@localhost"
+"GRANT u1@localhost TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
+"REVOKE ALL ON *.* FROM some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
+"chdir $ENV{'MYSQL_TMP_DIR'}"
+"EOF
+let $EXPORT_DIR= $MYSQL_TMP_DIR/export"
+"opendir(TMP, ""$ENV{'MYSQL_TMP_DIR'}/export"")"
+"chdir ""$ENV{'MYSQL_TMP_DIR'}/export"""
+"my $base= $1"
+"rename $_, ""${base}.sdi"""
+"open(T1, ""t1.sdi"")"
+"open(T1_, "">t1_.sdi"")"
+"print T1_ $_"
+close(T1_)
+"REVOKE ALL ON *.* FROM noimportforyou@localhost"
+"EOF
+
+IMPORT TABLE FROM 't1_.sdi'"
+"rename $_, ""${b}.sdi"""
+next
+"rename $_, ""${b}.MYD"""
+"rename $_, ""${b}.MYI"""
+"open(T1, ""t_case.sdi"")"
+"open(T1_, "">t_case_.sdi"")"
+"rename ""t_case_.sdi"", ""t_case.sdi"""
+"EOF
+
+IMPORT TABLE FROM 't_case.sdi'"
+"EOF
+
+
+
+
+IMPORT TABLE FROM 't_case.sdi'"
+"CREATE TABLE t1 (i INT DEFAULT 42, dt DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
+"my $passwd_file= $ENV{'PASSWD_FILE'} or die"
+"my $FILE"
+"print ""password found\n"""
+"my $OUT_FILE"
+"open(OUT_FILE, ""> $passwd_file"")"
+"print OUT_FILE ""delimiter lessprobability;\n"""
+"print OUT_FILE ""let new_pwd=$passwd"""
+"print OUT_FILE ""lessprobability\n"""
+"print OUT_FILE ""--delimiter ;\n"""
+close(OUT_FILE)
+"EOF
+
+source $passwd_file"
+"EOF
+
+mkdir $DDIR"
+"my $mysqldir=""$ENV{'DDIR'}/mysql"""
+closedir($dh)
+"my $bootstrap_file= $ENV{'BOOTSTRAP_SQL'} or die"
+"open(OUT_FILE, ""> $bootstrap_file"") or die"
+"print OUT_FILE ""INSTALL PLUGIN validate_password SONAME '"" or die"
+"print OUT_FILE $ENV{'VALIDATE_PASSWORD'} or die"
+"print OUT_FILE ""';\n"" or die"
+"print OUT_FILE ""CREATE TABLE mysql.t1 AS SELECT * FROM INFORMATION_SCHEMA.plugins;\n"" or die"
+"print OUT_FILE ""UNINSTALL PLUGIN validate_password;\n"" or die"
+"print OUT_FILE ""CREATE DATABASE test;\n"" or die"
+"EOF
+
+
+
+
+connect(root_con,localhost,root,,mysql)"
+"my $log= $ENV{'MYSQLD_LOG'} || die ""Failed to read MYSQLD_LOG from env: $!"""
+"open(FILE, ""$log"") || die ""Failed to open error log: $!"""
+"EOF
+
+
+SELECT * FROM information_schema.schemata"
+"my $search_file=     $ENV{'SEARCH_FILE'}     or die ""SEARCH_FILE not set"""
+"my $search_pattern=  $ENV{'SEARCH_PATTERN'}  or die ""SEARCH_PATTERN not set"""
+"my $search_pattern1= $ENV{'SEARCH_PATTERN1'}  or die ""SEARCH_PATTERN1 not set"""
+"my $minimum_matches= $ENV{'MINIMUM_MATCHES'} or die ""MINIMUM_MATCHES not set"""
+"open(FILE, ""$search_file"") or die(""Unable to open '$search_file': $!\n"")"
+"my $count = 0"
+"CREATE TABLE t1(a INT,
+b INT GENERATED ALWAYS AS (-a) VIRTUAL,
+c INT GENERATED ALWAYS AS (-a) STORED)"
+"CREATE TABLE t1 (f1 INTEGER, b INTEGER AS ((1)) INVISIBLE, KEY k1(b))"
+enable_info
+disable_info
+"CREATE TABLE t1(f1 INT INVISIBLE, f2 INT)"
+"CREATE TABLE t1 (f1 INT, f2 INT PRIMARY KEY INVISIBLE)"
+"CREATE TABLE t2 (f1 INT PRIMARY KEY INVISIBLE, f2 INT,
+CONSTRAINT FOREIGN KEY (f1) REFERENCES t1(f2))"
+"ALTER TABLE t1 ALTER COLUMN f1 SET INVISIBLE, ALGORITHM = INPLACE"
+"ALTER TABLE t1 CHANGE f1 f1 INT VISIBLE, ALGORITHM = INPLACE"
+"ALTER TABLE t1 MODIFY f1 INT INVISIBLE, ALGORITHM = INPLACE"
+"ALTER TABLE t1 ALTER COLUMN f1 SET INVISIBLE, ALGORITHM = INSTANT"
+"ALTER TABLE t1 CHANGE f1 f1 INT VISIBLE, ALGORITHM = INSTANT"
+"ALTER TABLE t1 MODIFY f1 INT INVISIBLE, ALGORITHM = INSTANT"
+"CREATE TABLE t1(a INT, b DATE NOT NULL INVISIBLE)
+PARTITION BY RANGE( YEAR(b) ) (
+PARTITION p0 VALUES LESS THAN (1960),
+PARTITION p1 VALUES LESS THAN (1970),
+PARTITION p2 VALUES LESS THAN (1980),
+PARTITION p3 VALUES LESS THAN (1990))"
+"CREATE TABLE t1(id INT NOT NULL INVISIBLE, name VARCHAR(10))
+PARTITION BY LIST(id) (
+PARTITION p0 VALUES IN (10,19),
+PARTITION p1 VALUES IN (20,29),
+PARTITION p2 VALUES IN (30,39),
+PARTITION p3 VALUES IN (40,49))"
+"CREATE TABLE t1(id INT NOT NULL INVISIBLE, name VARCHAR(40))
+PARTITION BY HASH(id)
+PARTITIONS 4"
+"CREATE TABLE t1(id INT PRIMARY KEY NOT NULL INVISIBLE, name VARCHAR(40))
+PARTITION BY KEY()
+PARTITIONS 4"
+"CREATE TABLE t1 (f1 INT PRIMARY KEY INVISIBLE, f2 INT UNIQUE INVISIBLE,
+f3 INT, FOREIGN KEY (f2) REFERENCES t1(f1))"
+"CREATE TABLE t1 ( a INT GENERATED ALWAYS AS (1), KEY (a) INVISIBLE )"
+"SELECT *
+FROM t1
+NATURAL JOIN (
+SELECT t2.*
+FROM t1 AS t2 JOIN t1 AS t3 ON t3.c1 = t2.c1
+WHERE t2.c3 <> ANY (SELECT c3 FROM t1)
+) AS d1"
+"SELECT MIN(t3.f1)
+FROM (t2 JOIN (t3 JOIN (SELECT t1.*
+FROM t1
+WHERE t1.f2 < t1.f2) AS dt
+ON (dt.f1 = t3.f1))
+ON (dt.f2 = t3.f2))
+WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
+"create table t4 like t3"
+"create table t5 like t4"
+"create table t6 like t5"
+"create table t7 like t6"
+"create table t3 like t2"
+"create table t3 (like t1)"
+"require Expect"
+"my $texp = new Expect()"
+$texp->raw_pty(1)
+$texp->log_stdout(0)
+"$texp->log_file(""$ENV{MYSQLD_LOG}"", ""w"")"
+"$texp->spawn(""$ENV{MYSQLD} $ENV{MYSQLD_ARGS}"")"
+"$texp->expect(15,' -re ',[ 'Enter password:' => sub {
+$texp->send(""a\n"")"
+$texp->soft_close()
+disable_reconnect
+enable_reconnect
+"ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
+"SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
+"SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
+"my $file_trad= $ENV{'LOG_FILE_TRAD'}"
+"my $file_json= $ENV{'LOG_FILE_JSON'}"
+"my $file_conv= $ENV{'LOG_FILE_JSON_TO_TRAD'}"
+"my @log_lines_trad=<FILET>"
+close(FILET)
+"print ""[ PASS ] Successfully read traditional log file.\n"""
+"my @log_lines_json=<FILEJ>"
+close(FILEJ)
+"print ""[ PASS ] Successfully read JSON log file.\n"""
+"$string =~ s/\}\n\{/\},\n\{/g "
+"my $parsed_json = decode_json $string"
+"unless ( $parsed_json )
+{
+print ""[ FAIL ] Error while parsing the error log as a JSON document:"".
+""\n$@\n"""
+$success=0
+"my $line_count=0"
+"for my $item( sort { $a->{time} cmp $b->{time} } @$parsed_json ) {
+my $errcode_formatted= sprintf(""%06d"", $item->{'err_code'})"
+"my $label= ($item->{'label'} =~ ""Error"") ? uc $item->{'label'}
+: $item->{'label'}"
+"my $msg= $item->{'msg'}"
+"print $outfh $item->{'time'}."" "".$thread_id."" "".""["".$label.""] [MY-"".
+$errcode_formatted.""] ["".$item->{'subsystem'}.""] "".$msg . ""\n"""
+$line_count++
+"use File::Compare"
+"my $compare = compare($file_conv, $file_trad)"
+"$/ = undef"
+"my $contents"
+"print ""\n--- Contents of converted file, "".$file_conv."" ---\n"""
+"open my $fh, '<', $file_conv or die(""Unable to open $file_conv $!\n"")"
+"$contents = <$fh>"
+"close $fh"
+"print $contents"
+"print ""\n--- Contents of native trad file, "".$file_trad."" ---\n"""
+"open my $fh, '<', $file_trad or die(""Unable to open $file_trad $!\n"")"
+"print ""--- end of inserted log ---\n\n"""
+"RESET PERSIST log_error_suppression_list"
+"use File::stat"
+"my $pattern=""^20"""
+"my $stime= $ENV{'GREP_START'}"
+"my $ts = 0"
+$ts=$1.$2.$3.$4.$5.$6.$7
+"$line =~ s/""err_code"" : \d+, //"
+"print ""$line"""
+"EOF
+
+SET @@global.log_error_verbosity=@old_log_error_verbosity"
+"RESET PERSIST `syseventlog.tag`"
+disable_warnings
+"log_sink_test"";
+
+disable_warnings;
+SET @@global.dragnet.log_error_filter_rules= @rules;
+SET @@global.log_error_services=""log_filter_dragnet"
+"RESET PERSIST `syseventlog.include_pid`"
+"RESET PERSIST `syseventlog.facility`"
+"my $file= $ENV{'LOG_FILE'} or die(""logfile not set"")"
+"my $result=0"
+"print $line"
+"my $pattern= ""Turning logging off for the server"""
+"open(FILE, ""$file"") or die(""Unable to open $file: $!\n"")"
+break
+"RESET PERSIST `dragnet.log_error_filter_rules`"
+"RESET PERSIST `log_error_suppression_list`"
+"RESET PERSIST `log_error_services`"
+"my $ignore_regex= scalar(@ignore_patterns)?
+""("". join('|', @ignore_patterns). "")"":
+"""""
+"next if $ignore_regex and $line =~ /$ignore_regex/"
+$result=1
+"my $result_note=0"
+"my $result_warning=0"
+print
+$result_note=0
+$result_warning=0
+$result=0
+"my $verbosity_adjust_message_logged= 0"
+"$verbosity_adjust_message_logged= 0"
+"open(FILE,""$file"") or die(""Unable to open $file $!\n"")"
+"my @log_lines=<FILE>"
+"my $parsed_json"
+"my $success=1"
+"$parsed_json = decode_json $string"
+"unless ( $parsed_json )
+{
+print ""[ FAIL ] Error while parsing the error log as a json document:\n$@\n"""
+"for my $item( @$parsed_json ){
+if ( $item->{'msg'} =~ /Access denied for user \'unknown_user\'/) {
+print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'} . ""\n"""
+"print ""[ FAIL ] Offender: $line\n"""
+"create table general_log_new like general_log"
+"create table slow_log_new like slow_log"
+"FLUSH TABLE mysql.general_log"
+"FLUSH TABLE mysql.slow_log"
+"$conn_id= $ENV{'CONN_ID'}"
+"print ""Contents of log file:\n"""
+"seek(FILE, 0, 0)"
+"EOF
+
+
+
+
+
+SELECT @@session.long_query_time INTO @old_long_query_time"
+"my $c_w= grep(/Different lower_case_table_names settings/gi,<FILE>)"
+"print ""#    Found lower_case_table_names error $c_w times.\n"""
+"create table t2 like T1"
+"CREATE TABLE TestTable2 LIKE TestTable1"
+"CREATE TABLE T2 LIKE T1"
+"EOF
+
+
+
+set names utf8"
+"EOF
+
+
+
+
+drop table if exists t1Aa,t2Aa,v1Aa,v2Aa"
+"CREATE TABLE t1_new LIKE t1_src"
+"CREATE TABLE t2_new LIKE t2_src"
+"CREATE TABLE m1 LIKE t1"
+"CREATE TABLE m1(a INT) ENGINE=MERGE UNION=()"
+"ALTER TABLE m1 UNION=()"
+"CREATE TABLE t4 LIKE t3"
+"CREATE TEMPORARY TABLE t4 LIKE t3"
+"FLUSH TABLE mysql_db1.t1"
+"print FILE ""select\n"""
+"print FILE ""'a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a',\n"" x 3400"
+"print FILE ""'b';\n"""
+"EOF
+
+
+
+
+
+create table t17583 (a int)"
+"EOF
+remove_file $MYSQLTEST_VARDIR/tmp/mysqltest.sql"
+"EOF
+
+
+
+
+
+
+DROP DATABASE db1"
+"1,a
+2,b
+EOF
+1,a
+2,b
+EOF
+1,a
+2,b
+EOF
+
+CREATE TABLE test.wl13168(id INT PRIMARY KEY, data VARCHAR(50))"
+"EOF
+
+
+
+remove_file $cmd_file"
+"my $dir = $ENV{'MYSQLTEST_VARDIR'}"
+"open ( OUTPUT, "">$dir/tmp/zoneinfocheck.inc"") "
+@path=()
+"EOF
+
+
+
+if (!$zoneinfo_japan_path) {
+--skip Unable to locate zoneinfo/Japan
+}
+if (!$zoneinfo_europe_path) {
+--skip Unable to locate zoneinfo/Europe
+}
+
+CREATE DATABASE test_zone"
+"CREATE TABLE test.slave_master_info_backup LIKE mysql.slave_master_info"
+"[client]
+loose-database=db2
+EOF
+
+
+remove_file $MYSQLTEST_VARDIR/tmp/bug10608.cnf"
+"EOF
+
+
+[client]
+host = 127.0.0.1
+EOF
+
+
+
+
+
+
+[client]
+host = 127.0.0.1
+EOF
+
+
+
+
+CREATE USER testadmin_user1"
+"insert into t5 select * from `Ã¤Ã¶Ã¼ÃÃÃ`
+EOF
+
+flush logs"
+"EOF
+
+
+diff_files $MYSQLTEST_VARDIR/tmp/mysqlbinlog.warn $MYSQLTEST_VARDIR/tmp/mysqlbinlog.warn.empty"
+enable_warnings
+"(`$MYSQL_BINLOG --raw --read-from-remote-server --stop-never --user=root --host=127.0.0.1 --port=$MASTER_MYPORT --result-file=$MYSQL_TMP_DIR/ binlog.000001 ; [ $? -le 1 ]` && $MYSQL -e ""use test; INSERT INTO raw_mode_exit VALUES (1);"") < /dev/null > /dev/null 2>&1 &
+EOF
+let $wait_condition= SELECT id from information_schema.processlist where processlist.command like '%Binlog%' and state like '%Source has sent%'"
+"$timeout= 30"
+"$binlog= $ENV{'MYSQL_TMP_DIR'} . '/binlog.000003'"
+"$binlog_exists= 0"
+$timeout--
+"EOF
+CREATE TABLE db2.t2 (a INT)"
+"my $mysqld_log= $ENV{'MDF_LOG'}"
+"open(MYSQLD_LOG, $mysqld_log) || die ""1 - Failed to open '$mysqld_log': $!"""
+"open(MYSQLD_LOG, $mysqld_log) || die ""2 - Failed to open '$mysqld_log': $!"""
+"my $test_dir= $ENV{'MYSQL_TEST_DIR_ABS'}"
+"open(MYSQLD_LOG, $mysqld_log) || die ""3 - Failed to open '$mysqld_log': $!"""
+s/$test_dir/MYSQL_TEST_DIR/
+"open(MYSQLD_LOG, $mysqld_log) || die ""4 - Failed to open '$mysqld_log': $!"""
+"open(MYSQLD_LOG, $mysqld_log) || die ""5 - Failed to open '$mysqld_log': $!"""
+"open(MYSQLD_LOG, $mysqld_log) || die ""6 - Failed to open '$mysqld_log': $!"""
+"open ( OUTPUT, "">$dir/tmp/mysqld_path_file.inc"") "
+"my $path = $ENV{MYSQLD}"
+"$path =~ /^(.*)\/([^\/]*)$/"
+"print OUTPUT ""let \$mysqld_path = $1;\n"""
+"print OUTPUT ""let \$mysqld_bin = $2;\n"""
+"close (OUTPUT)"
+"EOF
+
+
+
+
+let BOOTSTRAP_SQL=$MYSQL_TMP_DIR/boot.sql"
+"[mysqld]
+binlog_format=MIXED
+EOF
+
+
+
+connection default"
+"open FILE, ""$ENV{'MYSQLD_DATADIR'}/mysqldump_long_query_time-slow.log"" or die"
+"my @lines = <FILE>"
+"foreach $line (@lines) {
+if ($line =~ /^select/) {
+print $line"
+"revoke all privileges on mysqldump_myDB.* from myDB_User@localhost"
+"CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
+sum INTEGER GENERATED ALWAYS AS (a+b),
+sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
+key k1(sum),
+key k2(sub)
+) engine=innodb"
+"CREATE TABLE t2 (pk INTEGER, a INTEGER, b INTEGER,
+sum INTEGER GENERATED ALWAYS AS (a+b),
+c VARCHAR(16),
+key k1(sum)
+) engine=innodb"
+"CREATE TABLE t2(f1 INT, f2 INT INVISIBLE)"
+"CREATE TABLE t1 (my_row_id bigint unsigned NOT NULL AUTO_INCREMENT INVISIBLE, f INT,
+PRIMARY KEY(my_row_id))"
+"CREATE TABLE t2 (f1 INT, f2 INT INVISIBLE DEFAULT 10)"
+"CREATE TABLE x1 (c0 BLOB AS ('a') VIRTUAL, c1 INT)"
+"CREATE TABLE x2 (c1 INT, c0 BLOB AS ('a') VIRTUAL)"
+"CREATE TABLE x3 (c0 BLOB AS ('a') VIRTUAL INVISIBLE, c1 INT)"
+"CREATE TABLE x4 (c1 INT, c0 BLOB AS ('a') VIRTUAL INVISIBLE)"
+"CREATE TABLE x5 (c0 BLOB AS ('a') STORED, c1 INT)"
+"CREATE TABLE x6 (c1 INT, c0 BLOB AS ('a') STORED)"
+"CREATE TABLE x7 (c0 BLOB AS ('a') STORED INVISIBLE, c1 INT)"
+"CREATE TABLE x8 (c1 INT, c0 BLOB AS ('a') STORED INVISIBLE)"
+"1
+2
+3
+EOF
+
+
+SELECT * FROM b12688860_db.b12688860_tab"
+"1
+2
+3
+EOF
+
+
+echo # cleanup
+DROP TABLE b34999015_db.`KEY`"
+"CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
+sum INTEGER GENERATED ALWAYS AS (a+b),
+sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
+key k1(sum),
+key k2(sub)
+)"
+"CREATE TABLE t2 (pk INTEGER, a INTEGER, b INTEGER,
+sum INTEGER GENERATED ALWAYS AS (a+b),
+c VARCHAR(16),
+key k1(sum)
+)"
+"CREATE TABLE t3 (sum INTEGER GENERATED ALWAYS AS (a+(EXTRACT(YEAR from pk))),
+pk TIMESTAMP, a INTEGER,
+c VARCHAR(16)
+)"
+"CREATE TABLE t1(f1 INT INVISIBLE, f2 INT,
+f3 INT AS (f1 + 10), f4 INT AS (f2 + 10) INVISIBLE)"
+"CREATE TABLE t2(f1 INT INVISIBLE, f2 INT)"
+"CREATE TABLE B32340208.test (
+`pk` int NOT NULL AUTO_INCREMENT,
+`a1` smallint GENERATED ALWAYS AS (((0 <> `c1`) and (_utf8mb4'0000-00-00
+00:00:00' <> `d1`))) VIRTUAL NOT SECONDARY,
+`b1` char(8) DEFAULT NULL,
+`c1` longblob NOT NULL NOT SECONDARY,
+`d1` timestamp NOT NULL,
+PRIMARY KEY (`pk`),
+KEY `functional_index` ((radians(`c1`))) USING BTREE COMMENT 'you''re'
+) ENGINE=InnoDB DEFAULT CHARSET=euckr"
+"[mysqlpump]
+exclude_databases=db1,mysql,mtr
+EOF
+
+
+use strict"
+"$texp->log_file(""$ENV{MYSQLPUMP_LOG}"", ""w"")"
+"$texp->spawn(""$ENV{MYSQLPUMP} $ENV{MYSQLPUMP_ARGS}"")"
+"REVOKE ALL PRIVILEGES ON *.* FROM user1"
+"CREATE TEMPORARY TABLE Temp3 LIKE Temp2"
+"CREATE TEMPORARY TABLE tt1 LIKE performance_schema.setup_consumers"
+"SELECT 1 WHERE 1 =
+ANY (SELECT GROUPING(a) FROM t1 GROUP BY a WITH ROLLUP)"
+"SELECT a, b, a + COALESCE(b, 0), AVG(b) OVER () FROM t1 GROUP BY a, b WITH ROLLUP"
+"EXPLAIN FORMAT=tree SELECT i, j, i+j, AVG(j) over () from t1 GROUP BY i,j
+WITH ROLLUP HAVING i+j is NULL ORDER BY i"
+"SELECT i, j, i+j, AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
+HAVING i+j is NULL ORDER BY i"
+"SELECT i, j, i+j, AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
+HAVING i+j is NULL ORDER BY GROUPING(i)"
+"SELECT i, j, i+j, AVG(j), AVG(j) over () from t1 GROUP BY i,j WITH ROLLUP
+HAVING GROUPING(j)+AVG(j) > 11 ORDER BY GROUPING(i)"
+"EXPLAIN FORMAT=JSON SELECT
+id, AVG(id) over w `avg`, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt
+FROM t1 WINDOW w as (ORDER BY id RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT /*+ SET_VAR(windowing_use_high_precision=OFF)*/
+d, AVG(d) over w `avg`, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt
+FROM t1 WINDOW w as (ORDER BY d RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"create procedure p1()
+select COUNT(*)
+FROM v1 WHERE f1 IN
+(SELECT f1 FROM t2 WHERE f1 = ANY (SELECT f1 FROM v1))"
+"revoke all privileges on *.* from user_1@localhost"
+"((SELECT 1 FROM t1 ORDER BY 1) ORDER BY 1) ORDER BY 1"
+"((SELECT 1 FROM t1 LIMIT 1) LIMIT 1) LIMIT 1"
+"( (SELECT 1 UNION SELECT 1 ) UNION SELECT 1 ) UNION SELECT 1"
+"((SELECT 1 FROM t1)  UNION   SELECT 2 FROM t1)"
+"(((SELECT 1 FROM t1)) UNION   SELECT 2 FROM t1)"
+"((((SELECT 1 FROM t1)) UNION   SELECT 2 FROM t1))"
+"((SELECT 1 FROM t1)  UNION  (SELECT 2 FROM t1))"
+"(((SELECT 1 FROM t1)  UNION  (SELECT 2 FROM t1)))"
+"((((SELECT 1 FROM t1)) UNION  (SELECT 2 FROM t1)))"
+"(((SELECT 1 FROM t1)  UNION ((SELECT 2 FROM t1))))"
+"((((SELECT 1 FROM t1)) UNION ((SELECT 2 FROM t1))))"
+"((SELECT 1) ORDER BY 1)"
+"((SELECT 1) LIMIT 1)"
+"SELECT * FROM   ((SELECT 1 FROM t1)  UNION   SELECT 2 FROM t1) dt"
+"SELECT * FROM  (((SELECT 1 FROM t1)) UNION   SELECT 2 FROM t1) dt"
+"SELECT * FROM ((((SELECT 1 FROM t1)) UNION   SELECT 2 FROM t1)) dt"
+"SELECT * FROM   ((SELECT 1 FROM t1)  UNION  (SELECT 2 FROM t1)) dt"
+"SELECT * FROM  (((SELECT 1 FROM t1)  UNION  (SELECT 2 FROM t1))) dt"
+"SELECT * FROM ((((SELECT 1 FROM t1)) UNION  (SELECT 2 FROM t1))) dt"
+"SELECT * FROM  (((SELECT 1 FROM t1)  UNION ((SELECT 2 FROM t1)))) dt"
+"SELECT * FROM ((((SELECT 1 FROM t1)) UNION ((SELECT 2 FROM t1)))) dt"
+"SELECT 1 FROM ((SELECT 2) ORDER BY 1) AS res"
+"SELECT 1 FROM ((SELECT 2) LIMIT 1) AS res"
+"((SELECT 1 UNION SELECT 1) UNION SELECT 1)"
+"SELECT * FROM ((SELECT 1 UNION SELECT 1) UNION SELECT 1) a"
+"((SELECT 1) UNION (SELECT 1 INTO @v FROM t1))"
+"((SELECT 1) UNION (SELECT 2 INTO OUTFILE 'parser.test.file5'))"
+"select 2 as expected, /*!01000/**/*/ 2 as result"
+"select 1 as expected, /*!99998/**/*/ 1 as result"
+"select 7 as expected, /*!01000 1 + /* 8 + */ 2 + */ 4 as result"
+"select 8 as expected, /*!99998 1 + /* 2 + */ 4 + */ 8 as result"
+"select 7 as expected, /*!01000 1 + /*!01000 8 + */ 2 + */ 4 as result"
+"select 7 as expected, /*!01000 1 + /*!99998 8 + */ 2 + */ 4 as result"
+"select 4 as expected, /*!99998 1 + /*!99998 8 + */ 2 + */ 4 as result"
+"select 4 as expected, /*!99998 1 + /*!01000 8 + */ 2 + */ 4 as result"
+"select 7 as expected, /*!01000 1 + /*!01000 8 + /*!01000 error */ 16 + */ 2 + */ 4 as result"
+"select 4 as expected, /* 1 + /*!01000 8 + */ 2 + */ 4"
+"EXPLAIN ((SELECT * FROM t3 ORDER BY a LIMIT 3)
+ORDER BY b DESC LIMIT 2)
+ORDER BY c LIMIT 1"
+"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'"
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'"
+"SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'"
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'"
+"SELECT 1 UNION SELECT 1 FROM DUAL FOR UPDATE INTO @var"
+"(SELECT 1 UNION SELECT 1 FROM DUAL FOR UPDATE INTO @var)"
+"WITH cte AS (SELECT 0 /*! ) */ SELECT * FROM cte a, cte b"
+"WITH cte AS /*! ( */ SELECT 0) SELECT * FROM cte a, cte b"
+"(SELECT 1) LIMIT 1 INTO @var"
+"(SELECT 2 AS c) ORDER BY c INTO @var"
+"(SELECT 3 AS c) ORDER BY c LIMIT 1 INTO @var"
+"SELECT cast( NULL AT TIME ZONE 'UTC' AS DATETIME )"
+"((SELECT * FROM t1 ORDER BY i) ORDER BY i) ORDER BY i"
+"ALTER TABLE t1 DROP PARTITION p0"
+"abcd
+EOF
+
+CREATE TABLE t1
+(id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+name TINYBLOB NOT NULL,
+modified TIMESTAMP DEFAULT '0000-00-00 00:00:00',
+INDEX namelocs (name(255))) ENGINE = InnoDB
+PARTITION BY HASH(id) PARTITIONS 2"
+"CREATE TABLE t1_1 (
+`col1` int(11) DEFAULT NULL,
+`col2` int(11) DEFAULT NULL,
+`col3` int(11) DEFAULT NULL,
+`col4` text,
+`col5` varchar(500) GENERATED ALWAYS AS (substr(`col4`,1,500)) VIRTUAL,
+`col6` text GENERATED ALWAYS AS (substr(`col4`,1,500)) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+/*!50100 PARTITION BY RANGE ((`col1` * 2))
+(PARTITION p0 VALUES LESS THAN (128) ENGINE = InnoDB,
+PARTITION p1 VALUES LESS THAN (256) ENGINE = InnoDB,
+PARTITION p2 VALUES LESS THAN (384) ENGINE = InnoDB,
+PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
+"CREATE TABLE tmp LIKE t"
+"CREATE TEMPORARY TABLE tmp LIKE t"
+"CREATE TABLE t LIKE tp"
+"CREATE TABLE t2 LIKE t"
+"CREATE TABLE t2 like t1"
+"CREATE TABLE t LIKE general_log"
+"DELETE FROM t1 PARTITION(subp1) WHERE b = ""REPLACEd by REPLACE"""
+"DELETE FROM t1 PARTITION (pNeg) WHERE a = -1"
+"DELETE FROM t1 PARTITION (subp1) WHERE b like '%subp1%'"
+"DELETE FROM t1 PARTITION (subp1) WHERE b = 'p0-9:subp3'"
+"DELETE FROM t1 PARTITION (`p0-9`) WHERE b = 'p0-9:subp3'"
+"DELETE FROM t1 PARTITION (subp3)"
+"DELETE FROM t1 PARTITION (`p0-29`)"
+"DELETE FROM t1 PARTITION (p2)"
+"revoke all privileges on *.* from mysqltest_1@localhost"
+"alter table t1 drop partition p2"
+SEND
+"DELETE FROM t1 PARTITION (p0)
+WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
+"EXPLAIN DELETE FROM t1 PARTITION (p0)
+WHERE a = (SELECT a + 2 FROM t2 WHERE a = 1)"
+"CREATE TABLE t1 (a INT)
+/*!50100 PARTITION BY HASH (a)
+/* Test
+of multi-line
+comment */
+PARTITIONS 5 */"
+"ALTER TABLE t1 DROP PARTITION x1"
+"create table t9 (a date not null) partition by RANGE(TO_DAYS(a)) (
+partition p0 values less than (732299), -- 2004-12-19
+partition p1 values less than (732468), -- 2005-06-06
+partition p2 values less than (732664)  -- 2005-12-19
+)"
+"EOF
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DROP TABLE t1, t2, t3, t4, t5"
+"alter table t1 drop partition p0"
+"ALTER TABLE t1 DROP PARTITION p3"
+"ALTER TABLE t1 DROP PARTITION p1"
+"ALTER TABLE t1 DROP PARTITION p2"
+"open(FILE, "">"", ""$ENV{MYSQL_TMP_DIR}/perror_syslocale.inc"") or die $!"
+"EOF
+
+source $MYSQL_TMP_DIR/perror_syslocale.inc"
+"RESET PERSIST sort_buffer_size"
+"RESET PERSIST max_heap_table_size"
+"RESET PERSIST max_execution_time"
+"RESET PERSIST max_user_connections"
+"RESET PERSIST sql_require_primary_key"
+"RESET PERSIST default_table_encryption"
+"RESET PERSIST table_encryption_privilege_check"
+"RESET PERSIST replica_net_timeout"
+"RESET PERSIST max_connections"
+"RESET PERSIST server_id"
+"RESET PERSIST general_log"
+"RESET PERSIST session_track_system_variables"
+"RESET PERSIST default.key_buffer_size"
+"RESET PERSIST test_component.str_sys_var"
+"RESET PERSIST event_scheduler"
+"RESET PERSIST ft_query_expansion_limit"
+"RESET PERSIST sql_mode"
+"[mysqld]
+innodb_fast_shutdown=1
+innodb_default_row_format=REDUNDANT
+sql_mode=REAL_AS_FLOAT
+innodb_flush_log_at_trx_commit=2
+max_digest_length=2024
+disconnect_on_expired_password=OFF
+EOF
+
+
+
+
+
+
+SELECT @@global.innodb_fast_shutdown"
+"RESET PERSIST slow_query_log_file"
+"RESET PERSIST general_log_file"
+"RESET PERSIST auto_increment_increment"
+"RESET PERSIST innodb_checksum_algorithm"
+"[mysqld]
+sort_buffer_size=314156
+EOF
+
+[mysqld]
+innodb_fast_shutdown=1
+innodb_default_row_format=REDUNDANT
+innodb_flush_log_at_trx_commit=2
+EOF
+
+
+SELECT VARIABLE_NAME, VARIABLE_SOURCE
+FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
+('sort_buffer_size', 'max_connections', 'max_digest_length',
+'innodb_fast_shutdown', 'innodb_default_row_format', 'innodb_flush_log_at_trx_commit')"
+"RESET PERSIST `validate_password.length`"
+"RESET PERSIST validate_password_length"
+"RESET PERSIST gtid_mode"
+"RESET PERSIST enforce_gtid_consistency"
+"REVOKE ALL PRIVILEGES ON test_user_db.* FROM plug"
+"revoke all privileges on mysqltest.t1 from second_user@localhost"
+"revoke all privileges on test.t1 from drop_user@localhost "
+"set @a= timestamp ""2001-01-02 10:11:12.345"""
+"set @a=date ""2001-01-02"""
+"set @a= time ""10:11:12.345"""
+"set @a= time ""01:02:00"""
+"set @a= timestamp ""2001-01-02 01:02:00"""
+"set @a= date ""2001-01-02"""
+"query_attributes a b"
+"query_attributes a b c d"
+"query_attributes 'a' ""b c"""
+"query_attributes '' 'a'"
+"EOF
+exec $MYSQL < $MYSQLTEST_VARDIR/tmp/wl12542.sql"
+"query_attributes a c"
+"query_attributes a"
+"query_attributes 'a' 'b c'"
+resetconnection
+reset_connection
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r UNION ALL SELECT * FROM s) INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r UNION ALL SELECT * FROM s INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT ALL SELECT * FROM s) INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT ALL SELECT * FROM s INTERSECT ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT ALL SELECT * FROM s) UNION ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT ALL SELECT * FROM s UNION ALL SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r UNION DISTINCT SELECT * FROM s) INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r UNION DISTINCT SELECT * FROM s INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s INTERSECT DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s UNION DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r UNION SELECT * FROM s) INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r UNION SELECT * FROM s INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT SELECT * FROM s) INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT SELECT * FROM s INTERSECT SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+(SELECT * FROM r EXCEPT SELECT * FROM s) UNION SELECT * FROM t"
+"EXPLAIN FORMAT = tree
+SELECT * FROM r EXCEPT SELECT * FROM s UNION SELECT * FROM t"
+"EXPLAIN SELECT * FROM r EXCEPT ALL SELECT * FROM s"
+"EXPLAIN SELECT * FROM r INTERSECT ALL SELECT * FROM s"
+"EXPLAIN SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s"
+"EXPLAIN SELECT * FROM r INTERSECT DISTINCT SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r EXCEPT ALL SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r INTERSECT ALL SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s"
+"EXPLAIN FORMAT = json SELECT * FROM r INTERSECT DISTINCT SELECT * FROM s"
+"EXPLAIN FORMAT=json SELECT * FROM (SELECT 1 INTERSECT SELECT 2) AS dt"
+"EXPLAIN FORMAT=json SELECT * FROM (SELECT 1 EXCEPT SELECT 2) AS dt"
+"EXPLAIN (SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT SELECT * FROM t"
+"EXPLAIN (SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT
+(SELECT * FROM t INTERSECT DISTINCT SELECT * FROM t)"
+"EXPLAIN FORMAT = json
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT SELECT * FROM t"
+"EXPLAIN FORMAT = json
+(SELECT * FROM r EXCEPT DISTINCT SELECT * FROM s) UNION DISTINCT
+(SELECT * FROM t INTERSECT DISTINCT SELECT * FROM t)"
+"WITH RECURSIVE qn AS
+( SELECT * FROM t INTERSECT
+VALUES ROW(1, 1, 1) UNION ALL
+SELECT 1+n, unp1, un+unp1 FROM qn WHERE n<10)
+SELECT * FROM qn"
+"WITH RECURSIVE cte AS
+( ( (SELECT 1 AS n UNION SELECT 2) EXCEPT SELECT 2)  UNION ALL
+SELECT n+1  FROM cte WHERE n<100)
+SELECT n FROM cte LIMIT 10"
+"SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t3"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t3"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t2"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1 INTERSECT DISTINCT SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3 INTERSECT DISTINCT SELECT * FROM t1"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2 INTERSECT DISTINCT SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t3"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t3"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t2"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1 EXCEPT    DISTINCT SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3 EXCEPT    DISTINCT SELECT * FROM t1"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2 EXCEPT    DISTINCT SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t1 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t1"
+"SELECT * FROM t2 INTERSECT ALL SELECT * FROM t3"
+"SELECT * FROM t3 INTERSECT ALL SELECT * FROM t2"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t2"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t1 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t1"
+"SELECT * FROM t2 EXCEPT    ALL SELECT * FROM t3"
+"SELECT * FROM t3 EXCEPT    ALL SELECT * FROM t2"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT 2,2"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT null, null"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 INTERSECT SELECT 2,2"
+"CREATE TABLE t4 AS SELECT null AS c1, null AS c2 INTERSECT SELECT null, null"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT 2,2"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT null, null"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 EXCEPT SELECT 2,2"
+"CREATE TABLE t4 AS SELECT null AS c1, null AS c2 EXCEPT SELECT null, null"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 EXCEPT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 EXCEPT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 EXCEPT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 INTERSECT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 INTERSECT
+(SELECT null AS c1, null AS c2 UNION SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 INTERSECT
+(SELECT 1 AS c1, 1 AS c2 UNION SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT null AS c1, null AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 UNION
+(SELECT null AS c1, null AS c2 INTERSECT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 INTERSECT SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT null AS c1, null AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT 1 AS c1, 1 AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT 2,2)"
+"CREATE TABLE t1 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t2 AS SELECT null AS c1, null AS c2 UNION
+(SELECT null AS c1, null AS c2 EXCEPT SELECT null, null)"
+"CREATE TABLE t3 AS SELECT null AS c1, null AS c2 UNION
+(SELECT 1 AS c1, 1 AS c2 EXCEPT SELECT 2,2)"
+"CREATE TABLE t1 AS ((VALUES ROW (1, 1), ROW (2,2) ORDER BY column_0 LIMIT 2)
+ORDER BY column_1 LIMIT 1)"
+"CREATE TABLE t2 AS ((VALUES ROW (null, null), ROW (2,2)
+ORDER BY column_0 LIMIT 2) ORDER BY column_1 LIMIT 1)"
+"EXPLAIN FORMAT=tree
+SELECT * FROM t1 INTERSECT (SELECT * FROM t1 ORDER BY 1 LIMIT 3)"
+"EXPLAIN FORMAT=tree
+SELECT * FROM t1 EXCEPT    (SELECT * FROM t1 ORDER BY 1 LIMIT 3)"
+"EOF
+
+create user nonsuper@localhost"
+"CREATE TEMPORARY TABLE temp2 LIKE temp1"
+"RESET PERSIST replica_type_conversions"
+"ALTER USER u11 DEFAULT ROLE ALL"
+"ALTER USER u1@localhost DEFAULT ROLE r1,r2"
+"SHOW GRANTS FOR u2@localhost USING r1"
+"ALTER USER u5 DEFAULT ROLE r2,r3"
+"ALTER USER u2 DEFAULT ROLE r1, r2, r3"
+"EOF
+
+
+
+
+
+connection default"
+"REVOKE ALL ON *.* FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE SELECT ON *.* FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE ALL PRIVILEGES, GRANT OPTION FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE PROXY ON u1 FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE r1 FROM unknown_user IGNORE UNKNOWN USER"
+"GRANT CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO u2"
+"REVOKE INSERT (i) ON wl14690.t FROM u1, u2 IGNORE UNKNOWN USER"
+"REVOKE r1 FROM unknown_user, u2 IGNORE UNKNOWN USER"
+"REVOKE SELECT, INSERT (i) ON wl14690.t FROM u1, u2, unknown_user IGNORE UNKNOWN USER"
+"REVOKE TABLE_ENCRYPTION_ADMIN ON *.* FROM unknown_user, u2 IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS PROXY ON u3 FROM u1"
+"REVOKE IF EXISTS PROXY ON u3 FROM r1"
+"REVOKE IF EXISTS SELECT ON wl14690.* FROM u1"
+"REVOKE IF EXISTS SELECT ON wl14690.* FROM r1"
+"REVOKE IF EXISTS INSERT (i) ON wl14690.t FROM u4"
+"REVOKE IF EXISTS INSERT (j) ON wl14690.t FROM u4"
+"REVOKE IF EXISTS ENCRYPTION_KEY_ADMIN, APPLICATION_PASSWORD_ADMIN ON *.* FROM u4"
+"REVOKE IF EXISTS role1 FROM u1"
+"REVOKE IF EXISTS role1, r1 FROM u1"
+"REVOKE IF EXISTS SELECT, INSERT, UPDATE ON *.* FROM u1"
+"REVOKE ALL ON *.* FROM u2"
+"REVOKE ALL ON *.* FROM u3"
+"REVOKE IF EXISTS SELECT ON wl14690.* FROM u1, u2, u3"
+"REVOKE IF EXISTS role1 FROM u1, u2"
+"REVOKE IF EXISTS DELETE, SELECT ON wl14690.* FROM u1, u2, u3"
+"REVOKE IF EXISTS DELETE, SELECT ON wl14690.* FROM r1"
+"REVOKE IF EXISTS SYSTEM_VARIABLES_ADMIN,TABLE_ENCRYPTION_ADMIN,XA_RECOVER_ADMIN
+ON *.* FROM u1,u2,u3,u4,r1"
+"REVOKE IF EXISTS UPDATE, SELECT ON wl14690.* FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS PROXY ON u1 FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS INSERT (i) ON wl14690.t FROM u1, u2 IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS TABLE_ENCRYPTION_ADMIN,XA_RECOVER_ADMIN ON *.* FROM u1, u3
+IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS DELETE, SELECT ON wl14690.* FROM u1, u2, u3
+IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS SYSTEM_VARIABLES_ADMIN,CONNECTION_ADMIN,ENCRYPTION_KEY_ADMIN
+ON *.* FROM u1, u2 IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS SELECT ON wl14690.t FROM u1, unknown_user IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS DYNAMIC_PRIV1, DYNAMIC_PRIV2 ON wl14690.* FROM u1"
+"REVOKE IF EXISTS DYNAMIC_PRIV1, DYNAMIC_PRIV2 ON wl14690.* FROM unknown_user IGNORE UNKNOWN USER"
+"REVOKE IF EXISTS r1 FROM u1"
+"REVOKE IF EXISTS r1 FROM r2"
+"REVOKE IF EXISTS r1 FROM u1,u2,u3,r2"
+"CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='azundris3'"
+"SET PASSWORD = '' REPLACE ''"
+"ALTER USER u1 IDENTIFIED BY '123' REPLACE '', u2 IDENTIFIED BY '456'
+PASSWORD REQUIRE CURRENT OPTIONAL"
+"ALTER USER u2 IDENTIFIED BY 'xyz', u1 IDENTIFIED BY 'abc' REPLACE '123'"
+"ALTER USER plaintext_test IDENTIFIED BY '' REPLACE 'pwd'"
+"SET PASSWORD='789' REPLACE '456'"
+"ALTER USER test_user2 IDENTIFIED BY 'azundris2' REPLACE 'azundris2'"
+"SET PASSWORD='azundris2' REPLACE 'azundris2'"
+"CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='azundris3',
+SOURCE_BIND = 'eth4n',
+SOURCE_TLS_CIPHERSUITES = ''
+FOR CHANNEL 'chan_jackie'"
+"CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='azundris3',
+SOURCE_CONNECT_RETRY = 1, SOURCE_HEARTBEAT_PERIOD = 1.01,
+SOURCE_LOG_FILE = 'master_log_name', SOURCE_LOG_POS = 0,
+SOURCE_SSL = 0, SOURCE_SSL_CA = 'ca_file_name',
+SOURCE_SSL_CAPATH = 'ca_directory_name',
+SOURCE_SSL_CERT = 'cert_file_name', SOURCE_SSL_KEY = 'key_file_name',
+SOURCE_SSL_CIPHER = 'cipher_list', SOURCE_SSL_VERIFY_SERVER_CERT = 1,
+SOURCE_SSL_CRL = 'crl_file_name', SOURCE_SSL_CRLPATH = 'crl_directory_name',
+IGNORE_SERVER_IDS = (99,100), SOURCE_TLS_VERSION = 'TLSv1.2',
+SOURCE_TLS_CIPHERSUITES = NULL,
+SOURCE_BIND = 'eth4n', SOURCE_RETRY_COUNT = 7,
+SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
+"SHOW GRANTS FOR CURRENT_USER() USING `admin-db1`"
+"GRANT b30896461_test1@localhost TO b30896461_test2@localhost"
+"SHOW GRANTS FOR u_worldrou@localhost USING r_worldrou"
+"GRANT role1, `role2`@`host2`, role3 TO user1, user2, `user3`@`host3`"
+"GRANT `engineering`@`US` TO `engineering`@`INDIA`"
+"SHOW GRANTS FOR current_user() USING `engineering`@`%`,`role`@`%`"
+"REVOKE role1, `role2`@`host2`, role3 FROM user1, user2, `user3`@`host3`"
+"ALTER USER `joe`@`localhost` DEFAULT ROLE wp_administrators"
+"ALTER USER CURRENT_USER() DEFAULT ROLE NONE"
+"SHOW GRANTS FOR `joe`@`localhost` USING wp_administrators"
+"SHOW GRANTS FOR `joe`@`localhost` USING engineering"
+"SHOW GRANTS FOR sally USING engineering, consultants"
+"SHOW GRANTS FOR sally USING consultants"
+"SHOW GRANTS FOR sally USING engineering"
+"SHOW GRANTS FOR current_user() USING `replication`"
+"SHOW GRANTS FOR `joe`@`localhost` USING `replication`"
+"ALTER USER `joe_schema_designer`@`localhost` DEFAULT ROLE `schema_designer`"
+"SHOW GRANTS FOR 'joe_schema_designer'@'localhost' USING 'schema_designer'"
+"SHOW GRANTS FOR 'joe_schema_designer'@'localhost' USING 'db_admin'"
+"SHOW GRANTS FOR CURRENT_USER() USING `db_admin`"
+"SHOW GRANTS FOR CURRENT_USER() USING db_admin"
+"SHOW GRANTS FOR u1@`%` USING r1"
+"ALTER USER u1@localhost DEFAULT ROLE ALL"
+"ALTER USER u1@localhost DEFAULT ROLE NONE"
+"GRANT CREATE ROLE, DROP ROLE ON *.* TO r1"
+"GRANT r1@Vilhelmina TO u1@localhost"
+"SHOW GRANTS FOR u1@localhost USING u1234567890123456789012345678901"
+"ALTER USER r2 DEFAULT ROLE r1"
+"ALTER USER baseuser default role r2"
+"ALTER USER u1 DEFAULT ROLE r1"
+"ALTER USER u1@localhost DEFAULT ROLE 'r1'"
+"SHOW GRANTS FOR CURRENT_USER() USING r1"
+"SHOW GRANTS FOR u1@localhost USING r1,r2"
+"GRANT 'r1'@'' TO 'u1'@''"
+"GRANT 'r2'@'' TO 'u1'@''"
+"REVOKE 'r1'@'' FROM 'u1'@''"
+"REVOKE 'r2'@'' FROM 'u1'@''"
+"GRANT CREATE ROLE, DROP ROLE ON *.* TO uu@localhost"
+"REVOKE ALL ON *.* FROM my_role"
+"REVOKE ALL ON *.* FROM foo@localhost"
+"GRANT `r_verifier`@`localhost` TO `TestUserFails`@`localhost`"
+"REVOKE ALL ON my_db.t1 FROM foo_role"
+"REVOKE ALL ON my_db.t1 FROM bar"
+"GRANT CREATE ROLE, DROP ROLE ON *.* TO b35471453@localhost"
+"REVOKE CREATE ROLE, DROP ROLE, SET_USER_ID ON *.* FROM b35471453@localhost"
+"my $mysqlbinlog= $ENV{'MYSQL_BINLOG'}"
+"my $port= $ENV{'MASTER_MYPORT'}"
+"my $binlog_file= $ENV{'BINLOG_FILE'}"
+"system(""$mysqlbinlog --stop-never --read-from-remote-server --user=root --host=127.0.0.1 --port=$port $binlog_file > /dev/null &"")"
+"EOF
+
+
+
+eval SELECT ATTR_NAME, ATTR_VALUE FROM performance_schema.session_connect_attrs
+WHERE PROCESSLIST_ID = $thread_id AND
+ATTR_NAME IN ('program_name', '_client_replication_channel_name', '_client_role')"
+"CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_LOG_FILE='binlog-ch1.000001', SOURCE_LOG_POS=4 FOR CHANNEL 'ch1'"
+"CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_LOG_FILE='binlog-ch2.000001', SOURCE_LOG_POS=4 FOR CHANNEL 'ch2'"
+"CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_LOG_FILE=""binlog-default.000001"", SOURCE_LOG_POS=4 FOR CHANNEL ''"
+"EOF
+COMMIT"
+"ALTER SCHEMA s1 READ ONLY DEFAULT"
+"START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
+"SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
+"my $filename = $ENV{""MYSQLD_PIDFILE""} or die(""pidfile not set"")"
+"my $pid"
+"my $wait_cnt=60"
+"open(FILE, ""$filename"") or die ""cannot open file $filename"""
+"rename $ENV{""MYSQLD_LOG""}, $ENV{""MYSQLD_LOG""}."".1"""
+"kill 'USR1', $pid or die ""could not kill $pid: $!"""
+$wait_cnt--
+"rename $ENV{""MYSQLD_LOG_SLOW""}, $ENV{""MYSQLD_LOG_SLOW""}."".1"""
+"EOF
+
+let MYSQLD_PIDFILE= `SELECT @@pid_file;`"
+"EOF
+
+
+SET @@global.slow_query_log=0"
+"rename $ENV{""MYSQLD_LOG_GENERAL""}, $ENV{""MYSQLD_LOG_GENERAL""}."".1"""
+"EOF
+
+SET @@global.general_log=0"
+"REVOKE ALL ON test.* FROM mysqltest_1@'127.0.0.1/255.255.255.255'"
+"my $file= $ENV{'SLOW_LOG'} or die(""slow log not set"")"
+"$result++ if ($line =~ /SET timestamp=10"
+/)
+"EOF
+
+SET @@global.slow_query_log_file= @old_slow_query_log_file"
+"my $obfs = 0"
+"my $nono = 0"
+"my $protdiv= $ENV{'IS_PS'}+1"
+"$obfs++ if(($line =~ /CREATE USER /)&& ($line =~ / IDENTIFIED BY <secret>/))"
+"$nono++ if(($line =~ /CREATE USER /)&&!($line =~ / IDENTIFIED BY <secret>/))"
+"print ""slow file non-obfuscated statements>"".($nono/$protdiv).""\n"""
+"EOF
+
+TRUNCATE mysql.slow_log"
+"open FILE, ""$ENV{'BIG_LOG'}"" or die"
+"foreach $line (@lines) {
+if ($line =~ m/^# Query_time/) {
+$line =~ m/(Rows_sent.*) Thread_id.* (Errno.*) Start.*/"
+"print ""$1 $2\n"""
+"my $file= $ENV{'SLOW_LOG1'} or die(""slow log not set"")"
+"$result++ if ($line =~ /Start: 1970-01-01T00:00:10.000000Z /)"
+"open FILE, ""$ENV{'SLOW_LOG2'}"" or die"
+"foreach $line (@lines) {
+if ($line =~ m/^# Query_time/) {
+$line =~ s/Thread_id: \d* Errno:/Thread_id: 0 Errno:/"
+"$line =~ m/(Rows_sent.*) Start.*/"
+"print ""$1\n"""
+"open FILE, ""$ENV{'SLOW_LOG3'}"" or die ""Could not open tmp slow log file: $!"""
+"EOF
+
+SET @@global.slow_query_log_file=@save_sqlf"
+"FLUSH TABLE mysql.procs_priv"
+"create procedure p1()
+begin
+declare v_stmt_text varchar(255);
+declare v_id integer;
+declare done int default 0;
+declare c cursor for select id, stmt_text from t1;
+declare continue handler for 1295 -- ER_UNSUPPORTED_PS
+set @status='not supported';
+declare continue handler for 1064 -- ER_SYNTAX_ERROR
+set @status='syntax error';
+declare continue handler for sqlstate '02000' set done = 1;
+
+prepare update_stmt from ""update t1 set status=? where id=?"";
+open c;
+repeat
+if not done then
+fetch c into v_id, v_stmt_text;
+set @id=v_id, @stmt_text=v_stmt_text;
+set @status=""supported"";
+prepare stmt from @stmt_text;
+execute update_stmt using @status, @id;
+end if;
+until done end repeat;
+deallocate prepare update_stmt;
+end"
+"DECLARE cur1 CURSOR FOR SHOW TABLES"
+"OPEN cur1"
+"FETCH cur1 INTO c"
+"CLOSE cur1"
+"END|
+
+
+CREATE DATABASE mysqltest"
+"create procedure p1(a int)
+begin
+declare continue handler for 1436 -- ER_STACK_OVERRUN_NEED_MORE
+select 'exception';
+call p1(a+1);
+end"
+"revoke all privileges on procedure sptest.p1 from userb@localhost"
+"create procedure h_ee()
+deterministic
+begin
+declare continue handler for 1062 -- ER_DUP_ENTRY
+select 'Outer (bad)' as 'h_ee';
+
+begin
+declare continue handler for 1062 -- ER_DUP_ENTRY
+select 'Inner (good)' as 'h_ee';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_es()
+deterministic
+begin
+declare continue handler for 1062 -- ER_DUP_ENTRY
+select 'Outer (bad)' as 'h_es';
+
+begin
+-- integrity constraint violation
+declare continue handler for sqlstate '23000'
+select 'Inner (good)' as 'h_es';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_en()
+deterministic
+begin
+declare continue handler for 1329 -- ER_SP_FETCH_NO_DATA
+select 'Outer (bad)' as 'h_en';
+
+begin
+declare x int;
+declare continue handler for sqlstate '02000' -- no data
+select 'Inner (good)' as 'h_en';
+
+select a into x from t3 where a = 42;
+end;
+end"
+"create procedure h_ew()
+deterministic
+begin
+declare continue handler for 1264 -- ER_WARN_DATA_OUT_OF_RANGE
+select 'Outer (bad)' as 'h_ew';
+
+begin
+declare continue handler for sqlwarning
+select 'Inner (good)' as 'h_ew';
+
+insert into t3 values (123456789012);
+end;
+delete from t3;
+insert into t3 values (1);
+end"
+"create procedure h_ex()
+deterministic
+begin
+declare continue handler for 1062 -- ER_DUP_ENTRY
+select 'Outer (bad)' as 'h_ex';
+
+begin
+declare continue handler for sqlexception
+select 'Inner (good)' as 'h_ex';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_se()
+deterministic
+begin
+-- integrity constraint violation
+declare continue handler for sqlstate '23000'
+select 'Outer (bad)' as 'h_se';
+
+begin
+declare continue handler for 1062 -- ER_DUP_ENTRY
+select 'Inner (good)' as 'h_se';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_ss()
+deterministic
+begin
+-- integrity constraint violation
+declare continue handler for sqlstate '23000'
+select 'Outer (bad)' as 'h_ss';
+
+begin
+-- integrity constraint violation
+declare continue handler for sqlstate '23000'
+select 'Inner (good)' as 'h_ss';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_sn()
+deterministic
+begin
+-- Note: '02000' is more specific than NOT FOUND ;
+--       there might be other not found states
+declare continue handler for sqlstate '02000' -- no data
+select 'Outer (bad)' as 'h_sn';
+
+begin
+declare x int;
+declare continue handler for not found
+select 'Inner (good)' as 'h_sn';
+
+select a into x from t3 where a = 42;
+end;
+end"
+"create procedure h_sw()
+deterministic
+begin
+-- data exception - numeric value out of range
+declare continue handler for sqlstate '22003'
+select 'Outer (bad)' as 'h_sw';
+
+begin
+declare continue handler for sqlwarning
+select 'Inner (good)' as 'h_sw';
+
+insert into t3 values (123456789012);
+end;
+delete from t3;
+insert into t3 values (1);
+end"
+"create procedure h_sx()
+deterministic
+begin
+-- integrity constraint violation
+declare continue handler for sqlstate '23000'
+select 'Outer (bad)' as 'h_sx';
+
+begin
+declare continue handler for sqlexception
+select 'Inner (good)' as 'h_sx';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_ne()
+deterministic
+begin
+declare continue handler for not found
+select 'Outer (bad)' as 'h_ne';
+
+begin
+declare x int;
+declare continue handler for 1329 -- ER_SP_FETCH_NO_DATA
+select 'Inner (good)' as 'h_ne';
+
+select a into x from t3 where a = 42;
+end;
+end"
+"create procedure h_ns()
+deterministic
+begin
+declare continue handler for not found
+select 'Outer (bad)' as 'h_ns';
+
+begin
+declare x int;
+declare continue handler for sqlstate '02000' -- no data
+select 'Inner (good)' as 'h_ns';
+
+select a into x from t3 where a = 42;
+end;
+end"
+"create procedure h_we()
+deterministic
+begin
+declare continue handler for sqlwarning
+select 'Outer (bad)' as 'h_we';
+
+begin
+declare continue handler for 1264 -- ER_WARN_DATA_OUT_OF_RANGE
+select 'Inner (good)' as 'h_we';
+
+insert into t3 values (123456789012);
+end;
+delete from t3;
+insert into t3 values (1);
+end"
+"create procedure h_ws()
+deterministic
+begin
+declare continue handler for sqlwarning
+select 'Outer (bad)' as 'h_ws';
+
+begin
+-- data exception - numeric value out of range
+declare continue handler for sqlstate '22003'
+select 'Inner (good)' as 'h_ws';
+
+insert into t3 values (123456789012);
+end;
+delete from t3;
+insert into t3 values (1);
+end"
+"create procedure h_xe()
+deterministic
+begin
+declare continue handler for sqlexception
+select 'Outer (bad)' as 'h_xe';
+
+begin
+declare continue handler for 1062 -- ER_DUP_ENTRY
+select 'Inner (good)' as 'h_xe';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure h_xs()
+deterministic
+begin
+declare continue handler for sqlexception
+select 'Outer (bad)' as 'h_xs';
+
+begin
+-- integrity constraint violation
+declare continue handler for sqlstate '23000'
+select 'Inner (good)' as 'h_xs';
+
+insert into t3 values (1);
+end;
+end"
+"create procedure mysqltest1.p1()
+begin
+alter database character set koi8r;
+end"
+"CREATE PROCEDURE p1(IN loops BIGINT(19) UNSIGNED)
+BEGIN
+WHILE loops > 0 DO
+SELECT c1 FROM v1"
+"END|
+
+CREATE PROCEDURE p2(IN loops BIGINT(19) UNSIGNED)
+BEGIN
+WHILE loops > 0 DO
+SELECT c1 FROM v1"
+"END|
+
+CREATE FUNCTION f1(loops INT UNSIGNED)
+RETURNS INT
+BEGIN
+DECLARE tmp INT"
+"RETURN loops"
+"END|
+
+DELIMITER "
+"|
+
+eval CALL p1($p1_cnt)"
+"CREATE TEMPORARY TABLE t3 LIKE t1"
+"CREATE FUNCTION f1() RETURNS INT DETERMINISTIC
+BEGIN
+DECLARE a int;
+-- SQL statement inside
+SELECT 1 INTO a;
+RETURN a;
+END "
+"CREATE EVENT e1 ON SCHEDULE EVERY 1 SECOND STARTS NOW() DO
+BEGIN
+DECLARE EXIT HANDLER FOR 1136 BEGIN
+INSERT INTO t3 VALUES (1);
+END; -- ER_WRONG_VALUE_COUNT_ON_ROW
+
+SELECT GET_LOCK('e1_lock', 60);
+SELECT RELEASE_LOCK('e1_lock');
+
+INSERT INTO t2 SELECT * FROM t1;
+END"
+"create function bug23333()
+RETURNS int(11)
+DETERMINISTIC
+begin
+insert into t1 values (null)"
+"return @a"
+"end|
+
+reset master"
+"ALTER INSTANCE RELOAD TLS"
+"ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"
+"SELECT 1 FROM t1 AS table2 LEFT JOIN (SELECT 'c') AS table3(f1)
+ON table3.f1 = table2.f1 WHERE table2.f1
+IN (SELECT 1 FROM (SELECT 1314830897) AS t1(pk)
+WHERE t1.pk <= ANY(SELECT 5)) AND FALSE"
+"EXPLAIN FORMAT=tree
+SELECT /*+ JOIN_ORDER(t3,t2,t1) */ * FROM t1
+WHERE t1.col1 = ANY (
+SELECT t1.col1 + t2.col2
+FROM t2 JOIN t3 ON t2.col2 = t3.col2 AND t2.col1 =  t3.col1
+WHERE t2.col2 BETWEEN 2 AND 9
+)"
+"SELECT AVG(a) OVER () AS `avg`,
+a + (SELECT SUM(a) + (SELECT COUNT(a) FROM t1)
+FROM (SELECT * from t1) t11) AS cnt FROM t2"
+"SELECT AVG(s2.avg_us) OVER () + 3 AS avgsum,
+s2.avg_us avg_us,
+s2.avg_us avg_us2,
+SUM(s2.avg_us) OVER () + 3 AS avgsum2,
+IFNULL(SUM(s1.cnt)/NULLIF((SELECT COUNT(*) FROM
+events_digest), 0), 0) percentile
+FROM sys.`x$ps_digest_avg_latency_distribution` AS s1
+JOIN sys.`x$ps_digest_avg_latency_distribution` AS s2
+ON s1.avg_us <= s2.avg_us
+GROUP BY s2.avg_us
+HAVING IFNULL(SUM(s1.cnt)/ NULLIF((SELECT COUNT(*) FROM events_digest), 0), 0) > 0.95
+ORDER BY percentile LIMIT 1"
+"SELECT t2.i FROM t2
+WHERE ( false ) AND
+( t2.i  IN ( SELECT t1.i FROM t1
+WHERE t1.i <= SOME ( SELECT 8 UNION  SELECT 3 ) ) )"
+"SELECT SUM(pk) FROM t1 WHERE ( pk >= ANY ( SELECT MAX(1) FROM DUAL) )"
+"SELECT AVG(DISTINCT id) FROM t1 GROUP BY id % 13"
+"SELECT * FROM t1 WHERE int_key IN ( SELECT AVG(DISTINCT pk) FROM t2 WHERE time_nokey = datetime_key )"
+"FLUSH TABLE schema1.t1"
+"SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1))"
+"SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1), ROW(2))"
+"REVOKE ALL ON *.* FROM noprivs@localhost"
+"CREATE TABLESPACE ts1 ENGINE_ATTRIBUTE=''"
+"CREATE TABLESPACE ts2 ENGINE_ATTRIBUTE='{""c"": ""v""}'"
+"ALTER TABLESPACE ts1 ENGINE_ATTRIBUTE='{""foo"": ""bar""}'"
+"create temporary table tg (i int not null) engine=merge union=()"
+"SELECT JSON_VALUE('{""data"": ""2019-01-01 11:11::11""}', '$.data' RETURNING DATETIME) AS v"
+"SELECT JSON_VALUE('{""data"": ""2019-01/01""}', '$.data' RETURNING DATE) AS v"
+"SELECT JSON_VALUE('{""data"": ""10:11:12.098700    ""}', '$.data' RETURNING TIME) AS v"
+"CREATE USER user1@"
+"GRANT UPDATE (a) ON t1 TO user1@"
+"DROP USER user1@"
+"TYPE=TRIGGERNAME
+trigger_table=t1
+EOF
+
+TYPE=TRIGGERNAME
+trigger_table=t1
+EOF
+
+TYPE=TRIGGERNAME
+trigger_table=t1
+EOF
+
+TYPE=TRIGGERNAME
+trigger_table=t1
+EOF
+
+TYPE=TRIGGERNAME
+trigger_table=t1
+EOF
+
+TYPE=TRIGGERS
+triggers='CREATE DEFINER=`root`@`localhost` TRIGGER tr11 BEFORE INSERT ON t1 FOR EACH ROW DELETE FROM t3' 'CREATE DEFINER=`root`@`localhost` TRIGGER tr12 AFTER INSERT ON t1 FOR EACH ROW DELETE FROM t3' 'CREATE DEFINER=`root`@`localhost` TRIGGER tr13 BEFORE DELETE ON t1 FOR EACH ROW DELETE FROM t1 a USING t1 a' 'CREATE DEFINER=`root`@`localhost` TRIGGER tr14 AFTER DELETE ON t1 FOR EACH ROW DELETE FROM non_existing_table' 'CREATE DEFINER=`root`@`localhost` TRIGGER tr15 BEFORE UPDATE ON t1 FOR EACH ROW DELETE FROM non_existing_table a USING non_existing_table a'
+sql_modes=0 0 0 0 0
+definers='root@localhost' 'root@localhost' 'root@localhost' 'root@localhost' 'root@localhost'
+EOF
+
+TYPE=TRIGGERS
+triggers='Not allowed syntax here, and trigger name cant be extracted either.'
+sql_modes=0
+definers='root@localhost'
+EOF
+
+FLUSH TABLE t1"
+"create trigger t1_whoupdated before update on t1 for each row
+begin
+declare user varchar(32);
+declare i int;
+select user() into user;
+set NEW.username = user;
+select count(*) from ((select 1) union (select 2)) as d1 into i;
+end"
+"load data infile '../../std_data/words.dat' into table t1 (a) set b:= f1()"
+"REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
+"SELECT 10,10.0,10.,.1e+2,100.0e-1"
+"create table t1 (c nchar varchar(10))"
+"create table t1 (c national character varying(10))"
+"create table t1 (c nchar varying(10))"
+"SELECT AVG(DISTINCT a) FROM t1"
+"CREATE PROCEDURE p1 ()
+BEGIN
+DECLARE a TIME(6)"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1//
+DROP PROCEDURE p1//
+CREATE PROCEDURE p1 (a TIME(6))
+BEGIN
+SELECT a"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1(112233)//
+CALL p1(112233.123)//
+CALL p1(112233.123e0)//
+CALL p1('11:22:33.123')//
+DROP PROCEDURE p1//
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a TIME(6)"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1//
+DROP PROCEDURE p1//
+CREATE FUNCTION p1 (a TIME(6)) RETURNS TIME(6)
+BEGIN
+RETURN a"
+"END//
+SHOW CREATE FUNCTION p1//
+SELECT p1(112233.123)//
+DROP FUNCTION p1//
+DELIMITER "
+"//
+
+
+CREATE TABLE t1 (a TIME(6))"
+"CREATE PROCEDURE p1 ()
+BEGIN
+DECLARE a DATETIME(6)"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1//
+DROP PROCEDURE p1//
+CREATE PROCEDURE p1 (a DATETIME(6))
+BEGIN
+SELECT a"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1(20010101112233)//
+CALL p1(20010101112233.123)//
+CALL p1(0.123e0)//
+CALL p1('2001-01-01 11:22:33.123')//
+DROP PROCEDURE p1//
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a DATETIME(6)"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1//
+DROP PROCEDURE p1//
+CREATE FUNCTION p1 (a DATETIME(6)) RETURNS DATETIME(6)
+BEGIN
+RETURN a"
+"END//
+SHOW CREATE FUNCTION p1//
+SELECT p1(20010101112233)//
+SELECT p1(20010101112233.123)//
+DROP FUNCTION p1//
+DELIMITER "
+"//
+
+CREATE TABLE t1 (a DATETIME(6))"
+"CREATE PROCEDURE p1 ()
+BEGIN
+DECLARE a TIMESTAMP(6)"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1//
+DROP PROCEDURE p1//
+CREATE PROCEDURE p1 (a TIMESTAMP(6))
+BEGIN
+SELECT a"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1(20010101112233)//
+CALL p1(20010101112233.123)//
+CALL p1(0.123e0)//
+CALL p1('2001-01-01 11:22:33.123')//
+DROP PROCEDURE p1//
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a TIMESTAMP(6)"
+"END//
+SHOW CREATE PROCEDURE p1//
+CALL p1//
+DROP PROCEDURE p1//
+CREATE FUNCTION p1 (a TIMESTAMP(6)) RETURNS TIMESTAMP(6)
+BEGIN
+RETURN a"
+"//
+
+CREATE TABLE t1 (a TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6))"
+"EOF
+
+
+
+
+connection default"
+"select count(*) from (
+(select                      a,b from t1 limit 2)  union all (select a,b from t2 order by a)) q"
+"(select * from t1 limit 3) intersect (select * from t1 limit 3)"
+"(select * from t1 limit 4) except (select * from t1 limit 1)"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1) UNION all (SELECT * FROM t2)) q"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1 LIMIT 1) UNION all (SELECT * FROM t2)) q"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1) UNION all (SELECT * FROM t2 LIMIT 1)) q"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1 LIMIT 1) UNION SELECT * FROM t2) q"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1 LIMIT 1) UNION all SELECT * FROM t2) q"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1 LIMIT 100) UNION SELECT * FROM t2) q"
+"SELECT COUNT(*) FROM (
+(SELECT                     * FROM t1 limit 2,2) UNION SELECT * FROM t2) q"
+"select * from ((select * from t1 limit 1) union (select * from t1 limit 1)) a"
+"select * from ((select * from t1 limit 1) union (select * from t1 limit 1) union (select * from t1 limit 1)) a"
+"select * from ((((select * from t1))) union (select * from t1) union (select * from t1)) a"
+"select * from ((select * from t1) union (((select * from t1))) union (select * from t1)) a"
+"SELECT c1, c2 FROM (
+(
+(SELECT c1, c2 FROM t1)
+UNION
+(SELECT c1, c2 FROM t2)
+)
+ORDER BY c2 DESC, c1 ASC LIMIT 1
+) AS res"
+"((SELECT SQL_CALC_FOUND_ROWS * FROM r ORDER BY a LIMIT 5) ORDER BY -a LIMIT 4) ORDER BY a LIMIT 3"
+"CREATE TABLE t1(a INTEGER, b INTEGER AS (a))"
+"CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6"
+"ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2"
+"ALTER USER foo@localhost PASSWORD_LOCK_TIME 3"
+"CREATE USER foo@localhost FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"CREATE USER failed_login_attempts@localhost FAILED_LOGIN_ATTEMPTS 2"
+"CREATE USER password_lock_time@localhost PASSWORD_LOCK_TIME 3"
+"CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 0"
+"ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 0"
+"CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3 ACCOUNT LOCK"
+"CREATE USER proxied_to_user@localhost IDENTIFIED WITH 'mysql_native_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"CREATE USER proxy_user@localhost IDENTIFIED WITH 'mysql_native_password' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 2"
+"ALTER USER u1 FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"ALTER USER u1 FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0"
+"CREATE USER foo@localhost FAILED_LOGIN_ATTEMPTS 32767"
+"CREATE USER foo@localhost PASSWORD_LOCK_TIME 32767"
+"CREATE USER ''@localhost IDENTIFIED BY 'pwd' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
+"CREATE USER foo@localhost IDENTIFIED BY 'foo' PASSWORD_LOCK_TIME 3 FAILED_LOGIN_ATTEMPTS 2"
+"ALTER USER foo@localhost ATTRIBUTE ""{ \"test\": \"account locking\" }"""
+"ALTER USER foo@localhost COMMENT ""This is a test account for verifying that password locking and user attributes won't interfer with one and another."""
+"CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME UNBOUNDED"
+"ALTER USER u1 COMMENT 'free form text'"
+"ALTER USER u1 COMMENT 'changed the free form text'"
+"ALTER USER u1 ATTRIBUTE '{""uid"" : ""34234""}'"
+"ALTER USER u1 ATTRIBUTE '{""speed"" : ""9000""}'"
+"ALTER USER u1 ATTRIBUTE '{""speed"" : null }'"
+"ALTER USER foo@localhost COMMENT 'password lock time'"
+"ALTER USER foo@localhost ATTRIBUTE '{""flag"":""red""}'"
+"ALTER USER foo@localhost ATTRIBUTE '{""flag"":null}'"
+"ALTER USER foo@localhost COMMENT 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'"
+"ALTER USER foo@localhost COMMENT 'xxx'"
+"CREATE USER foo2@localhost IDENTIFIED BY 'foo' COMMENT 'xxx'"
+"CREATE USER foo3 PASSWORD EXPIRE DEFAULT COMMENT 'abc'"
+"CREATE USER foo4 ACCOUNT LOCK ATTRIBUTE '{""stuff"":""ffuts""}'"
+"ALTER USER foo4 ACCOUNT UNLOCK ATTRIBUTE '{""stuff"":""unlocked""}'"
+"ALTER USER foo@localhost ATTRIBUTE '{""key"":""value""}'"
+"ALTER USER foo@localhost COMMENT 'Added key/value pair'"
+"ALTER USER redqueen@localhost IDENTIFIED BY 'madness' RETAIN CURRENT PASSWORD"
+"ALTER USER redqueen@localhost DISCARD OLD PASSWORD COMMENT 'Dropped old password'"
+"CREATE USER u1 COMMENT 'Hello ""Smith""'"
+"CREATE USER u1@localhost IDENTIFIED BY 'foo' COMMENT 'Not permitted to change this'"
+"CREATE USER u1@localhost IDENTIFIED BY 'foo',u2@localhost IDENTIFIED BY 'foo' COMMENT ""Works with partial restrictions"""
+"ALTER USER CURRENT_USER() COMMENT 'test'"
+"ALTER USER CURRENT_USER() ATTRIBUTE '{ ""comment"" : null }'"
+"ALTER USER u1@localhost ATTRIBUTE '{""Restrictions"": [{""Database"":""mysql"",""Privileges"": [ ""CREATE"" ]}]}'"
+"CREATE TRIGGER trig_t1_ins BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+SET @aux = GET_LOCK(2,1)"
+END
+"|
+SELECT GET_LOCK(CAST(2 AS CHAR),0)"
+"password
+validate
+EOF
+
+password
+validate
+monkey
+EOF
+
+CREATE USER 'user1'@'localhost' IDENTIFIED BY 'passWORD123#'"
+"my $dict_file= ""$ENV{MYSQLTEST_VARDIR}/tmp/dict.txt"""
+"my $outer = 100000"
+"open(DICT_FILE, "">"", $dict_file) or die ""Can't open $dict_file for write: $!"""
+"EOF
+
+
+
+
+
+
+
+
+
+
+
+SELECT @@GLOBAL.VALIDATE_PASSWORD.LENGTH"
+"password
+validate
+EOF
+
+eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dictionary.txt"""
+"REVOKE ALL PRIVILEGES ON test.* FROM ""base_user""@localhost"
+"REVOKE ALL PRIVILEGES ON test.* FROM """"@localhost"
+"create table table_28127_a(0b02 int)"
+"create table table_28127_b(0b2 int)"
+"create view  v1 as select avg(distinct s1) from t1"
+"revoke all privileges on test.* from mysqltest_1@localhost"
+"revoke all privileges on mysqltest.v1 from mysqltest_1@localhost"
+"REVOKE ALL ON mysqltest_db1.* FROM mysqltest_u1@localhost"
+"REVOKE ALL ON mysqltest_db2.* FROM mysqltest_u2@localhost"
+"SELECT k, AVG(DISTINCT j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
+"SELECT sex, RANK() OVER (ORDER BY sex DESC) `rank`, AVG(DISTINCT id) AS uids FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex ORDER BY sex"
+"SELECT sex, PERCENT_RANK() OVER (ORDER BY sex DESC) `rank`, AVG(DISTINCT id) AS uids FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex ORDER BY sex"
+"SELECT sex, CUME_DIST() OVER (ORDER BY sex DESC) `cume_dist`, AVG(DISTINCT id) AS uids FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex ORDER BY sex"
+"SELECT  sex, AVG(DISTINCT id) AS uids, RANK() OVER w `rank` FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex
+WINDOW w AS (ORDER BY AVG(DISTINCT id) DESC) ORDER BY sex"
+"SELECT  sex, AVG(DISTINCT id) AS uids, PERCENT_RANK() OVER w `p_rank` FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex
+WINDOW w AS (ORDER BY AVG(DISTINCT id) DESC) ORDER BY sex"
+"SELECT  sex, AVG(DISTINCT id) AS uids, CUME_DIST() OVER w `c_dist` FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex
+WINDOW w AS (ORDER BY AVG(DISTINCT id) DESC) ORDER BY sex"
+"SELECT t3_id, AVG(t3_id) OVER w,
+CUME_DIST() OVER w,
+k FROM t3
+WINDOW w AS (PARTITION BY k ORDER BY t3_id
+RANGE BETWEEN 4 PRECEDING AND 2 PRECEDING)"
+"SELECT SUM(id) OVER w * 2, AVG(id) OVER w, COUNT(id) OVER w FROM t1
+WINDOW w AS (PARTITION BY sex)"
+"SELECT id, AVG(id) OVER (ROWS UNBOUNDED PRECEDING) FROM t1"
+"SELECT id, AVG(id) OVER w, COUNT(id) OVER w FROM t1
+WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT d, SUM(d) OVER (ORDER BY d), AVG(d) OVER (ORDER BY d) FROM td"
+"SELECT d, SUM(d) OVER (ORDER BY d), AVG(d) OVER () FROM td"
+"SELECT d, SUM(d) OVER (ORDER BY d), AVG(d) OVER (ORDER BY d ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM td"
+"SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
+WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)"
+"SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
+WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING)"
+"SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
+WINDOW w AS (ORDER BY d RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)"
+"SELECT user_id, SUM(user_id) OVER w, AVG(user_id) OVER w FROM t2 WINDOW w AS (ORDER BY user_id)"
+"SELECT p, user_id, SUM(user_id) OVER w, AVG(user_id) OVER w FROM t22 WINDOW w AS (PARTITION BY p ORDER BY user_id) ORDER BY p"
+"SELECT user_id, SUM(user_id) OVER w, AVG(user_id) OVER w1 FROM t2
+WINDOW w AS (ORDER BY user_id), w1 AS (ORDER BY user_id)"
+"SELECT id, AVG(id) OVER (PARTITION BY id) summ FROM t1"
+"SELECT     AVG(id) OVER (PARTITION BY id) summ FROM t1"
+"SELECT id, AVG(id) OVER (PARTITION BY id) summ,
+AVG(id) OVER (PARTITION BY id) summ2 FROM t1"
+"SELECT     AVG(id) OVER (PARTITION BY id) summ,
+AVG(id) OVER (PARTITION BY id) summ2 FROM t1"
+"SELECT COUNT(id) OVER w, id, AVG(id) OVER w, SUM(id) OVER w, FIRST_VALUE(id) OVER w FROM t1
+WINDOW w AS (ORDER BY id RANGE 1 PRECEDING)"
+"SELECT COUNT(id) OVER w, id, AVG(id) OVER w, SUM(id) OVER w, FIRST_VALUE(id) OVER w FROM t1r
+WINDOW w AS (ORDER BY id RANGE 1 PRECEDING)"
+"SELECT *, AVG(s1) OVER () FROM t1"
+"SELECT *, AVG(s1) OVER (ROWS UNBOUNDED PRECEDING) FROM t1"
+"SELECT AVG(b) OVER (ORDER BY b) FROM t"
+"SELECT a, b, COUNT(a) OVER w count,
+SUM(a) OVER w sum,
+AVG(a) over w average,
+LAST_VALUE(a) OVER w lastval FROM t1
+WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT a, b, COUNT(a) OVER w count,
+SUM(a) OVER w sum,
+AVG(a) OVER w average,
+LAST_VALUE(a) OVER w lastval FROM t1
+WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT a, b, COUNT(a) OVER w count,
+SUM(a) OVER w sum,
+AVG(a) OVER w average,
+LAST_VALUE(a) OVER w lastval FROM t1
+WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING)"
+"SELECT id, AVG(id) over w `avg`, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt FROM t1 WINDOW w as (ORDER BY id RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"SELECT d, AVG(d) over w `avg`, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt FROM t1 WINDOW w as (ORDER BY d RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"SELECT AVG(1) OVER ()"
+"SELECT AVG(1.2) OVER ()"
+"SELECT AVG(CAST(4 as JSON)) OVER ()"
+"SELECT AVG('e') OVER ()"
+"SELECT AVG(1)   OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+"SELECT AVG(1.2) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+"SELECT AVG(CAST(4 as JSON)) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+"SELECT AVG('e') OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+"SELECT * FROM t WHERE a = SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
+"SELECT * FROM t WHERE a = ANY(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
+"SELECT * FROM t WHERE a >= SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
+"SELECT NTILE (3) OVER (ORDER BY alias1.a), AVG(alias1.a)  OVER ()
+FROM t AS alias1 RIGHT JOIN t AS alias2 ON (alias1.a = alias2.b)"
+"CREATE PROCEDURE p1() SELECT  AVG(c2)  OVER ( ) AS res FROM  te2"
+"CREATE FUNCTION f1()
+RETURNS char(255)
+BEGIN
+DECLARE ret char(255);
+SELECT  AVG(c2)  OVER ( ) AS res FROM  te2 INTO ret;
+RETURN ret;
+END"
+"CREATE TABLE `C` (
+`pk` int(11) NOT NULL AUTO_INCREMENT,
+`col_int` int(11) NOT NULL,
+`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
+`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
+`col_date` date NOT NULL,
+`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
+`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
+`col_datetime` datetime NOT NULL,
+`col_time` time NOT NULL,
+`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
+`col_varchar` varchar(15) NOT NULL,
+`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
+`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
+PRIMARY KEY (`pk`),
+UNIQUE KEY `col_date_key` (`col_date_key`),
+UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
+UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
+UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
+UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
+UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
+UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
+UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
+UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
+KEY `col_int_gckey` (`col_int_gckey`),
+KEY `col_int_gckey_2` (`col_int_gckey` DESC),
+KEY `col_date_gckey` (`col_date_gckey`),
+KEY `col_datetime_gckey` (`col_datetime_gckey`),
+KEY `col_time_gckey` (`col_time_gckey`),
+KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
+KEY `col_int_key` (`col_int_key`),
+KEY `col_int_key_2` (`col_int_key` DESC),
+KEY `col_time_key` (`col_time_key`),
+KEY `col_datetime_key` (`col_datetime_key`),
+KEY `col_int_key_5` (`col_int_key`,`col_int`),
+KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
+KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
+KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
+KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=latin1"
+"CREATE TABLE `DD` (
+`pk` int(11) NOT NULL AUTO_INCREMENT,
+`col_int` int(11) NOT NULL,
+`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
+`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
+`col_date` date NOT NULL,
+`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
+`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
+`col_datetime` datetime NOT NULL,
+`col_time` time NOT NULL,
+`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
+`col_varchar` varchar(15) NOT NULL,
+`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
+`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
+PRIMARY KEY (`pk`),
+UNIQUE KEY `col_date_key` (`col_date_key`),
+UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
+UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
+UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
+UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
+UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
+UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
+UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
+UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
+KEY `col_int_gckey` (`col_int_gckey`),
+KEY `col_int_gckey_2` (`col_int_gckey` DESC),
+KEY `col_date_gckey` (`col_date_gckey`),
+KEY `col_datetime_gckey` (`col_datetime_gckey`),
+KEY `col_time_gckey` (`col_time_gckey`),
+KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
+KEY `col_int_key` (`col_int_key`),
+KEY `col_int_key_2` (`col_int_key` DESC),
+KEY `col_time_key` (`col_time_key`),
+KEY `col_datetime_key` (`col_datetime_key`),
+KEY `col_int_key_5` (`col_int_key`,`col_int`),
+KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
+KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
+KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
+KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=73 DEFAULT CHARSET=latin1"
+"CREATE TABLE `E` (
+`pk` int(11) NOT NULL AUTO_INCREMENT,
+`col_int` int(11) NOT NULL,
+`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
+`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
+`col_date` date NOT NULL,
+`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
+`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
+`col_datetime` datetime NOT NULL,
+`col_time` time NOT NULL,
+`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
+`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
+`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
+`col_varchar` varchar(15) NOT NULL,
+`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
+`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
+PRIMARY KEY (`pk`),
+UNIQUE KEY `col_date_key` (`col_date_key`),
+UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
+UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
+UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
+UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
+UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
+UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
+UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
+UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
+KEY `col_int_gckey` (`col_int_gckey`),
+KEY `col_int_gckey_2` (`col_int_gckey` DESC),
+KEY `col_date_gckey` (`col_date_gckey`),
+KEY `col_datetime_gckey` (`col_datetime_gckey`),
+KEY `col_time_gckey` (`col_time_gckey`),
+KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
+KEY `col_int_key` (`col_int_key`),
+KEY `col_int_key_2` (`col_int_key` DESC),
+KEY `col_time_key` (`col_time_key`),
+KEY `col_datetime_key` (`col_datetime_key`),
+KEY `col_int_key_5` (`col_int_key`,`col_int`),
+KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
+KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
+KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
+KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=80 DEFAULT CHARSET=latin1"
+"CREATE TABLE t (
+f1 LONGTEXT GENERATED ALWAYS AS (_utf8mb4'1') VIRTUAL NOT NULL
+)"
+"SELECT VARIANCE(b) over w `var`,
+AVG(b) OVER w `avg`,
+SUM(b) OVER w `sum`,
+b,
+COUNT(b) OVER w count FROM t1
+WINDOW w as (ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT VARIANCE(b) over w `var`,
+AVG(b) OVER w `avg`,
+SUM(b) OVER w `sum`,
+b,
+count(b) OVER w count FROM t1
+WINDOW w as (ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT VARIANCE(b) over w `var`,
+AVG(b) OVER w `avg`,
+SUM(b) OVER w `sum`,
+b,
+count(b) OVER w count,
+LAST_VALUE(b) OVER w lastval FROM t1
+WINDOW w as (ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT VARIANCE(b) over w `var`,
+FIRST_VALUE(b) over w fv,
+AVG(b) OVER w `avg`,
+SUM(b) OVER w `sum`,
+b,
+count(b) OVER w count FROM t1
+WINDOW w as (ORDER BY b ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"DO BIT_LENGTH(AVG(@f)OVER())"
+"DO LTRIM(AVG(LOG2(@c))OVER())"
+"DO TO_BASE64(AVG(@d)OVER())"
+"SELECT bit_count(avg(cos(-66365726))over())"
+"CREATE TABLE t(
+a TEXT CHARACTER SET CP1251
+GENERATED ALWAYS AS (LPAD(1,10621933,10)) VIRTUAL,
+b BLOB
+GENERATED ALWAYS AS (LPAD(1,10622,10)) VIRTUAL
+) ENGINE=INNODB"
+"SELECT 0.2 * AVG(f1) OVER w AS avg, f1
+FROM t1 JOIN t2 ON t1_partkey = t2_partkey
+WINDOW w AS (PARTITION BY t1_partkey)"
+"SELECT n
+, SUM(n)   OVER w AS ""sum(n)""
+, COUNT(*) OVER w AS ""count(n)""
+, AVG(n)   OVER w AS ""avg(n)""
+, SUM(n)   OVER w / COUNT(*) OVER w AS ""sum(n)/count(n)"",
+r
+, SUM(r)   OVER w AS ""sum(r)""
+, COUNT(*) OVER w AS ""count(r)""
+, AVG(r)   OVER w AS ""avg(r)""
+, SUM(r)   OVER w / COUNT(*) OVER w AS ""sum(r)/count(r)""
+FROM t WINDOW w AS (ORDER BY n ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING)
+ORDER BY n"
+"EXPLAIN FORMAT=JSON SELECT k, AVG(DISTINCT j), SUM(k) OVER (ROWS UNBOUNDED PRECEDING) foo FROM t GROUP BY (k)"
+"EXPLAIN FORMAT=JSON SELECT sex, RANK() OVER (ORDER BY sex DESC) `rank`, AVG(DISTINCT id) AS uids FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex ORDER BY sex"
+"EXPLAIN FORMAT=JSON SELECT  sex, AVG(DISTINCT id) AS uids, RANK() OVER w `rank` FROM t1 u, t2
+WHERE t2.user_id = u.id GROUP BY sex
+WINDOW w AS (ORDER BY AVG(DISTINCT id) DESC) ORDER BY sex"
+"EXPLAIN FORMAT=JSON SELECT SUM(id) OVER w * 2, AVG(id) OVER w, COUNT(id) OVER w FROM t1
+WINDOW w AS (PARTITION BY sex)"
+"EXPLAIN FORMAT=JSON SELECT id, AVG(id) OVER (ROWS UNBOUNDED PRECEDING) FROM t1"
+"EXPLAIN FORMAT=JSON SELECT id, AVG(id) OVER w, COUNT(id) OVER w FROM t1
+WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER (ORDER BY d), AVG(d) OVER (ORDER BY d) FROM td"
+"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER (ORDER BY d), AVG(d) OVER () FROM td"
+"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER (ORDER BY d), AVG(d) OVER (ORDER BY d ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM td"
+"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
+WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)"
+"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
+WINDOW w AS (ORDER BY d RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT d, SUM(d) OVER w, AVG(d) OVER w FROM td
+WINDOW w AS (ORDER BY d RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT user_id, SUM(user_id) OVER w, AVG(user_id) OVER w FROM t2 WINDOW w AS (ORDER BY user_id)"
+"EXPLAIN FORMAT=JSON SELECT p, user_id, SUM(user_id) OVER w, AVG(user_id) OVER w FROM t22 WINDOW w AS (PARTITION BY p ORDER BY user_id) ORDER BY p"
+"EXPLAIN FORMAT=JSON SELECT user_id, SUM(user_id) OVER w, AVG(user_id) OVER w1 FROM t2
+WINDOW w AS (ORDER BY user_id), w1 AS (ORDER BY user_id)"
+"EXPLAIN FORMAT=JSON SELECT id, AVG(id) OVER (PARTITION BY id) summ FROM t1"
+"EXPLAIN FORMAT=JSON SELECT     AVG(id) OVER (PARTITION BY id) summ FROM t1"
+"EXPLAIN FORMAT=JSON SELECT id, AVG(id) OVER (PARTITION BY id) summ,
+AVG(id) OVER (PARTITION BY id) summ2 FROM t1"
+"EXPLAIN FORMAT=JSON SELECT     AVG(id) OVER (PARTITION BY id) summ,
+AVG(id) OVER (PARTITION BY id) summ2 FROM t1"
+"EXPLAIN FORMAT=JSON SELECT COUNT(id) OVER w, id, AVG(id) OVER w, SUM(id) OVER w, FIRST_VALUE(id) OVER w FROM t1
+WINDOW w AS (ORDER BY id RANGE 1 PRECEDING)"
+"EXPLAIN FORMAT=JSON SELECT *, AVG(s1) OVER () FROM t1"
+"EXPLAIN FORMAT=JSON SELECT *, AVG(s1) OVER (ROWS UNBOUNDED PRECEDING) FROM t1"
+"EXPLAIN FORMAT=JSON SELECT AVG(b) OVER (ORDER BY b) FROM t"
+"EXPLAIN FORMAT=JSON SELECT a, b, COUNT(a) OVER w count,
+SUM(a) OVER w sum,
+AVG(a) over w average,
+LAST_VALUE(a) OVER w lastval FROM t1
+WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT a, b, COUNT(a) OVER w count,
+SUM(a) OVER w sum,
+AVG(a) OVER w average,
+LAST_VALUE(a) OVER w lastval FROM t1
+WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT a, b, COUNT(a) OVER w count,
+SUM(a) OVER w sum,
+AVG(a) OVER w average,
+LAST_VALUE(a) OVER w lastval FROM t1
+WINDOW w as (PARTITION BY a ORDER BY b ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT id, AVG(id) over w `avg`, SUM(id) OVER w `sum`, COUNT(*) OVER w cnt FROM t1 WINDOW w as (ORDER BY id RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT d, AVG(d) over w `avg`, SUM(d) OVER w `sum`, COUNT(*) OVER w cnt FROM t1 WINDOW w as (ORDER BY d RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING)"
+"EXPLAIN FORMAT=JSON SELECT SUM(j) OVER w, COUNT(j) OVER (),
+AVG(j) OVER (w ORDER BY j), FIRST_VALUE(j) OVER w
+FROM t WINDOW w AS (PARTITION BY i)
+ORDER BY LAST_VALUE(j) OVER w, NTH_VALUE(j,1) OVER (),
+ROW_NUMBER() OVER (PARTITION BY j)"
+"EXPLAIN FORMAT=tree SELECT a, SUM(c) OVER (ORDER BY b), AVG(c) OVER (ORDER BY a), SUM(c) OVER (PARTITION BY a) AS x FROM t1 ORDER BY b, x"
+"SELECT k, AVG(DISTINCT j), MIN(k) OVER (ROWS UNBOUNDED PRECEDING) min,
+MAX(k) OVER (ROWS UNBOUNDED PRECEDING) max FROM t GROUP BY (k)"
+"SELECT AVG(id) OVER w, MIN(id) OVER w min, MAX(id) OVER w max FROM t1
+WINDOW w AS (PARTITION BY sex)"
+"SELECT id, AVG(id) OVER (ROWS UNBOUNDED PRECEDING) avg,
+MIN(id) OVER (ROWS UNBOUNDED PRECEDING) min FROM t1"
+"SELECT id, AVG(id) OVER (ROWS UNBOUNDED PRECEDING),
+MAX(id) OVER (ROWS UNBOUNDED PRECEDING) max FROM t1"
+"SELECT id, AVG(id) OVER w avg, COUNT(id) OVER w count, MIN(id) OVER w min,
+MAX(id) OVER w max FROM t1
+WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)"
+"SELECT AVG(DISTINCT EXTRACTVALUE((''),('$@k')))"
