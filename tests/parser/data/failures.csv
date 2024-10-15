@@ -323,8 +323,6 @@ f CHAR(30),
 g INT,
 h TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
-"REVOKE ALL ON db1.v1 FROM testuser1@localhost"
-"REVOKE ALL ON db1.t1 FROM testuser1@localhost"
 "TYPE=TRIGGERS
 triggers='CREATE DEFINER=`root`@`localhost` TRIGGER tr1_bi BEFORE INSERT ON vt2 FOR EACH ROW SET @a:=1'
 sql_modes=1073741824 1073741824
@@ -765,30 +763,12 @@ name CHARACTER VARYING(64),
 boundary POLYGON)"
 "ALTER TABLE t1 ALGORITHM=COPY, MODIFY COLUMN b GEOMETRY NOT NULL"
 "CREATE TABLE t1 (g GEOMCOLLECTION)"
-"revoke all privileges on mysqltest.* from mysqltest_1@localhost"
-"revoke all on test.* from mysqltest_3@localhost"
-"revoke all on test.t1 from mysqltest_2@localhost"
-"revoke ALL PRIVILEGES on t1 from grant_user@localhost"
-"revoke all on mysqltest_1.t1 from mysqltest_3@localhost"
-"revoke all on mysqltest_1.t2 from mysqltest_3@localhost"
-"revoke all on mysqltest_2.t1 from mysqltest_3@localhost"
-"revoke all on mysqltest_2.t2 from mysqltest_3@localhost"
-"revoke all privileges on mysqltest.t1 from mysqltest_1@localhost"
 "create user mysqltest_7@"
 "alter user mysqltest_7@ identified by 'systpass'"
 "show grants for mysqltest_7@"
 "drop user mysqltest_7@"
 "grant select on mysqltest.* to mysqltest_8@"
 "show grants for mysqltest_8@"
-"REVOKE ALL ON db27878.* FROM 'mysqltest_1'@'localhost'"
-"revoke all on test.* from ÑÐ·ÐµÑ_ÑÐ·ÐµÑ@localhost"
-"REVOKE ALL ON db1.* FROM 'user1'@'localhost'"
-"REVOKE ALL ON db1.* FROM 'user2'@'%'"
-"REVOKE ALL PRIVILEGES ON mysqltest.v0 FROM mysqltest@localhost"
-"REVOKE ALL PRIVILEGES ON mysqltest.visible FROM mysqltest@localhost"
-"REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
-"revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.1'"
-"revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.0/255.0.0.0'"
 "CREATE TEMPORARY TABLE t6(a INT) ENGINE = MERGE UNION = ()"
 "ALTER TABLE t6 UNION = ()"
 "ALTER TABLE mysqltest_db2.t2_2 UNION = ()"
@@ -802,18 +782,12 @@ SELECT 1"
 "ALTER USER USER() IDENTIFIED BY 'abc'"
 "ALTER USER USER() IDENTIFIED BY 'new_pwd_string'"
 "ALTER USER USER() IDENTIFIED BY 'new-auth'"
-"REVOKE ALL ON *.* FROM user1@localhost"
 "SHOW GRANTS FOR u1@localhost USING r1"
 "ALTER USER u1@localhost DEFAULT ROLE r1"
-"REVOKE ALL ON *.* FROM u1@localhost"
-"REVOKE ALL ON *.* FROM u1"
 "SHOW GRANTS FOR u1 using r1"
 "SHOW GRANTS FOR u1 using r2"
-"REVOKE ALL ON *.* FROM CURRENT_USER()"
 enable_connect_log
-"REVOKE ALL PRIVILEGES ON t1 FROM wl14303@localhost"
 disable_connect_log
-"REVOKE ALL PRIVILEGES ON privtest_db.t1 FROM 'privtest'@'localhost'"
 "insert into t2 select
 x3.a,  -- 3
 concat('val-', x3.a + 3*x4.a), -- 12
@@ -1100,7 +1074,6 @@ KEY col_date_key (col_date_key)
 ) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4"
 "GRANT some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 TO root@localhost"
 "GRANT u1@localhost TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
-"REVOKE ALL ON *.* FROM some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
 "chdir $ENV{'MYSQL_TMP_DIR'}"
 "EOF
 let $EXPORT_DIR= $MYSQL_TMP_DIR/export"
@@ -1112,7 +1085,6 @@ let $EXPORT_DIR= $MYSQL_TMP_DIR/export"
 "open(T1_, "">t1_.sdi"")"
 "print T1_ $_"
 close(T1_)
-"REVOKE ALL ON *.* FROM noimportforyou@localhost"
 "EOF
 
 IMPORT TABLE FROM 't1_.sdi'"
@@ -1490,7 +1462,6 @@ connection default"
 "foreach $line (@lines) {
 if ($line =~ /^select/) {
 print $line"
-"revoke all privileges on mysqldump_myDB.* from myDB_User@localhost"
 "CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
 sum INTEGER GENERATED ALWAYS AS (a+b),
 sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
@@ -1565,14 +1536,12 @@ EOF
 use strict"
 "$texp->log_file(""$ENV{MYSQLPUMP_LOG}"", ""w"")"
 "$texp->spawn(""$ENV{MYSQLPUMP} $ENV{MYSQLPUMP_ARGS}"")"
-"REVOKE ALL PRIVILEGES ON *.* FROM user1"
 "SELECT 1 WHERE 1 =
 ANY (SELECT GROUPING(a) FROM t1 GROUP BY a WITH ROLLUP)"
 "create procedure p1()
 select COUNT(*)
 FROM v1 WHERE f1 IN
 (SELECT f1 FROM t2 WHERE f1 = ANY (SELECT f1 FROM v1))"
-"revoke all privileges on *.* from user_1@localhost"
 "((SELECT 1 FROM t1 ORDER BY 1) ORDER BY 1) ORDER BY 1"
 "((SELECT 1 FROM t1 LIMIT 1) LIMIT 1) LIMIT 1"
 "( (SELECT 1 UNION SELECT 1 ) UNION SELECT 1 ) UNION SELECT 1"
@@ -1657,7 +1626,6 @@ PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 "DELETE FROM t1 PARTITION (subp3)"
 "DELETE FROM t1 PARTITION (`p0-29`)"
 "DELETE FROM t1 PARTITION (p2)"
-"revoke all privileges on *.* from mysqltest_1@localhost"
 "alter table t1 drop partition p2"
 SEND
 "DELETE FROM t1 PARTITION (p0)
@@ -1760,9 +1728,6 @@ FROM performance_schema.variables_info WHERE VARIABLE_NAME IN
 "RESET PERSIST validate_password_length"
 "RESET PERSIST gtid_mode"
 "RESET PERSIST enforce_gtid_consistency"
-"REVOKE ALL PRIVILEGES ON test_user_db.* FROM plug"
-"revoke all privileges on mysqltest.t1 from second_user@localhost"
-"revoke all privileges on test.t1 from drop_user@localhost "
 "set @a= timestamp ""2001-01-02 10:11:12.345"""
 "set @a=date ""2001-01-02"""
 "set @a= time ""10:11:12.345"""
@@ -1993,8 +1958,6 @@ connection default"
 "REVOKE IF EXISTS role1 FROM u1"
 "REVOKE IF EXISTS role1, r1 FROM u1"
 "REVOKE IF EXISTS SELECT, INSERT, UPDATE ON *.* FROM u1"
-"REVOKE ALL ON *.* FROM u2"
-"REVOKE ALL ON *.* FROM u3"
 "REVOKE IF EXISTS SELECT ON wl14690.* FROM u1, u2, u3"
 "REVOKE IF EXISTS role1 FROM u1, u2"
 "REVOKE IF EXISTS DELETE, SELECT ON wl14690.* FROM u1, u2, u3"
@@ -2079,11 +2042,7 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "REVOKE 'r1'@'' FROM 'u1'@''"
 "REVOKE 'r2'@'' FROM 'u1'@''"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO uu@localhost"
-"REVOKE ALL ON *.* FROM my_role"
-"REVOKE ALL ON *.* FROM foo@localhost"
 "GRANT `r_verifier`@`localhost` TO `TestUserFails`@`localhost`"
-"REVOKE ALL ON my_db.t1 FROM foo_role"
-"REVOKE ALL ON my_db.t1 FROM bar"
 "GRANT CREATE ROLE, DROP ROLE ON *.* TO b35471453@localhost"
 "REVOKE CREATE ROLE, DROP ROLE, SET_USER_ID ON *.* FROM b35471453@localhost"
 "my $mysqlbinlog= $ENV{'MYSQL_BINLOG'}"
@@ -2124,7 +2083,6 @@ SET @@global.slow_query_log=0"
 "EOF
 
 SET @@global.general_log=0"
-"REVOKE ALL ON test.* FROM mysqltest_1@'127.0.0.1/255.255.255.255'"
 "my $file= $ENV{'SLOW_LOG'} or die(""slow log not set"")"
 "$result++ if ($line =~ /SET timestamp=10"
 /)
@@ -2197,7 +2155,6 @@ declare continue handler for 1436 -- ER_STACK_OVERRUN_NEED_MORE
 select 'exception';
 call p1(a+1);
 end"
-"revoke all privileges on procedure sptest.p1 from userb@localhost"
 "create procedure h_ee()
 deterministic
 begin
@@ -2503,7 +2460,6 @@ WHERE t1.i <= SOME ( SELECT 8 UNION  SELECT 3 ) ) )"
 "FLUSH TABLE schema1.t1"
 "SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1))"
 "SELECT * FROM t0 WHERE a <ANY (VALUES ROW(1), ROW(2))"
-"REVOKE ALL ON *.* FROM noprivs@localhost"
 "CREATE TABLESPACE ts1 ENGINE_ATTRIBUTE=''"
 "CREATE TABLESPACE ts2 ENGINE_ATTRIBUTE='{""c"": ""v""}'"
 "ALTER TABLESPACE ts1 ENGINE_ATTRIBUTE='{""foo"": ""bar""}'"
@@ -2556,7 +2512,6 @@ set NEW.username = user;
 select count(*) from ((select 1) union (select 2)) as d1 into i;
 end"
 "load data infile '../../std_data/words.dat' into table t1 (a) set b:= f1()"
-"REVOKE ALL ON *.* FROM 'no_rights'@'localhost'"
 "SELECT 10,10.0,10.,.1e+2,100.0e-1"
 "create table t1 (c nchar varchar(10))"
 "create table t1 (c national character varying(10))"
@@ -2784,14 +2739,8 @@ validate
 EOF
 
 eval SET @@global.validate_password.dictionary_file=""$MYSQLTEST_VARDIR/tmp/dictionary.txt"""
-"REVOKE ALL PRIVILEGES ON test.* FROM ""base_user""@localhost"
-"REVOKE ALL PRIVILEGES ON test.* FROM """"@localhost"
 "create table table_28127_a(0b02 int)"
 "create table table_28127_b(0b2 int)"
-"revoke all privileges on test.* from mysqltest_1@localhost"
-"revoke all privileges on mysqltest.v1 from mysqltest_1@localhost"
-"REVOKE ALL ON mysqltest_db1.* FROM mysqltest_u1@localhost"
-"REVOKE ALL ON mysqltest_db2.* FROM mysqltest_u2@localhost"
 "SELECT * FROM t WHERE a = SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
 "SELECT * FROM t WHERE a = ANY(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
 "SELECT * FROM t WHERE a >= SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
