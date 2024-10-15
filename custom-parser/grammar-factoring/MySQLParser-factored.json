@@ -23006,6 +23006,9 @@
         "literal"
       ],
       [
+        "sumExpr"
+      ],
+      [
         "%%simpleExpr_factored1167"
       ],
       [
@@ -23019,9 +23022,6 @@
       ],
       [
         "PARAM_MARKER"
-      ],
-      [
-        "sumExpr"
       ],
       [
         "groupingOperation"
