@@ -47,7 +47,8 @@ viewCheckOption ::= WITH_SYMBOL (CASCADED_SYMBOL | LOCAL_SYMBOL)? CHECK_SYMBOL O
 createStatement ::= CREATE_SYMBOL (createDatabase | createTable | createFunction | createProcedure | createUdf | createLogfileGroup | createView | createTrigger | createIndex | createServer | createTablespace | createEvent | createRole | createSpatialReference | createUndoTablespace)
 createDatabase ::= DATABASE_SYMBOL ifNotExists? schemaName createDatabaseOption*
 createDatabaseOption ::= defaultCharset | defaultCollation | defaultEncryption
-createTable ::= TEMPORARY_SYMBOL? TABLE_SYMBOL ifNotExists? tableName (((OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL)? createTableOptions? partitionClause? duplicateAsQueryExpression?) | (LIKE_SYMBOL tableRef) | (OPEN_PAR_SYMBOL LIKE_SYMBOL tableRef CLOSE_PAR_SYMBOL))
+/* createTable ::= TEMPORARY_SYMBOL? TABLE_SYMBOL ifNotExists? tableName (((OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL)? createTableOptions? partitionClause? duplicateAsQueryExpression?) | (LIKE_SYMBOL tableRef) | (OPEN_PAR_SYMBOL LIKE_SYMBOL tableRef CLOSE_PAR_SYMBOL)) */
+createTable ::= TEMPORARY_SYMBOL? TABLE_SYMBOL ifNotExists? tableName ((LIKE_SYMBOL tableRef) | (OPEN_PAR_SYMBOL LIKE_SYMBOL tableRef CLOSE_PAR_SYMBOL) | ((OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL)? createTableOptions? partitionClause? duplicateAsQueryExpression?))
 tableElementList ::= tableElement (COMMA_SYMBOL tableElement)*
 tableElement ::= columnDefinition | tableConstraintDef
 duplicateAsQueryExpression ::= (REPLACE_SYMBOL | IGNORE_SYMBOL)? AS_SYMBOL? queryExpressionOrParens
@@ -677,6 +678,12 @@ tableAdministrationStatement ::= (ANALYZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL 
  * and "indexName TYPE_SYMBOL" prefix by moving them to a single branch.
  */
 indexNameAndType ::= indexName? ((USING_SYMBOL | TYPE_SYMBOL) indexType)?
+
+/**
+ * Fix "createTable" to solve support "LIKE tableRef" and "LIKE (tableRef)".
+ * They need to come before "tableElementList" to avoid misinterpreting "LIKE".
+ */
+createTable ::= TEMPORARY_SYMBOL? TABLE_SYMBOL ifNotExists? tableName ((LIKE_SYMBOL tableRef) | (OPEN_PAR_SYMBOL LIKE_SYMBOL tableRef CLOSE_PAR_SYMBOL) | ((OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL)? createTableOptions? partitionClause? duplicateAsQueryExpression?))
 
 /* Factor left recursion. */
 expr ::= %expr_simple %expr_rr*

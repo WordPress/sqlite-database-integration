@@ -1795,28 +1795,7 @@
     ]
   },
   {
-    "name": "%%%createTable105106107",
-    "bnf": [
-      [
-        "OPEN_PAR_SYMBOL",
-        "tableElementList",
-        "CLOSE_PAR_SYMBOL"
-      ]
-    ]
-  },
-  {
     "name": "%%createTable105106",
-    "bnf": [
-      [
-        "%%%createTable105106107_zero_or_one",
-        "createTableOptions_zero_or_one",
-        "partitionClause_zero_or_one",
-        "duplicateAsQueryExpression_zero_or_one"
-      ]
-    ]
-  },
-  {
-    "name": "%%createTable105108",
     "bnf": [
       [
         "LIKE_SYMBOL",
@@ -1825,7 +1804,7 @@
     ]
   },
   {
-    "name": "%%createTable105109",
+    "name": "%%createTable105107",
     "bnf": [
       [
         "OPEN_PAR_SYMBOL",
@@ -1836,16 +1815,37 @@
     ]
   },
   {
+    "name": "%%%createTable105108109",
+    "bnf": [
+      [
+        "OPEN_PAR_SYMBOL",
+        "tableElementList",
+        "CLOSE_PAR_SYMBOL"
+      ]
+    ]
+  },
+  {
+    "name": "%%createTable105108",
+    "bnf": [
+      [
+        "%%%createTable105108109_zero_or_one",
+        "createTableOptions_zero_or_one",
+        "partitionClause_zero_or_one",
+        "duplicateAsQueryExpression_zero_or_one"
+      ]
+    ]
+  },
+  {
     "name": "%createTable105",
     "bnf": [
       [
         "%%createTable105106"
       ],
       [
-        "%%createTable105108"
+        "%%createTable105107"
       ],
       [
-        "%%createTable105109"
+        "%%createTable105108"
       ]
     ]
   },
@@ -1857,7 +1857,7 @@
         "TABLE_SYMBOL",
         "ifNotExists_zero_or_one",
         "tableName",
-        "%createTable105"
+        "%createTable1132"
       ]
     ]
   },
@@ -22308,6 +22308,61 @@
     ]
   },
   {
+    "name": "%%createTable11321133",
+    "bnf": [
+      [
+        "LIKE_SYMBOL",
+        "tableRef"
+      ]
+    ]
+  },
+  {
+    "name": "%%createTable11321134",
+    "bnf": [
+      [
+        "OPEN_PAR_SYMBOL",
+        "LIKE_SYMBOL",
+        "tableRef",
+        "CLOSE_PAR_SYMBOL"
+      ]
+    ]
+  },
+  {
+    "name": "%%%createTable113211351136",
+    "bnf": [
+      [
+        "OPEN_PAR_SYMBOL",
+        "tableElementList",
+        "CLOSE_PAR_SYMBOL"
+      ]
+    ]
+  },
+  {
+    "name": "%%createTable11321135",
+    "bnf": [
+      [
+        "%%%createTable113211351136_zero_or_one",
+        "createTableOptions_zero_or_one",
+        "partitionClause_zero_or_one",
+        "duplicateAsQueryExpression_zero_or_one"
+      ]
+    ]
+  },
+  {
+    "name": "%createTable1132",
+    "bnf": [
+      [
+        "%%createTable11321133"
+      ],
+      [
+        "%%createTable11321134"
+      ],
+      [
+        "%%createTable11321135"
+      ]
+    ]
+  },
+  {
     "name": "expr",
     "bnf": [
       [
@@ -22317,7 +22372,7 @@
     ]
   },
   {
-    "name": "%%%%expr_simple113211331134",
+    "name": "%%%%expr_simple113711381139",
     "bnf": [
       [
         "TRUE_SYMBOL"
@@ -22331,26 +22386,26 @@
     ]
   },
   {
-    "name": "%%%expr_simple11321133",
+    "name": "%%%expr_simple11371138",
     "bnf": [
       [
         "IS_SYMBOL",
         "notRule_zero_or_one",
-        "%%%%expr_simple113211331134"
+        "%%%%expr_simple113711381139"
       ]
     ]
   },
   {
-    "name": "%%expr_simple1132",
+    "name": "%%expr_simple1137",
     "bnf": [
       [
         "boolPri",
-        "%%%expr_simple11321133_zero_or_one"
+        "%%%expr_simple11371138_zero_or_one"
       ]
     ]
   },
   {
-    "name": "%%expr_simple1135",
+    "name": "%%expr_simple1140",
     "bnf": [
       [
         "NOT_SYMBOL",
@@ -22362,15 +22417,15 @@
     "name": "%expr_simple",
     "bnf": [
       [
-        "%%expr_simple1132"
+        "%%expr_simple1137"
       ],
       [
-        "%%expr_simple1135"
+        "%%expr_simple1140"
       ]
     ]
   },
   {
-    "name": "%%%expr_rr11361137",
+    "name": "%%%expr_rr11411142",
     "bnf": [
       [
         "AND_SYMBOL"
@@ -22381,16 +22436,16 @@
     ]
   },
   {
-    "name": "%%expr_rr1136",
+    "name": "%%expr_rr1141",
     "bnf": [
       [
-        "%%%expr_rr11361137",
+        "%%%expr_rr11411142",
         "expr"
       ]
     ]
   },
   {
-    "name": "%%expr_rr1138",
+    "name": "%%expr_rr1143",
     "bnf": [
       [
         "XOR_SYMBOL",
@@ -22399,7 +22454,7 @@
     ]
   },
   {
-    "name": "%%%expr_rr11391140",
+    "name": "%%%expr_rr11441145",
     "bnf": [
       [
         "OR_SYMBOL"
@@ -22410,10 +22465,10 @@
     ]
   },
   {
-    "name": "%%expr_rr1139",
+    "name": "%%expr_rr1144",
     "bnf": [
       [
-        "%%%expr_rr11391140",
+        "%%%expr_rr11441145",
         "expr"
       ]
     ]
@@ -22422,13 +22477,13 @@
     "name": "%expr_rr",
     "bnf": [
       [
-        "%%expr_rr1136"
+        "%%expr_rr1141"
       ],
       [
-        "%%expr_rr1138"
+        "%%expr_rr1143"
       ],
       [
-        "%%expr_rr1139"
+        "%%expr_rr1144"
       ]
     ]
   },
@@ -22442,7 +22497,7 @@
     ]
   },
   {
-    "name": "%%boolPri_rr1141",
+    "name": "%%boolPri_rr1146",
     "bnf": [
       [
         "IS_SYMBOL",
@@ -22452,7 +22507,7 @@
     ]
   },
   {
-    "name": "%%boolPri_rr1142",
+    "name": "%%boolPri_rr1147",
     "bnf": [
       [
         "compOp",
@@ -22461,7 +22516,7 @@
     ]
   },
   {
-    "name": "%%%boolPri_rr11431144",
+    "name": "%%%boolPri_rr11481149",
     "bnf": [
       [
         "ALL_SYMBOL"
@@ -22472,11 +22527,11 @@
     ]
   },
   {
-    "name": "%%boolPri_rr1143",
+    "name": "%%boolPri_rr1148",
     "bnf": [
       [
         "compOp",
-        "%%%boolPri_rr11431144",
+        "%%%boolPri_rr11481149",
         "subquery"
       ]
     ]
@@ -22485,18 +22540,18 @@
     "name": "%boolPri_rr",
     "bnf": [
       [
-        "%%boolPri_rr1141"
+        "%%boolPri_rr1146"
       ],
       [
-        "%%boolPri_rr1142"
+        "%%boolPri_rr1147"
       ],
       [
-        "%%boolPri_rr1143"
+        "%%boolPri_rr1148"
       ]
     ]
   },
   {
-    "name": "%%predicate11451146",
+    "name": "%%predicate11501151",
     "bnf": [
       [
         "notRule_zero_or_one",
@@ -22505,7 +22560,7 @@
     ]
   },
   {
-    "name": "%%predicate11451147",
+    "name": "%%predicate11501152",
     "bnf": [
       [
         "MEMBER_SYMBOL",
@@ -22515,7 +22570,7 @@
     ]
   },
   {
-    "name": "%%predicate11451148",
+    "name": "%%predicate11501153",
     "bnf": [
       [
         "SOUNDS_SYMBOL",
@@ -22525,16 +22580,16 @@
     ]
   },
   {
-    "name": "%predicate1145",
+    "name": "%predicate1150",
     "bnf": [
       [
-        "%%predicate11451146"
+        "%%predicate11501151"
       ],
       [
-        "%%predicate11451147"
+        "%%predicate11501152"
       ],
       [
-        "%%predicate11451148"
+        "%%predicate11501153"
       ]
     ]
   },
@@ -22543,7 +22598,7 @@
     "bnf": [
       [
         "bitExpr",
-        "%predicate1145_zero_or_one"
+        "%predicate1150_zero_or_one"
       ]
     ]
   },
@@ -22557,7 +22612,7 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1149",
+    "name": "%%bitExpr_rr1154",
     "bnf": [
       [
         "BITWISE_XOR_OPERATOR",
@@ -22566,7 +22621,7 @@
     ]
   },
   {
-    "name": "%%%bitExpr_rr11501151",
+    "name": "%%%bitExpr_rr11551156",
     "bnf": [
       [
         "MULT_OPERATOR"
@@ -22586,16 +22641,16 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1150",
+    "name": "%%bitExpr_rr1155",
     "bnf": [
       [
-        "%%%bitExpr_rr11501151",
+        "%%%bitExpr_rr11551156",
         "bitExpr"
       ]
     ]
   },
   {
-    "name": "%%%bitExpr_rr11521153",
+    "name": "%%%bitExpr_rr11571158",
     "bnf": [
       [
         "PLUS_OPERATOR"
@@ -22606,16 +22661,16 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1152",
+    "name": "%%bitExpr_rr1157",
     "bnf": [
       [
-        "%%%bitExpr_rr11521153",
+        "%%%bitExpr_rr11571158",
         "bitExpr"
       ]
     ]
   },
   {
-    "name": "%%%bitExpr_rr11541155",
+    "name": "%%%bitExpr_rr11591160",
     "bnf": [
       [
         "PLUS_OPERATOR"
@@ -22626,10 +22681,10 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1154",
+    "name": "%%bitExpr_rr1159",
     "bnf": [
       [
-        "%%%bitExpr_rr11541155",
+        "%%%bitExpr_rr11591160",
         "INTERVAL_SYMBOL",
         "expr",
         "interval"
@@ -22637,7 +22692,7 @@
     ]
   },
   {
-    "name": "%%%bitExpr_rr11561157",
+    "name": "%%%bitExpr_rr11611162",
     "bnf": [
       [
         "SHIFT_LEFT_OPERATOR"
@@ -22648,16 +22703,16 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1156",
+    "name": "%%bitExpr_rr1161",
     "bnf": [
       [
-        "%%%bitExpr_rr11561157",
+        "%%%bitExpr_rr11611162",
         "bitExpr"
       ]
     ]
   },
   {
-    "name": "%%bitExpr_rr1158",
+    "name": "%%bitExpr_rr1163",
     "bnf": [
       [
         "BITWISE_AND_OPERATOR",
@@ -22666,7 +22721,7 @@
     ]
   },
   {
-    "name": "%%bitExpr_rr1159",
+    "name": "%%bitExpr_rr1164",
     "bnf": [
       [
         "BITWISE_OR_OPERATOR",
@@ -22678,30 +22733,30 @@
     "name": "%bitExpr_rr",
     "bnf": [
       [
-        "%%bitExpr_rr1149"
-      ],
-      [
-        "%%bitExpr_rr1150"
-      ],
-      [
-        "%%bitExpr_rr1152"
-      ],
-      [
         "%%bitExpr_rr1154"
       ],
       [
-        "%%bitExpr_rr1156"
+        "%%bitExpr_rr1155"
       ],
       [
-        "%%bitExpr_rr1158"
+        "%%bitExpr_rr1157"
       ],
       [
         "%%bitExpr_rr1159"
+      ],
+      [
+        "%%bitExpr_rr1161"
+      ],
+      [
+        "%%bitExpr_rr1163"
+      ],
+      [
+        "%%bitExpr_rr1164"
       ]
     ]
   },
   {
-    "name": "%simpleExpr1160",
+    "name": "%simpleExpr1165",
     "bnf": [
       [
         "CONCAT_PIPES_SYMBOL",
@@ -22714,12 +22769,12 @@
     "bnf": [
       [
         "%simpleExpr_collate",
-        "%simpleExpr1160_zero_or_more"
+        "%simpleExpr1165_zero_or_more"
       ]
     ]
   },
   {
-    "name": "%%simpleExpr_collate1161",
+    "name": "%%simpleExpr_collate1166",
     "bnf": [
       [
         "COLLATE_SYMBOL",
@@ -22732,12 +22787,12 @@
     "bnf": [
       [
         "%simpleExpr_factored",
-        "%%simpleExpr_collate1161_zero_or_one"
+        "%%simpleExpr_collate1166_zero_or_one"
       ]
     ]
   },
   {
-    "name": "%%%simpleExpr_factored11621163",
+    "name": "%%%simpleExpr_factored11671168",
     "bnf": [
       [
         "equal",
@@ -22746,16 +22801,16 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1162",
+    "name": "%%simpleExpr_factored1167",
     "bnf": [
       [
         "variable",
-        "%%%simpleExpr_factored11621163_zero_or_one"
+        "%%%simpleExpr_factored11671168_zero_or_one"
       ]
     ]
   },
   {
-    "name": "%%simpleExpr_factored1164",
+    "name": "%%simpleExpr_factored1169",
     "bnf": [
       [
         "columnRef",
@@ -22764,7 +22819,7 @@
     ]
   },
   {
-    "name": "%%%simpleExpr_factored11651166",
+    "name": "%%%simpleExpr_factored11701171",
     "bnf": [
       [
         "PLUS_OPERATOR"
@@ -22778,16 +22833,16 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1165",
+    "name": "%%simpleExpr_factored1170",
     "bnf": [
       [
-        "%%%simpleExpr_factored11651166",
+        "%%%simpleExpr_factored11701171",
         "simpleExpr"
       ]
     ]
   },
   {
-    "name": "%%simpleExpr_factored1167",
+    "name": "%%simpleExpr_factored1172",
     "bnf": [
       [
         "not2Rule",
@@ -22796,7 +22851,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1168",
+    "name": "%%simpleExpr_factored1173",
     "bnf": [
       [
         "ROW_SYMBOL_zero_or_one",
@@ -22807,7 +22862,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1169",
+    "name": "%%simpleExpr_factored1174",
     "bnf": [
       [
         "EXISTS_SYMBOL_zero_or_one",
@@ -22816,7 +22871,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1170",
+    "name": "%%simpleExpr_factored1175",
     "bnf": [
       [
         "OPEN_CURLY_SYMBOL",
@@ -22827,7 +22882,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1171",
+    "name": "%%simpleExpr_factored1176",
     "bnf": [
       [
         "MATCH_SYMBOL",
@@ -22841,7 +22896,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1172",
+    "name": "%%simpleExpr_factored1177",
     "bnf": [
       [
         "BINARY_SYMBOL",
@@ -22850,7 +22905,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1173",
+    "name": "%%simpleExpr_factored1178",
     "bnf": [
       [
         "CAST_SYMBOL",
@@ -22864,7 +22919,7 @@
     ]
   },
   {
-    "name": "%%%simpleExpr_factored11741175",
+    "name": "%%%simpleExpr_factored11791180",
     "bnf": [
       [
         "whenExpression",
@@ -22873,19 +22928,19 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1174",
+    "name": "%%simpleExpr_factored1179",
     "bnf": [
       [
         "CASE_SYMBOL",
         "expr_zero_or_one",
-        "%%%simpleExpr_factored11741175_one_or_more",
+        "%%%simpleExpr_factored11791180_one_or_more",
         "elseExpression_zero_or_one",
         "END_SYMBOL"
       ]
     ]
   },
   {
-    "name": "%%simpleExpr_factored1176",
+    "name": "%%simpleExpr_factored1181",
     "bnf": [
       [
         "CONVERT_SYMBOL",
@@ -22898,7 +22953,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1177",
+    "name": "%%simpleExpr_factored1182",
     "bnf": [
       [
         "CONVERT_SYMBOL",
@@ -22911,7 +22966,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1178",
+    "name": "%%simpleExpr_factored1183",
     "bnf": [
       [
         "DEFAULT_SYMBOL",
@@ -22922,7 +22977,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1179",
+    "name": "%%simpleExpr_factored1184",
     "bnf": [
       [
         "VALUES_SYMBOL",
@@ -22933,7 +22988,7 @@
     ]
   },
   {
-    "name": "%%simpleExpr_factored1180",
+    "name": "%%simpleExpr_factored1185",
     "bnf": [
       [
         "INTERVAL_SYMBOL",
@@ -22951,7 +23006,7 @@
         "literal"
       ],
       [
-        "%%simpleExpr_factored1162"
+        "%%simpleExpr_factored1167"
       ],
       [
         "functionCall"
@@ -22960,7 +23015,7 @@
         "runtimeFunctionCall"
       ],
       [
-        "%%simpleExpr_factored1164"
+        "%%simpleExpr_factored1169"
       ],
       [
         "PARAM_MARKER"
@@ -22975,22 +23030,7 @@
         "windowFunctionCall"
       ],
       [
-        "%%simpleExpr_factored1165"
-      ],
-      [
-        "%%simpleExpr_factored1167"
-      ],
-      [
-        "%%simpleExpr_factored1168"
-      ],
-      [
-        "%%simpleExpr_factored1169"
-      ],
-      [
         "%%simpleExpr_factored1170"
-      ],
-      [
-        "%%simpleExpr_factored1171"
       ],
       [
         "%%simpleExpr_factored1172"
@@ -23000,6 +23040,9 @@
       ],
       [
         "%%simpleExpr_factored1174"
+      ],
+      [
+        "%%simpleExpr_factored1175"
       ],
       [
         "%%simpleExpr_factored1176"
@@ -23014,7 +23057,19 @@
         "%%simpleExpr_factored1179"
       ],
       [
-        "%%simpleExpr_factored1180"
+        "%%simpleExpr_factored1181"
+      ],
+      [
+        "%%simpleExpr_factored1182"
+      ],
+      [
+        "%%simpleExpr_factored1183"
+      ],
+      [
+        "%%simpleExpr_factored1184"
+      ],
+      [
+        "%%simpleExpr_factored1185"
       ]
     ]
   },
@@ -23617,10 +23672,10 @@
     ]
   },
   {
-    "name": "%%%createTable105106107_zero_or_one",
+    "name": "%%%createTable105108109_zero_or_one",
     "bnf": [
       [
-        "%%%createTable105106107"
+        "%%%createTable105108109"
       ],
       [
         "\u03b5"
@@ -28309,6 +28364,17 @@
     ]
   },
   {
+    "name": "%%%createTable113211351136_zero_or_one",
+    "bnf": [
+      [
+        "%%%createTable113211351136"
+      ],
+      [
+        "\u03b5"
+      ]
+    ]
+  },
+  {
     "name": "%expr_rr_zero_or_more",
     "bnf": [
       [
@@ -28324,10 +28390,10 @@
     ]
   },
   {
-    "name": "%%%expr_simple11321133_zero_or_one",
+    "name": "%%%expr_simple11371138_zero_or_one",
     "bnf": [
       [
-        "%%%expr_simple11321133"
+        "%%%expr_simple11371138"
       ],
       [
         "\u03b5"
@@ -28361,10 +28427,10 @@
     ]
   },
   {
-    "name": "%predicate1145_zero_or_one",
+    "name": "%predicate1150_zero_or_one",
     "bnf": [
       [
-        "%predicate1145"
+        "%predicate1150"
       ],
       [
         "\u03b5"
@@ -28387,25 +28453,14 @@
     ]
   },
   {
-    "name": "%simpleExpr1160_zero_or_more",
+    "name": "%simpleExpr1165_zero_or_more",
     "bnf": [
       [
-        "%simpleExpr1160",
-        "%simpleExpr1160_zero_or_more"
+        "%simpleExpr1165",
+        "%simpleExpr1165_zero_or_more"
       ],
       [
-        "%simpleExpr1160"
-      ],
-      [
-        "\u03b5"
-      ]
-    ]
-  },
-  {
-    "name": "%%simpleExpr_collate1161_zero_or_one",
-    "bnf": [
-      [
-        "%%simpleExpr_collate1161"
+        "%simpleExpr1165"
       ],
       [
         "\u03b5"
@@ -28413,10 +28468,21 @@
     ]
   },
   {
-    "name": "%%%simpleExpr_factored11621163_zero_or_one",
+    "name": "%%simpleExpr_collate1166_zero_or_one",
     "bnf": [
       [
-        "%%%simpleExpr_factored11621163"
+        "%%simpleExpr_collate1166"
+      ],
+      [
+        "\u03b5"
+      ]
+    ]
+  },
+  {
+    "name": "%%%simpleExpr_factored11671168_zero_or_one",
+    "bnf": [
+      [
+        "%%%simpleExpr_factored11671168"
       ],
       [
         "\u03b5"
@@ -28468,14 +28534,14 @@
     ]
   },
   {
-    "name": "%%%simpleExpr_factored11741175_one_or_more",
+    "name": "%%%simpleExpr_factored11791180_one_or_more",
     "bnf": [
       [
-        "%%%simpleExpr_factored11741175",
-        "%%%simpleExpr_factored11741175_one_or_more"
+        "%%%simpleExpr_factored11791180",
+        "%%%simpleExpr_factored11791180_one_or_more"
       ],
       [
-        "%%%simpleExpr_factored11741175"
+        "%%%simpleExpr_factored11791180"
       ]
     ]
   },

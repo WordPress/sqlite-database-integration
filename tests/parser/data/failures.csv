@@ -157,9 +157,6 @@ c2 INT,
 c3 INT GENERATED ALWAYS AS (c1 + c2),
 CONSTRAINT ck CHECK (c3 > 10)
 )"
-"CREATE TABLE t2 LIKE t1"
-"CREATE TEMPORARY TABLE tmp_t2 LIKE t2"
-"CREATE TABLE t3 LIKE tmp_t2"
 "CREATE TRIGGER t1_before_insert_trg BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 IF NEW.f1 = 1 THEN
@@ -228,23 +225,13 @@ SET GLOBAL validate_password.length = 60, validate_password.number_count = 50"
 SELECT COUNT(*) FROM wl12475.t1"
 "CREATE TABLE t3 (col1 INT, col2 INT GENERATED ALWAYS AS (col1) STORED)"
 "ALTER TABLE t1 ADD COLUMN f3 INT GENERATED ALWAYS AS (f1) STORED"
-"create table t1 like `a/a`"
 "select 1ea10.1a20,1e+ 1e+10 from 1ea10"
-"create table t3 like t1"
-"create table if not exists t3 like t1"
-"create temporary table t3 like t2"
-"create table mysqltest.t3 like t1"
-"create temporary table t3 like mysqltest.t3"
-"create table t2 like t3"
-"create temporary table t3 like t1"
 "create function f1() returns int
 begin
 declare res int"
 "return res"
 "end|
 create table t1 as select 1"
-"create table t1 like information_schema.processlist"
-"create temporary table t1 like information_schema.processlist"
 "CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
@@ -252,7 +239,6 @@ INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) "
 
 
 DROP TABLE t1"
-"create table t2 like t1"
 "CREATE PROCEDURE IF NOT EXISTS sp1() BEGIN END"
 "CREATE FUNCTION IF NOT EXISTS sf1() RETURNS INT DETERMINISTIC return 0"
 "CREATE FUNCTION IF NOT EXISTS abs() RETURNS INT DETERMINISTIC return 0"
@@ -322,7 +308,6 @@ connect(root_con,localhost,root,,mysql)"
 "my $c_w= grep(/Access to data dictionary table \'mysql.st_spatial_reference_systems\' is rejected/gi,<FILE>)"
 "print ""#     Data Dictionary table access error found $c_w times.\n"""
 "my $c_w= grep(/Access to data dictionary table \'mysql.tables\' is rejected/gi,<FILE>)"
-"CREATE TABLE t1 LIKE information_schema.processlist"
 "FLUSH TABLES mysql.events"
 "CREATE TABLE t1 (a1 INTEGER,
 a2 INTEGER GENERATED ALWAYS AS (a1 * 2) STORED,
@@ -374,7 +359,6 @@ perl
 "EOF
 
 CREATE SCHEMA test123"
-"CREATE TABLE t3 LIKE t1"
 "CREATE TABLE t1 (i INT, b char(255) DEFAULT (md5(i)), j INT GENERATED ALWAYS AS (i*2))"
 "CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
 d2 DOUBLE DEFAULT 0.0, c2 CHAR(255),
@@ -409,7 +393,6 @@ c TIMESTAMP GENERATED ALWAYS AS (65),
 UNIQUE KEY (a, b),
 UNIQUE KEY (c, a)
 )"
-"CREATE TABLE testdb.l1 LIKE testdb.t1"
 "my $logf= $ENV{'LOGF'} or die ""LOGF not set"""
 "open(FILE, ""$logf"") or die(""Unable to open $logf: $!\n"")"
 "my $count_warnings= grep(/\[Warning\] \[[^]]*\] \[[^]]*\] The syntax 'plugin-validate-password-length' is deprecated and will be removed in a future release\. Please use validate-password-length instead\./gi,<FILE>)"
@@ -428,7 +411,6 @@ WHERE SUBQUERY1_t1.col_varchar_10_key <= table1.col_varchar_10_key
 )
 )
 "
-"create table t12 like t11"
 "SELECT
 /*+ SET_VAR(optimizer_switch = 'materialization=off,semijoin=off') */
 * FROM t1 AS ta, lateral (select 1 WHERE ta.a IN (SELECT b FROM t2 AS tb                WHERE tb.b >= SOME(SELECT SUM(tc.a) as sg FROM t1 as tc                                   GROUP BY tc.b                                   HAVING ta.a=tc.b))) dt"
@@ -446,7 +428,6 @@ SET GLOBAL log_error_verbosity = @old_log_error_verbosity"
 disable_result_log
 enable_query_log
 "EXPLAIN ((SELECT a FROM t ORDER BY 1 LIMIT 3) ORDER BY -a LIMIT 2) ORDER BY a"
-"CREATE TABLE t3 LIKE t2"
 "EXPLAIN
 DELETE LOW_PRIORITY QUICK IGNORE
 FROM t1 PARTITION (p1)
@@ -485,8 +466,6 @@ FOREIGN KEY (a) REFERENCES t1(a))"
 "CREATE TABLE t2(a INT, b INT GENERATED ALWAYS AS (a+1) VIRTUAL UNIQUE)"
 "CREATE TABLE t2(fld1 INT NOT NULL, fld2 INT AS (fld1) VIRTUAL, KEY(fld2),
 FOREIGN KEY(fld1) REFERENCES t1(fld1) ON UPDATE CASCADE)"
-"CREATE TABLE child2 LIKE child"
-"CREATE TABLE IF NOT EXISTS parent LIKE parent_source"
 "CREATE TABLE child (base INT, fk INT GENERATED ALWAYS AS (base+1) VIRTUAL)"
 "CREATE TABLE self (pk INT PRIMARY KEY, base INT,
 fk INT GENERATED ALWAYS AS (base+1) VIRTUAL)"
@@ -504,8 +483,6 @@ UNIQUE KEY(pk), FOREIGN KEY (fk) REFERENCES self(pk))"
 "CREATE TABLE parent0 (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
 "CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT, F3 INT AS (f1+1) VIRTUAL,
 FOREIGN KEY(f2) REFERENCES t2(f3))"
-"CREATE TABLE child_copy LIKE child"
-"CREATE TABLE parent LIKE parent_base"
 "CREATE TABLE parent (i INT, j INT,
 d INT GENERATED ALWAYS AS (i) VIRTUAL,
 e INT GENERATED ALWAYS AS (j) VIRTUAL,
@@ -796,13 +773,6 @@ boundary POLYGON)"
 "revoke all privileges on mysqltest.* from mysqltest_1@localhost"
 "revoke all on test.* from mysqltest_3@localhost"
 "revoke all on test.t1 from mysqltest_2@localhost"
-"CREATE TABLE t4 LIKE t1"
-"CREATE TABLE t5 LIKE t1"
-"CREATE TABLE t6 LIKE t1"
-"CREATE TABLE t7 LIKE t1"
-"CREATE TABLE t8 LIKE t1"
-"CREATE TABLE t9 LIKE t1"
-"CREATE TABLE t10 LIKE t1"
 "revoke ALL PRIVILEGES on t1 from grant_user@localhost"
 "revoke all on mysqltest_1.t1 from mysqltest_3@localhost"
 "revoke all on mysqltest_1.t2 from mysqltest_3@localhost"
@@ -824,14 +794,9 @@ boundary POLYGON)"
 "REVOKE ALL ON mysqltest_1.t1 FROM mysqltest_1@'127.0.0.0/255.0.0.0'"
 "revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.1'"
 "revoke all on mysqltest_1.* from mysqltest_1@'127.0.0.0/255.0.0.0'"
-"create table t1 like mysqltest_2.t1"
-"CREATE TEMPORARY TABLE t2 LIKE t1"
 "CREATE TEMPORARY TABLE t6(a INT) ENGINE = MERGE UNION = ()"
 "ALTER TABLE t6 UNION = ()"
 "ALTER TABLE mysqltest_db2.t2_2 UNION = ()"
-"create table t_select_priv like t_column_priv_only"
-"create table t_no_priv like t_column_priv_only"
-"create table test.t_duplicated like mysqltest_db1.t_select_priv"
 "flush table mysqltest_db1.t1"
 "ALTER USER user() IDENTIFIED BY 'abc'"
 "EOF
@@ -854,9 +819,6 @@ enable_connect_log
 "REVOKE ALL PRIVILEGES ON t1 FROM wl14303@localhost"
 disable_connect_log
 "REVOKE ALL PRIVILEGES ON privtest_db.t1 FROM 'privtest'@'localhost'"
-"CREATE TABLE mysql.temp_user LIKE mysql.user"
-"CREATE TABLE t100 LIKE t10"
-"CREATE TABLE t10000 LIKE t10"
 "insert into t2 select
 x3.a,  -- 3
 concat('val-', x3.a + 3*x4.a), -- 12
@@ -1276,12 +1238,6 @@ WHERE t1.f2 < t1.f2) AS dt
 ON (dt.f1 = t3.f1))
 ON (dt.f2 = t3.f2))
 WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
-"create table t4 like t3"
-"create table t5 like t4"
-"create table t6 like t5"
-"create table t7 like t6"
-"create table t3 like t2"
-"create table t3 (like t1)"
 "require Expect"
 "my $texp = new Expect()"
 $texp->raw_pty(1)
@@ -1387,8 +1343,6 @@ print ""[ FAIL ] Error while parsing the error log as a json document:\n$@\n"""
 if ( $item->{'msg'} =~ /Access denied for user \'unknown_user\'/) {
 print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'} . ""\n"""
 "print ""[ FAIL ] Offender: $line\n"""
-"create table general_log_new like general_log"
-"create table slow_log_new like slow_log"
 "FLUSH TABLE mysql.general_log"
 "FLUSH TABLE mysql.slow_log"
 "$conn_id= $ENV{'CONN_ID'}"
@@ -1403,9 +1357,6 @@ print ""[ PASS ] Expected entry found in the json error log: "" . $item->{'msg'}
 SELECT @@session.long_query_time INTO @old_long_query_time"
 "my $c_w= grep(/Different lower_case_table_names settings/gi,<FILE>)"
 "print ""#    Found lower_case_table_names error $c_w times.\n"""
-"create table t2 like T1"
-"CREATE TABLE TestTable2 LIKE TestTable1"
-"CREATE TABLE T2 LIKE T1"
 "EOF
 
 
@@ -1417,13 +1368,8 @@ set names utf8"
 
 
 drop table if exists t1Aa,t2Aa,v1Aa,v2Aa"
-"CREATE TABLE t1_new LIKE t1_src"
-"CREATE TABLE t2_new LIKE t2_src"
-"CREATE TABLE m1 LIKE t1"
 "CREATE TABLE m1(a INT) ENGINE=MERGE UNION=()"
 "ALTER TABLE m1 UNION=()"
-"CREATE TABLE t4 LIKE t3"
-"CREATE TEMPORARY TABLE t4 LIKE t3"
 "FLUSH TABLE mysql_db1.t1"
 "print FILE ""select\n"""
 "print FILE ""'a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a','a',\n"" x 3400"
@@ -1476,7 +1422,6 @@ if (!$zoneinfo_europe_path) {
 }
 
 CREATE DATABASE test_zone"
-"CREATE TABLE test.slave_master_info_backup LIKE mysql.slave_master_info"
 "[client]
 loose-database=db2
 EOF
@@ -1630,8 +1575,6 @@ use strict"
 "$texp->log_file(""$ENV{MYSQLPUMP_LOG}"", ""w"")"
 "$texp->spawn(""$ENV{MYSQLPUMP} $ENV{MYSQLPUMP_ARGS}"")"
 "REVOKE ALL PRIVILEGES ON *.* FROM user1"
-"CREATE TEMPORARY TABLE Temp3 LIKE Temp2"
-"CREATE TEMPORARY TABLE tt1 LIKE performance_schema.setup_consumers"
 "SELECT 1 WHERE 1 =
 ANY (SELECT GROUPING(a) FROM t1 GROUP BY a WITH ROLLUP)"
 "SELECT a, b, a + COALESCE(b, 0), AVG(b) OVER () FROM t1 GROUP BY a, b WITH ROLLUP"
@@ -1730,12 +1673,6 @@ PARTITION BY HASH(id) PARTITIONS 2"
 PARTITION p1 VALUES LESS THAN (256) ENGINE = InnoDB,
 PARTITION p2 VALUES LESS THAN (384) ENGINE = InnoDB,
 PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
-"CREATE TABLE tmp LIKE t"
-"CREATE TEMPORARY TABLE tmp LIKE t"
-"CREATE TABLE t LIKE tp"
-"CREATE TABLE t2 LIKE t"
-"CREATE TABLE t2 like t1"
-"CREATE TABLE t LIKE general_log"
 "DELETE FROM t1 PARTITION(subp1) WHERE b = ""REPLACEd by REPLACE"""
 "DELETE FROM t1 PARTITION (pNeg) WHERE a = -1"
 "DELETE FROM t1 PARTITION (subp1) WHERE b like '%subp1%'"
@@ -2047,7 +1984,6 @@ SELECT * FROM t1 EXCEPT    (SELECT * FROM t1 ORDER BY 1 LIMIT 3)"
 "EOF
 
 create user nonsuper@localhost"
-"CREATE TEMPORARY TABLE temp2 LIKE temp1"
 "RESET PERSIST replica_type_conversions"
 "ALTER USER u11 DEFAULT ROLE ALL"
 "ALTER USER u1@localhost DEFAULT ROLE r1,r2"
@@ -2543,7 +2479,6 @@ DELIMITER "
 "|
 
 eval CALL p1($p1_cnt)"
-"CREATE TEMPORARY TABLE t3 LIKE t1"
 "CREATE FUNCTION f1() RETURNS INT DETERMINISTIC
 BEGIN
 DECLARE a int;
