@@ -1765,10 +1765,10 @@ userFunction:
     USER_SYMBOL parentheses
 ;
 
-//createUser:
-//    CREATE_SYMBOL USER_SYMBOL ({serverVersion >= 50706}? ifNotExists | /* empty */) createUserList defaultRoleClause
-//        createUserTail
-//;
+createUser:
+    CREATE_SYMBOL USER_SYMBOL ({serverVersion >= 50706}? ifNotExists | /* empty */) createUserList defaultRoleClause
+        createUserTail
+;
 
 createUserTail:
     {serverVersion >= 50706}? requireClause? connectOptions? accountLockPasswordExpireOptions*
@@ -5035,13 +5035,6 @@ roleOrLabelKeyword:
  * This is necessary to support "t.id" in a query like "ALTER TABLE t ORDER BY t.id".
  */
 alterOrderList: qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentifier direction?)*;
-
-/*
- * Fix CREATE USER statement.
- * The original grammar contains "({serverVersion >= 50706}? ifNotExists | / * empty * /)",
- * but the optionality of "| / * empty * /" part was lost during the conversion.
- */
-createUser: CREATE_SYMBOL USER_SYMBOL ifNotExists? createUserList defaultRoleClause createUserTail;
 
 /*
  * Fix CAST(2024 AS YEAR).

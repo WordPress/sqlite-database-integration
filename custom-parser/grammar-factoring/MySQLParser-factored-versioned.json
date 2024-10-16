@@ -10184,6 +10184,9 @@
         "bnf": [
             [
                 "%xaConvert00"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
@@ -11570,6 +11573,9 @@
         "bnf": [
             [
                 "%slaveConnectionOptions00"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
@@ -12436,10 +12442,46 @@
         ]
     },
     {
+        "name": "createUser",
+        "bnf": [
+            [
+                "CREATE_SYMBOL",
+                "USER_SYMBOL",
+                "%createUser02",
+                "createUserList",
+                "defaultRoleClause",
+                "createUserTail"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 50706",
+        "name": "%createUser0200",
+        "bnf": [
+            [
+                "ifNotExists"
+            ]
+        ]
+    },
+    {
+        "name": "%createUser02",
+        "bnf": [
+            [
+                "%createUser0200"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
         "name": "createUserTail",
         "bnf": [
             [
                 "%createUserTail00"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
@@ -12496,6 +12538,9 @@
         "bnf": [
             [
                 "%defaultRoleClause00"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
@@ -15603,6 +15648,9 @@
         "bnf": [
             [
                 "%nonBlocking00"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
@@ -24202,6 +24250,9 @@
         "bnf": [
             [
                 "%createTableOption21100"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
@@ -30454,30 +30505,6 @@
                 "COMMA_SYMBOL",
                 "qualifiedIdentifier",
                 "direction_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "ifNotExists_zero_or_one",
-        "bnf": [
-            [
-                "ifNotExists"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "createUser",
-        "bnf": [
-            [
-                "CREATE_SYMBOL",
-                "USER_SYMBOL",
-                "ifNotExists_zero_or_one",
-                "createUserList",
-                "defaultRoleClause",
-                "createUserTail"
             ]
         ]
     },

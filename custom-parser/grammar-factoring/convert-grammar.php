@@ -20,12 +20,22 @@ function process_rule(string $rule) {
 
 	$parens_regex = PARENS_REGEX;
 
+	// Match empty branches in the original grammar. The equal to "ε", making the parent optional.
+	// This matches a "|" not followed by any rule, e.g. (A | B |) or (A | | B), etc.
+	$empty_branch_regex = '\|(?=\s*(?:\||\)|$))';
+
 	// extract rule branches (split by | not inside parentheses)
-	preg_match_all("/((?:[^()|]|$parens_regex)+)/", $rule, $matches);
+	preg_match_all("/((?:[^()|]|$parens_regex)+|$empty_branch_regex)/", $rule, $matches);
 	$branches = $matches[0];
 	$subrules = [];
 	foreach ($branches as $branch) {
 		$branch = trim($branch);
+
+		// empty branch equals to "ε"
+		if ($branch === '|') {
+			$subrules[] = ["ε"];
+			continue;
+		}
 
 		// extract version specifiers (like "{serverVersion >= 80000}?")
 		$versions = null;
