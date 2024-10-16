@@ -170,6 +170,9 @@ foreach (scandir($testsDir) as $i => $file) {
 	// Track whether we're inside quotes.
 	$quotes = null;
 
+	// Track whether we're inside a command body (perl, append_file, write_file), save terminator.
+	$command_body_terminator = null;
+
 	// Track whether we should skip the next query.
 	$skipNext = false;
 
@@ -178,6 +181,20 @@ foreach (scandir($testsDir) as $i => $file) {
 	$contents = utf8_encode(file_get_contents($testsDir . '/' . $file));
 	foreach (preg_split('/\R/u', $contents) as $line) {
 		$lines += 1;
+
+		// Skip command bodies for perl, append_file, and write_file commands.
+		if ($command_body_terminator) {
+			if (trim($line) === $command_body_terminator) {
+				$command_body_terminator = null;
+			}
+			continue;
+		} elseif (
+			preg_match('/^(--)?perl(\s+(?P<terminator>\w+))?/', $line, $matches)
+			|| preg_match('/^(--)?(write_file|append_file)(\s+(\S+))?(\s+(?P<terminator>\w+))?/', $line, $matches)
+		) {
+			$command_body_terminator = $matches['terminator'] ?? 'EOF';
+			continue;
+		}
 
 		// Skip queries that are expected to result in parse errors for now.
 		if (str_starts_with(strtolower($line), '--error') || str_starts_with(strtolower($line), '-- error')) {
