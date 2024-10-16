@@ -14849,6 +14849,17 @@
         ]
     },
     {
+        "name": "%histogram05_zero_or_one",
+        "bnf": [
+            [
+                "%histogram05"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
         "name": "histogram",
         "bnf": [
             [
@@ -14856,7 +14867,8 @@
                 "HISTOGRAM_SYMBOL",
                 "ON_SYMBOL",
                 "identifierList",
-                "%histogram04_zero_or_one"
+                "%histogram04_zero_or_one",
+                "%histogram05_zero_or_one"
             ],
             [
                 "DROP_SYMBOL",
@@ -14884,6 +14896,27 @@
                 "WITH_SYMBOL",
                 "INT_NUMBER",
                 "BUCKETS_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%histogram05_zero_or_one",
+        "bnf": [
+            [
+                "%histogram05"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%histogram05",
+        "bnf": [
+            [
+                "USING_SYMBOL",
+                "DATA_SYMBOL",
+                "textStringLiteral"
             ]
         ]
     },

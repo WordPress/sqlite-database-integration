@@ -2077,10 +2077,21 @@ tableAdministrationStatement:
     | type = REPAIR_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList repairType*
 ;
 
-histogram:
+/*histogram:
     UPDATE_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList (
         WITH_SYMBOL INT_NUMBER BUCKETS_SYMBOL
     )?
+    | DROP_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList
+;*/
+
+/*
+ * @FIX:
+ * Add missing optional "USING DATA 'json_data'" to UPDATE HISTOGRAM clause.
+ */
+histogram:
+    UPDATE_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList (
+        WITH_SYMBOL INT_NUMBER BUCKETS_SYMBOL
+    )? (USING_SYMBOL DATA_SYMBOL textStringLiteral)?
     | DROP_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList
 ;
 
