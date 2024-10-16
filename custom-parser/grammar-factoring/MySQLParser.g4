@@ -2,7 +2,7 @@
  * Grammar from: https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLParser.g4
  *
  * The grammar was manually fixed and factored. The original grammar is kept below in its entirety.
- * The adjusted rules were kept in place, but commented out and redefined at the end of the file.
+ * The adjusted rules were kept in place, but commented out and redefined below with manual fixes.
  */
 
 parser grammar MySQLParser;
@@ -315,6 +315,15 @@ restrict:
     identifier direction? (COMMA_SYMBOL identifier direction?)*
 ;*/
 
+/*
+ * @FIX:
+ * Fix ALTER TABLE with ORDER to use 'qualifiedIdentifier' instead of just 'identifier'.
+ * This is necessary to support "t.id" in a query like "ALTER TABLE t ORDER BY t.id".
+ */
+alterOrderList:
+    qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentifier direction?)*
+;
+
 alterAlgorithmOption:
     ALGORITHM_SYMBOL EQUAL_OPERATOR? (DEFAULT_SYMBOL | identifier)
 ;
@@ -448,6 +457,19 @@ createDatabaseOption:
     )
 ;*/
 
+/*
+ * @FIX:
+ * Fix "createTable" to solve support "LIKE tableRef" and "LIKE (tableRef)".
+ * They need to come before "tableElementList" to avoid misinterpreting "LIKE".
+ */
+createTable:
+    TEMPORARY_SYMBOL? TABLE_SYMBOL ifNotExists? tableName (
+        LIKE_SYMBOL tableRef
+        | OPEN_PAR_SYMBOL LIKE_SYMBOL tableRef CLOSE_PAR_SYMBOL
+        | (OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL)? createTableOptions? partitionClause? duplicateAsQueryExpression?
+    )
+;
+
 tableElementList:
     tableElement (COMMA_SYMBOL tableElement)*
 ;
@@ -544,6 +566,15 @@ createIndex:
     indexName (USING_SYMBOL indexType)?
     | indexName TYPE_SYMBOL indexType
 ;*/
+
+/*
+ * @FIX:
+ * Fix "indexNameAndType" to solve conflicts between "indexName USING_SYMBOL"
+ * and "indexName TYPE_SYMBOL" prefix by moving them to a single branch.
+ */
+indexNameAndType:
+    indexName? ((USING_SYMBOL | TYPE_SYMBOL) indexType)?
+;
 
 createIndexTarget:
     ON_SYMBOL tableRef keyListVariants
@@ -1141,6 +1172,23 @@ windowSpec:
 /*windowSpecDetails:
     windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause?
 ;*/
+
+/*
+ * @FIX:
+ * Rewrite "windowSpecDetails" so to keep variants with "windowName?" last.
+ * We first need to try to match the symbols as keywords, only then as identifiers.
+ * Identifiers can never take precedence over keywords in the grammar.
+ *
+ * E.g., in "OVER (ROWS UNBOUNDED PRECEDING)", the "ROWS" token needs to match as a keyword
+ * rather than as an identifier. At the same time, "OVER (ROWS PARTITION BY x)" is also valid
+ * with the "ROWS" token as an identifier.
+ */
+windowSpecDetails:
+    PARTITION_SYMBOL BY_SYMBOL orderList orderClause? windowFrameClause?
+    | (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause windowFrameClause?
+    | (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause
+    | windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause?
+;
 
 windowFrameClause:
     windowFrameUnits windowFrameExtent windowFrameExclusion?
@@ -1877,6 +1925,23 @@ renameUser:
     )
 ;*/
 
+/*
+ * @FIX:
+ * Fix "revoke" to support "REVOKE ALL ON ... FROM ...".
+ * The "(onTypeTo? FROM_SYMBOL userList)?" part was missing in the original rule.
+ */
+revoke:
+    REVOKE_SYMBOL (
+        {serverVersion >= 80000}? roleOrPrivilegesList FROM_SYMBOL userList
+        | roleOrPrivilegesList onTypeTo FROM_SYMBOL userList
+        | ALL_SYMBOL PRIVILEGES_SYMBOL? (
+            {serverVersion >= 80000}? ON_SYMBOL aclType? grantIdentifier
+            | COMMA_SYMBOL GRANT_SYMBOL OPTION_SYMBOL FROM_SYMBOL userList
+        ) (onTypeTo? FROM_SYMBOL userList)?
+        | PROXY_SYMBOL ON_SYMBOL user FROM_SYMBOL userList
+    )
+;
+
 onTypeTo: // Optional, starting with 8.0.1.
     {serverVersion < 80000}? ON_SYMBOL aclType? grantIdentifier
     | {serverVersion >= 80000}? (ON_SYMBOL aclType? grantIdentifier)?
@@ -1933,6 +1998,19 @@ roleOrPrivilege:
     | {serverVersion >= 80017}? schemaRef DOT_SYMBOL tableRef
 ;*/
 
+/*
+ * @FIX:
+ * Rewrite "grantIdentifier" to solve conflicts between "schemaRef DOT_SYMBOL tableRef"
+ * and "schemaRef DOT_SYMBOL MULT_OPERATOR". Move them to a single branch, and order
+ * "schemaRef" and "tableRef" after to preserve precedence of keywords over identifiers.
+ */
+grantIdentifier:
+    MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?
+    | schemaRef DOT_SYMBOL (MULT_OPERATOR | {serverVersion >= 80017}? tableRef)
+    | schemaRef
+    | tableRef
+;
+
 requireList:
     requireListElement (AND_SYMBOL? requireListElement)*
 ;
@@ -1980,6 +2058,24 @@ role:
     | type = OPTIMIZE_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList
     | type = REPAIR_SYMBOL noWriteToBinLog? TABLE_SYMBOL tableRefList repairType*
 ;*/
+
+/*
+ * @FIX:
+ * Fix administration statements to support both "TABLE" and "TABLES" keywords.
+ * The original rule only supported "TABLE".
+ */
+tableAdministrationStatement:
+    type = ANALYZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList (
+        {serverVersion >= 80000}? histogram
+    )?
+    | type = CHECK_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList checkOption*
+    | type = CHECKSUM_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList (
+        QUICK_SYMBOL
+        | EXTENDED_SYMBOL
+    )?
+    | type = OPTIMIZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList
+    | type = REPAIR_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList repairType*
+;
 
 histogram:
     UPDATE_SYMBOL HISTOGRAM_SYMBOL ON_SYMBOL identifierList (
@@ -2343,6 +2439,25 @@ dropResourceGroup:
     | {serverVersion >= 80011}? restartServer
 ;*/
 
+/*
+ * @FIX:
+ * Reorder "explainStatement" and "describeStatement".
+ * EXPLAIN can be followed by an identifier (matching a "describeStatement"),
+ * but identifiers can never take precedence over keywords in the grammar.
+ *
+ * E.g., in "EXPLAIN FORMAT=JSON ...", the "FORMAT" token needs to match as a keyword
+ * in the "explainStatement" rather than as an identifier in the "describeStatement".
+ * At the same time, "EXPLAIN FORMAT" is a valid "describeStatement" with the "FORMAT"
+ * token as an identifier.
+ */
+utilityStatement:
+    explainStatement
+    | describeStatement
+    | helpCommand
+    | useCommand
+    | {serverVersion >= 80011}? restartServer
+;
+
 describeStatement:
     (EXPLAIN_SYMBOL | DESCRIBE_SYMBOL | DESC_SYMBOL) tableRef (
         textString
@@ -2394,12 +2509,43 @@ restartServer:
     | expr op = (OR_SYMBOL | LOGICAL_OR_OPERATOR) expr                                 # exprOr
 ;
 
-boolPri:
+/*
+ * @FIX:
+ * Factor left recursion.
+ */
+expr: %expr_simple %expr_rr*;
+
+%expr_simple:
+    boolPri (IS_SYMBOL notRule? type = (TRUE_SYMBOL | FALSE_SYMBOL | UNKNOWN_SYMBOL))? # exprIs
+    | (NOT_SYMBOL expr)                                                                # exprNot
+;
+
+%expr_rr:
+    op = (AND_SYMBOL | LOGICAL_AND_OPERATOR) expr                                      # exprAnd
+    | XOR_SYMBOL expr                                                                  # exprXor
+    | op = (OR_SYMBOL | LOGICAL_OR_OPERATOR) expr                                      # exprOr
+;
+
+/*boolPri:
     predicate                                           # primaryExprPredicate
     | boolPri IS_SYMBOL notRule? NULL_SYMBOL            # primaryExprIsNull
     | boolPri compOp predicate                          # primaryExprCompare
     | boolPri compOp (ALL_SYMBOL | ANY_SYMBOL) subquery # primaryExprAllAny
 ;*/
+
+/*
+ * @FIX:
+ * Factor left recursion.
+ */
+boolPri:
+    predicate %boolPri_rr*
+;
+
+%boolPri_rr:
+    IS_SYMBOL notRule? NULL_SYMBOL              # primaryExprIsNull
+    | compOp predicate                          # primaryExprCompare
+    | compOp (ALL_SYMBOL | ANY_SYMBOL) subquery # primaryExprAllAny
+;
 
 compOp:
     EQUAL_OPERATOR
@@ -2411,13 +2557,13 @@ compOp:
     | NOT_EQUAL_OPERATOR
 ;
 
-/*predicate:
+predicate:
     bitExpr (
         notRule? predicateOperations
         | {serverVersion >= 80017}? MEMBER_SYMBOL OF_SYMBOL? simpleExprWithParentheses
         | SOUNDS_SYMBOL LIKE_SYMBOL bitExpr
     )?
-;*/
+;
 
 predicateOperations:
     IN_SYMBOL (subquery | OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL) # predicateExprIn
@@ -2441,9 +2587,33 @@ predicateOperations:
     | bitExpr op = (SHIFT_LEFT_OPERATOR | SHIFT_RIGHT_OPERATOR) bitExpr
     | bitExpr op = BITWISE_AND_OPERATOR bitExpr
     | bitExpr op = BITWISE_OR_OPERATOR bitExpr
+;*/
+
+/*
+ * @FIX:
+ * Factor left recursion.
+ */
+bitExpr: simpleExpr %bitExpr_rr*;
+
+bitExpr: simpleExpr %bitExpr_rr*;
+
+%bitExpr_rr:
+    op = BITWISE_XOR_OPERATOR bitExpr
+    | op = (
+        MULT_OPERATOR
+        | DIV_OPERATOR
+        | MOD_OPERATOR
+        | DIV_SYMBOL
+        | MOD_SYMBOL
+    ) bitExpr
+    | op = (PLUS_OPERATOR | MINUS_OPERATOR) bitExpr
+    | op = (PLUS_OPERATOR | MINUS_OPERATOR) INTERVAL_SYMBOL expr interval
+    | op = (SHIFT_LEFT_OPERATOR | SHIFT_RIGHT_OPERATOR) bitExpr
+    | op = BITWISE_AND_OPERATOR bitExpr
+    | op = BITWISE_OR_OPERATOR bitExpr
 ;
 
-simpleExpr:
+/*simpleExpr:
     variable (equal expr)?                                                                               # simpleExprVariable
     | columnRef jsonOperator?                                                                            # simpleExprColumnRef
     | runtimeFunctionCall                                                                                # simpleExprRuntimeFunction
@@ -2470,6 +2640,40 @@ simpleExpr:
     | VALUES_SYMBOL OPEN_PAR_SYMBOL simpleIdentifier CLOSE_PAR_SYMBOL                                    # simpleExprValues
     | INTERVAL_SYMBOL expr interval PLUS_OPERATOR expr                                                   # simpleExprInterval
 ;*/
+
+/*
+ * @FIX:
+ * Factor left recursion.
+ */
+simpleExpr: %simpleExpr_collate (CONCAT_PIPES_SYMBOL %simpleExpr_collate)*;
+
+%simpleExpr_collate: %simpleExpr_factored (COLLATE_SYMBOL textOrIdentifier)?;
+
+%simpleExpr_factored:
+    literal                                                                                              # simpleExprLiteral
+    | sumExpr                                                                                            # simpleExprSum
+    | variable (equal expr)?                                                                             # simpleExprVariable
+    | functionCall                                                                                       # simpleExprFunction
+    | runtimeFunctionCall                                                                                # simpleExprRuntimeFunction
+    | columnRef jsonOperator?                                                                            # simpleExprColumnRef
+    | PARAM_MARKER                                                                                       # simpleExprParamMarker
+    | {serverVersion >= 80000}? groupingOperation                                                        # simpleExprGroupingOperation
+    | {serverVersion >= 80000}? windowFunctionCall                                                       # simpleExprWindowingFunction
+    | op = (PLUS_OPERATOR | MINUS_OPERATOR | BITWISE_NOT_OPERATOR) simpleExpr                            # simpleExprUnary
+    | not2Rule simpleExpr                                                                                # simpleExprNot
+    | ROW_SYMBOL? OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL                                              # simpleExprList
+    | EXISTS_SYMBOL? subquery                                                                            # simpleExprSubQuery
+    | OPEN_CURLY_SYMBOL identifier expr CLOSE_CURLY_SYMBOL                                               # simpleExprOdbc
+    | MATCH_SYMBOL identListArg AGAINST_SYMBOL OPEN_PAR_SYMBOL bitExpr fulltextOptions? CLOSE_PAR_SYMBOL # simpleExprMatch
+    | BINARY_SYMBOL simpleExpr                                                                           # simpleExprBinary
+    | CAST_SYMBOL OPEN_PAR_SYMBOL expr AS_SYMBOL castType arrayCast? CLOSE_PAR_SYMBOL                    # simpleExprCast
+    | CASE_SYMBOL expr? (whenExpression thenExpression)+ elseExpression? END_SYMBOL                      # simpleExprCase
+    | CONVERT_SYMBOL OPEN_PAR_SYMBOL expr COMMA_SYMBOL castType CLOSE_PAR_SYMBOL                         # simpleExprConvert
+    | CONVERT_SYMBOL OPEN_PAR_SYMBOL expr USING_SYMBOL charsetName CLOSE_PAR_SYMBOL                      # simpleExprConvertUsing
+    | DEFAULT_SYMBOL OPEN_PAR_SYMBOL simpleIdentifier CLOSE_PAR_SYMBOL                                   # simpleExprDefault
+    | VALUES_SYMBOL OPEN_PAR_SYMBOL simpleIdentifier CLOSE_PAR_SYMBOL                                    # simpleExprValues
+    | INTERVAL_SYMBOL expr interval PLUS_OPERATOR expr                                                   # simpleExprInterval
+;
 
 arrayCast:
     {serverVersion >= 80017}? ARRAY_SYMBOL
@@ -2764,6 +2968,28 @@ elseExpression:
     | {serverVersion >= 80017}? realType
     | {serverVersion >= 80017}? FLOAT_SYMBOL standardFloatOptions?
 ;*/
+
+
+/*
+ * @FIX:
+ * Fix CAST(2024 AS YEAR).
+ * The original grammar was missing the YEAR_SYMBOL in the "castType" rule.
+ */
+castType:
+    BINARY_SYMBOL fieldLength?
+    | CHAR_SYMBOL fieldLength? charsetWithOptBinary?
+    | nchar fieldLength?
+    | SIGNED_SYMBOL INT_SYMBOL?
+    | UNSIGNED_SYMBOL INT_SYMBOL?
+    | DATE_SYMBOL
+    | TIME_SYMBOL typeDatetimePrecision?
+    | DATETIME_SYMBOL typeDatetimePrecision?
+    | DECIMAL_SYMBOL floatOptions?
+    | YEAR_SYMBOL
+    | {serverVersion >= 50708}? JSON_SYMBOL
+    | {serverVersion >= 80017}? realType
+    | {serverVersion >= 80017}? FLOAT_SYMBOL standardFloatOptions?
+;
 
 exprList:
     expr (COMMA_SYMBOL expr)*
@@ -5028,87 +5254,3 @@ roleOrLabelKeyword:
     )
     | {serverVersion >= 80014}? ADMIN_SYMBOL
 ;
-
-
-/*
- * Fix ALTER TABLE with ORDER to use 'qualifiedIdentifier' instead of just 'identifier'.
- * This is necessary to support "t.id" in a query like "ALTER TABLE t ORDER BY t.id".
- */
-alterOrderList: qualifiedIdentifier direction? (COMMA_SYMBOL qualifiedIdentifier direction?)*;
-
-/*
- * Fix CAST(2024 AS YEAR).
- * The original grammar was missing the YEAR_SYMBOL in the "castType" rule.
- */
-castType: (BINARY_SYMBOL fieldLength?) | (CHAR_SYMBOL fieldLength? charsetWithOptBinary?) | (nchar fieldLength?) | (SIGNED_SYMBOL INT_SYMBOL?) | (UNSIGNED_SYMBOL INT_SYMBOL?) | DATE_SYMBOL | (TIME_SYMBOL typeDatetimePrecision?) | (DATETIME_SYMBOL typeDatetimePrecision?) | (DECIMAL_SYMBOL floatOptions?) | JSON_SYMBOL | realType | (FLOAT_SYMBOL standardFloatOptions?) | YEAR_SYMBOL;
-
-/*
- * Reorder "explainStatement" and "describeStatement".
- * EXPLAIN can be followed by an identifier (matching a "describeStatement"),
- * but identifiers can never take precedence over keywords in the grammar.
- *
- * E.g., in "EXPLAIN FORMAT=JSON ...", the "FORMAT" token needs to match as a keyword
- * in the "explainStatement" rather than as an identifier in the "describeStatement".
- * At the same time, "EXPLAIN FORMAT" is a valid "describeStatement" with the "FORMAT"
- * token as an identifier.
- */
-utilityStatement: explainStatement | describeStatement | helpCommand | useCommand | restartServer;
-
-/*
- * Rewrite "windowSpecDetails" so to keep variants with "windowName?" last.
- * We first need to try to match the symbols as keywords, only then as identifiers.
- * Identifiers can never take precedence over keywords in the grammar.
- *
- * E.g., in "OVER (ROWS UNBOUNDED PRECEDING)", the "ROWS" token needs to match as a keyword
- * rather than as an identifier. At the same time, "OVER (ROWS PARTITION BY x)" is also valid
- * with the "ROWS" token as an identifier.
- */
-windowSpecDetails: (PARTITION_SYMBOL BY_SYMBOL orderList orderClause? windowFrameClause?) | ((PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause windowFrameClause?) | ((PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause) | (windowName? (PARTITION_SYMBOL BY_SYMBOL orderList)? orderClause? windowFrameClause?);
-
-/**
- * Rewrite "grantIdentifier" to solve conflicts between "schemaRef DOT_SYMBOL tableRef"
- * and "schemaRef DOT_SYMBOL MULT_OPERATOR". Move them to a single branch, and order
- * "schemaRef" and "tableRef" after to preserve precedence of keywords over identifiers.
- */
-grantIdentifier: (MULT_OPERATOR (DOT_SYMBOL MULT_OPERATOR)?) | (schemaRef DOT_SYMBOL (MULT_OPERATOR | tableRef)) | schemaRef | tableRef;
-
-/**
- * Fix administration statements to support both "TABLE" and "TABLES" keywords.
- * The original rule only supported "TABLE".
- */
-tableAdministrationStatement: (ANALYZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList histogram?) | (CHECK_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList checkOption*) | (CHECKSUM_SYMBOL (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList (QUICK_SYMBOL | EXTENDED_SYMBOL)?) | (OPTIMIZE_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList) | (REPAIR_SYMBOL noWriteToBinLog? (TABLE_SYMBOL | TABLES_SYMBOL) tableRefList repairType*);
-
-/**
- * Fix "indexNameAndType" to solve conflicts between "indexName USING_SYMBOL"
- * and "indexName TYPE_SYMBOL" prefix by moving them to a single branch.
- */
-indexNameAndType: indexName? ((USING_SYMBOL | TYPE_SYMBOL) indexType)?;
-
-/**
- * Fix "createTable" to solve support "LIKE tableRef" and "LIKE (tableRef)".
- * They need to come before "tableElementList" to avoid misinterpreting "LIKE".
- */
-createTable: TEMPORARY_SYMBOL? TABLE_SYMBOL ifNotExists? tableName ((LIKE_SYMBOL tableRef) | (OPEN_PAR_SYMBOL LIKE_SYMBOL tableRef CLOSE_PAR_SYMBOL) | ((OPEN_PAR_SYMBOL tableElementList CLOSE_PAR_SYMBOL)? createTableOptions? partitionClause? duplicateAsQueryExpression?));
-
-/**
- * Fix "revoke" to support "REVOKE ALL ON ... FROM ...".
- * The "(onTypeTo? FROM_SYMBOL userList)?" part was missing in the original rule.
- */
-revoke: REVOKE_SYMBOL ((roleOrPrivilegesList FROM_SYMBOL userList) | (roleOrPrivilegesList onTypeTo FROM_SYMBOL userList) | (ALL_SYMBOL PRIVILEGES_SYMBOL? ((ON_SYMBOL aclType? grantIdentifier) | (COMMA_SYMBOL GRANT_SYMBOL OPTION_SYMBOL FROM_SYMBOL userList)) (onTypeTo? FROM_SYMBOL userList)?) | (PROXY_SYMBOL ON_SYMBOL user FROM_SYMBOL userList));
-
-/* Factor left recursion. */
-expr: %expr_simple %expr_rr*;
-%expr_simple: (boolPri (IS_SYMBOL notRule? (TRUE_SYMBOL | FALSE_SYMBOL | UNKNOWN_SYMBOL))?) | (NOT_SYMBOL expr);
-%expr_rr: ((AND_SYMBOL | LOGICAL_AND_OPERATOR) expr) | (XOR_SYMBOL expr) | ((OR_SYMBOL | LOGICAL_OR_OPERATOR) expr);
-
-boolPri: predicate %boolPri_rr*;
-%boolPri_rr: (IS_SYMBOL notRule? NULL_SYMBOL) | (compOp predicate) | (compOp (ALL_SYMBOL | ANY_SYMBOL) subquery);
-
-predicate: bitExpr ((notRule? predicateOperations) | (MEMBER_SYMBOL OF_SYMBOL? simpleExprWithParentheses) | (SOUNDS_SYMBOL LIKE_SYMBOL bitExpr))?;
-
-bitExpr: simpleExpr %bitExpr_rr*;
-%bitExpr_rr: (BITWISE_XOR_OPERATOR bitExpr) | ((MULT_OPERATOR | DIV_OPERATOR | MOD_OPERATOR | DIV_SYMBOL | MOD_SYMBOL) bitExpr) | ((PLUS_OPERATOR | MINUS_OPERATOR) bitExpr) | ((PLUS_OPERATOR | MINUS_OPERATOR) INTERVAL_SYMBOL expr interval) | ((SHIFT_LEFT_OPERATOR | SHIFT_RIGHT_OPERATOR) bitExpr) | (BITWISE_AND_OPERATOR bitExpr) | (BITWISE_OR_OPERATOR bitExpr);
-
-simpleExpr: %simpleExpr_collate (CONCAT_PIPES_SYMBOL %simpleExpr_collate)*;
-%simpleExpr_collate: %simpleExpr_factored (COLLATE_SYMBOL textOrIdentifier)?;
-%simpleExpr_factored: literal | sumExpr | (variable (equal expr)?) | functionCall | runtimeFunctionCall | (columnRef jsonOperator?) | PARAM_MARKER | groupingOperation | windowFunctionCall | ((PLUS_OPERATOR | MINUS_OPERATOR | BITWISE_NOT_OPERATOR) simpleExpr) | (not2Rule simpleExpr) | (ROW_SYMBOL? OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL) | (EXISTS_SYMBOL? subquery) | (OPEN_CURLY_SYMBOL identifier expr CLOSE_CURLY_SYMBOL) | (MATCH_SYMBOL identListArg AGAINST_SYMBOL OPEN_PAR_SYMBOL bitExpr fulltextOptions? CLOSE_PAR_SYMBOL) | (BINARY_SYMBOL simpleExpr) | (CAST_SYMBOL OPEN_PAR_SYMBOL expr AS_SYMBOL castType arrayCast? CLOSE_PAR_SYMBOL) | (CASE_SYMBOL expr? (whenExpression thenExpression)+ elseExpression? END_SYMBOL) | (CONVERT_SYMBOL OPEN_PAR_SYMBOL expr COMMA_SYMBOL castType CLOSE_PAR_SYMBOL) | (CONVERT_SYMBOL OPEN_PAR_SYMBOL expr USING_SYMBOL charsetName CLOSE_PAR_SYMBOL) | (DEFAULT_SYMBOL OPEN_PAR_SYMBOL simpleIdentifier CLOSE_PAR_SYMBOL) | (VALUES_SYMBOL OPEN_PAR_SYMBOL simpleIdentifier CLOSE_PAR_SYMBOL) | (INTERVAL_SYMBOL expr interval PLUS_OPERATOR expr);

@@ -1830,6 +1830,78 @@
         ]
     },
     {
+        "name": "direction_zero_or_one",
+        "bnf": [
+            [
+                "direction"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%alterOrderList02_zero_or_more",
+        "bnf": [
+            [
+                "%alterOrderList02",
+                "%alterOrderList02_zero_or_more"
+            ],
+            [
+                "%alterOrderList02"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "alterOrderList",
+        "bnf": [
+            [
+                "qualifiedIdentifier",
+                "direction_zero_or_one",
+                "%alterOrderList02_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "direction_zero_or_one",
+        "bnf": [
+            [
+                "direction"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%alterOrderList02_zero_or_more",
+        "bnf": [
+            [
+                "%alterOrderList02",
+                "%alterOrderList02_zero_or_more"
+            ],
+            [
+                "%alterOrderList02"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%alterOrderList02",
+        "bnf": [
+            [
+                "COMMA_SYMBOL",
+                "qualifiedIdentifier",
+                "direction_zero_or_one"
+            ]
+        ]
+    },
+    {
         "name": "EQUAL_OPERATOR_zero_or_one",
         "bnf": [
             [
@@ -2661,6 +2733,126 @@
         ]
     },
     {
+        "name": "TEMPORARY_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "TEMPORARY_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "ifNotExists_zero_or_one",
+        "bnf": [
+            [
+                "ifNotExists"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "createTable",
+        "bnf": [
+            [
+                "TEMPORARY_SYMBOL_zero_or_one",
+                "TABLE_SYMBOL",
+                "ifNotExists_zero_or_one",
+                "tableName",
+                "%createTable04"
+            ]
+        ]
+    },
+    {
+        "name": "%createTable0420_zero_or_one",
+        "bnf": [
+            [
+                "%createTable0420"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%createTable0420",
+        "bnf": [
+            [
+                "OPEN_PAR_SYMBOL",
+                "tableElementList",
+                "CLOSE_PAR_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%createTable0420_zero_or_one",
+        "bnf": [
+            [
+                "%createTable0420"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "createTableOptions_zero_or_one",
+        "bnf": [
+            [
+                "createTableOptions"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "partitionClause_zero_or_one",
+        "bnf": [
+            [
+                "partitionClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "duplicateAsQueryExpression_zero_or_one",
+        "bnf": [
+            [
+                "duplicateAsQueryExpression"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%createTable04",
+        "bnf": [
+            [
+                "LIKE_SYMBOL",
+                "tableRef"
+            ],
+            [
+                "OPEN_PAR_SYMBOL",
+                "LIKE_SYMBOL",
+                "tableRef",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "%createTable0420_zero_or_one",
+                "createTableOptions_zero_or_one",
+                "partitionClause_zero_or_one",
+                "duplicateAsQueryExpression_zero_or_one"
+            ]
+        ]
+    },
+    {
         "name": "%tableElementList01_zero_or_more",
         "bnf": [
             [
@@ -3330,6 +3522,68 @@
                 "indexName",
                 "createIndexTarget",
                 "spatialIndexOption_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "indexName_zero_or_one",
+        "bnf": [
+            [
+                "indexName"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%indexNameAndType01_zero_or_one",
+        "bnf": [
+            [
+                "%indexNameAndType01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "indexNameAndType",
+        "bnf": [
+            [
+                "indexName_zero_or_one",
+                "%indexNameAndType01_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "name": "%indexNameAndType0100",
+        "bnf": [
+            [
+                "USING_SYMBOL"
+            ],
+            [
+                "TYPE_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%indexNameAndType01_zero_or_one",
+        "bnf": [
+            [
+                "%indexNameAndType01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%indexNameAndType01",
+        "bnf": [
+            [
+                "%indexNameAndType0100",
+                "indexType"
             ]
         ]
     },
@@ -7635,6 +7889,207 @@
                 "OPEN_PAR_SYMBOL",
                 "windowSpecDetails",
                 "CLOSE_PAR_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "orderClause_zero_or_one",
+        "bnf": [
+            [
+                "orderClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "windowFrameClause_zero_or_one",
+        "bnf": [
+            [
+                "windowFrameClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails10_zero_or_one",
+        "bnf": [
+            [
+                "%windowSpecDetails10"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "windowFrameClause_zero_or_one",
+        "bnf": [
+            [
+                "windowFrameClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails20_zero_or_one",
+        "bnf": [
+            [
+                "%windowSpecDetails20"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "orderClause_zero_or_one",
+        "bnf": [
+            [
+                "orderClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "windowName_zero_or_one",
+        "bnf": [
+            [
+                "windowName"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails31_zero_or_one",
+        "bnf": [
+            [
+                "%windowSpecDetails31"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "orderClause_zero_or_one",
+        "bnf": [
+            [
+                "orderClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "windowFrameClause_zero_or_one",
+        "bnf": [
+            [
+                "windowFrameClause"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "windowSpecDetails",
+        "bnf": [
+            [
+                "PARTITION_SYMBOL",
+                "BY_SYMBOL",
+                "orderList",
+                "orderClause_zero_or_one",
+                "windowFrameClause_zero_or_one"
+            ],
+            [
+                "%windowSpecDetails10_zero_or_one",
+                "orderClause",
+                "windowFrameClause_zero_or_one"
+            ],
+            [
+                "%windowSpecDetails20_zero_or_one",
+                "orderClause_zero_or_one",
+                "windowFrameClause"
+            ],
+            [
+                "windowName_zero_or_one",
+                "%windowSpecDetails31_zero_or_one",
+                "orderClause_zero_or_one",
+                "windowFrameClause_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails10_zero_or_one",
+        "bnf": [
+            [
+                "%windowSpecDetails10"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails10",
+        "bnf": [
+            [
+                "PARTITION_SYMBOL",
+                "BY_SYMBOL",
+                "orderList"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails20_zero_or_one",
+        "bnf": [
+            [
+                "%windowSpecDetails20"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails20",
+        "bnf": [
+            [
+                "PARTITION_SYMBOL",
+                "BY_SYMBOL",
+                "orderList"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails31_zero_or_one",
+        "bnf": [
+            [
+                "%windowSpecDetails31"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%windowSpecDetails31",
+        "bnf": [
+            [
+                "PARTITION_SYMBOL",
+                "BY_SYMBOL",
+                "orderList"
             ]
         ]
     },
@@ -13266,6 +13721,144 @@
         ]
     },
     {
+        "name": "revoke",
+        "bnf": [
+            [
+                "REVOKE_SYMBOL",
+                "%revoke01"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%revoke0100",
+        "bnf": [
+            [
+                "roleOrPrivilegesList",
+                "FROM_SYMBOL",
+                "userList"
+            ]
+        ]
+    },
+    {
+        "name": "aclType_zero_or_one",
+        "bnf": [
+            [
+                "aclType"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%revoke012200",
+        "bnf": [
+            [
+                "ON_SYMBOL",
+                "aclType_zero_or_one",
+                "grantIdentifier"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke0122",
+        "bnf": [
+            [
+                "%revoke012200"
+            ],
+            [
+                "COMMA_SYMBOL",
+                "GRANT_SYMBOL",
+                "OPTION_SYMBOL",
+                "FROM_SYMBOL",
+                "userList"
+            ]
+        ]
+    },
+    {
+        "name": "onTypeTo_zero_or_one",
+        "bnf": [
+            [
+                "onTypeTo"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke0123_zero_or_one",
+        "bnf": [
+            [
+                "%revoke0123"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke0123",
+        "bnf": [
+            [
+                "onTypeTo_zero_or_one",
+                "FROM_SYMBOL",
+                "userList"
+            ]
+        ]
+    },
+    {
+        "name": "PRIVILEGES_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "PRIVILEGES_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke0123_zero_or_one",
+        "bnf": [
+            [
+                "%revoke0123"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke01",
+        "bnf": [
+            [
+                "%revoke0100"
+            ],
+            [
+                "roleOrPrivilegesList",
+                "onTypeTo",
+                "FROM_SYMBOL",
+                "userList"
+            ],
+            [
+                "ALL_SYMBOL",
+                "PRIVILEGES_SYMBOL_zero_or_one",
+                "%revoke0122",
+                "%revoke0123_zero_or_one"
+            ],
+            [
+                "PROXY_SYMBOL",
+                "ON_SYMBOL",
+                "user",
+                "FROM_SYMBOL",
+                "userList"
+            ]
+        ]
+    },
+    {
         "name": "onTypeTo",
         "bnf": [
             [
@@ -13670,6 +14263,77 @@
         ]
     },
     {
+        "name": "%grantIdentifier01_zero_or_one",
+        "bnf": [
+            [
+                "%grantIdentifier01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "grantIdentifier",
+        "bnf": [
+            [
+                "MULT_OPERATOR",
+                "%grantIdentifier01_zero_or_one"
+            ],
+            [
+                "schemaRef",
+                "DOT_SYMBOL",
+                "%grantIdentifier12"
+            ],
+            [
+                "schemaRef"
+            ],
+            [
+                "tableRef"
+            ]
+        ]
+    },
+    {
+        "name": "%grantIdentifier01_zero_or_one",
+        "bnf": [
+            [
+                "%grantIdentifier01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%grantIdentifier01",
+        "bnf": [
+            [
+                "DOT_SYMBOL",
+                "MULT_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80017",
+        "name": "%grantIdentifier1210",
+        "bnf": [
+            [
+                "tableRef"
+            ]
+        ]
+    },
+    {
+        "name": "%grantIdentifier12",
+        "bnf": [
+            [
+                "MULT_OPERATOR"
+            ],
+            [
+                "%grantIdentifier1210"
+            ]
+        ]
+    },
+    {
         "name": "%requireList01_zero_or_more",
         "bnf": [
             [
@@ -13943,6 +14607,233 @@
             ],
             [
                 "AT_TEXT_SUFFIX"
+            ]
+        ]
+    },
+    {
+        "name": "noWriteToBinLog_zero_or_one",
+        "bnf": [
+            [
+                "noWriteToBinLog"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement04_zero_or_one",
+        "bnf": [
+            [
+                "%tableAdministrationStatement04"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "checkOption_zero_or_more",
+        "bnf": [
+            [
+                "checkOption",
+                "checkOption_zero_or_more"
+            ],
+            [
+                "checkOption"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement23_zero_or_one",
+        "bnf": [
+            [
+                "%tableAdministrationStatement23"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "noWriteToBinLog_zero_or_one",
+        "bnf": [
+            [
+                "noWriteToBinLog"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "noWriteToBinLog_zero_or_one",
+        "bnf": [
+            [
+                "noWriteToBinLog"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "repairType_zero_or_more",
+        "bnf": [
+            [
+                "repairType",
+                "repairType_zero_or_more"
+            ],
+            [
+                "repairType"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "tableAdministrationStatement",
+        "bnf": [
+            [
+                "ANALYZE_SYMBOL",
+                "noWriteToBinLog_zero_or_one",
+                "%tableAdministrationStatement02",
+                "tableRefList",
+                "%tableAdministrationStatement04_zero_or_one"
+            ],
+            [
+                "CHECK_SYMBOL",
+                "%tableAdministrationStatement11",
+                "tableRefList",
+                "checkOption_zero_or_more"
+            ],
+            [
+                "CHECKSUM_SYMBOL",
+                "%tableAdministrationStatement21",
+                "tableRefList",
+                "%tableAdministrationStatement23_zero_or_one"
+            ],
+            [
+                "OPTIMIZE_SYMBOL",
+                "noWriteToBinLog_zero_or_one",
+                "%tableAdministrationStatement32",
+                "tableRefList"
+            ],
+            [
+                "REPAIR_SYMBOL",
+                "noWriteToBinLog_zero_or_one",
+                "%tableAdministrationStatement42",
+                "tableRefList",
+                "repairType_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement02",
+        "bnf": [
+            [
+                "TABLE_SYMBOL"
+            ],
+            [
+                "TABLES_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%tableAdministrationStatement0400",
+        "bnf": [
+            [
+                "histogram"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement04_zero_or_one",
+        "bnf": [
+            [
+                "%tableAdministrationStatement04"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement04",
+        "bnf": [
+            [
+                "%tableAdministrationStatement0400"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement11",
+        "bnf": [
+            [
+                "TABLE_SYMBOL"
+            ],
+            [
+                "TABLES_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement21",
+        "bnf": [
+            [
+                "TABLE_SYMBOL"
+            ],
+            [
+                "TABLES_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement23_zero_or_one",
+        "bnf": [
+            [
+                "%tableAdministrationStatement23"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement23",
+        "bnf": [
+            [
+                "QUICK_SYMBOL"
+            ],
+            [
+                "EXTENDED_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement32",
+        "bnf": [
+            [
+                "TABLE_SYMBOL"
+            ],
+            [
+                "TABLES_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%tableAdministrationStatement42",
+        "bnf": [
+            [
+                "TABLE_SYMBOL"
+            ],
+            [
+                "TABLES_SYMBOL"
             ]
         ]
     },
@@ -16851,6 +17742,35 @@
         ]
     },
     {
+        "name": "utilityStatement",
+        "bnf": [
+            [
+                "explainStatement"
+            ],
+            [
+                "describeStatement"
+            ],
+            [
+                "helpCommand"
+            ],
+            [
+                "useCommand"
+            ],
+            [
+                "%utilityStatement40"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80011",
+        "name": "%utilityStatement40",
+        "bnf": [
+            [
+                "restartServer"
+            ]
+        ]
+    },
+    {
         "name": "%describeStatement02_zero_or_one",
         "bnf": [
             [
@@ -17101,6 +18021,212 @@
         ]
     },
     {
+        "name": "%expr_rr_zero_or_more",
+        "bnf": [
+            [
+                "%expr_rr",
+                "%expr_rr_zero_or_more"
+            ],
+            [
+                "%expr_rr"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "expr",
+        "bnf": [
+            [
+                "%expr_simple",
+                "%expr_rr_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_simple01_zero_or_one",
+        "bnf": [
+            [
+                "%%expr_simple01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%expr_simple",
+        "bnf": [
+            [
+                "boolPri",
+                "%%expr_simple01_zero_or_one"
+            ],
+            [
+                "%%expr_simple10"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_simple0102",
+        "bnf": [
+            [
+                "TRUE_SYMBOL"
+            ],
+            [
+                "FALSE_SYMBOL"
+            ],
+            [
+                "UNKNOWN_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "notRule_zero_or_one",
+        "bnf": [
+            [
+                "notRule"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_simple01_zero_or_one",
+        "bnf": [
+            [
+                "%%expr_simple01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_simple01",
+        "bnf": [
+            [
+                "IS_SYMBOL",
+                "notRule_zero_or_one",
+                "%%expr_simple0102"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_simple10",
+        "bnf": [
+            [
+                "NOT_SYMBOL",
+                "expr"
+            ]
+        ]
+    },
+    {
+        "name": "%expr_rr",
+        "bnf": [
+            [
+                "%%expr_rr00",
+                "expr"
+            ],
+            [
+                "XOR_SYMBOL",
+                "expr"
+            ],
+            [
+                "%%expr_rr20",
+                "expr"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_rr00",
+        "bnf": [
+            [
+                "AND_SYMBOL"
+            ],
+            [
+                "LOGICAL_AND_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%%expr_rr20",
+        "bnf": [
+            [
+                "OR_SYMBOL"
+            ],
+            [
+                "LOGICAL_OR_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%boolPri_rr_zero_or_more",
+        "bnf": [
+            [
+                "%boolPri_rr",
+                "%boolPri_rr_zero_or_more"
+            ],
+            [
+                "%boolPri_rr"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "boolPri",
+        "bnf": [
+            [
+                "predicate",
+                "%boolPri_rr_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "notRule_zero_or_one",
+        "bnf": [
+            [
+                "notRule"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%boolPri_rr",
+        "bnf": [
+            [
+                "IS_SYMBOL",
+                "notRule_zero_or_one",
+                "NULL_SYMBOL"
+            ],
+            [
+                "compOp",
+                "predicate"
+            ],
+            [
+                "compOp",
+                "%%boolPri_rr21",
+                "subquery"
+            ]
+        ]
+    },
+    {
+        "name": "%%boolPri_rr21",
+        "bnf": [
+            [
+                "ALL_SYMBOL"
+            ],
+            [
+                "ANY_SYMBOL"
+            ]
+        ]
+    },
+    {
         "name": "compOp",
         "bnf": [
             [
@@ -17123,6 +18249,87 @@
             ],
             [
                 "NOT_EQUAL_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%predicate01_zero_or_one",
+        "bnf": [
+            [
+                "%predicate01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "predicate",
+        "bnf": [
+            [
+                "bitExpr",
+                "%predicate01_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "name": "OF_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "OF_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80017",
+        "name": "%predicate0110",
+        "bnf": [
+            [
+                "MEMBER_SYMBOL",
+                "OF_SYMBOL_zero_or_one",
+                "simpleExprWithParentheses"
+            ]
+        ]
+    },
+    {
+        "name": "notRule_zero_or_one",
+        "bnf": [
+            [
+                "notRule"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%predicate01_zero_or_one",
+        "bnf": [
+            [
+                "%predicate01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%predicate01",
+        "bnf": [
+            [
+                "notRule_zero_or_one",
+                "predicateOperations"
+            ],
+            [
+                "%predicate0110"
+            ],
+            [
+                "SOUNDS_SYMBOL",
+                "LIKE_SYMBOL",
+                "bitExpr"
             ]
         ]
     },
@@ -17191,6 +18398,501 @@
             [
                 "ESCAPE_SYMBOL",
                 "simpleExpr"
+            ]
+        ]
+    },
+    {
+        "name": "%bitExpr_rr_zero_or_more",
+        "bnf": [
+            [
+                "%bitExpr_rr",
+                "%bitExpr_rr_zero_or_more"
+            ],
+            [
+                "%bitExpr_rr"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "bitExpr",
+        "bnf": [
+            [
+                "simpleExpr",
+                "%bitExpr_rr_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "%bitExpr_rr",
+        "bnf": [
+            [
+                "BITWISE_XOR_OPERATOR",
+                "bitExpr"
+            ],
+            [
+                "%%bitExpr_rr10",
+                "bitExpr"
+            ],
+            [
+                "%%bitExpr_rr20",
+                "bitExpr"
+            ],
+            [
+                "%%bitExpr_rr30",
+                "INTERVAL_SYMBOL",
+                "expr",
+                "interval"
+            ],
+            [
+                "%%bitExpr_rr40",
+                "bitExpr"
+            ],
+            [
+                "BITWISE_AND_OPERATOR",
+                "bitExpr"
+            ],
+            [
+                "BITWISE_OR_OPERATOR",
+                "bitExpr"
+            ]
+        ]
+    },
+    {
+        "name": "%%bitExpr_rr10",
+        "bnf": [
+            [
+                "MULT_OPERATOR"
+            ],
+            [
+                "DIV_OPERATOR"
+            ],
+            [
+                "MOD_OPERATOR"
+            ],
+            [
+                "DIV_SYMBOL"
+            ],
+            [
+                "MOD_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%%bitExpr_rr20",
+        "bnf": [
+            [
+                "PLUS_OPERATOR"
+            ],
+            [
+                "MINUS_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%%bitExpr_rr30",
+        "bnf": [
+            [
+                "PLUS_OPERATOR"
+            ],
+            [
+                "MINUS_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%%bitExpr_rr40",
+        "bnf": [
+            [
+                "SHIFT_LEFT_OPERATOR"
+            ],
+            [
+                "SHIFT_RIGHT_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%simpleExpr01_zero_or_more",
+        "bnf": [
+            [
+                "%simpleExpr01",
+                "%simpleExpr01_zero_or_more"
+            ],
+            [
+                "%simpleExpr01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "simpleExpr",
+        "bnf": [
+            [
+                "%simpleExpr_collate",
+                "%simpleExpr01_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "%simpleExpr01_zero_or_more",
+        "bnf": [
+            [
+                "%simpleExpr01",
+                "%simpleExpr01_zero_or_more"
+            ],
+            [
+                "%simpleExpr01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%simpleExpr01",
+        "bnf": [
+            [
+                "CONCAT_PIPES_SYMBOL",
+                "%simpleExpr_collate"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_collate01_zero_or_one",
+        "bnf": [
+            [
+                "%%simpleExpr_collate01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%simpleExpr_collate",
+        "bnf": [
+            [
+                "%simpleExpr_factored",
+                "%%simpleExpr_collate01_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_collate01_zero_or_one",
+        "bnf": [
+            [
+                "%%simpleExpr_collate01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_collate01",
+        "bnf": [
+            [
+                "COLLATE_SYMBOL",
+                "textOrIdentifier"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored21_zero_or_one",
+        "bnf": [
+            [
+                "%%simpleExpr_factored21"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "jsonOperator_zero_or_one",
+        "bnf": [
+            [
+                "jsonOperator"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "ROW_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "ROW_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "EXISTS_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "EXISTS_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "fulltextOptions_zero_or_one",
+        "bnf": [
+            [
+                "fulltextOptions"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "arrayCast_zero_or_one",
+        "bnf": [
+            [
+                "arrayCast"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "expr_zero_or_one",
+        "bnf": [
+            [
+                "expr"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored172_one_or_more",
+        "bnf": [
+            [
+                "%%simpleExpr_factored172",
+                "%%simpleExpr_factored172_one_or_more"
+            ],
+            [
+                "%%simpleExpr_factored172"
+            ]
+        ]
+    },
+    {
+        "name": "elseExpression_zero_or_one",
+        "bnf": [
+            [
+                "elseExpression"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%simpleExpr_factored",
+        "bnf": [
+            [
+                "literal"
+            ],
+            [
+                "sumExpr"
+            ],
+            [
+                "variable",
+                "%%simpleExpr_factored21_zero_or_one"
+            ],
+            [
+                "functionCall"
+            ],
+            [
+                "runtimeFunctionCall"
+            ],
+            [
+                "columnRef",
+                "jsonOperator_zero_or_one"
+            ],
+            [
+                "PARAM_MARKER"
+            ],
+            [
+                "%%simpleExpr_factored70"
+            ],
+            [
+                "%%simpleExpr_factored80"
+            ],
+            [
+                "%%simpleExpr_factored90",
+                "simpleExpr"
+            ],
+            [
+                "not2Rule",
+                "simpleExpr"
+            ],
+            [
+                "ROW_SYMBOL_zero_or_one",
+                "OPEN_PAR_SYMBOL",
+                "exprList",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "EXISTS_SYMBOL_zero_or_one",
+                "subquery"
+            ],
+            [
+                "OPEN_CURLY_SYMBOL",
+                "identifier",
+                "expr",
+                "CLOSE_CURLY_SYMBOL"
+            ],
+            [
+                "MATCH_SYMBOL",
+                "identListArg",
+                "AGAINST_SYMBOL",
+                "OPEN_PAR_SYMBOL",
+                "bitExpr",
+                "fulltextOptions_zero_or_one",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "BINARY_SYMBOL",
+                "simpleExpr"
+            ],
+            [
+                "CAST_SYMBOL",
+                "OPEN_PAR_SYMBOL",
+                "expr",
+                "AS_SYMBOL",
+                "castType",
+                "arrayCast_zero_or_one",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "CASE_SYMBOL",
+                "expr_zero_or_one",
+                "%%simpleExpr_factored172_one_or_more",
+                "elseExpression_zero_or_one",
+                "END_SYMBOL"
+            ],
+            [
+                "CONVERT_SYMBOL",
+                "OPEN_PAR_SYMBOL",
+                "expr",
+                "COMMA_SYMBOL",
+                "castType",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "CONVERT_SYMBOL",
+                "OPEN_PAR_SYMBOL",
+                "expr",
+                "USING_SYMBOL",
+                "charsetName",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "DEFAULT_SYMBOL",
+                "OPEN_PAR_SYMBOL",
+                "simpleIdentifier",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "VALUES_SYMBOL",
+                "OPEN_PAR_SYMBOL",
+                "simpleIdentifier",
+                "CLOSE_PAR_SYMBOL"
+            ],
+            [
+                "INTERVAL_SYMBOL",
+                "expr",
+                "interval",
+                "PLUS_OPERATOR",
+                "expr"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored21_zero_or_one",
+        "bnf": [
+            [
+                "%%simpleExpr_factored21"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored21",
+        "bnf": [
+            [
+                "equal",
+                "expr"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%%simpleExpr_factored70",
+        "bnf": [
+            [
+                "groupingOperation"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%%simpleExpr_factored80",
+        "bnf": [
+            [
+                "windowFunctionCall"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored90",
+        "bnf": [
+            [
+                "PLUS_OPERATOR"
+            ],
+            [
+                "MINUS_OPERATOR"
+            ],
+            [
+                "BITWISE_NOT_OPERATOR"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored172_one_or_more",
+        "bnf": [
+            [
+                "%%simpleExpr_factored172",
+                "%%simpleExpr_factored172_one_or_more"
+            ],
+            [
+                "%%simpleExpr_factored172"
+            ]
+        ]
+    },
+    {
+        "name": "%%simpleExpr_factored172",
+        "bnf": [
+            [
+                "whenExpression",
+                "thenExpression"
             ]
         ]
     },
@@ -19812,6 +21514,197 @@
             [
                 "ELSE_SYMBOL",
                 "expr"
+            ]
+        ]
+    },
+    {
+        "name": "fieldLength_zero_or_one",
+        "bnf": [
+            [
+                "fieldLength"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "fieldLength_zero_or_one",
+        "bnf": [
+            [
+                "fieldLength"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "charsetWithOptBinary_zero_or_one",
+        "bnf": [
+            [
+                "charsetWithOptBinary"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "fieldLength_zero_or_one",
+        "bnf": [
+            [
+                "fieldLength"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "INT_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "INT_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "INT_SYMBOL_zero_or_one",
+        "bnf": [
+            [
+                "INT_SYMBOL"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "typeDatetimePrecision_zero_or_one",
+        "bnf": [
+            [
+                "typeDatetimePrecision"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "typeDatetimePrecision_zero_or_one",
+        "bnf": [
+            [
+                "typeDatetimePrecision"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "floatOptions_zero_or_one",
+        "bnf": [
+            [
+                "floatOptions"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "castType",
+        "bnf": [
+            [
+                "BINARY_SYMBOL",
+                "fieldLength_zero_or_one"
+            ],
+            [
+                "CHAR_SYMBOL",
+                "fieldLength_zero_or_one",
+                "charsetWithOptBinary_zero_or_one"
+            ],
+            [
+                "nchar",
+                "fieldLength_zero_or_one"
+            ],
+            [
+                "SIGNED_SYMBOL",
+                "INT_SYMBOL_zero_or_one"
+            ],
+            [
+                "UNSIGNED_SYMBOL",
+                "INT_SYMBOL_zero_or_one"
+            ],
+            [
+                "DATE_SYMBOL"
+            ],
+            [
+                "TIME_SYMBOL",
+                "typeDatetimePrecision_zero_or_one"
+            ],
+            [
+                "DATETIME_SYMBOL",
+                "typeDatetimePrecision_zero_or_one"
+            ],
+            [
+                "DECIMAL_SYMBOL",
+                "floatOptions_zero_or_one"
+            ],
+            [
+                "YEAR_SYMBOL"
+            ],
+            [
+                "%castType100"
+            ],
+            [
+                "%castType110"
+            ],
+            [
+                "%castType120"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 50708",
+        "name": "%castType100",
+        "bnf": [
+            [
+                "JSON_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80017",
+        "name": "%castType110",
+        "bnf": [
+            [
+                "realType"
+            ]
+        ]
+    },
+    {
+        "name": "standardFloatOptions_zero_or_one",
+        "bnf": [
+            [
+                "standardFloatOptions"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80017",
+        "name": "%castType120",
+        "bnf": [
+            [
+                "FLOAT_SYMBOL",
+                "standardFloatOptions_zero_or_one"
             ]
         ]
     },
@@ -30433,2277 +32326,6 @@
         "bnf": [
             [
                 "ADMIN_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "direction_zero_or_one",
-        "bnf": [
-            [
-                "direction"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterOrderList02_zero_or_more",
-        "bnf": [
-            [
-                "%alterOrderList02",
-                "%alterOrderList02_zero_or_more"
-            ],
-            [
-                "%alterOrderList02"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "alterOrderList",
-        "bnf": [
-            [
-                "qualifiedIdentifier",
-                "direction_zero_or_one",
-                "%alterOrderList02_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "direction_zero_or_one",
-        "bnf": [
-            [
-                "direction"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterOrderList02_zero_or_more",
-        "bnf": [
-            [
-                "%alterOrderList02",
-                "%alterOrderList02_zero_or_more"
-            ],
-            [
-                "%alterOrderList02"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterOrderList02",
-        "bnf": [
-            [
-                "COMMA_SYMBOL",
-                "qualifiedIdentifier",
-                "direction_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "castType",
-        "bnf": [
-            [
-                "%castType00"
-            ],
-            [
-                "%castType10"
-            ],
-            [
-                "%castType20"
-            ],
-            [
-                "%castType30"
-            ],
-            [
-                "%castType40"
-            ],
-            [
-                "DATE_SYMBOL"
-            ],
-            [
-                "%castType60"
-            ],
-            [
-                "%castType70"
-            ],
-            [
-                "%castType80"
-            ],
-            [
-                "JSON_SYMBOL"
-            ],
-            [
-                "realType"
-            ],
-            [
-                "%castType110"
-            ],
-            [
-                "YEAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "fieldLength_zero_or_one",
-        "bnf": [
-            [
-                "fieldLength"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType00",
-        "bnf": [
-            [
-                "BINARY_SYMBOL",
-                "fieldLength_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "fieldLength_zero_or_one",
-        "bnf": [
-            [
-                "fieldLength"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "charsetWithOptBinary_zero_or_one",
-        "bnf": [
-            [
-                "charsetWithOptBinary"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType10",
-        "bnf": [
-            [
-                "CHAR_SYMBOL",
-                "fieldLength_zero_or_one",
-                "charsetWithOptBinary_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "fieldLength_zero_or_one",
-        "bnf": [
-            [
-                "fieldLength"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType20",
-        "bnf": [
-            [
-                "nchar",
-                "fieldLength_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "INT_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "INT_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType30",
-        "bnf": [
-            [
-                "SIGNED_SYMBOL",
-                "INT_SYMBOL_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "INT_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "INT_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType40",
-        "bnf": [
-            [
-                "UNSIGNED_SYMBOL",
-                "INT_SYMBOL_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "typeDatetimePrecision_zero_or_one",
-        "bnf": [
-            [
-                "typeDatetimePrecision"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType60",
-        "bnf": [
-            [
-                "TIME_SYMBOL",
-                "typeDatetimePrecision_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "typeDatetimePrecision_zero_or_one",
-        "bnf": [
-            [
-                "typeDatetimePrecision"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType70",
-        "bnf": [
-            [
-                "DATETIME_SYMBOL",
-                "typeDatetimePrecision_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "floatOptions_zero_or_one",
-        "bnf": [
-            [
-                "floatOptions"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType80",
-        "bnf": [
-            [
-                "DECIMAL_SYMBOL",
-                "floatOptions_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "standardFloatOptions_zero_or_one",
-        "bnf": [
-            [
-                "standardFloatOptions"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%castType110",
-        "bnf": [
-            [
-                "FLOAT_SYMBOL",
-                "standardFloatOptions_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "utilityStatement",
-        "bnf": [
-            [
-                "explainStatement"
-            ],
-            [
-                "describeStatement"
-            ],
-            [
-                "helpCommand"
-            ],
-            [
-                "useCommand"
-            ],
-            [
-                "restartServer"
-            ]
-        ]
-    },
-    {
-        "name": "windowSpecDetails",
-        "bnf": [
-            [
-                "%windowSpecDetails00"
-            ],
-            [
-                "%windowSpecDetails10"
-            ],
-            [
-                "%windowSpecDetails20"
-            ],
-            [
-                "%windowSpecDetails30"
-            ]
-        ]
-    },
-    {
-        "name": "orderClause_zero_or_one",
-        "bnf": [
-            [
-                "orderClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "windowFrameClause_zero_or_one",
-        "bnf": [
-            [
-                "windowFrameClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails00",
-        "bnf": [
-            [
-                "PARTITION_SYMBOL",
-                "BY_SYMBOL",
-                "orderList",
-                "orderClause_zero_or_one",
-                "windowFrameClause_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails1000_zero_or_one",
-        "bnf": [
-            [
-                "%windowSpecDetails1000"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails1000",
-        "bnf": [
-            [
-                "PARTITION_SYMBOL",
-                "BY_SYMBOL",
-                "orderList"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails1000_zero_or_one",
-        "bnf": [
-            [
-                "%windowSpecDetails1000"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "windowFrameClause_zero_or_one",
-        "bnf": [
-            [
-                "windowFrameClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails10",
-        "bnf": [
-            [
-                "%windowSpecDetails1000_zero_or_one",
-                "orderClause",
-                "windowFrameClause_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails2000_zero_or_one",
-        "bnf": [
-            [
-                "%windowSpecDetails2000"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails2000",
-        "bnf": [
-            [
-                "PARTITION_SYMBOL",
-                "BY_SYMBOL",
-                "orderList"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails2000_zero_or_one",
-        "bnf": [
-            [
-                "%windowSpecDetails2000"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "orderClause_zero_or_one",
-        "bnf": [
-            [
-                "orderClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails20",
-        "bnf": [
-            [
-                "%windowSpecDetails2000_zero_or_one",
-                "orderClause_zero_or_one",
-                "windowFrameClause"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails3001_zero_or_one",
-        "bnf": [
-            [
-                "%windowSpecDetails3001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails3001",
-        "bnf": [
-            [
-                "PARTITION_SYMBOL",
-                "BY_SYMBOL",
-                "orderList"
-            ]
-        ]
-    },
-    {
-        "name": "windowName_zero_or_one",
-        "bnf": [
-            [
-                "windowName"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails3001_zero_or_one",
-        "bnf": [
-            [
-                "%windowSpecDetails3001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "orderClause_zero_or_one",
-        "bnf": [
-            [
-                "orderClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "windowFrameClause_zero_or_one",
-        "bnf": [
-            [
-                "windowFrameClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%windowSpecDetails30",
-        "bnf": [
-            [
-                "windowName_zero_or_one",
-                "%windowSpecDetails3001_zero_or_one",
-                "orderClause_zero_or_one",
-                "windowFrameClause_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "grantIdentifier",
-        "bnf": [
-            [
-                "%grantIdentifier00"
-            ],
-            [
-                "%grantIdentifier10"
-            ],
-            [
-                "schemaRef"
-            ],
-            [
-                "tableRef"
-            ]
-        ]
-    },
-    {
-        "name": "%grantIdentifier0001_zero_or_one",
-        "bnf": [
-            [
-                "%grantIdentifier0001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%grantIdentifier0001",
-        "bnf": [
-            [
-                "DOT_SYMBOL",
-                "MULT_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%grantIdentifier0001_zero_or_one",
-        "bnf": [
-            [
-                "%grantIdentifier0001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%grantIdentifier00",
-        "bnf": [
-            [
-                "MULT_OPERATOR",
-                "%grantIdentifier0001_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%grantIdentifier1002",
-        "bnf": [
-            [
-                "MULT_OPERATOR"
-            ],
-            [
-                "tableRef"
-            ]
-        ]
-    },
-    {
-        "name": "%grantIdentifier10",
-        "bnf": [
-            [
-                "schemaRef",
-                "DOT_SYMBOL",
-                "%grantIdentifier1002"
-            ]
-        ]
-    },
-    {
-        "name": "tableAdministrationStatement",
-        "bnf": [
-            [
-                "%tableAdministrationStatement00"
-            ],
-            [
-                "%tableAdministrationStatement10"
-            ],
-            [
-                "%tableAdministrationStatement20"
-            ],
-            [
-                "%tableAdministrationStatement30"
-            ],
-            [
-                "%tableAdministrationStatement40"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement0002",
-        "bnf": [
-            [
-                "TABLE_SYMBOL"
-            ],
-            [
-                "TABLES_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "noWriteToBinLog_zero_or_one",
-        "bnf": [
-            [
-                "noWriteToBinLog"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "histogram_zero_or_one",
-        "bnf": [
-            [
-                "histogram"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement00",
-        "bnf": [
-            [
-                "ANALYZE_SYMBOL",
-                "noWriteToBinLog_zero_or_one",
-                "%tableAdministrationStatement0002",
-                "tableRefList",
-                "histogram_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement1001",
-        "bnf": [
-            [
-                "TABLE_SYMBOL"
-            ],
-            [
-                "TABLES_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "checkOption_zero_or_more",
-        "bnf": [
-            [
-                "checkOption",
-                "checkOption_zero_or_more"
-            ],
-            [
-                "checkOption"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement10",
-        "bnf": [
-            [
-                "CHECK_SYMBOL",
-                "%tableAdministrationStatement1001",
-                "tableRefList",
-                "checkOption_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement2001",
-        "bnf": [
-            [
-                "TABLE_SYMBOL"
-            ],
-            [
-                "TABLES_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement2003_zero_or_one",
-        "bnf": [
-            [
-                "%tableAdministrationStatement2003"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement2003",
-        "bnf": [
-            [
-                "QUICK_SYMBOL"
-            ],
-            [
-                "EXTENDED_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement2003_zero_or_one",
-        "bnf": [
-            [
-                "%tableAdministrationStatement2003"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement20",
-        "bnf": [
-            [
-                "CHECKSUM_SYMBOL",
-                "%tableAdministrationStatement2001",
-                "tableRefList",
-                "%tableAdministrationStatement2003_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement3002",
-        "bnf": [
-            [
-                "TABLE_SYMBOL"
-            ],
-            [
-                "TABLES_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "noWriteToBinLog_zero_or_one",
-        "bnf": [
-            [
-                "noWriteToBinLog"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement30",
-        "bnf": [
-            [
-                "OPTIMIZE_SYMBOL",
-                "noWriteToBinLog_zero_or_one",
-                "%tableAdministrationStatement3002",
-                "tableRefList"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement4002",
-        "bnf": [
-            [
-                "TABLE_SYMBOL"
-            ],
-            [
-                "TABLES_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "noWriteToBinLog_zero_or_one",
-        "bnf": [
-            [
-                "noWriteToBinLog"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "repairType_zero_or_more",
-        "bnf": [
-            [
-                "repairType",
-                "repairType_zero_or_more"
-            ],
-            [
-                "repairType"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%tableAdministrationStatement40",
-        "bnf": [
-            [
-                "REPAIR_SYMBOL",
-                "noWriteToBinLog_zero_or_one",
-                "%tableAdministrationStatement4002",
-                "tableRefList",
-                "repairType_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "indexName_zero_or_one",
-        "bnf": [
-            [
-                "indexName"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%indexNameAndType01_zero_or_one",
-        "bnf": [
-            [
-                "%indexNameAndType01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "indexNameAndType",
-        "bnf": [
-            [
-                "indexName_zero_or_one",
-                "%indexNameAndType01_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%indexNameAndType0100",
-        "bnf": [
-            [
-                "USING_SYMBOL"
-            ],
-            [
-                "TYPE_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%indexNameAndType01_zero_or_one",
-        "bnf": [
-            [
-                "%indexNameAndType01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%indexNameAndType01",
-        "bnf": [
-            [
-                "%indexNameAndType0100",
-                "indexType"
-            ]
-        ]
-    },
-    {
-        "name": "TEMPORARY_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "TEMPORARY_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "ifNotExists_zero_or_one",
-        "bnf": [
-            [
-                "ifNotExists"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "createTable",
-        "bnf": [
-            [
-                "TEMPORARY_SYMBOL_zero_or_one",
-                "TABLE_SYMBOL",
-                "ifNotExists_zero_or_one",
-                "tableName",
-                "%createTable04"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable0400",
-        "bnf": [
-            [
-                "LIKE_SYMBOL",
-                "tableRef"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable0410",
-        "bnf": [
-            [
-                "OPEN_PAR_SYMBOL",
-                "LIKE_SYMBOL",
-                "tableRef",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable042000_zero_or_one",
-        "bnf": [
-            [
-                "%createTable042000"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable042000",
-        "bnf": [
-            [
-                "OPEN_PAR_SYMBOL",
-                "tableElementList",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable042000_zero_or_one",
-        "bnf": [
-            [
-                "%createTable042000"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "createTableOptions_zero_or_one",
-        "bnf": [
-            [
-                "createTableOptions"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "partitionClause_zero_or_one",
-        "bnf": [
-            [
-                "partitionClause"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "duplicateAsQueryExpression_zero_or_one",
-        "bnf": [
-            [
-                "duplicateAsQueryExpression"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable0420",
-        "bnf": [
-            [
-                "%createTable042000_zero_or_one",
-                "createTableOptions_zero_or_one",
-                "partitionClause_zero_or_one",
-                "duplicateAsQueryExpression_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%createTable04",
-        "bnf": [
-            [
-                "%createTable0400"
-            ],
-            [
-                "%createTable0410"
-            ],
-            [
-                "%createTable0420"
-            ]
-        ]
-    },
-    {
-        "name": "revoke",
-        "bnf": [
-            [
-                "REVOKE_SYMBOL",
-                "%revoke01"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke0100",
-        "bnf": [
-            [
-                "roleOrPrivilegesList",
-                "FROM_SYMBOL",
-                "userList"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke0110",
-        "bnf": [
-            [
-                "roleOrPrivilegesList",
-                "onTypeTo",
-                "FROM_SYMBOL",
-                "userList"
-            ]
-        ]
-    },
-    {
-        "name": "aclType_zero_or_one",
-        "bnf": [
-            [
-                "aclType"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke01200200",
-        "bnf": [
-            [
-                "ON_SYMBOL",
-                "aclType_zero_or_one",
-                "grantIdentifier"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke01200210",
-        "bnf": [
-            [
-                "COMMA_SYMBOL",
-                "GRANT_SYMBOL",
-                "OPTION_SYMBOL",
-                "FROM_SYMBOL",
-                "userList"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke012002",
-        "bnf": [
-            [
-                "%revoke01200200"
-            ],
-            [
-                "%revoke01200210"
-            ]
-        ]
-    },
-    {
-        "name": "onTypeTo_zero_or_one",
-        "bnf": [
-            [
-                "onTypeTo"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke012003_zero_or_one",
-        "bnf": [
-            [
-                "%revoke012003"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke012003",
-        "bnf": [
-            [
-                "onTypeTo_zero_or_one",
-                "FROM_SYMBOL",
-                "userList"
-            ]
-        ]
-    },
-    {
-        "name": "PRIVILEGES_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "PRIVILEGES_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke012003_zero_or_one",
-        "bnf": [
-            [
-                "%revoke012003"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke0120",
-        "bnf": [
-            [
-                "ALL_SYMBOL",
-                "PRIVILEGES_SYMBOL_zero_or_one",
-                "%revoke012002",
-                "%revoke012003_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke0130",
-        "bnf": [
-            [
-                "PROXY_SYMBOL",
-                "ON_SYMBOL",
-                "user",
-                "FROM_SYMBOL",
-                "userList"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke01",
-        "bnf": [
-            [
-                "%revoke0100"
-            ],
-            [
-                "%revoke0110"
-            ],
-            [
-                "%revoke0120"
-            ],
-            [
-                "%revoke0130"
-            ]
-        ]
-    },
-    {
-        "name": "%expr_rr_zero_or_more",
-        "bnf": [
-            [
-                "%expr_rr",
-                "%expr_rr_zero_or_more"
-            ],
-            [
-                "%expr_rr"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "expr",
-        "bnf": [
-            [
-                "%expr_simple",
-                "%expr_rr_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "%expr_simple",
-        "bnf": [
-            [
-                "%%expr_simple00"
-            ],
-            [
-                "%%expr_simple10"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_simple000102",
-        "bnf": [
-            [
-                "TRUE_SYMBOL"
-            ],
-            [
-                "FALSE_SYMBOL"
-            ],
-            [
-                "UNKNOWN_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "notRule_zero_or_one",
-        "bnf": [
-            [
-                "notRule"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_simple0001_zero_or_one",
-        "bnf": [
-            [
-                "%%expr_simple0001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_simple0001",
-        "bnf": [
-            [
-                "IS_SYMBOL",
-                "notRule_zero_or_one",
-                "%%expr_simple000102"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_simple0001_zero_or_one",
-        "bnf": [
-            [
-                "%%expr_simple0001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_simple00",
-        "bnf": [
-            [
-                "boolPri",
-                "%%expr_simple0001_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_simple10",
-        "bnf": [
-            [
-                "NOT_SYMBOL",
-                "expr"
-            ]
-        ]
-    },
-    {
-        "name": "%expr_rr",
-        "bnf": [
-            [
-                "%%expr_rr00"
-            ],
-            [
-                "%%expr_rr10"
-            ],
-            [
-                "%%expr_rr20"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_rr0000",
-        "bnf": [
-            [
-                "AND_SYMBOL"
-            ],
-            [
-                "LOGICAL_AND_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_rr00",
-        "bnf": [
-            [
-                "%%expr_rr0000",
-                "expr"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_rr10",
-        "bnf": [
-            [
-                "XOR_SYMBOL",
-                "expr"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_rr2000",
-        "bnf": [
-            [
-                "OR_SYMBOL"
-            ],
-            [
-                "LOGICAL_OR_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%%expr_rr20",
-        "bnf": [
-            [
-                "%%expr_rr2000",
-                "expr"
-            ]
-        ]
-    },
-    {
-        "name": "%boolPri_rr_zero_or_more",
-        "bnf": [
-            [
-                "%boolPri_rr",
-                "%boolPri_rr_zero_or_more"
-            ],
-            [
-                "%boolPri_rr"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "boolPri",
-        "bnf": [
-            [
-                "predicate",
-                "%boolPri_rr_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "%boolPri_rr",
-        "bnf": [
-            [
-                "%%boolPri_rr00"
-            ],
-            [
-                "%%boolPri_rr10"
-            ],
-            [
-                "%%boolPri_rr20"
-            ]
-        ]
-    },
-    {
-        "name": "notRule_zero_or_one",
-        "bnf": [
-            [
-                "notRule"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%boolPri_rr00",
-        "bnf": [
-            [
-                "IS_SYMBOL",
-                "notRule_zero_or_one",
-                "NULL_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%boolPri_rr10",
-        "bnf": [
-            [
-                "compOp",
-                "predicate"
-            ]
-        ]
-    },
-    {
-        "name": "%%boolPri_rr2001",
-        "bnf": [
-            [
-                "ALL_SYMBOL"
-            ],
-            [
-                "ANY_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%boolPri_rr20",
-        "bnf": [
-            [
-                "compOp",
-                "%%boolPri_rr2001",
-                "subquery"
-            ]
-        ]
-    },
-    {
-        "name": "%predicate01_zero_or_one",
-        "bnf": [
-            [
-                "%predicate01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "predicate",
-        "bnf": [
-            [
-                "bitExpr",
-                "%predicate01_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "notRule_zero_or_one",
-        "bnf": [
-            [
-                "notRule"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%predicate0100",
-        "bnf": [
-            [
-                "notRule_zero_or_one",
-                "predicateOperations"
-            ]
-        ]
-    },
-    {
-        "name": "OF_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "OF_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%predicate0110",
-        "bnf": [
-            [
-                "MEMBER_SYMBOL",
-                "OF_SYMBOL_zero_or_one",
-                "simpleExprWithParentheses"
-            ]
-        ]
-    },
-    {
-        "name": "%predicate0120",
-        "bnf": [
-            [
-                "SOUNDS_SYMBOL",
-                "LIKE_SYMBOL",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%predicate01_zero_or_one",
-        "bnf": [
-            [
-                "%predicate01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%predicate01",
-        "bnf": [
-            [
-                "%predicate0100"
-            ],
-            [
-                "%predicate0110"
-            ],
-            [
-                "%predicate0120"
-            ]
-        ]
-    },
-    {
-        "name": "%bitExpr_rr_zero_or_more",
-        "bnf": [
-            [
-                "%bitExpr_rr",
-                "%bitExpr_rr_zero_or_more"
-            ],
-            [
-                "%bitExpr_rr"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "bitExpr",
-        "bnf": [
-            [
-                "simpleExpr",
-                "%bitExpr_rr_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "%bitExpr_rr",
-        "bnf": [
-            [
-                "%%bitExpr_rr00"
-            ],
-            [
-                "%%bitExpr_rr10"
-            ],
-            [
-                "%%bitExpr_rr20"
-            ],
-            [
-                "%%bitExpr_rr30"
-            ],
-            [
-                "%%bitExpr_rr40"
-            ],
-            [
-                "%%bitExpr_rr50"
-            ],
-            [
-                "%%bitExpr_rr60"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr00",
-        "bnf": [
-            [
-                "BITWISE_XOR_OPERATOR",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr1000",
-        "bnf": [
-            [
-                "MULT_OPERATOR"
-            ],
-            [
-                "DIV_OPERATOR"
-            ],
-            [
-                "MOD_OPERATOR"
-            ],
-            [
-                "DIV_SYMBOL"
-            ],
-            [
-                "MOD_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr10",
-        "bnf": [
-            [
-                "%%bitExpr_rr1000",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr2000",
-        "bnf": [
-            [
-                "PLUS_OPERATOR"
-            ],
-            [
-                "MINUS_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr20",
-        "bnf": [
-            [
-                "%%bitExpr_rr2000",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr3000",
-        "bnf": [
-            [
-                "PLUS_OPERATOR"
-            ],
-            [
-                "MINUS_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr30",
-        "bnf": [
-            [
-                "%%bitExpr_rr3000",
-                "INTERVAL_SYMBOL",
-                "expr",
-                "interval"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr4000",
-        "bnf": [
-            [
-                "SHIFT_LEFT_OPERATOR"
-            ],
-            [
-                "SHIFT_RIGHT_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr40",
-        "bnf": [
-            [
-                "%%bitExpr_rr4000",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr50",
-        "bnf": [
-            [
-                "BITWISE_AND_OPERATOR",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%%bitExpr_rr60",
-        "bnf": [
-            [
-                "BITWISE_OR_OPERATOR",
-                "bitExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%simpleExpr01_zero_or_more",
-        "bnf": [
-            [
-                "%simpleExpr01",
-                "%simpleExpr01_zero_or_more"
-            ],
-            [
-                "%simpleExpr01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "simpleExpr",
-        "bnf": [
-            [
-                "%simpleExpr_collate",
-                "%simpleExpr01_zero_or_more"
-            ]
-        ]
-    },
-    {
-        "name": "%simpleExpr01_zero_or_more",
-        "bnf": [
-            [
-                "%simpleExpr01",
-                "%simpleExpr01_zero_or_more"
-            ],
-            [
-                "%simpleExpr01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%simpleExpr01",
-        "bnf": [
-            [
-                "CONCAT_PIPES_SYMBOL",
-                "%simpleExpr_collate"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_collate01_zero_or_one",
-        "bnf": [
-            [
-                "%%simpleExpr_collate01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%simpleExpr_collate",
-        "bnf": [
-            [
-                "%simpleExpr_factored",
-                "%%simpleExpr_collate01_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_collate01_zero_or_one",
-        "bnf": [
-            [
-                "%%simpleExpr_collate01"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_collate01",
-        "bnf": [
-            [
-                "COLLATE_SYMBOL",
-                "textOrIdentifier"
-            ]
-        ]
-    },
-    {
-        "name": "%simpleExpr_factored",
-        "bnf": [
-            [
-                "literal"
-            ],
-            [
-                "sumExpr"
-            ],
-            [
-                "%%simpleExpr_factored20"
-            ],
-            [
-                "functionCall"
-            ],
-            [
-                "runtimeFunctionCall"
-            ],
-            [
-                "%%simpleExpr_factored50"
-            ],
-            [
-                "PARAM_MARKER"
-            ],
-            [
-                "groupingOperation"
-            ],
-            [
-                "windowFunctionCall"
-            ],
-            [
-                "%%simpleExpr_factored90"
-            ],
-            [
-                "%%simpleExpr_factored100"
-            ],
-            [
-                "%%simpleExpr_factored110"
-            ],
-            [
-                "%%simpleExpr_factored120"
-            ],
-            [
-                "%%simpleExpr_factored130"
-            ],
-            [
-                "%%simpleExpr_factored140"
-            ],
-            [
-                "%%simpleExpr_factored150"
-            ],
-            [
-                "%%simpleExpr_factored160"
-            ],
-            [
-                "%%simpleExpr_factored170"
-            ],
-            [
-                "%%simpleExpr_factored180"
-            ],
-            [
-                "%%simpleExpr_factored190"
-            ],
-            [
-                "%%simpleExpr_factored200"
-            ],
-            [
-                "%%simpleExpr_factored210"
-            ],
-            [
-                "%%simpleExpr_factored220"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored2001_zero_or_one",
-        "bnf": [
-            [
-                "%%simpleExpr_factored2001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored2001",
-        "bnf": [
-            [
-                "equal",
-                "expr"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored2001_zero_or_one",
-        "bnf": [
-            [
-                "%%simpleExpr_factored2001"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored20",
-        "bnf": [
-            [
-                "variable",
-                "%%simpleExpr_factored2001_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "jsonOperator_zero_or_one",
-        "bnf": [
-            [
-                "jsonOperator"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored50",
-        "bnf": [
-            [
-                "columnRef",
-                "jsonOperator_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored9000",
-        "bnf": [
-            [
-                "PLUS_OPERATOR"
-            ],
-            [
-                "MINUS_OPERATOR"
-            ],
-            [
-                "BITWISE_NOT_OPERATOR"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored90",
-        "bnf": [
-            [
-                "%%simpleExpr_factored9000",
-                "simpleExpr"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored100",
-        "bnf": [
-            [
-                "not2Rule",
-                "simpleExpr"
-            ]
-        ]
-    },
-    {
-        "name": "ROW_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "ROW_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored110",
-        "bnf": [
-            [
-                "ROW_SYMBOL_zero_or_one",
-                "OPEN_PAR_SYMBOL",
-                "exprList",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "EXISTS_SYMBOL_zero_or_one",
-        "bnf": [
-            [
-                "EXISTS_SYMBOL"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored120",
-        "bnf": [
-            [
-                "EXISTS_SYMBOL_zero_or_one",
-                "subquery"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored130",
-        "bnf": [
-            [
-                "OPEN_CURLY_SYMBOL",
-                "identifier",
-                "expr",
-                "CLOSE_CURLY_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "fulltextOptions_zero_or_one",
-        "bnf": [
-            [
-                "fulltextOptions"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored140",
-        "bnf": [
-            [
-                "MATCH_SYMBOL",
-                "identListArg",
-                "AGAINST_SYMBOL",
-                "OPEN_PAR_SYMBOL",
-                "bitExpr",
-                "fulltextOptions_zero_or_one",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored150",
-        "bnf": [
-            [
-                "BINARY_SYMBOL",
-                "simpleExpr"
-            ]
-        ]
-    },
-    {
-        "name": "arrayCast_zero_or_one",
-        "bnf": [
-            [
-                "arrayCast"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored160",
-        "bnf": [
-            [
-                "CAST_SYMBOL",
-                "OPEN_PAR_SYMBOL",
-                "expr",
-                "AS_SYMBOL",
-                "castType",
-                "arrayCast_zero_or_one",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored17002_one_or_more",
-        "bnf": [
-            [
-                "%%simpleExpr_factored17002",
-                "%%simpleExpr_factored17002_one_or_more"
-            ],
-            [
-                "%%simpleExpr_factored17002"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored17002",
-        "bnf": [
-            [
-                "whenExpression",
-                "thenExpression"
-            ]
-        ]
-    },
-    {
-        "name": "expr_zero_or_one",
-        "bnf": [
-            [
-                "expr"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored17002_one_or_more",
-        "bnf": [
-            [
-                "%%simpleExpr_factored17002",
-                "%%simpleExpr_factored17002_one_or_more"
-            ],
-            [
-                "%%simpleExpr_factored17002"
-            ]
-        ]
-    },
-    {
-        "name": "elseExpression_zero_or_one",
-        "bnf": [
-            [
-                "elseExpression"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored170",
-        "bnf": [
-            [
-                "CASE_SYMBOL",
-                "expr_zero_or_one",
-                "%%simpleExpr_factored17002_one_or_more",
-                "elseExpression_zero_or_one",
-                "END_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored180",
-        "bnf": [
-            [
-                "CONVERT_SYMBOL",
-                "OPEN_PAR_SYMBOL",
-                "expr",
-                "COMMA_SYMBOL",
-                "castType",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored190",
-        "bnf": [
-            [
-                "CONVERT_SYMBOL",
-                "OPEN_PAR_SYMBOL",
-                "expr",
-                "USING_SYMBOL",
-                "charsetName",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored200",
-        "bnf": [
-            [
-                "DEFAULT_SYMBOL",
-                "OPEN_PAR_SYMBOL",
-                "simpleIdentifier",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored210",
-        "bnf": [
-            [
-                "VALUES_SYMBOL",
-                "OPEN_PAR_SYMBOL",
-                "simpleIdentifier",
-                "CLOSE_PAR_SYMBOL"
-            ]
-        ]
-    },
-    {
-        "name": "%%simpleExpr_factored220",
-        "bnf": [
-            [
-                "INTERVAL_SYMBOL",
-                "expr",
-                "interval",
-                "PLUS_OPERATOR",
-                "expr"
             ]
         ]
     }
