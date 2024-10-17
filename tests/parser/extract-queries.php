@@ -215,7 +215,8 @@ foreach (scandir($testsDir) as $i => $file) {
 			$char = $line[$i];
 
 			// Handle quotes.
-			if ($char === '\'' || $char === '"' || $char === '`') {
+			$is_escaped = ($line[$i - 1] ?? '') === '\\' && ($line[$i - 2] ?? '') !== '\\';
+			if (!$is_escaped && ($char === '\'' || $char === '"' || $char === '`')) {
 				if ($quotes === null) {
 					$quotes = $char; // start
 				} elseif ($quotes === $char) {
