@@ -7218,63 +7218,36 @@
         "name": "queryExpressionBody",
         "bnf": [
             [
-                "%queryExpressionBody00",
+                "queryTerm",
                 "%queryExpressionBody01_zero_or_more"
             ]
         ]
     },
     {
-        "name": "%queryExpressionBody0013",
+        "versions": "serverVersion >= 80031",
+        "name": "%queryExpressionBody010010",
         "bnf": [
             [
-                "queryPrimary"
-            ],
-            [
-                "queryExpressionParens"
+                "EXCEPT_SYMBOL"
             ]
         ]
     },
     {
-        "name": "unionOption_zero_or_one",
+        "name": "%queryExpressionBody0100",
         "bnf": [
             [
-                "unionOption"
+                "UNION_SYMBOL"
             ],
             [
-                "\u03b5"
+                "%queryExpressionBody010010"
             ]
         ]
     },
     {
-        "name": "%queryExpressionBody00",
+        "name": "setOperationOption_zero_or_one",
         "bnf": [
             [
-                "queryPrimary"
-            ],
-            [
-                "queryExpressionParens",
-                "UNION_SYMBOL",
-                "unionOption_zero_or_one",
-                "%queryExpressionBody0013"
-            ]
-        ]
-    },
-    {
-        "name": "%queryExpressionBody0102",
-        "bnf": [
-            [
-                "queryPrimary"
-            ],
-            [
-                "queryExpressionParens"
-            ]
-        ]
-    },
-    {
-        "name": "unionOption_zero_or_one",
-        "bnf": [
-            [
-                "unionOption"
+                "setOperationOption"
             ],
             [
                 "\u03b5"
@@ -7300,9 +7273,100 @@
         "name": "%queryExpressionBody01",
         "bnf": [
             [
-                "UNION_SYMBOL",
-                "unionOption_zero_or_one",
-                "%queryExpressionBody0102"
+                "%queryExpressionBody0100",
+                "setOperationOption_zero_or_one",
+                "queryTerm"
+            ]
+        ]
+    },
+    {
+        "name": "%queryTerm01_zero_or_more",
+        "bnf": [
+            [
+                "%queryTerm01",
+                "%queryTerm01_zero_or_more"
+            ],
+            [
+                "%queryTerm01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "queryTerm",
+        "bnf": [
+            [
+                "%queryTerm00",
+                "%queryTerm01_zero_or_more"
+            ]
+        ]
+    },
+    {
+        "name": "%queryTerm00",
+        "bnf": [
+            [
+                "queryPrimary"
+            ],
+            [
+                "queryExpressionParens"
+            ]
+        ]
+    },
+    {
+        "name": "%queryTerm01002",
+        "bnf": [
+            [
+                "queryPrimary"
+            ],
+            [
+                "queryExpressionParens"
+            ]
+        ]
+    },
+    {
+        "name": "setOperationOption_zero_or_one",
+        "bnf": [
+            [
+                "setOperationOption"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80031",
+        "name": "%queryTerm0100",
+        "bnf": [
+            [
+                "INTERSECT_SYMBOL",
+                "setOperationOption_zero_or_one",
+                "%queryTerm01002"
+            ]
+        ]
+    },
+    {
+        "name": "%queryTerm01_zero_or_more",
+        "bnf": [
+            [
+                "%queryTerm01",
+                "%queryTerm01_zero_or_more"
+            ],
+            [
+                "%queryTerm01"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%queryTerm01",
+        "bnf": [
+            [
+                "%queryTerm0100"
             ]
         ]
     },
@@ -9568,7 +9632,7 @@
         ]
     },
     {
-        "name": "unionOption",
+        "name": "setOperationOption",
         "bnf": [
             [
                 "DISTINCT_SYMBOL"

@@ -1086,7 +1086,7 @@ queryExpression:
     ) ({serverVersion < 80000}? procedureAnalyseClause)?
 ;
 
-queryExpressionBody:
+/*queryExpressionBody:
     (
         queryPrimary
         | queryExpressionParens UNION_SYMBOL unionOption? (
@@ -1094,6 +1094,21 @@ queryExpressionBody:
             | queryExpressionParens
         )
     ) (UNION_SYMBOL unionOption? ( queryPrimary | queryExpressionParens))*
+;*/
+
+/*
+ * @FIX:
+ * Implement missing "EXCEPT" and "INTERSECT" operators in the grammar.
+ * Note that "INTERSECT" must have a higher precedence than "UNION" and "EXCEPT",
+ * and is therefore evaluated first via "queryTerm" as per:
+ *   https://dev.mysql.com/doc/refman/8.0/en/set-operations.html
+ */
+queryExpressionBody:
+    queryTerm ((UNION_SYMBOL | {serverVersion >= 80031}? EXCEPT_SYMBOL) setOperationOption? queryTerm)*
+;
+
+queryTerm:
+		(queryPrimary | queryExpressionParens) ({serverVersion >= 80031}? INTERSECT_SYMBOL setOperationOption? (queryPrimary | queryExpressionParens))*
 ;
 
 queryExpressionParens:
@@ -1444,7 +1459,16 @@ jtOnResponse:
     | DEFAULT_SYMBOL textStringLiteral
 ;
 
-unionOption:
+/*unionOption:
+    DISTINCT_SYMBOL
+    | ALL_SYMBOL
+;*/
+
+/*
+ * @FIX:
+ * Renamed "unionOption" to "setOperationOption" as this is now used also for EXCEPT and INTERSECT.
+ */
+setOperationOption:
     DISTINCT_SYMBOL
     | ALL_SYMBOL
 ;
