@@ -23747,10 +23747,10 @@
         ]
     },
     {
-        "name": "%fieldDefinition01101_zero_or_one",
+        "name": "%fieldDefinition01001_zero_or_one",
         "bnf": [
             [
-                "%fieldDefinition01101"
+                "%fieldDefinition01001"
             ],
             [
                 "\u03b5"
@@ -23758,7 +23758,7 @@
         ]
     },
     {
-        "name": "%fieldDefinition01101",
+        "name": "%fieldDefinition01001",
         "bnf": [
             [
                 "GENERATED_SYMBOL",
@@ -23767,10 +23767,10 @@
         ]
     },
     {
-        "name": "%fieldDefinition01104_zero_or_one",
+        "name": "%fieldDefinition01004_zero_or_one",
         "bnf": [
             [
-                "%fieldDefinition01104"
+                "%fieldDefinition01004"
             ],
             [
                 "\u03b5"
@@ -23778,7 +23778,7 @@
         ]
     },
     {
-        "name": "%fieldDefinition01104",
+        "name": "%fieldDefinition01004",
         "bnf": [
             [
                 "VIRTUAL_SYMBOL"
@@ -23805,7 +23805,7 @@
     },
     {
         "versions": "serverVersion < 80000",
-        "name": "%fieldDefinition0110500",
+        "name": "%fieldDefinition0100500",
         "bnf": [
             [
                 "gcolAttribute_zero_or_more"
@@ -23829,7 +23829,7 @@
     },
     {
         "versions": "serverVersion >= 80000",
-        "name": "%fieldDefinition0110510",
+        "name": "%fieldDefinition0100510",
         "bnf": [
             [
                 "columnAttribute_zero_or_more"
@@ -23837,13 +23837,13 @@
         ]
     },
     {
-        "name": "%fieldDefinition01105",
+        "name": "%fieldDefinition01005",
         "bnf": [
             [
-                "%fieldDefinition0110500"
+                "%fieldDefinition0100500"
             ],
             [
-                "%fieldDefinition0110510"
+                "%fieldDefinition0100510"
             ]
         ]
     },
@@ -23859,10 +23859,10 @@
         ]
     },
     {
-        "name": "%fieldDefinition01101_zero_or_one",
+        "name": "%fieldDefinition01001_zero_or_one",
         "bnf": [
             [
-                "%fieldDefinition01101"
+                "%fieldDefinition01001"
             ],
             [
                 "\u03b5"
@@ -23870,10 +23870,10 @@
         ]
     },
     {
-        "name": "%fieldDefinition01104_zero_or_one",
+        "name": "%fieldDefinition01004_zero_or_one",
         "bnf": [
             [
-                "%fieldDefinition01104"
+                "%fieldDefinition01004"
             ],
             [
                 "\u03b5"
@@ -23882,15 +23882,15 @@
     },
     {
         "versions": "serverVersion >= 50707",
-        "name": "%fieldDefinition0110",
+        "name": "%fieldDefinition0100",
         "bnf": [
             [
                 "collate_zero_or_one",
-                "%fieldDefinition01101_zero_or_one",
+                "%fieldDefinition01001_zero_or_one",
                 "AS_SYMBOL",
                 "exprWithParentheses",
-                "%fieldDefinition01104_zero_or_one",
-                "%fieldDefinition01105"
+                "%fieldDefinition01004_zero_or_one",
+                "%fieldDefinition01005"
             ]
         ]
     },
@@ -23913,10 +23913,10 @@
         "name": "%fieldDefinition01",
         "bnf": [
             [
-                "columnAttribute_zero_or_more"
+                "%fieldDefinition0100"
             ],
             [
-                "%fieldDefinition0110"
+                "columnAttribute_zero_or_more"
             ]
         ]
     },

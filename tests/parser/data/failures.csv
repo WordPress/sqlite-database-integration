@@ -1,24 +1,3 @@
-"CREATE TABLE t3(a POINT GENERATED ALWAYS AS (POINT(1,1)) VIRTUAL NOT NULL)
-ENGINE=INNODB"
-"CREATE TABLE t4 (a BLOB, b BLOB GENERATED ALWAYS AS (a) VIRTUAL NOT NULL) ENGINE=INNODB"
-"CREATE TABLE t (a TIMESTAMP(1) GENERATED ALWAYS AS (1) VIRTUAL,
-b INT GENERATED ALWAYS AS (1) VIRTUAL
-) ENGINE=INNODB"
-"CREATE TABLE t_gen(a INT, b DOUBLE GENERATED ALWAYS AS (SQRT(a)))"
-"ALTER TABLE t_gen RENAME COLUMN a TO c, CHANGE COLUMN b b DOUBLE GENERATED ALWAYS AS (SQRT(c))"
-"ALTER TABLE t
-ADD COLUMN b DATE GENERATED ALWAYS AS ('1999-09-09') VIRTUAL NOT NULL"
-"ALTER TABLE t
-ADD COLUMN c DATE GENERATED ALWAYS AS ('1999-09-09') STORED NOT NULL"
-"ALTER TABLE t
-ADD COLUMN d DATE GENERATED ALWAYS AS (NULL) VIRTUAL NOT NULL"
-"CREATE TABLE t1(fld1 INT, fld2 INT GENERATED ALWAYS AS (-fld1) VIRTUAL,
-fld3 INT GENERATED ALWAYS AS (-fld1) STORED)"
-"CREATE TABLE t1(c1 int,
-c2 VARCHAR(1) CHARSET UTF8MB3,
-c3 VARCHAR(1) CHARSET UTF8MB3,
-c4 VARCHAR(2) GENERATED ALWAYS AS (CONCAT(c2,c3)) virtual)"
-"ALTER TABLE t1 ADD gcol INT AS (b + 1) VIRTUAL FIRST, ADD COLUMN a INT"
 "ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
 "ALTER TABLE t1 ALGORITHM = COPY, LOCK = SHARED, DROP PARTITION p4"
 "ALTER TABLE t1 ALGORITHM = COPY, LOCK = EXCLUSIVE, ADD PARTITION (PARTITION p4 VALUES LESS THAN (2010))"
@@ -73,11 +52,6 @@ REAP
 BEGIN
 DECLARE x INT DEFAULT 3000"
 "RESET PERSIST character_set_server"
-"CREATE TABLE t1(c1 INT,
-c2 INT,
-c3 INT GENERATED ALWAYS AS (c1 + c2),
-CONSTRAINT ck CHECK (c3 > 10)
-)"
 "CREATE TRIGGER t1_before_insert_trg BEFORE INSERT ON t1 FOR EACH ROW
 BEGIN
 IF NEW.f1 = 1 THEN
@@ -104,8 +78,6 @@ ELSEIF OLD.f1 = 6 THEN
 SET NEW.f2 = '2018-06-06 00:00:00';
 END IF;
 END;"
-"CREATE TABLE t1 (f1 INT, f2 INT, f3 INT, f4 FLOAT AS (f3 * 0.01), f5 INT,
-CHECK (f1 < f2))"
 "SELECT 1 /*!99999 /* */ */"
 "SELECT 2 /*!12345 /* */ */"
 "SELECT 3 /*! /* */ */"
@@ -142,8 +114,6 @@ SET validate_password.length = 16"
 "INSTALL COMPONENT ""file://component_validate_password""
 SET GLOBAL validate_password.length = 60, validate_password.number_count = 50"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = 12"
-"CREATE TABLE t3 (col1 INT, col2 INT GENERATED ALWAYS AS (col1) STORED)"
-"ALTER TABLE t1 ADD COLUMN f3 INT GENERATED ALWAYS AS (f1) STORED"
 "select 1ea10.1a20,1e+ 1e+10 from 1ea10"
 "create function f1() returns int
 begin
@@ -213,54 +183,9 @@ SELECT QUOTE('\')"
 "CREATE VIEW v1 AS SELECT 1 from t1
 WHERE t1.b <=> (SELECT a FROM t1 WHERE a < SOME(SELECT '1'))"
 "FLUSH TABLES mysql.events"
-"CREATE TABLE t1 (a1 INTEGER,
-a2 INTEGER GENERATED ALWAYS AS (a1 * 2) STORED,
-a3 INTEGER GENERATED ALWAYS AS (a1 * 3) VIRTUAL,
-KEY (a1) )"
-"CREATE TEMPORARY TABLE t1 (
-a INTEGER NOT NULL DEFAULT 1,
-b INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY,
-c INTEGER,
-d INTEGER GENERATED ALWAYS AS (a * 2) STORED,
-e POINT NOT NULL SRID 0,
-f CHAR(30),
-g INT,
-h TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-KEY(g), SPATIAL KEY(e), FULLTEXT(f)) engine=myisam"
-"CREATE TABLE t1 (i INT, b char(255) DEFAULT (md5(i)), j INT GENERATED ALWAYS AS (i*2))"
-"CREATE TABLE IF NOT EXISTS D1 (i2 INT DEFAULT 568447044, d1 DOUBLE,
-d2 DOUBLE DEFAULT 0.0, c2 CHAR(255),
-def2 DOUBLE DEFAULT( i2 DIV d2 ),
-v1 INT AS ( d2 = c2 % ASIN( d1 ) > i2 ) VIRTUAL)"
-"CREATE TABLE IF NOT EXISTS D1 (def2 DOUBLE DEFAULT( 100 DIV 0 ),
-v1 INT AS (1) VIRTUAL)"
-"ALTER TABLE t1 ADD COLUMN b INT DEFAULT (a), ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED"
-"ALTER TABLE t2 ADD COLUMN b INT DEFAULT (a), ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED, ALGORITHM=COPY"
-"ALTER TABLE t1 ADD COLUMN b INT DEFAULT (a),
-ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED,
-ADD COLUMN d INT DEFAULT (c),
-ADD COLUMN e INT GENERATED ALWAYS AS (-d) STORED"
-"ALTER TABLE t2 ADD COLUMN b INT DEFAULT (a),
-ADD COLUMN c INT GENERATED ALWAYS AS (-b) STORED,
-ADD COLUMN d INT DEFAULT (c),
-ADD COLUMN e INT GENERATED ALWAYS AS (-d) STORED,
-ALGORITHM=COPY"
-"CREATE TABLE t (a INT,
-b INT,
-c INT DEFAULT 77,
-d INT GENERATED ALWAYS AS (DEFAULT(c)))"
-"CREATE TABLE t (a INT,
-b INT GENERATED ALWAYS AS (a*5))"
 "CREATE TRIGGER tr1 AFTER DELETE ON t1 FOR EACH ROW
 BEGIN
 INSERT INTO t1 SELECT * FROM t1 AS A"
-"CREATE TABLE t (
-a INT,
-b INT,
-c TIMESTAMP GENERATED ALWAYS AS (65),
-UNIQUE KEY (a, b),
-UNIQUE KEY (c, a)
-)"
 "select * from (select * from t1 intersect all select * from t1 order by a,b limit 2) a"
 "select * from (select * from t1 except all select * from t1 limit 2) a"
 "SELECT  table1.col_date_key AS field1
@@ -294,42 +219,6 @@ echo
 "FLUSH LOCAL TABLES test.t1, test.t2 for ExPoRt"
 "FLUSH TABLE db1.t1 FOR EXPORT"
 "FLUSH LOCAL TABLES test.t1 FOR EXPORT"
-"CREATE TABLE t1(a INT PRIMARY KEY,
-b INT GENERATED ALWAYS AS (a+1) VIRTUAL UNIQUE)"
-"CREATE TABLE t2(a INT, b INT GENERATED ALWAYS AS (a+1) STORED UNIQUE)"
-"CREATE TABLE t3(a INT, b INT GENERATED ALWAYS AS (a+1) STORED UNIQUE,
-FOREIGN KEY (b) REFERENCES t1(a))"
-"CREATE TABLE t3(a INT, b INT GENERATED ALWAYS AS (a+1) STORED UNIQUE,
-FOREIGN KEY (a) REFERENCES t1(a))"
-"CREATE TABLE t2(a INT, b INT GENERATED ALWAYS AS (a+1) VIRTUAL UNIQUE)"
-"CREATE TABLE t2(fld1 INT NOT NULL, fld2 INT AS (fld1) VIRTUAL, KEY(fld2),
-FOREIGN KEY(fld1) REFERENCES t1(fld1) ON UPDATE CASCADE)"
-"CREATE TABLE child (base INT, fk INT GENERATED ALWAYS AS (base+1) VIRTUAL)"
-"CREATE TABLE self (pk INT PRIMARY KEY, base INT,
-fk INT GENERATED ALWAYS AS (base+1) VIRTUAL)"
-"CREATE TABLE child (base INT, fk INT GENERATED ALWAYS AS (base+1) STORED,
-FOREIGN KEY (fk) REFERENCES parent(pk))"
-"CREATE TABLE self (pk INT PRIMARY KEY, base INT,
-fk INT GENERATED ALWAYS AS (base+1) STORED,
-FOREIGN KEY (fk) REFERENCES self(pk))"
-"CREATE TABLE parent (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
-"CREATE TABLE self (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, fk INT,
-UNIQUE KEY(pk))"
-"CREATE TABLE parent (base INT, pk INT GENERATED ALWAYS AS (base+1) STORED, UNIQUE KEY(pk))"
-"CREATE TABLE self (base INT, pk INT GENERATED ALWAYS AS (base+1) STORED, fk INT,
-UNIQUE KEY(pk), FOREIGN KEY (fk) REFERENCES self(pk))"
-"CREATE TABLE parent0 (base INT, pk INT GENERATED ALWAYS AS (base+1) VIRTUAL, UNIQUE KEY(pk))"
-"CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT, F3 INT AS (f1+1) VIRTUAL,
-FOREIGN KEY(f2) REFERENCES t2(f3))"
-"CREATE TABLE parent (i INT, j INT,
-d INT GENERATED ALWAYS AS (i) VIRTUAL,
-e INT GENERATED ALWAYS AS (j) VIRTUAL,
-PRIMARY KEY (i), UNIQUE u(i,d), UNIQUE u1(i,j,e))"
-"CREATE TABLE self (i INT, j INT, i2 INT, j2 INT,
-d INT GENERATED ALWAYS AS (i) VIRTUAL,
-e INT GENERATED ALWAYS AS (j) VIRTUAL,
-PRIMARY KEY (i), UNIQUE u(i,d), UNIQUE u1(i,j,e),
-FOREIGN KEY (i2, j2) REFERENCES self (i, j))"
 "create table t1 (
 a int not null,
 b int not null references t2 (c),
@@ -349,29 +238,14 @@ JSON_SET(outr1.col_date, CONCAT('$','[',1,']','.','cdate'), '2007-07-12')
 WHERE outr1.pk <= ANY ( SELECT DISTINCT innr1.col_int_key AS y FROM bb4
 AS innr2 LEFT JOIN bb4 AS innr1 ON (innr2.col_int_key <> innr1.col_int_key)
 WHERE innr1.col_int_key= 4)"
-"CREATE TABLE t(x VARCHAR(10),
-gc INTEGER GENERATED ALWAYS AS (x LIKE 'abba' ESCAPE 'b'))"
 exit
-"CREATE TABLE t (
-a INT,
-b BLOB,
-c INT GENERATED ALWAYS AS (1) VIRTUAL,
-d INT,
-e INT GENERATED ALWAYS AS (LPAD('111', b, '1')) VIRTUAL,
-UNIQUE KEY (e),
-KEY(b(1),a,e),
-KEY(e,b(1))
-)"
 "select 1 from t1 where 1 < some (select cast(a as datetime) from t1)"
-"CREATE TABLE t1(col1 varchar(100), gcol2 binary(16) AS (uuid_to_bin(col1)) virtual, index(gcol2))"
-"CREATE TABLE t2(col1 binary(16), gcol2 varchar(36) AS (bin_to_uuid(col1)) virtual, index(col1), index(gcol2))"
 "select hex(weight_string('aa' as binary(3)))"
 "SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000)))"
 "CREATE VIEW v5 AS SELECT WEIGHT_STRING(a AS BINARY(2)) AS b FROM t1"
 "CREATE VIEW v6 AS SELECT WEIGHT_STRING(a AS BINARY(6)) AS b FROM t1"
 "SELECT HEX(WEIGHT_STRING(a AS BINARY(2))) FROM t1"
 "SELECT HEX(WEIGHT_STRING(a AS BINARY(6))) FROM t1"
-"CREATE TABLE t1 (col1 INT, col2 INT AS (col1 + col1), INDEX (col2))"
 "CREATE PROCEDURE run_show_and_i_s_stmts() BEGIN
 SHOW CREATE TABLE t1;
 SHOW COLUMNS FROM t1;
@@ -534,105 +408,16 @@ USE INDEX FOR JOIN (i2,i2)"
 (SELECT a FROM t1 USE INDEX (i2) IGNORE INDEX (i2))"
 "EXPLAIN SELECT 1 FROM t2 WHERE a IN
 (SELECT a FROM t1 USE INDEX (i2) IGNORE INDEX (i2))"
-"CREATE TABLE t1
-(
-a INT GENERATED ALWAYS AS (1) VIRTUAL,
-b INT GENERATED ALWAYS AS (a) VIRTUAL,
-c INT GENERATED ALWAYS AS (1) VIRTUAL
-)"
 "SELECT EMPNUM, GRADE*1000
 FROM HU.STAFF WHERE GRADE * 1000 >
 ANY (SELECT SUM(BUDGET) FROM HU.PROJ
 GROUP BY CITY, PTYPE
 HAVING HU.PROJ.CITY = HU.STAFF.CITY)"
-"ALTER TABLE t1 ADD COLUMN virtual_generated INT AS (col_integer + 10) VIRTUAL,
-ADD COLUMN stored_generated INT AS (col_integer + 20) STORED"
-"CREATE TABLE t1 (
-c1 int(11) DEFAULT NULL,
-c2 int(11) GENERATED ALWAYS AS ((c1 * 2)) VIRTUAL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-"CREATE TABLE foo (col1 INT,
-col2 INT AS (col1 + 1) VIRTUAL,
-col3 INT AS (col2 + 1) VIRTUAL)"
-"CREATE TABLE t1 (
-pk int(11) NOT NULL AUTO_INCREMENT,
-col_int int(11) NOT NULL,
-col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
-col_date date NOT NULL,
-col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day))
-VIRTUAL,
-col_datetime datetime NOT NULL,
-col_time time NOT NULL,
-col_datetime_key datetime GENERATED ALWAYS AS
-(addtime(col_datetime,col_time)) VIRTUAL,
-col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time))
-VIRTUAL,
-col_varchar varchar(1) NOT NULL,
-col_varchar_key varchar(2) GENERATED ALWAYS AS
-(concat(col_varchar,col_varchar)) VIRTUAL,
-PRIMARY KEY (pk),
-KEY col_date_key (col_date_key)
-) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARSET=utf8mb4"
-"CREATE TABLE t2 (
-pk int(11) NOT NULL AUTO_INCREMENT,
-col_int int(11) NOT NULL,
-col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
-col_date date NOT NULL,
-col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day))
-VIRTUAL,
-col_datetime datetime NOT NULL,
-col_time time NOT NULL,
-col_datetime_key datetime GENERATED ALWAYS AS
-(addtime(col_datetime,col_time)) VIRTUAL,
-col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time))
-VIRTUAL,
-col_varchar varchar(1) NOT NULL,
-col_varchar_key varchar(2) GENERATED ALWAYS AS
-(concat(col_varchar,col_varchar)) VIRTUAL,
-PRIMARY KEY (pk),
-KEY col_date_key (col_date_key)
-) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4"
-"CREATE TABLE t1 (
-pk int(11) NOT NULL AUTO_INCREMENT,
-col_int int(11) DEFAULT NULL,
-col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
-col_date date DEFAULT NULL,
-col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day)) VIRTUAL,
-col_datetime datetime DEFAULT NULL,
-col_time time DEFAULT NULL,
-col_datetime_key datetime GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
-col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
-col_varchar varchar(1) DEFAULT NULL,
-col_varchar_key varchar(2) GENERATED ALWAYS AS (concat(col_varchar,col_varchar)) VIRTUAL,
-PRIMARY KEY (pk),
-KEY col_date_key (col_date_key) /*!80000 INVISIBLE */
-) ENGINE=InnoDB AUTO_INCREMENT=20 DEFAULT CHARSET=utf8mb4"
-"CREATE TABLE t2 (
-pk int(11) NOT NULL AUTO_INCREMENT,
-col_int int(11) DEFAULT NULL,
-col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
-col_date date DEFAULT NULL,
-col_date_key date GENERATED ALWAYS AS ((col_date + interval 30 day)) VIRTUAL,
-col_datetime datetime DEFAULT NULL,
-col_time time DEFAULT NULL,
-col_datetime_key datetime GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
-col_time_key time GENERATED ALWAYS AS (addtime(col_datetime,col_time)) VIRTUAL,
-col_varchar varchar(1) DEFAULT NULL,
-col_varchar_key varchar(2) GENERATED ALWAYS AS (concat(col_varchar,col_varchar)) VIRTUAL,
-PRIMARY KEY (pk),
-KEY col_date_key (col_date_key)
-) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4"
 "GRANT some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 TO root@localhost"
 "GRANT u1@localhost TO some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890"
-"CREATE TABLE t1 (i INT DEFAULT 42, dt DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
-"CREATE TABLE t1(a INT,
-b INT GENERATED ALWAYS AS (-a) VIRTUAL,
-c INT GENERATED ALWAYS AS (-a) STORED)"
 "CREATE TABLE t1 (f1 INTEGER, b INTEGER AS ((1)) INVISIBLE, KEY k1(b))"
 enable_info
 disable_info
-"CREATE TABLE t1 ( a INT GENERATED ALWAYS AS (1), KEY (a) INVISIBLE )"
 "SELECT *
 FROM t1
 NATURAL JOIN (
@@ -672,40 +457,10 @@ SET @@global.log_error_services=""log_filter_dragnet"
 "ALTER TABLE m1 UNION=()"
 "FLUSH TABLE mysql_db1.t1"
 enable_warnings
-"CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
-sum INTEGER GENERATED ALWAYS AS (a+b),
-sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
-key k1(sum),
-key k2(sub)
-) engine=innodb"
-"CREATE TABLE t2 (pk INTEGER, a INTEGER, b INTEGER,
-sum INTEGER GENERATED ALWAYS AS (a+b),
-c VARCHAR(16),
-key k1(sum)
-) engine=innodb"
-"CREATE TABLE x1 (c0 BLOB AS ('a') VIRTUAL, c1 INT)"
-"CREATE TABLE x2 (c1 INT, c0 BLOB AS ('a') VIRTUAL)"
 "CREATE TABLE x3 (c0 BLOB AS ('a') VIRTUAL INVISIBLE, c1 INT)"
 "CREATE TABLE x4 (c1 INT, c0 BLOB AS ('a') VIRTUAL INVISIBLE)"
-"CREATE TABLE x5 (c0 BLOB AS ('a') STORED, c1 INT)"
-"CREATE TABLE x6 (c1 INT, c0 BLOB AS ('a') STORED)"
 "CREATE TABLE x7 (c0 BLOB AS ('a') STORED INVISIBLE, c1 INT)"
 "CREATE TABLE x8 (c1 INT, c0 BLOB AS ('a') STORED INVISIBLE)"
-"CREATE TABLE t1 (pk INTEGER, a INTEGER, b INTEGER, c VARCHAR(16),
-sum INTEGER GENERATED ALWAYS AS (a+b),
-sub VARCHAR(4) GENERATED ALWAYS AS (SUBSTRING(c, 1, 4)),
-key k1(sum),
-key k2(sub)
-)"
-"CREATE TABLE t2 (pk INTEGER, a INTEGER, b INTEGER,
-sum INTEGER GENERATED ALWAYS AS (a+b),
-c VARCHAR(16),
-key k1(sum)
-)"
-"CREATE TABLE t3 (sum INTEGER GENERATED ALWAYS AS (a+(EXTRACT(YEAR from pk))),
-pk TIMESTAMP, a INTEGER,
-c VARCHAR(16)
-)"
 "CREATE TABLE t1(f1 INT INVISIBLE, f2 INT,
 f3 INT AS (f1 + 10), f4 INT AS (f2 + 10) INVISIBLE)"
 "CREATE TABLE B32340208.test (
@@ -798,19 +553,6 @@ ORDER BY c LIMIT 1"
 "((SELECT * FROM t1 ORDER BY i) ORDER BY i) ORDER BY i"
 "ALTER TABLE t1 DROP PARTITION p0"
 "ALTER TABLE t1 DROP PARTITION p1"
-"CREATE TABLE t1_1 (
-`col1` int(11) DEFAULT NULL,
-`col2` int(11) DEFAULT NULL,
-`col3` int(11) DEFAULT NULL,
-`col4` text,
-`col5` varchar(500) GENERATED ALWAYS AS (substr(`col4`,1,500)) VIRTUAL,
-`col6` text GENERATED ALWAYS AS (substr(`col4`,1,500)) VIRTUAL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-/*!50100 PARTITION BY RANGE ((`col1` * 2))
-(PARTITION p0 VALUES LESS THAN (128) ENGINE = InnoDB,
-PARTITION p1 VALUES LESS THAN (256) ENGINE = InnoDB,
-PARTITION p2 VALUES LESS THAN (384) ENGINE = InnoDB,
-PARTITION p3 VALUES LESS THAN MAXVALUE ENGINE = InnoDB) */"
 "DELETE FROM t1 PARTITION(subp1) WHERE b = ""REPLACEd by REPLACE"""
 "DELETE FROM t1 PARTITION (pNeg) WHERE a = -1"
 "DELETE FROM t1 PARTITION (subp1) WHERE b like '%subp1%'"
@@ -1175,12 +917,6 @@ SOURCE_DELAY = 4711, SOURCE_AUTO_POSITION = 0 FOR CHANNEL 'chan_jackie'"
 "ALTER SCHEMA s1 READ ONLY DEFAULT"
 "START TRANSACTION READ ONLY,  WITH CONSISTENT SNAPSHOT"
 "SET TRANSACTION   READ ONLY, ISOLATION LEVEL SERIALIZABLE"
-"CREATE TABLE t1 (i CHAR(3),
-n CHAR(20) CHARACTER SET utf8 GENERATED ALWAYS AS (md5(i)))"
-"CREATE TABLE `t1` (
-`i` char(3) DEFAULT NULL,
-`n` char(20) CHARACTER SET utf8 GENERATED ALWAYS AS (md5(i)) VIRTUAL
-) ENGINE=InnoDB DEFAULT CHARSET=latin1"
 "FLUSH TABLE mysql.procs_priv"
 "create procedure p1()
 begin
@@ -1682,7 +1418,6 @@ UNION
 ORDER BY c2 DESC, c1 ASC LIMIT 1
 ) AS res"
 "((SELECT SQL_CALC_FOUND_ROWS * FROM r ORDER BY a LIMIT 5) ORDER BY -a LIMIT 4) ORDER BY a LIMIT 3"
-"CREATE TABLE t1(a INTEGER, b INTEGER AS (a))"
 "CREATE USER foo@localhost IDENTIFIED BY 'foo' FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME 6"
 "ALTER USER foo@localhost FAILED_LOGIN_ATTEMPTS 2"
 "ALTER USER foo@localhost PASSWORD_LOCK_TIME 3"
@@ -1744,242 +1479,7 @@ SUBSTRING(1 FROM (SELECT 3 FROM t1 WHERE a >= ANY(SELECT 1)))"
 "SELECT * FROM t WHERE a = SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
 "SELECT * FROM t WHERE a = ANY(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
 "SELECT * FROM t WHERE a >= SOME(SELECT ROW_NUMBER() OVER () + 1 FROM t)"
-"ALTER TABLE A ADD COLUMN col_varchar_10_latin1_gckey VARCHAR(20) GENERATED ALWAYS AS (CONCAT(col_varchar_10_latin1_key,'x')) VIRTUAL"
-"ALTER TABLE B ADD COLUMN col_int_gckey INT GENERATED ALWAYS AS (col_int_key + col_int_key) VIRTUAL"
-"ALTER TABLE B ADD COLUMN col_varchar_255_utf8_gckey TEXT GENERATED ALWAYS AS (CONCAT(col_varchar_255_utf8_key,'x')) VIRTUAL"
-"CREATE TABLE t (
-col_int INT,
-pk INT NOT NULL AUTO_INCREMENT,
-col_int_key INT GENERATED ALWAYS AS (col_int+col_int)
-VIRTUAL, PRIMARY KEY (pk))"
-"CREATE TABLE E (
-col_int int(11) DEFAULT NULL,
-col_varchar_10_utf8 varchar(10) CHARACTER SET utf8 DEFAULT NULL,
-pk int(11) NOT NULL AUTO_INCREMENT,
-col_varchar_10_latin1 varchar(10) DEFAULT NULL,
-col_varchar_255_utf8 varchar(255) CHARACTER SET utf8 DEFAULT NULL,
-col_varchar_255_latin1 varchar(255) DEFAULT NULL,
-col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
-col_varchar_255_utf8_key varchar(255) CHARACTER SET utf8
-GENERATED ALWAYS AS
-(concat(repeat(col_varchar_10_utf8,3),repeat(col_varchar_10_utf8,3)))
-VIRTUAL,
-col_varchar_255_latin1_key varchar(255)
-GENERATED ALWAYS AS
-(concat(repeat(col_varchar_10_latin1,3),repeat(col_varchar_10_latin1,3)))
-VIRTUAL,
-col_varchar_10_utf8_key varchar(10) CHARACTER SET utf8
-GENERATED ALWAYS AS
-(repeat(substr(col_varchar_10_utf8,-(1)),5)) VIRTUAL,
-col_varchar_10_latin1_key varchar(10) GENERATED ALWAYS AS
-(repeat(substr(col_varchar_10_latin1,-(1)),7)) VIRTUAL,
-PRIMARY KEY (pk DESC),
-UNIQUE KEY ucover_key1
-(pk DESC, col_int_key DESC, col_varchar_255_utf8_key DESC,
-col_varchar_255_latin1_key DESC, col_varchar_10_utf8_key DESC,
-col_varchar_10_latin1_key DESC),
-UNIQUE KEY ucover_key2
-(pk, col_int_key, col_varchar_255_utf8_key, col_varchar_255_latin1_key,
-col_varchar_10_utf8_key, col_varchar_10_latin1_key),
-KEY col_int_key (col_int_key DESC),
-KEY col_varchar_255_utf8_key (col_varchar_255_utf8_key DESC),
-KEY col_varchar_255_latin1_key (col_varchar_255_latin1_key DESC),
-KEY col_varchar_10_utf8_key (col_varchar_10_utf8_key DESC),
-KEY col_varchar_10_latin1_key (col_varchar_10_latin1_key),
-KEY multi_key1 (col_int_key DESC, col_varchar_10_latin1_key),
-KEY multi_key1a (col_int_key DESC, col_varchar_10_latin1_key DESC),
-KEY multi_key2 (col_int_key,col_int DESC),
-KEY multi_key3 (col_varchar_255_utf8_key DESC, col_varchar_255_utf8),
-KEY multi_key4 (col_varchar_255_latin1_key, col_varchar_255_latin1),
-KEY multi_key5 (pk DESC,col_int_key DESC, col_varchar_10_latin1_key),
-KEY cover_key1
-(pk DESC,col_int_key DESC, col_varchar_255_utf8_key,
-col_varchar_255_latin1_key DESC, col_varchar_10_utf8_key DESC,
-col_varchar_10_latin1_key)
-)"
-"CREATE TABLE C (
-col_int int(11) DEFAULT NULL,
-col_varchar_10_utf8 varchar(10) CHARACTER SET utf8 DEFAULT NULL,
-pk int(11) NOT NULL AUTO_INCREMENT,
-col_varchar_10_latin1 varchar(10) DEFAULT NULL,
-col_varchar_255_utf8 varchar(255) CHARACTER SET utf8 DEFAULT NULL,
-col_varchar_255_latin1 varchar(255) DEFAULT NULL,
-col_int_key int(11) GENERATED ALWAYS AS ((col_int + col_int)) VIRTUAL,
-col_varchar_255_utf8_key varchar(255) CHARACTER SET utf8
-GENERATED ALWAYS AS
-(concat(repeat(col_varchar_10_utf8,3),repeat(col_varchar_10_utf8,3)))
-VIRTUAL,
-col_varchar_255_latin1_key varchar(255) GENERATED ALWAYS AS
-(concat(repeat(col_varchar_10_latin1,3),repeat(col_varchar_10_latin1,3)))
-VIRTUAL,
-col_varchar_10_utf8_key varchar(10) CHARACTER SET utf8 GENERATED ALWAYS AS
-(repeat(substr(col_varchar_10_utf8,-(1)),5)) VIRTUAL,
-col_varchar_10_latin1_key varchar(10) GENERATED ALWAYS AS
-(repeat(substr(col_varchar_10_latin1,-(1)),7)) VIRTUAL,
-PRIMARY KEY (pk DESC),
-UNIQUE KEY ucover_key1
-(pk DESC, col_int_key DESC, col_varchar_255_utf8_key DESC,
-col_varchar_255_latin1_key DESC, col_varchar_10_utf8_key DESC,
-col_varchar_10_latin1_key DESC),
-UNIQUE KEY ucover_key2
-(pk, col_int_key, col_varchar_255_utf8_key, col_varchar_255_latin1_key,
-col_varchar_10_utf8_key, col_varchar_10_latin1_key),
-KEY col_int_key (col_int_key DESC),
-KEY col_varchar_255_utf8_key (col_varchar_255_utf8_key DESC),
-KEY col_varchar_255_latin1_key (col_varchar_255_latin1_key DESC),
-KEY col_varchar_10_utf8_key (col_varchar_10_utf8_key DESC),
-KEY col_varchar_10_latin1_key (col_varchar_10_latin1_key),
-KEY multi_key1 (col_int_key DESC, col_varchar_10_latin1_key),
-KEY multi_key1a (col_int_key DESC, col_varchar_10_latin1_key DESC),
-KEY multi_key2 (col_int_key, col_int DESC),
-KEY multi_key3 (col_varchar_255_utf8_key DESC, col_varchar_255_utf8),
-KEY multi_key4 (col_varchar_255_latin1_key, col_varchar_255_latin1),
-KEY multi_key5
-(pk DESC, col_int_key DESC, col_varchar_10_latin1_key),
-KEY cover_key1
-(pk DESC, col_int_key DESC, col_varchar_255_utf8_key,
-col_varchar_255_latin1_key DESC, col_varchar_10_utf8_key DESC,
-col_varchar_10_latin1_key)
-)"
 "CREATE PROCEDURE p2(n INT) DO LEAD(1, n) OVER()"
 "CREATE PROCEDURE p3(n INT) DO LAG(1, n) OVER()"
 "DO LAG(1, @v) OVER()"
 "DO LEAD(1, @v) OVER()"
-"CREATE TABLE `C` (
-`pk` int(11) NOT NULL AUTO_INCREMENT,
-`col_int` int(11) NOT NULL,
-`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
-`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
-`col_date` date NOT NULL,
-`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
-`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
-`col_datetime` datetime NOT NULL,
-`col_time` time NOT NULL,
-`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
-`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
-`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
-`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
-`col_varchar` varchar(15) NOT NULL,
-`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
-`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
-PRIMARY KEY (`pk`),
-UNIQUE KEY `col_date_key` (`col_date_key`),
-UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
-UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
-UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
-UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
-UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
-UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
-UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
-UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
-KEY `col_int_gckey` (`col_int_gckey`),
-KEY `col_int_gckey_2` (`col_int_gckey` DESC),
-KEY `col_date_gckey` (`col_date_gckey`),
-KEY `col_datetime_gckey` (`col_datetime_gckey`),
-KEY `col_time_gckey` (`col_time_gckey`),
-KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
-KEY `col_int_key` (`col_int_key`),
-KEY `col_int_key_2` (`col_int_key` DESC),
-KEY `col_time_key` (`col_time_key`),
-KEY `col_datetime_key` (`col_datetime_key`),
-KEY `col_int_key_5` (`col_int_key`,`col_int`),
-KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
-KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
-KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
-KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
-) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=latin1"
-"CREATE TABLE `DD` (
-`pk` int(11) NOT NULL AUTO_INCREMENT,
-`col_int` int(11) NOT NULL,
-`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
-`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
-`col_date` date NOT NULL,
-`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
-`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
-`col_datetime` datetime NOT NULL,
-`col_time` time NOT NULL,
-`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
-`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
-`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
-`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
-`col_varchar` varchar(15) NOT NULL,
-`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
-`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
-PRIMARY KEY (`pk`),
-UNIQUE KEY `col_date_key` (`col_date_key`),
-UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
-UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
-UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
-UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
-UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
-UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
-UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
-UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
-KEY `col_int_gckey` (`col_int_gckey`),
-KEY `col_int_gckey_2` (`col_int_gckey` DESC),
-KEY `col_date_gckey` (`col_date_gckey`),
-KEY `col_datetime_gckey` (`col_datetime_gckey`),
-KEY `col_time_gckey` (`col_time_gckey`),
-KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
-KEY `col_int_key` (`col_int_key`),
-KEY `col_int_key_2` (`col_int_key` DESC),
-KEY `col_time_key` (`col_time_key`),
-KEY `col_datetime_key` (`col_datetime_key`),
-KEY `col_int_key_5` (`col_int_key`,`col_int`),
-KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
-KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
-KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
-KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
-) ENGINE=InnoDB AUTO_INCREMENT=73 DEFAULT CHARSET=latin1"
-"CREATE TABLE `E` (
-`pk` int(11) NOT NULL AUTO_INCREMENT,
-`col_int` int(11) NOT NULL,
-`col_int_gckey` int(11) GENERATED ALWAYS AS ((`col_int` + `col_int`)) VIRTUAL NOT NULL,
-`col_int_key` int(11) GENERATED ALWAYS AS ((`col_int_gckey` + `col_int`)) VIRTUAL NOT NULL,
-`col_date` date NOT NULL,
-`col_date_gckey` date GENERATED ALWAYS AS ((`col_date` + interval 30 day)) VIRTUAL NOT NULL,
-`col_date_key` date GENERATED ALWAYS AS ((`col_date_gckey` + interval 30 day)) VIRTUAL NOT NULL,
-`col_datetime` datetime NOT NULL,
-`col_time` time NOT NULL,
-`col_datetime_gckey` datetime GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
-`col_time_gckey` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time`)) VIRTUAL NOT NULL,
-`col_datetime_key` datetime GENERATED ALWAYS AS (addtime(`col_datetime_gckey`,`col_time`)) VIRTUAL NOT NULL,
-`col_time_key` time GENERATED ALWAYS AS (addtime(`col_datetime`,`col_time_gckey`)) VIRTUAL NOT NULL,
-`col_varchar` varchar(15) NOT NULL,
-`col_varchar_gckey` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar`,`col_varchar`)) VIRTUAL NOT NULL,
-`col_varchar_key` varchar(15) GENERATED ALWAYS AS (concat(`col_varchar_gckey`,_latin1'x')) VIRTUAL NOT NULL,
-PRIMARY KEY (`pk`),
-UNIQUE KEY `col_date_key` (`col_date_key`),
-UNIQUE KEY `col_date_key_2` (`col_date_key`,`col_time_key`,`col_datetime_key`),
-UNIQUE KEY `col_varchar_key` (`col_varchar_key`(3)),
-UNIQUE KEY `col_varchar_key_2` (`col_varchar_key`(5) DESC),
-UNIQUE KEY `col_int_key_3` (`col_int_key`,`col_varchar_key`(5)),
-UNIQUE KEY `col_int_key_4` (`col_int_key` DESC,`col_varchar_key`(5)),
-UNIQUE KEY `col_varchar_key_3` (`col_varchar_key`(2),`col_varchar`(3)),
-UNIQUE KEY `col_varchar_key_4` (`col_varchar_key`(2) DESC,`col_varchar`(3) DESC),
-UNIQUE KEY `col_int_key_10` (`col_int_key`,`col_varchar_key`(5),`col_date_key`,`col_time_key`,`col_datetime_key`),
-KEY `col_int_gckey` (`col_int_gckey`),
-KEY `col_int_gckey_2` (`col_int_gckey` DESC),
-KEY `col_date_gckey` (`col_date_gckey`),
-KEY `col_datetime_gckey` (`col_datetime_gckey`),
-KEY `col_time_gckey` (`col_time_gckey`),
-KEY `col_varchar_gckey` (`col_varchar_gckey`(5)),
-KEY `col_int_key` (`col_int_key`),
-KEY `col_int_key_2` (`col_int_key` DESC),
-KEY `col_time_key` (`col_time_key`),
-KEY `col_datetime_key` (`col_datetime_key`),
-KEY `col_int_key_5` (`col_int_key`,`col_int`),
-KEY `col_int_key_6` (`col_int_key` DESC,`col_int` DESC),
-KEY `col_int_key_7` (`col_int_key`,`col_date_key`),
-KEY `col_int_key_8` (`col_int_key`,`col_time_key`),
-KEY `col_int_key_9` (`col_int_key`,`col_datetime_key`)
-) ENGINE=InnoDB AUTO_INCREMENT=80 DEFAULT CHARSET=latin1"
-"CREATE TABLE t (
-f1 LONGTEXT GENERATED ALWAYS AS (_utf8mb4'1') VIRTUAL NOT NULL
-)"
-"CREATE TABLE t(
-a TEXT CHARACTER SET CP1251
-GENERATED ALWAYS AS (LPAD(1,10621933,10)) VIRTUAL,
-b BLOB
-GENERATED ALWAYS AS (LPAD(1,10622,10)) VIRTUAL
-) ENGINE=INNODB"

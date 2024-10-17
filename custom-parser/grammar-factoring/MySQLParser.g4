@@ -3358,7 +3358,7 @@ constraintName:
     CONSTRAINT_SYMBOL identifier?
 ;
 
-fieldDefinition:
+/*fieldDefinition:
     dataType (
         columnAttribute*
         | {serverVersion >= 50707}? collate? (GENERATED_SYMBOL ALWAYS_SYMBOL)? AS_SYMBOL exprWithParentheses (
@@ -3368,6 +3368,23 @@ fieldDefinition:
             {serverVersion < 80000}? gcolAttribute*
             | {serverVersion >= 80000}? columnAttribute* // Beginning with 8.0 the full attribute set is supported.
         )
+    )
+;*/
+
+/*
+ * @FIX:
+ * Fix "fieldDefinition" to solve conflict between "columnAttribute" and GENERATED/AS.
+ */
+fieldDefinition:
+    dataType (
+        {serverVersion >= 50707}? collate? (GENERATED_SYMBOL ALWAYS_SYMBOL)? AS_SYMBOL exprWithParentheses (
+            VIRTUAL_SYMBOL
+            | STORED_SYMBOL
+        )? (
+            {serverVersion < 80000}? gcolAttribute*
+            | {serverVersion >= 80000}? columnAttribute* // Beginning with 8.0 the full attribute set is supported.
+        )
+        | columnAttribute*
     )
 ;
 
