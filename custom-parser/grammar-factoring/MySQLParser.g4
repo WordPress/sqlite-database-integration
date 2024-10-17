@@ -1574,7 +1574,7 @@ xid:
 
 //----------------------------------------------------------------------------------------------------------------------
 
-replicationStatement:
+/*replicationStatement:
     PURGE_SYMBOL (BINARY_SYMBOL | MASTER_SYMBOL) LOGS_SYMBOL (
         TO_SYMBOL textLiteral
         | BEFORE_SYMBOL expr
@@ -1582,6 +1582,25 @@ replicationStatement:
     | changeMaster
     | RESET_SYMBOL resetOption (COMMA_SYMBOL resetOption)*
     | {serverVersion > 80000}? RESET_SYMBOL PERSIST_SYMBOL (ifExists identifier)?
+    | slave
+    | {serverVersion >= 50700}? changeReplication
+    | replicationLoad
+    | {serverVersion > 50706}? groupReplication
+;*/
+
+/*
+ * @FIX:
+ * Fix "replicationStatement" to correctly support the "RESET PERSIST" statement.
+ * The "ifExists" clause wasn't optional, and "identifier" was used instead of "qualifiedIdentifier".
+ */
+replicationStatement:
+    PURGE_SYMBOL (BINARY_SYMBOL | MASTER_SYMBOL) LOGS_SYMBOL (
+        TO_SYMBOL textLiteral
+        | BEFORE_SYMBOL expr
+    )
+    | changeMaster
+    | RESET_SYMBOL resetOption (COMMA_SYMBOL resetOption)*
+    | {serverVersion > 80000}? RESET_SYMBOL PERSIST_SYMBOL (ifExists? qualifiedIdentifier)?
     | slave
     | {serverVersion >= 50700}? changeReplication
     | replicationLoad

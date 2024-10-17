@@ -10868,6 +10868,17 @@
         ]
     },
     {
+        "name": "ifExists_zero_or_one",
+        "bnf": [
+            [
+                "ifExists"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
         "name": "%replicationStatement302_zero_or_one",
         "bnf": [
             [
@@ -10882,8 +10893,8 @@
         "name": "%replicationStatement302",
         "bnf": [
             [
-                "ifExists",
-                "identifier"
+                "ifExists_zero_or_one",
+                "qualifiedIdentifier"
             ]
         ]
     },
