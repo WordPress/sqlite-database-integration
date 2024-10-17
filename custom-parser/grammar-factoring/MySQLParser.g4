@@ -2476,13 +2476,28 @@ describeStatement:
     )?
 ;
 
-explainStatement:
+/*explainStatement:
     (EXPLAIN_SYMBOL | DESCRIBE_SYMBOL | DESC_SYMBOL) (
         {serverVersion < 80000}? EXTENDED_SYMBOL
         | {serverVersion < 80000}? PARTITIONS_SYMBOL
         | {serverVersion >= 50605}? FORMAT_SYMBOL EQUAL_OPERATOR textOrIdentifier
         | {serverVersion >= 80018}? ANALYZE_SYMBOL
         | {serverVersion >= 80019}? ANALYZE_SYMBOL FORMAT_SYMBOL EQUAL_OPERATOR textOrIdentifier
+    )? explainableStatement
+;*/
+
+/*
+ * @FIX:
+ * Fix "explainStatement" to solve conflict between "ANALYZE ..." and "ANALYZE FORMAT=...".
+ * The "ANALYZE FORMAT=..." must be attempted to be matched before "ANALYZE ...".
+ */
+explainStatement:
+    (EXPLAIN_SYMBOL | DESCRIBE_SYMBOL | DESC_SYMBOL) (
+        {serverVersion < 80000}? EXTENDED_SYMBOL
+        | {serverVersion < 80000}? PARTITIONS_SYMBOL
+        | {serverVersion >= 50605}? FORMAT_SYMBOL EQUAL_OPERATOR textOrIdentifier
+        | {serverVersion >= 80019}? ANALYZE_SYMBOL FORMAT_SYMBOL EQUAL_OPERATOR textOrIdentifier
+        | {serverVersion >= 80018}? ANALYZE_SYMBOL
     )? explainableStatement
 ;
 

@@ -17925,23 +17925,23 @@
         ]
     },
     {
-        "versions": "serverVersion >= 80018",
-        "name": "%explainStatement0130",
-        "bnf": [
-            [
-                "ANALYZE_SYMBOL"
-            ]
-        ]
-    },
-    {
         "versions": "serverVersion >= 80019",
-        "name": "%explainStatement0140",
+        "name": "%explainStatement0130",
         "bnf": [
             [
                 "ANALYZE_SYMBOL",
                 "FORMAT_SYMBOL",
                 "EQUAL_OPERATOR",
                 "textOrIdentifier"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80018",
+        "name": "%explainStatement0140",
+        "bnf": [
+            [
+                "ANALYZE_SYMBOL"
             ]
         ]
     },
