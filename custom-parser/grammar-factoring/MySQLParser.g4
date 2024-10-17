@@ -202,9 +202,18 @@ alterTableActions:
     | (alterCommandsModifierList COMMA_SYMBOL)? standaloneAlterCommands
 ;
 
-alterCommandList:
+/*alterCommandList:
     alterCommandsModifierList
     | (alterCommandsModifierList COMMA_SYMBOL)? alterList
+;*/
+
+/*
+ * @FIX:
+ * Fix "alterCommandList" to solve conflicts between "alterCommandsModifierList" prefixes.
+ */
+alterCommandList:
+    alterCommandsModifierList (COMMA_SYMBOL alterList)?
+    | alterList
 ;
 
 alterCommandsModifierList:

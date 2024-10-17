@@ -1,12 +1,3 @@
-"alter table t1 algorithm=inplace, rename key k to kk"
-"alter table t2 algorithm=inplace, rename key k to kk"
-"alter table t1 algorithm=copy, rename key kkk to kkkk"
-"alter table t2 algorithm=copy, rename key kkk to kkkk"
-"alter table t1 algorithm=inplace, rename key kkkk to k, alter column i set default 100"
-"alter table t2 algorithm=inplace, rename key kkkk to k, alter column i set default 100"
-"alter table t1 algorithm=copy, rename key kk to kkk"
-"ALTER TABLE t1 ALGORITHM=INPLACE, DROP INDEX fld1,
-ADD FULLTEXT INDEX fld1(fld1)"
 "CREATE TABLE t3(a POINT GENERATED ALWAYS AS (POINT(1,1)) VIRTUAL NOT NULL)
 ENGINE=INNODB"
 "CREATE TABLE t4 (a BLOB, b BLOB GENERATED ALWAYS AS (a) VIRTUAL NOT NULL) ENGINE=INNODB"
@@ -522,7 +513,6 @@ shores MULTIPOLYGON)"
 fid INTEGER NOT NULL PRIMARY KEY,
 name CHARACTER VARYING(64),
 boundary POLYGON)"
-"ALTER TABLE t1 ALGORITHM=COPY, MODIFY COLUMN b GEOMETRY NOT NULL"
 "CREATE TABLE t1 (g GEOMCOLLECTION)"
 "create user mysqltest_7@"
 "alter user mysqltest_7@ identified by 'systpass'"
@@ -719,7 +709,6 @@ ON (dt.f2 = t3.f2))
 WHERE (dt.f2 <> ANY (SELECT t1.f1 FROM t1 WHERE t1.f2 = dt.f2))"
 disable_reconnect
 enable_reconnect
-"ALTER TABLE testtable_1 ALGORITHM=INPLACE, ADD COLUMN c3 VARCHAR(255)"
 "SELECT 1 FROM DUAL LIMIT 1 FOR UPDATE INTO @var"
 "SELECT 1 UNION SELECT 1 FOR UPDATE INTO @var"
 "RESET PERSIST log_error_services"

@@ -843,10 +843,10 @@
         ]
     },
     {
-        "name": "%alterCommandList10_zero_or_one",
+        "name": "%alterCommandList01_zero_or_one",
         "bnf": [
             [
-                "%alterCommandList10"
+                "%alterCommandList01"
             ],
             [
                 "\u03b5"
@@ -857,19 +857,19 @@
         "name": "alterCommandList",
         "bnf": [
             [
-                "alterCommandsModifierList"
+                "alterCommandsModifierList",
+                "%alterCommandList01_zero_or_one"
             ],
             [
-                "%alterCommandList10_zero_or_one",
                 "alterList"
             ]
         ]
     },
     {
-        "name": "%alterCommandList10_zero_or_one",
+        "name": "%alterCommandList01_zero_or_one",
         "bnf": [
             [
-                "%alterCommandList10"
+                "%alterCommandList01"
             ],
             [
                 "\u03b5"
@@ -877,11 +877,11 @@
         ]
     },
     {
-        "name": "%alterCommandList10",
+        "name": "%alterCommandList01",
         "bnf": [
             [
-                "alterCommandsModifierList",
-                "COMMA_SYMBOL"
+                "COMMA_SYMBOL",
+                "alterList"
             ]
         ]
     },
