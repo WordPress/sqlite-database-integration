@@ -294,6 +294,7 @@ alterListItem:
             | signedLiteral
         )
         | DROP_SYMBOL DEFAULT_SYMBOL
+        | {serverVersion >= 80023}? SET_SYMBOL visibility /* @FIX: Add missing SET VISIBLE/INVISIBLE clause.  */
     )
     | {serverVersion >= 80000}? ALTER_SYMBOL INDEX_SYMBOL indexRef visibility
     | {serverVersion >= 80017}? ALTER_SYMBOL CHECK_SYMBOL identifier constraintEnforcement
@@ -3378,6 +3379,7 @@ columnAttribute:
         | NOW_SYMBOL timeFunctionParameters?
         | {serverVersion >= 80013}? exprWithParentheses
     )
+    | {serverVersion >= 80023}? visibility /* @FIX: Add missing VISIBLE/INVISIBLE attribute. */
     | value = ON_SYMBOL UPDATE_SYMBOL NOW_SYMBOL timeFunctionParameters?
     | value = AUTO_INCREMENT_SYMBOL
     | value = SERIAL_SYMBOL DEFAULT_SYMBOL VALUE_SYMBOL

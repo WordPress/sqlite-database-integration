@@ -1679,6 +1679,16 @@
         ]
     },
     {
+        "versions": "serverVersion >= 80023",
+        "name": "%alterListItem7320",
+        "bnf": [
+            [
+                "SET_SYMBOL",
+                "visibility"
+            ]
+        ]
+    },
+    {
         "name": "%alterListItem73",
         "bnf": [
             [
@@ -1689,6 +1699,9 @@
             [
                 "DROP_SYMBOL",
                 "DEFAULT_SYMBOL"
+            ],
+            [
+                "%alterListItem7320"
             ]
         ]
     },
@@ -23966,6 +23979,9 @@
                 "%columnAttribute21"
             ],
             [
+                "%columnAttribute30"
+            ],
+            [
                 "ON_SYMBOL",
                 "UPDATE_SYMBOL",
                 "NOW_SYMBOL",
@@ -24003,13 +24019,13 @@
                 "storageMedia"
             ],
             [
-                "%columnAttribute120"
-            ],
-            [
                 "%columnAttribute130"
             ],
             [
                 "%columnAttribute140"
+            ],
+            [
+                "%columnAttribute150"
             ]
         ]
     },
@@ -24059,8 +24075,17 @@
         ]
     },
     {
+        "versions": "serverVersion >= 80023",
+        "name": "%columnAttribute30",
+        "bnf": [
+            [
+                "visibility"
+            ]
+        ]
+    },
+    {
         "versions": "serverVersion >= 80000",
-        "name": "%columnAttribute120",
+        "name": "%columnAttribute130",
         "bnf": [
             [
                 "SRID_SYMBOL",
@@ -24081,7 +24106,7 @@
     },
     {
         "versions": "serverVersion >= 80017",
-        "name": "%columnAttribute130",
+        "name": "%columnAttribute140",
         "bnf": [
             [
                 "constraintName_zero_or_one",
@@ -24091,7 +24116,7 @@
     },
     {
         "versions": "serverVersion >= 80017",
-        "name": "%columnAttribute140",
+        "name": "%columnAttribute150",
         "bnf": [
             [
                 "constraintEnforcement"
