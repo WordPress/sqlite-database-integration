@@ -13226,6 +13226,14 @@
             [
                 "PASSWORD_SYMBOL",
                 "%accountLockPasswordExpireOptions11"
+            ],
+            [
+                "PASSWORD_LOCK_TIME_SYMBOL",
+                "%accountLockPasswordExpireOptions21"
+            ],
+            [
+                "FAILED_LOGIN_ATTEMPTS_SYMBOL",
+                "real_ulong_number"
             ]
         ]
     },
@@ -13363,6 +13371,17 @@
             ],
             [
                 "%accountLockPasswordExpireOptions1130"
+            ]
+        ]
+    },
+    {
+        "name": "%accountLockPasswordExpireOptions21",
+        "bnf": [
+            [
+                "real_ulong_number"
+            ],
+            [
+                "UNBOUNDED_SYMBOL"
             ]
         ]
     },

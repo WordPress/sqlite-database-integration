@@ -1905,6 +1905,31 @@ connectOptions:
     )+
 ;
 
+/*accountLockPasswordExpireOptions:
+    ACCOUNT_SYMBOL (LOCK_SYMBOL | UNLOCK_SYMBOL)
+    | PASSWORD_SYMBOL (
+        EXPIRE_SYMBOL (
+            INTERVAL_SYMBOL real_ulong_number DAY_SYMBOL
+            | NEVER_SYMBOL
+            | DEFAULT_SYMBOL
+        )?
+        | HISTORY_SYMBOL (real_ulong_number | DEFAULT_SYMBOL)
+        | REUSE_SYMBOL INTERVAL_SYMBOL (
+            real_ulong_number DAY_SYMBOL
+            | DEFAULT_SYMBOL
+        )
+        | {serverVersion >= 80014}? REQUIRE_SYMBOL CURRENT_SYMBOL (
+            DEFAULT_SYMBOL
+            | OPTIONAL_SYMBOL
+        )?
+    )
+    |
+;*/
+
+/*
+ * @FIX:
+ * Add missing "PASSWORD_LOCK_TIME_SYMBOL" and "FAILED_LOGIN_ATTEMPTS_SYMBOL".
+ */
 accountLockPasswordExpireOptions:
     ACCOUNT_SYMBOL (LOCK_SYMBOL | UNLOCK_SYMBOL)
     | PASSWORD_SYMBOL (
@@ -1923,6 +1948,8 @@ accountLockPasswordExpireOptions:
             | OPTIONAL_SYMBOL
         )?
     )
+    | PASSWORD_LOCK_TIME_SYMBOL (real_ulong_number | UNBOUNDED_SYMBOL)
+    | FAILED_LOGIN_ATTEMPTS_SYMBOL real_ulong_number
 ;
 
 dropUser:
