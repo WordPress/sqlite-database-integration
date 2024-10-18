@@ -179,6 +179,16 @@ foreach (scandir($testsDir) as $i => $file) {
 	$lines = 0;
 	$query = '';
 	$contents = utf8_encode(file_get_contents($testsDir . '/' . $file));
+
+	// Skip mysqltest.test file that is focused on mysqltest constructs rather than SQL.
+	if ($file === 'mysqltest.test') {
+		continue;
+	}
+
+	// Remove "if" and "while" block, including nested ones, using a recursive regex.
+	// Extracting queries from them is not straightforward as they introduce a new scope for delimiters, etc.
+	$contents = preg_replace('/^\s*(?:if|while)\s*(\((?>(?1)|[^()])*+\))\s*(\{(?>(?2)|[^{}])*+})/ium', '', $contents);
+
 	foreach (preg_split('/\R/u', $contents) as $line) {
 		$lines += 1;
 
