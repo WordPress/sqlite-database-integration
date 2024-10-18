@@ -760,10 +760,10 @@
         ]
     },
     {
-        "name": "%alterTableActions01_zero_or_one",
+        "name": "%alterTableActions00_zero_or_one",
         "bnf": [
             [
-                "%alterTableActions01"
+                "%alterTableActions00"
             ],
             [
                 "\u03b5"
@@ -771,10 +771,10 @@
         ]
     },
     {
-        "name": "%alterTableActions30_zero_or_one",
+        "name": "%alterTableActions11_zero_or_one",
         "bnf": [
             [
-                "%alterTableActions30"
+                "%alterTableActions11"
             ],
             [
                 "\u03b5"
@@ -785,35 +785,13 @@
         "name": "alterTableActions",
         "bnf": [
             [
-                "alterCommandList",
-                "%alterTableActions01_zero_or_one"
-            ],
-            [
-                "partitionClause"
-            ],
-            [
-                "removePartitioning"
-            ],
-            [
-                "%alterTableActions30_zero_or_one",
+                "%alterTableActions00_zero_or_one",
                 "standaloneAlterCommands"
-            ]
-        ]
-    },
-    {
-        "name": "%alterTableActions01_zero_or_one",
-        "bnf": [
-            [
-                "%alterTableActions01"
             ],
             [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterTableActions01",
-        "bnf": [
+                "alterCommandList",
+                "%alterTableActions11_zero_or_one"
+            ],
             [
                 "partitionClause"
             ],
@@ -823,10 +801,10 @@
         ]
     },
     {
-        "name": "%alterTableActions30_zero_or_one",
+        "name": "%alterTableActions00_zero_or_one",
         "bnf": [
             [
-                "%alterTableActions30"
+                "%alterTableActions00"
             ],
             [
                 "\u03b5"
@@ -834,11 +812,33 @@
         ]
     },
     {
-        "name": "%alterTableActions30",
+        "name": "%alterTableActions00",
         "bnf": [
             [
                 "alterCommandsModifierList",
                 "COMMA_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%alterTableActions11_zero_or_one",
+        "bnf": [
+            [
+                "%alterTableActions11"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%alterTableActions11",
+        "bnf": [
+            [
+                "partitionClause"
+            ],
+            [
+                "removePartitioning"
             ]
         ]
     },

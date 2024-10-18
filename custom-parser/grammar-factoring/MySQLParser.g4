@@ -195,11 +195,22 @@ alterTable:
     onlineOption? ({serverVersion < 50700}? IGNORE_SYMBOL)? TABLE_SYMBOL tableRef alterTableActions?
 ;
 
-alterTableActions:
+/*alterTableActions:
     alterCommandList (partitionClause | removePartitioning)?
     | partitionClause
     | removePartitioning
     | (alterCommandsModifierList COMMA_SYMBOL)? standaloneAlterCommands
+;*/
+
+/*
+ * @FIX:
+ * Fix "alterTableActions" to solve conflicts between "alterCommandsModifierList" and "alterCommandList".
+ */
+alterTableActions:
+    (alterCommandsModifierList COMMA_SYMBOL)? standaloneAlterCommands
+    | alterCommandList (partitionClause | removePartitioning)?
+    | partitionClause
+    | removePartitioning
 ;
 
 /*alterCommandList:
