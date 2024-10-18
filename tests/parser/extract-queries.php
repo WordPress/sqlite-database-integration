@@ -214,9 +214,18 @@ foreach (scandir($testsDir) as $i => $file) {
 
 		// Skip comments.
 		$char1 = $line[0] ?? null;
-		$char2 = $line[1] ?? null;
-		if ($char1 === '#' || ($char1 === '-' && $char2 === '-')) {
+		if ($char1 === '#') {
 			continue;
+		}
+
+		// Skip '--' commands; convert "--delimiter <delimiter>" to "DELIMITER <delimiter>".
+		$char2 = $line[1] ?? null;
+		if ($char1 === '-' && $char2 === '-') {
+			if (str_starts_with(strtolower($line), '--delimiter')) {
+				$line = substr($line, 2); // remove '--'
+			} else {
+				continue;
+			}
 		}
 
 		// Process line.
