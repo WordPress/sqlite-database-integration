@@ -1,0 +1,329 @@
+QUERY:
+WITH mytable AS (select 1) SELECT 123 FROM test
+
+PARSE TREE:
+
+{
+    "rule_id": 2004,
+    "rule_name": "query",
+    "children": [
+        {
+            "rule_id": 2005,
+            "rule_name": "simpleStatement",
+            "children": [
+                {
+                    "rule_id": 2354,
+                    "rule_name": "selectStatement",
+                    "children": [
+                        {
+                            "rule_id": 2362,
+                            "rule_name": "queryExpression",
+                            "children": [
+                                {
+                                    "rule_id": 2421,
+                                    "rule_name": "withClause",
+                                    "children": [
+                                        {
+                                            "type": 772,
+                                            "name": "WITH_SYMBOL",
+                                            "text": "WITH"
+                                        },
+                                        {
+                                            "rule_id": 2422,
+                                            "rule_name": "commonTableExpression",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3648,
+                                                    "rule_name": "identifier",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3647,
+                                                            "rule_name": "pureIdentifier",
+                                                            "children": [
+                                                                {
+                                                                    "type": 790,
+                                                                    "name": "IDENTIFIER",
+                                                                    "text": "mytable"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": 92,
+                                                    "name": "AS_SYMBOL",
+                                                    "text": "AS"
+                                                },
+                                                {
+                                                    "rule_id": 2374,
+                                                    "rule_name": "subquery",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 2371,
+                                                            "rule_name": "queryExpressionParens",
+                                                            "children": [
+                                                                {
+                                                                    "type": 27,
+                                                                    "name": "OPEN_PAR_SYMBOL",
+                                                                    "text": "("
+                                                                },
+                                                                {
+                                                                    "rule_id": 2362,
+                                                                    "rule_name": "queryExpression",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 2368,
+                                                                            "rule_name": "queryExpressionBody",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 2372,
+                                                                                    "rule_name": "queryPrimary",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 2373,
+                                                                                            "rule_name": "querySpecification",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 610,
+                                                                                                    "name": "SELECT_SYMBOL",
+                                                                                                    "text": "select"
+                                                                                                },
+                                                                                                {
+                                                                                                    "rule_id": 2449,
+                                                                                                    "rule_name": "selectItemList",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "rule_id": 2451,
+                                                                                                            "rule_name": "selectItem",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "rule_id": 3729,
+                                                                                                                    "rule_name": "expr",
+                                                                                                                    "children": [
+                                                                                                                        {
+                                                                                                                            "rule_id": 3741,
+                                                                                                                            "rule_name": "boolPri",
+                                                                                                                            "children": [
+                                                                                                                                {
+                                                                                                                                    "rule_id": 3751,
+                                                                                                                                    "rule_name": "predicate",
+                                                                                                                                    "children": [
+                                                                                                                                        {
+                                                                                                                                            "rule_id": 3752,
+                                                                                                                                            "rule_name": "bitExpr",
+                                                                                                                                            "children": [
+                                                                                                                                                {
+                                                                                                                                                    "rule_id": 3766,
+                                                                                                                                                    "rule_name": "simpleExpr",
+                                                                                                                                                    "children": [
+                                                                                                                                                        {
+                                                                                                                                                            "rule_id": 3664,
+                                                                                                                                                            "rule_name": "literal",
+                                                                                                                                                            "children": [
+                                                                                                                                                                {
+                                                                                                                                                                    "rule_id": 3679,
+                                                                                                                                                                    "rule_name": "numLiteral",
+                                                                                                                                                                    "children": [
+                                                                                                                                                                        {
+                                                                                                                                                                            "type": 796,
+                                                                                                                                                                            "name": "DECIMAL_NUMBER",
+                                                                                                                                                                            "text": "1"
+                                                                                                                                                                        }
+                                                                                                                                                                    ]
+                                                                                                                                                                }
+                                                                                                                                                            ]
+                                                                                                                                                        }
+                                                                                                                                                    ]
+                                                                                                                                                }
+                                                                                                                                            ]
+                                                                                                                                        }
+                                                                                                                                    ]
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": 28,
+                                                                    "name": "CLOSE_PAR_SYMBOL",
+                                                                    "text": ")"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "rule_id": 2368,
+                                    "rule_name": "queryExpressionBody",
+                                    "children": [
+                                        {
+                                            "rule_id": 2372,
+                                            "rule_name": "queryPrimary",
+                                            "children": [
+                                                {
+                                                    "rule_id": 2373,
+                                                    "rule_name": "querySpecification",
+                                                    "children": [
+                                                        {
+                                                            "type": 610,
+                                                            "name": "SELECT_SYMBOL",
+                                                            "text": "SELECT"
+                                                        },
+                                                        {
+                                                            "rule_id": 2449,
+                                                            "rule_name": "selectItemList",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 2451,
+                                                                    "rule_name": "selectItem",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3729,
+                                                                            "rule_name": "expr",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3741,
+                                                                                    "rule_name": "boolPri",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3751,
+                                                                                            "rule_name": "predicate",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3752,
+                                                                                                    "rule_name": "bitExpr",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "rule_id": 3766,
+                                                                                                            "rule_name": "simpleExpr",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "rule_id": 3664,
+                                                                                                                    "rule_name": "literal",
+                                                                                                                    "children": [
+                                                                                                                        {
+                                                                                                                            "rule_id": 3679,
+                                                                                                                            "rule_name": "numLiteral",
+                                                                                                                            "children": [
+                                                                                                                                {
+                                                                                                                                    "type": 796,
+                                                                                                                                    "name": "DECIMAL_NUMBER",
+                                                                                                                                    "text": "123"
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 2430,
+                                                            "rule_name": "fromClause",
+                                                            "children": [
+                                                                {
+                                                                    "type": 277,
+                                                                    "name": "FROM_SYMBOL",
+                                                                    "text": "FROM"
+                                                                },
+                                                                {
+                                                                    "rule_id": 2432,
+                                                                    "rule_name": "tableReferenceList",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 2458,
+                                                                            "rule_name": "tableReference",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 2479,
+                                                                                    "rule_name": "tableFactor",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 2480,
+                                                                                            "rule_name": "singleTable",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3632,
+                                                                                                    "rule_name": "tableRef",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "rule_id": 3652,
+                                                                                                            "rule_name": "qualifiedIdentifier",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "rule_id": 3648,
+                                                                                                                    "rule_name": "identifier",
+                                                                                                                    "children": [
+                                                                                                                        {
+                                                                                                                            "rule_id": 3647,
+                                                                                                                            "rule_name": "pureIdentifier",
+                                                                                                                            "children": [
+                                                                                                                                {
+                                                                                                                                    "type": 790,
+                                                                                                                                    "name": "IDENTIFIER",
+                                                                                                                                    "text": "test"
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": -1,
+            "name": "$",
+            "text": "<EOF>"
+        }
+    ]
+}

@@ -1,0 +1,176 @@
+QUERY:
+GRANT SELECT ON mytable TO myuser@localhost
+
+PARSE TREE:
+
+{
+    "rule_id": 2004,
+    "rule_name": "query",
+    "children": [
+        {
+            "rule_id": 2005,
+            "rule_name": "simpleStatement",
+            "children": [
+                {
+                    "rule_id": 2693,
+                    "rule_name": "accountManagementStatement",
+                    "children": [
+                        {
+                            "rule_id": 2747,
+                            "rule_name": "grant",
+                            "children": [
+                                {
+                                    "type": 288,
+                                    "name": "GRANT_SYMBOL",
+                                    "text": "GRANT"
+                                },
+                                {
+                                    "rule_id": 2774,
+                                    "rule_name": "roleOrPrivilegesList",
+                                    "children": [
+                                        {
+                                            "rule_id": 2796,
+                                            "rule_name": "roleOrPrivilege",
+                                            "children": [
+                                                {
+                                                    "type": 610,
+                                                    "name": "SELECT_SYMBOL",
+                                                    "text": "SELECT"
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 471,
+                                    "name": "ON_SYMBOL",
+                                    "text": "ON"
+                                },
+                                {
+                                    "rule_id": 2802,
+                                    "rule_name": "grantIdentifier",
+                                    "children": [
+                                        {
+                                            "rule_id": 3606,
+                                            "rule_name": "schemaRef",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3648,
+                                                    "rule_name": "identifier",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3647,
+                                                            "rule_name": "pureIdentifier",
+                                                            "children": [
+                                                                {
+                                                                    "type": 790,
+                                                                    "name": "IDENTIFIER",
+                                                                    "text": "mytable"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 715,
+                                    "name": "TO_SYMBOL",
+                                    "text": "TO"
+                                },
+                                {
+                                    "rule_id": 2748,
+                                    "rule_name": "grantTargetList",
+                                    "children": [
+                                        {
+                                            "rule_id": 3558,
+                                            "rule_name": "createUserList",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3570,
+                                                    "rule_name": "createUserEntry",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3587,
+                                                            "rule_name": "user",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3585,
+                                                                    "rule_name": "userIdentifierOrText",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3689,
+                                                                            "rule_name": "textOrIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "myuser"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 34,
+                                                                            "name": "AT_SIGN_SYMBOL",
+                                                                            "text": "@"
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3689,
+                                                                            "rule_name": "textOrIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "localhost"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": -1,
+            "name": "$",
+            "text": "<EOF>"
+        }
+    ]
+}

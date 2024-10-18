@@ -1,0 +1,1979 @@
+QUERY:
+CREATE TABLE products (
+    product_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_name VARCHAR(100) NOT NULL,
+    `description` TEXT,
+    category ENUM('Electronics', 'Clothing', 'Books', 'Home', 'Beauty'),
+    order_id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT,
+    product_id INT,
+    `status` SET('Pending', 'Shipped', 'Delivered', 'Cancelled'),
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    delivery_date DATETIME,
+    CONSTRAINT fk_customer
+        FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_product
+        FOREIGN KEY (product_id) REFERENCES products (product_id)
+        ON DELETE CASCADE,
+    INDEX idx_col_h_i (`col_h`, `col_i`),
+    INDEX idx_col_g (`col_g`),
+    UNIQUE INDEX idx_col_k (`col_k`),
+    FULLTEXT INDEX idx_col_l (`col_l`)
+) DEFAULT CHARACTER SET cp1250 COLLATE cp1250_general_ci;
+
+PARSE TREE:
+
+{
+    "rule_id": 2004,
+    "rule_name": "query",
+    "children": [
+        {
+            "rule_id": 2005,
+            "rule_name": "simpleStatement",
+            "children": [
+                {
+                    "rule_id": 2144,
+                    "rule_name": "createStatement",
+                    "children": [
+                        {
+                            "type": 168,
+                            "name": "CREATE_SYMBOL",
+                            "text": "CREATE"
+                        },
+                        {
+                            "rule_id": 2152,
+                            "rule_name": "createTable",
+                            "children": [
+                                {
+                                    "type": 695,
+                                    "name": "TABLE_SYMBOL",
+                                    "text": "TABLE"
+                                },
+                                {
+                                    "rule_id": 3625,
+                                    "rule_name": "tableName",
+                                    "children": [
+                                        {
+                                            "rule_id": 3652,
+                                            "rule_name": "qualifiedIdentifier",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3648,
+                                                    "rule_name": "identifier",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3647,
+                                                            "rule_name": "pureIdentifier",
+                                                            "children": [
+                                                                {
+                                                                    "type": 790,
+                                                                    "name": "IDENTIFIER",
+                                                                    "text": "products"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 27,
+                                    "name": "OPEN_PAR_SYMBOL",
+                                    "text": "("
+                                },
+                                {
+                                    "rule_id": 2154,
+                                    "rule_name": "tableElementList",
+                                    "children": [
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "product_id"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 39,
+                                                                            "name": "INT_SYMBOL",
+                                                                            "text": "INT"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3350,
+                                                                    "rule_name": "columnAttribute",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 97,
+                                                                            "name": "AUTO_INCREMENT_SYMBOL",
+                                                                            "text": "AUTO_INCREMENT"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3350,
+                                                                    "rule_name": "columnAttribute",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 517,
+                                                                            "name": "PRIMARY_SYMBOL",
+                                                                            "text": "PRIMARY"
+                                                                        },
+                                                                        {
+                                                                            "type": 342,
+                                                                            "name": "KEY_SYMBOL",
+                                                                            "text": "KEY"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "product_name"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 55,
+                                                                            "name": "VARCHAR_SYMBOL",
+                                                                            "text": "VARCHAR"
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3435,
+                                                                            "rule_name": "fieldLength",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 27,
+                                                                                    "name": "OPEN_PAR_SYMBOL",
+                                                                                    "text": "("
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3661,
+                                                                                    "rule_name": "real_ulonglong_number",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 796,
+                                                                                            "name": "DECIMAL_NUMBER",
+                                                                                            "text": "100"
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 28,
+                                                                                    "name": "CLOSE_PAR_SYMBOL",
+                                                                                    "text": ")"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3350,
+                                                                    "rule_name": "columnAttribute",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 453,
+                                                                            "name": "NOT_SYMBOL",
+                                                                            "text": "NOT"
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3681,
+                                                                            "rule_name": "nullLiteral",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 457,
+                                                                                    "name": "NULL_SYMBOL",
+                                                                                    "text": "NULL"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 791,
+                                                                                    "name": "BACK_TICK_QUOTED_ID",
+                                                                                    "text": "`description`"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 63,
+                                                                            "name": "TEXT_SYMBOL",
+                                                                            "text": "TEXT"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "category"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 66,
+                                                                            "name": "ENUM_SYMBOL",
+                                                                            "text": "ENUM"
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3669,
+                                                                            "rule_name": "stringList",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 27,
+                                                                                    "name": "OPEN_PAR_SYMBOL",
+                                                                                    "text": "("
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Electronics'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Clothing'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Books'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Home'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Beauty'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 28,
+                                                                                    "name": "CLOSE_PAR_SYMBOL",
+                                                                                    "text": ")"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "order_id"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 39,
+                                                                            "name": "INT_SYMBOL",
+                                                                            "text": "INT"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3350,
+                                                                    "rule_name": "columnAttribute",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 97,
+                                                                            "name": "AUTO_INCREMENT_SYMBOL",
+                                                                            "text": "AUTO_INCREMENT"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3350,
+                                                                    "rule_name": "columnAttribute",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 517,
+                                                                            "name": "PRIMARY_SYMBOL",
+                                                                            "text": "PRIMARY"
+                                                                        },
+                                                                        {
+                                                                            "type": 342,
+                                                                            "name": "KEY_SYMBOL",
+                                                                            "text": "KEY"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "customer_id"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 39,
+                                                                            "name": "INT_SYMBOL",
+                                                                            "text": "INT"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "product_id"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 39,
+                                                                            "name": "INT_SYMBOL",
+                                                                            "text": "INT"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 791,
+                                                                                    "name": "BACK_TICK_QUOTED_ID",
+                                                                                    "text": "`status`"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 67,
+                                                                            "name": "SET_SYMBOL",
+                                                                            "text": "SET"
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3669,
+                                                                            "rule_name": "stringList",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 27,
+                                                                                    "name": "OPEN_PAR_SYMBOL",
+                                                                                    "text": "("
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Pending'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Shipped'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Delivered'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 24,
+                                                                                    "name": "COMMA_SYMBOL",
+                                                                                    "text": ","
+                                                                                },
+                                                                                {
+                                                                                    "rule_id": 3671,
+                                                                                    "rule_name": "textString",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3670,
+                                                                                            "rule_name": "textStringLiteral",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 793,
+                                                                                                    "name": "SINGLE_QUOTED_TEXT",
+                                                                                                    "text": "'Cancelled'"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": 28,
+                                                                                    "name": "CLOSE_PAR_SYMBOL",
+                                                                                    "text": ")"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "order_date"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 51,
+                                                                            "name": "TIMESTAMP_SYMBOL",
+                                                                            "text": "TIMESTAMP"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3350,
+                                                                    "rule_name": "columnAttribute",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 198,
+                                                                            "name": "DEFAULT_SYMBOL",
+                                                                            "text": "DEFAULT"
+                                                                        },
+                                                                        {
+                                                                            "type": 810,
+                                                                            "name": null,
+                                                                            "text": "CURRENT_TIMESTAMP"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3312,
+                                                    "rule_name": "columnDefinition",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3595,
+                                                            "rule_name": "columnName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "delivery_date"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3335,
+                                                            "rule_name": "fieldDefinition",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3429,
+                                                                    "rule_name": "dataType",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 52,
+                                                                            "name": "DATETIME_SYMBOL",
+                                                                            "text": "DATETIME"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3328,
+                                                    "rule_name": "tableConstraintDef",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3329,
+                                                            "rule_name": "constraintName",
+                                                            "children": [
+                                                                {
+                                                                    "type": 157,
+                                                                    "name": "CONSTRAINT_SYMBOL",
+                                                                    "text": "CONSTRAINT"
+                                                                },
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "fk_customer"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": 273,
+                                                            "name": "FOREIGN_SYMBOL",
+                                                            "text": "FOREIGN"
+                                                        },
+                                                        {
+                                                            "type": 342,
+                                                            "name": "KEY_SYMBOL",
+                                                            "text": "KEY"
+                                                        },
+                                                        {
+                                                            "rule_id": 3371,
+                                                            "rule_name": "keyList",
+                                                            "children": [
+                                                                {
+                                                                    "type": 27,
+                                                                    "name": "OPEN_PAR_SYMBOL",
+                                                                    "text": "("
+                                                                },
+                                                                {
+                                                                    "rule_id": 3372,
+                                                                    "rule_name": "keyPart",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "customer_id"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": 28,
+                                                                    "name": "CLOSE_PAR_SYMBOL",
+                                                                    "text": ")"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3365,
+                                                            "rule_name": "references",
+                                                            "children": [
+                                                                {
+                                                                    "type": 543,
+                                                                    "name": "REFERENCES_SYMBOL",
+                                                                    "text": "REFERENCES"
+                                                                },
+                                                                {
+                                                                    "rule_id": 3632,
+                                                                    "rule_name": "tableRef",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3652,
+                                                                            "rule_name": "qualifiedIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "customers"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3651,
+                                                                    "rule_name": "identifierListWithParentheses",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 27,
+                                                                            "name": "OPEN_PAR_SYMBOL",
+                                                                            "text": "("
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3650,
+                                                                            "rule_name": "identifierList",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "customer_id"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 28,
+                                                                            "name": "CLOSE_PAR_SYMBOL",
+                                                                            "text": ")"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": 471,
+                                                                    "name": "ON_SYMBOL",
+                                                                    "text": "ON"
+                                                                },
+                                                                {
+                                                                    "type": 203,
+                                                                    "name": "DELETE_SYMBOL",
+                                                                    "text": "DELETE"
+                                                                },
+                                                                {
+                                                                    "rule_id": 3369,
+                                                                    "rule_name": "deleteOption",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 120,
+                                                                            "name": "CASCADE_SYMBOL",
+                                                                            "text": "CASCADE"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3328,
+                                                    "rule_name": "tableConstraintDef",
+                                                    "children": [
+                                                        {
+                                                            "rule_id": 3329,
+                                                            "rule_name": "constraintName",
+                                                            "children": [
+                                                                {
+                                                                    "type": 157,
+                                                                    "name": "CONSTRAINT_SYMBOL",
+                                                                    "text": "CONSTRAINT"
+                                                                },
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "fk_product"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": 273,
+                                                            "name": "FOREIGN_SYMBOL",
+                                                            "text": "FOREIGN"
+                                                        },
+                                                        {
+                                                            "type": 342,
+                                                            "name": "KEY_SYMBOL",
+                                                            "text": "KEY"
+                                                        },
+                                                        {
+                                                            "rule_id": 3371,
+                                                            "rule_name": "keyList",
+                                                            "children": [
+                                                                {
+                                                                    "type": 27,
+                                                                    "name": "OPEN_PAR_SYMBOL",
+                                                                    "text": "("
+                                                                },
+                                                                {
+                                                                    "rule_id": 3372,
+                                                                    "rule_name": "keyPart",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "product_id"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": 28,
+                                                                    "name": "CLOSE_PAR_SYMBOL",
+                                                                    "text": ")"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3365,
+                                                            "rule_name": "references",
+                                                            "children": [
+                                                                {
+                                                                    "type": 543,
+                                                                    "name": "REFERENCES_SYMBOL",
+                                                                    "text": "REFERENCES"
+                                                                },
+                                                                {
+                                                                    "rule_id": 3632,
+                                                                    "rule_name": "tableRef",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3652,
+                                                                            "rule_name": "qualifiedIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "products"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "rule_id": 3651,
+                                                                    "rule_name": "identifierListWithParentheses",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 27,
+                                                                            "name": "OPEN_PAR_SYMBOL",
+                                                                            "text": "("
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3650,
+                                                                            "rule_name": "identifierList",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3648,
+                                                                                    "rule_name": "identifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3647,
+                                                                                            "rule_name": "pureIdentifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": 790,
+                                                                                                    "name": "IDENTIFIER",
+                                                                                                    "text": "product_id"
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 28,
+                                                                            "name": "CLOSE_PAR_SYMBOL",
+                                                                            "text": ")"
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": 471,
+                                                                    "name": "ON_SYMBOL",
+                                                                    "text": "ON"
+                                                                },
+                                                                {
+                                                                    "type": 203,
+                                                                    "name": "DELETE_SYMBOL",
+                                                                    "text": "DELETE"
+                                                                },
+                                                                {
+                                                                    "rule_id": 3369,
+                                                                    "rule_name": "deleteOption",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 120,
+                                                                            "name": "CASCADE_SYMBOL",
+                                                                            "text": "CASCADE"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3328,
+                                                    "rule_name": "tableConstraintDef",
+                                                    "children": [
+                                                        {
+                                                            "type": 313,
+                                                            "name": "INDEX_SYMBOL",
+                                                            "text": "INDEX"
+                                                        },
+                                                        {
+                                                            "rule_id": 2191,
+                                                            "rule_name": "indexNameAndType",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3601,
+                                                                    "rule_name": "indexName",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "idx_col_h_i"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3377,
+                                                            "rule_name": "keyListVariants",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3374,
+                                                                    "rule_name": "keyListWithExpression",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 27,
+                                                                            "name": "OPEN_PAR_SYMBOL",
+                                                                            "text": "("
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3376,
+                                                                            "rule_name": "keyPartOrExpression",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3372,
+                                                                                    "rule_name": "keyPart",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3648,
+                                                                                            "rule_name": "identifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3647,
+                                                                                                    "rule_name": "pureIdentifier",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": 791,
+                                                                                                            "name": "BACK_TICK_QUOTED_ID",
+                                                                                                            "text": "`col_h`"
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 24,
+                                                                            "name": "COMMA_SYMBOL",
+                                                                            "text": ","
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3376,
+                                                                            "rule_name": "keyPartOrExpression",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3372,
+                                                                                    "rule_name": "keyPart",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3648,
+                                                                                            "rule_name": "identifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3647,
+                                                                                                    "rule_name": "pureIdentifier",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": 791,
+                                                                                                            "name": "BACK_TICK_QUOTED_ID",
+                                                                                                            "text": "`col_i`"
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 28,
+                                                                            "name": "CLOSE_PAR_SYMBOL",
+                                                                            "text": ")"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3328,
+                                                    "rule_name": "tableConstraintDef",
+                                                    "children": [
+                                                        {
+                                                            "type": 313,
+                                                            "name": "INDEX_SYMBOL",
+                                                            "text": "INDEX"
+                                                        },
+                                                        {
+                                                            "rule_id": 2191,
+                                                            "rule_name": "indexNameAndType",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3601,
+                                                                    "rule_name": "indexName",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "idx_col_g"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3377,
+                                                            "rule_name": "keyListVariants",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3374,
+                                                                    "rule_name": "keyListWithExpression",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 27,
+                                                                            "name": "OPEN_PAR_SYMBOL",
+                                                                            "text": "("
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3376,
+                                                                            "rule_name": "keyPartOrExpression",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3372,
+                                                                                    "rule_name": "keyPart",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3648,
+                                                                                            "rule_name": "identifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3647,
+                                                                                                    "rule_name": "pureIdentifier",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": 791,
+                                                                                                            "name": "BACK_TICK_QUOTED_ID",
+                                                                                                            "text": "`col_g`"
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 28,
+                                                                            "name": "CLOSE_PAR_SYMBOL",
+                                                                            "text": ")"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3328,
+                                                    "rule_name": "tableConstraintDef",
+                                                    "children": [
+                                                        {
+                                                            "type": 734,
+                                                            "name": "UNIQUE_SYMBOL",
+                                                            "text": "UNIQUE"
+                                                        },
+                                                        {
+                                                            "rule_id": 2511,
+                                                            "rule_name": "keyOrIndex",
+                                                            "children": [
+                                                                {
+                                                                    "type": 313,
+                                                                    "name": "INDEX_SYMBOL",
+                                                                    "text": "INDEX"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 2191,
+                                                            "rule_name": "indexNameAndType",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3601,
+                                                                    "rule_name": "indexName",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "idx_col_k"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3377,
+                                                            "rule_name": "keyListVariants",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3374,
+                                                                    "rule_name": "keyListWithExpression",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 27,
+                                                                            "name": "OPEN_PAR_SYMBOL",
+                                                                            "text": "("
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3376,
+                                                                            "rule_name": "keyPartOrExpression",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3372,
+                                                                                    "rule_name": "keyPart",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3648,
+                                                                                            "rule_name": "identifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3647,
+                                                                                                    "rule_name": "pureIdentifier",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": 791,
+                                                                                                            "name": "BACK_TICK_QUOTED_ID",
+                                                                                                            "text": "`col_k`"
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 28,
+                                                                            "name": "CLOSE_PAR_SYMBOL",
+                                                                            "text": ")"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 24,
+                                            "name": "COMMA_SYMBOL",
+                                            "text": ","
+                                        },
+                                        {
+                                            "rule_id": 2155,
+                                            "rule_name": "tableElement",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3328,
+                                                    "rule_name": "tableConstraintDef",
+                                                    "children": [
+                                                        {
+                                                            "type": 278,
+                                                            "name": "FULLTEXT_SYMBOL",
+                                                            "text": "FULLTEXT"
+                                                        },
+                                                        {
+                                                            "rule_id": 2511,
+                                                            "rule_name": "keyOrIndex",
+                                                            "children": [
+                                                                {
+                                                                    "type": 313,
+                                                                    "name": "INDEX_SYMBOL",
+                                                                    "text": "INDEX"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3601,
+                                                            "rule_name": "indexName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3648,
+                                                                    "rule_name": "identifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3647,
+                                                                            "rule_name": "pureIdentifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": 790,
+                                                                                    "name": "IDENTIFIER",
+                                                                                    "text": "idx_col_l"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3377,
+                                                            "rule_name": "keyListVariants",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3374,
+                                                                    "rule_name": "keyListWithExpression",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": 27,
+                                                                            "name": "OPEN_PAR_SYMBOL",
+                                                                            "text": "("
+                                                                        },
+                                                                        {
+                                                                            "rule_id": 3376,
+                                                                            "rule_name": "keyPartOrExpression",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3372,
+                                                                                    "rule_name": "keyPart",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "rule_id": 3648,
+                                                                                            "rule_name": "identifier",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "rule_id": 3647,
+                                                                                                    "rule_name": "pureIdentifier",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": 791,
+                                                                                                            "name": "BACK_TICK_QUOTED_ID",
+                                                                                                            "text": "`col_l`"
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": 28,
+                                                                            "name": "CLOSE_PAR_SYMBOL",
+                                                                            "text": ")"
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 28,
+                                    "name": "CLOSE_PAR_SYMBOL",
+                                    "text": ")"
+                                },
+                                {
+                                    "rule_id": 3453,
+                                    "rule_name": "createTableOptions",
+                                    "children": [
+                                        {
+                                            "rule_id": 3485,
+                                            "rule_name": "createTableOption",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3489,
+                                                    "rule_name": "defaultCharset",
+                                                    "children": [
+                                                        {
+                                                            "type": 198,
+                                                            "name": "DEFAULT_SYMBOL",
+                                                            "text": "DEFAULT"
+                                                        },
+                                                        {
+                                                            "rule_id": 3225,
+                                                            "rule_name": "charset",
+                                                            "children": [
+                                                                {
+                                                                    "type": 54,
+                                                                    "name": "CHAR_SYMBOL",
+                                                                    "text": "CHARACTER"
+                                                                },
+                                                                {
+                                                                    "type": 67,
+                                                                    "name": "SET_SYMBOL",
+                                                                    "text": "SET"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "rule_id": 3450,
+                                                            "rule_name": "charsetName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3689,
+                                                                    "rule_name": "textOrIdentifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "cp1250"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "rule_id": 3485,
+                                            "rule_name": "createTableOption",
+                                            "children": [
+                                                {
+                                                    "rule_id": 3487,
+                                                    "rule_name": "defaultCollation",
+                                                    "children": [
+                                                        {
+                                                            "type": 140,
+                                                            "name": "COLLATE_SYMBOL",
+                                                            "text": "COLLATE"
+                                                        },
+                                                        {
+                                                            "rule_id": 3451,
+                                                            "rule_name": "collationName",
+                                                            "children": [
+                                                                {
+                                                                    "rule_id": 3689,
+                                                                    "rule_name": "textOrIdentifier",
+                                                                    "children": [
+                                                                        {
+                                                                            "rule_id": 3648,
+                                                                            "rule_name": "identifier",
+                                                                            "children": [
+                                                                                {
+                                                                                    "rule_id": 3647,
+                                                                                    "rule_name": "pureIdentifier",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": 790,
+                                                                                            "name": "IDENTIFIER",
+                                                                                            "text": "cp1250_general_ci"
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": 25,
+            "name": "SEMICOLON_SYMBOL",
+            "text": ";"
+        },
+        {
+            "type": -1,
+            "name": "$",
+            "text": "<EOF>"
+        }
+    ]
+}
