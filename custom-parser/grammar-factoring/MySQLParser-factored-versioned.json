@@ -13809,30 +13809,10 @@
         ]
     },
     {
-        "name": "revoke",
+        "name": "%revoke01_zero_or_one",
         "bnf": [
             [
-                "REVOKE_SYMBOL",
                 "%revoke01"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 80000",
-        "name": "%revoke0100",
-        "bnf": [
-            [
-                "roleOrPrivilegesList",
-                "FROM_SYMBOL",
-                "userList"
-            ]
-        ]
-    },
-    {
-        "name": "aclType_zero_or_one",
-        "bnf": [
-            [
-                "aclType"
             ],
             [
                 "\u03b5"
@@ -13840,26 +13820,61 @@
         ]
     },
     {
-        "versions": "serverVersion >= 80000",
-        "name": "%revoke012200",
+        "name": "%revoke03_zero_or_one",
         "bnf": [
             [
-                "ON_SYMBOL",
-                "aclType_zero_or_one",
-                "grantIdentifier"
+                "%revoke03"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
     {
-        "name": "%revoke0122",
+        "name": "revoke",
         "bnf": [
             [
-                "%revoke012200"
+                "REVOKE_SYMBOL",
+                "%revoke01_zero_or_one",
+                "%revoke02",
+                "%revoke03_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80030",
+        "name": "%revoke0100",
+        "bnf": [
+            [
+                "ifExists"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke01_zero_or_one",
+        "bnf": [
+            [
+                "%revoke01"
             ],
             [
-                "COMMA_SYMBOL",
-                "GRANT_SYMBOL",
-                "OPTION_SYMBOL",
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke01",
+        "bnf": [
+            [
+                "%revoke0100"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%revoke0200",
+        "bnf": [
+            [
+                "roleOrPrivilegesList",
                 "FROM_SYMBOL",
                 "userList"
             ]
@@ -13877,10 +13892,10 @@
         ]
     },
     {
-        "name": "%revoke0123_zero_or_one",
+        "name": "%revoke0222003_zero_or_one",
         "bnf": [
             [
-                "%revoke0123"
+                "%revoke0222003"
             ],
             [
                 "\u03b5"
@@ -13888,10 +13903,59 @@
         ]
     },
     {
-        "name": "%revoke0123",
+        "name": "%revoke0222003",
         "bnf": [
             [
                 "onTypeTo_zero_or_one",
+                "FROM_SYMBOL",
+                "userList"
+            ]
+        ]
+    },
+    {
+        "name": "aclType_zero_or_one",
+        "bnf": [
+            [
+                "aclType"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke0222003_zero_or_one",
+        "bnf": [
+            [
+                "%revoke0222003"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80000",
+        "name": "%revoke022200",
+        "bnf": [
+            [
+                "ON_SYMBOL",
+                "aclType_zero_or_one",
+                "grantIdentifier",
+                "%revoke0222003_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke0222",
+        "bnf": [
+            [
+                "%revoke022200"
+            ],
+            [
+                "COMMA_SYMBOL",
+                "GRANT_SYMBOL",
+                "OPTION_SYMBOL",
                 "FROM_SYMBOL",
                 "userList"
             ]
@@ -13909,21 +13973,10 @@
         ]
     },
     {
-        "name": "%revoke0123_zero_or_one",
+        "name": "%revoke02",
         "bnf": [
             [
-                "%revoke0123"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%revoke01",
-        "bnf": [
-            [
-                "%revoke0100"
+                "%revoke0200"
             ],
             [
                 "roleOrPrivilegesList",
@@ -13934,8 +13987,7 @@
             [
                 "ALL_SYMBOL",
                 "PRIVILEGES_SYMBOL_zero_or_one",
-                "%revoke0122",
-                "%revoke0123_zero_or_one"
+                "%revoke0222"
             ],
             [
                 "PROXY_SYMBOL",
@@ -13943,6 +13995,36 @@
                 "user",
                 "FROM_SYMBOL",
                 "userList"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80030",
+        "name": "%revoke0300",
+        "bnf": [
+            [
+                "IGNORE_SYMBOL",
+                "UNKNOWN_SYMBOL",
+                "USER_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke03_zero_or_one",
+        "bnf": [
+            [
+                "%revoke03"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
+        "name": "%revoke03",
+        "bnf": [
+            [
+                "%revoke0300"
             ]
         ]
     },

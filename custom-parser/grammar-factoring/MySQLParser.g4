@@ -1991,19 +1991,21 @@ renameUser:
 
 /*
  * @FIX:
- * Fix "revoke" to support "REVOKE ALL ON ... FROM ...".
- * The "(onTypeTo? FROM_SYMBOL userList)?" part was missing in the original rule.
+ * Fix "revoke" to support "IF EXISTS" and "REVOKE ALL ON ... FROM ...".
+ * 1. The "IF EXISTS" clause was missing in the original rule.
+ * 2. The "(onTypeTo? FROM_SYMBOL userList)?" part was missing in the original rule.
+ * 3. The "IGNORE UNKNOWN USER" clause was missing in the original rule.
  */
 revoke:
-    REVOKE_SYMBOL (
+    REVOKE_SYMBOL ({serverVersion >= 80030}? ifExists)? (
         {serverVersion >= 80000}? roleOrPrivilegesList FROM_SYMBOL userList
         | roleOrPrivilegesList onTypeTo FROM_SYMBOL userList
         | ALL_SYMBOL PRIVILEGES_SYMBOL? (
-            {serverVersion >= 80000}? ON_SYMBOL aclType? grantIdentifier
+            {serverVersion >= 80000}? ON_SYMBOL aclType? grantIdentifier (onTypeTo? FROM_SYMBOL userList)?
             | COMMA_SYMBOL GRANT_SYMBOL OPTION_SYMBOL FROM_SYMBOL userList
-        ) (onTypeTo? FROM_SYMBOL userList)?
+        )
         | PROXY_SYMBOL ON_SYMBOL user FROM_SYMBOL userList
-    )
+    ) ({serverVersion >= 80030}? IGNORE_SYMBOL UNKNOWN_SYMBOL USER_SYMBOL)?
 ;
 
 onTypeTo: // Optional, starting with 8.0.1.
