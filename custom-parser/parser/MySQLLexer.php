@@ -891,6 +891,7 @@ class MySQLLexer {
 	const SQL_TSI_WEEK_SYMBOL = 809;
 	const SQL_TSI_YEAR_SYMBOL = 810;
 	const INTERSECT_SYMBOL = 811; // missing in MySQLLexer.g4
+	const ATTRIBUTE_SYMBOL = 812; // missing in MySQLLexer.g4
 
 	// Special tokens
     const EOF = -1;
@@ -923,6 +924,7 @@ class MySQLLexer {
 		'ASCII' => self::ASCII_SYMBOL,
 		'ASENSITIVE' => self::ASENSITIVE_SYMBOL,
 		'AT' => self::AT_SYMBOL,
+		'ATTRIBUTE' => self::ATTRIBUTE_SYMBOL,
 		'AUTHORS' => self::AUTHORS_SYMBOL,
 		'AUTO_INCREMENT' => self::AUTO_INCREMENT_SYMBOL,
 		'AUTOEXTEND_SIZE' => self::AUTOEXTEND_SIZE_SYMBOL,
@@ -1822,6 +1824,7 @@ class MySQLLexer {
 		self::ACTIVE_SYMBOL => 80014,
 		self::ADMIN_SYMBOL => 80000,
 		self::ARRAY_SYMBOL => 80017,
+		self::ATTRIBUTE_SYMBOL => 80021,
 		self::BUCKETS_SYMBOL => 80000,
 		self::CLONE_SYMBOL => 80000,
 		self::COMPONENT_SYMBOL => 80000,

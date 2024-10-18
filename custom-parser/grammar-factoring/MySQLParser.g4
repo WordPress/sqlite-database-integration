@@ -1856,7 +1856,7 @@ alterUser:
     ALTER_SYMBOL USER_SYMBOL ({serverVersion >= 50706}? ifExists)? alterUserTail
 ;
 
-alterUserTail:
+/*alterUserTail:
     ({serverVersion < 80014}? createUserList | {serverVersion >= 80014}? alterUserList) createUserTail
     | {serverVersion >= 50706}? user IDENTIFIED_SYMBOL BY_SYMBOL textString (
         {serverVersion >= 80014}? replacePassword
@@ -1871,6 +1871,21 @@ alterUserTail:
         PASSWORD_SYMBOL retainCurrentPassword?
     | FAILED_LOGIN_ATTEMPTS_SYMBOL real_ulong_number
     | PASSWORD_LOCK_TIME_SYMBOL (real_ulong_number | UNBOUNDED_SYMBOL)
+;*/
+
+/*
+ * @FIX:
+ * 1. Support also "USER()" function call.
+ * 2. Fix matching "DEFAULT ROLE" by reordering rules.
+ * 3. Reorder "alterUserList" and "createUserList" to match "alterUserList", as we don't handle versions yet.
+ * 4. Add support COMMENT and ATTRIBUTE. The "(COMMENT_SYMBOL | ATTRIBUTE_SYMBOL) textString)?" was missing.
+ * 5. Removed "IDENTIFIED (WITH) BY ..." and "discardOldPassword"; see the fixed "alterUserEntry" rule.
+ * 6. Remove "FAILED_LOGIN_ATTEMPTS_SYMBOL" and "PASSWORD_LOCK_TIME_SYMBOL"; they are in "createUserTail" now.
+ */
+alterUserTail:
+    {serverVersion >= 80000}? (userFunction | user) DEFAULT_SYMBOL ROLE_SYMBOL (ALL_SYMBOL | NONE_SYMBOL | roleList)
+    | ({serverVersion >= 80014}? alterUserList | {serverVersion < 80014}? createUserList)
+        createUserTail ({serverVersion >= 80021}? (COMMENT_SYMBOL | ATTRIBUTE_SYMBOL) textString)?
 ;
 
 userFunction:
@@ -3935,7 +3950,7 @@ createUserEntry: // create_user in sql_yacc.yy
     )?
 ;
 
-alterUserEntry: // alter_user in sql_yacc.yy
+/*alterUserEntry: // alter_user in sql_yacc.yy
     user (
         IDENTIFIED_SYMBOL (
             (WITH_SYMBOL textOrIdentifier)? BY_SYMBOL textString (
@@ -3946,6 +3961,24 @@ alterUserEntry: // alter_user in sql_yacc.yy
             )?
         )?
         | discardOldPassword?
+    )
+;*/
+
+/*
+ * @FIX:
+ * Fix "alterUserEntry":
+ * 1. Support also "USER()" function call.
+ * 2. Add support for "RANDOM PASSWORD".
+ */
+alterUserEntry: // alter_user in sql_yacc.yy
+    (userFunction | user) (
+        IDENTIFIED_SYMBOL (
+            (WITH_SYMBOL textOrIdentifier)? BY_SYMBOL ({serverVersion >= 80018}? RANDOM_SYMBOL PASSWORD_SYMBOL | textString)
+                replacePassword? retainCurrentPassword?
+            | WITH_SYMBOL textOrIdentifier (AS_SYMBOL textStringHash retainCurrentPassword?)?
+        )?
+        | {serverVersion >= 80014}? discardOldPassword
+        | /* empty */
     )
 ;
 

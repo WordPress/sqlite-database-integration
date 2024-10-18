@@ -12722,167 +12722,42 @@
         ]
     },
     {
+        "name": "%alterUserTail12_zero_or_one",
+        "bnf": [
+            [
+                "%alterUserTail12"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
         "name": "alterUserTail",
         "bnf": [
             [
-                "%alterUserTail00",
-                "createUserTail"
+                "%alterUserTail00"
             ],
             [
-                "%alterUserTail10"
+                "%alterUserTail10",
+                "createUserTail",
+                "%alterUserTail12_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "name": "%alterUserTail000",
+        "bnf": [
+            [
+                "userFunction"
             ],
             [
-                "%alterUserTail20"
-            ],
-            [
-                "%alterUserTail30"
-            ],
-            [
-                "%alterUserTail40"
-            ],
-            [
-                "FAILED_LOGIN_ATTEMPTS_SYMBOL",
-                "real_ulong_number"
-            ],
-            [
-                "PASSWORD_LOCK_TIME_SYMBOL",
-                "%alterUserTail61"
+                "user"
             ]
         ]
     },
     {
-        "versions": "serverVersion < 80014",
-        "name": "%alterUserTail0000",
-        "bnf": [
-            [
-                "createUserList"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 80014",
-        "name": "%alterUserTail0010",
-        "bnf": [
-            [
-                "alterUserList"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail00",
-        "bnf": [
-            [
-                "%alterUserTail0000"
-            ],
-            [
-                "%alterUserTail0010"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 80014",
-        "name": "%alterUserTail10400",
-        "bnf": [
-            [
-                "replacePassword"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail104_zero_or_one",
-        "bnf": [
-            [
-                "%alterUserTail104"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail104",
-        "bnf": [
-            [
-                "%alterUserTail10400"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 80014",
-        "name": "%alterUserTail10500",
-        "bnf": [
-            [
-                "retainCurrentPassword"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail105_zero_or_one",
-        "bnf": [
-            [
-                "%alterUserTail105"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail105",
-        "bnf": [
-            [
-                "%alterUserTail10500"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail104_zero_or_one",
-        "bnf": [
-            [
-                "%alterUserTail104"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail105_zero_or_one",
-        "bnf": [
-            [
-                "%alterUserTail105"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 50706",
-        "name": "%alterUserTail10",
-        "bnf": [
-            [
-                "user",
-                "IDENTIFIED_SYMBOL",
-                "BY_SYMBOL",
-                "textString",
-                "%alterUserTail104_zero_or_one",
-                "%alterUserTail105_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 80014",
-        "name": "%alterUserTail20",
-        "bnf": [
-            [
-                "user",
-                "discardOldPassword"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail303",
+        "name": "%alterUserTail003",
         "bnf": [
             [
                 "ALL_SYMBOL"
@@ -12897,21 +12772,71 @@
     },
     {
         "versions": "serverVersion >= 80000",
-        "name": "%alterUserTail30",
+        "name": "%alterUserTail00",
         "bnf": [
             [
-                "user",
+                "%alterUserTail000",
                 "DEFAULT_SYMBOL",
                 "ROLE_SYMBOL",
-                "%alterUserTail303"
+                "%alterUserTail003"
             ]
         ]
     },
     {
-        "name": "%alterUserTail402_zero_or_one",
+        "versions": "serverVersion >= 80014",
+        "name": "%alterUserTail1000",
         "bnf": [
             [
-                "%alterUserTail402"
+                "alterUserList"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion < 80014",
+        "name": "%alterUserTail1010",
+        "bnf": [
+            [
+                "createUserList"
+            ]
+        ]
+    },
+    {
+        "name": "%alterUserTail10",
+        "bnf": [
+            [
+                "%alterUserTail1000"
+            ],
+            [
+                "%alterUserTail1010"
+            ]
+        ]
+    },
+    {
+        "name": "%alterUserTail12000",
+        "bnf": [
+            [
+                "COMMENT_SYMBOL"
+            ],
+            [
+                "ATTRIBUTE_SYMBOL"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80021",
+        "name": "%alterUserTail1200",
+        "bnf": [
+            [
+                "%alterUserTail12000",
+                "textString"
+            ]
+        ]
+    },
+    {
+        "name": "%alterUserTail12_zero_or_one",
+        "bnf": [
+            [
+                "%alterUserTail12"
             ],
             [
                 "\u03b5"
@@ -12919,59 +12844,10 @@
         ]
     },
     {
-        "name": "%alterUserTail402",
+        "name": "%alterUserTail12",
         "bnf": [
             [
-                "WITH_SYMBOL",
-                "textOrIdentifier"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail402_zero_or_one",
-        "bnf": [
-            [
-                "%alterUserTail402"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "name": "retainCurrentPassword_zero_or_one",
-        "bnf": [
-            [
-                "retainCurrentPassword"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
-        "versions": "serverVersion >= 80018",
-        "name": "%alterUserTail40",
-        "bnf": [
-            [
-                "user",
-                "IDENTIFIED_SYMBOL",
-                "%alterUserTail402_zero_or_one",
-                "BY_SYMBOL",
-                "RANDOM_SYMBOL",
-                "PASSWORD_SYMBOL",
-                "retainCurrentPassword_zero_or_one"
-            ]
-        ]
-    },
-    {
-        "name": "%alterUserTail61",
-        "bnf": [
-            [
-                "real_ulong_number"
-            ],
-            [
-                "UNBOUNDED_SYMBOL"
+                "%alterUserTail1200"
             ]
         ]
     },
@@ -27926,8 +27802,19 @@
         "name": "alterUserEntry",
         "bnf": [
             [
-                "user",
+                "%alterUserEntry00",
                 "%alterUserEntry01"
+            ]
+        ]
+    },
+    {
+        "name": "%alterUserEntry00",
+        "bnf": [
+            [
+                "userFunction"
+            ],
+            [
+                "user"
             ]
         ]
     },
@@ -27952,21 +27839,22 @@
         ]
     },
     {
-        "name": "%alterUserEntry010103_zero_or_one",
+        "versions": "serverVersion >= 80018",
+        "name": "%alterUserEntry01010200",
         "bnf": [
             [
-                "%alterUserEntry010103"
-            ],
-            [
-                "\u03b5"
+                "RANDOM_SYMBOL",
+                "PASSWORD_SYMBOL"
             ]
         ]
     },
     {
-        "name": "%alterUserEntry010103",
+        "name": "%alterUserEntry010102",
         "bnf": [
             [
-                "REPLACE_SYMBOL",
+                "%alterUserEntry01010200"
+            ],
+            [
                 "textString"
             ]
         ]
@@ -28015,10 +27903,10 @@
         ]
     },
     {
-        "name": "%alterUserEntry010103_zero_or_one",
+        "name": "replacePassword_zero_or_one",
         "bnf": [
             [
-                "%alterUserEntry010103"
+                "replacePassword"
             ],
             [
                 "\u03b5"
@@ -28064,14 +27952,23 @@
             [
                 "%alterUserEntry010100_zero_or_one",
                 "BY_SYMBOL",
-                "textString",
-                "%alterUserEntry010103_zero_or_one",
+                "%alterUserEntry010102",
+                "replacePassword_zero_or_one",
                 "retainCurrentPassword_zero_or_one"
             ],
             [
                 "WITH_SYMBOL",
                 "textOrIdentifier",
                 "%alterUserEntry010112_zero_or_one"
+            ]
+        ]
+    },
+    {
+        "versions": "serverVersion >= 80014",
+        "name": "%alterUserEntry0110",
+        "bnf": [
+            [
+                "discardOldPassword"
             ]
         ]
     },
@@ -28087,17 +27984,6 @@
         ]
     },
     {
-        "name": "discardOldPassword_zero_or_one",
-        "bnf": [
-            [
-                "discardOldPassword"
-            ],
-            [
-                "\u03b5"
-            ]
-        ]
-    },
-    {
         "name": "%alterUserEntry01",
         "bnf": [
             [
@@ -28105,7 +27991,10 @@
                 "%alterUserEntry0101_zero_or_one"
             ],
             [
-                "discardOldPassword_zero_or_one"
+                "%alterUserEntry0110"
+            ],
+            [
+                "\u03b5"
             ]
         ]
     },
