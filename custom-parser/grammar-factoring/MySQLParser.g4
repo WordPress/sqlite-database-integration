@@ -3994,8 +3994,16 @@ replacePassword:
     REPLACE_SYMBOL textString
 ;
 
-userIdentifierOrText:
+/*userIdentifierOrText:
     textOrIdentifier (AT_SIGN_SYMBOL textOrIdentifier | AT_TEXT_SUFFIX)?
+;*/
+
+/*
+ * @FIX:
+ * Fix "userIdentifierOrText" to support omitting sequence after "@".
+ */
+userIdentifierOrText:
+    textOrIdentifier (AT_SIGN_SYMBOL textOrIdentifier? | AT_TEXT_SUFFIX)?
 ;
 
 user:

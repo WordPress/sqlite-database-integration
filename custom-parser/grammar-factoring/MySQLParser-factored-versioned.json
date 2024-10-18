@@ -28048,6 +28048,17 @@
         ]
     },
     {
+        "name": "textOrIdentifier_zero_or_one",
+        "bnf": [
+            [
+                "textOrIdentifier"
+            ],
+            [
+                "\u03b5"
+            ]
+        ]
+    },
+    {
         "name": "%userIdentifierOrText01_zero_or_one",
         "bnf": [
             [
@@ -28063,7 +28074,7 @@
         "bnf": [
             [
                 "AT_SIGN_SYMBOL",
-                "textOrIdentifier"
+                "textOrIdentifier_zero_or_one"
             ],
             [
                 "AT_TEXT_SUFFIX"

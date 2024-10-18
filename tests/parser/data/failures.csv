@@ -288,12 +288,7 @@ fid INTEGER NOT NULL PRIMARY KEY,
 name CHARACTER VARYING(64),
 boundary POLYGON)"
 "CREATE TABLE t1 (g GEOMCOLLECTION)"
-"create user mysqltest_7@"
 "alter user mysqltest_7@ identified by 'systpass'"
-"show grants for mysqltest_7@"
-"drop user mysqltest_7@"
-"grant select on mysqltest.* to mysqltest_8@"
-"show grants for mysqltest_8@"
 "CREATE TEMPORARY TABLE t6(a INT) ENGINE = MERGE UNION = ()"
 "ALTER TABLE t6 UNION = ()"
 "ALTER TABLE mysqltest_db2.t2_2 UNION = ()"
@@ -848,9 +843,6 @@ WHERE t1.i <= SOME ( SELECT 8 UNION  SELECT 3 ) ) )"
 "SELECT JSON_VALUE('{""data"": ""2019-01-01 11:11::11""}', '$.data' RETURNING DATETIME) AS v"
 "SELECT JSON_VALUE('{""data"": ""2019-01/01""}', '$.data' RETURNING DATE) AS v"
 "SELECT JSON_VALUE('{""data"": ""10:11:12.098700    ""}', '$.data' RETURNING TIME) AS v"
-"CREATE USER user1@"
-"GRANT UPDATE (a) ON t1 TO user1@"
-"DROP USER user1@"
 "create trigger t1_whoupdated before update on t1 for each row
 begin
 declare user varchar(32);
