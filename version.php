@@ -5,4 +5,4 @@
  *
  * This constant needs to be updated on plugin release!
  */
-define( 'SQLITE_DRIVER_VERSION', '2.1.17-alpha' );
+define( 'SQLITE_DRIVER_VERSION', '2.2.0' );
