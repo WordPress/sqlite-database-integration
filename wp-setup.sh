@@ -58,6 +58,10 @@ cp "$DIR"/db.copy "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'#__DIR__.'/plugins/sqlite-database-integration'#g" "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#{SQLITE_PLUGIN}#$WP_DIR/src/wp-content/plugins/sqlite-database-integration/load.php#g" "$WP_DIR"/src/wp-content/db.php
 
-# 5. Install dependencies.
+# 5. Rewrite helper class WpdbExposedMethodsForTesting to extend WP_SQLite_DB.
+echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_SQLite_DB..."
+sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExposedMethodsForTesting extends WP_SQLite_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
+
+# 6. Install dependencies.
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
