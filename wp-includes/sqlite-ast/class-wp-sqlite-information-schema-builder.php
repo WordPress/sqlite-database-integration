@@ -2298,7 +2298,18 @@ class WP_SQLite_Information_Schema_Builder {
 			$values      = $string_list->get_child_nodes( 'textString' );
 			$length      = 0;
 			foreach ( $values as $value ) {
-				$length = max( $length, strlen( $this->get_value( $value ) ) );
+				if ( 'enum' === $data_type ) {
+					$length = max( $length, strlen( $this->get_value( $value ) ) );
+				} else {
+					$length += strlen( $this->get_value( $value ) );
+				}
+			}
+			if ( 'set' === $data_type ) {
+				if ( 2 === count( $values ) ) {
+					$length += 1;
+				} elseif ( count( $values ) > 2 ) {
+					$length += 2;
+				}
 			}
 			$max_bytes_per_char = self::CHARSET_MAX_BYTES_MAP[ $charset ] ?? 1;
 			return array( $length, $max_bytes_per_char * $length );

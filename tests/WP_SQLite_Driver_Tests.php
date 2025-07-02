@@ -6895,4 +6895,1279 @@ END;
 		$result = $this->assertQuery( "SELECT X'417a'" );
 		$this->assertEquals( array( (object) array( "X'417a'" => 'Az' ) ), $result );
 	}
+
+	public function testColumnInfo(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT,
+				name TEXT,
+				score DOUBLE,
+				data BLOB,
+				PRIMARY KEY (id),
+				UNIQUE KEY (name(64))
+			)'
+		);
+
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'name', 1.1, B'01101001')" );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 4, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+		$this->assertCount( 4, $column_info );
+
+		$this->assertSame(
+			array(
+				'native_type'      => 'LONG',
+				'pdo_type'         => PDO::PARAM_INT,
+				'flags'            => array( 'not_null', 'primary_key' ),
+				'table'            => 't',
+				'name'             => 'id',
+				'len'              => 11,
+				'precision'        => 0,
+				'sqlite:decl_type' => 'INT',
+			),
+			$column_info[0]
+		);
+
+		$this->assertSame(
+			array(
+				'native_type'      => 'BLOB',
+				'pdo_type'         => PDO::PARAM_STR,
+				'flags'            => array( 'unique_key', 'blob' ),
+				'table'            => 't',
+				'name'             => 'name',
+				'len'              => 262140,
+				'precision'        => 0,
+				'sqlite:decl_type' => 'TEXT',
+			),
+			$column_info[1]
+		);
+
+		$this->assertSame(
+			array(
+				'native_type'      => 'DOUBLE',
+				'pdo_type'         => PDO::PARAM_STR,
+				'flags'            => array(),
+				'table'            => 't',
+				'name'             => 'score',
+				'len'              => 22,
+				'precision'        => 31,
+				'sqlite:decl_type' => 'REAL',
+			),
+			$column_info[2]
+		);
+
+		$this->assertSame(
+			array(
+				'native_type'      => 'BLOB',
+				'pdo_type'         => PDO::PARAM_STR,
+				'flags'            => array( 'blob' ),
+				'table'            => 't',
+				'name'             => 'data',
+				'len'              => 65535,
+				'precision'        => 0,
+				'sqlite:decl_type' => 'BLOB',
+			),
+			$column_info[3]
+		);
+	}
+
+	public function testColumnInfoWithConstraints(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				slug VARCHAR(255) UNIQUE,
+				parent_id INT,
+				CONSTRAINT parent_id_fk FOREIGN KEY (parent_id) REFERENCES t (id)
+			)'
+		);
+
+		$this->assertQuery( 'INSERT INTO t VALUES (1, "slug", 1)' );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 3, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'LONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null', 'primary_key' ),
+					'table'            => 't',
+					'name'             => 'id',
+					'len'              => 11,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INT',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'unique_key' ),
+					'table'            => 't',
+					'name'             => 'slug',
+					'len'              => 1020,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					// TODO: MySQL seems to automatically create indexes for foreign key columns.
+					//       We should mirror this behavior to both information schema and SQLite.
+					'native_type'      => 'LONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(), // Has "multiple_key" in MySQL.
+					'table'            => 't',
+					'name'             => 'parent_id',
+					'len'              => 11,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForIntegerDataTypes(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_bit BIT,
+				col_bool BOOL,
+				col_tinyint TINYINT,
+				col_smallint SMALLINT,
+				col_mediumint MEDIUMINT,
+				col_int INT,
+				col_bigint BIGINT
+			)'
+		);
+
+		$this->assertQuery( 'INSERT INTO t VALUES (0, 1, 2, 3, 4, 5, 6)' );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 7, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'BIT',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_bit',
+					'len'              => 1,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'TINY',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_bool',
+					'len'              => 1,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'TINY',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_tinyint',
+					'len'              => 4,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'SHORT',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_smallint',
+					'len'              => 6,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'INT24',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_mediumint',
+					'len'              => 9,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'LONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_int',
+					'len'              => 11,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_bigint',
+					'len'              => 20,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForUnsignedIntegerDataTypes(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_tinyint_unsigned TINYINT UNSIGNED,
+				col_smallint_unsigned SMALLINT UNSIGNED,
+				col_mediumint_unsigned MEDIUMINT UNSIGNED,
+				col_int_unsigned INT UNSIGNED,
+				col_bigint_unsigned BIGINT UNSIGNED
+			)'
+		);
+
+		$this->assertQuery( 'INSERT INTO t VALUES (1, 2, 3, 4, 5)' );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 5, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'TINY',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_tinyint_unsigned',
+					'len'              => 3,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'SHORT',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_smallint_unsigned',
+					'len'              => 5,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'INT24',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_mediumint_unsigned',
+					'len'              => 8,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'LONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_int_unsigned',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_bigint_unsigned',
+					'len'              => 20,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForFloatingPointDataTypes(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_float FLOAT,
+				col_double DOUBLE,
+				col_real REAL,
+				col_decimal DECIMAL(10,2),
+				col_dec DEC(10,2),
+				col_fixed FIXED(10,2),
+				col_numeric NUMERIC(10,2)
+			)'
+		);
+
+		$this->assertQuery( 'INSERT INTO t VALUES (1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7)' );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 7, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'FLOAT',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_float',
+					'len'              => 12,
+					'precision'        => 31,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'DOUBLE',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_double',
+					'len'              => 22,
+					'precision'        => 31,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'DOUBLE',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_real',
+					'len'              => 22,
+					'precision'        => 31,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'NEWDECIMAL',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_decimal',
+					'len'              => 12,
+					'precision'        => 2,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'NEWDECIMAL',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_dec',
+					'len'              => 12,
+					'precision'        => 2,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'NEWDECIMAL',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_fixed',
+					'len'              => 12,
+					'precision'        => 2,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'NEWDECIMAL',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_numeric',
+					'len'              => 12,
+					'precision'        => 2,
+					'sqlite:decl_type' => 'REAL',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForStringDataTypes(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				col_char CHAR(10),
+				col_varchar VARCHAR(10),
+				col_nchar NCHAR(10),
+				col_nvarchar NVARCHAR(10),
+				col_tinytext TINYTEXT,
+				col_text TEXT,
+				col_mediumtext MEDIUMTEXT,
+				col_longtext LONGTEXT,
+				col_enum ENUM('a', 'b', 'c'),
+				col_set SET('a', 'b', 'c'),
+				col_json JSON
+			)"
+		);
+
+		$this->assertQuery( 'INSERT INTO t VALUES ("a", "b", "c", "d", "e", "f", "g", "h", "a", "b", "{}")' );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 11, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_char',
+					'len'              => 40,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_varchar',
+					'len'              => 40,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_nchar',
+					'len'              => 40,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_nvarchar',
+					'len'              => 40,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_tinytext',
+					'len'              => 1020,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_text',
+					'len'              => 262140,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_mediumtext',
+					'len'              => 67108860,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_longtext',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_enum',
+					'len'              => 4,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_set',
+					'len'              => 20,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_json',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForDateAndTimeDataTypes(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_date DATE,
+				col_time TIME,
+				col_datetime DATETIME,
+				col_timestamp TIMESTAMP,
+				col_year YEAR
+			)'
+		);
+
+		$this->assertQuery( 'INSERT INTO t VALUES ("2024-01-01", "12:00:00", "2024-01-01 12:00:00", "2024-01-01 12:00:00", 2024)' );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 5, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'DATE',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_date',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'TIME',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_time',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'DATETIME',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_datetime',
+					'len'              => 19,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'TIMESTAMP',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_timestamp',
+					'len'              => 19,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'YEAR',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_year',
+					'len'              => 4,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForBinaryDataTypes(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_binary BINARY(10),
+				col_varbinary VARBINARY(10),
+				col_tinyblob TINYBLOB,
+				col_blob BLOB,
+				col_mediumblob MEDIUMBLOB,
+				col_longblob LONGBLOB
+			)'
+		);
+
+		$this->assertQuery( "INSERT INTO t VALUES (B'01000001', B'01101001', B'10101010', B'01010101', B'10000000', B'11111111')" );
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 6, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'BLOB',          // STRING in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ), // No flags in MySQL.
+					'table'            => 't',
+					'name'             => 'col_binary',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB',          // VAR_STRING in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ), // No flags in MySQL.
+					'table'            => 't',
+					'name'             => 'col_varbinary',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_tinyblob',
+					'len'              => 255,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_blob',
+					'len'              => 65535,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_mediumblob',
+					'len'              => 16777215,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_longblob',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForSpatialDataTypes(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_geometry GEOMETRY,
+				col_point POINT,
+				col_linestring LINESTRING,
+				col_polygon POLYGON,
+				col_multipoint MULTIPOINT,
+				col_multilinestring MULTILINESTRING,
+				col_multipolygon MULTIPOLYGON,
+				col_geomcollection GEOMCOLLECTION,
+				col_geometrycollection GEOMETRYCOLLECTION
+			)'
+		);
+
+		$this->assertQuery(
+			"INSERT INTO t VALUES (
+				'POINT(1 1)',
+				'POINT(1 1)',
+				'LINESTRING(0 0, 1 1)',
+				'POLYGON((0 0, 1 0, 0 1, 0 0))',
+				'MULTIPOINT(1 1, 2 2)',
+				'MULTILINESTRING((0 0, 1 1), (2 2, 3 3))',
+				'MULTIPOLYGON(((0 0, 1 0, 0 1, 0 0)))',
+				'GEOMCOLLECTION(POINT(1 1), LINESTRING(0 0, 1 1))',
+				'GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(0 0, 1 1))'
+			)"
+		);
+
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 9, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_geometry',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_point',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_linestring',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_polygon',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_multipoint',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_multilinestring',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_multipolygon',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_geomcollection',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_geometrycollection',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoForExpressions(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery(
+			"SELECT
+				NULL AS col_expr_1,
+				TRUE AS col_expr_2,
+				FALSE AS col_expr_3,
+				1 AS col_expr_4,
+				(1 + 1) AS col_expr_5,
+				'abc' AS col_expr_6,
+				COUNT(*) AS col_expr_7,
+				SUM(id) AS col_expr_8,
+				CONCAT('a', 'b') AS col_expr_9,
+				YEAR('2025-01-01') AS col_expr_10,
+				CAST('2024-01-01' AS DATE) AS col_expr_11,
+				CAST(X'68656C6C6F' AS BINARY) AS col_expr_12,
+				CAST('123' AS CHAR) AS col_expr_13,
+				CAST(42 AS SIGNED) AS col_expr_14,
+				COALESCE(NULL, 'fallback') AS col_expr_15,
+				CASE WHEN id > 5 THEN 'yes' ELSE 'no' END AS col_expr_16,
+				CASE WHEN id < 5 THEN 'string' ELSE 123 END AS col_expr_17,
+				ABS(-7) AS col_expr_18,
+				RAND() AS col_expr_19,
+				(SELECT 1) AS col_expr_20
+			FROM t"
+		);
+		$this->assertEquals( 20, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'NULL',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => '',
+					'name'             => 'col_expr_1',
+					'len'              => 0,
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_2',
+					'len'              => 21, // 1 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_3',
+					'len'              => 21, // 1 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_4',
+					'len'              => 21, // 2 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_5',
+					'len'              => 21, // 3 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_6',
+					'len'              => 65535, // 12 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_7',
+					'len'              => 21,
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',     // NEWDECIMAL in MySQL.
+					'pdo_type'         => PDO::PARAM_INT, // PARAM_STR in MySQL.
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_8',
+					'len'              => 21,             // 33 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_9',
+					'len'              => 65535, // 8 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',          // "YEAR" in MySQL.
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ), // Empty in MySQL.
+					'table'            => '',
+					'name'             => 'col_expr_10',
+					'len'              => 21,                  // 4 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					// "CAST('2024-01-01' AS DATE)" seems to behave differently in SQLite.
+					'native_type'      => 'LONGLONG',          // "DATE" in MySQL.
+					'pdo_type'         => PDO::PARAM_INT,      // PARAM_STR in MySQL.
+					'flags'            => array( 'not_null' ), // Empty in MySQL.
+					'table'            => '',
+					'name'             => 'col_expr_11',
+					'len'              => 21,                  // 10 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_12',
+					'len'              => 65535, // 5 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_13',
+					'len'              => 65535, // 12 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_14',
+					'len'              => 21,
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_15',
+					'len'              => 65535, // 32 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_16',
+					'len'              => 65535, // 12 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_17',
+					'len'              => 65535, // 24 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_18',
+					'len'              => 21, // 2 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					// TODO: Fix custom "RAND()" function to behave like in MySQL.
+					'native_type'      => 'LONGLONG',          // DOUBLE in MySQL.
+					'pdo_type'         => PDO::PARAM_INT,      // PARAM_STR in MySQL.
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_19',
+					'len'              => 21,                  // 23 in MySQL.
+					'precision'        => 0,                   // 31 in MySQL.
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_20',
+					'len'              => 21, // 2 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+			),
+			$column_info
+		);
+	}
+
+	public function testColumnInfoWithZeroRows(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				col_int INT,
+				col_float FLOAT,
+				col_char CHAR(10),
+				col_varchar VARCHAR(10),
+				col_text TEXT,
+				col_json JSON,
+				col_binary BINARY(10),
+				col_varbinary VARBINARY(10),
+				col_blob BLOB,
+				col_date DATE,
+				col_timestamp TIMESTAMP,
+				col_geometry GEOMETRY
+			)'
+		);
+
+		$this->assertQuery(
+			"SELECT
+				*,
+				COUNT(*) AS col_expr_1,
+				SUM(col_int) AS col_expr_2,
+				CASE WHEN col_int > 5 THEN 'yes' ELSE 'no' END AS col_expr_3,
+				CASE WHEN col_int < 5 THEN 'string' ELSE 123 END AS col_expr_4
+			FROM t"
+		);
+		$this->assertEquals( 16, $this->engine->get_last_column_count() );
+
+		$column_info = $this->engine->get_last_column_meta();
+		$this->assertCount( 16, $column_info );
+
+		$this->assertSame(
+			array(
+				array(
+					'native_type'      => 'LONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_int',
+					'len'              => 11,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'INTEGER',
+				),
+				array(
+					'native_type'      => 'FLOAT',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_float',
+					'len'              => 12,
+					'precision'        => 31,
+					'sqlite:decl_type' => 'REAL',
+				),
+				array(
+					'native_type'      => 'STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_char',
+					'len'              => 40,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_varchar',
+					'len'              => 40,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_text',
+					'len'              => 262140,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB', // Missing in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_json',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'BLOB', // STRING in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_binary',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB', // VAR_STRING in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_varbinary',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'BLOB',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_blob',
+					'len'              => 65535,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'BLOB',
+				),
+				array(
+					'native_type'      => 'DATE',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_date',
+					'len'              => 10,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'TIMESTAMP',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => 't',
+					'name'             => 'col_timestamp',
+					'len'              => 19,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'GEOMETRY',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'blob' ),
+					'table'            => 't',
+					'name'             => 'col_geometry',
+					'len'              => 4294967295,
+					'precision'        => 0,
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'native_type'      => 'LONGLONG',
+					'pdo_type'         => PDO::PARAM_INT,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_1',
+					'len'              => 21,
+					'precision'        => 0, // 32897 in MySQL.
+					'sqlite:decl_type' => '',
+				),
+				array(
+					// For "SUM(*)" without rows, SQLite fails to provide a type.
+					'native_type'      => 'NULL', // NEWDECIMAL in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array(),
+					'table'            => '',
+					'name'             => 'col_expr_2',
+					'len'              => 0,      // 33 in MySQL.
+					'precision'        => 0,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'VAR_STRING',
+					'pdo_type'         => PDO::PARAM_STR,
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_3',
+					'len'              => 65535, // 12 in MySQL.
+					'precision'        => 31,
+					'sqlite:decl_type' => '',
+				),
+				array(
+					'native_type'      => 'LONGLONG',     // VAR_STRING in MySQL.
+					'pdo_type'         => PDO::PARAM_INT, // PARAM_STR in MySQL.
+					'flags'            => array( 'not_null' ),
+					'table'            => '',
+					'name'             => 'col_expr_4',
+					'len'              => 21, // 24 in MySQL.
+					'precision'        => 0,  // 31 in MySQL.
+					'sqlite:decl_type' => '',
+				),
+			),
+			$column_info
+		);
+	}
 }

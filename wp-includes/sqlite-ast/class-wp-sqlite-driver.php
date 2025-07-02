@@ -295,6 +295,92 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * A map of MySQL column data types to native types in MySQL column meta.
+	 *
+	 * This maps normalized MySQL column data types (as per information schema)
+	 * to MySQL "PDOStatement::getColumnMeta()" data types in the "native_type"
+	 * field, as well as the "len" and "precision" fields, where applicable:
+	 *
+	 *     <mysql-column-type> => array( <native_type>, <len>, <precision> )
+	 *
+	 * This is used to compute the column metadata from the information schema.
+	 */
+	const COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP = array(
+		// Numeric data types:
+		'bit'             => array( 'BIT', 1, 0 ),
+		'tinyint'         => array( 'TINY', 4, 0 ),
+		'smallint'        => array( 'SHORT', 6, 0 ),
+		'mediumint'       => array( 'INT24', 9, 0 ),
+		'int'             => array( 'LONG', 11, 0 ),
+		'bigint'          => array( 'LONGLONG', 20, 0 ),
+		'float'           => array( 'FLOAT', 12, 31 ),
+		'double'          => array( 'DOUBLE', 22, 31 ),
+		'decimal'         => array( 'NEWDECIMAL', null, null ),
+
+		// String data types:
+		'char'            => array( 'STRING', null, 0 ),
+		'varchar'         => array( 'VAR_STRING', null, 0 ),
+		'tinytext'        => array( 'BLOB', null, 0 ),
+		'text'            => array( 'BLOB', null, 0 ),
+		'mediumtext'      => array( 'BLOB', null, 0 ),
+		'longtext'        => array( 'BLOB', null, 0 ),
+		'enum'            => array( 'STRING', null, 0 ),
+		'set'             => array( 'STRING', null, 0 ),
+		'json'            => array( 'BLOB', 4294967295, 0 ),
+
+		// Date and time data types:
+		'date'            => array( 'DATE', 10, 0 ),
+		'time'            => array( 'TIME', 10, 0 ),
+		'datetime'        => array( 'DATETIME', 19, 0 ),
+		'timestamp'       => array( 'TIMESTAMP', 19, 0 ),
+		'year'            => array( 'YEAR', 4, 0 ),
+
+		// Binary data types:
+		'binary'          => array( 'BLOB', null, 0 ),
+		'varbinary'       => array( 'BLOB', null, 0 ),
+		'tinyblob'        => array( 'BLOB', null, 0 ),
+		'blob'            => array( 'BLOB', null, 0 ),
+		'mediumblob'      => array( 'BLOB', null, 0 ),
+		'longblob'        => array( 'BLOB', null, 0 ),
+
+		// Spatial data types:
+		'geometry'        => array( 'GEOMETRY', 4294967295, 0 ),
+		'point'           => array( 'GEOMETRY', 4294967295, 0 ),
+		'linestring'      => array( 'GEOMETRY', 4294967295, 0 ),
+		'polygon'         => array( 'GEOMETRY', 4294967295, 0 ),
+		'multipoint'      => array( 'GEOMETRY', 4294967295, 0 ),
+		'multilinestring' => array( 'GEOMETRY', 4294967295, 0 ),
+		'multipolygon'    => array( 'GEOMETRY', 4294967295, 0 ),
+		'geomcollection'  => array( 'GEOMETRY', 4294967295, 0 ),
+	);
+
+	/**
+	 * A map of SQLite column definition data types and SQLite column meta data
+	 * types to native types in MySQL column meta.
+	 *
+	 * This maps both SQLite column definition data types and SQLite column meta
+	 * data types (as per "PDOStatement::getColumnMeta()") to MySQL column meta
+	 * "native_type" field, as per "PDOStatement::getColumnMeta()", as well as
+	 * the "len" and "precision" fields, where applicable:
+	 *
+	 *     <sqlite-column-definition-type> => array( <native_type>, <len>, <precision> )
+	 *     <sqlite-column-meta-type>       => array( <native_type>, <len>, <precision> )
+	 *
+	 * This is used to compute the MySQL column metadata for non-column fields
+	 * that have no records in the information schema (i.e., expressions).
+	 */
+	const COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP = array(
+		'NULL'    => array( 'NULL', 0, 0 ),
+		'INT'     => array( 'LONGLONG', 21, 0 ),
+		'INTEGER' => array( 'LONGLONG', 21, 0 ),
+		'STRING'  => array( 'VAR_STRING', 65535, 31 ),
+		'TEXT'    => array( 'BLOB', null, 0 ),
+		'REAL'    => array( 'DOUBLE', 22, 31 ),
+		'DOUBLE'  => array( 'DOUBLE', 23, 31 ),
+		'BLOB'    => array( 'BLOB', null, 0 ),
+	);
+
+	/**
 	 * The SQLite engine version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
@@ -377,6 +463,13 @@ class WP_SQLite_Driver {
 	 * @var mixed
 	 */
 	private $last_return_value;
+
+	/**
+	 * SQLite column metadata for the last emulated query.
+	 *
+	 * @var array
+	 */
+	private $last_column_meta = array();
 
 	/**
 	 * Number of rows found by the last SQL_CALC_FOUND_ROW query.
@@ -752,6 +845,153 @@ class WP_SQLite_Driver {
 	 */
 	public function get_last_return_value() {
 		return $this->last_return_value;
+	}
+
+	/**
+	 * Get the number of columns returned by the last emulated query.
+	 *
+	 * @return int
+	 */
+	public function get_last_column_count(): int {
+		return count( $this->last_column_meta );
+	}
+
+	/**
+	 * Get column metadata for results of the last emulated query.
+	 *
+	 * @return array
+	 */
+	public function get_last_column_meta(): array {
+		// Build the column metadata as per "PDOStatement::getColumnMeta()".
+		$column_meta = array();
+		foreach ( $this->last_column_meta as $meta ) {
+			$table = $meta['table'] ?? null;
+			$name  = $meta['name'];
+			$type  = strtoupper( $meta['sqlite:decl_type'] ?? $meta['native_type'] ?? '' );
+
+			// When table is known, we can get data from the information schema.
+			$column_info = null;
+			if ( null !== $table ) {
+				$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table );
+				$columns_table      = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+				$column_info        = $this->execute_sqlite_query(
+					sprintf(
+						'
+							SELECT
+								IS_NULLABLE,
+								DATA_TYPE,
+								COLUMN_TYPE,
+								COLUMN_KEY,
+								CHARACTER_MAXIMUM_LENGTH,
+								NUMERIC_PRECISION,
+								NUMERIC_SCALE
+							FROM %s
+							WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+						',
+						$this->quote_sqlite_identifier( $columns_table )
+					),
+					array( $this->db_name, $table, $name )
+				)->fetch( PDO::FETCH_ASSOC );
+
+				if ( false === $column_info ) {
+					$column_info = null;
+				}
+			}
+
+			// If we have information schema data, we can use it.
+			if ( null !== $column_info ) {
+				$type_info = self::COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP[ $column_info['DATA_TYPE'] ] ?? null;
+				if ( null === $type_info ) {
+					$type_info = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ] ?? null;
+				}
+				$native_type = $type_info[0];
+				$len         = $type_info[1];
+				$precision   = $type_info[2];
+
+				if ( 'tinyint(1)' === $column_info['COLUMN_TYPE'] ) {
+					$len = 1;
+				}
+
+				if ( 'decimal' === $column_info['DATA_TYPE'] ) {
+					$len       = (int) $column_info['NUMERIC_PRECISION'] + (int) $column_info['NUMERIC_SCALE'];
+					$precision = (int) $column_info['NUMERIC_SCALE'];
+				}
+
+				if (
+					str_contains( $column_info['COLUMN_TYPE'], 'unsigned' )
+					&& ! str_contains( $column_info['COLUMN_TYPE'], 'bigint' )
+				) {
+					$len -= 1;
+				}
+
+				// If set, lenght can be taken from the information schema.
+				if ( isset( $column_info['CHARACTER_MAXIMUM_LENGTH'] ) ) {
+					$len = (int) $column_info['CHARACTER_MAXIMUM_LENGTH'];
+				}
+
+				// For string types, the length is multiplied by the maximum number
+				// of bytes per character for the used connection encoding. In our
+				// case, it's always "utf8mb4" and therefore 4 bytes per character.
+				if (
+					str_contains( $column_info['DATA_TYPE'], 'text' )
+					|| str_contains( $column_info['DATA_TYPE'], 'char' )
+					|| 'enum' === $column_info['DATA_TYPE']
+					|| 'set' === $column_info['DATA_TYPE']
+				) {
+					// Except for "longtext" - this might be a MySQL bug.
+					if ( 'longtext' !== $column_info['DATA_TYPE'] ) {
+						$len = 4 * $len;
+					}
+				}
+
+				// Flags.
+				$flags = array();
+				if ( 'NO' === $column_info['IS_NULLABLE'] ) {
+					$flags[] = 'not_null';
+				}
+				if ( 'PRI' === $column_info['COLUMN_KEY'] ) {
+					$flags[] = 'primary_key';
+				} elseif ( 'UNI' === $column_info['COLUMN_KEY'] ) {
+					$flags[] = 'unique_key';
+				} elseif ( 'MUL' === $column_info['COLUMN_KEY'] ) {
+					$flags[] = 'multiple_key';
+				}
+			} else {
+				$type_info   = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ];
+				$native_type = $type_info[0];
+				$len         = $type_info[1] ?? 0;
+				$precision   = $type_info[2];
+
+				// Flags.
+				$flags = array();
+				if ( 'NULL' !== $type ) {
+					$flags[] = 'not_null';
+				}
+			}
+
+			if ( 'BLOB' === $native_type || 'GEOMETRY' === $native_type ) {
+				$flags[] = 'blob';
+			}
+
+			// PDO type.
+			if ( 'INT' === $type || 'INTEGER' === $type ) {
+				$pdo_type = PDO::PARAM_INT;
+			} else {
+				$pdo_type = PDO::PARAM_STR;
+			}
+
+			$column_meta[] = array(
+				'native_type'      => $native_type,
+				'pdo_type'         => $pdo_type,
+				'flags'            => $flags,
+				'table'            => $meta['table'] ?? '',
+				'name'             => $meta['name'],
+				'len'              => $len,
+				'precision'        => $precision,
+				'sqlite:decl_type' => $meta['sqlite:decl_type'] ?? '',
+			);
+		}
+		return $column_meta;
 	}
 
 	/**
@@ -1197,6 +1437,14 @@ class WP_SQLite_Driver {
 
 		// Execute the query.
 		$stmt = $this->execute_sqlite_query( $query );
+
+		// Store column meta info. This must be done before fetching data, which
+		// seems to erase type information for expressions in the SELECT clause.
+		$this->last_column_meta = array();
+		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+			$this->last_column_meta[] = $stmt->getColumnMeta( $i );
+		}
+
 		$this->set_results_from_fetched_data(
 			$stmt->fetchAll( $this->pdo_fetch_mode )
 		);
@@ -4986,6 +5234,7 @@ class WP_SQLite_Driver {
 		$this->last_sqlite_queries = array();
 		$this->last_result         = null;
 		$this->last_return_value   = null;
+		$this->last_column_meta    = array();
 		$this->is_readonly         = false;
 	}
 
