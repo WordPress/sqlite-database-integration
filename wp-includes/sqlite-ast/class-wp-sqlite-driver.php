@@ -426,6 +426,18 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * A name-to-value map of MySQL user variables.
+	 *
+	 * MySQL user variables are session-specific, so we can store them in-memory.
+	 *
+	 * See:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/user-variables.html
+	 *
+	 * @var array<string, string>
+	 */
+	private $user_variables = array();
+
+	/**
 	 * Constructor.
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
@@ -2109,11 +2121,19 @@ class WP_SQLite_Driver {
 					|| 'setSystemVariable' === $part->rule_name
 				)
 			) {
+				// Set a system variable.
 				array_shift( $definition ); // Remove the '='.
 				$value = array_shift( $definition );
 				$this->execute_set_system_variable_statement( $part, $value, $default_type );
+			} elseif (
+				$part instanceof WP_Parser_Node
+				&& 'userVariable' === $part->rule_name
+			) {
+				// Set a user variable.
+				array_shift( $definition ); // Remove the '='.
+				$value = array_shift( $definition );
+				$this->execute_set_user_variable_statement( $part, $value );
 			} else {
-				// TODO: Support user variables (in-memory or a temporary table).
 				throw $this->new_not_supported_exception(
 					sprintf( 'SET statement: %s', $node->rule_name )
 				);
@@ -2174,6 +2194,26 @@ class WP_SQLite_Driver {
 		}
 
 		// TODO: Handle GLOBAL, PERSIST, and PERSIST_ONLY types.
+	}
+
+	/**
+	 * Translate and execute a MySQL SET statement for user variables.
+	 *
+	 * @param  WP_Parser_Node $user_variable The "userVariable" AST node.
+	 * @param  WP_Parser_Node $expr          The "expr" AST node.
+	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
+	 */
+	private function execute_set_user_variable_statement(
+		WP_Parser_Node $user_variable,
+		WP_Parser_Node $expr
+	): void {
+		$name  = $this->unquote_sqlite_identifier(
+			$this->translate( $user_variable->get_first_child() )
+		);
+		$name  = strtolower( substr( $name, 1 ) ); // Remove '@', normalize case.
+		$value = $this->evaluate_expression( $expr );
+
+		$this->user_variables[ $name ] = $value;
 	}
 
 	/**
@@ -2256,6 +2296,33 @@ class WP_SQLite_Driver {
 			);
 		}
 		$this->set_results_from_fetched_data( $results );
+	}
+
+	/**
+	 * Evaluate an expression and return the value, preserving its type.
+	 *
+	 * This is used to support expressions in SET statements for MySQL variables.
+	 *
+	 * @param  WP_Parser_Node $node The "expr" AST node.
+	 * @return mixed                The value of the expression.
+	 */
+	public function evaluate_expression( WP_Parser_Node $node ) {
+		// To support expressions, we'll use a SQLite query.
+		$stmt = $this->execute_sqlite_query(
+			sprintf( 'SELECT %s', $this->translate( $node ) )
+		);
+
+		// MySQL variables are typed, so we need to preserve the value type.
+		$value = $stmt->fetchColumn();
+		$type  = $stmt->getColumnMeta( 0 )['native_type'];
+		if ( 'null' === $type ) {
+			return null;
+		} elseif ( 'integer' === $type ) {
+			return (int) $value;
+		} elseif ( 'double' === $type ) {
+			return (float) $value;
+		}
+		return $value;
 	}
 
 	/**
@@ -2428,6 +2495,17 @@ class WP_SQLite_Driver {
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variable-reference.html
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html
 				return $value;
+			case 'userVariable':
+				$name  = $this->unquote_sqlite_identifier( $this->translate( $node->get_first_child() ) );
+				$name  = strtolower( substr( $name, 1 ) ); // Remove '@', normalize case.
+				$value = $this->user_variables[ $name ] ?? null;
+				if ( null === $value ) {
+					return 'NULL';
+				}
+				if ( is_string( $value ) ) {
+					return $this->connection->quote( $value );
+				}
+				return (string) $value;
 			case 'castType':
 				// Translate "CAST(... AS BINARY)" to "CAST(... AS BLOB)".
 				if ( $node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {

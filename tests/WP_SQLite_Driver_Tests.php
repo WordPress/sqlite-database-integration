@@ -6055,4 +6055,18 @@ END;
 		$this->assertQuery( 'SET CHARSET utf8mb4' );
 		$this->assertQuery( 'SET CHARACTER SET utf8mb4' );
 	}
+
+	public function testUserVariables(): void {
+		$this->assertQuery( 'SET @my_var = 1' );
+		$result = $this->assertQuery( 'SELECT @my_var' );
+		$this->assertEquals( 1, $result[0]->{'@my_var'} );
+
+		$this->assertQuery( 'SET @my_var = @my_var + 1' );
+		$result = $this->assertQuery( 'SELECT @my_var' );
+		$this->assertEquals( 2, $result[0]->{'@my_var'} );
+
+		$this->assertQuery( 'SET @my_var = @my_var + 1' );
+		$result = $this->assertQuery( 'SELECT @my_var' );
+		$this->assertEquals( 3, $result[0]->{'@my_var'} );
+	}
 }
