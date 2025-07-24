@@ -6049,4 +6049,10 @@ END;
 		$result = $this->assertQuery( "SELECT CONCAT('a', 'b') AS alias_concat" );
 		$this->assertSame( array( 'alias_concat' ), array_keys( (array) $result[0] ) );
 	}
+
+	public function testSetStatement(): void {
+		$this->assertQuery( 'SET NAMES utf8mb4' );
+		$this->assertQuery( 'SET CHARSET utf8mb4' );
+		$this->assertQuery( 'SET CHARACTER SET utf8mb4' );
+	}
 }

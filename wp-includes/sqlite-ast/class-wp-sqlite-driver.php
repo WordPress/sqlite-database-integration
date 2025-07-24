@@ -2089,6 +2089,20 @@ class WP_SQLite_Driver {
 			}
 
 			if (
+				$part instanceof WP_MySQL_Token
+				&& WP_MySQL_Lexer::NAMES_SYMBOL === $part->id
+			) {
+				// "SET NAMES ..." is a no-op for now.
+				// TODO: Validate charset compatibility with UTF-8.
+				//       See: https://github.com/WordPress/sqlite-database-integration/issues/192
+			} elseif (
+				$part instanceof WP_Parser_Node
+				&& 'charsetClause' === $part->rule_name
+			) {
+				// "SET CHARACTER SET ..." is a no-op for now.
+				// TODO: Validate charset compatibility with UTF-8.
+				//       See: https://github.com/WordPress/sqlite-database-integration/issues/192
+			} elseif (
 				$part instanceof WP_Parser_Node
 				&& (
 					'internalVariableName' === $part->rule_name
