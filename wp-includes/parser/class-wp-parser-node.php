@@ -381,9 +381,4 @@ class WP_Parser_Node {
 		$last_token  = $tokens[ count( $tokens ) - 1 ];
 		return $last_token->start + $last_token->length - $first_token->start;
 	}
-
-	/*
-	 * @TODO: Let's implement a more powerful AST-querying API.
-	 *        See: https://github.com/WordPress/sqlite-database-integration/pull/164#discussion_r1855230501
-	 */
 }
