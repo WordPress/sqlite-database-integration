@@ -426,6 +426,19 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * A name-to-value map of MySQL system variables for the current session.
+	 *
+	 * MySQL session system variables are session-specific, so we can store them
+	 * in-memory. In SQL queries, they are combined with global system variables.
+	 *
+	 * See:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/using-system-variables.html
+	 *
+	 * @var array<string, string>
+	 */
+	private $session_system_variables = array();
+
+	/**
 	 * A name-to-value map of MySQL user variables.
 	 *
 	 * MySQL user variables are session-specific, so we can store them in-memory.
@@ -2175,15 +2188,14 @@ class WP_SQLite_Driver {
 			$type           = $var_ident_type->get_first_child_token()->id;
 		}
 
-		// Get the variable value.
-		$value = $this->translate( $value_node );
-		$value = str_replace( "''", "'", $value );
-		$value = substr( $value, 1, -1 );
+		$value = $this->evaluate_expression( $value_node );
 
 		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 			if ( 'sql_mode' === $name ) {
 				$modes                  = explode( ',', strtoupper( $value ) );
 				$this->active_sql_modes = $modes;
+			} else {
+				$this->session_system_variables[ $name ] = $value;
 			}
 		} elseif ( WP_MySQL_Lexer::GLOBAL_SYMBOL === $type ) {
 			throw $this->new_not_supported_exception( "SET statement type: 'GLOBAL'" );
@@ -2485,16 +2497,24 @@ class WP_SQLite_Driver {
 				$name = strtolower( $original_name );
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
-					$value = $this->connection->quote( implode( ',', $this->active_sql_modes ) );
+					$value = implode( ',', $this->active_sql_modes );
+				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
+					$value = $this->session_system_variables[ $name ] ?? null;
 				} else {
 					// When we have no value, it's reasonable to use NULL.
-					$value = 'NULL';
+					$value = null;
 				}
 
 				// @TODO: Emulate more system variables, or use reasonable defaults.
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variable-reference.html
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html
-				return $value;
+				if ( null === $value ) {
+					return 'NULL';
+				}
+				if ( is_string( $value ) ) {
+					return $this->connection->quote( $value );
+				}
+				return (string) $value;
 			case 'userVariable':
 				$name  = $this->unquote_sqlite_identifier( $this->translate( $node->get_first_child() ) );
 				$name  = strtolower( substr( $name, 1 ) ); // Remove '@', normalize case.

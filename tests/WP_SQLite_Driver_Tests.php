@@ -6056,6 +6056,20 @@ END;
 		$this->assertQuery( 'SET CHARACTER SET utf8mb4' );
 	}
 
+	public function testSessionSystemVariables(): void {
+		$this->assertQuery( "SET character_set_client = 'latin1'" );
+		$result = $this->assertQuery( 'SELECT @@character_set_client' );
+		$this->assertSame( 'latin1', $result[0]->{'@@character_set_client'} );
+
+		$this->assertQuery( "SET @@character_set_client = 'utf8mb3'" );
+		$result = $this->assertQuery( 'SELECT @@character_set_client' );
+		$this->assertSame( 'utf8mb3', $result[0]->{'@@character_set_client'} );
+
+		$this->assertQuery( "SET @@session.character_set_client = 'utf8mb4'" );
+		$result = $this->assertQuery( 'SELECT @@session.character_set_client' );
+		$this->assertSame( 'utf8mb4', $result[0]->{'@@session.character_set_client'} );
+	}
+
 	public function testUserVariables(): void {
 		$this->assertQuery( 'SET @my_var = 1' );
 		$result = $this->assertQuery( 'SELECT @my_var' );
