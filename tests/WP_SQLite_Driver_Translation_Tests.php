@@ -1261,7 +1261,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testConcatFunction(): void {
 		$this->assertQuery(
-			"SELECT ('a' || 'b' || 'c')",
+			"SELECT ('a' || 'b' || 'c') AS `CONCAT(\"a\", \"b\", \"c\")`",
 			'SELECT CONCAT("a", "b", "c")'
 		);
 	}

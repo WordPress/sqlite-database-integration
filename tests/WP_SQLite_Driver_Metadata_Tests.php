@@ -23,13 +23,10 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertQuery( 'CREATE TABLE t2 (id INT)' );
 
 		$result = $this->assertQuery( "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'wp'" );
-		$this->assertEquals( array( (object) array( 'COUNT ( * )' => '2' ) ), $result );
+		$this->assertEquals( array( (object) array( 'COUNT(*)' => '2' ) ), $result );
 
 		$result = $this->assertQuery( "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'other'" );
-		$this->assertEquals( array( (object) array( 'COUNT ( * )' => '0' ) ), $result );
-
-		// @TODO: The result key should be "COUNT(*)" instead of "COUNT ( * )".
-		//        The spacing was probably inserted by the translator.
+		$this->assertEquals( array( (object) array( 'COUNT(*)' => '0' ) ), $result );
 	}
 
 	public function testInformationSchemaTables() {

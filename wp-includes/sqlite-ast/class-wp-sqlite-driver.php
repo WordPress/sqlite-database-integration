@@ -2365,6 +2365,8 @@ class WP_SQLite_Driver {
 				throw $this->new_not_supported_exception(
 					sprintf( 'data type: %s', $child->get_value() )
 				);
+			case 'selectItem':
+				return $this->translate_select_item( $node );
 			case 'fromClause':
 				// FROM DUAL is MySQL-specific syntax that means "FROM no tables"
 				// and it is equivalent to omitting the FROM clause entirely.
@@ -2411,19 +2413,7 @@ class WP_SQLite_Driver {
 				// @TODO: Emulate more system variables, or use reasonable defaults.
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variable-reference.html
 				//        See: https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html
-
-				// TODO: Original name should come from the original MySQL input,
-				//       exactly as it was written by the user, and not translated.
-
-				// TODO: The '% AS %' syntax is compatible with SELECT lists only.
-				//       We need to translate it differently when used as a value.
-				return sprintf(
-					'%s AS %s',
-					$value,
-					$this->quote_sqlite_identifier(
-						'@@' . ( $type_token ? "{$type_token->get_value()}." : '' ) . $original_name
-					)
-				);
+				return $value;
 			case 'castType':
 				// Translate "CAST(... AS BINARY)" to "CAST(... AS BLOB)".
 				if ( $node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
@@ -2880,15 +2870,11 @@ class WP_SQLite_Driver {
 			case 'CONCAT':
 				return '(' . implode( ' || ', $args ) . ')';
 			case 'FOUND_ROWS':
-				// @TODO: The following implementation with an alias assumes
-				//        that the function is used in the SELECT field list.
-				//        For compatibility with more complex use cases, it may
-				//        be better to register it as a custom SQLite function.
 				$found_rows = $this->last_sql_calc_found_rows;
 				if ( null === $found_rows && is_array( $this->last_result ) ) {
 					$found_rows = count( $this->last_result );
 				}
-				return sprintf( "(SELECT %d) AS 'FOUND_ROWS()'", $found_rows );
+				return $found_rows;
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
@@ -2957,6 +2943,72 @@ class WP_SQLite_Driver {
 			}
 		}
 		return $value;
+	}
+
+	/**
+	 * Translate a select item to SQLite.
+	 *
+	 * In some cases, an explicit alias will be added to the select item, so that
+	 * the returned column name is always the same as it would be in MySQL.
+	 *
+	 * @param  WP_Parser_Node $node       The "selectItem" AST node.
+	 * @return string                     The translated value.
+	 */
+	public function translate_select_item( WP_Parser_Node $node ): string {
+		/*
+		 * First, let's translate the select item subtree.
+		 *
+		 * [GRAMMAR]
+		 * selectItem: tableWild | (expr selectAlias?)
+		 */
+		$item = $this->translate_sequence( $node->get_children() );
+
+		// A table wildcard (e.g., "SELECT *, t.*, ...") never has an alias.
+		if ( $node->has_child_node( 'tableWild' ) ) {
+			return $item;
+		}
+
+		// When an explicit alias is provided, we can use it as is.
+		$alias = $node->get_first_child_node( 'selectAlias' );
+		if ( $alias ) {
+			return $item;
+		}
+
+		/*
+		 * When the select item contains only a column definition, we need to use
+		 * it without change, so that the returned column name reflects the real
+		 * column name in all cases, including when using a fully qualified name.
+		 *
+		 * For example, for "SELECT t.id", the column name in the result set will
+		 * only be "id", not "t.id", as it may appear based on the original query.
+		 *
+		 * In this case, SQLite uses the same logic as MySQL, so using the value
+		 * as is without adding an explicit alias will produce the correct result.
+		 */
+		$column_ref    = $node->get_first_descendant_node( 'columnRef' );
+		$is_column_ref = $column_ref && $item === $this->translate( $column_ref );
+		if ( $is_column_ref ) {
+			return $item;
+		}
+
+		/*
+		 * When the select item has no explicit alias, we need to ensure that the
+		 * returned column name is equivalent to what MySQL infers from the input.
+		 *
+		 * For example, if we translate "CONCAT('a', 'b')" to "('a' || 'b')", we
+		 * need to use the original "CONCAT('a', 'b')" string as the column name.
+		 * To achieve this, the select item will be translated as follows:
+		 *
+		 *   SELECT CONCAT('a', 'b') -> SELECT ('a' || 'b') AS `CONCAT('a', 'b')`
+		 */
+		$raw_alias = substr( $this->last_mysql_query, $node->get_start(), $node->get_length() );
+		$alias     = $this->quote_sqlite_identifier( $raw_alias );
+		if ( $alias === $item || $raw_alias === $item ) {
+			// For the simple case of selecting only columns ("SELECT id FROM t"),
+			// let's avoid unnecessary aliases ("SELECT `id` AS `id` FROM t").
+			return $item;
+		}
+		return sprintf( '%s AS %s', $item, $alias );
 	}
 
 	/**

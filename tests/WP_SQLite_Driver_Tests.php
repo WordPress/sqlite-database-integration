@@ -6020,4 +6020,33 @@ END;
 		$this->expectExceptionMessage( "Incorrect database name. The database was created with name 'db-one', but 'db-two' is used in the current session." );
 		new WP_SQLite_Driver( $connection, 'db-two' );
 	}
+
+	public function testSelectColumnNames(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+		$this->assertQuery( 'INSERT INTO t (id, name) VALUES (1, "John"), (2, "Jane")' );
+
+		// Columns (no explicit alias).
+		$result = $this->assertQuery( 'SELECT id, name FROM t' );
+		$this->assertSame( array( 'id', 'name' ), array_keys( (array) $result[0] ) );
+
+		// Columns with an explicit alias.
+		$result = $this->assertQuery( 'SELECT id AS alias_id, name AS alias_name FROM t' );
+		$this->assertSame( array( 'alias_id', 'alias_name' ), array_keys( (array) $result[0] ) );
+
+		// Expressions (no explicit alias).
+		$result = $this->assertQuery( 'SELECT id + 1, (2 + 3) FROM t' );
+		$this->assertSame( array( 'id + 1', '(2 + 3)' ), array_keys( (array) $result[0] ) );
+
+		// Expressions with an explicit alias.
+		$result = $this->assertQuery( 'SELECT id + 1 AS alias_id, (2 + 3) AS alias_numbers FROM t' );
+		$this->assertSame( array( 'alias_id', 'alias_numbers' ), array_keys( (array) $result[0] ) );
+
+		// Function calls (no explicit alias).
+		$result = $this->assertQuery( "SELECT CONCAT('a', 'b')" );
+		$this->assertSame( array( "CONCAT('a', 'b')" ), array_keys( (array) $result[0] ) );
+
+		// Function calls with an explicit alias.
+		$result = $this->assertQuery( "SELECT CONCAT('a', 'b') AS alias_concat" );
+		$this->assertSame( array( 'alias_concat' ), array_keys( (array) $result[0] ) );
+	}
 }
