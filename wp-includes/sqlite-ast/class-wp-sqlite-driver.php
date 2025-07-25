@@ -3105,7 +3105,7 @@ class WP_SQLite_Driver {
 	 * the returned column name is always the same as it would be in MySQL.
 	 *
 	 * @param  WP_Parser_Node $node       The "selectItem" AST node.
-	 * @return string                     The translated value.
+	 * @return string                     The translated expression.
 	 */
 	public function translate_select_item( WP_Parser_Node $node ): string {
 		/*
