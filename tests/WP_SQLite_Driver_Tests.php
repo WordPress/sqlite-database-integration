@@ -6100,6 +6100,131 @@ END;
 		$this->assertSame( 'FORCED', $result[0]->{'@@use_secondary_engine'} );
 	}
 
+	public function testSystemVariablesWithBooleanValues(): void {
+		$this->assertQuery( 'SET autocommit = ON, big_tables = OFF' );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( 'SET autocommit = on, big_tables = off' );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( "SET autocommit = 'ON', big_tables = 'OFF'" );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( "SET autocommit = 'on', big_tables = 'off'" );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( 'SET autocommit = TRUE, big_tables = FALSE' );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( 'SET autocommit = true, big_tables = false' );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( 'SET autocommit = 1, big_tables = 0' );
+		$result = $this->assertQuery( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+	}
+
+	public function testSystemVariablesWithOnOffValues(): void {
+		$this->assertQuery( 'SET autocommit = ON' );
+		$result = $this->assertQuery( 'SELECT @@autocommit' );
+		$this->assertSame( '1', $result[0]->{'@@autocommit'} );
+
+		$this->assertQuery( 'SET big_tables = OFF' );
+		$result = $this->assertQuery( 'SELECT @@big_tables' );
+		$this->assertSame( '0', $result[0]->{'@@big_tables'} );
+
+		$this->assertQuery( 'SET end_markers_in_json = ON' );
+		$result = $this->assertQuery( 'SELECT @@end_markers_in_json' );
+		$this->assertSame( '1', $result[0]->{'@@end_markers_in_json'} );
+
+		$this->assertQuery( 'SET explicit_defaults_for_timestamp = OFF' );
+		$result = $this->assertQuery( 'SELECT @@explicit_defaults_for_timestamp' );
+		$this->assertSame( '0', $result[0]->{'@@explicit_defaults_for_timestamp'} );
+
+		$this->assertQuery( 'SET keep_files_on_create = ON' );
+		$result = $this->assertQuery( 'SELECT @@keep_files_on_create' );
+		$this->assertSame( '1', $result[0]->{'@@keep_files_on_create'} );
+
+		$this->assertQuery( 'SET old_alter_table = OFF' );
+		$result = $this->assertQuery( 'SELECT @@old_alter_table' );
+		$this->assertSame( '0', $result[0]->{'@@old_alter_table'} );
+
+		$this->assertQuery( 'SET print_identified_with_as_hex = ON' );
+		$result = $this->assertQuery( 'SELECT @@print_identified_with_as_hex' );
+		$this->assertSame( '1', $result[0]->{'@@print_identified_with_as_hex'} );
+
+		$this->assertQuery( 'SET require_row_format = OFF' );
+		$result = $this->assertQuery( 'SELECT @@require_row_format' );
+		$this->assertSame( '0', $result[0]->{'@@require_row_format'} );
+
+		$this->assertQuery( 'SET select_into_disk_sync = ON' );
+		$result = $this->assertQuery( 'SELECT @@select_into_disk_sync' );
+		$this->assertSame( '1', $result[0]->{'@@select_into_disk_sync'} );
+
+		$this->assertQuery( 'SET session_track_gtids = OFF' );
+		$result = $this->assertQuery( 'SELECT @@session_track_gtids' );
+		// @TODO: For session_track_gtids, the value should be OFF, not 0.
+		//$this->assertSame( 'OFF', $result[0]->{'@@session_track_gtids'} );
+
+		$this->assertQuery( 'SET session_track_schema = ON' );
+		$result = $this->assertQuery( 'SELECT @@session_track_schema' );
+		$this->assertSame( '1', $result[0]->{'@@session_track_schema'} );
+
+		$this->assertQuery( 'SET session_track_state_change = OFF' );
+		$result = $this->assertQuery( 'SELECT @@session_track_state_change' );
+		$this->assertSame( '0', $result[0]->{'@@session_track_state_change'} );
+
+		$this->assertQuery( 'SET session_track_transaction_info = OFF' );
+		$result = $this->assertQuery( 'SELECT @@session_track_transaction_info' );
+		// @TODO: For session_track_transaction_info, the value should be OFF, not 0.
+		//$this->assertSame( 'OFF', $result[0]->{'@@session_track_transaction_info'} );
+
+		$this->assertQuery( 'SET show_create_table_skip_secondary_engine = ON' );
+		$result = $this->assertQuery( 'SELECT @@show_create_table_skip_secondary_engine' );
+		$this->assertSame( '1', $result[0]->{'@@show_create_table_skip_secondary_engine'} );
+
+		$this->assertQuery( 'SET show_create_table_verbosity = OFF' );
+		$result = $this->assertQuery( 'SELECT @@show_create_table_verbosity' );
+		$this->assertSame( '0', $result[0]->{'@@show_create_table_verbosity'} );
+
+		$this->assertQuery( 'SET sql_auto_is_null = ON' );
+		$result = $this->assertQuery( 'SELECT @@sql_auto_is_null' );
+		$this->assertSame( '1', $result[0]->{'@@sql_auto_is_null'} );
+
+		$this->assertQuery( 'SET sql_big_selects = OFF' );
+		$result = $this->assertQuery( 'SELECT @@sql_big_selects' );
+		$this->assertSame( '0', $result[0]->{'@@sql_big_selects'} );
+
+		$this->assertQuery( 'SET sql_buffer_result = ON' );
+		$result = $this->assertQuery( 'SELECT @@sql_buffer_result' );
+		$this->assertSame( '1', $result[0]->{'@@sql_buffer_result'} );
+
+		$this->assertQuery( 'SET sql_safe_updates = OFF' );
+		$result = $this->assertQuery( 'SELECT @@sql_safe_updates' );
+		$this->assertSame( '0', $result[0]->{'@@sql_safe_updates'} );
+
+		$this->assertQuery( 'SET sql_warnings = ON' );
+		$result = $this->assertQuery( 'SELECT @@sql_warnings' );
+		$this->assertSame( '1', $result[0]->{'@@sql_warnings'} );
+
+		$this->assertQuery( 'SET transaction_read_only = OFF' );
+		$result = $this->assertQuery( 'SELECT @@transaction_read_only' );
+		$this->assertSame( '0', $result[0]->{'@@transaction_read_only'} );
+	}
+
 	public function testUserVariables(): void {
 		$this->assertQuery( 'SET @my_var = 1' );
 		$result = $this->assertQuery( 'SELECT @my_var' );

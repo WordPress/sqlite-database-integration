@@ -2214,6 +2214,23 @@ class WP_SQLite_Driver {
 			$value = $this->evaluate_expression( $value_node );
 		}
 
+		/*
+		 * Handle ON/OFF values. They are accepted as both strings and keywords.
+		 *
+		 * @TODO: This is actually variable-specific and depends on the its type.
+		 *        For example:
+		 *          SET autocommit = OFF;                   SELECT @@autocommit;                 -> 0
+		 *          SET autocommit = false;                 SELECT @@autocommit;                 -> 0
+		 *          SET session_track_gtids = OFF;          SELECT @@session_track_gtids;        -> OFF
+		 *          SET session_track_gtids = false;        SELECT @@session_track_gtids;        -> OFF
+		 *          SET updatable_views_with_limit = OFF;   ERROR 1231 (42000)
+		 *          SET updatable_views_with_limit = false; SELECT @@updatable_views_with_limit; -> NO
+		 */
+		$lowercase_value = strtolower( $value );
+		if ( 'on' === $lowercase_value || 'off' === $lowercase_value ) {
+			$value = 'on' === $lowercase_value ? 1 : 0;
+		}
+
 		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 			if ( 'sql_mode' === $name ) {
 				$modes                  = explode( ',', strtoupper( $value ) );
