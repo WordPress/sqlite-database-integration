@@ -2188,7 +2188,31 @@ class WP_SQLite_Driver {
 			$type           = $var_ident_type->get_first_child_token()->id;
 		}
 
-		$value = $this->evaluate_expression( $value_node );
+		/*
+		 * Some MySQL system variables values can be set using an unquoted pure
+		 * identifier rather than a string literal. This includes non-reserved
+		 * keywords. This is equivalent to using a corresponding string literal.
+		 *
+		 * For example, the following statement pairs are equivalent:
+		 *
+		 *   SET default_storage_engine = InnoDB
+		 *   SET default_storage_engine = 'InnoDB'
+		 *
+		 *   SET default_collation_for_utf8mb4 = utf8mb4_0900_ai_ci
+		 *   SET default_collation_for_utf8mb4 = 'utf8mb4_0900_ai_ci'
+		 *
+		 * In this cases, we need to use the value directly without attempting
+		 * to evaluate the expression, as that would result in a query error.
+		 * In the grammar, unquoted identifiers are captured by "columnRef".
+		 */
+		$identifier = $this->translate( $value_node->get_first_descendant_node( 'columnRef' ) );
+		if ( $identifier && $identifier === $this->translate( $value_node ) ) {
+			$value = $this->unquote_sqlite_identifier( $identifier );
+		} elseif ( ! $value_node->has_child_node( 'expr' ) ) {
+			$value = $this->unquote_sqlite_identifier( $this->translate( $value_node ) );
+		} else {
+			$value = $this->evaluate_expression( $value_node );
+		}
 
 		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 			if ( 'sql_mode' === $name ) {

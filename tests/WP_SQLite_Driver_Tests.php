@@ -6070,6 +6070,36 @@ END;
 		$this->assertSame( 'utf8mb4', $result[0]->{'@@session.character_set_client'} );
 	}
 
+	public function testSystemVariablesWithKeywords(): void {
+		$this->assertQuery( 'SET default_storage_engine = InnoDB' );
+		$result = $this->assertQuery( 'SELECT @@default_storage_engine' );
+		$this->assertSame( 'InnoDB', $result[0]->{'@@default_storage_engine'} );
+
+		$this->assertQuery( 'SET default_collation_for_utf8mb4 = utf8mb4_0900_ai_ci' );
+		$result = $this->assertQuery( 'SELECT @@default_collation_for_utf8mb4' );
+		$this->assertSame( 'utf8mb4_0900_ai_ci', $result[0]->{'@@default_collation_for_utf8mb4'} );
+
+		$this->assertQuery( 'SET resultset_metadata = FULL' );
+		$result = $this->assertQuery( 'SELECT @@resultset_metadata' );
+		$this->assertSame( 'FULL', $result[0]->{'@@resultset_metadata'} );
+
+		$this->assertQuery( 'SET session_track_gtids = OWN_GTID' );
+		$result = $this->assertQuery( 'SELECT @@session_track_gtids' );
+		$this->assertSame( 'OWN_GTID', $result[0]->{'@@session_track_gtids'} );
+
+		$this->assertQuery( 'SET session_track_transaction_info = STATE' );
+		$result = $this->assertQuery( 'SELECT @@session_track_transaction_info' );
+		$this->assertSame( 'STATE', $result[0]->{'@@session_track_transaction_info'} );
+
+		$this->assertQuery( 'SET transaction_isolation = SERIALIZABLE' );
+		$result = $this->assertQuery( 'SELECT @@transaction_isolation' );
+		$this->assertSame( 'SERIALIZABLE', $result[0]->{'@@transaction_isolation'} );
+
+		$this->assertQuery( 'SET use_secondary_engine = FORCED' );
+		$result = $this->assertQuery( 'SELECT @@use_secondary_engine' );
+		$this->assertSame( 'FORCED', $result[0]->{'@@use_secondary_engine'} );
+	}
+
 	public function testUserVariables(): void {
 		$this->assertQuery( 'SET @my_var = 1' );
 		$result = $this->assertQuery( 'SELECT @my_var' );
