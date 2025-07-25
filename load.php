@@ -26,8 +26,3 @@ require_once __DIR__ . '/activate.php';
 require_once __DIR__ . '/deactivate.php';
 require_once __DIR__ . '/admin-notices.php';
 require_once __DIR__ . '/health-check.php';
-
-// Query Monitor integration:
-if ( defined( 'SQLITE_QUERY_MONITOR_LOADED' ) && SQLITE_QUERY_MONITOR_LOADED ) {
-	require_once __DIR__ . '/integrations/query-monitor/plugin.php';
-}

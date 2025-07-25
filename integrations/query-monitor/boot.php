@@ -125,3 +125,12 @@ if ( ! defined( 'SAVEQUERIES' ) ) {
 
 // 5. Mark the Query Monitor integration as loaded.
 define( 'SQLITE_QUERY_MONITOR_LOADED', true );
+
+// 6. Register the SQLite enhancements for Query Monitor.
+function register_sqlite_enhancements_for_query_monitor() {
+	require_once __DIR__ . '/plugin.php';
+}
+
+if ( function_exists( 'add_action' ) ) {
+	add_action( 'plugins_loaded', 'register_sqlite_enhancements_for_query_monitor' );
+}
