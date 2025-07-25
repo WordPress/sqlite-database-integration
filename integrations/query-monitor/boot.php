@@ -56,6 +56,7 @@ if ( is_admin() ) {
 	}
 }
 
+global $wpdb;
 if ( ! isset( $wpdb ) ) {
 	return;
 }
