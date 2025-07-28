@@ -666,64 +666,34 @@ class WP_SQLite_Driver {
 				throw $this->new_driver_exception( 'Multi-query is not supported.' );
 			}
 
-			// Handle transaction commands.
-
 			/*
+			 * Determine if we need to wrap the translated queries in a transaction.
+			 *
 			 * [GRAMMAR]
-			 * beginWork: BEGIN_SYMBOL WORK_SYMBOL?
+			 * query:
+			 *   EOF
+			 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
 			 */
-			$child = $ast->get_first_child();
-			if ( $child instanceof WP_Parser_Node && 'beginWork' === $child->rule_name ) {
+			$child_node = $ast->get_first_child_node();
+			if (
+				null === $child_node
+				|| 'beginWork' === $child_node->rule_name
+				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
+			) {
+				$wrap_in_transaction = false;
+			} else {
+				$wrap_in_transaction = true;
+			}
+
+			if ( $wrap_in_transaction ) {
 				$this->begin_transaction();
-				return true;
 			}
 
-			if ( $child instanceof WP_Parser_Node && 'simpleStatement' === $child->rule_name ) {
-				/*
-				 * [GRAMMAR]
-				 * transactionOrLockingStatement:
-				 *   transactionStatement | savepointStatement | lockStatement | xaStatement
-				 */
-				$subchild = $child->get_first_child_node( 'transactionOrLockingStatement' );
-				if ( null !== $subchild ) {
-					$tokens = $subchild->get_descendant_tokens();
-					$token1 = $tokens[0];
-					$token2 = $tokens[1] ?? null;
-					if (
-						WP_MySQL_Lexer::START_SYMBOL === $token1->id
-						&& WP_MySQL_Lexer::TRANSACTION_SYMBOL === $token2->id
-					) {
-						$this->begin_transaction();
-						return true;
-					}
-
-					if (
-						WP_MySQL_Lexer::BEGIN_SYMBOL === $token1->id
-					) {
-						$this->begin_transaction();
-						return true;
-					}
-
-					if (
-						WP_MySQL_Lexer::COMMIT_SYMBOL === $token1->id
-					) {
-						$this->commit();
-						return true;
-					}
-
-					if (
-						WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token1->id
-					) {
-						$this->rollback();
-						return true;
-					}
-				}
-			}
-
-			// Perform all the queries in a nested transaction.
-			$this->begin_transaction();
 			$this->execute_mysql_query( $ast );
-			$this->commit();
+
+			if ( $wrap_in_transaction ) {
+				$this->commit();
+			}
 			return $this->last_return_value;
 		} catch ( Throwable $e ) {
 			try {
@@ -895,6 +865,11 @@ class WP_SQLite_Driver {
 			);
 		}
 
+		if ( 'beginWork' === $children[0]->rule_name ) {
+			$this->begin_transaction();
+			return;
+		}
+
 		if ( 'simpleStatement' !== $children[0]->rule_name ) {
 			throw $this->new_driver_exception(
 				sprintf( 'Expected "simpleStatement" node, got: "%s"', $children[0]->rule_name )
@@ -904,6 +879,9 @@ class WP_SQLite_Driver {
 		// Process the "simpleStatement" AST node.
 		$node = $children[0]->get_first_child_node();
 		switch ( $node->rule_name ) {
+			case 'transactionOrLockingStatement':
+				$this->execute_transaction_or_locking_statement( $node );
+				break;
 			case 'selectStatement':
 				$this->is_readonly = true;
 				$this->execute_select_statement( $node );
@@ -1013,6 +991,49 @@ class WP_SQLite_Driver {
 			default:
 				throw $this->new_not_supported_exception(
 					sprintf( 'statement type: "%s"', $node->rule_name )
+				);
+		}
+	}
+
+	/**
+	 * Execute a MySQL transaction or locking statement in SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "transactionOrLockingStatement" AST node.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_transaction_or_locking_statement( WP_Parser_Node $node ): void {
+		$subnode = $node->get_first_child_node();
+		$token   = $node->get_first_descendant_token();
+		switch ( $subnode->rule_name ) {
+			case 'transactionStatement':
+				// START TRANSACTION.
+				if ( WP_MySQL_Lexer::START_SYMBOL === $token->id ) {
+					$this->begin_transaction();
+					break;
+				}
+
+				// COMMIT.
+				if ( WP_MySQL_Lexer::COMMIT_SYMBOL === $token->id ) {
+					$this->commit();
+					break;
+				}
+
+				// Unknown statement. Fall through to the default case.
+			case 'savepointStatement':
+				// ROLLBACK.
+				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
+					$this->rollback();
+					break;
+				}
+
+				// Unknown statement. Fall through to the default case.
+			default:
+				throw $this->new_not_supported_exception(
+					sprintf(
+						'statement type: "%s" > "%s"',
+						$node->rule_name,
+						$subnode->rule_name
+					)
 				);
 		}
 	}
