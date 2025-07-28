@@ -1,5 +1,5 @@
 /*
- * Wrap the "composer run wp-tests-phpunit" command to process tests
+ * Wrap the "composer run wp-tests-php" command to process tests
  * that are expected to error and fail at the moment.
  *
  * This makes sure that the CI job passes, while explicitly tracking
@@ -108,7 +108,7 @@ console.log( 'Expected failures:', expectedFailures );
 try {
 	try {
 		execSync(
-			`composer run wp-test-phpunit -- --log-junit=phpunit-results.xml --verbose`,
+			`composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose`,
 			{ stdio: 'inherit' }
 		);
 		console.log( '\n⚠️ All tests passed, checking if expected errors/failures occurred...' );

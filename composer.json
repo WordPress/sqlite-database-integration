@@ -49,7 +49,7 @@
 			"npm --prefix wordpress run env:start",
 			"npm --prefix wordpress run env:install"
 		],
-		"wp-test-phpunit": [
+		"wp-test-php": [
 			"rm -rf wordpress/src/wp-content/database && npm --prefix wordpress run test:php --"
 		],
 		"wp-test-clean": [
