@@ -47,10 +47,15 @@
 		],
 		"wp-test-start": [
 			"npm --prefix wordpress run env:start",
-			"npm --prefix wordpress run env:install"
+			"npm --prefix wordpress run env:install",
+			"npm --prefix wordpress run env:cli -- plugin install gutenberg",
+			"npm --prefix wordpress run env:cli -- plugin install query-monitor"
 		],
 		"wp-test-php": [
 			"rm -rf wordpress/src/wp-content/database && npm --prefix wordpress run test:php --"
+		],
+		"wp-test-e2e": [
+			"npm --prefix wordpress run test:e2e --"
 		],
 		"wp-test-clean": [
 			"npm --prefix wordpress run env:clean"

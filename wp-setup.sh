@@ -65,3 +65,4 @@ sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExpose
 # 6. Install dependencies.
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
+npm --prefix "$WP_DIR" run build:dev
