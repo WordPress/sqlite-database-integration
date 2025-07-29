@@ -400,6 +400,16 @@ class WP_SQLite_Driver {
 	private $transaction_level = 0;
 
 	/**
+	 * Whether a MySQL table lock is active.
+	 *
+	 * Set to "true" when a lock is acquired using the MySQL LOCK statement.
+	 * Set to "false" when locks are released using the MySQL UNLOCK statement.
+	 *
+	 * @var bool
+	 */
+	private $table_lock_active = false;
+
+	/**
 	 * The PDO fetch mode used for the emulated query.
 	 *
 	 * @var mixed
@@ -1023,6 +1033,60 @@ class WP_SQLite_Driver {
 				// ROLLBACK.
 				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
 					$this->rollback();
+					break;
+				}
+
+				// Unknown statement. Fall through to the default case.
+			case 'lockStatement':
+				// LOCK TABLE/LOCK TABLES.
+				if (
+					WP_MySQL_Lexer::LOCK_SYMBOL === $token->id
+					&& $subnode->has_child_node( 'lockItem' )
+				) {
+					// Check if the table(s) exists.
+					$lock_items = $subnode->get_child_nodes( 'lockItem' );
+					foreach ( $lock_items as $lock_item ) {
+						$table_name = $this->unquote_sqlite_identifier(
+							$this->translate( $lock_item->get_first_child_node( 'tableRef' ) )
+						);
+						try {
+							/*
+							* Attempt to query the table directly rather than checking
+							* SQLite schema or information schema tables, so that we
+							* can handle persistent and temporary tables in one query.
+							*/
+							$this->execute_sqlite_query(
+								sprintf( 'SELECT 1 FROM %s LIMIT 0', $table_name )
+							);
+						} catch ( PDOException $e ) {
+							throw $this->new_driver_exception(
+								sprintf( "Table '%s.%s' doesn't exist", $this->db_name, $table_name ),
+								'42S02'
+							);
+						}
+					}
+
+					// Start a transaction when no top-level transaction is active.
+					if ( 0 === $this->transaction_level ) {
+						$this->begin_transaction();
+						$this->table_lock_active = true;
+					}
+					break;
+				}
+
+				// UNLOCK TABLES/UNLOCK TABLE.
+				if (
+					WP_MySQL_Lexer::UNLOCK_SYMBOL === $token->id
+					&& (
+						$subnode->has_child_token( WP_MySQL_Lexer::TABLE_SYMBOL )
+						|| $subnode->has_child_token( WP_MySQL_Lexer::TABLES_SYMBOL )
+					)
+				) {
+					// Commit the transaction when created by the LOCK statement.
+					if ( 1 === $this->transaction_level && $this->table_lock_active ) {
+						$this->commit();
+						$this->table_lock_active = false;
+					}
 					break;
 				}
 

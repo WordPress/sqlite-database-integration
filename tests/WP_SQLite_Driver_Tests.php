@@ -6238,4 +6238,60 @@ END;
 		$result = $this->assertQuery( 'SELECT @my_var' );
 		$this->assertEquals( 3, $result[0]->{'@my_var'} );
 	}
+
+	public function testLockingStatements(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		// When there is no lock, UNLOCK statement shouldn't fail.
+		$this->assertQuery( 'UNLOCK TABLES' );
+
+		// READ LOCK.
+		$this->assertQuery( 'LOCK TABLES t READ' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+
+		// WRITE LOCK.
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+
+		// LOCK inside a transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertQuery( 'COMMIT' );
+
+		// Transaction inside LOCK statements.
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'COMMIT' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+	}
+
+	public function testLockNonExistentTableForRead(): void {
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
+		$this->assertQuery( 'LOCK TABLES t READ' );
+	}
+
+	public function testLockNonExistentTableForWrite(): void {
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+	}
+
+	public function testLockMultipleWithNonExistentTable(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE t3 (id INT)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( "Table 'wp.t2' doesn't exist" );
+		$this->assertQuery( 'LOCK TABLES t1 READ, t2 READ, t3 WRITE' );
+	}
+
+	public function testLockTemporaryTables(): void {
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t3 (id INT)' );
+		$this->assertQuery( 'LOCK TABLES t1 READ, t2 READ, t3 WRITE' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+	}
 }
