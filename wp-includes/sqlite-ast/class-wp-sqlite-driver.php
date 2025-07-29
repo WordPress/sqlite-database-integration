@@ -1033,9 +1033,27 @@ class WP_SQLite_Driver {
 
 				// Unknown statement. Fall through to the default case.
 			case 'savepointStatement':
-				// ROLLBACK.
+				$savepoint_name = $this->translate( $subnode->get_first_child_node( 'identifier' ) );
+
+				// ROLLBACK/ROLLBACK TO SAVEPOINT <identifier>.
 				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
-					$this->rollback();
+					if ( null === $savepoint_name ) {
+						$this->rollback();
+					} else {
+						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+					}
+					break;
+				}
+
+				// SAVEPOINT.
+				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
+					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
+					break;
+				}
+
+				// RELEASE SAVEPOINT.
+				if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $token->id ) {
+					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 					break;
 				}
 

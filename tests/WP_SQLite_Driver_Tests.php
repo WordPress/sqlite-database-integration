@@ -6294,4 +6294,38 @@ END;
 		$this->assertQuery( 'LOCK TABLES t1 READ, t2 READ, t3 WRITE' );
 		$this->assertQuery( 'UNLOCK TABLES' );
 	}
+
+	public function testTransactionSavepoints(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( array( '1' ), (array) array_column( $result, 'id' ) );
+
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( array( '1', '2' ), (array) array_column( $result, 'id' ) );
+
+		$this->assertQuery( 'SAVEPOINT sp2' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (3)' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( array( '1', '2', '3' ), (array) array_column( $result, 'id' ) );
+
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( array( '1' ), (array) array_column( $result, 'id' ) );
+
+		$this->assertQuery( 'RELEASE SAVEPOINT sp1' );
+		$this->assertQuery( 'ROLLBACK' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertSame( array(), (array) array_column( $result, 'id' ) );
+	}
+
+	public function testRollbackNonExistentTransactionSavepoint(): void {
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'no such savepoint: sp1' );
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
+	}
 }
