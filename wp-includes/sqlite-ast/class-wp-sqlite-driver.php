@@ -812,7 +812,8 @@ class WP_SQLite_Driver {
 			 */
 			$this->execute_sqlite_query( $this->is_readonly ? 'BEGIN' : 'BEGIN IMMEDIATE' );
 		} else {
-			$this->execute_sqlite_query( 'SAVEPOINT LEVEL' . $this->transaction_level );
+			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
+			$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
 		}
 		++$this->transaction_level;
 	}
@@ -829,7 +830,8 @@ class WP_SQLite_Driver {
 		if ( 0 === $this->transaction_level ) {
 			$this->execute_sqlite_query( 'COMMIT' );
 		} else {
-			$this->execute_sqlite_query( 'RELEASE SAVEPOINT LEVEL' . $this->transaction_level );
+			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
+			$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 		}
 	}
 
@@ -845,7 +847,8 @@ class WP_SQLite_Driver {
 		if ( 0 === $this->transaction_level ) {
 			$this->execute_sqlite_query( 'ROLLBACK' );
 		} else {
-			$this->execute_sqlite_query( 'ROLLBACK TO SAVEPOINT LEVEL' . $this->transaction_level );
+			$savepoint_name = $this->get_internal_savepoint_name( $this->transaction_level );
+			$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 		}
 	}
 
@@ -4107,6 +4110,19 @@ class WP_SQLite_Driver {
 		// Prefix the original index name with the table name.
 		// This is to avoid conflicting index names in SQLite.
 		return $mysql_table_name . '__' . $mysql_index_name;
+	}
+
+	/**
+	 * Get an internal savepoint name.
+	 *
+	 * Internal savepoints are used to emulate MySQL transactions that are run
+	 * inside a wrapping SQLite transaction, as transactions can't be nested.
+	 *
+	 * @param  int $level The transaction nesting level.
+	 * @return string     The internal savepoint name.
+	 */
+	private function get_internal_savepoint_name( int $level ): string {
+		return sprintf( '%ssavepoint_%d', self::RESERVED_PREFIX, $level );
 	}
 
 	/**
