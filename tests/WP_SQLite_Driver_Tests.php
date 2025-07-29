@@ -4144,27 +4144,27 @@ QUERY
 		return array(
 			array(
 				'SELECT * FROM _wp_sqlite_t',
-				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
 			array(
 				'SELECT _wp_sqlite_t FROM t',
-				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
 			array(
 				'SELECT t._wp_sqlite_t FROM t',
-				"Invalid identifier `t`.`_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
 			array(
 				'CREATE TABLE _wp_sqlite_t (id INT)',
-				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
 			array(
 				'ALTER TABLE _wp_sqlite_t ADD COLUMN name TEXT',
-				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
 			array(
 				'DROP TABLE _wp_sqlite_t',
-				"Invalid identifier `_wp_sqlite_t`, prefix '_wp_sqlite_' is reserved",
+				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
 		);
 	}

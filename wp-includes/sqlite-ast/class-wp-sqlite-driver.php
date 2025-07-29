@@ -2791,6 +2791,17 @@ class WP_SQLite_Driver {
 	private function translate_pure_identifier( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
 		$value = $token->get_value();
+
+		if ( str_starts_with( $value, self::RESERVED_PREFIX ) ) {
+			throw $this->new_driver_exception(
+				sprintf(
+					"Invalid identifier '%s', prefix '%s' is reserved",
+					$value,
+					self::RESERVED_PREFIX
+				)
+			);
+		}
+
 		return '`' . str_replace( '`', '``', $value ) . '`';
 	}
 
@@ -2811,8 +2822,7 @@ class WP_SQLite_Driver {
 		?WP_Parser_Node $object_node = null,
 		?WP_Parser_Node $child_node = null
 	): string {
-		$parts                = array();
-		$uses_reserved_prefix = false;
+		$parts = array();
 
 		// Database name.
 		$is_information_schema = 'information_schema' === $this->db_name;
@@ -2861,38 +2871,16 @@ class WP_SQLite_Driver {
 				);
 				$parts[]     = $this->information_schema_builder->get_table_name( false, $object_name );
 			} else {
-				$quoted_object_name = $this->translate( $object_node );
-				$object_name        = $this->unquote_sqlite_identifier( $quoted_object_name );
-				if ( str_starts_with( $object_name, self::RESERVED_PREFIX ) ) {
-					$uses_reserved_prefix = true;
-				}
-				$parts[] = $quoted_object_name;
+				$parts[] = $this->translate( $object_node );
 			}
 		}
 
 		// Object child name (column, index, etc.).
 		if ( null !== $child_node ) {
-			$quoted_object_name = $this->translate( $child_node );
-			$object_name        = $this->unquote_sqlite_identifier( $quoted_object_name );
-			if ( str_starts_with( $object_name, self::RESERVED_PREFIX ) ) {
-				$uses_reserved_prefix = true;
-			}
-			$parts[] = $quoted_object_name;
+			$parts[] = $this->translate( $child_node );
 		}
 
-		$identifier = implode( '.', $parts );
-
-		if ( true === $uses_reserved_prefix ) {
-			throw $this->new_driver_exception(
-				sprintf(
-					"Invalid identifier %s, prefix '%s' is reserved",
-					$identifier,
-					self::RESERVED_PREFIX
-				)
-			);
-		}
-
-		return $identifier;
+		return implode( '.', $parts );
 	}
 
 	/**
