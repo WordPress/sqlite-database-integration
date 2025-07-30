@@ -47,13 +47,33 @@ if ( ! extension_loaded( 'pdo_sqlite' ) ) {
 	);
 }
 
-require_once __DIR__ . '/class-wp-sqlite-lexer.php';
-require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/class-wp-sqlite-translator.php';
-require_once __DIR__ . '/class-wp-sqlite-token.php';
-require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
-require_once __DIR__ . '/class-wp-sqlite-db.php';
-require_once __DIR__ . '/install-functions.php';
+if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
+	require_once __DIR__ . '/../parser/class-wp-parser-grammar.php';
+	require_once __DIR__ . '/../parser/class-wp-parser.php';
+	require_once __DIR__ . '/../parser/class-wp-parser-node.php';
+	require_once __DIR__ . '/../parser/class-wp-parser-token.php';
+	require_once __DIR__ . '/../mysql/class-wp-mysql-token.php';
+	require_once __DIR__ . '/../mysql/class-wp-mysql-lexer.php';
+	require_once __DIR__ . '/../mysql/class-wp-mysql-parser.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-connection.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-configurator.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-driver.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-driver-exception.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-information-schema-builder.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-information-schema-exception.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wp-sqlite-information-schema-reconstructor.php';
+	require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
+	require_once __DIR__ . '/install-functions.php';
+	require_once __DIR__ . '/../sqlite-ast/class-wpdb-sqlite.php';
+} else {
+	require_once __DIR__ . '/class-wp-sqlite-lexer.php';
+	require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
+	require_once __DIR__ . '/class-wp-sqlite-translator.php';
+	require_once __DIR__ . '/class-wp-sqlite-token.php';
+	require_once __DIR__ . '/class-wp-sqlite-pdo-user-defined-functions.php';
+	require_once __DIR__ . '/class-wp-sqlite-db.php';
+	require_once __DIR__ . '/install-functions.php';
+}
 
 /*
  * Debug: Cross-check with MySQL.
@@ -65,6 +85,11 @@ $crosscheck_tests_file_path = dirname( __DIR__, 2 ) . '/tests/class-wp-sqlite-cr
 if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exists( $crosscheck_tests_file_path ) ) {
 	require_once $crosscheck_tests_file_path;
 	$GLOBALS['wpdb'] = new WP_SQLite_Crosscheck_DB( DB_NAME );
+} elseif ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
+	$GLOBALS['wpdb'] = new WPDB_SQLite( defined( 'DB_NAME' ) ? DB_NAME : '' );
+
+	// Boot the Query Monitor plugin if it is active.
+	require_once dirname( __DIR__, 2 ) . '/integrations/query-monitor/boot.php';
 } else {
 	$GLOBALS['wpdb'] = new WP_SQLite_DB( defined( 'DB_NAME' ) ? DB_NAME : '' );
 

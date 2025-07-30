@@ -1,24 +1,34 @@
 <?php
-/**
- * Extend and replace the wpdb class.
- *
- * @package wp-sqlite-integration
- * @since 1.0.0
- */
 
 /**
- * This class extends wpdb and replaces it.
+ * A SQLite implementation of WPDB.
  *
- * It also rewrites some methods that use mysql specific functions.
+ * This class is a drop-in replacement for the WordPress-native "wpdb" class.
+ * It extends the "wpdb" class to integrate the SQLite driver into WordPress.
  */
-class WP_SQLite_DB extends wpdb {
-
+class WPDB_SQLite extends wpdb {
 	/**
-	 * Database Handle
+	 * Database handle.
 	 *
-	 * @var WP_SQLite_Translator
+	 * Possible values:
+	 *
+	 * - `WP_SQLite_Driver` instance during normal operation
+	 * - `null` if the connection is yet to be made or has been closed
+	 * - `false` if the connection has failed
+	 *
+	 * @var WP_SQLite_Driver|null|false
 	 */
 	protected $dbh;
+
+	/**
+	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
+	 *
+	 * This property is mirroring "wpdb::$allow_unsafe_unquoted_parameters",
+	 * because some tests are accessing it externally using PHP reflection.
+	 *
+	 * @var bool
+	 */
+	private $allow_unsafe_unquoted_parameters = true;
 
 	/**
 	 * Connects to the SQLite database.
@@ -28,6 +38,20 @@ class WP_SQLite_DB extends wpdb {
 	 * @param string $dbname Database name.
 	 */
 	public function __construct( $dbname ) {
+		/**
+		 * We need to initialize the "$wpdb" global early, so that the SQLite
+		 * driver can configure the database. The call stack goes like this:
+		 *
+		 *   1. The "parent::__construct()" call executes "$this->db_connect()".
+		 *   2. The database connection call initializes the SQLite driver.
+		 *   3. The SQLite driver initializes and runs "WP_SQLite_Configurator".
+		 *   4. The configurator uses "WP_SQLite_Information_Schema_Reconstructor",
+		 *      which requires "wp-admin/includes/schema.php" when in WordPress.
+		 *   5. The "wp-admin/includes/schema.php" requires the "$wpdb" global,
+		 *      which creates a circular dependency.
+		 */
+		$GLOBALS['wpdb'] = $this;
+
 		parent::__construct( '', '', $dbname, '' );
 		$this->charset = 'utf8mb4';
 	}
@@ -60,14 +84,48 @@ class WP_SQLite_DB extends wpdb {
 		return 'utf8mb4';
 	}
 
-		/**
-	 * Method to dummy out wpdb::set_sql_mode()
+	/**
+	 * Changes the current SQL mode, and ensures its WordPress compatibility.
 	 *
-	 * @see wpdb::set_sql_mode()
+	 * If no modes are passed, it will ensure the current MySQL server modes are compatible.
 	 *
-	 * @param array $modes Optional. A list of SQL modes to set.
+	 * This overrides wpdb::set_sql_mode() while closely mirroring its implementation.
+	 *
+	 * @param array $modes Optional. A list of SQL modes to set. Default empty array.
 	 */
 	public function set_sql_mode( $modes = array() ) {
+		if ( empty( $modes ) ) {
+			$result = $this->dbh->query( 'SELECT @@SESSION.sql_mode' );
+			if ( ! isset( $result[0] ) ) {
+				return;
+			}
+
+			$modes_str = $result[0]->{'@@SESSION.sql_mode'};
+			if ( empty( $modes_str ) ) {
+				return;
+			}
+			$modes = explode( ',', $modes_str );
+		}
+
+		$modes = array_change_key_case( $modes, CASE_UPPER );
+
+		/**
+		 * Filters the list of incompatible SQL modes to exclude.
+		 *
+		 * @since 3.9.0
+		 *
+		 * @param array $incompatible_modes An array of incompatible modes.
+		 */
+		$incompatible_modes = (array) apply_filters( 'incompatible_sql_modes', $this->incompatible_modes );
+
+		foreach ( $modes as $i => $mode ) {
+			if ( in_array( $mode, $incompatible_modes, true ) ) {
+				unset( $modes[ $i ] );
+			}
+		}
+		$modes_str = implode( ',', $modes );
+
+		$this->dbh->query( "SET SESSION sql_mode='$modes_str'" );
 	}
 
 	/**
@@ -111,23 +169,6 @@ class WP_SQLite_DB extends wpdb {
 		}
 		$escaped = addslashes( $data );
 		return $this->add_placeholder_escape( $escaped );
-	}
-
-	/**
-	 * Method to dummy out wpdb::esc_like() function.
-	 *
-	 * WordPress 4.0.0 introduced esc_like() function that adds backslashes to %,
-	 * underscore and backslash, which is not interpreted as escape character
-	 * by SQLite. So we override it and dummy out this function.
-	 *
-	 * @param string $text The raw text to be escaped. The input typed by the user should have no
-	 *                     extra or deleted slashes.
-	 *
-	 * @return string Text in the form of a LIKE phrase. The output is not SQL safe. Call $wpdb::prepare()
-	 *                or real_escape next.
-	 */
-	public function esc_like( $text ) {
-		return $text;
 	}
 
 	/**
@@ -240,9 +281,29 @@ class WP_SQLite_DB extends wpdb {
 			$pdo = $GLOBALS['@pdo'];
 		}
 
-		$this->dbh        = new WP_SQLite_Translator( $pdo );
-		$this->last_error = $this->dbh->get_error_message();
-		$GLOBALS['@pdo']  = $this->dbh->get_pdo();
+		if ( null === $this->dbname || '' === $this->dbname ) {
+			$this->bail(
+				'The database name was not set. The SQLite driver requires a database name to be set to emulate MySQL information schema tables.',
+				'db_connect_fail'
+			);
+			return false;
+		}
+
+		$this->ensure_database_directory( FQDB );
+
+		try {
+			$connection      = new WP_SQLite_Connection(
+				array(
+					'pdo'          => $pdo,
+					'path'         => FQDB,
+					'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+				)
+			);
+			$this->dbh       = new WP_SQLite_Driver( $connection, $this->dbname );
+			$GLOBALS['@pdo'] = $this->dbh->get_connection()->get_pdo();
+		} catch ( Throwable $e ) {
+			$this->last_error = $this->format_error_message( $e );
+		}
 		if ( $this->last_error ) {
 			return false;
 		}
@@ -259,6 +320,33 @@ class WP_SQLite_DB extends wpdb {
 	 */
 	public function check_connection( $allow_bail = true ) {
 		return true;
+	}
+
+	/**
+	 * Prepares a SQL query for safe execution.
+	 *
+	 * See "wpdb::prepare()". This override only fixes a WPDB test issue.
+	 *
+	 * @param string      $query   Query statement with `sprintf()`-like placeholders.
+	 * @param array|mixed $args    The array of variables or the first variable to substitute.
+	 * @param mixed       ...$args Further variables to substitute when using individual arguments.
+	 * @return string|void         Sanitized query string, if there is a query to prepare.
+	 */
+	public function prepare( $query, ...$args ) {
+		/*
+		 * Sync "$allow_unsafe_unquoted_parameters" with the WPDB parent property.
+		 * This is only needed because some WPDB tests are accessing the private
+		 * property externally via PHP reflection. This should be fixed WP tests.
+		 */
+		$wpdb_allow_unsafe_unquoted_parameters = $this->__get( 'allow_unsafe_unquoted_parameters' );
+		if ( $wpdb_allow_unsafe_unquoted_parameters !== $this->allow_unsafe_unquoted_parameters ) {
+			$property = new ReflectionProperty( 'wpdb', 'allow_unsafe_unquoted_parameters' );
+			$property->setAccessible( true );
+			$property->setValue( $this, $this->allow_unsafe_unquoted_parameters );
+			$property->setAccessible( false );
+		}
+
+		return parent::prepare( $query, ...$args );
 	}
 
 	/**
@@ -328,7 +416,7 @@ class WP_SQLite_DB extends wpdb {
 		if ( preg_match( '/^\s*(create|alter|truncate|drop)\s/i', $query ) ) {
 			$return_val = true;
 		} elseif ( preg_match( '/^\s*(insert|delete|update|replace)\s/i', $query ) ) {
-			$this->rows_affected = $this->dbh->get_affected_rows();
+			$this->rows_affected = $this->dbh->get_last_return_value();
 
 			// Take note of the insert_id.
 			if ( preg_match( '/^\s*(insert|replace)\s/i', $query ) ) {
@@ -373,7 +461,7 @@ class WP_SQLite_DB extends wpdb {
 			}
 
 			// Add SQLite query data.
-			$this->queries[ $i ]['sqlite_queries'] = $this->dbh->executed_sqlite_queries;
+			$this->queries[ $i ]['sqlite_queries'] = $this->dbh->get_last_sqlite_queries();
 		}
 		return $return_val;
 	}
@@ -392,8 +480,11 @@ class WP_SQLite_DB extends wpdb {
 			$this->timer_start();
 		}
 
-		$this->result     = $this->dbh->query( $query );
-		$this->last_error = $this->dbh->get_error_message();
+		try {
+			$this->result = $this->dbh->query( $query );
+		} catch ( Throwable $e ) {
+			$this->last_error = $this->format_error_message( $e );
+		}
 
 		++$this->num_queries;
 
@@ -507,5 +598,41 @@ class WP_SQLite_DB extends wpdb {
 
 		// Restore the original umask value.
 		umask( $umask );
+	}
+
+	/**
+	 * Format SQLite driver error message.
+	 *
+	 * @return string
+	 */
+	private function format_error_message( Throwable $e ) {
+		$output = '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
+
+		// Queries.
+		if ( $e instanceof WP_SQLite_Driver_Exception ) {
+			$driver = $e->getDriver();
+
+			$output .= '<div class="queries" style="clear:both;margin-bottom:2px;border:red dotted thin;">' . PHP_EOL;
+			$output .= '<p>MySQL query:</p>' . PHP_EOL;
+			$output .= '<p>' . $driver->get_last_mysql_query() . '</p>' . PHP_EOL;
+			$output .= '<p>Queries made or created this session were:</p>' . PHP_EOL;
+			$output .= '<ol>' . PHP_EOL;
+			foreach ( $driver->get_last_sqlite_queries() as $q ) {
+				$message = "Executing: {$q['sql']} | " . ( $q['params'] ? 'parameters: ' . implode( ', ', $q['params'] ) : '(no parameters)' );
+				$output .= '<li>' . htmlspecialchars( $message ) . '</li>' . PHP_EOL;
+			}
+			$output .= '</ol>' . PHP_EOL;
+			$output .= '</div>' . PHP_EOL;
+		}
+
+		// Message.
+		$output .= '<div style="clear:both;margin-bottom:2px;border:red dotted thin;" class="error_message" style="border-bottom:dotted blue thin;">' . PHP_EOL;
+		$output .= $e->getMessage() . PHP_EOL;
+		$output .= '</div>' . PHP_EOL;
+
+		// Backtrace.
+		$output .= '<p>Backtrace:</p>' . PHP_EOL;
+		$output .= '<pre>' . $e->getTraceAsString() . '</pre>' . PHP_EOL;
+		return $output;
 	}
 }
