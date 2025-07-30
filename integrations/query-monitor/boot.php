@@ -117,12 +117,16 @@ if ( null === $wpdb->options ) {
 
 $query_monitor_active = false;
 try {
-	$value = $wpdb->get_row(
+	// Make sure no errors are displayed when the query fails.
+	$show_errors = $wpdb->hide_errors();
+	$value       = $wpdb->get_row(
 		$wpdb->prepare(
 			"SELECT option_value FROM $wpdb->options WHERE option_name = %s LIMIT 1",
 			'active_plugins'
 		)
 	);
+	$wpdb->show_errors( $show_errors );
+
 	if ( null !== $value ) {
 		$query_monitor_active = in_array(
 			'query-monitor/query-monitor.php',
