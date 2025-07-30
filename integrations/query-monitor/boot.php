@@ -95,6 +95,20 @@ if ( ! isset( $wpdb ) ) {
 	return;
 }
 
+// Check if Query Monitor is installed.
+if ( defined( 'WP_PLUGIN_DIR' ) ) {
+	$plugins_dir = WP_PLUGIN_DIR;
+} else {
+	$plugins_dir = WP_CONTENT_DIR . '/plugins';
+}
+
+$qm_dir = "{$plugins_dir}/query-monitor";
+$qm_php = "{$qm_dir}/classes/PHP.php";
+
+if ( ! is_readable( $qm_php ) ) {
+	return;
+}
+
 // Check if Query Monitor is active.
 if ( null === $wpdb->options ) {
 	global $table_prefix;
@@ -124,20 +138,7 @@ if ( ! $query_monitor_active ) {
 	return;
 }
 
-// Determine the plugins directory.
-if ( defined( 'WP_PLUGIN_DIR' ) ) {
-	$plugins_dir = WP_PLUGIN_DIR;
-} else {
-	$plugins_dir = WP_CONTENT_DIR . '/plugins';
-}
-
-// Load Query Monitor (as per the original "db.php" file).
-$qm_dir = "{$plugins_dir}/query-monitor";
-$qm_php = "{$qm_dir}/classes/PHP.php";
-
-if ( ! is_readable( $qm_php ) ) {
-	return;
-}
+// Load Query Monitor eagerly (as per the original "db.php" file).
 require_once $qm_php;
 
 if ( ! QM_PHP::version_met() ) {
