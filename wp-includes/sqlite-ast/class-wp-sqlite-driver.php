@@ -1017,21 +1017,22 @@ class WP_SQLite_Driver {
 	private function execute_transaction_or_locking_statement( WP_Parser_Node $node ): void {
 		$subnode = $node->get_first_child_node();
 		$token   = $node->get_first_descendant_token();
+
 		switch ( $subnode->rule_name ) {
 			case 'transactionStatement':
 				// START TRANSACTION.
 				if ( WP_MySQL_Lexer::START_SYMBOL === $token->id ) {
 					$this->begin_transaction();
-					break;
+					return;
 				}
 
 				// COMMIT.
 				if ( WP_MySQL_Lexer::COMMIT_SYMBOL === $token->id ) {
 					$this->commit();
-					break;
+					return;
 				}
 
-				// Unknown statement. Fall through to the default case.
+				break;
 			case 'savepointStatement':
 				$savepoint_name = $this->translate( $subnode->get_first_child_node( 'identifier' ) );
 
@@ -1042,22 +1043,22 @@ class WP_SQLite_Driver {
 					} else {
 						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 					}
-					break;
+					return;
 				}
 
 				// SAVEPOINT.
 				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
 					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
-					break;
+					return;
 				}
 
 				// RELEASE SAVEPOINT.
 				if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $token->id ) {
 					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
-					break;
+					return;
 				}
 
-				// Unknown statement. Fall through to the default case.
+				break;
 			case 'lockStatement':
 				// LOCK TABLE/LOCK TABLES.
 				if (
@@ -1092,7 +1093,7 @@ class WP_SQLite_Driver {
 						$this->begin_transaction();
 						$this->table_lock_active = true;
 					}
-					break;
+					return;
 				}
 
 				// UNLOCK TABLES/UNLOCK TABLE.
@@ -1108,19 +1109,19 @@ class WP_SQLite_Driver {
 						$this->commit();
 						$this->table_lock_active = false;
 					}
-					break;
+					return;
 				}
 
-				// Unknown statement. Fall through to the default case.
-			default:
-				throw $this->new_not_supported_exception(
-					sprintf(
-						'statement type: "%s" > "%s"',
-						$node->rule_name,
-						$subnode->rule_name
-					)
-				);
+				break;
 		}
+
+		throw $this->new_not_supported_exception(
+			sprintf(
+				'statement type: "%s" > "%s"',
+				$node->rule_name,
+				$subnode->rule_name
+			)
+		);
 	}
 
 	/**
@@ -1727,11 +1728,11 @@ class WP_SQLite_Driver {
 		switch ( $keyword1->id ) {
 			case WP_MySQL_Lexer::DATABASES_SYMBOL:
 				$this->execute_show_databases_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::COLUMNS_SYMBOL:
 			case WP_MySQL_Lexer::FIELDS_SYMBOL:
 				$this->execute_show_columns_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
 				if ( WP_MySQL_Lexer::TABLE_SYMBOL === $keyword2->id ) {
 					$table_name = $this->unquote_sqlite_identifier(
@@ -1754,7 +1755,7 @@ class WP_SQLite_Driver {
 					}
 					return;
 				}
-				// Fall through to default.
+				break;
 			case WP_MySQL_Lexer::INDEX_SYMBOL:
 			case WP_MySQL_Lexer::INDEXES_SYMBOL:
 			case WP_MySQL_Lexer::KEYS_SYMBOL:
@@ -1762,7 +1763,7 @@ class WP_SQLite_Driver {
 					$this->translate( $node->get_first_child_node( 'tableRef' ) )
 				);
 				$this->execute_show_index_statement( $table_name );
-				break;
+				return;
 			case WP_MySQL_Lexer::GRANTS_SYMBOL:
 				$this->set_results_from_fetched_data(
 					array(
@@ -1774,22 +1775,22 @@ class WP_SQLite_Driver {
 				return;
 			case WP_MySQL_Lexer::TABLE_SYMBOL:
 				$this->execute_show_table_status_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::TABLES_SYMBOL:
 				$this->execute_show_tables_statement( $node );
-				break;
+				return;
 			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
 				$this->last_result = true;
 				return;
-			default:
-				throw $this->new_not_supported_exception(
-					sprintf(
-						'statement type: "%s" > "%s"',
-						$node->rule_name,
-						$keyword1->get_value()
-					)
-				);
 		}
+
+		throw $this->new_not_supported_exception(
+			sprintf(
+				'statement type: "%s" > "%s"',
+				$node->rule_name,
+				$keyword1->get_value()
+			)
+		);
 	}
 
 	/**
