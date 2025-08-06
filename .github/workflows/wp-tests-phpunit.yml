@@ -24,12 +24,6 @@ jobs:
           echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
-      - name: Setup WordPress test environment
-        run: composer run wp-setup
-
-      - name: Start WordPress test environment
-        run: composer run wp-test-start
-
       - name: Run WordPress PHPUnit tests
         run: node .github/workflows/wp-tests-phpunit-run.js
 

@@ -27,12 +27,6 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
-      - name: Setup WordPress test environment
-        run: composer run wp-setup
-
-      - name: Start WordPress test environment
-        run: composer run wp-test-start
-
       - name: Run WordPress end-to-end tests
         run: composer run wp-test-e2e
 
