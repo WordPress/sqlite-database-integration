@@ -6581,4 +6581,24 @@ END;
 		$this->expectExceptionMessage( 'no such savepoint: sp1' );
 		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
 	}
+
+	public function testForeignKeyConstraintAreIgnored(): void {
+		/*
+		 * FOREIGN KEY constraints are not supported yet, they will be ignored.
+		 * The following query will work, although it references a missing table.
+		 */
+		$this->assertQuery( 'CREATE TABLE t (id INT, CONSTRAINT c FOREIGN KEY (id) REFERENCES tt (id))' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
 }

@@ -1100,12 +1100,13 @@ class WP_SQLite_Information_Schema_Builder {
 			$keyword = $keyword->get_first_child_token();
 		}
 
-		// FOREIGN KEY and CHECK constraints are not supported yet.
-		if (
-			WP_MySQL_Lexer::FOREIGN_SYMBOL === $keyword->id
-			|| WP_MySQL_Lexer::CHECK_SYMBOL === $keyword->id
-		) {
-			throw new \Exception( 'FOREIGN KEY and CHECK constraints are not supported yet.' );
+		// FOREIGN KEY constraints are not supported yet; they will be ignored.
+		// @TODO: Implement support for FOREIGN KEY constraints.
+
+		// CHECK constraints are not supported yet.
+		// @TODO: Implement support for CHECK constraints.
+		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $keyword->id ) {
+			throw new \Exception( 'CHECK constraints are not supported yet.' );
 		}
 
 		// PRIMARY KEY and UNIQUE require an index.
