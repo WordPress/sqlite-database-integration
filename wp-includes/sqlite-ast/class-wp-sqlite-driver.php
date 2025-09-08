@@ -4094,6 +4094,42 @@ class WP_SQLite_Driver {
 			$grouped_constraints[ $name ][ $seq ] = $constraint;
 		}
 
+		// 4. Get foreign key info.
+		$referential_constraints_table = $this->information_schema_builder
+			->get_table_name( $table_is_temporary, 'referential_constraints' );
+		$referential_constraints_info  = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT * FROM %s WHERE constraint_schema = ? AND table_name = ? ORDER BY constraint_name',
+				$this->quote_sqlite_identifier( $referential_constraints_table )
+			),
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$key_column_usage_map = array();
+		if ( count( $referential_constraints_info ) > 0 ) {
+			$key_column_usage_table = $this->information_schema_builder
+				->get_table_name( $table_is_temporary, 'key_column_usage' );
+			$key_column_usage_info  = $this->execute_sqlite_query(
+				sprintf(
+					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->quote_sqlite_identifier( $key_column_usage_table )
+				),
+				array( $this->db_name, $table_name )
+			)->fetchAll( PDO::FETCH_ASSOC );
+
+			$key_column_usage_map = array();
+			foreach ( $key_column_usage_info as $key_column_usage ) {
+				$constraint_name = $key_column_usage['CONSTRAINT_NAME'];
+				if ( ! isset( $key_column_usage_map[ $constraint_name ] ) ) {
+					$key_column_usage_map[ $constraint_name ] = array();
+				}
+				$key_column_usage_map[ $constraint_name ][] = array(
+					$key_column_usage['COLUMN_NAME'],
+					$key_column_usage['REFERENCED_COLUMN_NAME'],
+				);
+			}
+		}
+
 		// 4. Generate CREATE TABLE statement columns.
 		$rows              = array();
 		$on_update_queries = array();
@@ -4230,6 +4266,30 @@ class WP_SQLite_Driver {
 			}
 		}
 
+		// Add foreign key constraints.
+		foreach ( $referential_constraints_info as $referential_constraint ) {
+			$column_names            = array();
+			$referenced_column_names = array();
+			foreach ( $key_column_usage_map[ $referential_constraint['CONSTRAINT_NAME'] ] as $info ) {
+				$column_names[]            = $this->quote_sqlite_identifier( $info[0] );
+				$referenced_column_names[] = $this->quote_sqlite_identifier( $info[1] );
+			}
+			$query = sprintf(
+				'  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)',
+				$this->quote_sqlite_identifier( $referential_constraint['CONSTRAINT_NAME'] ),
+				implode( ', ', $column_names ),
+				$this->quote_sqlite_identifier( $referential_constraint['REFERENCED_TABLE_NAME'] ),
+				implode( ', ', $referenced_column_names )
+			);
+			if ( 'NO ACTION' !== $referential_constraint['DELETE_RULE'] ) {
+				$query .= sprintf( ' ON DELETE %s', $referential_constraint['DELETE_RULE'] );
+			}
+			if ( 'NO ACTION' !== $referential_constraint['UPDATE_RULE'] ) {
+				$query .= sprintf( ' ON UPDATE %s', $referential_constraint['UPDATE_RULE'] );
+			}
+			$rows[] = $query;
+		}
+
 		// 6. Compose the CREATE TABLE statement.
 		$create_table_query  = sprintf(
 			"CREATE %sTABLE %s (\n",
@@ -4310,6 +4370,42 @@ class WP_SQLite_Driver {
 			$name                                 = $constraint['INDEX_NAME'];
 			$seq                                  = $constraint['SEQ_IN_INDEX'];
 			$grouped_constraints[ $name ][ $seq ] = $constraint;
+		}
+
+		// Get foreign key info.
+		$referential_constraints_table = $this->information_schema_builder
+			->get_table_name( $table_is_temporary, 'referential_constraints' );
+		$referential_constraints_info  = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT * FROM %s WHERE constraint_schema = ? AND table_name = ? ORDER BY constraint_name',
+				$this->quote_sqlite_identifier( $referential_constraints_table )
+			),
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$key_column_usage_map = array();
+		if ( count( $referential_constraints_info ) > 0 ) {
+			$key_column_usage_table = $this->information_schema_builder
+				->get_table_name( $table_is_temporary, 'key_column_usage' );
+			$key_column_usage_info  = $this->execute_sqlite_query(
+				sprintf(
+					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->quote_sqlite_identifier( $key_column_usage_table )
+				),
+				array( $this->db_name, $table_name )
+			)->fetchAll( PDO::FETCH_ASSOC );
+
+			$key_column_usage_map = array();
+			foreach ( $key_column_usage_info as $key_column_usage ) {
+				$constraint_name = $key_column_usage['CONSTRAINT_NAME'];
+				if ( ! isset( $key_column_usage_map[ $constraint_name ] ) ) {
+					$key_column_usage_map[ $constraint_name ] = array();
+				}
+				$key_column_usage_map[ $constraint_name ][] = array(
+					$key_column_usage['COLUMN_NAME'],
+					$key_column_usage['REFERENCED_COLUMN_NAME'],
+				);
+			}
 		}
 
 		// 4. Generate CREATE TABLE statement columns.
@@ -4410,6 +4506,30 @@ class WP_SQLite_Driver {
 				);
 			}
 
+			$rows[] = $sql;
+		}
+
+		// Add foreign key constraints.
+		foreach ( $referential_constraints_info as $referential_constraint ) {
+			$column_names            = array();
+			$referenced_column_names = array();
+			foreach ( $key_column_usage_map[ $referential_constraint['CONSTRAINT_NAME'] ] as $info ) {
+				$column_names[]            = $this->quote_mysql_identifier( $info[0] );
+				$referenced_column_names[] = $this->quote_mysql_identifier( $info[1] );
+			}
+			$sql = sprintf(
+				'  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)',
+				$this->quote_mysql_identifier( $referential_constraint['CONSTRAINT_NAME'] ),
+				implode( ', ', $column_names ),
+				$this->quote_mysql_identifier( $referential_constraint['REFERENCED_TABLE_NAME'] ),
+				implode( ', ', $referenced_column_names )
+			);
+			if ( 'NO ACTION' !== $referential_constraint['DELETE_RULE'] ) {
+				$sql .= sprintf( ' ON DELETE %s', $referential_constraint['DELETE_RULE'] );
+			}
+			if ( 'NO ACTION' !== $referential_constraint['UPDATE_RULE'] ) {
+				$sql .= sprintf( ' ON UPDATE %s', $referential_constraint['UPDATE_RULE'] );
+			}
 			$rows[] = $sql;
 		}
 
