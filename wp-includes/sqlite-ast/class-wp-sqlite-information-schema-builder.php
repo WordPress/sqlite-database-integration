@@ -640,6 +640,15 @@ class WP_SQLite_Information_Schema_Builder {
 
 			// DROP
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $first_token->id ) {
+				// DROP FOREIGN KEY
+				if ( $action->has_child_token( WP_MySQL_Lexer::FOREIGN_SYMBOL ) ) {
+					$field_identifier = $action->get_first_child_node( 'fieldIdentifier' );
+					$identifiers      = $field_identifier->get_descendant_nodes( 'identifier' );
+					$name             = $this->get_value( end( $identifiers ) );
+					$this->record_drop_foreign_key( $table_is_temporary, $table_name, $name );
+					continue;
+				}
+
 				// DROP [COLUMN]
 				$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
 				if ( null !== $column_ref ) {
@@ -1207,6 +1216,46 @@ class WP_SQLite_Information_Schema_Builder {
 				$key_column_usage_item
 			);
 		}
+	}
+
+	/**
+	 * Analyze DROP FOREIGN KEY statement and record data in the information schema.
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
+	 * @param string $name               The foreign key name.
+	 */
+	private function record_drop_foreign_key(
+		bool $table_is_temporary,
+		string $table_name,
+		string $name
+	): void {
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+			array(
+				'TABLE_SCHEMA'    => $this->db_name,
+				'TABLE_NAME'      => $table_name,
+				'CONSTRAINT_NAME' => $name,
+			)
+		);
+
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'referential_constraints' ),
+			array(
+				'CONSTRAINT_SCHEMA' => $this->db_name,
+				'TABLE_NAME'        => $table_name,
+				'CONSTRAINT_NAME'   => $name,
+			)
+		);
+
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
+			array(
+				'TABLE_SCHEMA'    => $this->db_name,
+				'TABLE_NAME'      => $table_name,
+				'CONSTRAINT_NAME' => $name,
+			)
+		);
 	}
 
 	/**

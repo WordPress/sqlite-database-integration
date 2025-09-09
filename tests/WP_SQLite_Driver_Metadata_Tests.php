@@ -1567,4 +1567,152 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			$result
 		);
 	}
+
+	public function testInformationSchemaAlterTableDropForeignKeys(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				t1_id INT REFERENCES t1 (id),
+				FOREIGN KEY (t1_id) REFERENCES t1 (id),
+				CONSTRAINT fk1 FOREIGN KEY (t1_id) REFERENCES t1 (id) ON DELETE CASCADE
+			)'
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 3, $result );
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 3, $result );
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 3, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`) ON DELETE CASCADE,',
+							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`),',
+							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// DROP the first foreign key.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY t2_ibfk_1' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't2_ibfk_2', $result[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'fk1', $result[1]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't2_ibfk_2', $result[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'fk1', $result[1]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 't2_ibfk_2', $result[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'fk1', $result[1]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`) ON DELETE CASCADE,',
+							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// DROP the second foreign key.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY t2_ibfk_2' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'fk1', $result[0]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'fk1', $result[0]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'fk1', $result[0]->CONSTRAINT_NAME );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL,',
+							'  CONSTRAINT `fk1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`) ON DELETE CASCADE',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// DROP the third foreign key.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY fk1' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL,',
+							'  `t1_id` int DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
 }
