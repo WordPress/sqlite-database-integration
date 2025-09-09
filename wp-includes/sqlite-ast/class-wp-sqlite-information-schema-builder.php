@@ -510,32 +510,50 @@ class WP_SQLite_Information_Schema_Builder {
 				throw $e;
 			}
 
-			// Inline column constraints and indexes.
-			$index_data = $this->extract_column_statistics_data(
+			// Extract inline column constraints and indexes.
+			$index_data                  = $this->extract_column_statistics_data(
 				$table_name,
 				$column_name,
 				$column_node,
 				'YES' === $column_data['is_nullable']
 			);
+			$constraint_data             = $this->extract_table_constraint_data(
+				$column_node,
+				$table_name,
+				$index_data['index_name'] ?? null
+			);
+			$referential_constraint_data = $this->extract_referential_constraint_data(
+				$column_node,
+				$table_name
+			);
+			$key_column_usage_data       = $this->extract_key_column_usage_data(
+				$column_node,
+				$table_name
+			);
 
+			// Save inline column constraints and indexes.
 			if ( null !== $index_data ) {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'statistics' ),
 					$index_data
 				);
 			}
-
-			// Save constraint data.
-			$constraint_data = $this->extract_table_constraint_data(
-				$column_node,
-				$table_name,
-				$index_data['index_name'] ?? null
-			);
-
 			if ( null !== $constraint_data ) {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 					$constraint_data
+				);
+			}
+			if ( null !== $referential_constraint_data ) {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'referential_constraints' ),
+					$referential_constraint_data
+				);
+			}
+			foreach ( $key_column_usage_data as $key_column_usage_item ) {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
+					$key_column_usage_item
 				);
 			}
 
@@ -1438,11 +1456,15 @@ class WP_SQLite_Information_Schema_Builder {
 	 *
 	 * @param  WP_Parser_Node $node       The "tableConstraintDef" AST node.
 	 * @param  string         $table_name The table name.
-	 * @return array                      The referential constraint data as stored in information schema.
+	 * @return array|null                 The referential constraint data as stored in information schema.
 	 */
-	private function extract_referential_constraint_data( WP_Parser_Node $node, string $table_name ): array {
+	private function extract_referential_constraint_data( WP_Parser_Node $node, string $table_name ): ?array {
+		$references = $node->get_first_descendant_node( 'references' );
+		if ( null === $references ) {
+			return null;
+		}
+
 		// Referenced table name.
-		$references             = $node->get_first_child_node( 'references' );
 		$referenced_table       = $references->get_first_child_node( 'tableRef' );
 		$referenced_identifiers = $referenced_table->get_descendant_nodes( 'identifier' );
 		$referenced_table_name  = $this->get_value( end( $referenced_identifiers ) );
@@ -1517,8 +1539,12 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return array                       The key column usage data as stored in information schema.
 	 */
 	private function extract_key_column_usage_data( WP_Parser_Node $node, string $table_name ): array {
+		$references = $node->get_first_descendant_node( 'references' );
+		if ( null === $references ) {
+			return array();
+		}
+
 		// Referenced table name.
-		$references              = $node->get_first_child_node( 'references' );
 		$referenced_table        = $references->get_first_child_node( 'tableRef' );
 		$referenced_identifiers  = $referenced_table->get_descendant_nodes( 'identifier' );
 		$referenced_table_schema = count( $referenced_identifiers ) > 1
@@ -1528,14 +1554,26 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$name = $this->get_table_constraint_name( $node, $table_name );
 
-		$key_parts       = $node->get_first_descendant_node( 'keyList' )->get_child_nodes( 'keyPart' );
+		if ( 'columnDefinition' === $node->rule_name ) {
+			$identifiers = $node
+				->get_first_descendant_node( 'fieldIdentifier' )
+				->get_descendant_nodes( 'identifier' );
+			$key_parts   = array( end( $identifiers ) );
+		} else {
+			$key_list  = $node->get_first_descendant_node( 'keyList' );
+			$key_parts = array();
+			foreach ( $key_list->get_child_nodes( 'keyPart' ) as $key_part ) {
+				$key_parts[] = $key_part->get_first_child_node( 'identifier' );
+			}
+		}
+
 		$reference_parts = $references->get_first_child_node( 'identifierListWithParentheses' )
 			->get_first_child_node( 'identifierList' )
 			->get_child_nodes( 'identifier' );
 
 		$rows = array();
 		foreach ( $key_parts as $i => $key_part ) {
-			$column_name = $this->get_value( $key_part->get_first_child_node( 'identifier' ) );
+			$column_name = $this->get_value( $key_part );
 
 			$rows[] = array(
 				'constraint_schema'             => $this->db_name,
