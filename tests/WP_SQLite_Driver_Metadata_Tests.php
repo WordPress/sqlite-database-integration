@@ -1715,4 +1715,71 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			$result
 		);
 	}
+
+	public function testInformationSchemaAlterTableDropConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				CONSTRAINT fk1 FOREIGN KEY (id) REFERENCES t1 (id)
+			)'
+		);
+
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT fk1' );
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$this->assertCount( 0, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t2` (',
+							'  `id` int DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropMissingConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3940 Constraint 'cnst' does not exist." );
+		$this->expectExceptionCode( 'HY000' );
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
+	}
+
+	public function testInformationSchemaAlterTableDropConstraintWithAmbiguousName(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				CONSTRAINT cnst UNIQUE (id),
+				CONSTRAINT cnst FOREIGN KEY (id) REFERENCES t1 (id)
+			)'
+		);
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3939 Table has multiple constraints with the name 'cnst'. Please use constraint specific 'DROP' clause." );
+		$this->expectExceptionCode( 'HY000' );
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
+	}
 }

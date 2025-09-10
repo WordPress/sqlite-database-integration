@@ -640,6 +640,13 @@ class WP_SQLite_Information_Schema_Builder {
 
 			// DROP
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $first_token->id ) {
+				// DROP CONSTRAINT
+				if ( $action->has_child_token( WP_MySQL_Lexer::CONSTRAINT_SYMBOL ) ) {
+					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
+					$this->record_drop_constraint( $table_is_temporary, $table_name, $name );
+					continue;
+				}
+
 				// DROP FOREIGN KEY
 				if ( $action->has_child_token( WP_MySQL_Lexer::FOREIGN_SYMBOL ) ) {
 					$field_identifier = $action->get_first_child_node( 'fieldIdentifier' );
@@ -1214,6 +1221,52 @@ class WP_SQLite_Information_Schema_Builder {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
 				$key_column_usage_item
+			);
+		}
+	}
+
+	/**
+	 * Analyze DROP CONSTRAINT statement and record data in the information schema.
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
+	 * @param string $name               The constraint name.
+	 */
+	private function record_drop_constraint(
+		bool $table_is_temporary,
+		string $table_name,
+		string $name
+	): void {
+		$constraint_types = $this->connection->query(
+			sprintf(
+				'SELECT constraint_type FROM %s WHERE table_schema = ? AND table_name = ? AND constraint_name = ?',
+				$this->connection->quote_identifier( $this->get_table_name( $table_is_temporary, 'table_constraints' ) )
+			),
+			array(
+				$this->db_name,
+				$table_name,
+				$name,
+			)
+		)->fetchAll(
+			PDO::FETCH_COLUMN // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+		);
+
+		if ( 0 === count( $constraint_types ) ) {
+			throw WP_SQLite_Information_Schema_Exception::constraint_does_not_exist( $name );
+		}
+
+		// MySQL doesn't allow a generic DELETE CONSTRAINT clause when the target
+		// is ambiguous, i.e., when multiple constraints with the same name exist.
+		if ( count( $constraint_types ) > 1 ) {
+			throw WP_SQLite_Information_Schema_Exception::multiple_constraints_with_name( $name );
+		}
+
+		$constraint_type = $constraint_types[0];
+		if ( 'FOREIGN KEY' === $constraint_type ) {
+			$this->record_drop_foreign_key( $table_is_temporary, $table_name, $name );
+		} else {
+			throw new \Exception(
+				"DROP CONSTRAINT for constraint type '$constraint_type' is not supported."
 			);
 		}
 	}

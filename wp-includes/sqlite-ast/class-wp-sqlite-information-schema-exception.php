@@ -8,10 +8,12 @@
  */
 class WP_SQLite_Information_Schema_Exception extends Exception {
 	// Information schema exception types.
-	const TYPE_DUPLICATE_TABLE_NAME  = 'duplicate-table-name';
-	const TYPE_DUPLICATE_COLUMN_NAME = 'duplicate-column-name';
-	const TYPE_DUPLICATE_KEY_NAME    = 'duplicate-key-name';
-	const TYPE_KEY_COLUMN_NOT_FOUND  = 'key-column-not-found';
+	const TYPE_DUPLICATE_TABLE_NAME           = 'duplicate-table-name';
+	const TYPE_DUPLICATE_COLUMN_NAME          = 'duplicate-column-name';
+	const TYPE_DUPLICATE_KEY_NAME             = 'duplicate-key-name';
+	const TYPE_KEY_COLUMN_NOT_FOUND           = 'key-column-not-found';
+	const TYPE_CONSTRAINT_DOES_NOT_EXIST      = 'constraint-does-not-exist';
+	const TYPE_MULTIPLE_CONSTRAINTS_WITH_NAME = 'multiple-constraints-with-name';
 
 	/**
 	 * The exception type.
@@ -106,11 +108,45 @@ class WP_SQLite_Information_Schema_Exception extends Exception {
 		);
 	}
 
+	/**
+	 * Create a key column not found exception.
+	 *
+	 * @param  string $column_name The name of the affected column.
+	 * @return self                The exception instance.
+	 */
 	public static function key_column_not_found( string $column_name ): WP_SQLite_Information_Schema_Exception {
 		return new self(
 			self::TYPE_KEY_COLUMN_NOT_FOUND,
 			sprintf( "Key column '%s' doesn't exist in table.", $column_name ),
 			array( 'column_name' => $column_name )
+		);
+	}
+
+	/**
+	 * Create a constraint does not exist exception.
+	 *
+	 * @param  string $name The name of the affected constraint.
+	 * @return self         The exception instance.
+	 */
+	public static function constraint_does_not_exist( string $name ): WP_SQLite_Information_Schema_Exception {
+		return new self(
+			self::TYPE_CONSTRAINT_DOES_NOT_EXIST,
+			sprintf( "Constraint '%s' does not exist.", $name ),
+			array( 'name' => $name )
+		);
+	}
+
+	/**
+	 * Create a multiple constraints with name exception.
+	 *
+	 * @param  string $name The name of the affected constraint.
+	 * @return self         The exception instance.
+	 */
+	public static function multiple_constraints_with_name( string $name ): WP_SQLite_Information_Schema_Exception {
+		return new self(
+			self::TYPE_MULTIPLE_CONSTRAINTS_WITH_NAME,
+			sprintf( "Table has multiple constraints with the name '%s'. Please use constraint specific 'DROP' clause.", $name ),
+			array( 'name' => $name )
 		);
 	}
 }

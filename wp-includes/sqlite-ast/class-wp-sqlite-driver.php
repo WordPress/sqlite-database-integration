@@ -4827,6 +4827,22 @@ class WP_SQLite_Driver {
 					),
 					'42000'
 				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_CONSTRAINT_DOES_NOT_EXIST:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[HY000]: General error: 3940 Constraint '%s' does not exist.",
+						$e->get_data()['name']
+					),
+					'HY000'
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_MULTIPLE_CONSTRAINTS_WITH_NAME:
+				return $this->new_driver_exception(
+					sprintf(
+						"SQLSTATE[HY000]: General error: 3939 Table has multiple constraints with the name '%s'. Please use constraint specific 'DROP' clause.",
+						$e->get_data()['name']
+					),
+					'HY000'
+				);
 			default:
 				return $e;
 		}
