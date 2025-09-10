@@ -528,7 +528,8 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 			$key_column_usage_data       = $this->extract_key_column_usage_data(
 				$column_node,
-				$table_name
+				$table_name,
+				$index_data['index_name'] ?? null
 			);
 
 			// Save inline column constraints and indexes.
@@ -1200,7 +1201,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// Extract constraint data.
 		$constraint_data             = $this->extract_table_constraint_data( $node, $table_name, $index_name );
 		$referential_constraint_data = $this->extract_referential_constraint_data( $node, $table_name );
-		$key_column_usage_data       = $this->extract_key_column_usage_data( $node, $table_name );
+		$key_column_usage_data       = $this->extract_key_column_usage_data( $node, $table_name, $index_name );
 
 		// Save constraint data.
 		if ( null !== $constraint_data ) {
@@ -1304,9 +1305,12 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
 			array(
-				'TABLE_SCHEMA'    => $this->db_name,
-				'TABLE_NAME'      => $table_name,
-				'CONSTRAINT_NAME' => $name,
+				'TABLE_SCHEMA'            => $this->db_name,
+				'TABLE_NAME'              => $table_name,
+				'CONSTRAINT_NAME'         => $name,
+
+				// Remove only FOREIGN KEY records; not PRIMARY/UNIQUE KEY data.
+				'REFERENCED_TABLE_SCHEMA' => $this->db_name,
 			)
 		);
 	}
@@ -1638,44 +1642,58 @@ class WP_SQLite_Information_Schema_Builder {
 	 *
 	 * @param  WP_Parser_Node $node        The "tableConstraintDef" AST node.
 	 * @param  string         $table_name  The table name.
+	 * @param  string         $index_name  The index name, when the constraint uses an index.
 	 * @return array                       The key column usage data as stored in information schema.
 	 */
-	private function extract_key_column_usage_data( WP_Parser_Node $node, string $table_name ): array {
+	private function extract_key_column_usage_data(
+		WP_Parser_Node $node,
+		string $table_name,
+		?string $index_name = null
+	): array {
+		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
+		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
 		$references = $node->get_first_descendant_node( 'references' );
-		if ( null === $references ) {
+		if ( null === $references && ! $is_primary && ! $is_unique ) {
 			return array();
 		}
 
-		// Referenced table name.
-		$referenced_table        = $references->get_first_child_node( 'tableRef' );
-		$referenced_identifiers  = $referenced_table->get_descendant_nodes( 'identifier' );
-		$referenced_table_schema = count( $referenced_identifiers ) > 1
-			? $this->get_value( $referenced_identifiers[0] )
-			: $this->db_name;
-		$referenced_table_name   = $this->get_value( end( $referenced_identifiers ) );
+		// Referenced table name and column names.
+		if ( $references ) {
+			$referenced_table        = $references->get_first_child_node( 'tableRef' );
+			$referenced_identifiers  = $referenced_table->get_descendant_nodes( 'identifier' );
+			$referenced_table_schema = count( $referenced_identifiers ) > 1
+				? $this->get_value( $referenced_identifiers[0] )
+				: $this->db_name;
+			$referenced_table_name   = $this->get_value( end( $referenced_identifiers ) );
+			$referenced_columns      = $references->get_first_child_node( 'identifierListWithParentheses' )
+				->get_first_child_node( 'identifierList' )
+				->get_child_nodes( 'identifier' );
+		} else {
+			$referenced_table_schema = null;
+			$referenced_table_name   = null;
+			$referenced_columns      = array();
+		}
 
-		$name = $this->get_table_constraint_name( $node, $table_name );
+		// Constraint name.
+		$name = $index_name ?? $this->get_table_constraint_name( $node, $table_name );
 
+		// Key parts.
 		if ( 'columnDefinition' === $node->rule_name ) {
 			$identifiers = $node
 				->get_first_descendant_node( 'fieldIdentifier' )
 				->get_descendant_nodes( 'identifier' );
 			$key_parts   = array( end( $identifiers ) );
 		} else {
-			$key_list  = $node->get_first_descendant_node( 'keyList' );
 			$key_parts = array();
-			foreach ( $key_list->get_child_nodes( 'keyPart' ) as $key_part ) {
+			foreach ( $node->get_descendant_nodes( 'keyPart' ) as $key_part ) {
 				$key_parts[] = $key_part->get_first_child_node( 'identifier' );
 			}
 		}
 
-		$reference_parts = $references->get_first_child_node( 'identifierListWithParentheses' )
-			->get_first_child_node( 'identifierList' )
-			->get_child_nodes( 'identifier' );
-
 		$rows = array();
 		foreach ( $key_parts as $i => $key_part ) {
 			$column_name = $this->get_value( $key_part );
+			$position    = $i + 1;
 
 			$rows[] = array(
 				'constraint_schema'             => $this->db_name,
@@ -1683,11 +1701,11 @@ class WP_SQLite_Information_Schema_Builder {
 				'table_schema'                  => $this->db_name,
 				'table_name'                    => $table_name,
 				'column_name'                   => $column_name,
-				'ordinal_position'              => $i + 1,
-				'position_in_unique_constraint' => $i + 1,
+				'ordinal_position'              => $position,
+				'position_in_unique_constraint' => $references ? $position : null,
 				'referenced_table_schema'       => $referenced_table_schema,
 				'referenced_table_name'         => $referenced_table_name,
-				'referenced_column_name'        => $this->get_value( $reference_parts[ $i ] ),
+				'referenced_column_name'        => $referenced_columns ? $this->get_value( $referenced_columns[ $i ] ) : null,
 			);
 		}
 		return $rows;
@@ -2792,7 +2810,12 @@ class WP_SQLite_Information_Schema_Builder {
 	private function delete_values( string $table_name, array $where ): void {
 		$where_statements = array();
 		foreach ( $where as $column => $value ) {
-			$where_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
+			if ( null === $value ) {
+				$where_statements[] = $this->connection->quote_identifier( $column ) . ' IS NULL';
+				unset( $where[ $column ] );
+			} else {
+				$where_statements[] = $this->connection->quote_identifier( $column ) . ' = ?';
+			}
 		}
 
 		$this->connection->query(

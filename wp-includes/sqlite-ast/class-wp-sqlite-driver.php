@@ -4111,7 +4111,7 @@ class WP_SQLite_Driver {
 				->get_table_name( $table_is_temporary, 'key_column_usage' );
 			$key_column_usage_info  = $this->execute_sqlite_query(
 				sprintf(
-					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? AND referenced_column_name IS NOT NULL',
 					$this->quote_sqlite_identifier( $key_column_usage_table )
 				),
 				array( $this->db_name, $table_name )
@@ -4389,7 +4389,7 @@ class WP_SQLite_Driver {
 				->get_table_name( $table_is_temporary, 'key_column_usage' );
 			$key_column_usage_info  = $this->execute_sqlite_query(
 				sprintf(
-					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ?',
+					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? AND referenced_column_name IS NOT NULL',
 					$this->quote_sqlite_identifier( $key_column_usage_table )
 				),
 				array( $this->db_name, $table_name )
