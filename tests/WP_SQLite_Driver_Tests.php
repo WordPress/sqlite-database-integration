@@ -6581,4 +6581,116 @@ END;
 		$this->expectExceptionMessage( 'no such savepoint: sp1' );
 		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
 	}
+
+	public function testForeignKeyOnUpdateNoAction(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON UPDATE NO ACTION)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
+		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
+	}
+
+	public function testForeignKeyOnUpdateRestrict(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON UPDATE RESTRICT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
+		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
+	}
+
+	public function testForeignKeyOnUpdateCascade(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON UPDATE CASCADE)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertEquals( array( (object) array( 'id' => '2' ) ), $result );
+	}
+
+	public function testForeignKeyOnUpdateSetNull(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON UPDATE SET NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertEquals( array( (object) array( 'id' => null ) ), $result );
+	}
+
+	public function testForeignKeyOnUpdateSetDefault(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT DEFAULT 0, FOREIGN KEY (id) REFERENCES t1 (id) ON UPDATE SET DEFAULT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertEquals( array( (object) array( 'id' => '0' ) ), $result );
+	}
+
+	public function testForeignKeyOnDeleteNoAction(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE NO ACTION)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
+		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
+	}
+
+	public function testForeignKeyOnDeleteRestrict(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE RESTRICT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
+		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
+	}
+
+	public function testForeignKeyOnDeleteCascade(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE CASCADE)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertEquals( array(), $result );
+	}
+
+	public function testForeignKeyOnDeleteSetNull(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE SET NULL)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertEquals( array( (object) array( 'id' => null ) ), $result );
+	}
+
+	public function testForeignKeyOnDeleteSetDefault(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT DEFAULT 0, FOREIGN KEY (id) REFERENCES t1 (id) ON DELETE SET DEFAULT)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
+
+		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM t2' );
+		$this->assertEquals( array( (object) array( 'id' => '0' ) ), $result );
+	}
 }
