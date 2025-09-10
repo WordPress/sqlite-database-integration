@@ -648,6 +648,12 @@ class WP_SQLite_Information_Schema_Builder {
 					continue;
 				}
 
+				// DROP PRIMARY KEY
+				if ( $action->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+					$this->record_drop_key( $table_is_temporary, $table_name, 'PRIMARY' );
+					continue;
+				}
+
 				// DROP FOREIGN KEY
 				if ( $action->has_child_token( WP_MySQL_Lexer::FOREIGN_SYMBOL ) ) {
 					$field_identifier = $action->get_first_child_node( 'fieldIdentifier' );
@@ -1263,13 +1269,64 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		$constraint_type = $constraint_types[0];
-		if ( 'FOREIGN KEY' === $constraint_type ) {
+		if ( 'PRIMARY KEY' === $constraint_type ) {
+			$this->record_drop_key( $table_is_temporary, $table_name, 'PRIMARY' );
+		} elseif ( 'UNIQUE' === $constraint_type ) {
+			$this->record_drop_key( $table_is_temporary, $table_name, $name );
+		} elseif ( 'FOREIGN KEY' === $constraint_type ) {
 			$this->record_drop_foreign_key( $table_is_temporary, $table_name, $name );
 		} else {
 			throw new \Exception(
 				"DROP CONSTRAINT for constraint type '$constraint_type' is not supported."
 			);
 		}
+	}
+
+	/**
+	 * Analyze DROP PRIMARY KEY or DROP UNIQUE statement and record data
+	 * in the information schema.
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
+	 * @param mixed  $name               The constraint name.
+	 */
+	private function record_drop_key(
+		bool $table_is_temporary,
+		string $table_name,
+		string $name
+	): void {
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+			array(
+				'TABLE_SCHEMA'    => $this->db_name,
+				'TABLE_NAME'      => $table_name,
+				'CONSTRAINT_NAME' => $name,
+			)
+		);
+
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'statistics' ),
+			array(
+				'TABLE_SCHEMA' => $this->db_name,
+				'TABLE_NAME'   => $table_name,
+				'INDEX_NAME'   => $name,
+			)
+		);
+
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
+			array(
+				'TABLE_SCHEMA'            => $this->db_name,
+				'TABLE_NAME'              => $table_name,
+				'CONSTRAINT_NAME'         => $name,
+
+				// Remove only PRIMARY/UNIQUE key records; not FOREIGN KEY data.
+				'REFERENCED_TABLE_SCHEMA' => null,
+			)
+		);
+
+		// Sync column info from constraint data.
+		$this->sync_column_key_info( $table_is_temporary, $table_name );
 	}
 
 	/**

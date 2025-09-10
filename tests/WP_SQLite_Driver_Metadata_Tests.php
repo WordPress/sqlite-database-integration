@@ -1716,39 +1716,20 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
-	public function testInformationSchemaAlterTableDropConstraint(): void {
-		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
-		$this->assertQuery(
-			'CREATE TABLE t2 (
-				id INT,
-				CONSTRAINT fk1 FOREIGN KEY (id) REFERENCES t1 (id)
-			)'
-		);
+	public function testInformationSchemaAlterTableDropPrimaryKey(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(255))' );
 
-		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT fk1' );
-
-		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
-		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
-		$this->assertCount( 0, $result );
-
-		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
-		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
-		$this->assertCount( 0, $result );
-
-		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
-		$this->assertCount( 0, $result );
-
-		// SHOW CREATE TABLE
-		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
 		$this->assertEquals(
 			array(
 				(object) array(
 					'Create Table' => implode(
 						"\n",
 						array(
-							'CREATE TABLE `t2` (',
-							'  `id` int DEFAULT NULL',
+							'CREATE TABLE `t` (',
+							'  `id` int NOT NULL,',
+							'  `name` varchar(255) DEFAULT NULL,',
+							'  PRIMARY KEY (`id`)',
 							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 						)
 					),
@@ -1756,6 +1737,121 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			),
 			$result
 		);
+
+		$this->assertQuery( 'ALTER TABLE t DROP PRIMARY KEY' );
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		// INFORMATION_SCHEMA.STATISTICS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t` (',
+							'  `id` int NOT NULL,',
+							'  `name` varchar(255) DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropUniqueKey(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, name TEXT, CONSTRAINT c UNIQUE (name))' );
+		$this->assertQuery( 'ALTER TABLE t DROP INDEX c' );
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+
+		// INFORMATION_SCHEMA.STATISTICS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t` (',
+							'  `id` int DEFAULT NULL,',
+							'  `name` text DEFAULT NULL',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT PRIMARY KEY,
+				name VARCHAR(255),
+				CONSTRAINT fk FOREIGN KEY (id) REFERENCES t1 (id),
+				CONSTRAINT name_unique UNIQUE (name)
+			)'
+		);
+
+		// Check the constraint records.
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 3, $table_constraints );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertCount( 3, $key_column_usage );
+		$this->assertCount( 2, $statistics );
+
+		// Drop the primary key constraint.
+		$this->assertQuery( 'ALTER TABLE t2 DROP PRIMARY KEY' );
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 2, $table_constraints );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertCount( 2, $key_column_usage );
+		$this->assertCount( 1, $statistics );
+
+		// Drop the unique key constraint.
+		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT name_unique' );
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 1, $table_constraints );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertCount( 1, $key_column_usage );
+		$this->assertCount( 0, $statistics );
+
+		// Drop the foreign key constraint.
+		$this->assertQuery( 'ALTER TABLE t2 DROP FOREIGN KEY fk' );
+		$table_constraints       = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$key_column_usage        = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
+		$statistics              = $this->assertQuery( "SELECT * FROM information_schema.statistics WHERE table_name = 't2'" );
+		$this->assertCount( 0, $table_constraints );
+		$this->assertCount( 0, $referential_constraints );
+		$this->assertCount( 0, $key_column_usage );
+		$this->assertCount( 0, $statistics );
 	}
 
 	public function testInformationSchemaAlterTableDropMissingConstraint(): void {
