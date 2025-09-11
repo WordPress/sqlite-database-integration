@@ -159,7 +159,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			'UPDATE `t` SET `c1` = 1 , `c2` = 2',
+			'UPDATE `t` SET `c1` = 1, `c2` = 2',
 			'UPDATE t SET c1 = 1, c2 = 2'
 		);
 
