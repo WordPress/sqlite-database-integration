@@ -4130,7 +4130,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 4. Generate CREATE TABLE statement columns.
+		// 5. Generate CREATE TABLE statement columns.
 		$rows              = array();
 		$on_update_queries = array();
 		$has_autoincrement = false;
@@ -4207,7 +4207,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 5. Generate CREATE TABLE statement constraints, collect indexes.
+		// 6. Generate CREATE TABLE statement constraints, collect indexes.
 		$create_index_queries = array();
 		foreach ( $grouped_constraints as $constraint ) {
 			ksort( $constraint );
@@ -4266,7 +4266,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// Add foreign key constraints.
+		// 7. Add foreign key constraints.
 		foreach ( $referential_constraints_info as $referential_constraint ) {
 			$column_names            = array();
 			$referenced_column_names = array();
@@ -4301,7 +4301,7 @@ class WP_SQLite_Driver {
 			$rows[] = $query;
 		}
 
-		// 6. Compose the CREATE TABLE statement.
+		// 8. Compose the CREATE TABLE statement.
 		$create_table_query  = sprintf(
 			"CREATE %sTABLE %s (\n",
 			$table_is_temporary ? 'TEMPORARY ' : '',
@@ -4383,7 +4383,7 @@ class WP_SQLite_Driver {
 			$grouped_constraints[ $name ][ $seq ] = $constraint;
 		}
 
-		// Get foreign key info.
+		// 4. Get foreign key info.
 		$referential_constraints_table = $this->information_schema_builder
 			->get_table_name( $table_is_temporary, 'referential_constraints' );
 		$referential_constraints_info  = $this->execute_sqlite_query(
@@ -4419,7 +4419,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 4. Generate CREATE TABLE statement columns.
+		// 5. Generate CREATE TABLE statement columns.
 		$rows = array();
 		foreach ( $column_info as $column ) {
 			$sql  = '  ';
@@ -4463,7 +4463,7 @@ class WP_SQLite_Driver {
 			$rows[] = $sql;
 		}
 
-		// 4. Generate CREATE TABLE statement constraints, collect indexes.
+		// 6. Generate CREATE TABLE statement constraints, collect indexes.
 		foreach ( $grouped_constraints as $constraint ) {
 			ksort( $constraint );
 			$info = $constraint[1];
@@ -4520,7 +4520,7 @@ class WP_SQLite_Driver {
 			$rows[] = $sql;
 		}
 
-		// Add foreign key constraints.
+		// 7. Add foreign key constraints.
 		foreach ( $referential_constraints_info as $referential_constraint ) {
 			$column_names            = array();
 			$referenced_column_names = array();
@@ -4544,7 +4544,7 @@ class WP_SQLite_Driver {
 			$rows[] = $sql;
 		}
 
-		// 5. Compose the CREATE TABLE statement.
+		// 8. Compose the CREATE TABLE statement.
 		$collation = $table_info['TABLE_COLLATION'];
 		$charset   = substr( $collation, 0, strpos( $collation, '_' ) );
 
