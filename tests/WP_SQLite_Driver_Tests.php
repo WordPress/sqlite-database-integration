@@ -6693,4 +6693,71 @@ END;
 		$result = $this->assertQuery( 'SELECT * FROM t2' );
 		$this->assertEquals( array( (object) array( 'id' => '0' ) ), $result );
 	}
+
+	public function testUpdateWithJoinedTables(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, name TEXT)' );
+
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1), (2), (3)' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (1, "update")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (2, "do-not-update")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (3, "update")' );
+		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (1, "do-not-update")' );
+		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (2, "update")' );
+		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (3, "update")' );
+
+		$this->assertQuery(
+			'UPDATE t1, t2
+			JOIN t3 ON t3.id = t1.id
+			SET t1.id = 0
+			WHERE t2.id = t1.id
+			AND t2.name = "update"
+			AND t3.name = "update"'
+		);
+
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertEquals(
+			array(
+				(object) array( 'id' => '1' ),
+				(object) array( 'id' => '2' ),
+				(object) array( 'id' => '0' ),
+			),
+			$result
+		);
+	}
+
+	public function testUpdateWithJoinedTablesInNonStrictMode(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t3 (id INT, name TEXT)' );
+
+		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1), (2), (3)' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (1, "update")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (2, "do-not-update")' );
+		$this->assertQuery( 'INSERT INTO t2 (id, name) VALUES (3, "update")' );
+		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (1, "do-not-update")' );
+		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (2, "update")' );
+		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (3, "update")' );
+
+		$this->assertQuery(
+			'UPDATE t1, t2
+			JOIN t3 ON t3.id = t1.id
+			SET t1.id = 0
+			WHERE t2.id = t1.id
+			AND t2.name = "update"
+			AND t3.name = "update"'
+		);
+
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertEquals(
+			array(
+				(object) array( 'id' => '1' ),
+				(object) array( 'id' => '2' ),
+				(object) array( 'id' => '0' ),
+			),
+			$result
+		);
+	}
 }
