@@ -1311,11 +1311,60 @@ class WP_SQLite_Driver {
 					? $this->unquote_sqlite_identifier( $this->translate( $column_ref_parts[0] ) )
 					: null;
 
+				// When the SET column reference is not qualified, we need to
+				// verify whether the column is used in multiple tables.
 				if ( null === $table_or_alias ) {
-					// TODO: Attempt to resolve the table name from the column name.
-					//       When not ambiguous, the table is a valid update target.
-					$updates_multiple_tables = true;
-					break;
+					$persistent_table_names = array();
+					$temporary_table_names  = array();
+					foreach ( array_column( $table_alias_map, 'table_name' ) as $table_name ) {
+						$is_temporary      = $this->information_schema_builder->temporary_table_exists( $table_name );
+						$quoted_table_name = $this->connection->quote( $table_name );
+						if ( $is_temporary ) {
+							$temporary_table_names[] = $quoted_table_name;
+						} else {
+							$persistent_table_names[] = $quoted_table_name;
+						}
+					}
+
+					$column_name = $this->unquote_sqlite_identifier(
+						$this->translate( end( $column_ref_parts ) )
+					);
+
+					$matched_temporary_tables = array();
+					if ( count( $temporary_table_names ) > 0 ) {
+						$matched_temporary_tables = $this->execute_sqlite_query(
+							sprintf(
+								'SELECT table_name FROM %s WHERE table_schema = ? AND table_name IN ( %s ) AND column_name = ?',
+								$this->quote_sqlite_identifier(
+									$this->information_schema_builder->get_table_name( true, 'columns' )
+								),
+								implode( ', ', $temporary_table_names )
+							),
+							array( $this->db_name, $column_name )
+						)->fetchAll( PDO::FETCH_COLUMN );
+					}
+
+					$matched_persistent_tables = array();
+					if ( count( $persistent_table_names ) > 0 ) {
+						$matched_persistent_tables = $this->execute_sqlite_query(
+							sprintf(
+								'SELECT table_name FROM %s WHERE table_schema = ? AND table_name IN ( %s ) AND column_name = ?',
+								$this->quote_sqlite_identifier(
+									$this->information_schema_builder->get_table_name( false, 'columns' )
+								),
+								implode( ', ', $persistent_table_names )
+							),
+							array( $this->db_name, $column_name )
+						)->fetchAll( PDO::FETCH_COLUMN );
+					}
+
+					$matched_tables          = array_merge( $matched_temporary_tables, $matched_persistent_tables );
+					$updates_multiple_tables = count( $matched_tables ) > 1;
+					if ( 1 === count( $matched_tables ) ) {
+						$table_or_alias = $matched_tables[0];
+					} else {
+						break;
+					}
 				}
 
 				if ( null === $update_target ) {

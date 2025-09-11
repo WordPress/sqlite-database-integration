@@ -6695,7 +6695,7 @@ END;
 	}
 
 	public function testUpdateWithJoinedTables(): void {
-		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, comment TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t3 (id INT, name TEXT)' );
 
@@ -6707,21 +6707,61 @@ END;
 		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (2, "update")' );
 		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (3, "update")' );
 
+		// Fully qualified column reference in SET.
 		$this->assertQuery(
-			'UPDATE t1, t2
+			"UPDATE t1, t2
 			JOIN t3 ON t3.id = t1.id
 			SET t1.id = 0
 			WHERE t2.id = t1.id
-			AND t2.name = "update"
-			AND t3.name = "update"'
+			AND t2.name = 'update'
+			AND t3.name = 'update'"
 		);
 
 		$result = $this->assertQuery( 'SELECT * FROM t1' );
 		$this->assertEquals(
 			array(
-				(object) array( 'id' => '1' ),
-				(object) array( 'id' => '2' ),
-				(object) array( 'id' => '0' ),
+				(object) array(
+					'id'      => '1',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '2',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '0',
+					'comment' => null,
+				),
+			),
+			$result
+		);
+
+		// Unqualified column reference in SET.
+		$this->assertQuery( 'UPDATE t1 SET id = 3 WHERE id = 0' );
+		$this->assertQuery(
+			"UPDATE t1, t2
+			JOIN t3 ON t3.id = t1.id
+			SET comment = 'updated'
+			WHERE t2.id = t1.id
+			AND t2.name = 'update'
+			AND t3.name = 'update'"
+		);
+
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'      => '1',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '2',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '3',
+					'comment' => 'updated',
+				),
 			),
 			$result
 		);
@@ -6729,7 +6769,7 @@ END;
 
 	public function testUpdateWithJoinedTablesInNonStrictMode(): void {
 		$this->assertQuery( "SET SESSION sql_mode = ''" );
-		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, comment TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t3 (id INT, name TEXT)' );
 
@@ -6741,21 +6781,61 @@ END;
 		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (2, "update")' );
 		$this->assertQuery( 'INSERT INTO t3 (id, name) VALUES (3, "update")' );
 
+		// Fully qualified column reference in SET.
 		$this->assertQuery(
-			'UPDATE t1, t2
+			"UPDATE t1, t2
 			JOIN t3 ON t3.id = t1.id
 			SET t1.id = 0
 			WHERE t2.id = t1.id
-			AND t2.name = "update"
-			AND t3.name = "update"'
+			AND t2.name = 'update'
+			AND t3.name = 'update'"
 		);
 
 		$result = $this->assertQuery( 'SELECT * FROM t1' );
 		$this->assertEquals(
 			array(
-				(object) array( 'id' => '1' ),
-				(object) array( 'id' => '2' ),
-				(object) array( 'id' => '0' ),
+				(object) array(
+					'id'      => '1',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '2',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '0',
+					'comment' => null,
+				),
+			),
+			$result
+		);
+
+		// Unqualified column reference in SET.
+		$this->assertQuery( 'UPDATE t1 SET id = 3 WHERE id = 0' );
+		$this->assertQuery(
+			"UPDATE t1, t2
+			JOIN t3 ON t3.id = t1.id
+			SET comment = 'updated'
+			WHERE t2.id = t1.id
+			AND t2.name = 'update'
+			AND t3.name = 'update'"
+		);
+
+		$result = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'      => '1',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '2',
+					'comment' => null,
+				),
+				(object) array(
+					'id'      => '3',
+					'comment' => 'updated',
+				),
 			),
 			$result
 		);
