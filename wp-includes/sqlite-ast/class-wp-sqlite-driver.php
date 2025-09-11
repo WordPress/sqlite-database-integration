@@ -1277,41 +1277,61 @@ class WP_SQLite_Driver {
 			&& ! $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
 		);
 
-		// Iterate and translate the update statement children.
-		$parts = array();
-		foreach ( $node->get_children() as $child ) {
-			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
-				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-				$parts[] = 'OR IGNORE';
-			} elseif (
-				$is_non_strict_mode
-				&& $child instanceof WP_Parser_Node
-				&& 'updateList' === $child->rule_name
-			) {
-				$table_ref  = $node->get_first_child_node( 'tableReferenceList' )->get_first_child_node( 'tableReference' );
-				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_update_list_in_non_strict_mode( $table_name, $child );
-			} else {
-				$parts[] = $this->translate( $child );
-			}
+		/*
+		 * Translate the UPDATE statement parts.
+		 *
+		 * [GRAMMAR]
+		 * updateStatement:
+		 *   withClause? UPDATE_SYMBOL LOW_PRIORITY_SYMBOL? IGNORE_SYMBOL? tableReferenceList
+		 *     SET_SYMBOL updateList whereClause? orderClause? simpleLimitClause?
+		 */
 
-			// When using a subquery, skip WHERE, ORDER BY, and LIMIT.
-			if (
-				null !== $where_subquery
-				&& $child instanceof WP_Parser_Node
-				&& 'updateList' === $child->rule_name
-			) {
-				// We can stop here, as the update statement grammar is:
-				//   ... updateList whereClause? orderClause? simpleLimitClause?
-				break;
-			}
+		// Translate WITH clause.
+		$with = $this->translate( $node->get_first_child_node( 'withClause' ) );
+
+		// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
+		$or_ignore = $node->has_child_token( WP_MySQL_Lexer::IGNORE_SYMBOL )
+			? 'OR IGNORE'
+			: null;
+
+		// Translate table reference list.
+		$table_list = $this->translate( $node->get_first_child_node( 'tableReferenceList' ) );
+
+		// Translate UPDATE list.
+		$update_list_node = $node->get_first_child_node( 'updateList' );
+		if ( $is_non_strict_mode ) {
+			$table_ref   = $node->get_first_child_node( 'tableReferenceList' )->get_first_child_node( 'tableReference' );
+			$table_name  = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+			$update_list = $this->translate_update_list_in_non_strict_mode( $table_name, $update_list_node );
+		} else {
+			$update_list = $this->translate( $update_list_node );
 		}
 
-		// Compose the update query.
-		$query = implode( ' ', $parts );
-		if ( null !== $where_subquery ) {
-			$query .= ' WHERE rowid IN ( ' . $where_subquery . ' )';
+		// Translate WHERE, ORDER BY, and LIMIT clauses.
+		if ( $where_subquery ) {
+			// When using a subquery, skip the original WHERE, ORDER BY, and LIMIT.
+			$where_clause = ' WHERE rowid IN ( ' . $where_subquery . ' )';
+			$order_clause = null;
+			$limit_clause = null;
+		} else {
+			$where_clause = $this->translate( $node->get_first_child_node( 'whereClause' ) );
+			$order_clause = $this->translate( $node->get_first_child_node( 'orderClause' ) );
+			$limit_clause = $this->translate( $node->get_first_child_node( 'simpleLimitClause' ) );
 		}
+
+		// Compose the UPDATE query.
+		$parts = array(
+			$with,
+			'UPDATE',
+			$or_ignore,
+			$table_list,
+			'SET',
+			$update_list,
+			$where_clause,
+			$order_clause,
+			$limit_clause,
+		);
+		$query = implode( ' ', array_filter( $parts ) );
 
 		$this->execute_sqlite_query( $query );
 		$this->set_result_from_affected_rows();
