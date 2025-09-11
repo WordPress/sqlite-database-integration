@@ -4281,12 +4281,23 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $referential_constraint['REFERENCED_TABLE_NAME'] ),
 				implode( ', ', $referenced_column_names )
 			);
-			if ( 'NO ACTION' !== $referential_constraint['DELETE_RULE'] ) {
-				$query .= sprintf( ' ON DELETE %s', $referential_constraint['DELETE_RULE'] );
+
+			// ON DELETE
+			$delete_rule = $referential_constraint['DELETE_RULE'];
+			if ( 'NO ACTION' === $delete_rule ) {
+				// In MySQL, NO ACTION is equivalent to RESTRICT with InnoDB.
+				$delete_rule = 'RESTRICT';
 			}
-			if ( 'NO ACTION' !== $referential_constraint['UPDATE_RULE'] ) {
-				$query .= sprintf( ' ON UPDATE %s', $referential_constraint['UPDATE_RULE'] );
+			$query .= sprintf( ' ON DELETE %s', $delete_rule );
+
+			// ON UPDATE
+			$update_rule = $referential_constraint['UPDATE_RULE'];
+			if ( 'NO ACTION' === $update_rule ) {
+				// In MySQL, NO ACTION is equivalent to RESTRICT with InnoDB.
+				$update_rule = 'RESTRICT';
 			}
+			$query .= sprintf( ' ON UPDATE %s', $update_rule );
+
 			$rows[] = $query;
 		}
 
