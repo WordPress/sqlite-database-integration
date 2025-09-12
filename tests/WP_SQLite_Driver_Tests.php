@@ -6868,6 +6868,7 @@ END;
 				WHERE claim_id = 0 AND scheduled_date_gmt <= '2025-09-03 12:23:55' AND status = 'pending'
 				ORDER BY priority ASC, attempts ASC, scheduled_date_gmt ASC, action_id ASC
 				LIMIT 25
+				FOR UPDATE
 			) t2 ON t1.action_id = t2.action_id
 			SET claim_id = 37, last_attempt_gmt = '2025-09-03 12:23:55', last_attempt_local = '2025-09-03 12:23:55'"
 		);

@@ -2841,6 +2841,10 @@ class WP_SQLite_Driver {
 			case 'indexHint':
 			case 'indexHintList':
 				return null;
+			case 'lockingClause':
+				// SQLite doesn't support locking clauses (SELECT ... FOR UPDATE).
+				// They are not needed in SQLite due to the database file locking.
+				return null;
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
