@@ -168,6 +168,17 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'UPDATE t SET c = 1 WHERE c = 2'
 		);
 
+		// UPDATE with a table alias.
+		$this->assertQuery(
+			'UPDATE `t` AS `a` SET `c` = 1 WHERE `a`.`c` = 2',
+			'UPDATE t AS a SET c = 1 WHERE a.c = 2'
+		);
+
+		$this->assertQuery(
+			'UPDATE `t` AS `a` SET `c` = 1 WHERE `a`.`c` = 2',
+			'UPDATE t AS a SET a.c = 1 WHERE a.c = 2'
+		);
+
 		// UPDATE with LIMIT.
 		$this->assertQuery(
 			'UPDATE `t` SET `c` = 1 WHERE rowid IN ( SELECT rowid FROM `t` LIMIT 1 )',
@@ -178,6 +189,24 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			'UPDATE `t` SET `c` = 1 WHERE rowid IN ( SELECT rowid FROM `t` ORDER BY `c` ASC LIMIT 1 )',
 			'UPDATE t SET c = 1 ORDER BY c ASC LIMIT 1'
+		);
+
+		// UPDATE with multiple tables.
+		$this->assertQuery(
+			'UPDATE `t1` SET `id` = 1 FROM `t2` WHERE `t1`.`c` = `t2`.`c`',
+			'UPDATE t1, t2 SET t1.id = 1 WHERE t1.c = t2.c'
+		);
+
+		// UPDATE with JOIN.
+		$this->assertQuery(
+			'UPDATE `t1` SET `id` = 1 FROM `t2` WHERE `t1`.`c` = 2 AND `t1`.`c` = `t2`.`c`',
+			'UPDATE t1 JOIN t2 ON t1.c = t2.c SET t1.id = 1 WHERE t1.c = 2'
+		);
+
+		// UPDATE with JOIN using a derived table.
+		$this->assertQuery(
+			'UPDATE `t1` SET `id` = 1 FROM ( SELECT * FROM `t2` ) AS `t2` WHERE `t1`.`c` = 2 AND `t1`.`c` = `t2`.`c`',
+			'UPDATE t1 JOIN ( SELECT * FROM t2 ) AS t2 ON t1.c = t2.c SET t1.id = 1 WHERE t1.c = 2'
 		);
 	}
 
