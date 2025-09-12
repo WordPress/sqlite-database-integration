@@ -1286,14 +1286,6 @@ class WP_SQLite_Driver {
 		 *     SET_SYMBOL updateList whereClause? orderClause? simpleLimitClause?
 		 */
 
-		// Translate WITH clause.
-		$with = $this->translate( $node->get_first_child_node( 'withClause' ) );
-
-		// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-		$or_ignore = $node->has_child_token( WP_MySQL_Lexer::IGNORE_SYMBOL )
-			? 'OR IGNORE'
-			: null;
-
 		// Collect all tables used in the UPDATE clause (e.g, UPDATE t1, t2 JOIN t3).
 		$table_alias_map = $this->create_table_reference_map(
 			$node->get_first_child_node( 'tableReferenceList' )
@@ -1316,7 +1308,7 @@ class WP_SQLite_Driver {
 				if ( null === $table_or_alias ) {
 					$persistent_table_names = array();
 					$temporary_table_names  = array();
-					foreach ( array_column( $table_alias_map, 'table_name' ) as $table_name ) {
+					foreach ( array_filter( array_column( $table_alias_map, 'table_name' ) ) as $table_name ) {
 						$is_temporary      = $this->information_schema_builder->temporary_table_exists( $table_name );
 						$quoted_table_name = $this->connection->quote( $table_name );
 						if ( $is_temporary ) {
@@ -1387,18 +1379,42 @@ class WP_SQLite_Driver {
 			throw $this->new_not_supported_exception( 'UPDATE statement modifying multiple tables' );
 		}
 
+		// Translate WITH clause.
+		$with = $this->translate( $node->get_first_child_node( 'withClause' ) );
+
+		// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
+		$or_ignore = $node->has_child_token( WP_MySQL_Lexer::IGNORE_SYMBOL )
+			? 'OR IGNORE'
+			: null;
+
+		// Compose the update target clause.
+		$update_target_table  = $table_alias_map[ $update_target ]['table_name'] ?? $update_target;
+		$update_target_clause = $this->quote_sqlite_identifier( $update_target_table );
+		if ( $update_target !== $update_target_table ) {
+			$update_target_clause .= ' AS ' . $this->quote_sqlite_identifier( $update_target );
+		}
+
 		// Compose the FROM clause using all tables except the one being updated.
 		// UPDATE with FROM in SQLite is equivalent to UPDATE with JOIN in MySQL.
 		$from_items = array();
 		foreach ( $table_alias_map as $alias => $data ) {
-			$table_name = $data['table_name'];
 			if ( $alias === $update_target ) {
 				continue;
 			}
 
-			$from_item = $this->quote_sqlite_identifier( $alias );
+			$table_name = $data['table_name'];
+
+			// Derived table.
+			if ( null === $table_name ) {
+				$from_item    = $data['table_expr'] . ' AS ' . $this->quote_sqlite_identifier( $alias );
+				$from_items[] = $from_item;
+				continue;
+			}
+
+			// Regular table.
+			$from_item = $this->quote_sqlite_identifier( $table_name );
 			if ( $alias !== $table_name ) {
-				$from_item .= ' AS ' . $this->quote_sqlite_identifier( $table_name );
+				$from_item .= ' AS ' . $this->quote_sqlite_identifier( $alias );
 			}
 			$from_items[] = $from_item;
 		}
@@ -1449,7 +1465,7 @@ class WP_SQLite_Driver {
 			$with,
 			'UPDATE',
 			$or_ignore,
-			$this->quote_sqlite_identifier( $update_target ),
+			$update_target_clause,
 			'SET',
 			$update_list,
 			$from,
@@ -4107,8 +4123,9 @@ class WP_SQLite_Driver {
 	 * The returned array maps table aliases to table names and additional data:
 	 *   - key:   table alias, or name if no alias is used
 	 *   - value: an array of table data
-	 *       - table_name: the real name of the table
-	 *       - join_expr:  the join expression used for the table
+	 *       - table_name: the real name of the table (null for derived tables)
+	 *       - table_expr: the table expression for a derived table (null for regular tables)
+	 *       - join_expr:  the join expression used for the table (null when no join is used)
 	 *
 	 * MySQL has a non-stand ardsyntax extension where a comma-separated list of
 	 * table references is allowed as a table reference in itself, for instance:
@@ -4145,11 +4162,24 @@ class WP_SQLite_Driver {
 
 			if ( 'singleTable' === $child->rule_name ) {
 				// Extract data from the "singleTable" node.
-				$name  = $this->translate( $child->get_first_child_node( 'tableRef' ) );
-				$alias = $this->translate( $child->get_first_child_node( 'tableAlias' ) );
+				$name       = $this->translate( $child->get_first_child_node( 'tableRef' ) );
+				$alias_node = $child->get_first_child_node( 'tableAlias' );
+				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
 
 				$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
 					'table_name' => $this->unquote_sqlite_identifier( $name ),
+					'table_expr' => null,
+					'join_expr'  => $this->translate( $join_expr ),
+				);
+			} elseif ( 'derivedTable' === $child->rule_name ) {
+				// Extract data from the "derivedTable" node.
+				$subquery   = $child->get_first_descendant_node( 'subquery' );
+				$alias_node = $child->get_first_child_node( 'tableAlias' );
+				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
+
+				$table_map[ $this->unquote_sqlite_identifier( $alias ) ] = array(
+					'table_name' => null,
+					'table_expr' => $this->translate( $subquery ),
 					'join_expr'  => $this->translate( $join_expr ),
 				);
 			} elseif ( 'tableReferenceListParens' === $child->rule_name ) {

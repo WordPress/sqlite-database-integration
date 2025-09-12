@@ -6840,4 +6840,36 @@ END;
 			$result
 		);
 	}
+
+	public function testUpdateWithJoinComplexQuery(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+
+		$default_date = '0000-00-00 00:00:00';
+		$this->assertQuery(
+			"CREATE TABLE wp_actionscheduler_actions (
+				action_id bigint(20) unsigned NOT NULL auto_increment,
+				status varchar(20) NOT NULL,
+				scheduled_date_gmt datetime NULL default '{$default_date}',
+				scheduled_date_local datetime NULL default '{$default_date}',
+				priority tinyint unsigned NOT NULL default '10',
+				attempts int(11) NOT NULL default '0',
+				last_attempt_gmt datetime NULL default '{$default_date}',
+				last_attempt_local datetime NULL default '{$default_date}',
+				claim_id bigint(20) unsigned NOT NULL default '0',
+				PRIMARY KEY  (action_id)
+			)"
+		);
+
+		$this->assertQuery(
+			"UPDATE wp_actionscheduler_actions t1
+			JOIN (
+				SELECT action_id
+				FROM wp_actionscheduler_actions
+				WHERE claim_id = 0 AND scheduled_date_gmt <= '2025-09-03 12:23:55' AND status = 'pending'
+				ORDER BY priority ASC, attempts ASC, scheduled_date_gmt ASC, action_id ASC
+				LIMIT 25
+			) t2 ON t1.action_id = t2.action_id
+			SET claim_id = 37, last_attempt_gmt = '2025-09-03 12:23:55', last_attempt_local = '2025-09-03 12:23:55'"
+		);
+	}
 }
