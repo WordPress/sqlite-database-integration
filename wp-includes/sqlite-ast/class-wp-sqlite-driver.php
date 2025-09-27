@@ -3354,6 +3354,8 @@ class WP_SQLite_Driver {
 		}
 
 		switch ( $child->id ) {
+			case WP_MySQL_Lexer::DATABASE_SYMBOL:
+				return $this->connection->quote( $this->db_name );
 			case WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL:
 			case WP_MySQL_Lexer::NOW_SYMBOL:
 				/*

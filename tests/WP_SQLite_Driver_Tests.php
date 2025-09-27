@@ -3705,6 +3705,19 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _dates WHERE option_value = CURRENT_TIMESTAMP()' );
 	}
 
+	public function testDatabaseFunction(): void {
+		$this->assertQuery( "SELECT DATABASE(), CONCAT('test-', (SELECT DATABASE()))" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'DATABASE()'                           => 'wp',
+					"CONCAT('test-', (SELECT DATABASE()))" => 'test-wp',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
 	public function testGroupByHaving() {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (
