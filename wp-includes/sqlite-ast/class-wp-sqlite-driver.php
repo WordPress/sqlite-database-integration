@@ -1442,6 +1442,27 @@ class WP_SQLite_Driver {
 		// seems to erase type information for expressions in the SELECT clause.
 		$this->last_column_meta = array();
 		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+			/*
+			 * Workaround for PHP PDO SQLite bug (#79664) in PHP < 7.3.
+			 * See also: https://github.com/php/php-src/pull/5654
+			 */
+			if ( PHP_VERSION_ID < 70300 ) {
+				try {
+					$this->last_column_meta[] = $stmt->getColumnMeta( $i );
+				} catch ( Throwable $e ) {
+					$this->last_column_meta[] = array(
+						'native_type' => 'null',
+						'pdo_type'    => PDO::PARAM_NULL,
+						'flags'       => array(),
+						'table'       => '',
+						'name'        => '',
+						'len'         => -1,
+						'precision'   => 0,
+					);
+				}
+				continue;
+			}
+
 			$this->last_column_meta[] = $stmt->getColumnMeta( $i );
 		}
 

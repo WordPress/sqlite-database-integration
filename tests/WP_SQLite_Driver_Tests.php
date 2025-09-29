@@ -8170,4 +8170,29 @@ END;
 			$column_info
 		);
 	}
+
+	public function testColumnInfoWithZeroRowsPhpBug(): void {
+		if ( PHP_VERSION_ID < 70300 ) {
+			$this->markTestSkipped( 'Skipping due to PHP bug (#79664)' );
+		}
+
+		$this->assertQuery( 'CREATE TABLE t ( id INT )' );
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals( 1, $this->engine->get_last_column_count() );
+		$column_info = $this->engine->get_last_column_meta();
+		$this->assertCount( 1, $column_info );
+		$this->assertSame(
+			array(
+				'native_type'      => 'LONG',
+				'pdo_type'         => PDO::PARAM_INT,
+				'flags'            => array(),
+				'table'            => 't',
+				'name'             => 'id',
+				'len'              => 11,
+				'precision'        => 0,
+				'sqlite:decl_type' => 'INTEGER',
+			),
+			$column_info[0]
+		);
+	}
 }
