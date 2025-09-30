@@ -301,57 +301,57 @@ class WP_SQLite_Driver {
 	 * to MySQL "PDOStatement::getColumnMeta()" data types in the "native_type"
 	 * field, as well as the "len" and "precision" fields, where applicable:
 	 *
-	 *     <mysql-column-type> => array( <native_type>, <len>, <precision> )
+	 *     <mysql-column-type> => array( <native_type>, <mysqli_type>, <len>, <precision> )
 	 *
 	 * This is used to compute the column metadata from the information schema.
 	 */
 	const COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP = array(
 		// Numeric data types:
-		'bit'             => array( 'BIT', 1, 0 ),
-		'tinyint'         => array( 'TINY', 4, 0 ),
-		'smallint'        => array( 'SHORT', 6, 0 ),
-		'mediumint'       => array( 'INT24', 9, 0 ),
-		'int'             => array( 'LONG', 11, 0 ),
-		'bigint'          => array( 'LONGLONG', 20, 0 ),
-		'float'           => array( 'FLOAT', 12, 31 ),
-		'double'          => array( 'DOUBLE', 22, 31 ),
-		'decimal'         => array( 'NEWDECIMAL', null, null ),
+		'bit'             => array( 'BIT', 16, 1, 0 ),
+		'tinyint'         => array( 'TINY', 1, 4, 0 ),
+		'smallint'        => array( 'SHORT', 2, 6, 0 ),
+		'mediumint'       => array( 'INT24', 9, 9, 0 ),
+		'int'             => array( 'LONG', 3, 11, 0 ),
+		'bigint'          => array( 'LONGLONG', 8, 20, 0 ),
+		'float'           => array( 'FLOAT', 4, 12, 31 ),
+		'double'          => array( 'DOUBLE', 5, 22, 31 ),
+		'decimal'         => array( 'NEWDECIMAL', 246, null, null ),
 
 		// String data types:
-		'char'            => array( 'STRING', null, 0 ),
-		'varchar'         => array( 'VAR_STRING', null, 0 ),
-		'tinytext'        => array( 'BLOB', null, 0 ),
-		'text'            => array( 'BLOB', null, 0 ),
-		'mediumtext'      => array( 'BLOB', null, 0 ),
-		'longtext'        => array( 'BLOB', null, 0 ),
-		'enum'            => array( 'STRING', null, 0 ),
-		'set'             => array( 'STRING', null, 0 ),
-		'json'            => array( 'BLOB', 4294967295, 0 ),
+		'char'            => array( 'STRING', 254, null, 0 ),
+		'varchar'         => array( 'VAR_STRING', 253, null, 0 ),
+		'tinytext'        => array( 'BLOB', 252, null, 0 ),
+		'text'            => array( 'BLOB', 252, null, 0 ),
+		'mediumtext'      => array( 'BLOB', 252, null, 0 ),
+		'longtext'        => array( 'BLOB', 252, null, 0 ),
+		'enum'            => array( 'STRING', 254, null, 0 ),
+		'set'             => array( 'STRING', 254, null, 0 ),
+		'json'            => array( 'BLOB', 245, 4294967295, 0 ),
 
 		// Date and time data types:
-		'date'            => array( 'DATE', 10, 0 ),
-		'time'            => array( 'TIME', 10, 0 ),
-		'datetime'        => array( 'DATETIME', 19, 0 ),
-		'timestamp'       => array( 'TIMESTAMP', 19, 0 ),
-		'year'            => array( 'YEAR', 4, 0 ),
+		'date'            => array( 'DATE', 10, 10, 0 ),
+		'time'            => array( 'TIME', 11, 10, 0 ),
+		'datetime'        => array( 'DATETIME', 12, 19, 0 ),
+		'timestamp'       => array( 'TIMESTAMP', 7, 19, 0 ),
+		'year'            => array( 'YEAR', 13, 4, 0 ),
 
 		// Binary data types:
-		'binary'          => array( 'BLOB', null, 0 ),
-		'varbinary'       => array( 'BLOB', null, 0 ),
-		'tinyblob'        => array( 'BLOB', null, 0 ),
-		'blob'            => array( 'BLOB', null, 0 ),
-		'mediumblob'      => array( 'BLOB', null, 0 ),
-		'longblob'        => array( 'BLOB', null, 0 ),
+		'binary'          => array( 'BLOB', 254, null, 0 ),
+		'varbinary'       => array( 'BLOB', 253, null, 0 ),
+		'tinyblob'        => array( 'BLOB', 252, null, 0 ),
+		'blob'            => array( 'BLOB', 252, null, 0 ),
+		'mediumblob'      => array( 'BLOB', 252, null, 0 ),
+		'longblob'        => array( 'BLOB', 252, null, 0 ),
 
 		// Spatial data types:
-		'geometry'        => array( 'GEOMETRY', 4294967295, 0 ),
-		'point'           => array( 'GEOMETRY', 4294967295, 0 ),
-		'linestring'      => array( 'GEOMETRY', 4294967295, 0 ),
-		'polygon'         => array( 'GEOMETRY', 4294967295, 0 ),
-		'multipoint'      => array( 'GEOMETRY', 4294967295, 0 ),
-		'multilinestring' => array( 'GEOMETRY', 4294967295, 0 ),
-		'multipolygon'    => array( 'GEOMETRY', 4294967295, 0 ),
-		'geomcollection'  => array( 'GEOMETRY', 4294967295, 0 ),
+		'geometry'        => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'point'           => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'linestring'      => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'polygon'         => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'multipoint'      => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'multilinestring' => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'multipolygon'    => array( 'GEOMETRY', 255, 4294967295, 0 ),
+		'geomcollection'  => array( 'GEOMETRY', 255, 4294967295, 0 ),
 	);
 
 	/**
@@ -363,21 +363,21 @@ class WP_SQLite_Driver {
 	 * "native_type" field, as per "PDOStatement::getColumnMeta()", as well as
 	 * the "len" and "precision" fields, where applicable:
 	 *
-	 *     <sqlite-column-definition-type> => array( <native_type>, <len>, <precision> )
-	 *     <sqlite-column-meta-type>       => array( <native_type>, <len>, <precision> )
+	 *     <sqlite-column-definition-type> => array( <native_type>, <mysqli_type>, <len>, <precision> )
+	 *     <sqlite-column-meta-type>       => array( <native_type>, <mysqli_type>, <len>, <precision> )
 	 *
 	 * This is used to compute the MySQL column metadata for non-column fields
 	 * that have no records in the information schema (i.e., expressions).
 	 */
 	const COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP = array(
-		'NULL'    => array( 'NULL', 0, 0 ),
-		'INT'     => array( 'LONGLONG', 21, 0 ),
-		'INTEGER' => array( 'LONGLONG', 21, 0 ),
-		'STRING'  => array( 'VAR_STRING', 65535, 31 ),
-		'TEXT'    => array( 'BLOB', null, 0 ),
-		'REAL'    => array( 'DOUBLE', 22, 31 ),
-		'DOUBLE'  => array( 'DOUBLE', 23, 31 ),
-		'BLOB'    => array( 'BLOB', null, 0 ),
+		'NULL'    => array( 'NULL', 6, 0, 0 ),
+		'INT'     => array( 'LONGLONG', 8, 21, 0 ),
+		'INTEGER' => array( 'LONGLONG', 8, 21, 0 ),
+		'STRING'  => array( 'VAR_STRING', 253, 65535, 31 ),
+		'TEXT'    => array( 'BLOB', 252, null, 0 ),
+		'REAL'    => array( 'DOUBLE', 5, 22, 31 ),
+		'DOUBLE'  => array( 'DOUBLE', 5, 23, 31 ),
+		'BLOB'    => array( 'BLOB', 252, null, 0 ),
 	);
 
 	/**
@@ -905,8 +905,9 @@ class WP_SQLite_Driver {
 					$type_info = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ] ?? null;
 				}
 				$native_type = $type_info[0];
-				$len         = $type_info[1];
-				$precision   = $type_info[2];
+				$mysqli_type = $type_info[1];
+				$len         = $type_info[2];
+				$precision   = $type_info[3];
 
 				if ( 'tinyint(1)' === $column_info['COLUMN_TYPE'] ) {
 					$len = 1;
@@ -959,8 +960,9 @@ class WP_SQLite_Driver {
 			} else {
 				$type_info   = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ];
 				$native_type = $type_info[0];
-				$len         = $type_info[1] ?? 0;
-				$precision   = $type_info[2];
+				$mysqli_type = $type_info[1];
+				$len         = $type_info[2] ?? 0;
+				$precision   = $type_info[3];
 
 				// Flags.
 				$flags = array();
@@ -980,6 +982,16 @@ class WP_SQLite_Driver {
 				$pdo_type = PDO::PARAM_STR;
 			}
 
+			// MySQLi charset number.
+			$is_string   = 'STRING' === $type || 'TEXT' === $type;
+			$is_binary   = 'BLOB' === $type || 'GEOMETRY' === $native_type;
+			$is_datetime = str_contains( $native_type, 'DATE' ) || str_contains( $native_type, 'TIME' ) || 'YEAR' === $native_type;
+			if ( $is_string && ! $is_binary && ! $is_datetime ) {
+				$mysqli_charsetnr = 255; // utf8mb4_0900_ai_ci
+			} else {
+				$mysqli_charsetnr = 63;  // binary
+			}
+
 			$column_meta[] = array(
 				'native_type'      => $native_type,
 				'pdo_type'         => $pdo_type,
@@ -989,6 +1001,17 @@ class WP_SQLite_Driver {
 				'len'              => $len,
 				'precision'        => $precision,
 				'sqlite:decl_type' => $meta['sqlite:decl_type'] ?? '',
+
+				/*
+				 * The MySQLi PHP extension exposes more MySQL column metadata than PDO.
+				 * We'll add the data here for use cases such as "wpdb::get_col_info()".
+				 */
+				'mysqli:orgname'   => $meta['name'],        // TODO: Use correct original name when alias is used.
+				'mysqli:orgtable'  => $meta['table'] ?? '', // TODO: Use correct original name when table alias is used.
+				'mysqli:db'        => $this->db_name,       // TODO: Use correct DB for queries to information schema.
+				'mysqli:charsetnr' => $mysqli_charsetnr,
+				'mysqli:flags'     => 0,                    // TODO: We can compute correct MySQL flags.
+				'mysqli:type'      => $mysqli_type,
 			);
 		}
 		return $column_meta;

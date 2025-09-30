@@ -13,7 +13,6 @@ const path = require( 'path' );
 const expectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
 	'Tests_DB_Charset::test_set_charset_changes_the_connection_collation',
-	'Tests_DB::test_get_col_info',
 ];
 
 const expectedFailures = [

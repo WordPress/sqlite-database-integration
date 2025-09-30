@@ -6926,6 +6926,14 @@ END;
 				'len'              => 11,
 				'precision'        => 0,
 				'sqlite:decl_type' => 'INT',
+
+				// Additional MySQLi metadata.
+				'mysqli:orgname'   => 'id',
+				'mysqli:orgtable'  => 't',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:flags'     => 0, // 53251 in MySQL.
+				'mysqli:type'      => 3,
 			),
 			$column_info[0]
 		);
@@ -6940,6 +6948,14 @@ END;
 				'len'              => 262140,
 				'precision'        => 0,
 				'sqlite:decl_type' => 'TEXT',
+
+				// Additional MySQLi metadata.
+				'mysqli:orgname'   => 'name',
+				'mysqli:orgtable'  => 't',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:flags'     => 0, // 16404 in MySQL.
+				'mysqli:type'      => 252,
 			),
 			$column_info[1]
 		);
@@ -6954,6 +6970,14 @@ END;
 				'len'              => 22,
 				'precision'        => 31,
 				'sqlite:decl_type' => 'REAL',
+
+				// Additional MySQLi metadata.
+				'mysqli:orgname'   => 'score',
+				'mysqli:orgtable'  => 't',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:flags'     => 0, // 32768 in MySQL.
+				'mysqli:type'      => 5,
 			),
 			$column_info[2]
 		);
@@ -6968,6 +6992,14 @@ END;
 				'len'              => 65535,
 				'precision'        => 0,
 				'sqlite:decl_type' => 'BLOB',
+
+				// Additional MySQLi metadata.
+				'mysqli:orgname'   => 'data',
+				'mysqli:orgtable'  => 't',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:flags'     => 0, // 144 in MySQL.
+				'mysqli:type'      => 252,
 			),
 			$column_info[3]
 		);
@@ -7001,6 +7033,14 @@ END;
 					'len'              => 11,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'id',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 53251 in MySQL.
+					'mysqli:type'      => 3,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7011,6 +7051,14 @@ END;
 					'len'              => 1020,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'slug',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 16388 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					// TODO: MySQL seems to automatically create indexes for foreign key columns.
@@ -7023,6 +7071,14 @@ END;
 					'len'              => 11,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'parent_id',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 49160 in MySQL.
+					'mysqli:type'      => 3,
 				),
 			),
 			$column_info
@@ -7060,6 +7116,14 @@ END;
 					'len'              => 1,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_bit',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32 in MySQL.
+					'mysqli:type'      => 16,
 				),
 				array(
 					'native_type'      => 'TINY',
@@ -7070,6 +7134,14 @@ END;
 					'len'              => 1,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_bool',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 1,
 				),
 				array(
 					'native_type'      => 'TINY',
@@ -7080,6 +7152,14 @@ END;
 					'len'              => 4,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_tinyint',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 1,
 				),
 				array(
 					'native_type'      => 'SHORT',
@@ -7090,6 +7170,14 @@ END;
 					'len'              => 6,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_smallint',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 2,
 				),
 				array(
 					'native_type'      => 'INT24',
@@ -7100,6 +7188,14 @@ END;
 					'len'              => 9,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_mediumint',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 9,
 				),
 				array(
 					'native_type'      => 'LONG',
@@ -7110,6 +7206,14 @@ END;
 					'len'              => 11,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_int',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 3,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7120,6 +7224,14 @@ END;
 					'len'              => 20,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_bigint',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 8,
 				),
 			),
 			$column_info
@@ -7155,6 +7267,14 @@ END;
 					'len'              => 3,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_tinyint_unsigned',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32800 in MySQL.
+					'mysqli:type'      => 1,
 				),
 				array(
 					'native_type'      => 'SHORT',
@@ -7165,6 +7285,14 @@ END;
 					'len'              => 5,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_smallint_unsigned',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32800 in MySQL.
+					'mysqli:type'      => 2,
 				),
 				array(
 					'native_type'      => 'INT24',
@@ -7175,6 +7303,14 @@ END;
 					'len'              => 8,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_mediumint_unsigned',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32800 in MySQL.
+					'mysqli:type'      => 9,
 				),
 				array(
 					'native_type'      => 'LONG',
@@ -7185,6 +7321,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_int_unsigned',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32800 in MySQL.
+					'mysqli:type'      => 3,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7195,6 +7339,14 @@ END;
 					'len'              => 20,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_bigint_unsigned',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32800 in MySQL.
+					'mysqli:type'      => 8,
 				),
 			),
 			$column_info
@@ -7232,6 +7384,14 @@ END;
 					'len'              => 12,
 					'precision'        => 31,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_float',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 4,
 				),
 				array(
 					'native_type'      => 'DOUBLE',
@@ -7242,6 +7402,14 @@ END;
 					'len'              => 22,
 					'precision'        => 31,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_double',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 5,
 				),
 				array(
 					'native_type'      => 'DOUBLE',
@@ -7249,9 +7417,17 @@ END;
 					'flags'            => array(),
 					'table'            => 't',
 					'name'             => 'col_real',
-					'len'              => 22,
+					'len'              => 22, // PDO reports 22 while MySQLi 12.
 					'precision'        => 31,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_real',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 5, // 4 in MySQL.
 				),
 				array(
 					'native_type'      => 'NEWDECIMAL',
@@ -7262,6 +7438,14 @@ END;
 					'len'              => 12,
 					'precision'        => 2,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_decimal',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 246,
 				),
 				array(
 					'native_type'      => 'NEWDECIMAL',
@@ -7272,6 +7456,14 @@ END;
 					'len'              => 12,
 					'precision'        => 2,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_dec',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 246,
 				),
 				array(
 					'native_type'      => 'NEWDECIMAL',
@@ -7282,6 +7474,14 @@ END;
 					'len'              => 12,
 					'precision'        => 2,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_fixed',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 246,
 				),
 				array(
 					'native_type'      => 'NEWDECIMAL',
@@ -7292,6 +7492,14 @@ END;
 					'len'              => 12,
 					'precision'        => 2,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_numeric',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 246,
 				),
 			),
 			$column_info
@@ -7333,6 +7541,14 @@ END;
 					'len'              => 40,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_char',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7343,6 +7559,14 @@ END;
 					'len'              => 40,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_varchar',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'STRING',
@@ -7353,6 +7577,14 @@ END;
 					'len'              => 40,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_nchar',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7363,6 +7595,14 @@ END;
 					'len'              => 40,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_nvarchar',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7373,6 +7613,14 @@ END;
 					'len'              => 1020,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_tinytext',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 16 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7383,6 +7631,14 @@ END;
 					'len'              => 262140,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_text',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 16 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7393,6 +7649,14 @@ END;
 					'len'              => 67108860,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_mediumtext',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 16 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7403,6 +7667,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_longtext',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 16 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'STRING',
@@ -7413,6 +7685,14 @@ END;
 					'len'              => 4,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_enum',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 256 in MySQL.
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'STRING',
@@ -7423,6 +7703,14 @@ END;
 					'len'              => 20,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_set',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 2048 in MySQL.
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7433,6 +7721,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_json',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255, // 63 in MySQL.
+					'mysqli:flags'     => 0,   // 144 in MySQL.
+					'mysqli:type'      => 245,
 				),
 			),
 			$column_info
@@ -7468,6 +7764,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_date',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 10,
 				),
 				array(
 					'native_type'      => 'TIME',
@@ -7478,6 +7782,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_time',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 11,
 				),
 				array(
 					'native_type'      => 'DATETIME',
@@ -7488,6 +7800,14 @@ END;
 					'len'              => 19,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_datetime',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 12,
 				),
 				array(
 					'native_type'      => 'TIMESTAMP',
@@ -7498,6 +7818,14 @@ END;
 					'len'              => 19,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_timestamp',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 7,
 				),
 				array(
 					'native_type'      => 'YEAR',
@@ -7508,6 +7836,14 @@ END;
 					'len'              => 4,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_year',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32864 in MySQL.
+					'mysqli:type'      => 13,
 				),
 			),
 			$column_info
@@ -7544,6 +7880,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_binary',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'BLOB',          // VAR_STRING in MySQL.
@@ -7554,6 +7898,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_varbinary',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7564,6 +7916,14 @@ END;
 					'len'              => 255,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_tinyblob',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7574,6 +7934,14 @@ END;
 					'len'              => 65535,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_blob',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7584,6 +7952,14 @@ END;
 					'len'              => 16777215,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_mediumblob',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -7594,6 +7970,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_longblob',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 252,
 				),
 			),
 			$column_info
@@ -7645,6 +8029,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_geometry',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7655,6 +8047,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_point',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7665,6 +8065,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_linestring',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7675,6 +8083,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_polygon',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7685,6 +8101,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_multipoint',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7695,6 +8119,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_multilinestring',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7705,6 +8137,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_multipolygon',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7715,6 +8155,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_geomcollection',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -7725,6 +8173,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_geometrycollection',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 			),
 			$column_info
@@ -7773,6 +8229,14 @@ END;
 					'len'              => 0,
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_1',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32896 in MySQL.
+					'mysqli:type'      => 6,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7783,6 +8247,14 @@ END;
 					'len'              => 21, // 1 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_2',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7793,6 +8265,14 @@ END;
 					'len'              => 21, // 1 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_3',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7803,6 +8283,14 @@ END;
 					'len'              => 21, // 2 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_4',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7813,6 +8301,14 @@ END;
 					'len'              => 21, // 3 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_5',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7823,6 +8319,14 @@ END;
 					'len'              => 65535, // 12 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_6',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 1 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7833,6 +8337,14 @@ END;
 					'len'              => 21,
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_7',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32769 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					'native_type'      => 'LONGLONG',     // NEWDECIMAL in MySQL.
@@ -7843,6 +8355,14 @@ END;
 					'len'              => 21,             // 33 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_8',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 8, // 246 in MySQL.
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7853,6 +8373,14 @@ END;
 					'len'              => 65535, // 8 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_9',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'LONGLONG',          // "YEAR" in MySQL.
@@ -7863,6 +8391,14 @@ END;
 					'len'              => 21,                  // 4 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_10',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32928 in MySQL.
+					'mysqli:type'      => 8, // 13 in MySQL.
 				),
 				array(
 					// "CAST('2024-01-01' AS DATE)" seems to behave differently in SQLite.
@@ -7874,6 +8410,14 @@ END;
 					'len'              => 21,                  // 10 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_11',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 8, // 10 in MySQL.
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7884,6 +8428,14 @@ END;
 					'len'              => 65535, // 5 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_12',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255, // 63 in MySQL.
+					'mysqli:flags'     => 0,   // 128 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7894,6 +8446,14 @@ END;
 					'len'              => 65535, // 12 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_13',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7904,6 +8464,14 @@ END;
 					'len'              => 21,
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_14',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7914,6 +8482,14 @@ END;
 					'len'              => 65535, // 32 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_15',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 1 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7924,6 +8500,14 @@ END;
 					'len'              => 65535, // 12 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_16',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 1 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -7934,6 +8518,14 @@ END;
 					'len'              => 65535, // 24 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_17',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 1 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7944,6 +8536,14 @@ END;
 					'len'              => 21, // 2 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_18',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 				array(
 					// TODO: Fix custom "RAND()" function to behave like in MySQL.
@@ -7955,6 +8555,14 @@ END;
 					'len'              => 21,                  // 23 in MySQL.
 					'precision'        => 0,                   // 31 in MySQL.
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_19',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32769 in MySQL.
+					'mysqli:type'      => 8, // 5 in MySQL.
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -7965,6 +8573,14 @@ END;
 					'len'              => 21, // 2 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_20',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32897 in MySQL.
+					'mysqli:type'      => 8,
 				),
 			),
 			$column_info
@@ -8014,6 +8630,14 @@ END;
 					'len'              => 11,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'INTEGER',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_int',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 3,
 				),
 				array(
 					'native_type'      => 'FLOAT',
@@ -8024,6 +8648,14 @@ END;
 					'len'              => 12,
 					'precision'        => 31,
 					'sqlite:decl_type' => 'REAL',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_float',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 32768 in MySQL.
+					'mysqli:type'      => 4,
 				),
 				array(
 					'native_type'      => 'STRING',
@@ -8034,6 +8666,14 @@ END;
 					'len'              => 40,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_char',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -8044,6 +8684,14 @@ END;
 					'len'              => 40,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_varchar',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -8054,6 +8702,14 @@ END;
 					'len'              => 262140,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_text',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255,
+					'mysqli:flags'     => 0, // 16 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'BLOB', // Missing in MySQL.
@@ -8064,6 +8720,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_json',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255, // 63 in MySQL.
+					'mysqli:flags'     => 0,   // 144 in MySQL.
+					'mysqli:type'      => 245,
 				),
 				array(
 					'native_type'      => 'BLOB', // STRING in MySQL.
@@ -8074,6 +8738,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_binary',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 254,
 				),
 				array(
 					'native_type'      => 'BLOB', // VAR_STRING in MySQL.
@@ -8084,6 +8756,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_varbinary',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'BLOB',
@@ -8094,6 +8774,14 @@ END;
 					'len'              => 65535,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'BLOB',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_blob',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 252,
 				),
 				array(
 					'native_type'      => 'DATE',
@@ -8104,6 +8792,14 @@ END;
 					'len'              => 10,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_date',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 10,
 				),
 				array(
 					'native_type'      => 'TIMESTAMP',
@@ -8114,6 +8810,14 @@ END;
 					'len'              => 19,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_timestamp',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 7,
 				),
 				array(
 					'native_type'      => 'GEOMETRY',
@@ -8124,6 +8828,14 @@ END;
 					'len'              => 4294967295,
 					'precision'        => 0,
 					'sqlite:decl_type' => 'TEXT',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_geometry',
+					'mysqli:orgtable'  => 't',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 144 in MySQL.
+					'mysqli:type'      => 255,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
@@ -8134,6 +8846,14 @@ END;
 					'len'              => 21,
 					'precision'        => 0, // 32897 in MySQL.
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_1',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 8,
 				),
 				array(
 					// For "SUM(*)" without rows, SQLite fails to provide a type.
@@ -8145,6 +8865,14 @@ END;
 					'len'              => 0,      // 33 in MySQL.
 					'precision'        => 0,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_2',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63,
+					'mysqli:flags'     => 0, // 128 in MySQL.
+					'mysqli:type'      => 6, // 246 in MySQL.
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -8155,6 +8883,14 @@ END;
 					'len'              => 65535, // 12 in MySQL.
 					'precision'        => 31,
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_3',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 255, // 63 in MySQL.
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
 				),
 				array(
 					'native_type'      => 'LONGLONG',     // VAR_STRING in MySQL.
@@ -8165,6 +8901,14 @@ END;
 					'len'              => 21, // 24 in MySQL.
 					'precision'        => 0,  // 31 in MySQL.
 					'sqlite:decl_type' => '',
+
+					// Additional MySQLi metadata.
+					'mysqli:orgname'   => 'col_expr_4',
+					'mysqli:orgtable'  => '',
+					'mysqli:db'        => 'wp',
+					'mysqli:charsetnr' => 63, // 255 in MySQL.
+					'mysqli:flags'     => 0,  // 1 in MySQL.
+					'mysqli:type'      => 8,  // 253 in MySQL.
 				),
 			),
 			$column_info
@@ -8191,6 +8935,14 @@ END;
 				'len'              => 11,
 				'precision'        => 0,
 				'sqlite:decl_type' => 'INTEGER',
+
+				// Additional MySQLi metadata.
+				'mysqli:orgname'   => 'id',
+				'mysqli:orgtable'  => 't',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:flags'     => 0,
+				'mysqli:type'      => 3,
 			),
 			$column_info[0]
 		);

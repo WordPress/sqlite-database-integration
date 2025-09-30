@@ -567,7 +567,28 @@ class WP_SQLite_DB extends wpdb {
 		if ( $this->col_info ) {
 			return;
 		}
-		$this->col_info = $this->dbh->get_columns();
+		if ( $this->dbh instanceof WP_SQLite_Driver ) {
+			$this->col_info = array();
+			foreach ( $this->dbh->get_last_column_meta() as $column ) {
+				$this->col_info[] = (object) array(
+					'name'       => $column['name'],
+					'orgname'    => $column['mysqli:orgname'],
+					'table'      => $column['table'],
+					'orgtable'   => $column['mysqli:orgtable'],
+					'def'        => '',    // Unused, always ''.
+					'db'         => $column['mysqli:db'],
+					'catalog'    => 'def', // Unused, always 'def'.
+					'max_length' => 0,     // As of PHP 8.1, this is always 0.
+					'length'     => $column['len'],
+					'charsetnr'  => $column['mysqli:charsetnr'],
+					'flags'      => $column['mysqli:flags'],
+					'type'       => $column['mysqli:type'],
+					'decimals'   => $column['precision'],
+				);
+			}
+		} else {
+			$this->col_info = $this->dbh->get_columns();
+		}
 	}
 
 	/**
