@@ -483,13 +483,35 @@ class WP_SQLite_Driver {
 		// Check the SQLite version.
 		$sqlite_version = $this->get_sqlite_version();
 		if ( version_compare( $sqlite_version, self::MINIMUM_SQLITE_VERSION, '<' ) ) {
-			throw $this->new_driver_exception(
-				sprintf(
-					'The SQLite version %s is not supported. Minimum required version is %s.',
-					$sqlite_version,
-					self::MINIMUM_SQLITE_VERSION
-				)
-			);
+			if ( defined( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS' ) && WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS ) {
+				/*
+				 * SQLite versions prior to 3.37.0 do not support STRICT tables.
+				 *
+				 * However, a database created with SQLite >= 3.37.0 can be used
+				 * with SQLite versions < 3.37.0 when "PRAGMA writable_schema" is
+				 * set to "ON", which also enables error-tolerant schema parsing.
+				 *
+				 * This is an unsafe opt-in feature for special back compatibility
+				 * use cases, as it can corrupt the database by allowing incorrect
+				 * types into STRICT tables. Additionally, depending on the legacy
+				 * SQLite version used, there is no guarantee that all features of
+				 * the SQLite driver will work as expected. Use this with caution.
+				 *
+				 * See: https://www.sqlite.org/stricttables.html#accessing_strict_tables_in_earlier_versions_of_sqlite
+				 *
+				 * TODO: Remove this flag when we drop support for PHP 8.0.
+				 *       From PHP 8.1, SQLite 3.46.1 is used by default.
+				 */
+				$this->execute_sqlite_query( 'PRAGMA writable_schema=ON' );
+			} else {
+				throw $this->new_driver_exception(
+					sprintf(
+						'The SQLite version %s is not supported. Minimum required version is %s.',
+						$sqlite_version,
+						self::MINIMUM_SQLITE_VERSION
+					)
+				);
+			}
 		}
 
 		// Load SQLite version to a property used by WordPress health info.
