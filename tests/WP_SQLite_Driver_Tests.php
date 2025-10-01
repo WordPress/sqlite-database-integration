@@ -6883,6 +6883,22 @@ END;
 
 		$result = $this->assertQuery( "SELECT B'0100000101111010'" );
 		$this->assertEquals( array( (object) array( "B'0100000101111010'" => 'Az' ) ), $result );
+
+		// Verify correct padding (0b1 === 0b01 === 0b001 ... === 0x00000001).
+		$result = $this->assertQuery( 'SELECT 0b1' );
+		$this->assertEquals( array( (object) array( '0b1' => pack( 'H*', '01' ) ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT 0b01' );
+		$this->assertEquals( array( (object) array( '0b01' => pack( 'H*', '01' ) ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT 0b001' );
+		$this->assertEquals( array( (object) array( '0b001' => pack( 'H*', '01' ) ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT 0b00000001' );
+		$this->assertEquals( array( (object) array( '0b00000001' => pack( 'H*', '01' ) ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT 0b000000001' );
+		$this->assertEquals( array( (object) array( '0b000000001' => pack( 'H*', '0001' ) ) ), $result );
 	}
 
 	public function testHexadecimalLiterals(): void {

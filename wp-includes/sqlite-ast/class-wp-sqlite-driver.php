@@ -2873,7 +2873,18 @@ class WP_SQLite_Driver {
 					// b'...' or B'...'
 					$value = substr( $value, 2, -1 );
 				}
-				return sprintf( "x'%s'", base_convert( $value, 2, 16 ) );
+
+				// Convert the binary string to HEX.
+				$hex = base_convert( $value, 2, 16 );
+
+				/*
+				 * The "base_convert()" function doesn't add or preserve padding.
+				 * Let's compute how many bytes we expect and pad the HEX value
+				 * to full bytes (SQLite requires HEX strings of even length).
+				 */
+				$byte_count = (int) ceil( strlen( $value ) / 8 );
+				$hex        = str_pad( $hex, $byte_count * 2, '0', STR_PAD_LEFT );
+				return sprintf( "x'%s'", $hex );
 			case WP_MySQL_Lexer::HEX_NUMBER:
 				/*
 				 * In MySQL, "0x" prefixed values represent binary literal values,
