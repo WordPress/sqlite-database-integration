@@ -484,6 +484,19 @@ class WP_SQLite_Driver {
 		$sqlite_version = $this->get_sqlite_version();
 		if ( version_compare( $sqlite_version, self::MINIMUM_SQLITE_VERSION, '<' ) ) {
 			if ( defined( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS' ) && WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS ) {
+				// When "WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS" is enabled,
+				// allow using legacy SQLite versions, but not older than 3.27.0.
+				if ( version_compare( $sqlite_version, '3.27.0', '<' ) ) {
+					throw $this->new_driver_exception(
+						sprintf(
+							'The SQLite version %s is not supported. Minimum required version is %s.'
+								. ' With "WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS" enabled, you must use 3.27.0 or newer.',
+							$sqlite_version,
+							self::MINIMUM_SQLITE_VERSION
+						)
+					);
+				}
+
 				/*
 				 * SQLite versions prior to 3.37.0 do not support STRICT tables.
 				 *
