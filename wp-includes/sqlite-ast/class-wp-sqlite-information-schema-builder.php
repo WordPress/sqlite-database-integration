@@ -22,10 +22,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 *  - COLUMNS
 	 *  - STATISTICS (indexes)
 	 *  - TABLE_CONSTRAINTS
+	 *  - CHECK_CONSTRAINTS
 	 *
 	 * TODO (not yet implemented):
 	 *  - VIEWS
-	 *  - CHECK_CONSTRAINTS
 	 *  - TRIGGERS
 	 */
 	const INFORMATION_SCHEMA_TABLE_DEFINITIONS = array(
@@ -167,6 +167,15 @@ class WP_SQLite_Information_Schema_Builder {
 			REFERENCED_TABLE_NAME TEXT COLLATE NOCASE,                     -- referenced table name
 			REFERENCED_COLUMN_NAME TEXT COLLATE NOCASE,                    -- referenced column name
 			UNIQUE (CONSTRAINT_SCHEMA, CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA)
+		",
+
+		// INFORMATION_SCHEMA.CHECK_CONSTRAINTS
+		'check_constraints'       => "
+			CONSTRAINT_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE, -- always 'def'
+			CONSTRAINT_SCHEMA TEXT NOT NULL COLLATE NOCASE,                -- constraint database name
+			CONSTRAINT_NAME TEXT NOT NULL COLLATE NOCASE,                  -- constraint name
+			CHECK_CLAUSE TEXT NOT NULL COLLATE BINARY,                     -- check clause
+			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME)
 		",
 	);
 
@@ -531,6 +540,10 @@ class WP_SQLite_Information_Schema_Builder {
 				$table_name,
 				$index_data['index_name'] ?? null
 			);
+			$check_constraint_data       = $this->extract_check_constraint_data(
+				$column_node,
+				$table_name
+			);
 
 			// Save inline column constraints and indexes.
 			if ( null !== $index_data ) {
@@ -555,6 +568,12 @@ class WP_SQLite_Information_Schema_Builder {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
 					$key_column_usage_item
+				);
+			}
+			if ( null !== $check_constraint_data ) {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'check_constraints' ),
+					$check_constraint_data
 				);
 			}
 
@@ -1167,14 +1186,13 @@ class WP_SQLite_Information_Schema_Builder {
 	): void {
 		// Get first constraint keyword.
 		$children = $node->get_children();
-		$keyword  = $children[0] instanceof WP_MySQL_Token ? $children[0] : $children[1];
+		if ( $children[0] instanceof WP_Parser_Node && 'constraintName' === $children[0]->rule_name ) {
+			$keyword = $children[1];
+		} else {
+			$keyword = $children[0];
+		}
 		if ( ! $keyword instanceof WP_MySQL_Token ) {
 			$keyword = $keyword->get_first_child_token();
-		}
-
-		// CHECK constraints are not supported yet.
-		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $keyword->id ) {
-			throw new \Exception( 'CHECK constraints are not supported yet.' );
 		}
 
 		// PRIMARY KEY and UNIQUE require an index.
@@ -1208,6 +1226,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$constraint_data             = $this->extract_table_constraint_data( $node, $table_name, $index_name );
 		$referential_constraint_data = $this->extract_referential_constraint_data( $node, $table_name );
 		$key_column_usage_data       = $this->extract_key_column_usage_data( $node, $table_name, $index_name );
+		$check_constraint_data       = $this->extract_check_constraint_data( $node, $table_name );
 
 		// Save constraint data.
 		if ( null !== $constraint_data ) {
@@ -1228,6 +1247,13 @@ class WP_SQLite_Information_Schema_Builder {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
 				$key_column_usage_item
+			);
+		}
+
+		if ( null !== $check_constraint_data ) {
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'check_constraints' ),
+				$check_constraint_data
 			);
 		}
 	}
@@ -1605,12 +1631,22 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// Index name always takes precedence over constraint name.
 		$name = $index_name ?? $this->get_table_constraint_name( $node, $table_name );
+
+		// Constraint enforcement.
+		$constraint_enforcement = $node->get_first_descendant_node( 'constraintEnforcement' );
+		if ( $constraint_enforcement && $constraint_enforcement->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) {
+			$enforced = 'NO';
+		} else {
+			$enforced = 'YES';
+		}
+
 		return array(
 			'table_schema'      => $this->db_name,
 			'table_name'        => $table_name,
 			'constraint_schema' => $this->db_name,
 			'constraint_name'   => $name,
 			'constraint_type'   => $type,
+			'enforced'          => $enforced,
 		);
 	}
 
@@ -1766,6 +1802,32 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 		}
 		return $rows;
+	}
+
+	/**
+	 * Extract check constraint data from the "tableConstraintDef" AST node.
+	 *
+	 * @param  WP_Parser_Node $node       The "tableConstraintDef" AST node.
+	 * @param  string         $table_name The table name.
+	 * @return array|null                 The check constraint data as stored in information schema.
+	 */
+	private function extract_check_constraint_data( WP_Parser_Node $node, string $table_name ): ?array {
+		$check_constraint = $node->get_first_descendant_node( 'checkConstraint' );
+		if ( null === $check_constraint ) {
+			return null;
+		}
+
+		$expr         = $check_constraint->get_first_child_node( 'exprWithParentheses' );
+		$check_clause = '';
+		foreach ( $expr->get_descendant_tokens() as $i => $token ) {
+			$check_clause .= ( $i > 0 ? ' ' : '' ) . $token->get_bytes();
+		}
+
+		return array(
+			'constraint_schema' => $this->db_name,
+			'constraint_name'   => $this->get_table_constraint_name( $node, $table_name ),
+			'check_clause'      => $check_clause,
+		);
 	}
 
 	/**
@@ -2431,9 +2493,14 @@ class WP_SQLite_Information_Schema_Builder {
 			return $this->get_value( $name_node->get_first_child_node( 'identifier' ) );
 		}
 
-		// FOREIGN KEY constraint without a name gets a generated name.
-		if ( $node->get_first_descendant_node( 'references' ) ) {
-			// Get the highest existing name in format "<table_name>_ibfk_<number>".
+		$foreign_key      = $node->get_first_descendant_node( 'references' );
+		$check_constraint = $node->get_first_descendant_node( 'checkConstraint' );
+
+		// FOREIGN KEY and CHECK constraints without a name get a generated name.
+		if ( $foreign_key || $check_constraint ) {
+			$type = $check_constraint ? 'chk' : 'ibfk';
+
+			// Get the highest existing name in format "<table_name>_<type>_<number>".
 			$existing_names = $this->connection->query(
 				sprintf(
 					"SELECT DISTINCT constraint_name
@@ -2451,7 +2518,7 @@ class WP_SQLite_Information_Schema_Builder {
 				array(
 					$this->db_name,
 					$table_name,
-					str_replace( array( '_', '%' ), array( '\\_', '\\%' ), $table_name ) . '\\_ibfk\\_%',
+					str_replace( array( '_', '%' ), array( '\\_', '\\%' ), $table_name ) . "\\_{$type}\\_%",
 				)
 			)->fetchAll(
 				PDO::FETCH_COLUMN // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
@@ -2465,10 +2532,9 @@ class WP_SQLite_Information_Schema_Builder {
 					$last_name_index = (int) max( $last_name_index, (int) $last_part );
 				}
 			}
-			return $table_name . '_ibfk_' . ( $last_name_index + 1 );
+			return $table_name . "_{$type}_" . ( $last_name_index + 1 );
 		}
 
-		// TODO: Handle CHECK constraints.
 		return null;
 	}
 

@@ -8976,4 +8976,211 @@ END;
 			$column_info[0]
 		);
 	}
+
+	public function testCheckConstraints(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT NOT NULL CHECK (id > 0),
+				name VARCHAR(255) NOT NULL CHECK (name != ''),
+				score DOUBLE NOT NULL CHECK (score > 0 AND score < 100),
+				data JSON CHECK (json_valid(data)),
+				start_timestamp TIMESTAMP NOT NULL,
+				end_timestamp TIMESTAMP NOT NULL,
+				CONSTRAINT c1 CHECK (id < 10),
+				CONSTRAINT c2 CHECK (start_timestamp < end_timestamp),
+				CONSTRAINT c3 CHECK (length(data) < 20)
+			)"
+		);
+
+		// Valid data.
+		$this->assertQuery(
+			"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+			VALUES (1, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
+		"
+		);
+
+		// Invalid ID.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (0, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_1',
+			$exception->getMessage()
+		);
+
+		// Invalid name.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (1, '', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_2',
+			$exception->getMessage()
+		);
+
+		// Invalid score.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (1, 'test', 100, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_3',
+			$exception->getMessage()
+		);
+
+		// Invalid data.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (1, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', 'invalid JSON')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_4',
+			$exception->getMessage()
+		);
+
+		// Invalid c1.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (11, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c1',
+			$exception->getMessage()
+		);
+
+		// Invalid c2.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (1, 'test', 50, '2025-01-02 12:00:00', '2025-01-01 12:00:00', '{\"key\":\"value\"}')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c2',
+			$exception->getMessage()
+		);
+
+		// Invalid c3.
+		$exception = null;
+		try {
+			$this->assertQuery(
+				"INSERT INTO t (id, name, score, start_timestamp, end_timestamp, data)
+				VALUES (1, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"a-very-long-value\"}')
+			"
+			);
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception );
+		$this->assertSame(
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c3',
+			$exception->getMessage()
+		);
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int NOT NULL,',
+					'  `name` varchar(255) NOT NULL,',
+					'  `score` double NOT NULL,',
+					'  `data` json DEFAULT NULL,',
+					'  `start_timestamp` timestamp NOT NULL,',
+					'  `end_timestamp` timestamp NOT NULL,',
+
+					// The of the check expressions below is not 100% matching MySQL,
+					// because in MySQL the expressions are parsed and normalized.
+					'  CONSTRAINT `c1` CHECK ( id < 10 ),',
+					'  CONSTRAINT `c2` CHECK ( start_timestamp < end_timestamp ),',
+					'  CONSTRAINT `c3` CHECK ( length ( data ) < 20 ),',
+					'  CONSTRAINT `t_chk_1` CHECK ( id > 0 ),',
+					"  CONSTRAINT `t_chk_2` CHECK ( name != '' ),",
+					'  CONSTRAINT `t_chk_3` CHECK ( score > 0 AND score < 100 ),',
+					'  CONSTRAINT `t_chk_4` CHECK ( json_valid ( data ) )',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
+	public function testAlterTableAddCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		// ADD CONSTRAINT syntax.
+		$this->assertQuery( 'ALTER TABLE t ADD CONSTRAINT c CHECK (id > 0)' );
+
+		// ADD CHECK syntax.
+		$this->assertQuery( 'ALTER TABLE t ADD CHECK (id < 10)' );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$result = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  CONSTRAINT `c` CHECK ( id > 0 ),',
+					'  CONSTRAINT `t_chk_1` CHECK ( id < 10 )',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		// Insert valid data.
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		// Insert invalid data.
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (0)' );
+	}
 }

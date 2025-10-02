@@ -4739,7 +4739,26 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 5. Generate CREATE TABLE statement columns.
+		// 5. Get CHECK constraint info.
+		$table_constraints_table = $this->information_schema_builder
+			->get_table_name( $table_is_temporary, 'table_constraints' );
+		$check_constraints_table = $this->information_schema_builder
+			->get_table_name( $table_is_temporary, 'check_constraints' );
+		$check_constraints_info  = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT tc.*, cc.check_clause
+				FROM %s tc
+				JOIN %s cc ON cc.constraint_name = tc.constraint_name
+				WHERE tc.constraint_schema = ?
+				AND tc.table_name = ?
+				ORDER BY tc.constraint_name',
+				$this->quote_sqlite_identifier( $table_constraints_table ),
+				$this->quote_sqlite_identifier( $check_constraints_table )
+			),
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		// 6. Generate CREATE TABLE statement columns.
 		$rows              = array();
 		$on_update_queries = array();
 		$has_autoincrement = false;
@@ -4875,7 +4894,7 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 7. Add foreign key constraints.
+		// 8. Add foreign key constraints.
 		foreach ( $referential_constraints_info as $referential_constraint ) {
 			$column_names            = array();
 			$referenced_column_names = array();
@@ -4910,7 +4929,26 @@ class WP_SQLite_Driver {
 			$rows[] = $query;
 		}
 
-		// 8. Compose the CREATE TABLE statement.
+		// 9. Add CHECK constraints.
+		foreach ( $check_constraints_info as $check_constraint ) {
+			if ( 'NO' === $check_constraint['ENFORCED'] ) {
+				continue;
+			}
+
+			// Translate the check clause from MySQL to SQLite.
+			$ast          = $this->create_parser( 'SELECT ' . $check_constraint['CHECK_CLAUSE'] )->parse();
+			$expr         = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
+			$check_clause = $this->translate( $expr );
+
+			$sql    = sprintf(
+				'  CONSTRAINT %s CHECK %s',
+				$this->quote_sqlite_identifier( $check_constraint['CONSTRAINT_NAME'] ),
+				$check_clause
+			);
+			$rows[] = $sql;
+		}
+
+		// 10. Compose the CREATE TABLE statement.
 		$create_table_query  = sprintf(
 			"CREATE %sTABLE %s (\n",
 			$table_is_temporary ? 'TEMPORARY ' : '',
@@ -5028,7 +5066,26 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 5. Generate CREATE TABLE statement columns.
+		// 5. Get CHECK constraint info.
+		$table_constraints_table = $this->information_schema_builder
+			->get_table_name( $table_is_temporary, 'table_constraints' );
+		$check_constraints_table = $this->information_schema_builder
+			->get_table_name( $table_is_temporary, 'check_constraints' );
+		$check_constraints_info  = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT tc.*, cc.check_clause
+				FROM %s tc
+				JOIN %s cc ON cc.constraint_name = tc.constraint_name
+				WHERE tc.constraint_schema = ?
+				AND tc.table_name = ?
+				ORDER BY tc.constraint_name',
+				$this->quote_sqlite_identifier( $table_constraints_table ),
+				$this->quote_sqlite_identifier( $check_constraints_table )
+			),
+			array( $this->db_name, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		// 6. Generate CREATE TABLE statement columns.
 		$rows = array();
 		foreach ( $column_info as $column ) {
 			$sql  = '  ';
@@ -5072,7 +5129,7 @@ class WP_SQLite_Driver {
 			$rows[] = $sql;
 		}
 
-		// 6. Generate CREATE TABLE statement constraints, collect indexes.
+		// 7. Generate CREATE TABLE statement constraints, collect indexes.
 		foreach ( $grouped_constraints as $constraint ) {
 			ksort( $constraint );
 			$info = $constraint[1];
@@ -5129,7 +5186,7 @@ class WP_SQLite_Driver {
 			$rows[] = $sql;
 		}
 
-		// 7. Add foreign key constraints.
+		// 8. Add foreign key constraints.
 		foreach ( $referential_constraints_info as $referential_constraint ) {
 			$column_names            = array();
 			$referenced_column_names = array();
@@ -5153,7 +5210,18 @@ class WP_SQLite_Driver {
 			$rows[] = $sql;
 		}
 
-		// 8. Compose the CREATE TABLE statement.
+		// 9. Add CHECK constraints.
+		foreach ( $check_constraints_info as $check_constraint ) {
+			$sql    = sprintf(
+				'  CONSTRAINT %s CHECK %s%s',
+				$this->quote_mysql_identifier( $check_constraint['CONSTRAINT_NAME'] ),
+				$check_constraint['CHECK_CLAUSE'],
+				'NO' === $check_constraint['ENFORCED'] ? ' /*!80016 NOT ENFORCED */' : ''
+			);
+			$rows[] = $sql;
+		}
+
+		// 10. Compose the CREATE TABLE statement.
 		$collation = $table_info['TABLE_COLLATION'];
 		$charset   = substr( $collation, 0, strpos( $collation, '_' ) );
 
