@@ -67,8 +67,10 @@ require_once __DIR__ . '/install-functions.php';
 if ( defined( 'DB_NAME' ) && '' !== DB_NAME ) {
 	$db_name = DB_NAME;
 } else {
-	$db_name = apply_filters( 'wp_sqlite_default_db_name', 'database_name_here' );
+	$db_name = 'database_name_here';
 }
+
+$db_name = apply_filters( 'wp_sqlite_default_db_name', $db_name );
 
 /*
  * Debug: Cross-check with MySQL.
