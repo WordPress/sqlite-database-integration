@@ -64,11 +64,15 @@ require_once __DIR__ . '/install-functions.php';
  *
  * TODO: For version 3.0, enforce the DB_NAME constant and remove the fallback.
  */
-if ( defined( 'DB_NAME' ) && '' !== DB_NAME ) {
+if ( defined( 'SQLITE_DB_NAME' ) && '' !== SQLITE_DB_NAME ) {
+	$db_name = SQLITE_DB_NAME;
+} elseif ( defined( 'DB_NAME' ) && '' !== DB_NAME ) {
 	$db_name = DB_NAME;
 } else {
-	$db_name = apply_filters( 'wp_sqlite_default_db_name', 'database_name_here' );
+	$db_name = 'database_name_here';
 }
+
+$db_name = apply_filters( 'wp_sqlite_default_db_name', $db_name );
 
 /*
  * Debug: Cross-check with MySQL.
