@@ -72,8 +72,6 @@ if ( defined( 'SQLITE_DB_NAME' ) && '' !== SQLITE_DB_NAME ) {
 	$db_name = 'database_name_here';
 }
 
-$db_name = apply_filters( 'wp_sqlite_default_db_name', $db_name );
-
 /*
  * Debug: Cross-check with MySQL.
  * This is for debugging purpose only and requires files
