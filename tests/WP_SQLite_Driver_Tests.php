@@ -9244,4 +9244,81 @@ END;
 			$result[0]->{'Create Table'}
 		);
 	}
+
+	public function testDynamicDatabaseName(): void {
+		// Create a setter for the private property "$db_name".
+		$set_db_name = Closure::bind(
+			function ( $name ) {
+				$this->main_db_name = $name;
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		// Default database name.
+		$result = $this->assertQuery( 'SELECT schema_name FROM information_schema.schemata ORDER BY schema_name' );
+		$this->assertEquals(
+			array(
+				(object) array( 'SCHEMA_NAME' => 'information_schema' ),
+				(object) array( 'SCHEMA_NAME' => 'wp' ),
+			),
+			$result
+		);
+
+		// Change the database name.
+		$set_db_name( 'wp_test_new' );
+		$result = $this->assertQuery( 'SELECT schema_name FROM information_schema.schemata ORDER BY schema_name' );
+		$this->assertEquals(
+			array(
+				(object) array( 'SCHEMA_NAME' => 'information_schema' ),
+				(object) array( 'SCHEMA_NAME' => 'wp_test_new' ),
+			),
+			$result
+		);
+	}
+
+	public function testDynamicDatabaseNameComplexScenario(): void {
+		// Create a setter for the private property "$db_name".
+		$set_db_name = Closure::bind(
+			function ( $name ) {
+				$this->main_db_name = $name;
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		$this->assertQuery( 'CREATE TABLE t (id INT, db_name TEXT)' );
+		$this->assertQuery( 'INSERT INTO t (id, db_name) VALUES (1, "wp")' );
+		$this->assertQuery( 'INSERT INTO t (id, db_name) VALUES (2, "wp_test_new")' );
+		$this->assertQuery( 'INSERT INTO t (id, db_name) VALUES (3, "other")' );
+
+		$set_db_name( 'wp_test_new' );
+
+		$result = $this->assertQuery(
+			"SELECT sq.id, sq.table_schema, sq.table_name, sq.column_name
+			FROM (
+				SELECT * FROM information_schema.columns ist
+				JOIN t ON t.db_name = CONCAT(COALESCE(ist.table_schema, 'default'), '')
+				WHERE ist.table_name = 't'
+			) sq
+			ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'           => '2',
+					'TABLE_SCHEMA' => 'wp_test_new',
+					'TABLE_NAME'   => 't',
+					'COLUMN_NAME'  => 'id',
+				),
+				(object) array(
+					'id'           => '2',
+					'TABLE_SCHEMA' => 'wp_test_new',
+					'TABLE_NAME'   => 't',
+					'COLUMN_NAME'  => 'db_name',
+				),
+			),
+			$result
+		);
+	}
 }

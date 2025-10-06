@@ -3416,7 +3416,16 @@ class WP_SQLite_Driver {
 
 		// Object child name (column, index, etc.).
 		if ( null !== $child_node ) {
-			$parts[] = $this->translate( $child_node );
+			$translated = $this->translate( $child_node );
+			$name       = $this->unquote_sqlite_identifier( $translated );
+			$parts[]    = $translated;
+
+			// When targeting a database name column from the information schema,
+			// we need to inject the configured database name.
+			if ( $this->is_information_schema_db_column( $name ) ) {
+				$fully_qualified_column = implode( '.', $parts );
+				return $this->inject_configured_database_name( $fully_qualified_column );
+			}
 		}
 
 		return implode( '.', $parts );
@@ -3916,7 +3925,16 @@ class WP_SQLite_Driver {
 		$column_ref    = $node->get_first_descendant_node( 'columnRef' );
 		$is_column_ref = $column_ref && $item === $this->translate( $column_ref );
 		if ( $is_column_ref ) {
-			return $item;
+			$translated = $this->translate( $column_ref );
+
+			// When targeting a database name column from the information schema,
+			// we need to inject the configured database name and add an alias.
+			$identifiers = $column_ref->get_descendant_nodes( 'identifier' );
+			$column_name = $this->unquote_sqlite_identifier( $this->translate( end( $identifiers ) ) );
+			if ( $this->is_information_schema_db_column( $column_name ) ) {
+				return sprintf( '%s AS %s', $translated, strtoupper( $column_name ) );
+			}
+			return $translated;
 		}
 
 		/*
@@ -3937,6 +3955,51 @@ class WP_SQLite_Driver {
 			return $item;
 		}
 		return sprintf( '%s AS %s', $item, $alias );
+	}
+
+	/**
+	 * Check if a column name appears to target an information schema column that
+	 * references the database name ("SCHEMA_NAME", "TABLE_SCHEMA", etc.).
+	 *
+	 * TODO: Fully resolve the column references to ensure that they are really
+	 *       referencing the information schema tables.
+	 *
+	 * @param  string $column_name The name of the column to check.
+	 * @return bool                True if the column is an information schema
+	 *                             database name column, false otherwise.
+	 */
+	private function is_information_schema_db_column( string $column_name ): bool {
+		static $information_schema_columns = array(
+			'SCHEMA_NAME'              => true,
+			'TABLE_SCHEMA'             => true,
+			'VIEW_SCHEMA'              => true,
+			'INDEX_SCHEMA'             => true,
+			'CONSTRAINT_SCHEMA'        => true,
+			'UNIQUE_CONSTRAINT_SCHEMA' => true,
+			'REFERENCED_TABLE_SCHEMA'  => true,
+			'TRIGGER_SCHEMA'           => true,
+		);
+		return isset( $information_schema_columns[ strtoupper( $column_name ) ] );
+	}
+
+	/**
+	 * Translate a name targeting an information schema database name column
+	 * to an expression that injects the configured database name value.
+	 *
+	 * For example, a reference like "`t`.`table_schema`" will be translated to:
+	 *
+	 *   IIF(`t`.`table_schema` = 'information_schema', `t`.`table_schema`, 'database_name')
+	 *
+	 * @param  string $column_name The name of the column to translate.
+	 * @return string              The translated value.
+	 */
+	private function inject_configured_database_name( string $column_name ): string {
+		return sprintf(
+			"IIF(%s = 'information_schema', %s, %s)",
+			$column_name,
+			$column_name,
+			$this->connection->quote( $this->main_db_name ),
+		);
 	}
 
 	/**
