@@ -9178,6 +9178,9 @@ END;
 		// Insert valid data.
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
 
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+
 		// Insert invalid data.
 		$this->expectException( WP_SQLite_Driver_Exception::class );
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c' );
@@ -9207,5 +9210,12 @@ END;
 			),
 			$result[0]->{'Create Table'}
 		);
+
+		// Insert data that would violate the constraints.
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (0)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (100)' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 2, $result );
 	}
 }
