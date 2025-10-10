@@ -682,6 +682,13 @@ class WP_SQLite_Information_Schema_Builder {
 					continue;
 				}
 
+				// DROP CHECK
+				if ( $action->has_child_token( WP_MySQL_Lexer::CHECK_SYMBOL ) ) {
+					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
+					$this->record_drop_check_constraint( $table_is_temporary, $table_name, $name );
+					continue;
+				}
+
 				// DROP [COLUMN]
 				$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
 				if ( null !== $column_ref ) {

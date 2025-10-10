@@ -9185,8 +9185,13 @@ END;
 	}
 
 	public function testAlterTableDropCheckConstraint(): void {
-		$this->assertQuery( 'CREATE TABLE t (id INT, CONSTRAINT c CHECK (id > 0))' );
-		$this->assertQuery( 'ALTER TABLE t DROP CONSTRAINT c' );
+		$this->assertQuery( 'CREATE TABLE t (id INT, CONSTRAINT c1 CHECK (id > 0), CONSTRAINT c2 CHECK (id < 10))' );
+
+		// DROP CONSTRAINT syntax.
+		$this->assertQuery( 'ALTER TABLE t DROP CONSTRAINT c1' );
+
+		// DROP CHECK syntax.
+		$this->assertQuery( 'ALTER TABLE t DROP CHECK c2' );
 
 		// SHOW CREATE TABLE
 		$this->assertQuery( 'SHOW CREATE TABLE t' );
