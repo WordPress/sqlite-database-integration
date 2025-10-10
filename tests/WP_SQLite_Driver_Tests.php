@@ -9218,4 +9218,30 @@ END;
 		$result = $this->assertQuery( 'SELECT * FROM t' );
 		$this->assertCount( 2, $result );
 	}
+
+	public function testCheckConstraintNotEnforced(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, CONSTRAINT c CHECK (id > 0) NOT ENFORCED)' );
+
+		// Insert data that would violate the constraints.
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (0)' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$result = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  CONSTRAINT `c` CHECK ( id > 0 ) /*!80016 NOT ENFORCED */',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
 }
