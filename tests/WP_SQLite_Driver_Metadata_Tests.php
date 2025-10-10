@@ -1878,4 +1878,221 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->expectExceptionCode( 'HY000' );
 		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
 	}
+
+	public function testInformationSchemaCheckConstraints(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT NOT NULL CHECK (id > 0),
+				name VARCHAR(255) NOT NULL CHECK (name != ''),
+				score DOUBLE NOT NULL CHECK (score > 0 AND score < 100),
+				data JSON CHECK (json_valid(data)),
+				start_timestamp TIMESTAMP NOT NULL,
+				end_timestamp TIMESTAMP NOT NULL,
+				CONSTRAINT c1 CHECK (id < 10),
+				CONSTRAINT c2 CHECK (start_timestamp < end_timestamp),
+				CONSTRAINT c3 CHECK (length(data) < 20)
+			)"
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't' ORDER BY CONSTRAINT_NAME" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c2',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c3',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_2',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_3',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_4',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.CHECK_CONSTRAINTS
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.check_constraints ORDER BY CONSTRAINT_NAME' );
+		$this->assertCount( 7, $result );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c1',
+					'CHECK_CLAUSE'       => '( id < 10 )',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c2',
+					'CHECK_CLAUSE'       => '( start_timestamp < end_timestamp )',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c3',
+					'CHECK_CLAUSE'       => '( length ( data ) < 20 )',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_1',
+					'CHECK_CLAUSE'       => '( id > 0 )',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_2',
+					'CHECK_CLAUSE'       => "( name != '' )",
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_3',
+					'CHECK_CLAUSE'       => '( score > 0 AND score < 100 )',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_4',
+					'CHECK_CLAUSE'       => '( json_valid ( data ) )',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableAddCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		// ADD CONSTRAINT syntax.
+		$this->assertQuery( 'ALTER TABLE t ADD CONSTRAINT c CHECK (id > 0)' );
+
+		// ADD CHECK syntax.
+		$this->assertQuery( 'ALTER TABLE t ADD CHECK (id < 10)' );
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't' ORDER BY CONSTRAINT_NAME" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_1',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 't',
+					'CONSTRAINT_TYPE'    => 'CHECK',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$result
+		);
+
+		// INFORMATION_SCHEMA.CHECK_CONSTRAINTS
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.check_constraints ORDER BY CONSTRAINT_NAME' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'c',
+					'CHECK_CLAUSE'       => '( id > 0 )',
+				),
+				(object) array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 't_chk_1',
+					'CHECK_CLAUSE'       => '( id < 10 )',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInformationSchemaAlterTableDropCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, CONSTRAINT c1 CHECK (id > 0), CONSTRAINT c2 CHECK (id < 10))' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertCount( 2, $result );
+
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.check_constraints' );
+		$this->assertCount( 2, $result );
+
+		// DROP CONSTRAINT syntax.
+		$this->assertQuery( 'ALTER TABLE t DROP CONSTRAINT c1' );
+
+		// DROP CHECK syntax.
+		$this->assertQuery( 'ALTER TABLE t DROP CHECK c2' );
+
+		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.check_constraints' );
+		$this->assertCount( 0, $result );
+	}
 }
