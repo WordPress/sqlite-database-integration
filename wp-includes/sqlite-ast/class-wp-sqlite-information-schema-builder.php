@@ -1301,6 +1301,8 @@ class WP_SQLite_Information_Schema_Builder {
 			$this->record_drop_key( $table_is_temporary, $table_name, $name );
 		} elseif ( 'FOREIGN KEY' === $constraint_type ) {
 			$this->record_drop_foreign_key( $table_is_temporary, $table_name, $name );
+		} elseif ( 'CHECK' === $constraint_type ) {
+			$this->record_drop_check_constraint( $table_is_temporary, $table_name, $name );
 		} else {
 			throw new \Exception(
 				"DROP CONSTRAINT for constraint type '$constraint_type' is not supported."
@@ -1394,6 +1396,37 @@ class WP_SQLite_Information_Schema_Builder {
 
 				// Remove only FOREIGN KEY records; not PRIMARY/UNIQUE KEY data.
 				'REFERENCED_TABLE_SCHEMA' => $this->db_name,
+			)
+		);
+	}
+
+	/**
+	 * Analyze DROP CHECK statement and record data in the information schema.
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $table_name         The table name.
+	 * @param string $name               The check constraint name.
+	 */
+	private function record_drop_check_constraint(
+		bool $table_is_temporary,
+		string $table_name,
+		string $name
+	): void {
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+			array(
+				'CONSTRAINT_SCHEMA' => $this->db_name,
+				'TABLE_NAME'        => $table_name,
+				'CONSTRAINT_TYPE'   => 'CHECK',
+				'CONSTRAINT_NAME'   => $name,
+			)
+		);
+
+		$this->delete_values(
+			$this->get_table_name( $table_is_temporary, 'check_constraints' ),
+			array(
+				'CONSTRAINT_SCHEMA' => $this->db_name,
+				'CONSTRAINT_NAME'   => $name,
 			)
 		);
 	}

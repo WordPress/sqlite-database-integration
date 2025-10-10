@@ -9183,4 +9183,24 @@ END;
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c' );
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (0)' );
 	}
+
+	public function testAlterTableDropCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, CONSTRAINT c CHECK (id > 0))' );
+		$this->assertQuery( 'ALTER TABLE t DROP CONSTRAINT c' );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$result = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
 }
