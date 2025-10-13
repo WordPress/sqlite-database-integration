@@ -3515,8 +3515,54 @@ class WP_SQLite_Driver {
 	 * @return string|null
 	 */
 	private function translate_query_specification( WP_Parser_Node $node ): string {
+		$from     = $node->get_first_child_node( 'fromClause' );
 		$group_by = $node->get_first_child_node( 'groupByClause' );
 		$having   = $node->get_first_child_node( 'havingClause' );
+
+		/*
+		 * Check if the query may possibly read from an information schema table
+		 * using a "*" wildcard, such as "SELECT *", "SELECT t.*", and similar.
+		 * If that's the case, we'll need to expand the wildcard to a list of
+		 * column names and inject the configured database name dynamically.
+		 */
+		if ( $from && $from->has_child_node( 'tableReferenceList' ) ) {
+			$select_item_list     = $node->get_first_child_node( 'selectItemList' );
+			$table_reference_list = $from->get_first_child_node( 'tableReferenceList' );
+
+			// Check if the query contains any wildcards.
+			$has_wildcard = $select_item_list->has_child_token( WP_MySQL_Lexer::MULT_OPERATOR );
+			if ( ! $has_wildcard ) {
+				foreach ( $select_item_list->get_child_nodes() as $select_item ) {
+					if ( $select_item->has_child_node( 'tableWild' ) ) {
+						$has_wildcard = true;
+						break;
+					}
+				}
+			}
+
+			if ( $has_wildcard ) {
+				$table_refs = $table_reference_list->get_descendant_nodes( 'tableRef' );
+
+				// Check if the query may reference any information schema tables.
+				// This check is approximate, as it also descends into subqueries.
+				$references_information_schema = false;
+				foreach ( $table_refs as $table_ref ) {
+					$references_information_schema = str_starts_with(
+						strtolower( $this->translate( $table_ref ) ),
+						self::RESERVED_PREFIX . 'mysql_information_schema_'
+					);
+					if ( $references_information_schema ) {
+						break;
+					}
+				}
+
+				// We have both wildcards and information schema tables.
+				// Let's expand the wildcards to a list of columns.
+				if ( $references_information_schema ) {
+					return $this->translate_query_specification_with_information_schema_wildcards( $node );
+				}
+			}
+		}
 
 		/*
 		 * When the GROUP BY or HAVING clause is present, we need to disambiguate
@@ -3590,6 +3636,73 @@ class WP_SQLite_Driver {
 			return implode( ' ', $parts );
 		}
 		return $this->translate_sequence( $node->get_children() );
+	}
+
+	/**
+	 * Translate a query specification with information schema wildcards to SQLite.
+	 *
+	 * When a SELECT item contains wildcards, such as "SELECT *" or "SELECT t.*",
+	 * and the query references an information schema table, we need to expand the
+	 * wildcards to a list of columns and inject the configured database name.
+	 *
+	 * @param WP_Parser_Node $node The "querySpecification" AST node.
+	 * @return string              The translated value.
+	 */
+	private function translate_query_specification_with_information_schema_wildcards( WP_Parser_Node $node ): string {
+		$select_item_list     = $node->get_first_child_node( 'selectItemList' );
+		$from                 = $node->get_first_child_node( 'fromClause' );
+		$table_reference_list = $from->get_first_child_node( 'tableReferenceList' );
+
+		// Collect all tables used in the query.
+		$table_alias_map = $this->create_table_reference_map( $table_reference_list );
+
+		// Translate the SELECT item list, expanding wildcards that are targeting
+		// the information schema tables, and replacing the database name with
+		// the configured database name.
+		$transformed_list = array();
+		foreach ( $select_item_list->get_children() as $select_item ) {
+			if ( $select_item instanceof WP_MySQL_Token ) {
+				// For a global wildcard ("SELECT *"), we need to expand all tables.
+				if ( WP_MySQL_Lexer::MULT_OPERATOR === $select_item->id ) {
+					foreach ( $table_alias_map as $table_alias => $table_data ) {
+						$transformed_list[] = $this->expand_wildcard( $table_data['table_name'], $table_alias );
+					}
+				}
+			} elseif ( $select_item->has_child_node( 'tableWild' ) ) {
+				// For a table wildcard ("SELECT t.*"), we expand the given table.
+				$table_wild  = $select_item->get_first_child_node( 'tableWild' );
+				$identifiers = $table_wild->get_child_nodes( 'identifier' );
+
+				// Do not expand the wildcard if the identifier has no database
+				// name and the current database is not "information_schema".
+				if (
+					0 === count( $identifiers )
+					&& 'information_schema' !== $this->db_name
+				) {
+					$transformed_list[] = $this->translate( $select_item );
+					continue;
+				}
+
+				// Expand the wildcard.
+				$last_identifier    = end( $identifiers );
+				$alias              = $this->unquote_sqlite_identifier( $this->translate( $last_identifier ) );
+				$table_name         = $table_alias_map[ $alias ]['table_name'];
+				$transformed_list[] = $this->expand_wildcard( $table_name, $alias );
+			} else {
+				$transformed_list[] = $this->translate( $select_item );
+			}
+		}
+
+		// Translate node children, replacing the SELECT list with the transformed one.
+		$parts = array();
+		foreach ( $node->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node && 'selectItemList' === $child->rule_name ) {
+				$parts[] = implode( ', ', $transformed_list );
+			} else {
+				$parts[] = $this->translate( $child );
+			}
+		}
+		return implode( ' ', $parts );
 	}
 
 	/**
@@ -3998,8 +4111,59 @@ class WP_SQLite_Driver {
 			"IIF(%s = 'information_schema', %s, %s)",
 			$column_name,
 			$column_name,
-			$this->connection->quote( $this->main_db_name ),
+			$this->connection->quote( $this->main_db_name )
 		);
+	}
+
+	/**
+	 * Expand a SELECT wildcard to a list of columns.
+	 *
+	 * This method expands wildcards such as "SELECT *", "SELECT t.*", and similar,
+	 * to an explicit list of all columns in the table. When the wildcard targets
+	 * an information schema table, the configured database name will be injected.
+	 *
+	 * For example, the following query:
+	 *
+	 *   SELECT * FROM information_schema.tables t
+	 *
+	 * Will be expanded to:
+	 *
+	 *   SELECT t.TABLE_CATALOG, 'database_name' AS TABLE_SCHEMA, t.TABLE_NAME, ...
+	 *   FROM information_schema.tables t
+	 *
+	 * @param string  $table_name  The name of the table to expand the wildcard for.
+	 * @param string  $table_alias The alias of the table to expand the wildcard for.
+	 * @return string              The expanded and translated list of columns.
+	 */
+	private function expand_wildcard( string $table_name, string $table_alias ): string {
+		// We need to fetch the SQLite column information, because the information
+		// schema tables don't contain records for the information schema itself.
+		$result = $this->execute_sqlite_query(
+			'SELECT name FROM pragma_table_info(?)',
+			array( $table_name )
+		);
+
+		// List all columns in the table, replacing columns targeting database
+		// name columns with the configured database name.
+		$columns       = $result->fetchAll( PDO::FETCH_COLUMN );
+		$expanded_list = array();
+		foreach ( $columns as $column ) {
+			$fully_qualified_column = sprintf(
+				'%s.%s',
+				$this->quote_sqlite_identifier( $table_alias ),
+				$this->quote_sqlite_identifier( $column )
+			);
+			if ( $this->is_information_schema_db_column( $column ) ) {
+				$expanded_list[] = sprintf(
+					'%s AS %s',
+					$this->inject_configured_database_name( $fully_qualified_column ),
+					strtoupper( $column )
+				);
+			} else {
+				$expanded_list[] = $fully_qualified_column;
+			}
+		}
+		return implode( ', ', $expanded_list );
 	}
 
 	/**

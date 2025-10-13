@@ -9321,4 +9321,33 @@ END;
 			$result
 		);
 	}
+
+	public function testDynamicDatabaseNameWithWildcards(): void {
+		// Create a setter for the private property "$db_name".
+		$set_db_name = Closure::bind(
+			function ( $name ) {
+				$this->main_db_name = $name;
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		// Default database name.
+		$result = $this->assertQuery(
+			'SELECT * FROM information_schema.schemata s'
+		);
+		$this->assertEquals( 'information_schema', $result[0]->SCHEMA_NAME );
+		$this->assertEquals( 'wp', $result[1]->SCHEMA_NAME );
+
+		// Default database name.
+		$set_db_name( 'wp_test_new' );
+		$result = $this->assertQuery(
+			'SELECT s.*
+			FROM information_schema.schemata s
+			LEFT JOIN information_schema.tables t ON t.table_schema = s.schema_name
+			ORDER BY s.schema_name'
+		);
+		$this->assertEquals( 'information_schema', $result[0]->SCHEMA_NAME );
+		$this->assertEquals( 'wp_test_new', $result[1]->SCHEMA_NAME );
+	}
 }
