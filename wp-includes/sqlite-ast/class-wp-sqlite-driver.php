@@ -2271,9 +2271,16 @@ class WP_SQLite_Driver {
 
 		$databases = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT SCHEMA_NAME AS Database FROM %s%s ORDER BY SCHEMA_NAME',
+				'SELECT SCHEMA_NAME AS Database
+				FROM (
+					SELECT IIF(SCHEMA_NAME = ?, ?, SCHEMA_NAME) AS SCHEMA_NAME FROM %s ORDER BY SCHEMA_NAME
+				)%s',
 				$this->quote_sqlite_identifier( $schemata_table ),
 				isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
+			),
+			array(
+				$this->get_saved_db_name(),
+				$this->main_db_name,
 			)
 		)->fetchAll( PDO::FETCH_OBJ );
 
