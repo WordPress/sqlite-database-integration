@@ -3005,6 +3005,8 @@ class WP_SQLite_Driver {
 				return $this->translate_query_expression( $node );
 			case 'querySpecification':
 				return $this->translate_query_specification( $node );
+			case 'tableRef':
+				return $this->translate_table_ref( $node );
 			case 'qualifiedIdentifier':
 			case 'tableRefWithWildcard':
 				$parts = $node->get_descendant_nodes( 'identifier' );
@@ -3404,14 +3406,7 @@ class WP_SQLite_Driver {
 
 		// Database-level object name (table, view, procedure, trigger, etc.).
 		if ( null !== $object_node ) {
-			if ( $is_information_schema ) {
-				$object_name = $this->unquote_sqlite_identifier(
-					$this->translate_sequence( $object_node->get_children() )
-				);
-				$parts[]     = $this->information_schema_builder->get_table_name( false, $object_name );
-			} else {
-				$parts[] = $this->translate( $object_node );
-			}
+			$parts[] = $this->translate( $object_node );
 		}
 
 		// Object child name (column, index, etc.).
@@ -3937,6 +3932,93 @@ class WP_SQLite_Driver {
 			return $item;
 		}
 		return sprintf( '%s AS %s', $item, $alias );
+	}
+
+	/**
+	 * Translate a MySQL table reference to SQLite.
+	 *
+	 * When the table reference targets an information schema table, we replace
+	 * it with a subquery, injecting the configured database name dynamically.
+	 *
+	 * For example, the following query:
+	 *
+	 *   SELECT *, t.*, t.table_schema FROM information_schema.tables t
+	 *
+	 * Will be translated to:
+	 *
+	 *   SELECT *, `t`.*, `t`.`table_schema` FROM (
+	 *     SELECT
+	 *       `TABLE_CATALOG`,
+	 *       IIF(`TABLE_SCHEMA` = 'information_schema', `TABLE_SCHEMA`, 'database_name') AS `TABLE_SCHEMA`,
+	 *       `TABLE_NAME`,
+	 *       ...
+	 *     FROM `_wp_sqlite_mysql_information_schema_tables` AS `tables`
+	 *   ) `t`
+	 *
+	 * The same logic will be applied to table references in JOIN clauses as well.
+	 *
+	 * @param  WP_Parser_Node $node       The "tableRef" AST node.
+	 * @return string                     The translated value.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	public function translate_table_ref( WP_Parser_Node $node ): string {
+		// Information schema is currently accessible only in read-only queries.
+		if ( ! $this->is_readonly ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		// The table reference is in "<schema>.<table>" or "<table>" format.
+		$parts  = $node->get_descendant_nodes( 'identifier' );
+		$table  = array_pop( $parts );
+		$schema = array_pop( $parts );
+
+		$schema_name = $schema ? $this->unquote_sqlite_identifier( $this->translate( $schema ) ) : null;
+		$table_name  = $this->unquote_sqlite_identifier( $this->translate( $table ) );
+
+		// When the table reference targets an information schema table,
+		// we need to inject the configured database name dynamically.
+		if (
+			( null === $schema_name && 'information_schema' === $this->db_name )
+			|| ( null !== $schema_name && 'information_schema' === strtolower( $schema_name ) )
+		) {
+			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+			$sqlite_table_name  = $this->information_schema_builder->get_table_name( $table_is_temporary, $table_name );
+
+			// We need to fetch the SQLite column information, because the information
+			// schema tables don't contain records for the information schema itself.
+			$columns = $this->execute_sqlite_query(
+				'SELECT name FROM pragma_table_info(?)',
+				array( $sqlite_table_name )
+			)->fetchAll( PDO::FETCH_COLUMN );
+
+			// List all columns in the table, replacing columns targeting database
+			// name columns with the configured database name.
+			$expanded_list = array();
+			foreach ( $columns as $column ) {
+				$quoted_column = $this->quote_sqlite_identifier( $column );
+				if ( str_contains( strtolower( $column ), 'schema' ) ) {
+					$expanded_list[] = sprintf(
+						"IIF(%s = 'information_schema', %s, %s) AS %s",
+						$quoted_column,
+						$quoted_column,
+						$this->connection->quote( $this->main_db_name ),
+						strtoupper( $quoted_column )
+					);
+				} else {
+					$expanded_list[] = $quoted_column;
+				}
+			}
+			$column_list = implode( ', ', $expanded_list );
+
+			// Compose information schema subquery.
+			return sprintf(
+				'(SELECT %s FROM %s AS %s)',
+				$column_list,
+				$this->quote_sqlite_identifier( $sqlite_table_name ),
+				$this->quote_sqlite_identifier( $table_name )
+			);
+		}
+		return $this->translate_sequence( $node->get_children() );
 	}
 
 	/**

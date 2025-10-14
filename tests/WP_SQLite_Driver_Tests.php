@@ -9244,4 +9244,111 @@ END;
 			$result[0]->{'Create Table'}
 		);
 	}
+
+	public function testDynamicDatabaseName(): void {
+		// Create a setter for the private property "$db_name".
+		$set_db_name = Closure::bind(
+			function ( $name ) {
+				$this->main_db_name = $name;
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		// Default database name.
+		$result = $this->assertQuery( 'SELECT schema_name FROM information_schema.schemata ORDER BY schema_name' );
+		$this->assertEquals(
+			array(
+				(object) array( 'SCHEMA_NAME' => 'information_schema' ),
+				(object) array( 'SCHEMA_NAME' => 'wp' ),
+			),
+			$result
+		);
+
+		// Change the database name.
+		$set_db_name( 'wp_test_new' );
+		$result = $this->assertQuery( 'SELECT schema_name FROM information_schema.schemata ORDER BY schema_name' );
+		$this->assertEquals(
+			array(
+				(object) array( 'SCHEMA_NAME' => 'information_schema' ),
+				(object) array( 'SCHEMA_NAME' => 'wp_test_new' ),
+			),
+			$result
+		);
+	}
+
+	public function testDynamicDatabaseNameComplexScenario(): void {
+		// Create a setter for the private property "$db_name".
+		$set_db_name = Closure::bind(
+			function ( $name ) {
+				$this->main_db_name = $name;
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		$this->assertQuery( 'CREATE TABLE t (id INT, db_name TEXT)' );
+		$this->assertQuery( 'INSERT INTO t (id, db_name) VALUES (1, "wp")' );
+		$this->assertQuery( 'INSERT INTO t (id, db_name) VALUES (2, "wp_test_new")' );
+		$this->assertQuery( 'INSERT INTO t (id, db_name) VALUES (3, "other")' );
+
+		$set_db_name( 'wp_test_new' );
+
+		$result = $this->assertQuery(
+			"SELECT sub.id, sub.table_schema, sub.table_name, sub.column_name
+			FROM (
+				SELECT * FROM information_schema.columns c
+				JOIN t ON t.db_name = CONCAT(COALESCE(c.table_schema, 'default'), '')
+				JOIN information_schema.schemata s ON s.schema_name = c.table_schema
+				WHERE c.table_name = 't'
+			) sub
+			ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'           => '2',
+					'TABLE_SCHEMA' => 'wp_test_new',
+					'TABLE_NAME'   => 't',
+					'COLUMN_NAME'  => 'id',
+				),
+				(object) array(
+					'id'           => '2',
+					'TABLE_SCHEMA' => 'wp_test_new',
+					'TABLE_NAME'   => 't',
+					'COLUMN_NAME'  => 'db_name',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testDynamicDatabaseNameWithWildcards(): void {
+		// Create a setter for the private property "$db_name".
+		$set_db_name = Closure::bind(
+			function ( $name ) {
+				$this->main_db_name = $name;
+			},
+			$this->engine,
+			WP_SQLite_Driver::class
+		);
+
+		// Default database name.
+		$result = $this->assertQuery(
+			'SELECT * FROM information_schema.schemata s'
+		);
+		$this->assertEquals( 'information_schema', $result[0]->SCHEMA_NAME );
+		$this->assertEquals( 'wp', $result[1]->SCHEMA_NAME );
+
+		// Default database name.
+		$set_db_name( 'wp_test_new' );
+		$result = $this->assertQuery(
+			'SELECT s.*
+			FROM information_schema.schemata s
+			LEFT JOIN information_schema.tables t ON t.table_schema = s.schema_name
+			ORDER BY s.schema_name'
+		);
+		$this->assertEquals( 'information_schema', $result[0]->SCHEMA_NAME );
+		$this->assertEquals( 'wp_test_new', $result[1]->SCHEMA_NAME );
+	}
 }
