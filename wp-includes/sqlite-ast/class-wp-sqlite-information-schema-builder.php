@@ -9,6 +9,17 @@
  */
 class WP_SQLite_Information_Schema_Builder {
 	/**
+	 * The name of the database that is saved in the information schema tables.
+	 *
+	 * The SQLite driver injects the configured database name dynamically,
+	 * but we need to store some value in the information schema tables.
+	 * This database name will also be visible in SQLite admin tools.
+	 *
+	 * @var string
+	 */
+	const SAVED_DATABASE_NAME = 'sqlite_database';
+
+	/**
 	 * SQL definitions for tables that emulate MySQL "information_schema".
 	 *
 	 * The full MySQL information schema comprises a large number of tables:
@@ -300,17 +311,6 @@ class WP_SQLite_Information_Schema_Builder {
 	);
 
 	/**
-	 * Database name.
-	 *
-	 * @TODO: Consider passing the database name as a parameter to each method.
-	 *        This would expose an API that could support multiple databases
-	 *        in the future. Alternatively, it could be a stateful property.
-	 *
-	 * @var string
-	 */
-	private $db_name;
-
-	/**
 	 * A prefix for information schema table names.
 	 *
 	 * @var string
@@ -348,12 +348,10 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Constructor.
 	 *
-	 * @param string               $database        Database name.
 	 * @param string               $reserved_prefix An identifier prefix for internal database objects.
 	 * @param WP_SQLite_Connection $connection      An instance of the SQLite connection.
 	 */
-	public function __construct( string $database, string $reserved_prefix, WP_SQLite_Connection $connection ) {
-		$this->db_name                = $database;
+	public function __construct( string $reserved_prefix, WP_SQLite_Connection $connection ) {
 		$this->connection             = $connection;
 		$this->table_prefix           = $reserved_prefix . 'mysql_information_schema_';
 		$this->temporary_table_prefix = $reserved_prefix . 'mysql_information_schema_tmp_';
@@ -455,7 +453,7 @@ class WP_SQLite_Information_Schema_Builder {
 		// 1. Table.
 		$tables_table_name = $this->get_table_name( $table_is_temporary, 'tables' );
 		$table_data        = array(
-			'table_schema'    => $this->db_name,
+			'table_schema'    => self::SAVED_DATABASE_NAME,
 			'table_name'      => $table_name,
 			'table_type'      => 'BASE TABLE',
 			'engine'          => $table_engine,
@@ -725,28 +723,28 @@ class WP_SQLite_Information_Schema_Builder {
 			$this->delete_values(
 				$this->get_table_name( $table_is_temporary, 'tables' ),
 				array(
-					'table_schema' => $this->db_name,
+					'table_schema' => self::SAVED_DATABASE_NAME,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
 				$this->get_table_name( $table_is_temporary, 'columns' ),
 				array(
-					'table_schema' => $this->db_name,
+					'table_schema' => self::SAVED_DATABASE_NAME,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
 				$this->get_table_name( $table_is_temporary, 'statistics' ),
 				array(
-					'table_schema' => $this->db_name,
+					'table_schema' => self::SAVED_DATABASE_NAME,
 					'table_name'   => $table_name,
 				)
 			);
 			$this->delete_values(
 				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 				array(
-					'table_schema' => $this->db_name,
+					'table_schema' => self::SAVED_DATABASE_NAME,
 					'table_name'   => $table_name,
 				)
 			);
@@ -804,7 +802,7 @@ class WP_SQLite_Information_Schema_Builder {
 				WHERE table_schema = ?
 				AND table_name = ?
 			',
-			array( $this->db_name, $table_name )
+			array( self::SAVED_DATABASE_NAME, $table_name )
 		)->fetchColumn();
 
 		$column_data = $this->extract_column_data( $table_name, $column_name, $node, (int) $position + 1 );
@@ -863,7 +861,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$this->get_table_name( $table_is_temporary, 'columns' ),
 			$column_data,
 			array(
-				'table_schema' => $this->db_name,
+				'table_schema' => self::SAVED_DATABASE_NAME,
 				'table_name'   => $table_name,
 				'column_name'  => $column_name,
 			)
@@ -877,7 +875,7 @@ class WP_SQLite_Information_Schema_Builder {
 					'column_name' => $new_column_name,
 				),
 				array(
-					'table_schema' => $this->db_name,
+					'table_schema' => self::SAVED_DATABASE_NAME,
 					'table_name'   => $table_name,
 					'column_name'  => $column_name,
 				)
@@ -946,7 +944,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'columns' ),
 			array(
-				'table_schema' => $this->db_name,
+				'table_schema' => self::SAVED_DATABASE_NAME,
 				'table_name'   => $table_name,
 				'column_name'  => $column_name,
 			)
@@ -988,7 +986,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$statistics_table,
 			array(
-				'table_schema' => $this->db_name,
+				'table_schema' => self::SAVED_DATABASE_NAME,
 				'table_name'   => $table_name,
 				'column_name'  => $column_name,
 			)
@@ -1017,7 +1015,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$this->connection->quote_identifier( $statistics_table ),
 				$this->connection->quote_identifier( $statistics_table )
 			),
-			array( $this->db_name, $table_name )
+			array( self::SAVED_DATABASE_NAME, $table_name )
 		);
 
 		/*
@@ -1048,7 +1046,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$this->connection->quote_identifier( $constraints_table ),
 				$this->connection->quote_identifier( $statistics_table )
 			),
-			array( $this->db_name, $table_name, $this->db_name, $table_name )
+			array( self::SAVED_DATABASE_NAME, $table_name, self::SAVED_DATABASE_NAME, $table_name )
 		);
 	}
 
@@ -1144,7 +1142,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'statistics' ),
 			array(
-				'table_schema' => $this->db_name,
+				'table_schema' => self::SAVED_DATABASE_NAME,
 				'table_name'   => $table_name,
 				'index_name'   => $index_name,
 			)
@@ -1168,7 +1166,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 			array(
-				'table_schema'    => $this->db_name,
+				'table_schema'    => self::SAVED_DATABASE_NAME,
 				'table_name'      => $table_name,
 				'constraint_name' => $index_name,
 				'constraint_type' => $constraint_type,
@@ -1283,7 +1281,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$this->connection->quote_identifier( $this->get_table_name( $table_is_temporary, 'table_constraints' ) )
 			),
 			array(
-				$this->db_name,
+				self::SAVED_DATABASE_NAME,
 				$table_name,
 				$name,
 			)
@@ -1333,7 +1331,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 			array(
-				'TABLE_SCHEMA'    => $this->db_name,
+				'TABLE_SCHEMA'    => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'      => $table_name,
 				'CONSTRAINT_NAME' => $name,
 			)
@@ -1342,7 +1340,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'statistics' ),
 			array(
-				'TABLE_SCHEMA' => $this->db_name,
+				'TABLE_SCHEMA' => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'   => $table_name,
 				'INDEX_NAME'   => $name,
 			)
@@ -1351,7 +1349,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
 			array(
-				'TABLE_SCHEMA'            => $this->db_name,
+				'TABLE_SCHEMA'            => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'              => $table_name,
 				'CONSTRAINT_NAME'         => $name,
 
@@ -1379,7 +1377,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 			array(
-				'TABLE_SCHEMA'    => $this->db_name,
+				'TABLE_SCHEMA'    => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'      => $table_name,
 				'CONSTRAINT_NAME' => $name,
 			)
@@ -1388,7 +1386,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'referential_constraints' ),
 			array(
-				'CONSTRAINT_SCHEMA' => $this->db_name,
+				'CONSTRAINT_SCHEMA' => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'        => $table_name,
 				'CONSTRAINT_NAME'   => $name,
 			)
@@ -1397,12 +1395,12 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
 			array(
-				'TABLE_SCHEMA'            => $this->db_name,
+				'TABLE_SCHEMA'            => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'              => $table_name,
 				'CONSTRAINT_NAME'         => $name,
 
 				// Remove only FOREIGN KEY records; not PRIMARY/UNIQUE KEY data.
-				'REFERENCED_TABLE_SCHEMA' => $this->db_name,
+				'REFERENCED_TABLE_SCHEMA' => self::SAVED_DATABASE_NAME,
 			)
 		);
 	}
@@ -1422,7 +1420,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 			array(
-				'CONSTRAINT_SCHEMA' => $this->db_name,
+				'CONSTRAINT_SCHEMA' => self::SAVED_DATABASE_NAME,
 				'TABLE_NAME'        => $table_name,
 				'CONSTRAINT_TYPE'   => 'CHECK',
 				'CONSTRAINT_NAME'   => $name,
@@ -1432,7 +1430,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->delete_values(
 			$this->get_table_name( $table_is_temporary, 'check_constraints' ),
 			array(
-				'CONSTRAINT_SCHEMA' => $this->db_name,
+				'CONSTRAINT_SCHEMA' => self::SAVED_DATABASE_NAME,
 				'CONSTRAINT_NAME'   => $name,
 			)
 		);
@@ -1462,7 +1460,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$generation_expression               = $this->get_column_generation_expression( $node );
 
 		return array(
-			'table_schema'             => $this->db_name,
+			'table_schema'             => self::SAVED_DATABASE_NAME,
 			'table_name'               => $table_name,
 			'column_name'              => $column_name,
 			'ordinal_position'         => $position,
@@ -1507,10 +1505,10 @@ class WP_SQLite_Information_Schema_Builder {
 		if ( $has_inline_primary_key || $has_inline_unique_key ) {
 			$index_name = $has_inline_primary_key ? 'PRIMARY' : $column_name;
 			return array(
-				'table_schema'  => $this->db_name,
+				'table_schema'  => self::SAVED_DATABASE_NAME,
 				'table_name'    => $table_name,
 				'non_unique'    => 0,
-				'index_schema'  => $this->db_name,
+				'index_schema'  => self::SAVED_DATABASE_NAME,
 				'index_name'    => $index_name,
 				'seq_in_index'  => 1,
 				'column_name'   => $column_name,
@@ -1578,7 +1576,7 @@ class WP_SQLite_Information_Schema_Builder {
 					AND table_name = ?
 					AND column_name IN (' . implode( ',', array_fill( 0, count( $column_names ), '?' ) ) . ')
 				',
-				array_merge( array( $this->db_name, $table_name ), $column_names )
+				array_merge( array( self::SAVED_DATABASE_NAME, $table_name ), $column_names )
 			)->fetchAll(
 				PDO::FETCH_ASSOC // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 			);
@@ -1627,10 +1625,10 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 
 			$statistics_data[] = array(
-				'table_schema'  => $this->db_name,
+				'table_schema'  => self::SAVED_DATABASE_NAME,
 				'table_name'    => $table_name,
 				'non_unique'    => $non_unique,
-				'index_schema'  => $this->db_name,
+				'index_schema'  => self::SAVED_DATABASE_NAME,
 				'index_name'    => $index_name,
 				'seq_in_index'  => $seq_in_index,
 				'column_name'   => $column_name,
@@ -1681,9 +1679,9 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		return array(
-			'table_schema'      => $this->db_name,
+			'table_schema'      => self::SAVED_DATABASE_NAME,
 			'table_name'        => $table_name,
-			'constraint_schema' => $this->db_name,
+			'constraint_schema' => self::SAVED_DATABASE_NAME,
 			'constraint_name'   => $name,
 			'constraint_type'   => $type,
 			'enforced'          => $enforced,
@@ -1730,7 +1728,7 @@ class WP_SQLite_Information_Schema_Builder {
 				AND non_unique = 0
 				ORDER BY index_name = 'PRIMARY' DESC, index_name, seq_in_index
 			",
-			array( $this->db_name, $referenced_table_name )
+			array( self::SAVED_DATABASE_NAME, $referenced_table_name )
 		)->fetchAll(
 			PDO::FETCH_ASSOC // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 		);
@@ -1759,9 +1757,9 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$name = $this->get_table_constraint_name( $node, $table_name );
 		return array(
-			'constraint_schema'        => $this->db_name,
+			'constraint_schema'        => self::SAVED_DATABASE_NAME,
 			'constraint_name'          => $name,
-			'unique_constraint_schema' => $this->db_name,
+			'unique_constraint_schema' => self::SAVED_DATABASE_NAME,
 			'unique_constraint_name'   => $unique_constraint_name,
 			'update_rule'              => $on_update,
 			'delete_rule'              => $on_delete,
@@ -1796,7 +1794,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$referenced_identifiers  = $referenced_table->get_descendant_nodes( 'identifier' );
 			$referenced_table_schema = count( $referenced_identifiers ) > 1
 				? $this->get_value( $referenced_identifiers[0] )
-				: $this->db_name;
+				: self::SAVED_DATABASE_NAME;
 			$referenced_table_name   = $this->get_value( end( $referenced_identifiers ) );
 			$referenced_columns      = $references->get_first_child_node( 'identifierListWithParentheses' )
 				->get_first_child_node( 'identifierList' )
@@ -1829,9 +1827,9 @@ class WP_SQLite_Information_Schema_Builder {
 			$position    = $i + 1;
 
 			$rows[] = array(
-				'constraint_schema'             => $this->db_name,
+				'constraint_schema'             => self::SAVED_DATABASE_NAME,
 				'constraint_name'               => $name,
-				'table_schema'                  => $this->db_name,
+				'table_schema'                  => self::SAVED_DATABASE_NAME,
 				'table_name'                    => $table_name,
 				'column_name'                   => $column_name,
 				'ordinal_position'              => $position,
@@ -1864,7 +1862,7 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		return array(
-			'constraint_schema' => $this->db_name,
+			'constraint_schema' => self::SAVED_DATABASE_NAME,
 			'constraint_name'   => $this->get_table_constraint_name( $node, $table_name ),
 			'check_clause'      => $check_clause,
 		);
@@ -1914,7 +1912,7 @@ class WP_SQLite_Information_Schema_Builder {
 			    WHERE c.table_schema = ?
 			    AND c.table_name = ?
 			',
-			array( $this->db_name, $table_name )
+			array( self::SAVED_DATABASE_NAME, $table_name )
 		);
 	}
 
@@ -2556,7 +2554,7 @@ class WP_SQLite_Information_Schema_Builder {
 					)
 				),
 				array(
-					$this->db_name,
+					self::SAVED_DATABASE_NAME,
 					$table_name,
 					str_replace( array( '_', '%' ), array( '\\_', '\\%' ), $table_name ) . "\\_{$type}\\_%",
 				)
@@ -2654,7 +2652,7 @@ class WP_SQLite_Information_Schema_Builder {
 					)
 				),
 				array(
-					$this->db_name,
+					self::SAVED_DATABASE_NAME,
 					$table_name,
 					$name,
 					str_replace( array( '_', '%' ), array( '\\_', '\\%' ), $name ) . '\\_%',
