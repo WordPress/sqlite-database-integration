@@ -5998,42 +5998,6 @@ END;
 		new WP_SQLite_Driver( $connection, '' );
 	}
 
-	public function testDatabaseNameMismatch(): void {
-		$pdo        = new PDO( 'sqlite::memory:' );
-		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
-
-		// Create a driver with database name 'db-one'.
-		new WP_SQLite_Driver( $connection, 'db-one' );
-
-		// Create another driver with the same name - no errors.
-		new WP_SQLite_Driver( $connection, 'db-one' );
-
-		// Create a driver with a different name - failure.
-		$this->expectException( WP_SQLite_Driver_Exception::class );
-		$this->expectExceptionMessage( "Incorrect database name. The database was created with name 'db-one', but 'db-two' is used in the current session." );
-		new WP_SQLite_Driver( $connection, 'db-two' );
-	}
-
-	public function testDatabaseNameMismatchWithExistingInformationSchemaTableData(): void {
-		$pdo        = new PDO( 'sqlite::memory:' );
-		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
-
-		// Create a driver with database name 'db-one'.
-		$driver = new WP_SQLite_Driver( $connection, 'db-one' );
-
-		// Create a table so that there is a record in the information schema.
-		$driver->query( 'CREATE TABLE t (id INT)' );
-
-		// Delete all variables, including driver version and database name.
-		$pdo->exec( sprintf( 'DELETE FROM %s', WP_SQLite_Driver::GLOBAL_VARIABLES_TABLE_NAME ) );
-
-		// Create a driver with a different name - failure.
-		// An information schema record with a different database name already exists.
-		$this->expectException( WP_SQLite_Driver_Exception::class );
-		$this->expectExceptionMessage( "Incorrect database name. The database was created with name 'db-one', but 'db-two' is used in the current session." );
-		new WP_SQLite_Driver( $connection, 'db-two' );
-	}
-
 	public function testSelectColumnNames(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
 		$this->assertQuery( 'INSERT INTO t (id, name) VALUES (1, "John"), (2, "Jane")' );

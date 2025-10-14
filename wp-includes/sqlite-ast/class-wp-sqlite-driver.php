@@ -636,7 +636,6 @@ class WP_SQLite_Driver {
 
 		// Initialize information schema builder.
 		$this->information_schema_builder = new WP_SQLite_Information_Schema_Builder(
-			$this->main_db_name,
 			self::RESERVED_PREFIX,
 			$this->connection
 		);
@@ -925,7 +924,7 @@ class WP_SQLite_Driver {
 						',
 						$this->quote_sqlite_identifier( $columns_table )
 					),
-					array( $this->db_name, $table, $name )
+					array( $this->get_saved_db_name(), $table, $name )
 				)->fetch( PDO::FETCH_ASSOC );
 
 				if ( false === $column_info ) {
@@ -1659,7 +1658,7 @@ class WP_SQLite_Driver {
 								),
 								implode( ', ', $temporary_table_names )
 							),
-							array( $this->db_name, $column_name )
+							array( $this->get_saved_db_name(), $column_name )
 						)->fetchAll( PDO::FETCH_COLUMN );
 					}
 
@@ -1673,7 +1672,7 @@ class WP_SQLite_Driver {
 								),
 								implode( ', ', $persistent_table_names )
 							),
-							array( $this->db_name, $column_name )
+							array( $this->get_saved_db_name(), $column_name )
 						)->fetchAll( PDO::FETCH_COLUMN );
 					}
 
@@ -1940,7 +1939,7 @@ class WP_SQLite_Driver {
 					'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
 					$this->quote_sqlite_identifier( $tables_table )
 				),
-				array( $this->db_name, $table_name )
+				array( $this->get_saved_db_name(), $table_name )
 			)->fetchColumn();
 
 			if ( $table_exists ) {
@@ -1987,7 +1986,7 @@ class WP_SQLite_Driver {
 				FROM %s WHERE table_schema = ? AND table_name = ?',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// Track column renames and removals.
@@ -2367,7 +2366,7 @@ class WP_SQLite_Driver {
 					ROWID,
 					SEQ_IN_INDEX
 			",
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
 		$this->set_results_from_fetched_data( $index_info );
@@ -2407,7 +2406,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $tables_tables ),
 				$condition ?? ''
 			),
-			array( $database )
+			array( $this->get_saved_db_name( $database ) )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
@@ -2476,7 +2475,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $table_tables ),
 				$condition ?? ''
 			),
-			array( $database )
+			array( $this->get_saved_db_name( $database ) )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
@@ -2534,7 +2533,7 @@ class WP_SQLite_Driver {
 				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
 				$this->quote_sqlite_identifier( $tables_tables )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name( $database ), $table_name )
 		)->fetchColumn();
 
 		if ( ! $table_exists ) {
@@ -2558,7 +2557,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $columns_table ),
 				$condition ?? ''
 			),
-			array( $database, $table_name )
+			array( $this->get_saved_db_name( $database ), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		if ( false === $column_info ) {
@@ -2610,7 +2609,7 @@ class WP_SQLite_Driver {
 				AND table_name = ?
 				ORDER BY ordinal_position
 			',
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
 		$this->set_results_from_fetched_data( $column_info );
@@ -4194,7 +4193,7 @@ class WP_SQLite_Driver {
 					'SELECT COLUMN_NAME FROM %s WHERE table_schema = ? AND table_name = ?',
 					$this->quote_sqlite_identifier( $columns_table )
 				),
-				array( $this->db_name, $table_name )
+				array( $this->get_saved_db_name(), $table_name )
 			)->fetchAll( PDO::FETCH_COLUMN );
 			$column_map    = array_combine( $column_names, $column_names );
 		}
@@ -4360,7 +4359,7 @@ class WP_SQLite_Driver {
 				AND table_name = ?
 				ORDER BY ordinal_position
 			',
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 2. Get the list of fields explicitly defined in the INSERT statement.
@@ -4497,7 +4496,7 @@ class WP_SQLite_Driver {
 				WHERE table_schema = ?
 				AND table_name = ?
 			',
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$column_map    = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
 
@@ -4857,6 +4856,21 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Get the database name as it is saved in the information schema tables.
+	 *
+	 * @param  string|null $db_name Optional. The database name to use. Defaults to the current database name.
+	 * @return string               The database name as it is saved in the information schema tables.
+	 */
+	private function get_saved_db_name( ?string $db_name = null ): string {
+		if ( null === $db_name ) {
+			$db_name = $this->db_name;
+		}
+		return $this->main_db_name === $db_name
+			? WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME
+			: $db_name;
+	}
+
+	/**
 	 * Generate a SQLite CREATE TABLE statement from information schema data.
 	 *
 	 * @param  bool        $table_is_temporary Whether the table is temporary.
@@ -4880,7 +4894,7 @@ class WP_SQLite_Driver {
 				AND table_schema = ?
 				AND table_name = ?
 			",
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetch( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
@@ -4897,7 +4911,7 @@ class WP_SQLite_Driver {
 				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
@@ -4920,7 +4934,7 @@ class WP_SQLite_Driver {
 				",
 				$this->quote_sqlite_identifier( $statistics_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$grouped_constraints = array();
@@ -4938,7 +4952,7 @@ class WP_SQLite_Driver {
 				'SELECT * FROM %s WHERE constraint_schema = ? AND table_name = ? ORDER BY constraint_name',
 				$this->quote_sqlite_identifier( $referential_constraints_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$key_column_usage_map = array();
@@ -4950,7 +4964,7 @@ class WP_SQLite_Driver {
 					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? AND referenced_column_name IS NOT NULL',
 					$this->quote_sqlite_identifier( $key_column_usage_table )
 				),
-				array( $this->db_name, $table_name )
+				array( $this->get_saved_db_name(), $table_name )
 			)->fetchAll( PDO::FETCH_ASSOC );
 
 			$key_column_usage_map = array();
@@ -4982,7 +4996,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $table_constraints_table ),
 				$this->quote_sqlite_identifier( $check_constraints_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 6. Generate CREATE TABLE statement columns.
@@ -5204,7 +5218,7 @@ class WP_SQLite_Driver {
 				AND table_schema = ?
 				AND table_name = ?
 			",
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetch( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
@@ -5224,7 +5238,7 @@ class WP_SQLite_Driver {
 				',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
@@ -5247,7 +5261,7 @@ class WP_SQLite_Driver {
 				",
 				$this->quote_sqlite_identifier( $statistics_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$grouped_constraints = array();
@@ -5265,7 +5279,7 @@ class WP_SQLite_Driver {
 				'SELECT * FROM %s WHERE constraint_schema = ? AND table_name = ? ORDER BY constraint_name',
 				$this->quote_sqlite_identifier( $referential_constraints_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$key_column_usage_map = array();
@@ -5277,7 +5291,7 @@ class WP_SQLite_Driver {
 					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? AND referenced_column_name IS NOT NULL',
 					$this->quote_sqlite_identifier( $key_column_usage_table )
 				),
-				array( $this->db_name, $table_name )
+				array( $this->get_saved_db_name(), $table_name )
 			)->fetchAll( PDO::FETCH_ASSOC );
 
 			$key_column_usage_map = array();
@@ -5309,7 +5323,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $table_constraints_table ),
 				$this->quote_sqlite_identifier( $check_constraints_table )
 			),
-			array( $this->db_name, $table_name )
+			array( $this->get_saved_db_name(), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 6. Generate CREATE TABLE statement columns.
