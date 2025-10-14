@@ -12,13 +12,6 @@
  */
 class WP_SQLite_Configurator {
 	/**
-	 * The name of the database.
-	 *
-	 * @var string
-	 */
-	private $db_name;
-
-	/**
 	 * The SQLite driver instance.
 	 *
 	 * @var WP_SQLite_Driver
@@ -42,16 +35,13 @@ class WP_SQLite_Configurator {
 	/**
 	 * Constructor.
 	 *
-	 * @param string                               $db_name        The name of the database.
 	 * @param WP_SQLite_Driver                     $driver         The SQLite driver instance.
 	 * @param WP_SQLite_Information_Schema_Builder $schema_builder The information schema builder instance.
 	 */
 	public function __construct(
-		string $db_name,
 		WP_SQLite_Driver $driver,
 		WP_SQLite_Information_Schema_Builder $schema_builder
 	) {
-		$this->db_name              = $db_name;
 		$this->driver               = $driver;
 		$this->schema_builder       = $schema_builder;
 		$this->schema_reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
@@ -72,20 +62,6 @@ class WP_SQLite_Configurator {
 		if ( version_compare( $version, $db_version ) > 0 ) {
 			$this->configure_database();
 		}
-
-		// Ensure that the database name used in the current session corresponds
-		// to the database name that is stored in the information schema tables.
-		$db_name = $this->driver->get_saved_database_name();
-		if ( $this->db_name !== $db_name ) {
-			throw new WP_SQLite_Driver_Exception(
-				$this->driver,
-				sprintf(
-					"Incorrect database name. The database was created with name '%s', but '%s' is used in the current session.",
-					$db_name,
-					$this->db_name
-				)
-			);
-		}
 	}
 
 	/**
@@ -105,7 +81,7 @@ class WP_SQLite_Configurator {
 			$this->schema_builder->ensure_information_schema_tables();
 			$this->schema_reconstructor->ensure_correct_information_schema();
 			$this->save_current_driver_version();
-			$this->ensure_schemata_data();
+			$this->ensure_database_data();
 		} catch ( Throwable $e ) {
 			$this->driver->execute_sqlite_query( 'ROLLBACK' );
 			throw $e;
@@ -131,70 +107,147 @@ class WP_SQLite_Configurator {
 	}
 
 	/**
-	 * Ensure that the "SCHEMATA" table data is correctly populated.
+	 * Ensure that the database data is correctly populated.
 	 *
 	 * This method ensures that the "INFORMATION_SCHEMA.SCHEMATA" table contains
 	 * records for both the "INFORMATION_SCHEMA" database and the user database.
 	 * At the moment, only a single user database is supported.
+	 *
+	 * Additionally, this method ensures that the user database name is stored
+	 * correctly in all the information schema tables.
 	 */
-	public function ensure_schemata_data(): void {
+	public function ensure_database_data(): void {
+		// Get all databases from the "SCHEMATA" table.
 		$schemata_table = $this->schema_builder->get_table_name( false, 'schemata' );
-
-		// 1. Ensure that the "INFORMATION_SCHEMA" database record exists.
-		$this->driver->execute_sqlite_query(
+		$databases      = $this->driver->execute_sqlite_query(
 			sprintf(
-				'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME)
-				VALUES (?, ?, ?) ON CONFLICT(SCHEMA_NAME) DO NOTHING',
-				$this->driver->get_connection()->quote_identifier( $schemata_table )
-			),
-			// The "INFORMATION_SCHEMA" database stays on "utf8mb3" even in MySQL 8 and 9.
-			array( 'information_schema', 'utf8mb3', 'utf8mb3_general_ci' )
-		);
-
-		// 2. Bail out if a user database record already exists.
-		$user_db_record_exists = $this->driver->execute_sqlite_query(
-			sprintf(
-				"SELECT COUNT(*) FROM %s WHERE SCHEMA_NAME != 'information_schema'",
+				'SELECT SCHEMA_NAME FROM %s',
 				$this->driver->get_connection()->quote_identifier( $schemata_table )
 			)
-		)->fetchColumn() > 0;
+		)->fetchAll( PDO::FETCH_COLUMN ); // phpcs:disable WordPress.DB.RestrictedClasses.mysql__PDO
 
-		if ( $user_db_record_exists ) {
-			return;
+		// Ensure that the "INFORMATION_SCHEMA" database record exists.
+		if ( ! in_array( 'information_schema', $databases, true ) ) {
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME) VALUES (?, ?, ?)',
+					$this->driver->get_connection()->quote_identifier( $schemata_table )
+				),
+				// The "INFORMATION_SCHEMA" database stays on "utf8mb3" even in MySQL 8 and 9.
+				array( 'information_schema', 'utf8mb3', 'utf8mb3_general_ci' )
+			);
 		}
 
-		/*
-		 * 3. Migrate from older driver versions without the "SCHEMATA" table.
-		 *
-		 * If a record with an existing database name value is already stored in
-		 * "INFORMATION_SCHEMA.TABLES", we need to use that value. This ensures
-		 * migration from older driver versions without the "SCHEMATA" table.
-		 */
-		$information_schema_db_name = $this->driver->execute_sqlite_query(
-			sprintf(
-				'SELECT table_schema FROM %s LIMIT 1',
-				$this->driver->get_connection()->quote_identifier(
-					$this->schema_builder->get_table_name( false, 'tables' )
-				)
-			)
-		)->fetchColumn();
-
-		if ( false !== $information_schema_db_name ) {
-			$db_name = $information_schema_db_name;
-		} else {
-			$db_name = $this->db_name;
+		// Get the existing user database name.
+		$existing_user_db_name = null;
+		foreach ( $databases as $database ) {
+			if ( 'information_schema' !== strtolower( $database ) ) {
+				$existing_user_db_name = $database;
+				break;
+			}
 		}
 
-		// 4. Create a user database record.
-		$this->driver->execute_sqlite_query(
-			sprintf(
-				'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME) VALUES (?, ?, ?)',
-				$this->driver->get_connection()->quote_identifier( $schemata_table )
-			),
-			// @TODO: This should probably be version-dependent.
-			//        Before MySQL 8, the default was different.
-			array( $db_name, 'utf8mb4', 'utf8mb4_0900_ai_ci' )
-		);
+		// Ensure that the user database record exists.
+		if ( null === $existing_user_db_name ) {
+			$existing_user_db_name = WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME;
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					'INSERT INTO %s (SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME) VALUES (?, ?, ?)',
+					$this->driver->get_connection()->quote_identifier( $schemata_table )
+				),
+				// @TODO: This should probably be version-dependent.
+				//        Before MySQL 8, the default was different.
+				array( $existing_user_db_name, 'utf8mb4', 'utf8mb4_0900_ai_ci' )
+			);
+		}
+
+		// Migrate from older versions without dynamic database names.
+		$saved_database_name = WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME;
+		if ( $saved_database_name !== $existing_user_db_name ) {
+			// INFORMATION_SCHEMA.SCHEMATA
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET SCHEMA_NAME = ? WHERE SCHEMA_NAME != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $schemata_table )
+				),
+				array( $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.TABLES
+			$tables_table = $this->schema_builder->get_table_name( false, 'tables' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET TABLE_SCHEMA = ? WHERE TABLE_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $tables_table )
+				),
+				array( $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.COLUMNS
+			$columns_table = $this->schema_builder->get_table_name( false, 'columns' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET TABLE_SCHEMA = ? WHERE TABLE_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $columns_table )
+				),
+				array( $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.STATISTICS
+			$statistics_table = $this->schema_builder->get_table_name( false, 'statistics' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET TABLE_SCHEMA = ?, INDEX_SCHEMA = ? WHERE TABLE_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $statistics_table )
+				),
+				array( $saved_database_name, $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+			$table_constraints_table = $this->schema_builder->get_table_name( false, 'table_constraints' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET TABLE_SCHEMA = ?, CONSTRAINT_SCHEMA = ? WHERE TABLE_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $table_constraints_table )
+				),
+				array( $saved_database_name, $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+			$referential_constraints_table = $this->schema_builder->get_table_name( false, 'referential_constraints' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET CONSTRAINT_SCHEMA = ?, UNIQUE_CONSTRAINT_SCHEMA = ? WHERE CONSTRAINT_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $referential_constraints_table )
+				),
+				array( $saved_database_name, $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+			$key_column_usage_table = $this->schema_builder->get_table_name( false, 'key_column_usage' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s
+					SET
+					  TABLE_SCHEMA = ?,
+					  CONSTRAINT_SCHEMA = ?,
+					  REFERENCED_TABLE_SCHEMA = IIF(REFERENCED_TABLE_SCHEMA IS NULL, NULL, ?)
+					WHERE TABLE_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $key_column_usage_table )
+				),
+				array( $saved_database_name, $saved_database_name, $saved_database_name )
+			);
+
+			// INFORMATION_SCHEMA.CHECK_CONSTRAINTS
+			$check_constraints_table = $this->schema_builder->get_table_name( false, 'check_constraints' );
+			$this->driver->execute_sqlite_query(
+				sprintf(
+					"UPDATE %s SET CONSTRAINT_SCHEMA = ? WHERE CONSTRAINT_SCHEMA != 'information_schema'",
+					$this->driver->get_connection()->quote_identifier( $check_constraints_table )
+				),
+				array( $saved_database_name )
+			);
+		}
 	}
 
 	/**
