@@ -641,7 +641,7 @@ class WP_SQLite_Driver {
 		);
 
 		// Ensure that the database is configured.
-		$migrator = new WP_SQLite_Configurator( $this->db_name, $this, $this->information_schema_builder );
+		$migrator = new WP_SQLite_Configurator( $this, $this->information_schema_builder );
 		$migrator->ensure_database_configured();
 
 		$this->connection->set_query_logger(
@@ -695,32 +695,6 @@ class WP_SQLite_Driver {
 		} catch ( PDOException $e ) {
 			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
 				return $default_version;
-			}
-			throw $e;
-		}
-	}
-
-	/**
-	 * Get the database name saved in the database.
-	 *
-	 * The saved database name represents the database name that was used when
-	 * the database was initialized and configured.
-	 *
-	 * @return string The database name.
-	 * @throws PDOException When the query execution fails.
-	 */
-	public function get_saved_database_name(): string {
-		try {
-			$schemata_table = $this->information_schema_builder->get_table_name( false, 'schemata' );
-			return $this->execute_sqlite_query(
-				sprintf(
-					'SELECT SCHEMA_NAME FROM %s WHERE SCHEMA_NAME != "information_schema" LIMIT 1',
-					$this->quote_sqlite_identifier( $schemata_table )
-				)
-			)->fetchColumn() ?? '';
-		} catch ( PDOException $e ) {
-			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
-				return '';
 			}
 			throw $e;
 		}
