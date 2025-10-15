@@ -3353,7 +3353,7 @@ class WP_SQLite_Driver {
 			);
 			if ( 'information_schema' === strtolower( $schema_name ) ) {
 				$is_information_schema = true;
-			} elseif ( $this->db_name === $schema_name ) {
+			} elseif ( $this->main_db_name === $schema_name ) {
 				$is_information_schema = false;
 			} else {
 				throw $this->new_not_supported_exception(

@@ -9325,4 +9325,46 @@ END;
 		$this->assertEquals( 'information_schema', $result[0]->SCHEMA_NAME );
 		$this->assertEquals( 'wp_test_new', $result[1]->SCHEMA_NAME );
 	}
+
+	public function testDynamicDatabaseNameWithUseStatement(): void {
+		// Ensure "information_schema.tables" is empty.
+		$this->assertQuery( 'DROP TABLE _options, _dates' );
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertCount( 0, $result );
+
+		// Create a "tables" table in the "wp" database.
+		$this->assertQuery( 'CREATE TABLE tables (id INT)' );
+		$this->assertQuery( 'INSERT INTO tables (id) VALUES (1), (2)' );
+
+		// Now, unqualified "tables" refers to the "wp.tables".
+		$result = $this->assertQuery( 'SELECT * FROM tables' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( array( (object) array( 'id' => '1' ), (object) array( 'id' => '2' ) ), $result );
+
+		// Qualified references should work as well.
+		$result = $this->assertQuery( 'SELECT * FROM wp.tables' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( array( (object) array( 'id' => '1' ), (object) array( 'id' => '2' ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'tables', $result[0]->TABLE_NAME );
+
+		// Switch to the "information_schema" database.
+		$this->assertQuery( 'USE information_schema' );
+
+		// Now, unqualified "tables" refers to the "information_schema.tables".
+		$result = $this->assertQuery( 'SELECT * FROM tables' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'tables', $result[0]->TABLE_NAME );
+
+		// Qualified references should still work.
+		$result = $this->assertQuery( 'SELECT * FROM wp.tables' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( array( (object) array( 'id' => '1' ), (object) array( 'id' => '2' ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'tables', $result[0]->TABLE_NAME );
+	}
 }
