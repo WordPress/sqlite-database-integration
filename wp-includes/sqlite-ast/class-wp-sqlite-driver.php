@@ -3973,10 +3973,21 @@ class WP_SQLite_Driver {
 
 			// List all columns in the table, replacing columns targeting database
 			// name columns with the configured database name.
+			static $information_schema_db_column_map = array(
+				'SCHEMA_NAME'              => true,
+				'TABLE_SCHEMA'             => true,
+				'VIEW_SCHEMA'              => true,
+				'INDEX_SCHEMA'             => true,
+				'CONSTRAINT_SCHEMA'        => true,
+				'UNIQUE_CONSTRAINT_SCHEMA' => true,
+				'REFERENCED_TABLE_SCHEMA'  => true,
+				'TRIGGER_SCHEMA'           => true,
+			);
+
 			$expanded_list = array();
 			foreach ( $columns as $column ) {
 				$quoted_column = $this->quote_sqlite_identifier( $column );
-				if ( str_contains( strtolower( $column ), 'schema' ) ) {
+				if ( isset( $information_schema_db_column_map[ strtoupper( $column ) ] ) ) {
 					$expanded_list[] = sprintf(
 						"IIF(%s = 'information_schema', %s, %s) AS %s",
 						$quoted_column,
