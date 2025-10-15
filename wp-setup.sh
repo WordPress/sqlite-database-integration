@@ -12,6 +12,7 @@ WP_VERSION="6.7.2"
 
 DIR="$(dirname "$0")"
 WP_DIR="$DIR/wordpress"
+PLUGIN_DIR="$DIR/plugins/sqlite-database-integration"
 
 # 1. Ensure that Git is installed.
 echo "Checking if Git is installed..."
@@ -34,7 +35,7 @@ services:
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
-      - ../:/var/www/src/wp-content/plugins/sqlite-database-integration
+      - ../plugins/sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
 
   php:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
@@ -42,7 +43,7 @@ services:
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
-      - ../:/var/www/src/wp-content/plugins/sqlite-database-integration
+      - ../plugins/sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
 
   cli:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
@@ -50,13 +51,13 @@ services:
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
-      - ../:/var/www/src/wp-content/plugins/sqlite-database-integration
+      - ../plugins/sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
 EOF
 
 # 4. Add "db.php" to the "wp-content" directory.
 echo "Adding 'db.php' to the 'wp-content' directory..."
 rm -f "$WP_DIR"/src/wp-content/db.php
-cp "$DIR"/db.copy "$WP_DIR"/src/wp-content/db.php
+cp "$PLUGIN_DIR"/db.copy "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'#__DIR__.'/plugins/sqlite-database-integration'#g" "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#{SQLITE_PLUGIN}#$WP_DIR/src/wp-content/plugins/sqlite-database-integration/load.php#g" "$WP_DIR"/src/wp-content/db.php
 

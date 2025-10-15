@@ -108,7 +108,7 @@ try {
 	try {
 		execSync(
 			`composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose`,
-			{ stdio: 'inherit' }
+			{ stdio: 'inherit', cwd: path.join( __dirname, '..', '..', 'plugins', 'sqlite-database-integration' ) }
 		);
 		console.log( '\n⚠️ All tests passed, checking if expected errors/failures occurred...' );
 	} catch ( error ) {

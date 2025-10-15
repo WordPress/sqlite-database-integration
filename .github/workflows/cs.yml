@@ -46,6 +46,7 @@ jobs:
       # Validate the composer.json file.
       # @link https://getcomposer.org/doc/03-cli.md#validate
       - name: Validate Composer installation
+        working-directory: plugins/sqlite-database-integration
         run: composer validate --no-check-all
 
       # Install dependencies and handle caching in one go.
@@ -55,14 +56,17 @@ jobs:
         with:
           # Bust the cache at least once a month - output format: YYYY-MM.
           custom-cache-suffix: $(date -u "+%Y-%m")
+          working-directory: plugins/sqlite-database-integration
 
       # Check the codestyle of the files.
       # The results of the CS check will be shown inline in the PR via the CS2PR tool.
       # @link https://github.com/staabm/annotate-pull-request-from-checkstyle/
       - name: Check PHP code style
         id: phpcs
+        working-directory: plugins/sqlite-database-integration
         run: composer check-cs -- --no-cache --report-full --report-checkstyle=./phpcs-report.xml
 
       - name: Show PHPCS results in PR
         if: ${{ always() && steps.phpcs.outcome == 'failure' }}
+        working-directory: plugins/sqlite-database-integration
         run: cs2pr ./phpcs-report.xml

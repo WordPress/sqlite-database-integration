@@ -42,6 +42,8 @@ jobs:
         with:
           ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
+          working-directory: plugins/sqlite-database-integration
 
       - name: Run PHPUnit tests
-        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist 
+        working-directory: plugins/sqlite-database-integration
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist

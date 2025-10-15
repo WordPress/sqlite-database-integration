@@ -29,4 +29,5 @@ jobs:
 
       - name: Stop Docker containers
         if: always()
+        working-directory: plugins/sqlite-database-integration
         run: composer run wp-test-clean

@@ -17,7 +17,7 @@ process.env.STORAGE_STATE_PATH ??= path.join(
 
 const config = defineConfig( {
 	...baseConfig,
-	globalSetup: require.resolve( '../../wordpress/tests/e2e/config/global-setup.js' ),
+	globalSetup: require.resolve( '../../../../wordpress/tests/e2e/config/global-setup.js' ),
 	webServer: {
 		...baseConfig.webServer,
 		command: 'npm run env:start',
