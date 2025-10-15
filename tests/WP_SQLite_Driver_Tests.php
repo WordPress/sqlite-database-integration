@@ -9239,6 +9239,16 @@ END;
 			),
 			$result
 		);
+
+		// Ensure it works with table aliases.
+		$result = $this->assertQuery( 'SELECT s.schema_name FROM information_schema.schemata AS s' );
+		$this->assertEquals(
+			array(
+				(object) array( 'SCHEMA_NAME' => 'information_schema' ),
+				(object) array( 'SCHEMA_NAME' => 'wp_test_new' ),
+			),
+			$result
+		);
 	}
 
 	public function testDynamicDatabaseNameComplexScenario(): void {
