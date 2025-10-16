@@ -1351,9 +1351,13 @@ class WP_SQLite_Driver {
 					// Check if the table(s) exists.
 					$lock_items = $subnode->get_child_nodes( 'lockItem' );
 					foreach ( $lock_items as $lock_item ) {
-						$table_name = $this->unquote_sqlite_identifier(
-							$this->translate( $lock_item->get_first_child_node( 'tableRef' ) )
-						);
+						$table_ref  = $lock_item->get_first_child_node( 'tableRef' );
+						$database   = $this->get_database_name( $table_ref );
+						$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+						if ( 'information_schema' === strtolower( $database ) ) {
+							throw $this->new_access_denied_to_information_schema_exception();
+						}
+
 						try {
 							/*
 							* Attempt to query the table directly rather than checking
@@ -1532,6 +1536,13 @@ class WP_SQLite_Driver {
 			$is_token = $child instanceof WP_MySQL_Token;
 			$is_node  = $child instanceof WP_Parser_Node;
 
+			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
+				$database = $this->get_database_name( $child );
+				if ( 'information_schema' === strtolower( $database ) ) {
+					throw $this->new_access_denied_to_information_schema_exception();
+				}
+			}
+
 			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
 			if ( $is_token && WP_MySQL_Lexer::SET_SYMBOL === $child->id ) {
 				continue;
@@ -1624,6 +1635,21 @@ class WP_SQLite_Driver {
 		$table_alias_map = $this->create_table_reference_map(
 			$node->get_first_child_node( 'tableReferenceList' )
 		);
+
+		/*
+		 * Deny UPDATE for information schema tables.
+		 *
+		 * This basic approach is rather restrictive, as it blocks the usage
+		 * of information schema tables anywhere in the UPDATE statement.
+		 *
+		 * TODO: Implement support for UPDATE statements like:
+		 *         UPDATE t, information_schema.columns c SET t.column = c.column ...
+		 */
+		foreach ( $table_alias_map as $alias => $data ) {
+			if ( 'information_schema' === strtolower( $data['database'] ) ) {
+				throw $this->new_access_denied_to_information_schema_exception();
+			}
+		}
 
 		// Determine whether the UPDATE statement modifies multiple tables.
 		$update_list_node        = $node->get_first_child_node( 'updateList' );
@@ -1845,14 +1871,24 @@ class WP_SQLite_Driver {
 			$alias_map      = array();
 			$table_ref_list = $node->get_first_child_node( 'tableReferenceList' );
 			foreach ( $table_ref_list->get_descendant_nodes( 'singleTable' ) as $single_table ) {
-				$alias = $this->unquote_sqlite_identifier(
-					$this->translate( $single_table->get_first_child_node( 'tableAlias' ) )
-				);
-				$ref   = $this->unquote_sqlite_identifier(
-					$this->translate( $single_table->get_first_child_node( 'tableRef' ) )
-				);
+				$table_ref  = $single_table->get_first_child_node( 'tableRef' );
+				$alias_node = $single_table->get_first_child_node( 'tableAlias' );
+				if ( $alias_node ) {
+					$alias = $this->unquote_sqlite_identifier( $this->translate( $alias_node ) );
+				} else {
+					$alias = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+				}
 
-				$alias_map[ $alias ] = $ref;
+				// For an information schema table, check if is a DELETE target.
+				$database = $this->get_database_name( $table_ref );
+				if (
+					'information_schema' === strtolower( $database )
+					&& in_array( $alias, $table_aliases, true )
+				) {
+					throw $this->new_access_denied_to_information_schema_exception();
+				}
+
+				$alias_map[ $alias ] = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 			}
 
 			// 3. Compose the SELECT query to fetch ROWIDs to delete.
@@ -1902,6 +1938,12 @@ class WP_SQLite_Driver {
 
 		// @TODO: Translate DELETE with JOIN to use a subquery.
 
+		$table_ref = $node->get_first_child_node( 'tableRef' );
+		$database  = $this->get_database_name( $table_ref );
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
 		$query = $this->translate( $node );
 		$this->execute_sqlite_query( $query );
 		$this->set_result_from_affected_rows();
@@ -1935,9 +1977,13 @@ class WP_SQLite_Driver {
 		}
 
 		// Get table name.
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $subnode->get_first_child_node( 'tableName' ) )
-		);
+		$table_name_node = $subnode->get_first_child_node( 'tableName' );
+		$database        = $this->get_database_name( $table_name_node );
+		$table_name      = $this->unquote_sqlite_identifier( $this->translate( $table_name_node ) );
+
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
 
 		// Handle IF NOT EXISTS.
 		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
@@ -1978,9 +2024,12 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_alter_table_statement( WP_Parser_Node $node ): void {
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $node->get_first_descendant_node( 'tableRef' ) )
-		);
+		$table_ref  = $node->get_first_descendant_node( 'tableRef' );
+		$database   = $this->get_database_name( $table_ref );
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
 
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
@@ -1994,7 +2043,7 @@ class WP_SQLite_Driver {
 				FROM %s WHERE table_schema = ? AND table_name = ?',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $this->get_saved_db_name( $database ), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// Track column renames and removals.
@@ -2063,6 +2112,11 @@ class WP_SQLite_Driver {
 		$table_is_temporary = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
 		$queries            = array();
 		foreach ( $table_refs as $table_ref ) {
+			$database = $this->get_database_name( $table_ref );
+			if ( 'information_schema' === strtolower( $database ) ) {
+				throw $this->new_access_denied_to_information_schema_exception();
+			}
+
 			$parts = array();
 			foreach ( $child_node->get_children() as $child ) {
 				$is_token = $child instanceof WP_MySQL_Token;
@@ -2100,9 +2154,12 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_truncate_table_statement( WP_Parser_Node $node ): void {
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $node->get_first_child_node( 'tableRef' ) )
-		);
+		$table_ref  = $node->get_first_child_node( 'tableRef' );
+		$database   = $this->get_database_name( $table_ref );
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
 
 		$this->execute_sqlite_query(
 			sprintf( 'DELETE FROM %s', $this->quote_sqlite_identifier( $table_name ) )
@@ -2126,14 +2183,18 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_create_index_statement( WP_Parser_Node $node ): void {
-		$this->information_schema_builder->record_create_index( $node );
-
 		$create_index = $node->get_first_child_node( 'createIndex' );
 		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
+		$table_ref    = $target->get_first_child_node( 'tableRef' );
+		$database     = $this->get_database_name( $table_ref );
+		$table_name   = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $target->get_first_child_node( 'tableRef' ) )
-		);
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$this->information_schema_builder->record_create_index( $node );
+
 		$index_name = $this->unquote_sqlite_identifier(
 			$this->translate( $create_index->get_first_child_node( 'indexName' ) )
 		);
@@ -2180,12 +2241,16 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_drop_index_statement( WP_Parser_Node $node ): void {
+		$drop_index = $node->get_first_child_node( 'dropIndex' );
+		$table_ref  = $drop_index->get_first_child_node( 'tableRef' );
+		$database   = $this->get_database_name( $table_ref );
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
 		$this->information_schema_builder->record_drop_index( $node );
 
-		$drop_index = $node->get_first_child_node( 'dropIndex' );
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $drop_index->get_first_child_node( 'tableRef' ) )
-		);
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		$index_name = $this->unquote_sqlite_identifier(
 			$this->translate( $drop_index->get_first_child_node( 'indexRef' ) )
 		);
@@ -2234,9 +2299,18 @@ class WP_SQLite_Driver {
 				return;
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
 				if ( WP_MySQL_Lexer::TABLE_SYMBOL === $keyword2->id ) {
-					$table_name = $this->unquote_sqlite_identifier(
-						$this->translate( $node->get_first_child_node( 'tableRef' ) )
-					);
+					$table_ref  = $node->get_first_child_node( 'tableRef' );
+					$database   = $this->get_database_name( $table_ref );
+					$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+
+					// Refuse SHOW CREATE TABLE for information schema tables,
+					// as we don't have the table definitions at the moment.
+					if ( 'information_schema' === strtolower( $database ) ) {
+						throw $this->new_driver_exception(
+							sprintf( "SHOW command denied to user 'sqlite'@'%%' for table '%s'", $table_name ),
+							'42000'
+						);
+					}
 
 					$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
@@ -2258,10 +2332,7 @@ class WP_SQLite_Driver {
 			case WP_MySQL_Lexer::INDEX_SYMBOL:
 			case WP_MySQL_Lexer::INDEXES_SYMBOL:
 			case WP_MySQL_Lexer::KEYS_SYMBOL:
-				$table_name = $this->unquote_sqlite_identifier(
-					$this->translate( $node->get_first_child_node( 'tableRef' ) )
-				);
-				$this->execute_show_index_statement( $table_name );
+				$this->execute_show_index_statement( $node );
 				return;
 			case WP_MySQL_Lexer::GRANTS_SYMBOL:
 				$this->set_results_from_fetched_data(
@@ -2353,10 +2424,21 @@ class WP_SQLite_Driver {
 	/**
 	 * Translate and execute a MySQL SHOW INDEX statement in SQLite.
 	 *
-	 * @param string $table_name The table name to show indexes for.
+	 * @param WP_Parser_Node $node The "showStatement" AST node.
 	 */
-	private function execute_show_index_statement( string $table_name ): void {
-		// TODO: FROM/IN (multiple)
+	private function execute_show_index_statement( WP_Parser_Node $node ): void {
+		$table_ref = $node->get_first_child_node( 'tableRef' );
+		$in_db     = $node->get_first_child_node( 'inDb' );
+
+		// Get database and table name.
+		if ( $in_db ) {
+			// FROM/IN database.
+			$database = $this->get_database_name( $in_db );
+		} else {
+			$database = $this->get_database_name( $table_ref );
+		}
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+
 		// TODO: WHERE
 
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
@@ -2410,7 +2492,7 @@ class WP_SQLite_Driver {
 					ROWID,
 					SEQ_IN_INDEX
 			",
-			array( $this->get_saved_db_name(), $table_name )
+			array( $this->get_saved_db_name( $database ), $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
 		$this->set_results_from_fetched_data( $index_info );
@@ -2554,20 +2636,17 @@ class WP_SQLite_Driver {
 	 */
 	private function execute_show_columns_statement( WP_Parser_Node $node ): void {
 		// TODO: EXTENDED, FULL
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $node->get_first_child_node( 'tableRef' ) )
-		);
+		$table_ref = $node->get_first_child_node( 'tableRef' );
+		$in_db     = $node->get_first_child_node( 'inDb' );
 
-		// FROM/IN database.
-		$in_db = $node->get_first_child_node( 'inDb' );
-		if ( null === $in_db ) {
-			$database = $this->db_name;
+		// Get database and table name.
+		if ( $in_db ) {
+			// FROM/IN database.
+			$database = $this->get_database_name( $in_db );
 		} else {
-			$database = $this->unquote_sqlite_identifier(
-				$this->translate( $in_db->get_first_child_node( 'identifier' ) )
-			);
+			$database = $this->get_database_name( $table_ref );
 		}
-
+		$table_name         = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
 		// Check if the table exists.
@@ -2632,9 +2711,9 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_describe_statement( WP_Parser_Node $node ): void {
-		$table_name = $this->unquote_sqlite_identifier(
-			$this->translate( $node->get_first_child_node( 'tableRef' ) )
-		);
+		$table_ref  = $node->get_first_child_node( 'tableRef' );
+		$database   = $this->get_database_name( $table_ref );
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
@@ -2653,7 +2732,7 @@ class WP_SQLite_Driver {
 				AND table_name = ?
 				ORDER BY ordinal_position
 			',
-			array( $this->get_saved_db_name(), $table_name )
+			array( $this->get_saved_db_name( $database ), $table_name )
 		)->fetchAll( PDO::FETCH_OBJ );
 
 		$this->set_results_from_fetched_data( $column_info );
@@ -2669,10 +2748,9 @@ class WP_SQLite_Driver {
 		$database_name = $this->unquote_sqlite_identifier(
 			$this->translate( $node->get_first_child_node( 'identifier' ) )
 		);
+		$database_name = strtolower( $database_name );
 
-		if ( 'information_schema' === strtolower( $database_name ) ) {
-			$this->db_name = 'information_schema';
-		} elseif ( $this->main_db_name === $database_name ) {
+		if ( $this->main_db_name === $database_name || 'information_schema' === $database_name ) {
 			$this->db_name = $database_name;
 		} else {
 			throw $this->new_not_supported_exception(
@@ -2925,6 +3003,11 @@ class WP_SQLite_Driver {
 		$table_ref_list = $node->get_first_child_node( 'tableRefList' );
 		$results        = array();
 		foreach ( $table_ref_list->get_child_nodes( 'tableRef' ) as $table_ref ) {
+			$database = $this->get_database_name( $table_ref );
+			if ( 'information_schema' === strtolower( $database ) ) {
+				throw $this->new_access_denied_to_information_schema_exception();
+			}
+
 			$table_name        = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 			$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
 			try {
@@ -3463,24 +3546,6 @@ class WP_SQLite_Driver {
 					)
 				);
 			}
-		}
-
-		/*
-		 * Make the 'information_schema' database read-only.
-		 *
-		 * This basic approach is rather restrictive, as it blocks the usage
-		 * of information schema tables in all data-modifying statements.
-		 *
-		 * Some of these statements can be valid, when the schema is only read:
-		 *   DELETE t FROM t JOIN information_schema.columns c ON ...
-		 *
-		 * If needed, a more granular approach can be implemented in the future.
-		 */
-		if ( true === $is_information_schema && false === $this->is_readonly ) {
-			throw $this->new_driver_exception(
-				"Access denied for user 'sqlite'@'%' to database 'information_schema'",
-				'42000'
-			);
 		}
 
 		// Database-level object name (table, view, procedure, trigger, etc.).
@@ -4080,6 +4145,10 @@ class WP_SQLite_Driver {
 				'SELECT name FROM pragma_table_info(?)',
 				array( $sqlite_table_name )
 			)->fetchAll( PDO::FETCH_COLUMN );
+
+			if ( count( $columns ) === 0 ) {
+				return $this->translate_sequence( $node->get_children() );
+			}
 
 			// List all columns in the table, replacing columns targeting database
 			// name columns with the configured database name.
@@ -4696,6 +4765,7 @@ class WP_SQLite_Driver {
 	 * The returned array maps table aliases to table names and additional data:
 	 *   - key:   table alias, or name if no alias is used
 	 *   - value: an array of table data
+	 *       - database:   the database name of the table (null for derived tables)
 	 *       - table_name: the real name of the table (null for derived tables)
 	 *       - table_expr: the table expression for a derived table (null for regular tables)
 	 *       - join_expr:  the join expression used for the table (null when no join is used)
@@ -4735,11 +4805,13 @@ class WP_SQLite_Driver {
 
 			if ( 'singleTable' === $child->rule_name ) {
 				// Extract data from the "singleTable" node.
-				$name       = $this->translate( $child->get_first_child_node( 'tableRef' ) );
+				$table_ref  = $child->get_first_child_node( 'tableRef' );
+				$name       = $this->translate( $table_ref );
 				$alias_node = $child->get_first_child_node( 'tableAlias' );
 				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
 
 				$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
+					'database'   => $this->get_database_name( $table_ref ),
 					'table_name' => $this->unquote_sqlite_identifier( $name ),
 					'table_expr' => null,
 					'join_expr'  => $this->translate( $join_expr ),
@@ -4751,6 +4823,7 @@ class WP_SQLite_Driver {
 				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
 
 				$table_map[ $this->unquote_sqlite_identifier( $alias ) ] = array(
+					'database'   => null,
 					'table_name' => null,
 					'table_expr' => $this->translate( $subquery ),
 					'join_expr'  => $this->translate( $join_expr ),
@@ -4849,6 +4922,31 @@ class WP_SQLite_Driver {
 	}
 
 	/**
+	 * Get the database name from one of fully-qualified name AST nodes.
+	 *
+	 * @param  WP_Parser_Node $node The AST node. One of "tableName", "tableRef", or "inDb".
+	 * @return string               The database name.
+	 */
+	private function get_database_name( WP_Parser_Node $node ): string {
+		if ( 'tableName' === $node->rule_name || 'tableRef' === $node->rule_name ) {
+			$parts = $node->get_descendant_nodes( 'identifier' );
+			if ( count( $parts ) > 1 ) {
+				return $this->unquote_sqlite_identifier( $this->translate( $parts[0] ) );
+			} else {
+				return $this->db_name;
+			}
+		} elseif ( 'inDb' === $node->rule_name ) {
+			return $this->unquote_sqlite_identifier(
+				$this->translate( $node->get_first_child_node( 'identifier' ) )
+			);
+		}
+
+		throw $this->new_driver_exception(
+			sprintf( 'Could not get database name from node: %s', $node->rule_name )
+		);
+	}
+
+	/**
 	 * Generate a SQLite CREATE TABLE statement from information schema data.
 	 *
 	 * @param  bool        $table_is_temporary Whether the table is temporary.
@@ -4862,6 +4960,9 @@ class WP_SQLite_Driver {
 		string $table_name,
 		?string $new_table_name = null
 	): array {
+		// This method is always used with the main database.
+		$database = $this->get_saved_db_name( $this->main_db_name );
+
 		// 1. Get table info.
 		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
@@ -4872,7 +4973,7 @@ class WP_SQLite_Driver {
 				AND table_schema = ?
 				AND table_name = ?
 			",
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetch( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
@@ -4889,7 +4990,7 @@ class WP_SQLite_Driver {
 				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
@@ -4912,7 +5013,7 @@ class WP_SQLite_Driver {
 				",
 				$this->quote_sqlite_identifier( $statistics_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$grouped_constraints = array();
@@ -4930,7 +5031,7 @@ class WP_SQLite_Driver {
 				'SELECT * FROM %s WHERE constraint_schema = ? AND table_name = ? ORDER BY constraint_name',
 				$this->quote_sqlite_identifier( $referential_constraints_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$key_column_usage_map = array();
@@ -4942,7 +5043,7 @@ class WP_SQLite_Driver {
 					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? AND referenced_column_name IS NOT NULL',
 					$this->quote_sqlite_identifier( $key_column_usage_table )
 				),
-				array( $this->get_saved_db_name(), $table_name )
+				array( $database, $table_name )
 			)->fetchAll( PDO::FETCH_ASSOC );
 
 			$key_column_usage_map = array();
@@ -4974,7 +5075,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $table_constraints_table ),
 				$this->quote_sqlite_identifier( $check_constraints_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 6. Generate CREATE TABLE statement columns.
@@ -5186,6 +5287,9 @@ class WP_SQLite_Driver {
 	 * @return string                     The CREATE TABLE statement.
 	 */
 	private function get_mysql_create_table_statement( bool $table_is_temporary, string $table_name ): ?string {
+		// This method is always used with the main database.
+		$database = $this->get_saved_db_name( $this->main_db_name );
+
 		// 1. Get table info.
 		$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 		$table_info   = $this->execute_sqlite_query(
@@ -5196,7 +5300,7 @@ class WP_SQLite_Driver {
 				AND table_schema = ?
 				AND table_name = ?
 			",
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetch( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
@@ -5216,7 +5320,7 @@ class WP_SQLite_Driver {
 				',
 				$this->quote_sqlite_identifier( $columns_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 3. Get index info, grouped by index name.
@@ -5239,7 +5343,7 @@ class WP_SQLite_Driver {
 				",
 				$this->quote_sqlite_identifier( $statistics_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$grouped_constraints = array();
@@ -5257,7 +5361,7 @@ class WP_SQLite_Driver {
 				'SELECT * FROM %s WHERE constraint_schema = ? AND table_name = ? ORDER BY constraint_name',
 				$this->quote_sqlite_identifier( $referential_constraints_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		$key_column_usage_map = array();
@@ -5269,7 +5373,7 @@ class WP_SQLite_Driver {
 					'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? AND referenced_column_name IS NOT NULL',
 					$this->quote_sqlite_identifier( $key_column_usage_table )
 				),
-				array( $this->get_saved_db_name(), $table_name )
+				array( $database, $table_name )
 			)->fetchAll( PDO::FETCH_ASSOC );
 
 			$key_column_usage_map = array();
@@ -5301,7 +5405,7 @@ class WP_SQLite_Driver {
 				$this->quote_sqlite_identifier( $table_constraints_table ),
 				$this->quote_sqlite_identifier( $check_constraints_table )
 			),
-			array( $this->get_saved_db_name(), $table_name )
+			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
 		// 6. Generate CREATE TABLE statement columns.
@@ -5687,6 +5791,18 @@ class WP_SQLite_Driver {
 		return new WP_SQLite_Driver_Exception(
 			$this,
 			sprintf( 'MySQL query not supported. Cause: %s', $cause )
+		);
+	}
+
+	/**
+	 * Create a new access denied exception for the information schema database.
+	 *
+	 * @return WP_SQLite_Driver_Exception
+	 */
+	private function new_access_denied_to_information_schema_exception(): WP_SQLite_Driver_Exception {
+		return $this->new_driver_exception(
+			"Access denied for user 'sqlite'@'%' to database 'information_schema'",
+			'42000'
 		);
 	}
 

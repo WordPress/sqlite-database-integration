@@ -4211,12 +4211,22 @@ QUERY
 	public function getInformationSchemaIsReadonlyTestData(): array {
 		return array(
 			array( 'INSERT INTO information_schema.tables (table_name) VALUES ("t")' ),
+			array( 'REPLACE INTO information_schema.tables (table_name) VALUES ("t")' ),
 			array( 'UPDATE information_schema.tables SET table_name = "new_t" WHERE table_name = "t"' ),
+			array( 'UPDATE information_schema.tables, information_schema.columns SET table_name = "new_t" WHERE table_name = "t"' ),
 			array( 'DELETE FROM information_schema.tables WHERE table_name = "t"' ),
+			array( 'DELETE it FROM t, information_schema.tables it WHERE table_name = "t"' ),
+			array( 'TRUNCATE information_schema.tables' ),
 			array( 'CREATE TABLE information_schema.new_table (id INT)' ),
 			array( 'ALTER TABLE information_schema.tables ADD COLUMN new_column INT' ),
 			array( 'DROP TABLE information_schema.tables' ),
-			array( 'TRUNCATE information_schema.tables' ),
+			array( 'LOCK TABLES information_schema.tables READ' ),
+			array( 'CREATE INDEX idx_name ON information_schema.tables (name)' ),
+			array( 'DROP INDEX `PRIMARY` ON information_schema.tables' ),
+			array( 'ANALYZE TABLE information_schema.tables' ),
+			array( 'CHECK TABLE information_schema.tables' ),
+			array( 'OPTIMIZE TABLE information_schema.tables' ),
+			array( 'REPAIR TABLE information_schema.tables' ),
 		);
 	}
 
@@ -4234,12 +4244,22 @@ QUERY
 	public function getInformationSchemaIsReadonlyWithUseTestData(): array {
 		return array(
 			array( 'INSERT INTO tables (table_name) VALUES ("t")' ),
+			array( 'REPLACE INTOtables (table_name) VALUES ("t")' ),
 			array( 'UPDATE tables SET table_name = "new_t" WHERE table_name = "t"' ),
+			array( 'UPDATE tables, columns SET table_name = "new_t" WHERE table_name = "t"' ),
 			array( 'DELETE FROM tables WHERE table_name = "t"' ),
+			array( 'DELETE it FROM t, tables it WHERE table_name = "t"' ),
+			array( 'TRUNCATE tables' ),
 			array( 'CREATE TABLE new_table (id INT)' ),
 			array( 'ALTER TABLE tables ADD COLUMN new_column INT' ),
 			array( 'DROP TABLE tables' ),
-			array( 'TRUNCATE tables' ),
+			array( 'LOCK TABLES tables READ' ),
+			array( 'CREATE INDEX idx_name ON tables (name)' ),
+			array( 'DROP INDEX `PRIMARY` ON tables' ),
+			array( 'ANALYZE TABLE tables' ),
+			array( 'CHECK TABLE tables' ),
+			array( 'OPTIMIZE TABLE tables' ),
+			array( 'REPAIR TABLE tables' ),
 		);
 	}
 
@@ -9532,6 +9552,258 @@ END;
 					'name'       => 'three',
 					'value'      => 'three-value',
 					'score'      => '0',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testFullyQualifiedTableName(): void {
+		// Ensure "information_schema.tables" is empty.
+		$this->assertQuery( 'DROP TABLE _options, _dates' );
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertCount( 0, $result );
+
+		// Switch to the "information_schema" database.
+		$this->assertQuery( 'USE information_schema' );
+
+		// CREATE TABLE
+		$this->assertQuery( 'CREATE TABLE wp.t (id INT PRIMARY KEY)' );
+		$result = $this->assertQuery( 'SHOW TABLES FROM wp' );
+		$this->assertCount( 1, $result );
+
+		// INSERT
+		$this->assertQuery( 'INSERT INTO wp.t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM wp.t' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $result );
+
+		// SELECT
+		$result = $this->assertQuery( 'SELECT * FROM wp.t' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $result );
+
+		// UPDATE
+		$this->assertQuery( 'UPDATE wp.t SET id = 2' );
+		$result = $this->assertQuery( 'SELECT * FROM wp.t' );
+		$this->assertEquals( array( (object) array( 'id' => '2' ) ), $result );
+
+		// DELETE
+		$this->assertQuery( 'DELETE FROM wp.t' );
+		$result = $this->assertQuery( 'SELECT * FROM wp.t' );
+		$this->assertCount( 0, $result );
+
+		// TRUNCATE TABLE
+		$this->assertQuery( 'INSERT INTO wp.t (id) VALUES (1)' );
+		$this->assertQuery( 'TRUNCATE TABLE wp.t' );
+		$result = $this->assertQuery( 'SELECT * FROM wp.t' );
+		$this->assertCount( 0, $result );
+
+		// SHOW CREATE TABLE
+		$result = $this->assertQuery( 'SHOW CREATE TABLE wp.t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Create Table' => implode(
+						"\n",
+						array(
+							'CREATE TABLE `t` (',
+							'  `id` int NOT NULL,',
+							'  PRIMARY KEY (`id`)',
+							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+						)
+					),
+				),
+			),
+			$result
+		);
+
+		// SHOW COLUMNS
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM wp.t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => 'PRI',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+
+		// SHOW COLUMNS with both qualified table name and "FROM database" clause.
+		// In case both are present, the "FROM database" clause takes precedence.
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM information_schema.t FROM wp' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => 'PRI',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$result
+		);
+
+		// SHOW INDEXES
+		$result = $this->assertQuery( 'SHOW INDEXES FROM wp.t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+
+		// SHOW INDEXES with both qualified table name and "FROM database" clause.
+		// In case both are present, the "FROM database" clause takes precedence.
+		$result = $this->assertQuery( 'SHOW INDEXES FROM information_schema.t FROM wp' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+
+		// DESCRIBE
+		$result = $this->assertQuery( 'DESCRIBE wp.t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'id', $result[0]->Field );
+		$this->assertEquals( 'int', $result[0]->Type );
+		$this->assertEquals( 'NO', $result[0]->Null );
+		$this->assertEquals( 'PRI', $result[0]->Key );
+		$this->assertEquals( null, $result[0]->Default );
+		$this->assertEquals( '', $result[0]->Extra );
+
+		// SHOW TABLES
+		$result = $this->assertQuery( 'SHOW TABLES FROM wp' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->Tables_in_wp );
+
+		// SHOW TABLE STATUS
+		$result = $this->assertQuery( 'SHOW TABLE STATUS FROM wp' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->Name );
+
+		// ALTER TABLE
+		$this->assertQuery( 'ALTER TABLE wp.t ADD COLUMN name VARCHAR(255)' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM wp.t' );
+		$this->assertCount( 2, $result );
+
+		// CREATE INDEX
+		$this->assertQuery( 'CREATE INDEX idx_name ON wp.t (name)' );
+		$result = $this->assertQuery( 'SHOW INDEXES FROM wp.t' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 'idx_name', $result[1]->Key_name );
+
+		// DROP INDEX
+		$this->assertQuery( 'DROP INDEX idx_name ON wp.t' );
+		$result = $this->assertQuery( 'SHOW INDEXES FROM wp.t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+
+		// LOCK TABLE
+		$this->assertQuery( 'LOCK TABLES wp.t READ' );
+
+		// UNLOCK TABLE
+		$this->assertQuery( 'UNLOCK TABLES' );
+
+		// ANALYZE TABLE
+		$this->assertQuery( 'ANALYZE TABLE wp.t' );
+
+		// CHECK TABLE
+		$this->assertQuery( 'CHECK TABLE wp.t' );
+
+		// OPTIMIZE TABLE
+		$this->assertQuery( 'OPTIMIZE TABLE wp.t' );
+
+		// REPAIR TABLE
+		$this->assertQuery( 'REPAIR TABLE wp.t' );
+
+		// DROP TABLE
+		$this->assertQuery( 'DROP TABLE wp.t' );
+		$result = $this->assertQuery( 'SHOW TABLES FROM wp' );
+		$this->assertCount( 0, $result );
+	}
+
+	public function testWriteWithUsageOfInformationSchemaTables(): void {
+		// Ensure "information_schema.tables" is empty.
+		$this->assertQuery( 'DROP TABLE _options, _dates' );
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertCount( 0, $result );
+
+		// Create a table.
+		$this->assertQuery( 'CREATE TABLE t (id INT, value VARCHAR(255))' );
+
+		// INSERT with SELECT from information schema.
+		$this->assertQuery( 'INSERT INTO t (id, value) SELECT 1, table_name FROM information_schema.tables' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 't',
+				),
+			),
+			$result
+		);
+
+		// INSERT with subselect from information schema.
+		$this->assertQuery( 'INSERT INTO t (id, value) SELECT 2, table_name FROM (SELECT table_name FROM information_schema.tables)' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 't',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 't',
+				),
+			),
+			$result
+		);
+
+		// INSERT with JOIN on information schema.
+		$this->assertQuery(
+			'INSERT INTO t (id, value)
+			SELECT 3, it.table_name
+			FROM information_schema.schemata s
+			JOIN information_schema.tables it ON s.schema_name = it.table_schema'
+		);
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertCount( 3, $result );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 't',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 't',
+				),
+				(object) array(
+					'id'    => '3',
+					'value' => 't',
+				),
+			),
+			$result
+		);
+
+		// TODO: UPDATE with JOIN on information schema is not supported yet.
+
+		// DELETE with JOIN on information schema.
+		$this->assertQuery( 'UPDATE t SET value = "other" WHERE id > 1' );
+		$this->assertQuery( 'DELETE t FROM t JOIN information_schema.tables it ON t.value = it.table_name' );
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '2',
+					'value' => 'other',
+				),
+				(object) array(
+					'id'    => '3',
+					'value' => 'other',
 				),
 			),
 			$result

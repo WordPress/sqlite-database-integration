@@ -481,7 +481,8 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param WP_Parser_Node $node The "createStatement" AST node with "createTable" child.
 	 */
 	public function record_create_table( WP_Parser_Node $node ): void {
-		$table_name       = $this->get_value( $node->get_first_descendant_node( 'tableName' ) );
+		$table_name_node  = $node->get_first_descendant_node( 'tableName' );
+		$table_name       = $this->get_table_name_from_node( $table_name_node );
 		$table_engine     = $this->get_table_engine( $node );
 		$table_row_format = 'MyISAM' === $table_engine ? 'Fixed' : 'Dynamic';
 		$table_collation  = $this->get_table_collation( $node );
@@ -638,7 +639,8 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param WP_Parser_Node $node The "alterStatement" AST node with "alterTable" child.
 	 */
 	public function record_alter_table( WP_Parser_Node $node ): void {
-		$table_name = $this->get_value( $node->get_first_descendant_node( 'tableRef' ) );
+		$table_ref  = $node->get_first_descendant_node( 'tableRef' );
+		$table_name = $this->get_table_name_from_node( $table_ref );
 		$actions    = $node->get_descendant_nodes( 'alterListItem' );
 
 		// Check if a temporary table with the given name exists.
@@ -765,7 +767,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		$table_refs = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
 		foreach ( $table_refs as $table_ref ) {
-			$table_name         = $this->get_value( $table_ref );
+			$table_name         = $this->get_table_name_from_node( $table_ref );
 			$table_is_temporary = $has_temporary_keyword || $this->temporary_table_exists( $table_name );
 
 			$this->delete_values(
@@ -809,7 +811,8 @@ class WP_SQLite_Information_Schema_Builder {
 	public function record_create_index( WP_Parser_Node $node ): void {
 		$create_index = $node->get_first_child_node( 'createIndex' );
 		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
-		$table_name   = $this->get_value( $target->get_first_child_node( 'tableRef' ) );
+		$table_ref    = $target->get_first_child_node( 'tableRef' );
+		$table_name   = $this->get_table_name_from_node( $table_ref );
 
 		$table_is_temporary = $this->temporary_table_exists( $table_name );
 		$this->record_add_index( $table_is_temporary, $table_name, $create_index );
@@ -822,7 +825,8 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function record_drop_index( WP_Parser_Node $node ): void {
 		$drop_index         = $node->get_first_child_node( 'dropIndex' );
-		$table_name         = $this->get_value( $drop_index->get_first_child_node( 'tableRef' ) );
+		$table_ref          = $drop_index->get_first_child_node( 'tableRef' );
+		$table_name         = $this->get_table_name_from_node( $table_ref );
 		$index_name         = $this->get_value( $drop_index->get_first_child_node( 'indexRef' ) );
 		$table_is_temporary = $this->temporary_table_exists( $table_name );
 		$this->record_drop_index_data( $table_is_temporary, $table_name, $index_name );
@@ -1750,9 +1754,8 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// Referenced table name.
-		$referenced_table       = $references->get_first_child_node( 'tableRef' );
-		$referenced_identifiers = $referenced_table->get_descendant_nodes( 'identifier' );
-		$referenced_table_name  = $this->get_value( end( $referenced_identifiers ) );
+		$referenced_table      = $references->get_first_child_node( 'tableRef' );
+		$referenced_table_name = $this->get_table_name_from_node( $referenced_table );
 
 		// Referenced column names.
 		$reference_parts = $references->get_first_child_node( 'identifierListWithParentheses' )
@@ -1843,7 +1846,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$referenced_table_schema = count( $referenced_identifiers ) > 1
 				? $this->get_value( $referenced_identifiers[0] )
 				: self::SAVED_DATABASE_NAME;
-			$referenced_table_name   = $this->get_value( end( $referenced_identifiers ) );
+			$referenced_table_name   = $this->get_table_name_from_node( $referenced_table );
 			$referenced_columns      = $references->get_first_child_node( 'identifierListWithParentheses' )
 				->get_first_child_node( 'identifierList' )
 				->get_child_nodes( 'identifier' );
@@ -1961,6 +1964,23 @@ class WP_SQLite_Information_Schema_Builder {
 			    AND c.table_name = ?
 			',
 			array( self::SAVED_DATABASE_NAME, $table_name )
+		);
+	}
+
+	/**
+	 * Extract table name from one of fully-qualified name AST nodes.
+	 *
+	 * @param  WP_Parser_Node $node The AST node. One of "tableName" or "tableRef".
+	 * @return string               The table name.
+	 */
+	private function get_table_name_from_node( WP_Parser_Node $node ): string {
+		if ( 'tableRef' === $node->rule_name || 'tableName' === $node->rule_name ) {
+			$parts = $node->get_descendant_nodes( 'identifier' );
+			return $this->get_value( end( $parts ) );
+		}
+
+		throw new Exception(
+			sprintf( 'Could not get table name from node: %s', $node->rule_name )
 		);
 	}
 
