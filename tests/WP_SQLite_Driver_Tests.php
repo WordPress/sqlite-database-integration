@@ -8403,22 +8403,22 @@ END;
 				),
 				array(
 					// "CAST('2024-01-01' AS DATE)" seems to behave differently in SQLite.
-					'native_type'      => 'LONGLONG',          // "DATE" in MySQL.
-					'pdo_type'         => PDO::PARAM_INT,      // PARAM_STR in MySQL.
+					'native_type'      => 'VAR_STRING',        // "DATE" in MySQL.
+					'pdo_type'         => PDO::PARAM_STR,
 					'flags'            => array( 'not_null' ), // Empty in MySQL.
 					'table'            => '',
 					'name'             => 'col_expr_11',
-					'len'              => 21,                  // 10 in MySQL.
-					'precision'        => 0,
+					'len'              => 65535,               // 10 in MySQL.
+					'precision'        => 31,                  // 0 in MySQL.
 					'sqlite:decl_type' => '',
 
 					// Additional MySQLi metadata.
 					'mysqli:orgname'   => 'col_expr_11',
 					'mysqli:orgtable'  => '',
 					'mysqli:db'        => 'wp',
-					'mysqli:charsetnr' => 63,
-					'mysqli:flags'     => 0, // 128 in MySQL.
-					'mysqli:type'      => 8, // 10 in MySQL.
+					'mysqli:charsetnr' => 255, // 63 in MySQL.
+					'mysqli:flags'     => 0,   // 128 in MySQL.
+					'mysqli:type'      => 253, // 10 in MySQL.
 				),
 				array(
 					'native_type'      => 'VAR_STRING',
@@ -9391,5 +9391,52 @@ END;
 		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'tables', $result[0]->TABLE_NAME );
+	}
+
+	public function testCastExpression(): void {
+		$result = $this->assertQuery(
+			"SELECT
+				CAST('abc' AS BINARY) AS expr_1,
+				CAST('abc' AS BINARY(2)) AS expr_2,
+				CAST('abc' AS CHAR)  AS expr_3,
+				CAST('abc' AS CHAR(2) CHARACTER SET utf8 BINARY)AS expr_4,
+				CAST('abc' AS NCHAR)AS expr_5,
+				CAST('abc' AS NATIONAL CHAR (2)) AS expr_6,
+				CAST('-10' AS SIGNED) AS expr_7,
+				CAST('-10' AS UNSIGNED INT) AS expr_8,
+				CAST('2025-10-05 14:05:28' AS DATE) AS expr_9,
+				CAST('2025-10-05 14:05:28' AS TIME) AS expr_10,
+				CAST('2025-10-05 14:05:28' AS DATETIME) AS expr_11,
+				CAST('123.456' AS DECIMAL(10,1)) AS expr_12,
+				CAST('123.456' AS FLOAT) AS expr_13,
+				CAST('123.456' AS REAL) AS expr_14,
+				CAST('123.456' AS DOUBLE) AS expr_15,
+				CAST('{\"name\":\"value\"}' AS JSON) AS expr_16
+			"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'expr_1'  => 'abc',
+					'expr_2'  => 'abc',                  // 'ab' In MySQL
+					'expr_3'  => 'abc',
+					'expr_4'  => 'abc',                 // 'ab' In MySQL
+					'expr_5'  => 'abc',
+					'expr_6'  => 'abc',                 // 'ab' In MySQL
+					'expr_7'  => '-10',
+					'expr_8'  => '-10',                 // 18446744073709551606 in MySQL
+					'expr_9'  => '2025-10-05 14:05:28', // 2025-10-05 in MySQL
+					'expr_10' => '2025-10-05 14:05:28', // 14:05:28 in MySQL
+					'expr_11' => '2025-10-05 14:05:28',
+					'expr_12' => '123.456',             // 123.5 in MySQL
+					'expr_13' => '123.456',
+					'expr_14' => '123.456',
+					'expr_15' => '123.456',
+					'expr_16' => '{"name":"value"}',
+				),
+			),
+			$result
+		);
 	}
 }

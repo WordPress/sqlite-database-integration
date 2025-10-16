@@ -3156,11 +3156,36 @@ class WP_SQLite_Driver {
 				}
 				return (string) $value;
 			case 'castType':
-				// Translate "CAST(... AS BINARY)" to "CAST(... AS BLOB)".
-				if ( $node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
-					return 'BLOB';
+				$first_child = $node->get_first_child();
+				if ( $first_child instanceof WP_Parser_Node ) {
+					$first_token = $first_child->get_first_child_token();
+				} else {
+					$first_token = $first_child;
 				}
-				return $this->translate_sequence( $node->get_children() );
+				switch ( $first_token->id ) {
+					case WP_MySQL_Lexer::BINARY_SYMBOL:
+						return 'BLOB';
+					case WP_MySQL_Lexer::CHAR_SYMBOL:
+					case WP_MySQL_Lexer::NCHAR_SYMBOL:
+					case WP_MySQL_Lexer::NATIONAL_SYMBOL:
+					case WP_MySQL_Lexer::DATE_SYMBOL:
+					case WP_MySQL_Lexer::TIME_SYMBOL:
+					case WP_MySQL_Lexer::DATETIME_SYMBOL:
+					case WP_MySQL_Lexer::JSON_SYMBOL:
+						return 'TEXT';
+					case WP_MySQL_Lexer::SIGNED_SYMBOL:
+					case WP_MySQL_Lexer::UNSIGNED_SYMBOL:
+						return 'INTEGER';
+					case WP_MySQL_Lexer::DECIMAL_SYMBOL:
+					case WP_MySQL_Lexer::FLOAT_SYMBOL:
+					case WP_MySQL_Lexer::REAL_SYMBOL:
+					case WP_MySQL_Lexer::DOUBLE_SYMBOL:
+						return 'REAL';
+					default:
+						throw $this->new_not_supported_exception(
+							sprintf( 'cast type: %s', $first_child->get_value() )
+						);
+				}
 			case 'defaultCollation':
 				// @TODO: Check and save in information schema.
 				return null;
