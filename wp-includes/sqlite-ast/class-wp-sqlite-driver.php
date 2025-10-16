@@ -2200,6 +2200,9 @@ class WP_SQLite_Driver {
 		$keyword2 = $tokens[2] ?? null;
 
 		switch ( $keyword1->id ) {
+			case WP_MySQL_Lexer::COLLATION_SYMBOL:
+				$this->execute_show_collation_statement();
+				return;
 			case WP_MySQL_Lexer::DATABASES_SYMBOL:
 				$this->execute_show_databases_statement( $node );
 				return;
@@ -2265,6 +2268,32 @@ class WP_SQLite_Driver {
 				$keyword1->get_value()
 			)
 		);
+	}
+
+	/**
+	 * Translate and execute a MySQL SHOW COLLATION statement in SQLite.
+	 */
+	private function execute_show_collation_statement(): void {
+		$definition = $this->information_schema_builder
+			->get_computed_information_schema_table_definition( 'collations' );
+
+		// TODO: LIKE and WHERE clauses.
+
+		$result = $this->execute_sqlite_query( $definition )->fetchAll( PDO::FETCH_ASSOC );
+
+		$collations = array();
+		foreach ( $result as $row ) {
+			$collations[] = (object) array(
+				'Collation'     => $row['COLLATION_NAME'],
+				'Charset'       => $row['CHARACTER_SET_NAME'],
+				'Id'            => $row['ID'],
+				'Default'       => $row['IS_DEFAULT'],
+				'Compiled'      => $row['IS_COMPILED'],
+				'Sortlen'       => $row['SORTLEN'],
+				'Pad_attribute' => $row['PAD_ATTRIBUTE'],
+			);
+		}
+		$this->set_results_from_fetched_data( $collations );
 	}
 
 	/**

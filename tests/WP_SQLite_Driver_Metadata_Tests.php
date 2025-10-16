@@ -467,6 +467,19 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCollation(): void {
+		$this->assertQuery( 'SHOW COLLATION' );
+		$actual = $this->engine->get_query_results();
+		$this->assertCount( 7, $actual );
+		$this->assertEquals( 'binary', $actual[0]->Collation );
+		$this->assertEquals( 'utf8_bin', $actual[1]->Collation );
+		$this->assertEquals( 'utf8_general_ci', $actual[2]->Collation );
+		$this->assertEquals( 'utf8_unicode_ci', $actual[3]->Collation );
+		$this->assertEquals( 'utf8mb4_bin', $actual[4]->Collation );
+		$this->assertEquals( 'utf8mb4_unicode_ci', $actual[5]->Collation );
+		$this->assertEquals( 'utf8mb4_0900_ai_ci', $actual[6]->Collation );
+	}
+
 	public function testShowDatabases(): void {
 		// Simple.
 		$this->assertQuery( 'SHOW DATABASES' );
