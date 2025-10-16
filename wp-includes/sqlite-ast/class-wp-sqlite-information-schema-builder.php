@@ -405,6 +405,54 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Get the definition and data of a computed information schema table.
+	 *
+	 * Some information schema tables can be computed on the fly when they are
+	 * referenced in a query. This method provides their definitions and data.
+	 *
+	 * @param  string $table_name The table name.
+	 * @return string|null        The table definition and data, or null if
+	 *                            the table is not a computed table.
+	 */
+	public function get_computed_information_schema_table_definition( string $table_name ): ?string {
+		switch ( strtolower( $table_name ) ) {
+			case 'character_sets':
+				return "SELECT
+						column1 AS CHARACTER_SET_NAME,
+						column2 AS DEFAULT_COLLATE_NAME,
+						column3 AS DESCRIPTION,
+						column4 AS MAXLEN
+					FROM (
+					VALUES
+						('binary', 'binary', 'Binary pseudo charset', 1),
+						('utf8', 'utf8_general_ci', 'UTF-8 Unicode', 3),
+						('utf8mb4', 'utf8mb4_0900_ai_ci', 'UTF-8 Unicode', 4)
+					)";
+			case 'collations':
+				return "SELECT
+					column1 AS COLLATION_NAME,
+					column2 AS CHARACTER_SET_NAME,
+					column3 AS ID,
+					column4 AS IS_DEFAULT,
+					column5 AS IS_COMPILED,
+					column6 AS SORTLEN,
+					column7 AS PAD_ATTRIBUTE
+				FROM (
+				VALUES
+					('binary', 'binary', 63, 'Yes', 'Yes', 1, 'NO PAD'),
+					('utf8_bin', 'utf8', 83, '', 'Yes', 1, 'PAD SPACE'),
+					('utf8_general_ci', 'utf8', 33, 'Yes', 'Yes', 1, 'PAD SPACE'),
+					('utf8_unicode_ci', 'utf8', 192, '', 'Yes', 8, 'PAD SPACE'),
+					('utf8mb4_bin', 'utf8mb4', 46, '', 'Yes', 1, 'PAD SPACE'),
+					('utf8mb4_unicode_ci', 'utf8mb4', 224, '', 'Yes', 8, 'PAD SPACE'),
+					('utf8mb4_0900_ai_ci', 'utf8mb4', 255, 'Yes', 'Yes', 0, 'NO PAD')
+				)";
+			default:
+				return null;
+		}
+	}
+
+	/**
 	 * Ensure that the temporary information schema tables exist in
 	 * the SQLite database. Tables that are missing will be created.
 	 */

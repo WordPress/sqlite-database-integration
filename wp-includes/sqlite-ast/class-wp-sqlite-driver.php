@@ -3983,6 +3983,17 @@ class WP_SQLite_Driver {
 			( null === $schema_name && 'information_schema' === $this->db_name )
 			|| ( null !== $schema_name && 'information_schema' === strtolower( $schema_name ) )
 		) {
+			$table_name = strtolower( $table_name );
+
+			// Some information schema tables can be computed on the fly.
+			if ( 'character_sets' === $table_name || 'collations' === $table_name ) {
+				$table_definition = $this->information_schema_builder
+					->get_computed_information_schema_table_definition( $table_name );
+				if ( null !== $table_definition ) {
+					return sprintf( '(%s)', $table_definition );
+				}
+			}
+
 			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 			$sqlite_table_name  = $this->information_schema_builder->get_table_name( $table_is_temporary, $table_name );
 

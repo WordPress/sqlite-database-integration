@@ -94,6 +94,105 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertEquals( 0, count( $result ) );
 	}
 
+	public function testInfromationSchemaCharacterSets(): void {
+		$result = $this->assertQuery( 'SELECT * FROM INFORMATION_SCHEMA.CHARACTER_SETS ORDER BY CHARACTER_SET_NAME' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'binary',
+					'DEFAULT_COLLATE_NAME' => 'binary',
+					'DESCRIPTION'          => 'Binary pseudo charset',
+					'MAXLEN'               => '1',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'utf8',
+					'DEFAULT_COLLATE_NAME' => 'utf8_general_ci',
+					'DESCRIPTION'          => 'UTF-8 Unicode',
+					'MAXLEN'               => '3',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'utf8mb4',
+					'DEFAULT_COLLATE_NAME' => 'utf8mb4_0900_ai_ci',
+					'DESCRIPTION'          => 'UTF-8 Unicode',
+					'MAXLEN'               => '4',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testInfromationSchemaCollations(): void {
+		$result = $this->assertQuery( 'SELECT * FROM INFORMATION_SCHEMA.COLLATIONS ORDER BY COLLATION_NAME' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLLATION_NAME'     => 'binary',
+					'CHARACTER_SET_NAME' => 'binary',
+					'ID'                 => '63',
+					'IS_DEFAULT'         => 'Yes',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'NO PAD',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8_bin',
+					'CHARACTER_SET_NAME' => 'utf8',
+					'ID'                 => '83',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8_general_ci',
+					'CHARACTER_SET_NAME' => 'utf8',
+					'ID'                 => '33',
+					'IS_DEFAULT'         => 'Yes',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8_unicode_ci',
+					'CHARACTER_SET_NAME' => 'utf8',
+					'ID'                 => '192',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '8',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '255',
+					'IS_DEFAULT'         => 'Yes',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '0',
+					'PAD_ATTRIBUTE'      => 'NO PAD',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_bin',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '46',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_unicode_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '224',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '8',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testUseStatement() {
 		$this->assertQuery( 'CREATE TABLE tables (ENGINE TEXT)' );
 		$this->assertQuery( "INSERT INTO tables (ENGINE) VALUES ('test')" );
