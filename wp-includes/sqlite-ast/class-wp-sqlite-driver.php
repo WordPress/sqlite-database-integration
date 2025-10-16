@@ -381,6 +381,13 @@ class WP_SQLite_Driver {
 	);
 
 	/**
+	 * The version of the MySQL server that the driver is configured for.
+	 *
+	 * @var int
+	 */
+	private $mysql_version;
+
+	/**
 	 * The SQLite engine version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
@@ -563,10 +570,15 @@ class WP_SQLite_Driver {
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
-	public function __construct( WP_SQLite_Connection $connection, string $database ) {
-		$this->connection   = $connection;
-		$this->main_db_name = $database;
-		$this->db_name      = $database;
+	public function __construct(
+		WP_SQLite_Connection $connection,
+		string $database,
+		int $mysql_version = 80038
+	) {
+		$this->mysql_version = $mysql_version;
+		$this->connection    = $connection;
+		$this->main_db_name  = $database;
+		$this->db_name       = $database;
 
 		// Check the database name.
 		if ( '' === $this->db_name ) {
@@ -3105,6 +3117,16 @@ class WP_SQLite_Driver {
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
 					$value = implode( ',', $this->active_sql_modes );
+				} elseif ( 'version' === $name ) {
+					$version = (string) $this->mysql_version;
+					$value   = sprintf(
+						'%d.%d.%d',
+						$version[0],
+						substr( $version, 1, 2 ),
+						substr( $version, 3, 2 )
+					);
+				} elseif ( 'version_comment' === $name ) {
+					$value = 'MySQL Community Server - GPL';
 				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 					$value = $this->session_system_variables[ $name ] ?? null;
 				} else {

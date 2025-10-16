@@ -6033,6 +6033,14 @@ END;
 		$this->assertQuery( 'SET CHARACTER SET utf8mb4' );
 	}
 
+	public function testBuiltInSystemVariables(): void {
+		$result = $this->assertQuery( 'SELECT @@version' );
+		$this->assertSame( '8.0.38', $result[0]->{'@@version'} );
+
+		$result = $this->assertQuery( 'SELECT @@version_comment' );
+		$this->assertSame( 'MySQL Community Server - GPL', $result[0]->{'@@version_comment'} );
+	}
+
 	public function testSessionSystemVariables(): void {
 		$this->assertQuery( "SET character_set_client = 'latin1'" );
 		$result = $this->assertQuery( 'SELECT @@character_set_client' );
