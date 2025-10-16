@@ -2609,7 +2609,7 @@ class WP_SQLite_Driver {
 
 		if ( 'information_schema' === strtolower( $database_name ) ) {
 			$this->db_name = 'information_schema';
-		} elseif ( $this->db_name === $database_name ) {
+		} elseif ( $this->main_db_name === $database_name ) {
 			$this->db_name = $database_name;
 		} else {
 			throw $this->new_not_supported_exception(

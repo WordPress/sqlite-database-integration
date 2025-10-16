@@ -9366,5 +9366,22 @@ END;
 		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'tables', $result[0]->TABLE_NAME );
+
+		// Switch back to the "wp" database.
+		$this->assertQuery( 'USE wp' );
+
+		// Now, unqualified "tables" refers to the "wp.tables".
+		$result = $this->assertQuery( 'SELECT * FROM tables' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( array( (object) array( 'id' => '1' ), (object) array( 'id' => '2' ) ), $result );
+
+		// Qualified references should still work.
+		$result = $this->assertQuery( 'SELECT * FROM wp.tables' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( array( (object) array( 'id' => '1' ), (object) array( 'id' => '2' ) ), $result );
+
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'tables', $result[0]->TABLE_NAME );
 	}
 }
