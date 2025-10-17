@@ -4106,11 +4106,6 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
 	public function translate_table_ref( WP_Parser_Node $node ): string {
-		// Information schema is currently accessible only in read-only queries.
-		if ( ! $this->is_readonly ) {
-			return $this->translate_sequence( $node->get_children() );
-		}
-
 		// The table reference is in "<schema>.<table>" or "<table>" format.
 		$parts  = $node->get_descendant_nodes( 'identifier' );
 		$table  = array_pop( $parts );
