@@ -1487,32 +1487,7 @@ class WP_SQLite_Driver {
 
 		// Store column meta info. This must be done before fetching data, which
 		// seems to erase type information for expressions in the SELECT clause.
-		$this->last_column_meta = array();
-		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
-			/*
-			 * Workaround for PHP PDO SQLite bug (#79664) in PHP < 7.3.
-			 * See also: https://github.com/php/php-src/pull/5654
-			 */
-			if ( PHP_VERSION_ID < 70300 ) {
-				try {
-					$this->last_column_meta[] = $stmt->getColumnMeta( $i );
-				} catch ( Throwable $e ) {
-					$this->last_column_meta[] = array(
-						'native_type' => 'null',
-						'pdo_type'    => PDO::PARAM_NULL,
-						'flags'       => array(),
-						'table'       => '',
-						'name'        => '',
-						'len'         => -1,
-						'precision'   => 0,
-					);
-				}
-				continue;
-			}
-
-			$this->last_column_meta[] = $stmt->getColumnMeta( $i );
-		}
-
+		$this->store_last_column_meta( $stmt );
 		$this->set_results_from_fetched_data(
 			$stmt->fetchAll( $this->pdo_fetch_mode )
 		);
@@ -2326,6 +2301,27 @@ class WP_SQLite_Driver {
 							)
 						);
 					}
+
+					$this->last_column_meta = array(
+						array(
+							'native_type' => 'STRING',
+							'pdo_type'    => PDO::PARAM_STR,
+							'flags'       => array( 'not_null' ),
+							'table'       => '',
+							'name'        => 'Table',
+							'len'         => 256,
+							'precision'   => 31,
+						),
+						array(
+							'native_type' => 'STRING',
+							'pdo_type'    => PDO::PARAM_STR,
+							'flags'       => array( 'not_null' ),
+							'table'       => '',
+							'name'        => 'Create Table',
+							'len'         => strlen( $sql ),
+							'precision'   => 31,
+						),
+					);
 					return;
 				}
 				break;
@@ -2342,6 +2338,17 @@ class WP_SQLite_Driver {
 						),
 					)
 				);
+				$this->last_column_meta = array(
+					array(
+						'native_type' => 'STRING',
+						'pdo_type'    => PDO::PARAM_STR,
+						'flags'       => array( 'not_null' ),
+						'table'       => '',
+						'name'        => 'Grants for root@localhost',
+						'len'         => 4096,
+						'precision'   => 31,
+					),
+				);
 				return;
 			case WP_MySQL_Lexer::TABLE_SYMBOL:
 				$this->execute_show_table_status_statement( $node );
@@ -2350,7 +2357,27 @@ class WP_SQLite_Driver {
 				$this->execute_show_tables_statement( $node );
 				return;
 			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
-				$this->last_result = true;
+				$this->last_result      = true;
+				$this->last_column_meta = array(
+					array(
+						'native_type' => 'STRING',
+						'pdo_type'    => PDO::PARAM_STR,
+						'flags'       => array( 'not_null' ),
+						'table'       => 'session_variables',
+						'name'        => 'Variable_name',
+						'len'         => 256,
+						'precision'   => 0,
+					),
+					array(
+						'native_type' => 'STRING',
+						'pdo_type'    => PDO::PARAM_STR,
+						'flags'       => array(),
+						'table'       => 'session_variables',
+						'name'        => 'Value',
+						'len'         => 4096,
+						'precision'   => 0,
+					),
+				);
 				return;
 		}
 
@@ -2372,21 +2399,22 @@ class WP_SQLite_Driver {
 
 		// TODO: LIKE and WHERE clauses.
 
-		$result = $this->execute_sqlite_query( $definition )->fetchAll( PDO::FETCH_ASSOC );
-
-		$collations = array();
-		foreach ( $result as $row ) {
-			$collations[] = (object) array(
-				'Collation'     => $row['COLLATION_NAME'],
-				'Charset'       => $row['CHARACTER_SET_NAME'],
-				'Id'            => $row['ID'],
-				'Default'       => $row['IS_DEFAULT'],
-				'Compiled'      => $row['IS_COMPILED'],
-				'Sortlen'       => $row['SORTLEN'],
-				'Pad_attribute' => $row['PAD_ATTRIBUTE'],
-			);
-		}
-		$this->set_results_from_fetched_data( $collations );
+		$stmt = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT
+					COLLATION_NAME AS `Collation`,
+					CHARACTER_SET_NAME AS `Charset`,
+					ID AS `Id`,
+					IS_DEFAULT AS `Default`,
+					IS_COMPILED AS `Compiled`,
+					SORTLEN AS `Sortlen`,
+					PAD_ATTRIBUTE AS `Pad_attribute`
+				FROM (%s)',
+				$definition
+			)
+		);
+		$this->store_last_column_meta( $stmt );
+		$this->set_results_from_fetched_data( $stmt->fetchAll( PDO::FETCH_OBJ ) );
 	}
 
 	/**
@@ -2403,7 +2431,7 @@ class WP_SQLite_Driver {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
 		}
 
-		$databases = $this->execute_sqlite_query(
+		$stmt = $this->execute_sqlite_query(
 			sprintf(
 				'SELECT SCHEMA_NAME AS Database
 				FROM (
@@ -2416,8 +2444,10 @@ class WP_SQLite_Driver {
 				$this->get_saved_db_name(),
 				$this->main_db_name,
 			)
-		)->fetchAll( PDO::FETCH_OBJ );
+		);
 
+		$this->store_last_column_meta( $stmt );
+		$databases = $stmt->fetchAll( PDO::FETCH_OBJ );
 		$this->set_results_from_fetched_data( $databases );
 	}
 
@@ -2462,7 +2492,7 @@ class WP_SQLite_Driver {
 		 */
 
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
-		$index_info       = $this->execute_sqlite_query(
+		$stmt             = $this->execute_sqlite_query(
 			'
 				SELECT
 					TABLE_NAME AS `Table`,
@@ -2493,8 +2523,10 @@ class WP_SQLite_Driver {
 					SEQ_IN_INDEX
 			",
 			array( $this->get_saved_db_name( $database ), $table_name )
-		)->fetchAll( PDO::FETCH_OBJ );
+		);
 
+		$this->store_last_column_meta( $stmt );
+		$index_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		$this->set_results_from_fetched_data( $index_info );
 	}
 
@@ -2526,45 +2558,42 @@ class WP_SQLite_Driver {
 			false, // SHOW TABLE STATUS lists only non-temporary tables.
 			'tables'
 		);
-		$table_info    = $this->execute_sqlite_query(
+		$stmt          = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? %s ORDER BY table_name',
+				'SELECT
+					table_name AS `Name`,
+					engine AS `Engine`,
+					version AS `Version`,
+					row_format AS `Row_format`,
+					table_rows AS `Rows`,
+					avg_row_length AS `Avg_row_length`,
+					data_length AS `Data_length`,
+					max_data_length AS `Max_data_length`,
+					index_length AS `Index_length`,
+					data_free AS `Data_free`,
+					auto_increment AS `Auto_increment`,
+					create_time AS `Create_time`,
+					update_time AS `Update_time`,
+					check_time AS `Check_time`,
+					table_collation AS `Collation`,
+					checksum AS `Checksum`,
+					create_options AS `Create_options`,
+					table_comment AS `Comment`
+				FROM %s
+				WHERE table_schema = ? %s
+				ORDER BY table_name',
 				$this->quote_sqlite_identifier( $tables_tables ),
 				$condition ?? ''
 			),
 			array( $this->get_saved_db_name( $database ) )
-		)->fetchAll( PDO::FETCH_ASSOC );
+		);
 
+		$this->store_last_column_meta( $stmt );
+		$table_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		if ( false === $table_info ) {
 			$this->set_results_from_fetched_data( array() );
 		}
-
-		// Format the results.
-		$tables = array();
-		foreach ( $table_info as $value ) {
-			$tables[] = (object) array(
-				'Name'            => $value['TABLE_NAME'],
-				'Engine'          => $value['ENGINE'],
-				'Version'         => $value['VERSION'],
-				'Row_format'      => $value['ROW_FORMAT'],
-				'Rows'            => $value['TABLE_ROWS'],
-				'Avg_row_length'  => $value['AVG_ROW_LENGTH'],
-				'Data_length'     => $value['DATA_LENGTH'],
-				'Max_data_length' => $value['MAX_DATA_LENGTH'],
-				'Index_length'    => $value['INDEX_LENGTH'],
-				'Data_free'       => $value['DATA_FREE'],
-				'Auto_increment'  => $value['AUTO_INCREMENT'],
-				'Create_time'     => $value['CREATE_TIME'],
-				'Update_time'     => $value['UPDATE_TIME'],
-				'Check_time'      => $value['CHECK_TIME'],
-				'Collation'       => $value['TABLE_COLLATION'],
-				'Checksum'        => $value['CHECKSUM'],
-				'Create_options'  => $value['CREATE_OPTIONS'],
-				'Comment'         => $value['TABLE_COMMENT'],
-			);
-		}
-
-		$this->set_results_from_fetched_data( $tables );
+		$this->set_results_from_fetched_data( $table_info );
 	}
 
 	/**
@@ -2590,41 +2619,33 @@ class WP_SQLite_Driver {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'table_name' );
 		}
 
+		// Handle the FULL keyword.
+		$command_type = $node->get_first_child_node( 'showCommandType' );
+		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
+
 		// Fetch table information.
 		$table_tables = $this->information_schema_builder->get_table_name(
 			false, // SHOW TABLES lists only non-temporary tables.
 			'tables'
 		);
-		$table_info   = $this->execute_sqlite_query(
+		$stmt         = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? %s ORDER BY table_name',
+				'SELECT %s FROM %s WHERE table_schema = ? %s ORDER BY table_name',
+				$is_full
+					? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
+					: sprintf( 'table_name AS `Tables_in_%s`', $database ),
 				$this->quote_sqlite_identifier( $table_tables ),
 				$condition ?? ''
 			),
 			array( $this->get_saved_db_name( $database ) )
-		)->fetchAll( PDO::FETCH_ASSOC );
+		);
 
+		$this->store_last_column_meta( $stmt );
+		$table_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		if ( false === $table_info ) {
 			$this->set_results_from_fetched_data( array() );
 		}
-
-		// Handle the FULL keyword.
-		$command_type = $node->get_first_child_node( 'showCommandType' );
-		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
-
-		// Format the results.
-		$tables = array();
-		foreach ( $table_info as $value ) {
-			$table = array(
-				"Tables_in_$database" => $value['TABLE_NAME'],
-			);
-			if ( true === $is_full ) {
-				$table['Table_type'] = $value['TABLE_TYPE'];
-			}
-			$tables[] = (object) $table;
-		}
-
-		$this->set_results_from_fetched_data( $tables );
+		$this->set_results_from_fetched_data( $table_info );
 	}
 
 	/**
@@ -2674,34 +2695,30 @@ class WP_SQLite_Driver {
 
 		// Fetch column information.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-		$column_info   = $this->execute_sqlite_query(
+		$stmt          = $this->execute_sqlite_query(
 			sprintf(
-				'SELECT * FROM %s WHERE table_schema = ? AND table_name = ? %s ORDER BY ordinal_position',
+				'SELECT
+					column_name AS `Field`,
+					column_type AS `Type`,
+					is_nullable AS `Null`,
+					column_key AS `Key`,
+					column_default AS `Default`,
+					extra AS `Extra`
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? %s
+				ORDER BY ordinal_position',
 				$this->quote_sqlite_identifier( $columns_table ),
 				$condition ?? ''
 			),
 			array( $this->get_saved_db_name( $database ), $table_name )
-		)->fetchAll( PDO::FETCH_ASSOC );
+		);
 
+		$this->store_last_column_meta( $stmt );
+		$column_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		if ( false === $column_info ) {
 			$this->set_results_from_fetched_data( array() );
 		}
-
-		// Format the results.
-		$columns = array();
-		foreach ( $column_info as $value ) {
-			$column    = array(
-				'Field'   => $value['COLUMN_NAME'],
-				'Type'    => $value['COLUMN_TYPE'],
-				'Null'    => $value['IS_NULLABLE'],
-				'Key'     => $value['COLUMN_KEY'],
-				'Default' => $value['COLUMN_DEFAULT'],
-				'Extra'   => $value['EXTRA'],
-			);
-			$columns[] = (object) $column;
-		}
-
-		$this->set_results_from_fetched_data( $columns );
+		$this->set_results_from_fetched_data( $column_info );
 	}
 
 	/**
@@ -2718,7 +2735,7 @@ class WP_SQLite_Driver {
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-		$column_info   = $this->execute_sqlite_query(
+		$stmt          = $this->execute_sqlite_query(
 			'
 				SELECT
 					column_name AS `Field`,
@@ -2733,8 +2750,10 @@ class WP_SQLite_Driver {
 				ORDER BY ordinal_position
 			',
 			array( $this->get_saved_db_name( $database ), $table_name )
-		)->fetchAll( PDO::FETCH_OBJ );
+		);
 
+		$this->store_last_column_meta( $stmt );
+		$column_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		$this->set_results_from_fetched_data( $column_info );
 	}
 
@@ -3070,6 +3089,45 @@ class WP_SQLite_Driver {
 				'Msg_text' => count( $errors ) > 0 ? 'Operation failed' : 'OK',
 			);
 		}
+
+		$this->last_column_meta = array(
+			array(
+				'native_type' => 'STRING',
+				'pdo_type'    => PDO::PARAM_STR,
+				'flags'       => array(),
+				'table'       => '',
+				'name'        => 'Table',
+				'len'         => 512,
+				'precision'   => 31,
+			),
+			array(
+				'native_type' => 'STRING',
+				'pdo_type'    => PDO::PARAM_STR,
+				'flags'       => array(),
+				'table'       => '',
+				'name'        => 'Op',
+				'len'         => 40,
+				'precision'   => 31,
+			),
+			array(
+				'native_type' => 'STRING',
+				'pdo_type'    => PDO::PARAM_STR,
+				'flags'       => array(),
+				'table'       => '',
+				'name'        => 'Msg_type',
+				'len'         => 40,
+				'precision'   => 31,
+			),
+			array(
+				'native_type' => 'TEXT',
+				'pdo_type'    => PDO::PARAM_STR,
+				'flags'       => array(),
+				'table'       => '',
+				'name'        => 'Msg_text',
+				'len'         => 1572864,
+				'precision'   => 31,
+			),
+		);
 		$this->set_results_from_fetched_data( $results );
 	}
 
@@ -4580,6 +4638,42 @@ class WP_SQLite_Driver {
 			$fragment .= $value;
 		}
 		return $fragment;
+	}
+
+	/**
+	 * Store column metadata for the last SQLite statement.
+	 *
+	 * This function stores the original SQLite column metadata as-is, without
+	 * converting it into MySQL column metadata. That is done only when needed.
+	 *
+	 * @param PDOStatement $stmt The PDOStatement object containing the SQLite column metadata.
+	 */
+	private function store_last_column_meta( PDOStatement $stmt ): void {
+		$this->last_column_meta = array();
+		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+			/*
+			 * Workaround for PHP PDO SQLite bug (#79664) in PHP < 7.3.
+			 * See also: https://github.com/php/php-src/pull/5654
+			 */
+			if ( PHP_VERSION_ID < 70300 ) {
+				try {
+					$this->last_column_meta[] = $stmt->getColumnMeta( $i );
+				} catch ( Throwable $e ) {
+					$this->last_column_meta[] = array(
+						'native_type' => 'null',
+						'pdo_type'    => PDO::PARAM_NULL,
+						'flags'       => array(),
+						'table'       => '',
+						'name'        => '',
+						'len'         => -1,
+						'precision'   => 0,
+					);
+				}
+				continue;
+			}
+
+			$this->last_column_meta[] = $stmt->getColumnMeta( $i );
+		}
 	}
 
 	/**
