@@ -2334,7 +2334,7 @@ class WP_SQLite_Driver {
 				$this->set_results_from_fetched_data(
 					array(
 						(object) array(
-							'Grants for root@localhost' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
+							'Grants for root@%' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
 						),
 					)
 				);
@@ -2344,7 +2344,7 @@ class WP_SQLite_Driver {
 						'pdo_type'    => PDO::PARAM_STR,
 						'flags'       => array( 'not_null' ),
 						'table'       => '',
-						'name'        => 'Grants for root@localhost',
+						'name'        => 'Grants for root@%',
 						'len'         => 4096,
 						'precision'   => 31,
 					),
@@ -5890,7 +5890,7 @@ class WP_SQLite_Driver {
 	 */
 	private function new_access_denied_to_information_schema_exception(): WP_SQLite_Driver_Exception {
 		return $this->new_driver_exception(
-			"Access denied for user 'sqlite'@'%' to database 'information_schema'",
+			"Access denied for user 'root'@'%' to database 'information_schema'",
 			'42000'
 		);
 	}
