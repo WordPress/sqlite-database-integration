@@ -1542,8 +1542,12 @@ class WP_SQLite_Driver {
 				$parts[] = 'OR IGNORE';
 			} elseif (
 				$is_non_strict_mode
-				&& $child instanceof WP_Parser_Node
-				&& ( 'insertFromConstructor' === $child->rule_name || 'insertQueryExpression' === $child->rule_name )
+				&& $is_node
+				&& (
+					'insertFromConstructor' === $child->rule_name
+					|| 'insertQueryExpression' === $child->rule_name
+					|| 'updateList' === $child->rule_name
+				)
 			) {
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
@@ -4322,6 +4326,12 @@ class WP_SQLite_Driver {
 			foreach ( $fields_node->get_child_nodes() as $field ) {
 				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $field ) );
 			}
+		} elseif ( 'updateList' === $node->rule_name ) {
+			// This is the "INSERT INTO ... SET c1 = v1, c2 = v2, ... " syntax.
+			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
+				$column_ref    = $update_element->get_first_child_node( 'columnRef' );
+				$insert_list[] = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
+			}
 		} else {
 			// When no explicit field list is provided, all columns are required.
 			foreach ( array_column( $columns, 'COLUMN_NAME' ) as $column_name ) {
@@ -4402,10 +4412,25 @@ class WP_SQLite_Driver {
 			}
 		}
 
-		// 6. Wrap the original insert VALUES or SELECT expression in a FROM clause.
-		$values = 'insertFromConstructor' === $node->rule_name
-			? $node->get_first_child_node( 'insertValues' )
-			: $node->get_first_child_node( 'queryExpressionOrParens' );
+		// 6. Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
+		if ( 'insertFromConstructor' === $node->rule_name ) {
+			// VALUES (...)
+			$from = $this->translate(
+				$node->get_first_child_node( 'insertValues' )
+			);
+		} elseif ( 'insertQueryExpression' === $node->rule_name ) {
+			// SELECT ...
+			$from = $this->translate(
+				$node->get_first_child_node( 'queryExpressionOrParens' )
+			);
+		} else {
+			// SET c1 = v1, c2 = v2, ...
+			$values = array();
+			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
+				$values[] = $this->translate( $update_element->get_first_child_node( 'expr' ) );
+			}
+			$from = 'VALUES (' . implode( ', ', $values ) . ')';
+		}
 
 		/*
 		 * The "WHERE true" suffix is used to avoid parsing ambiguity in SQLite.
@@ -4414,7 +4439,7 @@ class WP_SQLite_Driver {
 		 *
 		 * See: https://www.sqlite.org/lang_insert.html
 		 */
-		$fragment .= ' FROM (' . $this->translate( $values ) . ') WHERE true';
+		$fragment .= ' FROM (' . $from . ') WHERE true';
 
 		return $fragment;
 	}
