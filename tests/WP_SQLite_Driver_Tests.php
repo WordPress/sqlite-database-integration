@@ -9439,4 +9439,40 @@ END;
 			$result
 		);
 	}
+
+	public function testInsertIntoSetSyntax(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+			  id INT PRIMARY KEY AUTO_INCREMENT,
+			  name VARCHAR(255) NOT NULL,
+			  value TEXT
+			)'
+		);
+
+		$this->assertQuery( "INSERT INTO t SET name = 'one'" );
+		$this->assertQuery( "INSERT INTO t SET name = 'two', value = 'two-value'" );
+		$this->assertQuery( "INSERT INTO t SET value = 'three-value', name = 'three'" );
+
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'name'  => 'one',
+					'value' => null,
+				),
+				(object) array(
+					'id'    => '2',
+					'name'  => 'two',
+					'value' => 'two-value',
+				),
+				(object) array(
+					'id'    => '3',
+					'name'  => 'three',
+					'value' => 'three-value',
+				),
+			),
+			$result
+		);
+	}
 }

@@ -1529,7 +1529,15 @@ class WP_SQLite_Driver {
 
 		$parts = array();
 		foreach ( $node->get_children() as $child ) {
-			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
+			$is_token = $child instanceof WP_MySQL_Token;
+			$is_node  = $child instanceof WP_Parser_Node;
+
+			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
+			if ( $is_token && WP_MySQL_Lexer::SET_SYMBOL === $child->id ) {
+				continue;
+			}
+
+			if ( $is_token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
@@ -1540,6 +1548,16 @@ class WP_SQLite_Driver {
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				$parts[]    = $this->translate_insert_or_replace_body_in_non_strict_mode( $table_name, $child );
+			} elseif ( $is_node && 'updateList' === $child->rule_name ) {
+				// Convert "SET c1 = v1, c2 = v2, ... to "(c1, c2, ...) VALUES (v1, v2, ...)".
+				$columns = array();
+				$values  = array();
+				foreach ( $child->get_child_nodes( 'updateElement' ) as $update_element ) {
+					$column_ref = $update_element->get_first_child_node( 'columnRef' );
+					$columns[]  = $this->translate( $column_ref );
+					$values[]   = $this->translate( $update_element->get_first_child_node( 'expr' ) );
+				}
+				$parts[] = '(' . implode( ', ', $columns ) . ') VALUES (' . implode( ', ', $values ) . ')';
 			} else {
 				$parts[] = $this->translate( $child );
 			}
