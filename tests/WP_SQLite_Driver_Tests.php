@@ -4202,7 +4202,7 @@ QUERY
 	 * @dataProvider getInformationSchemaIsReadonlyTestData
 	 */
 	public function testInformationSchemaIsReadonly( string $query ): void {
-		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE tables (id INT)' );
 		$this->expectException( WP_SQLite_Driver_Exception::class );
 		$this->expectExceptionMessage( "Access denied for user 'sqlite'@'%' to database 'information_schema'" );
 		$this->assertQuery( $query );
@@ -4234,7 +4234,7 @@ QUERY
 	 * @dataProvider getInformationSchemaIsReadonlyWithUseTestData
 	 */
 	public function testInformationSchemaIsReadonlyWithUse( string $query ): void {
-		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
+		$this->assertQuery( 'CREATE TABLE tables (id INT)' );
 		$this->expectException( WP_SQLite_Driver_Exception::class );
 		$this->expectExceptionMessage( "Access denied for user 'sqlite'@'%' to database 'information_schema'" );
 		$this->assertQuery( 'USE information_schema' );
@@ -4244,7 +4244,7 @@ QUERY
 	public function getInformationSchemaIsReadonlyWithUseTestData(): array {
 		return array(
 			array( 'INSERT INTO tables (table_name) VALUES ("t")' ),
-			array( 'REPLACE INTOtables (table_name) VALUES ("t")' ),
+			array( 'REPLACE INTO tables (table_name) VALUES ("t")' ),
 			array( 'UPDATE tables SET table_name = "new_t" WHERE table_name = "t"' ),
 			array( 'UPDATE tables, columns SET table_name = "new_t" WHERE table_name = "t"' ),
 			array( 'DELETE FROM tables WHERE table_name = "t"' ),
