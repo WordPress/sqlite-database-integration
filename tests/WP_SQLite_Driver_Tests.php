@@ -3882,6 +3882,22 @@ QUERY
 		);
 	}
 
+	public function testLargeNumberOfNullCharactersInStrings(): void {
+		$this->assertQuery( 'CREATE TABLE t (value TEXT)' );
+
+		$long_string_with_null_bytes = str_repeat( "abcdef\0xyz", 1000 );
+
+		$this->assertQuery(
+			sprintf(
+				"INSERT INTO t (value) VALUES ('%s')",
+				$long_string_with_null_bytes
+			)
+		);
+
+		$result = $this->assertQuery( 'SELECT value FROM t' );
+		$this->assertSame( $long_string_with_null_bytes, $result[0]->value );
+	}
+
 	public function testColumnDefaults(): void {
 		$this->assertQuery(
 			"

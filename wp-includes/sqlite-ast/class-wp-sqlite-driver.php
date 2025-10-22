@@ -3339,7 +3339,7 @@ class WP_SQLite_Driver {
 		$value = $token->get_value();
 
 		/*
-		 * 5. Translate datetime literals.
+		 * Translate datetime literals.
 		 *
 		 * Process only strings that could possibly represent a datetime
 		 * literal ("YYYY-MM-DDTHH:MM:SS", "YYYY-MM-DDTHH:MM:SSZ", etc.).
@@ -3349,7 +3349,7 @@ class WP_SQLite_Driver {
 		}
 
 		/*
-		 * 6. Handle null characters.
+		 * Handle null characters.
 		 *
 		 * SQLite doesn't fully support null characters (\u0000) in strings.
 		 * However, it can store them and read them, with some limitations.
@@ -3358,25 +3358,26 @@ class WP_SQLite_Driver {
 		 * Removing them would damage the serialized data.
 		 *
 		 * There is no way to store null bytes using a string literal, so we
-		 * need to split the string and concatenate null bytes with its parts.
+		 * need to pass the value as a HEX string and cast it back to TEXT.
 		 * This will convert literals will null bytes to expressions.
 		 *
 		 * Alternatively, we could replace string literals with parameters and
 		 * pass them using prepared statements. However, that's not universally
 		 * applicable for all string literals (e.g., in default column values).
 		 *
+		 * We can't use the "part1 || CHAR(0) || part2 || ..." syntax, because
+		 * with a large number of null bytes, SQLite throws the following error:
+		 *
+		 *   SQLSTATE[HY000]:
+		 *   General error: 1 Expression tree is too large (maximum depth 1000)
+		 *
 		 * See:
 		 *   https://www.sqlite.org/nulinstr.html
 		 */
-		$parts = array();
-		foreach ( explode( "\0", $value ) as $segment ) {
-			// Escape and quote each segment.
-			$parts[] = "'" . str_replace( "'", "''", $segment ) . "'";
+		if ( strpos( $value, "\0" ) !== false ) {
+			return sprintf( "CAST(x'%s' AS TEXT)", bin2hex( $value ) );
 		}
-		if ( count( $parts ) > 1 ) {
-			return '(' . implode( ' || CHAR(0) || ', $parts ) . ')';
-		}
-		return $parts[0];
+		return sprintf( "'%s'", str_replace( "'", "''", $value ) );
 	}
 
 	/**
