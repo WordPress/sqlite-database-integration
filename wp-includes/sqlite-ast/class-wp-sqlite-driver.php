@@ -1487,7 +1487,7 @@ class WP_SQLite_Driver {
 
 		// Store column meta info. This must be done before fetching data, which
 		// seems to erase type information for expressions in the SELECT clause.
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$this->set_results_from_fetched_data(
 			$stmt->fetchAll( $this->pdo_fetch_mode )
 		);
@@ -2413,7 +2413,7 @@ class WP_SQLite_Driver {
 				$definition
 			)
 		);
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$this->set_results_from_fetched_data( $stmt->fetchAll( PDO::FETCH_OBJ ) );
 	}
 
@@ -2446,7 +2446,7 @@ class WP_SQLite_Driver {
 			)
 		);
 
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$databases = $stmt->fetchAll( PDO::FETCH_OBJ );
 		$this->set_results_from_fetched_data( $databases );
 	}
@@ -2525,7 +2525,7 @@ class WP_SQLite_Driver {
 			array( $this->get_saved_db_name( $database ), $table_name )
 		);
 
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$index_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		$this->set_results_from_fetched_data( $index_info );
 	}
@@ -2588,7 +2588,7 @@ class WP_SQLite_Driver {
 			array( $this->get_saved_db_name( $database ) )
 		);
 
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$table_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		if ( false === $table_info ) {
 			$this->set_results_from_fetched_data( array() );
@@ -2640,7 +2640,7 @@ class WP_SQLite_Driver {
 			array( $this->get_saved_db_name( $database ) )
 		);
 
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$table_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		if ( false === $table_info ) {
 			$this->set_results_from_fetched_data( array() );
@@ -2713,7 +2713,7 @@ class WP_SQLite_Driver {
 			array( $this->get_saved_db_name( $database ), $table_name )
 		);
 
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$column_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		if ( false === $column_info ) {
 			$this->set_results_from_fetched_data( array() );
@@ -2752,7 +2752,7 @@ class WP_SQLite_Driver {
 			array( $this->get_saved_db_name( $database ), $table_name )
 		);
 
-		$this->store_last_column_meta( $stmt );
+		$this->store_last_column_meta_from_statement( $stmt );
 		$column_info = $stmt->fetchAll( PDO::FETCH_OBJ );
 		$this->set_results_from_fetched_data( $column_info );
 	}
@@ -4648,7 +4648,7 @@ class WP_SQLite_Driver {
 	 *
 	 * @param PDOStatement $stmt The PDOStatement object containing the SQLite column metadata.
 	 */
-	private function store_last_column_meta( PDOStatement $stmt ): void {
+	private function store_last_column_meta_from_statement( PDOStatement $stmt ): void {
 		$this->last_column_meta = array();
 		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
 			/*
