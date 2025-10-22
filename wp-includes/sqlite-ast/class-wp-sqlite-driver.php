@@ -3377,7 +3377,7 @@ class WP_SQLite_Driver {
 		if ( strpos( $value, "\0" ) !== false ) {
 			return sprintf( "CAST(x'%s' AS TEXT)", bin2hex( $value ) );
 		}
-		return sprintf( "'%s'", str_replace( "'", "''", $value ) );
+		return $this->connection->quote( $value );
 	}
 
 	/**
