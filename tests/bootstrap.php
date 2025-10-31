@@ -23,7 +23,7 @@ require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-s
 require_once __DIR__ . '/../wp-includes/sqlite-ast/class-wp-sqlite-information-schema-reconstructor.php';
 
 // Configure the test environment.
-error_reporting( E_ALL & ~E_DEPRECATED );
+error_reporting( E_ALL );
 define( 'FQDB', ':memory:' );
 define( 'FQDBDIR', __DIR__ . '/../testdb' );
 
