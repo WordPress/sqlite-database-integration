@@ -2925,7 +2925,7 @@ class WP_SQLite_Driver {
 		 *          SET updatable_views_with_limit = OFF;   ERROR 1231 (42000)
 		 *          SET updatable_views_with_limit = false; SELECT @@updatable_views_with_limit; -> NO
 		 */
-		$lowercase_value = strtolower( $value );
+		$lowercase_value = null === $value ? null : strtolower( $value );
 		if ( 'on' === $lowercase_value || 'off' === $lowercase_value ) {
 			$value = 'on' === $lowercase_value ? 1 : 0;
 		}
