@@ -11134,4 +11134,9 @@ END;
 			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
 		);
 	}
+
+	public function testVersionFunction(): void {
+		$result = $this->engine->query( 'SELECT VERSION()' );
+		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
+	}
 }

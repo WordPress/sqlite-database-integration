@@ -3963,6 +3963,15 @@ class WP_SQLite_Driver {
 					$found_rows = count( $this->last_result );
 				}
 				return $found_rows;
+			case 'VERSION':
+				$version = (string) $this->mysql_version;
+				$value   = sprintf(
+					'%d.%d.%d',
+					$version[0],
+					substr( $version, 1, 2 ),
+					substr( $version, 3, 2 )
+				);
+				return $this->connection->quote( $value );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
