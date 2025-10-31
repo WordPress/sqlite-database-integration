@@ -75,7 +75,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 		try {
 			$data  = array();
 			$batch = 1;
-			while ( ( $record = fgetcsv( $handle ) ) !== false ) {
+			while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 				$data[] = $record;
 				if ( count( $data ) === 1000 ) {
 					yield "batch-$batch" => array( $data );

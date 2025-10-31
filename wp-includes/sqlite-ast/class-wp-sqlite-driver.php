@@ -1598,7 +1598,7 @@ class WP_SQLite_Driver {
 		 *         UPDATE t, information_schema.columns c SET t.column = c.column ...
 		 */
 		foreach ( $table_alias_map as $alias => $data ) {
-			if ( 'information_schema' === strtolower( $data['database'] ) ) {
+			if ( 'information_schema' === strtolower( $data['database'] ?? '' ) ) {
 				throw $this->new_access_denied_to_information_schema_exception();
 			}
 		}
@@ -2281,7 +2281,7 @@ class WP_SQLite_Driver {
 							'flags'       => array( 'not_null' ),
 							'table'       => '',
 							'name'        => 'Create Table',
-							'len'         => strlen( $sql ),
+							'len'         => strlen( $sql ?? '' ),
 							'precision'   => 31,
 						),
 					);
