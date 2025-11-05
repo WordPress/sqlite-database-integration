@@ -76,7 +76,7 @@ add_filter(
  */
 function sqlite_plugin_copy_db_file() {
 	// Bail early if the PDO SQLite extension is not loaded.
-	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
+	if ( ! extension_loaded( 'pdo_sqlite' ) && ! extension_loaded( 'sqlite3' ) ) {
 		return;
 	}
 

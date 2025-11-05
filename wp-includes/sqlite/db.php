@@ -33,7 +33,7 @@ if ( ! extension_loaded( 'pdo' ) ) {
 	);
 }
 
-if ( ! extension_loaded( 'pdo_sqlite' ) ) {
+if ( ! extension_loaded( 'pdo_sqlite' ) && ! extension_loaded( 'sqlite3' ) ) {
 	wp_die(
 		new WP_Error(
 			'pdo_driver_not_loaded',
