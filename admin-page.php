@@ -61,7 +61,7 @@ function sqlite_integration_admin_screen() {
 					);
 				?>
 			</p>
-		<?php elseif ( ! extension_loaded( 'pdo_sqlite' )  && ! extension_loaded( 'sqlite3' ) ) : ?>
+		<?php elseif ( ! extension_loaded( 'pdo_sqlite' ) && ! extension_loaded( 'sqlite3' ) ) : ?>
 			<div class="notice notice-error">
 				<p><?php esc_html_e( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
 			</div>
