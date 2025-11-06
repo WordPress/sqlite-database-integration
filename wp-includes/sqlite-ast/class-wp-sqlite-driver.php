@@ -2444,7 +2444,14 @@ class WP_SQLite_Driver {
 		}
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
-		// TODO: WHERE
+		// WHERE clause.
+		$where = $node->get_first_child_node( 'whereClause' );
+		if ( null !== $where ) {
+			$value     = $this->translate( $where->get_first_child_node( 'expr' ) );
+			$condition = sprintf( 'AND %s', $value );
+		} else {
+			$condition = '';
+		}
 
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
@@ -2488,6 +2495,7 @@ class WP_SQLite_Driver {
 				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . "
 				WHERE table_schema = ?
 				AND table_name = ?
+				$condition
 				ORDER BY
 					INDEX_NAME = 'PRIMARY' DESC,
 					NON_UNIQUE = '0' DESC,

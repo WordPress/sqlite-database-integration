@@ -3018,6 +3018,19 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			),
 			$this->engine->get_query_results()
 		);
+
+		// With WHERE clause.
+		$this->assertQuery( "SHOW INDEX FROM wptests_term_relationships WHERE Key_name = 'PRIMARY'" );
+		$actual = $this->engine->get_query_results();
+		$this->assertCount( 2, $actual );
+
+		$this->assertQuery( 'SHOW INDEX FROM wptests_term_relationships WHERE Non_unique = 0' );
+		$actual = $this->engine->get_query_results();
+		$this->assertCount( 2, $actual );
+
+		$this->assertQuery( "SHOW INDEX FROM wptests_term_relationships WHERE Index_type = 'FULLTEXT'" );
+		$actual = $this->engine->get_query_results();
+		$this->assertCount( 2, $actual );
 	}
 
 	public function testShowVarianles(): void {
