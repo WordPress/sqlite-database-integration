@@ -2402,10 +2402,9 @@ class WP_SQLite_Driver {
 
 		// LIKE and WHERE clauses.
 		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
-		if ( null !== $like_or_where ) {
+		if ( $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
 		}
-
 		$stmt = $this->execute_sqlite_query(
 			sprintf(
 				'SELECT SCHEMA_NAME AS Database
@@ -2432,10 +2431,9 @@ class WP_SQLite_Driver {
 	 * @param WP_Parser_Node $node The "showStatement" AST node.
 	 */
 	private function execute_show_index_statement( WP_Parser_Node $node ): void {
+		// Get database and table name.
 		$table_ref = $node->get_first_child_node( 'tableRef' );
 		$in_db     = $node->get_first_child_node( 'inDb' );
-
-		// Get database and table name.
 		if ( $in_db ) {
 			// FROM/IN database.
 			$database = $this->get_database_name( $in_db );
@@ -2640,10 +2638,10 @@ class WP_SQLite_Driver {
 	 */
 	private function execute_show_columns_statement( WP_Parser_Node $node ): void {
 		// TODO: EXTENDED, FULL
-		$table_ref = $node->get_first_child_node( 'tableRef' );
-		$in_db     = $node->get_first_child_node( 'inDb' );
 
 		// Get database and table name.
+		$table_ref = $node->get_first_child_node( 'tableRef' );
+		$in_db     = $node->get_first_child_node( 'inDb' );
 		if ( $in_db ) {
 			// FROM/IN database.
 			$database = $this->get_database_name( $in_db );
