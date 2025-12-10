@@ -7,8 +7,17 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	private $driver;
 
 	public function setUp(): void {
-		$connection   = new WP_SQLite_Connection( array( 'path' => ':memory:' ) );
-		$this->driver = new WP_PDO_MySQL_On_SQLite( $connection, 'wp' );
+		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+	}
+
+	public function test_connection(): void {
+		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=WordPress;' );
+		$this->assertInstanceOf( PDO::class, $driver );
+	}
+
+	public function test_query(): void {
+		$result = $this->driver->query( "SELECT 1, 'abc'" );
+		$this->assertInstanceOf( PDOStatement::class, $result );
 	}
 
 	public function test_begin_transaction(): void {

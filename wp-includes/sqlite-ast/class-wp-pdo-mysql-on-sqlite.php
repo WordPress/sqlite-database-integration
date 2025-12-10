@@ -14,7 +14,7 @@
  *
  * The driver requires PDO with the SQLite driver, and the PCRE engine.
  */
-class WP_PDO_MySQL_On_SQLite {
+class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * The path to the MySQL SQL grammar file.
 	 */
@@ -579,24 +579,51 @@ class WP_PDO_MySQL_On_SQLite {
 	private $user_variables = array();
 
 	/**
-	 * Constructor.
+	 * PDO API: Constructor.
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
 	 *
 	 * @param WP_SQLite_Connection $connection A SQLite database connection.
-	 * @param string               $database   The database name.
+	 * @param string               $db_name    The database name.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
 	public function __construct(
-		WP_SQLite_Connection $connection,
-		string $database,
-		int $mysql_version = 80038
+		string $dsn,
+		?string $username = null,
+		?string $password = null,
+		array $options = array()
 	) {
-		$this->mysql_version = $mysql_version;
-		$this->connection    = $connection;
-		$this->main_db_name  = $database;
-		$this->db_name       = $database;
+		// Parse the DSN.
+		$dsn_parts = explode( ':', $dsn, 2 );
+		if ( count( $dsn_parts ) < 2 ) {
+			throw new PDOException( 'invalid data source name' );
+		}
+
+		$driver = $dsn_parts[0];
+		if ( 'mysql-on-sqlite' !== $driver ) {
+			throw new PDOException( 'could not find driver' );
+		}
+
+		$args = array();
+		foreach ( explode( ';', $dsn_parts[1] ) as $arg ) {
+			$arg_parts             = explode( '=', $arg, 2 );
+			$args[ $arg_parts[0] ] = $arg_parts[1] ?? null;
+		}
+
+		$path    = $args['path'] ?? ':memory:';
+		$db_name = $args['dbname'] ?? 'sqlite_database';
+
+		// Create a new SQLite connection.
+		if ( isset( $options['pdo'] ) ) {
+			$this->connection = new WP_SQLite_Connection( array( 'pdo' => $options['pdo'] ) );
+		} else {
+			$this->connection = new WP_SQLite_Connection( array( 'path' => $path ) );
+		}
+
+		$this->mysql_version = $options['mysql_version'] ?? 80038;
+		$this->main_db_name  = $db_name;
+		$this->db_name       = $db_name;
 
 		// Check the database name.
 		if ( '' === $this->db_name ) {
@@ -685,7 +712,7 @@ class WP_PDO_MySQL_On_SQLite {
 	}
 
 	/**
-	 * Translate and execute a MySQL query in SQLite.
+	 * PDO API: Translate and execute a MySQL query in SQLite.
 	 *
 	 * A single MySQL query can be translated into zero or more SQLite queries.
 	 *
@@ -696,13 +723,9 @@ class WP_PDO_MySQL_On_SQLite {
 	 * @return mixed Return value, depending on the query type.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
-	 *
-	 * TODO:
-	 *   The API of this function is not final.
-	 *   We should also add support for parametrized queries.
-	 *   See: https://github.com/Automattic/sqlite-database-integration/issues/7
 	 */
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+	#[ReturnTypeWillChange]
+	public function query( string $query, ?int $fetch_mode = PDO::FETCH_COLUMN, ...$fetch_mode_args ) {
 		$this->flush();
 		$this->pdo_fetch_mode   = $fetch_mode;
 		$this->last_mysql_query = $query;
@@ -748,7 +771,8 @@ class WP_PDO_MySQL_On_SQLite {
 			if ( $wrap_in_transaction ) {
 				$this->commit_wrapper_transaction();
 			}
-			return $this->last_return_value;
+
+			return new WP_PDO_Synthetic_Statement();
 		} catch ( Throwable $e ) {
 			try {
 				$this->rollback_user_transaction();

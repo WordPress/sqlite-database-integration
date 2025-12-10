@@ -56,7 +56,15 @@ class WP_SQLite_Driver {
 		string $database,
 		int $mysql_version = 80038
 	) {
-		$this->mysql_on_sqlite_driver = new WP_PDO_MySQL_On_SQLite( $connection, $database, $mysql_version );
+		$this->mysql_on_sqlite_driver = new WP_PDO_MySQL_On_SQLite(
+			sprintf( 'mysql-on-sqlite:dbname=%s', $database ),
+			null,
+			null,
+			array(
+				'mysql_version' => $mysql_version,
+				'pdo'           => $connection->get_pdo(),
+			)
+		);
 		$this->main_db_name           = $database;
 		$this->client_info            = $this->mysql_on_sqlite_driver->client_info;
 	}
@@ -139,7 +147,8 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		return $this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
+		$this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
+		return $this->mysql_on_sqlite_driver->get_query_results();
 	}
 
 	/**
