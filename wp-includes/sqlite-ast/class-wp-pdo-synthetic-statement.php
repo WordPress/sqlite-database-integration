@@ -88,6 +88,24 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	use WP_PDO_Synthetic_Statement_PHP_Compat;
 
 	/**
+	 * The number of affected rows.
+	 *
+	 * @var int
+	 */
+	private $affected_rows;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param int $affected_rows The number of affected rows.
+	 */
+	public function __construct(
+		int $affected_rows = 0
+	) {
+		$this->affected_rows = $affected_rows;
+	}
+
+	/**
 	 * Execute a prepared statement.
 	 *
 	 * @param mixed $params The values to bind to the parameters of the prepared statement.
@@ -112,7 +130,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return int The number of rows affected by the statement.
 	 */
 	public function rowCount(): int {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->affected_rows;
 	}
 
 	/**

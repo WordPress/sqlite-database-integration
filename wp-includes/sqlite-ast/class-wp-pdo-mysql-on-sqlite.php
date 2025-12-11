@@ -772,7 +772,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->commit_wrapper_transaction();
 			}
 
-			return new WP_PDO_Synthetic_Statement();
+			$affected_rows = is_int( $this->last_return_value ) ? $this->last_return_value : 0;
+			return new WP_PDO_Synthetic_Statement( $affected_rows );
 		} catch ( Throwable $e ) {
 			try {
 				$this->rollback_user_transaction();
@@ -787,6 +788,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 			throw $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
 		}
+	}
+
+	/**
+	 * PDO API: Execute a MySQL statement and return the number of affected rows.
+	 *
+	 * @return int|false The number of affected rows or false on failure.
+	 */
+	#[ReturnTypeWillChange]
+	public function exec( $query ) {
+		$stmt = $this->query( $query );
+		return $stmt->rowCount();
 	}
 
 	/**

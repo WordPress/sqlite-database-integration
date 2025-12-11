@@ -20,6 +20,38 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDOStatement::class, $result );
 	}
 
+	public function test_exec(): void {
+		$result = $this->driver->exec( 'SELECT 1' );
+		$this->assertEquals( 0, $result );
+
+		$result = $this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->assertEquals( 0, $result );
+
+		$result = $this->driver->exec( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertEquals( 1, $result );
+
+		$result = $this->driver->exec( 'INSERT INTO t (id) VALUES (2), (3)' );
+		$this->assertEquals( 2, $result );
+
+		$result = $this->driver->exec( 'UPDATE t SET id = 10 + id WHERE id = 0' );
+		$this->assertEquals( 0, $result );
+
+		$result = $this->driver->exec( 'UPDATE t SET id = 10 + id WHERE id = 1' );
+		$this->assertEquals( 1, $result );
+
+		$result = $this->driver->exec( 'UPDATE t SET id = 10 + id WHERE id < 10' );
+		$this->assertEquals( 2, $result );
+
+		$result = $this->driver->exec( 'DELETE FROM t WHERE id = 11' );
+		$this->assertEquals( 1, $result );
+
+		$result = $this->driver->exec( 'DELETE FROM t' );
+		$this->assertEquals( 2, $result );
+
+		$result = $this->driver->exec( 'DROP TABLE t' );
+		$this->assertEquals( 0, $result );
+	}
+
 	public function test_begin_transaction(): void {
 		$result = $this->driver->beginTransaction();
 		$this->assertTrue( $result );
