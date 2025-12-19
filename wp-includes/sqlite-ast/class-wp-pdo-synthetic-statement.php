@@ -35,7 +35,7 @@ if ( PHP_VERSION_ID < 80000 ) {
 		 * @return bool          True on success, false on failure.
 		 */
 		public function setFetchMode( $mode, $params = null ): bool {
-			throw new RuntimeException( 'Not implemented' );
+			return $this->setDefaultFetchMode( $mode, $params );
 		}
 
 		/**
@@ -61,8 +61,7 @@ if ( PHP_VERSION_ID < 80000 ) {
 		 */
 		#[ReturnTypeWillChange]
 		public function setFetchMode( $mode, ...$args ): bool {
-			$this->fetch_mode = $mode;
-			return true;
+			return $this->setDefaultFetchMode( $mode, $args );
 		}
 
 		/**
@@ -475,6 +474,22 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 			$rows[] = $row;
 		}
 		return $rows;
+	}
+
+	/**
+	 * Set the default fetch mode for this statement.
+	 *
+	 * This is used internally by the "WP_PDO_Synthetic_Statement_PHP_Compat"
+	 * trait, that is defined conditionally based on the current PHP version.
+	 *
+	 * @param  int   $mode   The fetch mode to set as the default.
+	 * @param  mixed $args   Additional parameters for the default fetch mode.
+	 * @return bool          True on success, false on failure.
+	 */
+	private function setDefaultFetchMode( $mode, ...$args ): bool {
+		$this->fetch_mode      = $mode;
+		$this->fetch_mode_args = $args;
+		return true;
 	}
 }
 
