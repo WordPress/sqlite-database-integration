@@ -88,6 +88,13 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	use WP_PDO_Synthetic_Statement_PHP_Compat;
 
 	/**
+	 * The PDO connection.
+	 *
+	 * @var PDO
+	 */
+	private $pdo;
+
+	/**
 	 * Basic column metadata (containing at least name, table name, and native type).
 	 *
 	 * @var array
@@ -132,17 +139,27 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	private $fetch_mode_args = array();
 
 	/**
+	 * The PDO attributes set for this statement.
+	 *
+	 * @var array<int, mixed>
+	 */
+	private $attributes = array();
+
+	/**
 	 * Constructor.
 	 *
+	 * @param PDO   $pdo           The PDO connection.
 	 * @param array $columns       Basic column metadata (containing at least name, table name, and native type).
 	 * @param array $rows          Rows of the result set.
 	 * @param int   $affected_rows The number of affected rows.
 	 */
 	public function __construct(
+		PDO $pdo,
 		array $columns,
 		array $rows,
 		int $affected_rows
 	) {
+		$this->pdo           = $pdo;
 		$this->columns       = $columns;
 		$this->rows          = $rows;
 		$this->affected_rows = $affected_rows;
@@ -329,7 +346,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 */
 	#[ReturnTypeWillChange]
 	public function getAttribute( $attribute ) {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->attributes[ $attribute ] ?? $this->pdo->getAttribute( $attribute );
 	}
 
 	/**
@@ -340,7 +357,8 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return bool             True on success, false on failure.
 	 */
 	public function setAttribute( $attribute, $value ): bool {
-		throw new RuntimeException( 'Not implemented' );
+		$this->attributes[ $attribute ] = $value;
+		return true;
 	}
 
 	/**

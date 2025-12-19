@@ -444,6 +444,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $information_schema_builder;
 
 	/**
+	 * PDO API: The PDO attributes of the connection.
+	 *
+	 * TODO: Add PDO default attribute values.
+	 *
+	 * @var array<int, mixed>
+	 */
+	private $pdo_attributes = array(
+	);
+
+	/**
 	 * Last executed MySQL query.
 	 *
 	 * @var string
@@ -783,7 +793,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$columns       = is_array( $this->last_column_meta ) ? $this->last_column_meta : array();
 			$rows          = is_array( $this->last_result ) ? $this->last_result : array();
 			$affected_rows = is_int( $this->last_return_value ) ? $this->last_return_value : 0;
-			return new WP_PDO_Synthetic_Statement( $columns, $rows, $affected_rows );
+			return new WP_PDO_Synthetic_Statement( $this, $columns, $rows, $affected_rows );
 		} catch ( Throwable $e ) {
 			try {
 				$this->rollback_user_transaction();
@@ -878,6 +888,29 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return $this->in_transaction;
 		}
 		return $this->connection->get_pdo()->inTransaction();
+	}
+
+	/**
+	 * PDO API: Set a PDO attribute.
+	 *
+	 * @param int   $attribute The attribute to set.
+	 * @param mixed $value     The value of the attribute.
+	 * @return bool            True on success, false on failure.
+	 */
+	public function setAttribute( $attribute, $value ): bool {
+		$this->pdo_attributes[ $attribute ] = $value;
+		return true;
+	}
+
+	/**
+	 * PDO API: Get a PDO attribute.
+	 *
+	 * @param  int   $attribute The attribute to get.
+	 * @return mixed            The value of the attribute.
+	 */
+	#[ReturnTypeWillChange]
+	public function getAttribute( $attribute ) {
+		return $this->pdo_attributes[ $attribute ] ?? null;
 	}
 
 	/**
