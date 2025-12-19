@@ -88,6 +88,20 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	use WP_PDO_Synthetic_Statement_PHP_Compat;
 
 	/**
+	 * Basic column metadata (containing at least name, table name, and native type).
+	 *
+	 * @var array
+	 */
+	private $columns;
+
+	/**
+	 * Rows of the result set.
+	 *
+	 * @var array<array<mixed>>
+	 */
+	private $rows;
+
+	/**
 	 * The number of affected rows.
 	 *
 	 * @var int
@@ -95,13 +109,42 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	private $affected_rows;
 
 	/**
+	 * The current cursor offset.
+	 *
+	 * @var int
+	 */
+	private $cursor_offset = 0;
+
+	/**
+	 * The current fetch mode.
+	 *
+	 * TODO: Inherit this from "PDO::ATTR_DEFAULT_FETCH_MODE".
+	 *
+	 * @var int
+	 */
+	private $fetch_mode = PDO::FETCH_BOTH;
+
+	/**
+	 * Additional arguments for the current fetch mode.
+	 *
+	 * @var array<mixed>
+	 */
+	private $fetch_mode_args = array();
+
+	/**
 	 * Constructor.
 	 *
-	 * @param int $affected_rows The number of affected rows.
+	 * @param array $columns       Basic column metadata (containing at least name, table name, and native type).
+	 * @param array $rows          Rows of the result set.
+	 * @param int   $affected_rows The number of affected rows.
 	 */
 	public function __construct(
-		int $affected_rows = 0
+		array $columns,
+		array $rows,
+		int $affected_rows
 	) {
+		$this->columns       = $columns;
+		$this->rows          = $rows;
 		$this->affected_rows = $affected_rows;
 	}
 
@@ -121,7 +164,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return int The number of columns in the result set.
 	 */
 	public function columnCount(): int {
-		throw new RuntimeException( 'Not implemented' );
+		return count( $this->columns );
 	}
 
 	/**
@@ -151,7 +194,75 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 		$cursorOrientation = 0,
 		$cursorOffset = 0
 	) {
-		throw new RuntimeException( 'Not implemented' );
+		if ( 0 === $mode || null === $mode ) {
+			$mode = $this->fetch_mode;
+		}
+		if ( null === $cursorOrientation ) {
+			$cursorOrientation = PDO::FETCH_ORI_NEXT;
+		}
+		if ( null === $cursorOffset ) {
+			$cursorOffset = 0;
+		}
+
+		if ( ! array_key_exists( $this->cursor_offset, $this->rows ) ) {
+			return false;
+		}
+
+		// Get current row data and column names.
+		$row          = $this->rows[ $this->cursor_offset ];
+		$column_names = array_column( $this->columns, 'name' );
+
+		// Advance the cursor to the next row.
+		$this->cursor_offset += 1;
+
+		/*
+		 * TODO: Support scrollable cursor ($cursorOrientation and $cursorOffset).
+		 *       This only has works for with statements that were prepared with
+		 *       the PDO::ATTR_CURSOR attribute set to PDO::CURSOR_SCROLL value.
+		 *       Without it, these parameters have no effect.
+		 */
+
+		switch ( $mode ) {
+			case PDO::FETCH_BOTH:
+				$values = array();
+				foreach ( $row as $i => $value ) {
+					$name            = $column_names[ $i ];
+					$values[ $name ] = $value;
+					if ( ! array_key_exists( $i, $values ) ) {
+						$values[ $i ] = $value;
+					}
+				}
+				return $values;
+			case PDO::FETCH_NUM:
+				return $row;
+			case PDO::FETCH_ASSOC:
+				return array_combine( $column_names, $row );
+			case PDO::FETCH_NAMED:
+				$values = array();
+				foreach ( $row as $i => $value ) {
+					$name = $column_names[ $i ];
+					if ( is_array( $values[ $name ] ?? null ) ) {
+						$values[ $name ][] = $value;
+					} elseif ( array_key_exists( $name, $values ) ) {
+						$values[ $name ] = array( $values[ $name ], $value );
+					} else {
+						$values[ $name ] = $value;
+					}
+				}
+				return $values;
+			case PDO::FETCH_OBJ:
+				return (object) array_combine( $column_names, $row );
+			case PDO::FETCH_CLASS:
+				throw new RuntimeException( "'PDO::FETCH_CLASS' mode is not supported" );
+			case PDO::FETCH_INTO:
+				throw new RuntimeException( "'PDO::FETCH_INTO' mode is not supported" );
+			case PDO::FETCH_LAZY:
+				throw new RuntimeException( "'PDO::FETCH_LAZY' mode is not supported" );
+			case PDO::FETCH_BOUND:
+				throw new RuntimeException( "'PDO::FETCH_BOUND' mode is not supported" );
+			default:
+				throw new ValueError( sprintf( 'PDOStatement::fetch(): Argument #1 ($mode) must be a bitmask of PDO::FETCH_* constants', $mode ) );
+		}
 	}
 
 	/**
@@ -321,6 +432,22 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return array       The result set as an array of rows.
 	 */
 	private function fetchAllRows( $mode = null, ...$args ): array {
-		throw new RuntimeException( 'Not implemented' );
+		if ( null === $mode || 0 === $mode ) {
+			$mode = $this->fetch_mode;
+		}
+
+		$rows = array();
+		while ( $row = $this->fetch( $mode, ...$args ) ) {
+			$rows[] = $row;
+		}
+		return $rows;
+	}
+}
+
+/**
+ * Polyfill ValueError for PHP < 8.0.
+ */
+if ( PHP_VERSION_ID < 80000 && ! class_exists( ValueError::class ) ) {
+	class ValueError extends Error {
 	}
 }

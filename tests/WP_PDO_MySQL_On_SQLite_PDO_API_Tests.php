@@ -18,6 +18,14 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
 		$this->assertInstanceOf( PDOStatement::class, $result );
+		$this->assertSame(
+			array(
+				1     => 1,
+				0     => 1,
+				'abc' => 'abc',
+			),
+			$result->fetch()
+		);
 	}
 
 	public function test_exec(): void {
@@ -90,5 +98,88 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->expectExceptionMessage( 'There is no active transaction' );
 		$this->expectExceptionCode( 0 );
 		$this->driver->rollBack();
+	}
+
+	public function test_fetch_default(): void {
+		// Default fetch mode is PDO::FETCH_BOTH.
+		$result = $this->driver->query( "SELECT 1, 'abc', 2" );
+		$this->assertSame(
+			array(
+				1     => 1,
+				0     => 1,
+				'abc' => 'abc',
+				'2'   => 2,
+			),
+			$result->fetch()
+		);
+	}
+
+	/**
+	 * @dataProvider data_pdo_fetch_methods
+	 */
+	public function test_fetch( $query, $mode, $expected ): void {
+		$stmt   = $this->driver->query( $query );
+		$result = $stmt->fetch( $mode );
+		if ( is_object( $expected ) ) {
+			$this->assertInstanceOf( get_class( $expected ), $result );
+			$this->assertEquals( $expected, $result );
+		} else {
+			$this->assertSame( $expected, $result );
+		}
+	}
+
+	public function data_pdo_fetch_methods(): Generator {
+		// PDO::FETCH_BOTH
+		yield 'PDO::FETCH_BOTH' => array(
+			"SELECT 1, 'abc', 2, 'two' as `2`",
+			PDO::FETCH_BOTH,
+			array(
+				1     => 1,
+				0     => 1,
+				'abc' => 'abc',
+				'2'   => 'two',
+				'3'   => 'two',
+			),
+		);
+
+		// PDO::FETCH_NUM
+		yield 'PDO::FETCH_NUM' => array(
+			"SELECT 1, 'abc', 2, 'two' as `2`",
+			PDO::FETCH_NUM,
+			array( 1, 'abc', 2, 'two' ),
+		);
+
+		// PDO::FETCH_ASSOC
+		yield 'PDO::FETCH_ASSOC' => array(
+			"SELECT 1, 'abc', 2, 'two' as `2`",
+			PDO::FETCH_ASSOC,
+			array(
+				'1'   => 1,
+				'abc' => 'abc',
+				'2'   => 'two',
+			),
+		);
+
+		// PDO::FETCH_NAMED
+		yield 'PDO::FETCH_NAMED' => array(
+			"SELECT 1, 'abc', 2, 'two' as `2`",
+			PDO::FETCH_NAMED,
+			array(
+				'1'   => 1,
+				'abc' => 'abc',
+				'2'   => array( 2, 'two' ),
+			),
+		);
+
+		// PDO::FETCH_OBJ
+		yield 'PDO::FETCH_OBJ' => array(
+			"SELECT 1, 'abc', 2, 'two' as `2`",
+			PDO::FETCH_OBJ,
+			(object) array(
+				'1'   => 1,
+				'abc' => 'abc',
+				'2'   => 'two',
+			),
+		);
 	}
 }

@@ -42,6 +42,13 @@ class WP_SQLite_Driver {
 	private $mysql_on_sqlite_driver;
 
 	/**
+	 * Results of the last emulated query.
+	 *
+	 * @var mixed
+	 */
+	private $last_result;
+
+	/**
 	 * Constructor.
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
@@ -147,8 +154,16 @@ class WP_SQLite_Driver {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
-		return $this->mysql_on_sqlite_driver->get_query_results();
+		$stmt = $this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
+
+		if ( $stmt->columnCount() > 0 ) {
+			$this->last_result = $stmt->fetchAll( $fetch_mode );
+		} elseif ( $stmt->rowCount() > 0 ) {
+			$this->last_result = $stmt->rowCount();
+		} else {
+			$this->last_result = null;
+		}
+		return $this->last_result;
 	}
 
 	/**
@@ -167,7 +182,7 @@ class WP_SQLite_Driver {
 	 * @return mixed
 	 */
 	public function get_query_results() {
-		return $this->mysql_on_sqlite_driver->get_query_results();
+		return $this->last_result;
 	}
 
 	/**

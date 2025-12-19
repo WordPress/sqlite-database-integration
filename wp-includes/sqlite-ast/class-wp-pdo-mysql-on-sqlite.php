@@ -727,8 +727,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	#[ReturnTypeWillChange]
 	public function query( string $query, ?int $fetch_mode = PDO::FETCH_COLUMN, ...$fetch_mode_args ) {
 		$this->flush();
-		$this->pdo_fetch_mode   = $fetch_mode;
 		$this->last_mysql_query = $query;
+
+		/**
+		 * Use "PDO::FETCH_NUM" fetch mode, as the "WP_PDO_Synthetic_Statement"
+		 * expects the row data to be passed as an array of values.
+		 *
+		 * @TODO: We can remove this when we use the SQLite PDOStatements directly,
+		 *        likely via a proxy, and will stop fetching the results eagerly.
+		 */
+		$this->pdo_fetch_mode = PDO::FETCH_NUM;
 
 		try {
 			// Parse the MySQL query.
@@ -772,8 +780,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->commit_wrapper_transaction();
 			}
 
+			$columns       = is_array( $this->last_column_meta ) ? $this->last_column_meta : array();
+			$rows          = is_array( $this->last_result ) ? $this->last_result : array();
 			$affected_rows = is_int( $this->last_return_value ) ? $this->last_return_value : 0;
-			return new WP_PDO_Synthetic_Statement( $affected_rows );
+			return new WP_PDO_Synthetic_Statement( $columns, $rows, $affected_rows );
 		} catch ( Throwable $e ) {
 			try {
 				$this->rollback_user_transaction();
@@ -2518,7 +2528,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					} else {
 						$this->set_results_from_fetched_data(
 							array(
-								(object) array(
+								array(
 									'Table'        => $table_name,
 									'Create Table' => $sql,
 								),
@@ -2557,7 +2567,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			case WP_MySQL_Lexer::GRANTS_SYMBOL:
 				$this->set_results_from_fetched_data(
 					array(
-						(object) array(
+						array(
 							'Grants for root@%' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
 						),
 					)
@@ -2646,7 +2656,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			)
 		);
 		$this->store_last_column_meta_from_statement( $stmt );
-		$this->set_results_from_fetched_data( $stmt->fetchAll( PDO::FETCH_OBJ ) );
+		$this->set_results_from_fetched_data( $stmt->fetchAll( $this->pdo_fetch_mode ) );
 	}
 
 	/**
@@ -2680,7 +2690,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$databases = $stmt->fetchAll( PDO::FETCH_OBJ );
+		$databases = $stmt->fetchAll( $this->pdo_fetch_mode );
 		$this->set_results_from_fetched_data( $databases );
 	}
 
@@ -2766,7 +2776,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$index_info = $stmt->fetchAll( PDO::FETCH_OBJ );
+		$index_info = $stmt->fetchAll( $this->pdo_fetch_mode );
 		$this->set_results_from_fetched_data( $index_info );
 	}
 
@@ -2829,7 +2839,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$table_info = $stmt->fetchAll( PDO::FETCH_OBJ );
+		$table_info = $stmt->fetchAll( $this->pdo_fetch_mode );
 		if ( false === $table_info ) {
 			$this->set_results_from_fetched_data( array() );
 		}
@@ -2881,7 +2891,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$table_info = $stmt->fetchAll( PDO::FETCH_OBJ );
+		$table_info = $stmt->fetchAll( $this->pdo_fetch_mode );
 		if ( false === $table_info ) {
 			$this->set_results_from_fetched_data( array() );
 		}
@@ -2954,7 +2964,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$column_info = $stmt->fetchAll( PDO::FETCH_OBJ );
+		$column_info = $stmt->fetchAll( $this->pdo_fetch_mode );
 		if ( false === $column_info ) {
 			$this->set_results_from_fetched_data( array() );
 		}
@@ -2993,7 +3003,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$column_info = $stmt->fetchAll( PDO::FETCH_OBJ );
+		$column_info = $stmt->fetchAll( $this->pdo_fetch_mode );
 		$this->set_results_from_fetched_data( $column_info );
 	}
 
@@ -3315,14 +3325,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			$operation = strtolower( $first_token->get_value() );
 			foreach ( $errors as $error ) {
-				$results[] = (object) array(
+				$results[] = array(
 					'Table'    => $this->db_name . '.' . $table_name,
 					'Op'       => $operation,
 					'Msg_type' => 'Error',
 					'Msg_text' => $error,
 				);
 			}
-			$results[] = (object) array(
+			$results[] = array(
 				'Table'    => $this->db_name . '.' . $table_name,
 				'Op'       => $operation,
 				'Msg_type' => 'status',
