@@ -74,6 +74,8 @@ class WP_SQLite_Driver {
 		);
 		$this->main_db_name           = $database;
 		$this->client_info            = $this->mysql_on_sqlite_driver->client_info;
+
+		$connection->get_pdo()->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
 
 	/**

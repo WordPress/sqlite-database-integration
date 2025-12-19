@@ -451,6 +451,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @var array<int, mixed>
 	 */
 	private $pdo_attributes = array(
+		PDO::ATTR_STRINGIFY_FETCHES => PHP_VERSION_ID < 80100 ? true : false,
 	);
 
 	/**

@@ -8,6 +8,10 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 	public function setUp(): void {
 		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+
+		// Set "PDO::ATTR_STRINGIFY_FETCHES" to "false" explicitly, so the tests
+		// are consistent across PHP versions ("false" is the default from 8.1).
+		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
 	}
 
 	public function test_connection(): void {
