@@ -239,6 +239,22 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 		 *       Without it, these parameters have no effect.
 		 */
 
+		/**
+		 * With PHP < 8.1, the "PDO::ATTR_STRINGIFY_FETCHES" value of "false"
+		 * is not working correctly with the PDO SQLite driver. In such case,
+		 * we need to manually convert the row values to the correct types.
+		 */
+		if ( PHP_VERSION_ID < 80100 && ! $this->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) ) {
+			foreach ( $row as $i => $value ) {
+				$type = $this->columns[ $i ]['native_type'];
+				if ( 'integer' === $type ) {
+					$row[ $i ] = (int) $value;
+				} elseif ( 'float' === $type ) {
+					$row[ $i ] = (float) $value;
+				}
+			}
+		}
+
 		switch ( $mode ) {
 			case PDO::FETCH_BOTH:
 				$values = array();
