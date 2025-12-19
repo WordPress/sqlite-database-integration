@@ -32,6 +32,106 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider data_pdo_fetch_methods
+	 */
+	public function test_query_with_fetch_mode( $query, $mode, $expected ): void {
+		$stmt   = $this->driver->query( $query, $mode );
+		$result = $stmt->fetch();
+		if ( is_object( $expected ) ) {
+			$this->assertInstanceOf( get_class( $expected ), $result );
+			$this->assertEquals( $expected, $result );
+		} else {
+			$this->assertSame( $expected, $result );
+		}
+
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_query_fetch_mode_not_set(): void {
+		$result = $this->driver->query( 'SELECT 1' );
+		$this->assertSame(
+			array(
+				'1' => 1,
+				0   => 1,
+			),
+			$result->fetch()
+		);
+		$this->assertFalse( $result->fetch() );
+	}
+
+	public function test_query_fetch_mode_invalid_arg_count(): void {
+		$this->expectException( ArgumentCountError::class );
+		$this->expectExceptionMessage( 'PDO::query() expects exactly 2 arguments for the fetch mode provided, 3 given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_ASSOC, 0 );
+	}
+
+	public function test_query_fetch_default_mode_allow_any_args(): void {
+		$expected_result = array(
+			array(
+				1 => 1,
+				0 => 1,
+			),
+		);
+
+		$result = $this->driver->query( 'SELECT 1' );
+		$this->assertSame( $expected_result, $result->fetchAll() );
+
+		$result = $this->driver->query( 'SELECT 1', null );
+		$this->assertSame( $expected_result, $result->fetchAll() );
+
+		$result = $this->driver->query( 'SELECT 1', null, 1 );
+		$this->assertSame( $expected_result, $result->fetchAll() );
+
+		$result = $this->driver->query( 'SELECT 1', null, 'abc' );
+		$this->assertSame( $expected_result, $result->fetchAll() );
+
+		$result = $this->driver->query( 'SELECT 1', null, 1, 2, 'abc', array(), true );
+		$this->assertSame( $expected_result, $result->fetchAll() );
+	}
+
+	public function test_query_fetch_class_not_enough_args(): void {
+		$this->expectException( ArgumentCountError::class );
+		$this->expectExceptionMessage( 'PDO::query() expects at least 3 arguments for the fetch mode provided, 2 given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_CLASS );
+	}
+
+	public function test_query_fetch_class_too_many_args(): void {
+		$this->expectException( ArgumentCountError::class );
+		$this->expectExceptionMessage( 'PDO::query() expects at most 4 arguments for the fetch mode provided, 5 given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_CLASS, '\stdClass', array(), array() );
+	}
+
+	public function test_query_fetch_class_invalid_class_type(): void {
+		$this->expectException( TypeError::class );
+		$this->expectExceptionMessage( 'PDO::query(): Argument #3 must be of type string, int given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_CLASS, 1 );
+	}
+
+	public function test_query_fetch_class_invalid_class_name(): void {
+		$this->expectException( TypeError::class );
+		$this->expectExceptionMessage( 'PDO::query(): Argument #3 must be a valid class' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_CLASS, 'non-existent-class' );
+	}
+
+	public function test_query_fetch_class_invalid_constructor_args_type(): void {
+		$this->expectException( TypeError::class );
+		$this->expectExceptionMessage( 'PDO::query(): Argument #4 must be of type ?array, int given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_CLASS, 'stdClass', 1 );
+	}
+
+	public function test_query_fetch_into_invalid_arg_count(): void {
+		$this->expectException( ArgumentCountError::class );
+		$this->expectExceptionMessage( 'PDO::query() expects exactly 3 arguments for the fetch mode provided, 2 given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_INTO );
+	}
+
+	public function test_query_fetch_into_invalid_object_type(): void {
+		$this->expectException( TypeError::class );
+		$this->expectExceptionMessage( 'PDO::query(): Argument #3 must be of type object, int given' );
+		$this->driver->query( 'SELECT 1', PDO::FETCH_INTO, 1 );
+	}
+
 	public function test_exec(): void {
 		$result = $this->driver->exec( 'SELECT 1' );
 		$this->assertEquals( 0, $result );

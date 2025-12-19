@@ -736,7 +736,86 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	#[ReturnTypeWillChange]
-	public function query( string $query, ?int $fetch_mode = PDO::FETCH_COLUMN, ...$fetch_mode_args ) {
+	public function query( string $query, ?int $fetch_mode = null, ...$fetch_mode_args ) {
+		// Validate and parse the fetch mode and arguments.
+		$arg_count            = func_num_args();
+		$arg_colno            = 0;
+		$arg_class            = null;
+		$arg_constructor_args = array();
+		$arg_into             = null;
+
+		$get_type = function ( $value ) {
+			$type = gettype( $value );
+			if ( 'boolean' === $type ) {
+				return 'bool';
+			} elseif ( 'integer' === $type ) {
+				return 'int';
+			} elseif ( 'double' === $type ) {
+				return 'float';
+			}
+			return $type;
+		};
+
+		if ( null === $fetch_mode ) {
+			// When the default FETCH_BOTH is not set explicitly, additional
+			// arguments are ignored, and the argument count is not validated.
+			$fetch_mode = PDO::FETCH_BOTH;
+		} elseif ( PDO::FETCH_COLUMN === $fetch_mode ) {
+			if ( 3 !== $arg_count ) {
+				throw new ArgumentCountError(
+					sprintf( 'PDO::query() expects exactly 3 arguments for the fetch mode provided, %d given', $arg_count )
+				);
+			}
+			if ( ! is_int( $fetch_mode_args[0] ) ) {
+				throw new TypeError(
+					sprintf( 'PDO::query(): Argument #3 must be of type int, %s given', $get_type( $fetch_mode_args[0] ) )
+				);
+			}
+			$arg_colno = $fetch_mode_args[0];
+		} elseif ( PDO::FETCH_CLASS === $fetch_mode ) {
+			if ( $arg_count < 3 ) {
+				throw new ArgumentCountError(
+					sprintf( 'PDO::query() expects at least 3 arguments for the fetch mode provided, %d given', $arg_count )
+				);
+			}
+			if ( $arg_count > 4 ) {
+				throw new ArgumentCountError(
+					sprintf( 'PDO::query() expects at most 4 arguments for the fetch mode provided, %d given', $arg_count )
+				);
+			}
+			if ( ! is_string( $fetch_mode_args[0] ) ) {
+				throw new TypeError(
+					sprintf( 'PDO::query(): Argument #3 must be of type string, %s given', $get_type( $fetch_mode_args[0] ) )
+				);
+			}
+			if ( ! class_exists( $fetch_mode_args[0] ) ) {
+				throw new TypeError( 'PDO::query(): Argument #3 must be a valid class' );
+			}
+			if ( 4 === $arg_count && ! is_array( $fetch_mode_args[1] ) ) {
+				throw new TypeError(
+					sprintf( 'PDO::query(): Argument #4 must be of type ?array, %s given', $get_type( $fetch_mode_args[1] ) )
+				);
+			}
+			$arg_class            = $fetch_mode_args[0];
+			$arg_constructor_args = $fetch_mode_args[1] ?? array();
+		} elseif ( PDO::FETCH_INTO === $fetch_mode ) {
+			if ( 3 !== $arg_count ) {
+				throw new ArgumentCountError(
+					sprintf( 'PDO::query() expects exactly 3 arguments for the fetch mode provided, %d given', $arg_count )
+				);
+			}
+			if ( ! is_object( $fetch_mode_args[0] ) ) {
+				throw new TypeError(
+					sprintf( 'PDO::query(): Argument #3 must be of type object, %s given', $get_type( $fetch_mode_args[0] ) )
+				);
+			}
+			$arg_into = $fetch_mode_args[0];
+		} elseif ( $arg_count > 2 ) {
+			throw new ArgumentCountError(
+				sprintf( 'PDO::query() expects exactly 2 arguments for the fetch mode provided, %d given', $arg_count )
+			);
+		}
+
 		$this->flush();
 		$this->last_mysql_query = $query;
 
@@ -794,7 +873,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$columns       = is_array( $this->last_column_meta ) ? $this->last_column_meta : array();
 			$rows          = is_array( $this->last_result ) ? $this->last_result : array();
 			$affected_rows = is_int( $this->last_return_value ) ? $this->last_return_value : 0;
-			return new WP_PDO_Synthetic_Statement( $this, $columns, $rows, $affected_rows );
+
+			$stmt = new WP_PDO_Synthetic_Statement( $this, $columns, $rows, $affected_rows );
+			$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
+			return $stmt;
 		} catch ( Throwable $e ) {
 			try {
 				$this->rollback_user_transaction();
