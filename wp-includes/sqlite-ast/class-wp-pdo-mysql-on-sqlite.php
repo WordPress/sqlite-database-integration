@@ -5605,27 +5605,29 @@ class WP_PDO_MySQL_On_SQLite {
 			ksort( $constraint );
 			$info = $constraint[1];
 
+			$column_list = array_map(
+				function ( $column ) {
+					$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+					if ( 'D' === $column['COLLATION'] ) {
+						$fragment .= ' DESC';
+					}
+					return $fragment;
+				},
+				$constraint
+			);
+
 			if ( 'PRIMARY' === $info['INDEX_NAME'] ) {
 				if ( $has_autoincrement ) {
-					if ( count( $constraint ) > 1 ) {
-						throw $this->new_driver_exception(
-							'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite'
-						);
+					if ( $has_autoincrement ) {
+						if ( count( $constraint ) > 1 ) {
+							throw $this->new_driver_exception(
+								'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite'
+							);
+						}
 					}
 					continue;
 				}
-				$query  = '  PRIMARY KEY (';
-				$query .= implode(
-					', ',
-					array_map(
-						function ( $column ) {
-							return $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
-						},
-						$constraint
-					)
-				);
-				$query .= ')';
-				$rows[] = $query;
+				$rows[] = sprintf( '  PRIMARY KEY (%s)', implode( ', ', $column_list ) );
 			} else {
 				$is_unique = '0' === $info['NON_UNIQUE'];
 
@@ -5633,28 +5635,13 @@ class WP_PDO_MySQL_On_SQLite {
 				// This is to avoid conflicting index names in SQLite.
 				$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $info['INDEX_NAME'] );
 
-				$query  = sprintf(
-					'CREATE %sINDEX %s ON %s (',
+				$create_index_queries[] = sprintf(
+					'CREATE %sINDEX %s ON %s (%s)',
 					$is_unique ? 'UNIQUE ' : '',
 					$this->quote_sqlite_identifier( $sqlite_index_name ),
-					$this->quote_sqlite_identifier( $table_name )
+					$this->quote_sqlite_identifier( $table_name ),
+					implode( ', ', $column_list )
 				);
-				$query .= implode(
-					', ',
-					array_map(
-						function ( $column ) {
-							$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
-							if ( 'D' === $column['COLLATION'] ) {
-								$fragment .= ' DESC';
-							}
-							return $fragment;
-						},
-						$constraint
-					)
-				);
-				$query .= ')';
-
-				$create_index_queries[] = $query;
 			}
 		}
 
