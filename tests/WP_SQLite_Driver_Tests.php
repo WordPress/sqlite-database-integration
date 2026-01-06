@@ -4125,11 +4125,62 @@ QUERY
 		);
 	}
 
-	public function testCompoundPrimaryKeyAndAutoincrementNotSupported(): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite' );
+	public function testCompoundPrimaryKeyWithAutoincrement(): void {
 		$this->assertQuery(
-			'CREATE TABLE t1 (id1 INT AUTO_INCREMENT, id2 INT, PRIMARY KEY(id1, id2))'
+			'CREATE TABLE t1 (id INT AUTO_INCREMENT, name VARCHAR(32), PRIMARY KEY(id, name))'
+		);
+
+		// Ensure auto-increment is working.
+		$this->assertQuery( "INSERT INTO t1 (name) VALUES ('A'), ('B'), ('C')" );
+		$results = $this->assertQuery( 'SELECT * FROM t1' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => 1,
+					'name' => 'A',
+				),
+				(object) array(
+					'id'   => 2,
+					'name' => 'B',
+				),
+				(object) array(
+					'id'   => 3,
+					'name' => 'C',
+				),
+			),
+			$results
+		);
+
+		// Verify the table schema.
+		$results = $this->assertQuery( 'SHOW CREATE TABLE t1' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t1` (',
+					'  `id` int NOT NULL AUTO_INCREMENT,',
+					'  `name` varchar(32) NOT NULL,',
+					'  PRIMARY KEY (`id`, `name`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$results[0]->{'Create Table'}
+		);
+
+		// Ensure an SQLite index was created for the compound key columns.
+		$result = $this->engine
+			->execute_sqlite_query( "SELECT * FROM pragma_index_list('t1')" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals(
+			array(
+				'seq'     => '0',
+				'name'    => '_wp_sqlite_t1__primary',
+				'unique'  => '1',
+				'origin'  => 'c',
+				'partial' => '0',
+			),
+			$result[0]
 		);
 	}
 

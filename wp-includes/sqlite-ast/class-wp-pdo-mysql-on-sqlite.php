@@ -5618,13 +5618,33 @@ class WP_PDO_MySQL_On_SQLite {
 
 			if ( 'PRIMARY' === $info['INDEX_NAME'] ) {
 				if ( $has_autoincrement ) {
-					if ( $has_autoincrement ) {
-						if ( count( $constraint ) > 1 ) {
-							throw $this->new_driver_exception(
-								'Cannot combine AUTOINCREMENT and multiple primary keys in SQLite'
-							);
-						}
+					/*
+					 * In MySQL, a compound PRIMARY KEY can have an AUTOINCREMENT
+					 * column, when it is the first column in the key.
+					 *
+					 * SQLite doesn't support this, but we can emulate it as follows:
+					 *   1. Keep only the first column as a PRIMARY KEY.
+					 *      Since this is the column that also has AUTOINCREMENT,
+					 *      it reasonable to assume that its values are unique.
+					 *   2. Create a UNIQUE key for all the PRIMARY KEY columns.
+					 *      This is to preserve the index of the compound key.
+					 */
+					if ( count( $constraint ) > 1 ) {
+						$sqlite_index_name      = $this->get_sqlite_index_name( $table_name, 'primary' );
+						$create_index_queries[] = sprintf(
+							'CREATE UNIQUE INDEX %s ON %s (%s)',
+							self::RESERVED_PREFIX . $sqlite_index_name,
+							$this->quote_sqlite_identifier( $table_name ),
+							implode( ', ', $column_list )
+						);
 					}
+
+					/*
+					 * The PRIMARY KEY was already generated with AUTOINCREMENT,
+					 * as required by SQLite column constraint syntax.
+					 *
+					 * @see https://www.sqlite.org/syntax/column-constraint.html
+					 */
 					continue;
 				}
 				$rows[] = sprintf( '  PRIMARY KEY (%s)', implode( ', ', $column_list ) );
