@@ -1646,7 +1646,8 @@ class WP_PDO_MySQL_On_SQLite {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
-		$parts = array();
+		$parts                   = array();
+		$on_conflict_update_list = null;
 		foreach ( $node->get_children() as $child ) {
 			$is_token = $child instanceof WP_MySQL_Token;
 			$is_node  = $child instanceof WP_Parser_Node;
@@ -1678,14 +1679,87 @@ class WP_PDO_MySQL_On_SQLite {
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
 			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
-				// Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
-				$parts[] = 'ON CONFLICT DO UPDATE SET ';
-				$parts[] = $this->translate_update_list( $table_name, $child );
+				/*
+				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
+				 *
+				 * For SQLite versions older than 3.35.0, we need to handle the
+				 * ON CONFLICT clause differently, and at this stage, we only
+				 * save the translated update list to a variable.
+				 *
+				 * See bellow at "Handle ON CONFLICT clause for SQLite < 3.35.0".
+				 */
+				$sqlite_version = $this->get_sqlite_version();
+				if ( version_compare( $sqlite_version, '3.35.0', '<' ) ) {
+					$on_conflict_update_list = $this->translate_update_list( $table_name, $child );
+				} else {
+					$parts[] = 'ON CONFLICT DO UPDATE SET ';
+					$parts[] = $this->translate_update_list( $table_name, $child );
+				}
 			} else {
 				$parts[] = $this->translate( $child );
 			}
 		}
+
 		$query = implode( ' ', $parts );
+
+		/*
+		 * Handle ON CONFLICT clause for SQLite < 3.35.0.
+		 *
+		 * If and "$on_conflict_update_list" was saved, we are on SQLite version
+		 * older than 3.35.0 and an ON CONFLICT clause was used in the query.
+		 *
+		 * SQLite supports a generic ON CONFLICT clause without an explicit column
+		 * list only from version 3.35.0.
+		 *
+		 * For older versions, we need to work around this limitation:
+		 *   1. Save the ON CONFLICT update list to a variable.
+		 *   2. Execute the query without the ON CONFLICT clause.
+		 *   3. If a constraint violation error occurs, parse the names of the
+		 *      columns that caused the violation from the error message.
+		 *   4. Execute the query again, appending the ON CONFLICT clause with
+		 *      the column names parsed from the error message.
+		 */
+		if ( null !== $on_conflict_update_list ) {
+			try {
+				$this->execute_sqlite_query( $query );
+				$this->set_result_from_affected_rows();
+			} catch ( PDOException $e ) {
+				$unique_key_violation_prefix = 'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: ';
+				if ( '23000' === $e->getCode() && str_contains( $e->getMessage(), $unique_key_violation_prefix ) ) {
+					/*
+					 * Parse column names from the constraint violation error.
+					 *
+					 * The error message is in the following format:
+					 *   <prefix>: <table>.<col1>, <table>.<col2>, ...
+					 *
+					 * The table and column names in the message are not quoted.
+					 * To be on the safe side, we first strip the error message
+					 * prefix and the "<table>." part for the first column, and
+					 * then split the rest of the list by ", <table>." sequence.
+					 */
+					$column_list         = substr( $e->getMessage(), strlen( $unique_key_violation_prefix ) + strlen( $table_name ) + 1 );
+					$column_names        = explode( ", $table_name.", $column_list );
+					$quoted_column_names = array_map(
+						function ( $column ) {
+							return $this->quote_sqlite_identifier( $column );
+						},
+						$column_names
+					);
+					$this->execute_sqlite_query(
+						$query . sprintf(
+							' ON CONFLICT(%s) DO UPDATE SET %s',
+							implode( ', ', $quoted_column_names ),
+							$on_conflict_update_list
+						)
+					);
+					$this->set_result_from_affected_rows();
+				} else {
+					throw $e;
+				}
+			}
+			return;
+		}
+
 		$this->execute_sqlite_query( $query );
 		$this->set_result_from_affected_rows();
 	}
