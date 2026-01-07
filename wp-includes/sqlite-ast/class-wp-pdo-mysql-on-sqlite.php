@@ -5800,7 +5800,12 @@ class WP_PDO_MySQL_On_SQLite {
 			$this->quote_sqlite_identifier( $new_table_name ?? $table_name )
 		);
 		$create_table_query .= implode( ",\n", $rows );
-		$create_table_query .= "\n) STRICT";
+		$create_table_query .= "\n)";
+
+		if ( version_compare( $this->get_sqlite_version(), '3.37.0', '>=' ) ) {
+			$create_table_query .= ' STRICT';
+		}
+
 		return array_merge( array( $create_table_query ), $create_index_queries, $on_update_queries );
 	}
 

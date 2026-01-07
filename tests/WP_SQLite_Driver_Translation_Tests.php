@@ -15,6 +15,11 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	 */
 	private $driver;
 
+	/**
+	 * @var string
+	 */
+	private $strict_suffix;
+
 	public static function setUpBeforeClass(): void {
 		self::$grammar = new WP_Parser_Grammar( include self::GRAMMAR_PATH );
 	}
@@ -24,6 +29,9 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
 			'wp'
 		);
+
+		$supports_strict_tables = version_compare( $this->driver->get_sqlite_version(), '3.37.0', '>=' );
+		$this->strict_suffix    = $supports_strict_tables ? ' STRICT' : '';
 	}
 
 	public function testSelect(): void {
@@ -307,7 +315,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testCreateTable(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INTEGER ) STRICT',
+			'CREATE TABLE `t` ( `id` INTEGER )' . $this->strict_suffix,
 			'CREATE TABLE t (id INT)'
 		);
 
@@ -328,7 +336,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testCreateTableWithMultipleColumns(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INTEGER, `name` TEXT COLLATE NOCASE, `score` REAL DEFAULT \'0.0\' ) STRICT',
+			'CREATE TABLE `t` ( `id` INTEGER, `name` TEXT COLLATE NOCASE, `score` REAL DEFAULT \'0.0\' )' . $this->strict_suffix,
 			'CREATE TABLE t (id INT, name TEXT, score FLOAT DEFAULT 0.0)'
 		);
 
@@ -353,7 +361,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testCreateTableWithBasicConstraints(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT ) STRICT',
+			'CREATE TABLE `t` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT )' . $this->strict_suffix,
 			'CREATE TABLE t (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT)'
 		);
 
@@ -381,7 +389,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testCreateTableWithEngine(): void {
 		// ENGINE is not supported in SQLite, we save it in information schema.
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INTEGER ) STRICT',
+			'CREATE TABLE `t` ( `id` INTEGER )' . $this->strict_suffix,
 			'CREATE TABLE t (id INT) ENGINE=MyISAM'
 		);
 
@@ -403,7 +411,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testCreateTableWithCollate(): void {
 		// COLLATE is not supported in SQLite, we save it in information schema.
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INTEGER ) STRICT',
+			'CREATE TABLE `t` ( `id` INTEGER )' . $this->strict_suffix,
 			'CREATE TABLE t (id INT) COLLATE utf8mb4_czech_ci'
 		);
 
@@ -433,7 +441,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		 *  https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key
 		 */
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INT NOT NULL, PRIMARY KEY (`id`) ) STRICT',
+			'CREATE TABLE `t` ( `id` INT NOT NULL, PRIMARY KEY (`id`) )' . $this->strict_suffix,
 			'CREATE TABLE t (id INT PRIMARY KEY)'
 		);
 
@@ -461,7 +469,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testCreateTableWithPrimaryKeyAndAutoincrement(): void {
 		// With AUTOINCREMENT, we expect "INTEGER".
 		$this->assertQuery(
-			'CREATE TABLE `t1` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT ) STRICT',
+			'CREATE TABLE `t1` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT )' . $this->strict_suffix,
 			'CREATE TABLE t1 (id INT PRIMARY KEY AUTO_INCREMENT)'
 		);
 
@@ -487,7 +495,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		// In SQLite, PRIMARY KEY must come before AUTOINCREMENT.
 		$this->assertQuery(
-			'CREATE TABLE `t2` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT ) STRICT',
+			'CREATE TABLE `t2` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT )' . $this->strict_suffix,
 			'CREATE TABLE t2 (id INT AUTO_INCREMENT PRIMARY KEY)'
 		);
 
@@ -513,7 +521,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		// In SQLite, AUTOINCREMENT cannot be specified separately from PRIMARY KEY.
 		$this->assertQuery(
-			'CREATE TABLE `t3` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT ) STRICT',
+			'CREATE TABLE `t3` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT )' . $this->strict_suffix,
 			'CREATE TABLE t3 (id INT AUTO_INCREMENT, PRIMARY KEY(id))'
 		);
 
@@ -543,7 +551,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testCreateTableWithInlineUniqueIndexes(): void {
 		$this->assertQuery(
 			array(
-				'CREATE TABLE `t` ( `id` INTEGER, `name` TEXT COLLATE NOCASE ) STRICT',
+				'CREATE TABLE `t` ( `id` INTEGER, `name` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 				'CREATE UNIQUE INDEX `t__id` ON `t` (`id`)',
 				'CREATE UNIQUE INDEX `t__name` ON `t` (`name`)',
 			),
@@ -582,7 +590,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testCreateTableWithStandaloneUniqueIndexes(): void {
 		$this->assertQuery(
 			array(
-				'CREATE TABLE `t` ( `id` INTEGER, `name` TEXT COLLATE NOCASE ) STRICT',
+				'CREATE TABLE `t` ( `id` INTEGER, `name` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 				'CREATE UNIQUE INDEX `t__id` ON `t` (`id`)',
 				'CREATE UNIQUE INDEX `t__name` ON `t` (`name`)',
 			),
@@ -642,7 +650,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testCreateTemporaryTable(): void {
 		$this->assertQuery(
-			'CREATE TEMPORARY TABLE `t` ( `id` INTEGER ) STRICT',
+			'CREATE TEMPORARY TABLE `t` ( `id` INTEGER )' . $this->strict_suffix,
 			'CREATE TEMPORARY TABLE t (id INT)'
 		);
 	}
@@ -669,7 +677,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -700,7 +708,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER NOT NULL ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER NOT NULL )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -731,7 +739,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER DEFAULT \'0\' ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER DEFAULT \'0\' )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -762,7 +770,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER NOT NULL DEFAULT \'0\' ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER NOT NULL DEFAULT \'0\' )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -793,7 +801,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER, `b` TEXT COLLATE NOCASE, `c` INTEGER ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER, `b` TEXT COLLATE NOCASE, `c` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -830,7 +838,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -862,7 +870,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `id` INTEGER ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `id` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -900,7 +908,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `b` INTEGER ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `b` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`) SELECT `rowid` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -936,7 +944,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array(
 				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
-				'CREATE TABLE `<tmp-table>` ( `a` INTEGER ) STRICT',
+				'CREATE TABLE `<tmp-table>` ( `a` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`) SELECT `rowid` FROM `t`',
 				'DROP TABLE `t`',
 				'ALTER TABLE `<tmp-table>` RENAME TO `t`',
@@ -968,7 +976,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testBitDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER ) STRICT',
+			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER )' . $this->strict_suffix,
 			'CREATE TABLE t (i1 BIT, i2 BIT(10))'
 		);
 
@@ -991,7 +999,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testBooleanDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER ) STRICT',
+			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER )' . $this->strict_suffix,
 			'CREATE TABLE t (i1 BOOL, i2 BOOLEAN)'
 		);
 
@@ -1014,7 +1022,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testIntegerDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER, `i3` INTEGER, `i4` INTEGER, `i5` INTEGER, `i6` INTEGER ) STRICT',
+			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER, `i3` INTEGER, `i4` INTEGER, `i5` INTEGER, `i6` INTEGER )' . $this->strict_suffix,
 			'CREATE TABLE t (i1 TINYINT, i2 SMALLINT, i3 MEDIUMINT, i4 INT, i5 INTEGER, i6 BIGINT)'
 		);
 
@@ -1045,7 +1053,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testFloatDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `f1` REAL, `f2` REAL, `f3` REAL, `f4` REAL ) STRICT',
+			'CREATE TABLE `t` ( `f1` REAL, `f2` REAL, `f3` REAL, `f4` REAL )' . $this->strict_suffix,
 			'CREATE TABLE t (f1 FLOAT, f2 DOUBLE, f3 DOUBLE PRECISION, f4 REAL)'
 		);
 
@@ -1072,7 +1080,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testDecimalTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `f1` REAL, `f2` REAL, `f3` REAL, `f4` REAL ) STRICT',
+			'CREATE TABLE `t` ( `f1` REAL, `f2` REAL, `f3` REAL, `f4` REAL )' . $this->strict_suffix,
 			'CREATE TABLE t (f1 DECIMAL, f2 DEC, f3 FIXED, f4 NUMERIC)'
 		);
 
@@ -1099,7 +1107,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testCharDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (c1 CHAR, c2 CHAR(10))'
 		);
 
@@ -1122,7 +1130,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testVarcharDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (c1 VARCHAR(255), c2 CHAR VARYING(255), c3 CHARACTER VARYING(255))'
 		);
 
@@ -1147,7 +1155,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testNationalCharDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE, `c4` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE, `c4` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (c1 NATIONAL CHAR, c2 NCHAR, c3 NATIONAL CHAR (10), c4 NCHAR(10))'
 		);
 
@@ -1174,7 +1182,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testNcharVarcharDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (c1 NCHAR VARCHAR(255), c2 NCHAR VARYING(255), c3 NVARCHAR(255))'
 		);
 
@@ -1199,7 +1207,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testNationalVarcharDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `c1` TEXT COLLATE NOCASE, `c2` TEXT COLLATE NOCASE, `c3` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (c1 NATIONAL VARCHAR(255), c2 NATIONAL CHAR VARYING(255), c3 NATIONAL CHARACTER VARYING(255))'
 		);
 
@@ -1224,7 +1232,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testTextDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `t1` TEXT COLLATE NOCASE, `t2` TEXT COLLATE NOCASE, `t3` TEXT COLLATE NOCASE, `t4` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `t1` TEXT COLLATE NOCASE, `t2` TEXT COLLATE NOCASE, `t3` TEXT COLLATE NOCASE, `t4` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (t1 TINYTEXT, t2 TEXT, t3 MEDIUMTEXT, t4 LONGTEXT)'
 		);
 
@@ -1251,7 +1259,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testEnumDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `e` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `e` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (e ENUM("a", "b", "c"))'
 		);
 
@@ -1272,7 +1280,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testDateAndTimeDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `d` TEXT COLLATE NOCASE, `t` TEXT COLLATE NOCASE, `dt` TEXT COLLATE NOCASE, `ts` TEXT COLLATE NOCASE, `y` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `d` TEXT COLLATE NOCASE, `t` TEXT COLLATE NOCASE, `dt` TEXT COLLATE NOCASE, `ts` TEXT COLLATE NOCASE, `y` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (d DATE, t TIME, dt DATETIME, ts TIMESTAMP, y YEAR)'
 		);
 
@@ -1301,7 +1309,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testBinaryDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `b` BLOB, `v` BLOB ) STRICT',
+			'CREATE TABLE `t` ( `b` BLOB, `v` BLOB )' . $this->strict_suffix,
 			'CREATE TABLE t (b BINARY, v VARBINARY(255))'
 		);
 
@@ -1324,7 +1332,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testBlobDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `b1` BLOB, `b2` BLOB, `b3` BLOB, `b4` BLOB ) STRICT',
+			'CREATE TABLE `t` ( `b1` BLOB, `b2` BLOB, `b3` BLOB, `b4` BLOB )' . $this->strict_suffix,
 			'CREATE TABLE t (b1 TINYBLOB, b2 BLOB, b3 MEDIUMBLOB, b4 LONGBLOB)'
 		);
 
@@ -1351,7 +1359,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testBasicSpatialDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `g1` TEXT COLLATE NOCASE, `g2` TEXT COLLATE NOCASE, `g3` TEXT COLLATE NOCASE, `g4` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `g1` TEXT COLLATE NOCASE, `g2` TEXT COLLATE NOCASE, `g3` TEXT COLLATE NOCASE, `g4` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (g1 GEOMETRY, g2 POINT, g3 LINESTRING, g4 POLYGON)'
 		);
 
@@ -1378,7 +1386,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testMultiObjectSpatialDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `g1` TEXT COLLATE NOCASE, `g2` TEXT COLLATE NOCASE, `g3` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `g1` TEXT COLLATE NOCASE, `g2` TEXT COLLATE NOCASE, `g3` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (g1 MULTIPOINT, g2 MULTILINESTRING, g3 MULTIPOLYGON)'
 		);
 
@@ -1403,7 +1411,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testGeometryCollectionDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `g1` TEXT COLLATE NOCASE, `g2` TEXT COLLATE NOCASE ) STRICT',
+			'CREATE TABLE `t` ( `g1` TEXT COLLATE NOCASE, `g2` TEXT COLLATE NOCASE )' . $this->strict_suffix,
 			'CREATE TABLE t (g1 GEOMCOLLECTION, g2 GEOMETRYCOLLECTION)'
 		);
 
@@ -1426,7 +1434,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 	public function testSerialDataTypes(): void {
 		$this->assertQuery(
-			'CREATE TABLE `t` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT ) STRICT',
+			'CREATE TABLE `t` ( `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT )' . $this->strict_suffix,
 			'CREATE TABLE t (id SERIAL)'
 		);
 
