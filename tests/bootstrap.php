@@ -8,6 +8,12 @@ require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-token.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-translator.php';
 
+// When on an older SQLite version, enable unsafe back compatibility.
+$sqlite_version = ( new PDO( 'sqlite::memory:' ) )->query( 'SELECT SQLITE_VERSION();' )->fetch()[0];
+if ( version_compare( $sqlite_version, WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' ) ) {
+	define( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS', true );
+}
+
 // Configure the test environment.
 error_reporting( E_ALL );
 define( 'FQDB', ':memory:' );
