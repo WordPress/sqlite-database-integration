@@ -71,7 +71,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			"SELECT
 				table_name as 'name',
 				engine AS 'engine',
-				FLOOR( data_length / 1024 / 1024 ) 'data'
+				CAST( data_length / 1024 / 1024 AS UNSIGNED ) AS 'data'
 			FROM INFORMATION_SCHEMA.TABLES
 			WHERE TABLE_NAME = 't'
 			ORDER BY name ASC"
