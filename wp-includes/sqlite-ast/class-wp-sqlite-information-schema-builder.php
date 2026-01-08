@@ -378,10 +378,10 @@ class WP_SQLite_Information_Schema_Builder {
 	public function temporary_table_exists( string $table_name ): bool {
 		/*
 		 * We could search in the "{$this->temporary_table_prefix}tables" table,
-		 * but it may not exist yet, so using "sqlite_temp_schema" is simpler.
+		 * but it may not exist yet, so using "sqlite_temp_master" is simpler.
 		 */
 		$stmt = $this->connection->query(
-			"SELECT 1 FROM sqlite_temp_schema WHERE type = 'table' AND name = ?",
+			"SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ?",
 			array( $table_name )
 		);
 		return $stmt->fetchColumn() === '1';

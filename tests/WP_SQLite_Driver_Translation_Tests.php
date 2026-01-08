@@ -1944,7 +1944,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			array_filter(
 				$executed_queries,
 				function ( $query ) {
-					return "SELECT 1 FROM sqlite_temp_schema WHERE type = 'table' AND name = ?" !== $query;
+					return "SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ?" !== $query;
 				}
 			)
 		);

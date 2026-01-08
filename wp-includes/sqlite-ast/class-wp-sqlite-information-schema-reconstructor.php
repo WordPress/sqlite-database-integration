@@ -127,7 +127,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		return $this->driver->execute_sqlite_query(
 			"
 				SELECT name
-				FROM sqlite_schema
+				FROM sqlite_master
 				WHERE type = 'table'
 				AND name != ?
 				AND name NOT LIKE ? ESCAPE '\'
@@ -367,7 +367,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		$is_auto_increment = false;
 		if ( '0' !== $column_info['pk'] ) {
 			$is_auto_increment = $this->driver->execute_sqlite_query(
-				'SELECT 1 FROM sqlite_schema WHERE tbl_name = ? AND sql LIKE ?',
+				'SELECT 1 FROM sqlite_master WHERE tbl_name = ? AND sql LIKE ?',
 				array( $table_name, '%AUTOINCREMENT%' )
 			)->fetchColumn();
 
