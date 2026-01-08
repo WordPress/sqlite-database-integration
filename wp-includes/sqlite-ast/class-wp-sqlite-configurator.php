@@ -231,7 +231,7 @@ class WP_SQLite_Configurator {
 					SET
 					  TABLE_SCHEMA = ?,
 					  CONSTRAINT_SCHEMA = ?,
-					  REFERENCED_TABLE_SCHEMA = IIF(REFERENCED_TABLE_SCHEMA IS NULL, NULL, ?)
+					  REFERENCED_TABLE_SCHEMA = CASE WHEN REFERENCED_TABLE_SCHEMA IS NULL THEN NULL ELSE ? END
 					WHERE TABLE_SCHEMA != 'information_schema'",
 					$this->driver->get_connection()->quote_identifier( $key_column_usage_table )
 				),

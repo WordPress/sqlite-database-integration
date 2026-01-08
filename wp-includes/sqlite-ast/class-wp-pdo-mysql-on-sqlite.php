@@ -2630,7 +2630,9 @@ class WP_PDO_MySQL_On_SQLite {
 			sprintf(
 				'SELECT SCHEMA_NAME AS Database
 				FROM (
-					SELECT IIF(SCHEMA_NAME = ?, ?, SCHEMA_NAME) AS SCHEMA_NAME FROM %s ORDER BY SCHEMA_NAME
+					SELECT CASE WHEN SCHEMA_NAME = ? THEN ? ELSE SCHEMA_NAME END AS SCHEMA_NAME
+					FROM %s
+					ORDER BY SCHEMA_NAME
 				)%s',
 				$this->quote_sqlite_identifier( $schemata_table ),
 				isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
@@ -4372,7 +4374,7 @@ class WP_PDO_MySQL_On_SQLite {
 	 *   SELECT *, `t`.*, `t`.`table_schema` FROM (
 	 *     SELECT
 	 *       `TABLE_CATALOG`,
-	 *       IIF(`TABLE_SCHEMA` = 'information_schema', `TABLE_SCHEMA`, 'database_name') AS `TABLE_SCHEMA`,
+	 *       CASE WHEN `TABLE_SCHEMA` = 'information_schema' THEN `TABLE_SCHEMA` ELSE 'database_name' END AS `TABLE_SCHEMA`,
 	 *       `TABLE_NAME`,
 	 *       ...
 	 *     FROM `_wp_sqlite_mysql_information_schema_tables` AS `tables`
@@ -4442,7 +4444,7 @@ class WP_PDO_MySQL_On_SQLite {
 				$quoted_column = $this->quote_sqlite_identifier( $column );
 				if ( isset( $information_schema_db_column_map[ strtoupper( $column ) ] ) ) {
 					$expanded_list[] = sprintf(
-						"IIF(%s = 'information_schema', %s, %s) AS %s",
+						"CASE WHEN %s = 'information_schema' THEN %s ELSE %s END AS %s",
 						$quoted_column,
 						$quoted_column,
 						$this->connection->quote( $this->main_db_name ),
