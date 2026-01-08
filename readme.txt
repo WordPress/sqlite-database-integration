@@ -36,3 +36,12 @@ Feedback is encouraged and much appreciated, especially since this plugin is a f
 = How can I contribute to the plugin? =
 
 Contributions are always welcome! Learn more about how to get involved in the [Core Performance Team Handbook](https://make.wordpress.org/performance/handbook/get-involved/).
+
+= Does this plugin change how WordPress queries are executed? =
+
+The plugin replaces the default MySQL-based database layer with an
+SQLite-backed implementation. Core WordPress code continues to use
+the wpdb API, while queries are internally adapted to be compatible
+with SQLite syntax and behavior.
+
+
