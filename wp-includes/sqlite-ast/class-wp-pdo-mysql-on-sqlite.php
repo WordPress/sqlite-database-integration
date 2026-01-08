@@ -3496,6 +3496,22 @@ class WP_PDO_MySQL_On_SQLite {
 				return $this->translate_runtime_function_call( $node );
 			case 'functionCall':
 				return $this->translate_function_call( $node );
+			case 'substringFunction':
+				$nodes = $node->get_child_nodes();
+				if ( count( $nodes ) === 2 ) {
+					return sprintf(
+						'SUBSTR(%s, %s)',
+						$this->translate( $nodes[0] ),
+						$this->translate( $nodes[1] )
+					);
+				} else {
+					return sprintf(
+						'SUBSTR(%s, %s, %s)',
+						$this->translate( $nodes[0] ),
+						$this->translate( $nodes[1] ),
+						$this->translate( $nodes[2] )
+					);
+				}
 			case 'systemVariable':
 				$var_ident_type = $node->get_first_child_node( 'varIdentType' );
 				$type_token     = $var_ident_type ? $var_ident_type->get_first_child_token() : null;
@@ -4116,7 +4132,7 @@ class WP_PDO_MySQL_On_SQLite {
 			case WP_MySQL_Lexer::LEFT_SYMBOL:
 				$nodes = $node->get_child_nodes();
 				return sprintf(
-					'SUBSTRING(%s, 1, %s)',
+					'SUBSTR(%s, 1, %s)',
 					$this->translate( $nodes[0] ),
 					$this->translate( $nodes[1] )
 				);

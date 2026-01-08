@@ -11231,4 +11231,18 @@ END;
 		$result = $this->engine->query( 'SELECT VERSION()' );
 		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
 	}
+
+	public function testSubstringFunction(): void {
+		$result = $this->assertQuery( "SELECT SUBSTRING('abcdef', 1, 3) AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT SUBSTRING('abcdef', 4) AS s" );
+		$this->assertSame( 'def', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT SUBSTRING('abcdef' FROM 1 FOR 3) AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT SUBSTRING('abcdef' FROM 4) AS s" );
+		$this->assertSame( 'def', $result[0]->s );
+	}
 }
