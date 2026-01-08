@@ -5619,12 +5619,12 @@ class WP_PDO_MySQL_On_SQLite {
 			if ( 'PRIMARY' === $info['INDEX_NAME'] ) {
 				if ( $has_autoincrement ) {
 					/*
-					 * In MySQL, a compound PRIMARY KEY can have an AUTOINCREMENT
+					 * In MySQL, a compound PRIMARY KEY can have an AUTO_INCREMENT
 					 * column, when it is the first column in the key.
 					 *
 					 * SQLite doesn't support this, but we can emulate it as follows:
 					 *   1. Keep only the first column as a PRIMARY KEY.
-					 *      Since this is the column that also has AUTOINCREMENT,
+					 *      Since this is the column that also has AUTO_INCREMENT,
 					 *      it reasonable to assume that its values are unique.
 					 *   2. Create a UNIQUE key for all the PRIMARY KEY columns.
 					 *      This is to preserve the index of the compound key.
