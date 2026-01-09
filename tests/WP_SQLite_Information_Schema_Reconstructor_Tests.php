@@ -266,7 +266,6 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	}
 
 	public function testDefaultValueEscaping(): void {
-		//$this->assertSame("abc". chr( 8 ) . "xyz", "" );
 		$this->engine->get_connection()->query(
 			"
 			CREATE TABLE t (
@@ -277,8 +276,12 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 				col5 text DEFAULT 'abc\nxyz',
 				col6 text DEFAULT 'abc\rxyz',
 				col7 text DEFAULT 'abc\txyz',
-				col8 text DEFAULT 'abc" . chr( 8 ) . "xyz', -- backspace
-				col9 text DEFAULT 'abc" . chr( 26 ) . "xyz' -- control-Z
+				col8 text DEFAULT 'abc" . chr( 8 ) . "xyz',  -- backspace
+				col9 text DEFAULT 'abc" . chr( 26 ) . "xyz', -- control-Z
+				last text -- SQLite < 3.33.0 has a strange bug where a comment
+				          -- after the last table definition DEFAULT value is
+				          -- included in the value reported by PRAGMA table info.
+				          -- Let's add one more column to avoid this issue.
 			)
 		"
 		);
@@ -296,9 +299,10 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 					"  `col4` varchar(65535) DEFAULT 'abc\\\\xyz',",
 					"  `col5` varchar(65535) DEFAULT 'abc\\nxyz',",
 					"  `col6` varchar(65535) DEFAULT 'abc\\rxyz',",
-					"  `col7` varchar(65535) DEFAULT 'abc	xyz',",              // tab is preserved
-					"  `col8` varchar(65535) DEFAULT 'abc" . chr( 8 ) . "xyz',", // backspace is preserved
-					"  `col9` varchar(65535) DEFAULT 'abc" . chr( 26 ) . "xyz'", // control-Z is preserved
+					"  `col7` varchar(65535) DEFAULT 'abc	xyz',",               // tab is preserved
+					"  `col8` varchar(65535) DEFAULT 'abc" . chr( 8 ) . "xyz',",  // backspace is preserved
+					"  `col9` varchar(65535) DEFAULT 'abc" . chr( 26 ) . "xyz',", // control-Z is preserved
+					'  `last` text DEFAULT NULL',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
