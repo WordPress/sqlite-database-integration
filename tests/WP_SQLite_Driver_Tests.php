@@ -6768,6 +6768,14 @@ END;
 	}
 
 	public function testUpdateWithJoinedTables(): void {
+		$sqlite_version = $this->engine->get_sqlite_version();
+		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
+			$this->markTestSkipped(
+				sprintf( "SQLite version %s doesn't support UPDATE with FROM clause.", $sqlite_version )
+			);
+			return;
+		}
+
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, comment TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t3 (id INT, name TEXT)' );
@@ -6841,6 +6849,14 @@ END;
 	}
 
 	public function testUpdateWithJoinedTablesInNonStrictMode(): void {
+		$sqlite_version = $this->engine->get_sqlite_version();
+		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
+			$this->markTestSkipped(
+				sprintf( "SQLite version %s doesn't support UPDATE with FROM clause.", $sqlite_version )
+			);
+			return;
+		}
+
 		$this->assertQuery( "SET SESSION sql_mode = ''" );
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, comment TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
@@ -6915,6 +6931,14 @@ END;
 	}
 
 	public function testUpdateWithJoinComplexQuery(): void {
+		$sqlite_version = $this->engine->get_sqlite_version();
+		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
+			$this->markTestSkipped(
+				sprintf( "SQLite version %s doesn't support UPDATE with FROM clause.", $sqlite_version )
+			);
+			return;
+		}
+
 		$this->assertQuery( "SET SESSION sql_mode = ''" );
 
 		$default_date = '0000-00-00 00:00:00';
