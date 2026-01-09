@@ -107,23 +107,33 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t2 (c1 INT, c2 INT)' );
 		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
+		$is_values_naming_supported = version_compare( $this->driver->get_sqlite_version(), '3.33.0', '>=' );
+
 		$this->assertQuery(
-			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
+				: 'INSERT INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
 			'INSERT INTO t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
+				: 'INSERT INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
 			'INSERT INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true'
+				: 'INSERT INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true',
 			'INSERT INTO t (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true'
+				: 'INSERT INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true',
 			'INSERT INTO t (c) VALUES (1), (2)'
 		);
 
@@ -141,18 +151,26 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t2 (c1 TEXT, c2 TEXT)' );
 		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
+		$is_values_naming_supported = version_compare( $this->driver->get_sqlite_version(), '3.33.0', '>=' );
+
 		$this->assertQuery(
-			'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true'
+				: 'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
 			'INSERT INTO t1 (c1) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (VALUES ( 1 , 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (VALUES ( 1 , 2 )) WHERE true'
+				: 'INSERT INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true',
 			'INSERT INTO t1 (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
-			'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 ) , ( 2 )) WHERE true'
+				: 'INSERT INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true',
 			'INSERT INTO t1 (c1) VALUES (1), (2)'
 		);
 
@@ -171,23 +189,33 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t2 (c1 INT, c2 INT)' );
 		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
+		$is_values_naming_supported = version_compare( $this->driver->get_sqlite_version(), '3.33.0', '>=' );
+
 		$this->assertQuery(
-			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
+				: 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
 			'REPLACE INTO t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
+				: 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
 			'REPLACE INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true'
+				: 'REPLACE INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true',
 			'REPLACE INTO t (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true'
+				: 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true',
 			'REPLACE INTO t (c) VALUES (1), (2)'
 		);
 
@@ -205,18 +233,26 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t2 (c1 TEXT, c2 TEXT)' );
 		$this->driver->query( 'INSERT INTO t2 VALUES (1, 2)' );
 
+		$is_values_naming_supported = version_compare( $this->driver->get_sqlite_version(), '3.33.0', '>=' );
+
 		$this->assertQuery(
-			'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 )) WHERE true'
+				: 'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
 			'REPLACE INTO t1 (c1) VALUES (1)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (VALUES ( 1 , 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (VALUES ( 1 , 2 )) WHERE true'
+				: 'REPLACE INTO `t1` (`c1`, `c2`) SELECT CAST(`column1` AS TEXT), CAST(`column2` AS TEXT) FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true',
 			'REPLACE INTO t1 (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
-			'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 ) , ( 2 )) WHERE true',
+			$is_values_naming_supported
+				? 'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (VALUES ( 1 ) , ( 2 )) WHERE true'
+				: 'REPLACE INTO `t1` (`c1`) SELECT CAST(`column1` AS TEXT) FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true',
 			'REPLACE INTO t1 (c1) VALUES (1), (2)'
 		);
 

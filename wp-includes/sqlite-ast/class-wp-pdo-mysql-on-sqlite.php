@@ -4872,9 +4872,35 @@ class WP_PDO_MySQL_On_SQLite {
 		// Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
 		if ( 'insertFromConstructor' === $node->rule_name ) {
 			// VALUES (...)
-			$from = $this->translate(
-				$node->get_first_child_node( 'insertValues' )
-			);
+			$insert_values = $node->get_first_child_node( 'insertValues' );
+			$from          = $this->translate( $insert_values );
+
+			/**
+			 * The automatic "columnN" naming for VALUES lists is supported only
+			 * from SQLite 3.33.0. For older versions, we need to emulate it by
+			 * prepending a dummy VALUES list header via the UNION ALL operator:
+			 *
+			 * SELECT
+			 *   NULL AS `column1`, NULL AS `column2`, ... WHERE FALSE
+			 *   UNION ALL
+			 *   VALUES (value1, value2, ...)
+			 */
+			$is_values_naming_supported = version_compare( $this->get_sqlite_version(), '3.33.0', '>=' );
+			if ( ! $is_values_naming_supported ) {
+				$values_list = $insert_values->get_first_child_node( 'valueList' );
+				$values      = $values_list->get_first_child_node( 'values' );
+				$value_count = (
+					count( $values->get_child_nodes( 'expr' ) )
+					+ count( $values->get_child_nodes( WP_MySQL_Lexer::DEFAULT_SYMBOL ) )
+				);
+
+				$columns_list = '';
+				for ( $i = 1; $i <= $value_count; $i++ ) {
+					$columns_list .= $i > 1 ? ', ' : '';
+					$columns_list .= 'NULL AS ' . $this->quote_sqlite_identifier( 'column' . $i );
+				}
+				$from = 'SELECT ' . $columns_list . ' WHERE FALSE UNION ALL ' . $from;
+			}
 		} elseif ( 'insertQueryExpression' === $node->rule_name ) {
 			// SELECT ...
 			$from = $this->translate(
