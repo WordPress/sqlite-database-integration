@@ -849,7 +849,7 @@ class WP_PDO_MySQL_On_SQLite {
 	 * @return string SQLite engine version as a string.
 	 */
 	public function get_sqlite_version(): string {
-		return $this->connection->query( 'SELECT SQLITE_VERSION()' )->fetchColumn();
+		return $this->connection->get_pdo()->getAttribute( PDO::ATTR_SERVER_VERSION );
 	}
 
 	/**
