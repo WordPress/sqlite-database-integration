@@ -10142,10 +10142,17 @@ END;
 		$this->assertQuery( "INSERT INTO t VALUES ('2')" );
 		$this->assertQuery( "INSERT INTO t VALUES ('3.0')" );
 
-		// TODO: These are supported in MySQL:
-		$this->assertQueryError( "INSERT INTO t VALUES ('4.5')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
-		$this->assertQueryError( 'INSERT INTO t VALUES (0x05)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
-		$this->assertQueryError( "INSERT INTO t VALUES (x'06')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		if ( $is_legacy_sqlite ) {
+			$this->assertQuery( "INSERT INTO t VALUES ('4.5')" );
+			$this->assertQuery( 'INSERT INTO t VALUES (0x05)' );
+			$this->assertQuery( "INSERT INTO t VALUES (x'06')" );
+		} else {
+			// TODO: These are supported in MySQL:
+			$this->assertQueryError( "INSERT INTO t VALUES ('4.5')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
+			$this->assertQueryError( 'INSERT INTO t VALUES (0x05)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+			$this->assertQueryError( "INSERT INTO t VALUES (x'06')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+		}
 
 		$result = $this->assertQuery( 'SELECT * FROM t' );
 		$this->assertSame( null, $result[0]->value );
@@ -10170,8 +10177,13 @@ END;
 		$this->assertQuery( "INSERT INTO t VALUES ('5')" );
 
 		// TODO: These are supported in MySQL:
-		$this->assertQueryError( 'INSERT INTO t VALUES (0x06)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
-		$this->assertQueryError( "INSERT INTO t VALUES (x'07')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+		if ( $is_legacy_sqlite ) {
+			$this->assertQuery( 'INSERT INTO t VALUES (0x06)' );
+			$this->assertQuery( "INSERT INTO t VALUES (x'07')" );
+		} else {
+			$this->assertQueryError( 'INSERT INTO t VALUES (0x06)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+			$this->assertQueryError( "INSERT INTO t VALUES (x'07')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+		}
 
 		$result = $this->assertQuery( 'SELECT * FROM t' );
 		$this->assertSame( null, $result[0]->value );
@@ -10637,10 +10649,17 @@ END;
 		$this->assertQuery( "UPDATE t SET value = '3.0'" );
 		$this->assertSame( '3', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
 
-		// TODO: These are supported in MySQL:
-		$this->assertQueryError( "UPDATE t SET value = '4.5'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
-		$this->assertQueryError( 'UPDATE t SET value = 0x05', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
-		$this->assertQueryError( "UPDATE t SET value = x'06'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		if ( $is_legacy_sqlite ) {
+			$this->assertQuery( "UPDATE t SET value = '4.5'" );
+			$this->assertQuery( 'UPDATE t SET value = 0x05' );
+			$this->assertQuery( "UPDATE t SET value = x'06'" );
+		} else {
+			// TODO: These are supported in MySQL:
+			$this->assertQueryError( "UPDATE t SET value = '4.5'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
+			$this->assertQueryError( 'UPDATE t SET value = 0x05', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+			$this->assertQueryError( "UPDATE t SET value = x'06'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
+		}
 
 		$this->assertQuery( 'DROP TABLE t' );
 
@@ -10676,8 +10695,13 @@ END;
 		$this->assertSame( PHP_VERSION_ID < 80100 ? '5.0' : '5', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
 
 		// TODO: These are supported in MySQL:
-		$this->assertQueryError( 'UPDATE t SET value = 0x06', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
-		$this->assertQueryError( "UPDATE t SET value = x'07'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+		if ( $is_legacy_sqlite ) {
+			$this->assertQuery( 'UPDATE t SET value = 0x06' );
+			$this->assertQuery( "UPDATE t SET value = x'07'" );
+		} else {
+			$this->assertQueryError( 'UPDATE t SET value = 0x06', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+			$this->assertQueryError( "UPDATE t SET value = x'07'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in REAL column t.value' );
+		}
 
 		$this->assertQuery( 'DROP TABLE t' );
 
