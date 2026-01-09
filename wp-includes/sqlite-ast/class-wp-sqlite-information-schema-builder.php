@@ -1058,18 +1058,17 @@ class WP_SQLite_Information_Schema_Builder {
 		 */
 		$this->connection->query(
 			sprintf(
-				'UPDATE %s AS statistics
-				SET seq_in_index = renumbered.seq_in_index
-				FROM (
+				'WITH renumbered AS (
 					SELECT
 						rowid,
 						row_number() OVER (PARTITION BY index_name ORDER BY seq_in_index) AS seq_in_index
-					FROM %s
+					FROM %s x
 					WHERE table_schema = ?
 					AND table_name = ?
-				) AS renumbered
-				WHERE statistics.rowid = renumbered.rowid
-				AND statistics.seq_in_index != renumbered.seq_in_index',
+				)
+				UPDATE %s AS statistics
+				SET seq_in_index = (SELECT seq_in_index FROM renumbered WHERE rowid = statistics.rowid)
+				WHERE statistics.rowid IN (SELECT rowid FROM renumbered)',
 				$this->connection->quote_identifier( $statistics_table ),
 				$this->connection->quote_identifier( $statistics_table )
 			),
