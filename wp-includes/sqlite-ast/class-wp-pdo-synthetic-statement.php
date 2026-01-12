@@ -82,6 +82,21 @@ if ( PHP_VERSION_ID < 80000 ) {
  *
  * This class implements a complete PDOStatement interface on top of PHP arrays.
  * It is used for result sets that are composed or transformed in the PHP layer.
+ *
+ * PDO supports the following fetch modes:
+ *   - PDO::FETCH_DEFAULT:  current default fetch mode (available from PHP 8.0)
+ *   - PDO::FETCH_BOTH:     default
+ *   - PDO::FETCH_NUM:      numeric array
+ *   - PDO::FETCH_ASSOC:    associative array
+ *   - PDO::FETCH_NAMED:    associative array retaining duplicate columns
+ *   - PDO::FETCH_COLUMN:   single column value [1 extra arg]
+ *   - PDO::FETCH_KEY_PAIR: key-value pair
+ *   - PDO::FETCH_OBJ:      object (stdClass)
+ *   - PDO::FETCH_CLASS:    object (custom class) [1-2 extra args]
+ *   - PDO::FETCH_INTO:     update an exisisting object, can't be used with fetchAll() [1 extra arg]
+ *   - PDO::FETCH_LAZY:     lazy fetch via PDORow, can't be used with fetchAll()
+ *   - PDO::FETCH_BOUND:    bind values to PHP variables, can't be used with fetchAll()
+ *   - PDO::FETCH_FUNC:     custom function, only works with fetchAll(), can't be default [1 extra arg]
  */
 class WP_PDO_Synthetic_Statement extends PDOStatement {
 	use WP_PDO_Synthetic_Statement_PHP_Compat;
