@@ -35,6 +35,10 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		// DSN with whitespace in the database name.
 		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname= w p ' );
 		$this->assertSame( ' w p ', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
+
+		// DSN with semicolon in the database name.
+		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;dbname=w;;p;' );
+		$this->assertSame( 'w;p', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 	}
 
 	public function test_query(): void {
