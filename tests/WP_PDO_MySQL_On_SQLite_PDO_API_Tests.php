@@ -19,6 +19,24 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
+	public function test_dsn_parsing(): void {
+		// Standard DSN.
+		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
+		$this->assertSame( 'wp', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
+
+		// DSN with trailing semicolon.
+		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+		$this->assertSame( 'wp', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
+
+		// DSN with whitespace before argument names.
+		$driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:  path=:memory:;\t dbname=wp" );
+		$this->assertSame( 'wp', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
+
+		// DSN with whitespace in the database name.
+		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname= w p ' );
+		$this->assertSame( ' w p ', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
+	}
+
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
 		$this->assertInstanceOf( PDOStatement::class, $result );

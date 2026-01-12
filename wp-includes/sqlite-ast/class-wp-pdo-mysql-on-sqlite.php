@@ -619,6 +619,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		$args = array();
 		foreach ( explode( ';', $dsn_parts[1] ) as $arg ) {
+			$arg = ltrim( $arg ); // PDO DSN allows whitespace before argument name.
+			if ( '' === $arg ) {
+				continue;
+			}
 			$arg_parts             = explode( '=', $arg, 2 );
 			$args[ $arg_parts[0] ] = $arg_parts[1] ?? null;
 		}
