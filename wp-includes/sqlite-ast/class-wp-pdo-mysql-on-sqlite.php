@@ -470,6 +470,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $last_sqlite_queries = array();
 
 	/**
+	 * A PDO SQLite statement that represents the result of the last emulated query.
+	 *
+	 * @var PDOStatement|null
+	 */
+	private $last_result_statement;
+
+	/**
 	 * Results of the last emulated query.
 	 *
 	 * @var array|null
@@ -772,7 +779,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( null === $fetch_mode ) {
 			// When the default FETCH_BOTH is not set explicitly, additional
 			// arguments are ignored, and the argument count is not validated.
-			$fetch_mode = PDO::FETCH_BOTH;
+			$fetch_mode      = PDO::FETCH_BOTH;
+			$fetch_mode_args = array();
 		} elseif ( PDO::FETCH_COLUMN === $fetch_mode ) {
 			if ( 3 !== $arg_count ) {
 				throw new ArgumentCountError(
@@ -833,7 +841,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->last_mysql_query = $query;
 
 		/**
-		 * Use "PDO::FETCH_NUM" fetch mode, as the "WP_PDO_Synthetic_Statement"
+		 * Use "PDO::FETCH_NUM" fetch mode, as "create_result_statement_from_data()"
 		 * expects the row data to be passed as an array of values.
 		 *
 		 * @TODO: We can remove this when we use the SQLite PDOStatements directly,
@@ -883,11 +891,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->commit_wrapper_transaction();
 			}
 
-			$columns       = is_array( $this->last_column_meta ) ? $this->last_column_meta : array();
+			/*
+			 * For now, create all statements from data loaded in memory. This is
+			 * a temporary solution until all queries set their result statement.
+			 *
+			 * TODO: Use "$this->last_result_statement" with an actual PDO SQLite
+			 *       statement whenever possible rather than loading all data.
+			 */
+			$columns       = is_array( $this->last_column_meta ) ? array_column( $this->last_column_meta, 'name' ) : array();
 			$rows          = is_array( $this->last_result ) ? $this->last_result : array();
 			$affected_rows = is_int( $this->last_return_value ) ? $this->last_return_value : 0;
 
-			$stmt = new WP_PDO_Synthetic_Statement( $this, $columns, $rows, $affected_rows );
+			$this->last_result_statement = $this->create_result_statement_from_data( $columns, $rows );
+
+			$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $affected_rows );
 			$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
 			return $stmt;
 		} catch ( Throwable $e ) {
@@ -6469,6 +6486,85 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->last_column_meta         = array();
 		$this->is_readonly              = false;
 		$this->wrapper_transaction_type = null;
+	}
+
+	/**
+	 * Create a PDO SQLite statement from the specified columns and rows.
+	 *
+	 * Some emulated MySQL queries don't have an SQLite counterpart and their
+	 * result data may be generated without a corresponding SQLite statement.
+	 * In such cases, we can generate a simple SQLite SELECT query that will
+	 * provide us with the PDOStatement API for the given column and row data.
+	 *
+	 * @param  array $columns The columns of the result set.
+	 * @param  array $rows    The rows of the result set.
+	 * @return PDOStatement   The corresponding PDO SQLite statement.
+	 */
+	private function create_result_statement_from_data( array $columns, array $rows ): PDOStatement {
+		$pdo = $this->connection->get_pdo();
+
+		/*
+		 * With 0 columns, we need to create a PDO statement that has no columns.
+		 * This can be done using a noop INSERT statement that modifies no data.
+		 */
+		if ( 0 === count( $columns ) ) {
+			return $pdo->query(
+				sprintf(
+					'INSERT INTO %s (rowid) SELECT NULL WHERE FALSE',
+					$this->quote_sqlite_identifier( self::GLOBAL_VARIABLES_TABLE_NAME )
+				)
+			);
+		}
+
+		/*
+		 * Create an SQLite statement that returns the specified columns and rows.
+		 * This can be done using a SELECT statement in the following form:
+		 *
+		 *   -- A dummy header row to assign correct column names.
+		 *   SELECT NULL AS `col1`, NULL AS `col2`, ... WHERE FALSE
+		 *
+		 *   UNION ALL
+		 *
+		 *   -- The actual data rows.
+		 *   VALUES
+		 *     (val11, val12, ...),
+		 *     (val21, val22, ...),
+		 *     ...
+		 */
+
+		// Construct column header row ("SELECT <column-list> WHERE FALSE").
+		$query = 'SELECT ';
+		foreach ( $columns as $i => $column ) {
+			$query .= $i > 0 ? ', ' : '';
+			$query .= 'NULL AS ' . $pdo->quote( $column );
+		}
+		$query .= ' WHERE FALSE';
+
+		// UNION ALL
+		if ( count( $rows ) > 0 ) {
+			$query .= ' UNION ALL VALUES ';
+		}
+
+		// Construct data rows ("VALUES <row-list>").
+		foreach ( $rows as $i => $row ) {
+			$query .= $i > 0 ? ', ' : '';
+			$query .= '(';
+			foreach ( array_values( $row ) as $j => $value ) {
+				$query .= $j > 0 ? ', ' : '';
+				if ( null === $value ) {
+					$query .= 'NULL';
+				} elseif ( is_string( $value ) && strpos( $value, "\0" ) !== false ) {
+					// Handle null characters; see self::translate_string_literal().
+					$query .= sprintf( "CAST(x'%s' AS TEXT)", bin2hex( $value ) );
+				} elseif ( is_string( $value ) ) {
+					$query .= $pdo->quote( $value );
+				} else {
+					$query .= $value;
+				}
+			}
+			$query .= ')';
+		}
+		return $pdo->query( $query );
 	}
 
 	/**

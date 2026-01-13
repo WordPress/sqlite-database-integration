@@ -26,7 +26,7 @@
  * we conditionally define traits with different APIs based on the PHP version.
  */
 if ( PHP_VERSION_ID < 80000 ) {
-	trait WP_PDO_Synthetic_Statement_PHP_Compat {
+	trait WP_PDO_Proxy_Statement_PHP_Compat {
 		/**
 		 * Set the default fetch mode for this statement.
 		 *
@@ -51,7 +51,7 @@ if ( PHP_VERSION_ID < 80000 ) {
 		}
 	}
 } else {
-	trait WP_PDO_Synthetic_Statement_PHP_Compat {
+	trait WP_PDO_Proxy_Statement_PHP_Compat {
 		/**
 		 * Set the default fetch mode for this statement.
 		 *
@@ -61,7 +61,7 @@ if ( PHP_VERSION_ID < 80000 ) {
 		 */
 		#[ReturnTypeWillChange]
 		public function setFetchMode( $mode, ...$args ): bool {
-			return $this->setDefaultFetchMode( $mode, $args );
+			return $this->setDefaultFetchMode( $mode, ...$args );
 		}
 
 		/**
@@ -98,84 +98,34 @@ if ( PHP_VERSION_ID < 80000 ) {
  *   - PDO::FETCH_BOUND:    bind values to PHP variables, can't be used with fetchAll()
  *   - PDO::FETCH_FUNC:     custom function, only works with fetchAll(), can't be default [1 extra arg]
  */
-class WP_PDO_Synthetic_Statement extends PDOStatement {
-	use WP_PDO_Synthetic_Statement_PHP_Compat;
+class WP_PDO_Proxy_Statement extends PDOStatement {
+	use WP_PDO_Proxy_Statement_PHP_Compat;
 
 	/**
-	 * The PDO connection.
+	 * The original PDO statement.
 	 *
-	 * @var PDO
+	 * @var PDOStatement
 	 */
-	private $pdo;
-
-	/**
-	 * Basic column metadata (containing at least name, table name, and native type).
-	 *
-	 * @var array
-	 */
-	private $columns;
-
-	/**
-	 * Rows of the result set.
-	 *
-	 * @var array<array<mixed>>
-	 */
-	private $rows;
+	private $statement;
 
 	/**
 	 * The number of affected rows.
 	 *
-	 * @var int
+	 * @var int|null
 	 */
 	private $affected_rows;
 
 	/**
-	 * The current cursor offset.
-	 *
-	 * @var int
-	 */
-	private $cursor_offset = 0;
-
-	/**
-	 * The current fetch mode.
-	 *
-	 * TODO: Inherit this from "PDO::ATTR_DEFAULT_FETCH_MODE".
-	 *
-	 * @var int
-	 */
-	private $fetch_mode = PDO::FETCH_BOTH;
-
-	/**
-	 * Additional arguments for the current fetch mode.
-	 *
-	 * @var array<mixed>
-	 */
-	private $fetch_mode_args = array();
-
-	/**
-	 * The PDO attributes set for this statement.
-	 *
-	 * @var array<int, mixed>
-	 */
-	private $attributes = array();
-
-	/**
 	 * Constructor.
 	 *
-	 * @param PDO   $pdo           The PDO connection.
-	 * @param array $columns       Basic column metadata (containing at least name, table name, and native type).
-	 * @param array $rows          Rows of the result set.
-	 * @param int   $affected_rows The number of affected rows.
+	 * @param PDOStatement $statement     The original PDO statement.
+	 * @param int          $affected_rows The number of affected rows.
 	 */
 	public function __construct(
-		PDO $pdo,
-		array $columns,
-		array $rows,
-		int $affected_rows
+		PDOStatement $statement,
+		?int $affected_rows = null
 	) {
-		$this->pdo           = $pdo;
-		$this->columns       = $columns;
-		$this->rows          = $rows;
+		$this->statement     = $statement;
 		$this->affected_rows = $affected_rows;
 	}
 
@@ -186,7 +136,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return bool         True on success, false on failure.
 	 */
 	public function execute( $params = null ): bool {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->statement->execute( $params );
 	}
 
 	/**
@@ -195,7 +145,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return int The number of columns in the result set.
 	 */
 	public function columnCount(): int {
-		return count( $this->columns );
+		return $this->statement->columnCount();
 	}
 
 	/**
@@ -204,7 +154,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return int The number of rows affected by the statement.
 	 */
 	public function rowCount(): int {
-		return $this->affected_rows;
+		return $this->affected_rows ?? $this->statement->rowCount();
 	}
 
 	/**
@@ -225,91 +175,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 		$cursorOrientation = 0,
 		$cursorOffset = 0
 	) {
-		if ( 0 === $mode || null === $mode ) {
-			$mode = $this->fetch_mode;
-		}
-		if ( null === $cursorOrientation ) {
-			$cursorOrientation = PDO::FETCH_ORI_NEXT;
-		}
-		if ( null === $cursorOffset ) {
-			$cursorOffset = 0;
-		}
-
-		if ( ! array_key_exists( $this->cursor_offset, $this->rows ) ) {
-			return false;
-		}
-
-		// Get current row data and column names.
-		$row          = $this->rows[ $this->cursor_offset ];
-		$column_names = array_column( $this->columns, 'name' );
-
-		// Advance the cursor to the next row.
-		$this->cursor_offset += 1;
-
-		/*
-		 * TODO: Support scrollable cursor ($cursorOrientation and $cursorOffset).
-		 *       This only has works for with statements that were prepared with
-		 *       the PDO::ATTR_CURSOR attribute set to PDO::CURSOR_SCROLL value.
-		 *       Without it, these parameters have no effect.
-		 */
-
-		/**
-		 * With PHP < 8.1, the "PDO::ATTR_STRINGIFY_FETCHES" value of "false"
-		 * is not working correctly with the PDO SQLite driver. In such case,
-		 * we need to manually convert the row values to the correct types.
-		 */
-		if ( PHP_VERSION_ID < 80100 && ! $this->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) ) {
-			foreach ( $row as $i => $value ) {
-				$type = $this->columns[ $i ]['native_type'];
-				if ( 'integer' === $type ) {
-					$row[ $i ] = (int) $value;
-				} elseif ( 'float' === $type ) {
-					$row[ $i ] = (float) $value;
-				}
-			}
-		}
-
-		switch ( $mode ) {
-			case PDO::FETCH_BOTH:
-				$values = array();
-				foreach ( $row as $i => $value ) {
-					$name            = $column_names[ $i ];
-					$values[ $name ] = $value;
-					if ( ! array_key_exists( $i, $values ) ) {
-						$values[ $i ] = $value;
-					}
-				}
-				return $values;
-			case PDO::FETCH_NUM:
-				return $row;
-			case PDO::FETCH_ASSOC:
-				return array_combine( $column_names, $row );
-			case PDO::FETCH_NAMED:
-				$values = array();
-				foreach ( $row as $i => $value ) {
-					$name = $column_names[ $i ];
-					if ( is_array( $values[ $name ] ?? null ) ) {
-						$values[ $name ][] = $value;
-					} elseif ( array_key_exists( $name, $values ) ) {
-						$values[ $name ] = array( $values[ $name ], $value );
-					} else {
-						$values[ $name ] = $value;
-					}
-				}
-				return $values;
-			case PDO::FETCH_OBJ:
-				return (object) array_combine( $column_names, $row );
-			case PDO::FETCH_CLASS:
-				throw new RuntimeException( "'PDO::FETCH_CLASS' mode is not supported" );
-			case PDO::FETCH_INTO:
-				throw new RuntimeException( "'PDO::FETCH_INTO' mode is not supported" );
-			case PDO::FETCH_LAZY:
-				throw new RuntimeException( "'PDO::FETCH_LAZY' mode is not supported" );
-			case PDO::FETCH_BOUND:
-				throw new RuntimeException( "'PDO::FETCH_BOUND' mode is not supported" );
-			default:
-				throw new ValueError( sprintf( 'PDOStatement::fetch(): Argument #1 ($mode) must be a bitmask of PDO::FETCH_* constants', $mode ) );
-		}
+		return $this->statement->fetch( $mode, $cursorOrientation, $cursorOffset );
 	}
 
 	/**
@@ -376,7 +242,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 */
 	#[ReturnTypeWillChange]
 	public function getAttribute( $attribute ) {
-		return $this->attributes[ $attribute ] ?? $this->pdo->getAttribute( $attribute );
+		return $this->statement->getAttribute( $attribute );
 	}
 
 	/**
@@ -387,8 +253,7 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	 * @return bool             True on success, false on failure.
 	 */
 	public function setAttribute( $attribute, $value ): bool {
-		$this->attributes[ $attribute ] = $value;
-		return true;
+		return $this->statement->setAttribute( $attribute, $value );
 	}
 
 	/**
@@ -472,39 +337,29 @@ class WP_PDO_Synthetic_Statement extends PDOStatement {
 	/**
 	 * Fetch all remaining rows from the result set.
 	 *
-	 * This is used internally by the "WP_PDO_Synthetic_Statement_PHP_Compat"
-	 * trait, that is defined conditionally based on the current PHP version.
+	 * This is used internally by the "WP_PDO_Proxy_Statement_PHP_Compat" trait,
+	 * that is defined conditionally based on the current PHP version.
 	 *
 	 * @param  int   $mode The fetch mode to use.
 	 * @param  mixed $args Additional parameters for the fetch mode.
 	 * @return array       The result set as an array of rows.
 	 */
 	private function fetchAllRows( $mode = null, ...$args ): array {
-		if ( null === $mode || 0 === $mode ) {
-			$mode = $this->fetch_mode;
-		}
-
-		$rows = array();
-		while ( $row = $this->fetch( $mode, ...$args ) ) {
-			$rows[] = $row;
-		}
-		return $rows;
+		return $this->statement->fetchAll( $mode, ...$args );
 	}
 
 	/**
 	 * Set the default fetch mode for this statement.
 	 *
-	 * This is used internally by the "WP_PDO_Synthetic_Statement_PHP_Compat"
-	 * trait, that is defined conditionally based on the current PHP version.
+	 * This is used internally by the "WP_PDO_Proxy_Statement_PHP_Compat" trait,
+	 * that is defined conditionally based on the current PHP version.
 	 *
 	 * @param  int   $mode   The fetch mode to set as the default.
 	 * @param  mixed $args   Additional parameters for the default fetch mode.
 	 * @return bool          True on success, false on failure.
 	 */
 	private function setDefaultFetchMode( $mode, ...$args ): bool {
-		$this->fetch_mode      = $mode;
-		$this->fetch_mode_args = $args;
-		return true;
+		return $this->statement->setFetchMode( $mode, ...$args );
 	}
 }
 
