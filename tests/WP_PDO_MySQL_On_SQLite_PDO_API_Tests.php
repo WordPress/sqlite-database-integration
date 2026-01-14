@@ -63,6 +63,11 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		if ( is_object( $expected ) ) {
 			$this->assertInstanceOf( get_class( $expected ), $result );
 			$this->assertEquals( $expected, $result );
+		} elseif ( PDO::FETCH_NAMED === $mode ) {
+			// PDO::FETCH_NAMED returns all array keys as strings, even numeric
+			// ones. This is not possible in plain PHP and might be a PDO bug.
+			$this->assertSame( array_map( 'strval', array_keys( $expected ) ), array_keys( $result ) );
+			$this->assertSame( array_values( $expected ), array_values( $result ) );
 		} else {
 			$this->assertSame( $expected, $result );
 		}
@@ -249,6 +254,11 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		if ( is_object( $expected ) ) {
 			$this->assertInstanceOf( get_class( $expected ), $result );
 			$this->assertEquals( $expected, $result );
+		} elseif ( PDO::FETCH_NAMED === $mode ) {
+			// PDO::FETCH_NAMED returns all array keys as strings, even numeric
+			// ones. This is not possible in plain PHP and might be a PDO bug.
+			$this->assertSame( array_map( 'strval', array_keys( $expected ) ), array_keys( $result ) );
+			$this->assertSame( array_values( $expected ), array_values( $result ) );
 		} else {
 			$this->assertSame( $expected, $result );
 		}
