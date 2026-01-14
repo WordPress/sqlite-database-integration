@@ -313,6 +313,26 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
+	public function test_attr_default_fetch_mode(): void {
+		$this->driver->setAttribute( PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_NUM );
+		$result = $this->driver->query( "SELECT 'a', 'b', 'c'" );
+		$this->assertSame(
+			array( 'a', 'b', 'c' ),
+			$result->fetch()
+		);
+
+		$this->driver->setAttribute( PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC );
+		$result = $this->driver->query( "SELECT 'a', 'b', 'c'" );
+		$this->assertSame(
+			array(
+				'a' => 'a',
+				'b' => 'b',
+				'c' => 'c',
+			),
+			$result->fetch()
+		);
+	}
+
 	public function data_pdo_fetch_methods(): Generator {
 		// PDO::FETCH_BOTH
 		yield 'PDO::FETCH_BOTH' => array(

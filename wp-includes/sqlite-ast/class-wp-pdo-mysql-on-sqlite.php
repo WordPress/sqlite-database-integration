@@ -444,18 +444,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $information_schema_builder;
 
 	/**
-	 * PDO API: The PDO attributes of the connection.
-	 *
-	 * TODO: Add PDO default attribute values.
-	 *
-	 * @var array<int, mixed>
-	 */
-	private $pdo_attributes = array(
-		// On PHP < 8.1, PDO::ATTR_STRINGIFY_FETCHES is enabled by default.
-		PDO::ATTR_STRINGIFY_FETCHES => PHP_VERSION_ID < 80100 ? true : false,
-	);
-
-	/**
 	 * Last executed MySQL query.
 	 *
 	 * @var string
@@ -787,7 +775,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			// When the default FETCH_BOTH is not set explicitly, additional
 			// arguments are ignored, and the argument count is not validated.
-			$fetch_mode      = PDO::FETCH_BOTH;
+			$fetch_mode      = $this->connection->get_pdo()->getAttribute( PDO::ATTR_DEFAULT_FETCH_MODE );
 			$fetch_mode_args = array();
 		} elseif ( PDO::FETCH_COLUMN === $fetch_mode ) {
 			if ( 3 !== $arg_count ) {
@@ -1014,24 +1002,31 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * PDO API: Set a PDO attribute.
 	 *
+	 * TODO: Evaluate whether we should pass all PDO attributes to the PDO SQLite
+	 *       instance, or whether some of them require special handling.
+	 *       See: https://github.com/php/php-src/blob/b391c28f903536e3bc6a0021ae0976ddbc2745f8/ext/pdo/php_pdo_driver.h#L103
+	 *
 	 * @param int   $attribute The attribute to set.
 	 * @param mixed $value     The value of the attribute.
 	 * @return bool            True on success, false on failure.
 	 */
 	public function setAttribute( $attribute, $value ): bool {
-		$this->pdo_attributes[ $attribute ] = $value;
-		return true;
+		return $this->connection->get_pdo()->setAttribute( $attribute, $value );
 	}
 
 	/**
 	 * PDO API: Get a PDO attribute.
+	 *
+	 * TODO: Evaluate whether we should get all PDO attributes from the PDO SQLite
+	 *       instance, or whether some of them require special handling.
+	 *       See: https://github.com/php/php-src/blob/b391c28f903536e3bc6a0021ae0976ddbc2745f8/ext/pdo/php_pdo_driver.h#L103
 	 *
 	 * @param  int   $attribute The attribute to get.
 	 * @return mixed            The value of the attribute.
 	 */
 	#[ReturnTypeWillChange]
 	public function getAttribute( $attribute ) {
-		return $this->pdo_attributes[ $attribute ] ?? null;
+		return $this->connection->get_pdo()->getAttribute( $attribute );
 	}
 
 	/**
