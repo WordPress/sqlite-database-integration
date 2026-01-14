@@ -3,17 +3,16 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
-	/**
-	 * On PHP < 8.1, some PDO behavior is notably different from PHP >= 8.1.
-	 * To address that, we need to use conditional assertions in some cases.
-	 */
-	const LEGACY_PDO = PHP_VERSION_ID < 80100;
-
 	/** @var WP_PDO_MySQL_On_SQLite */
 	private $driver;
 
 	public function setUp(): void {
 		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+
+		// Run all tests with stringified fetch mode results, so we can use
+		// assertions that are consistent across all tested PHP versions.
+		// The "PDO::ATTR_STRINGIFY_FETCHES" mode is tested in separately.
+		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
 
 	public function test_connection(): void {
@@ -46,7 +45,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
 		$this->assertInstanceOf( PDOStatement::class, $result );
-		if ( self::LEGACY_PDO ) {
+		if ( PHP_VERSION_ID < 80000 ) {
 			$this->assertSame(
 				array(
 					1     => '1',
@@ -59,8 +58,8 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		} else {
 			$this->assertSame(
 				array(
-					1     => 1,
-					0     => 1,
+					1     => '1',
+					0     => '1',
 					'abc' => 'abc',
 				),
 				$result->fetch()
@@ -92,7 +91,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 	public function test_query_fetch_mode_not_set(): void {
 		$result = $this->driver->query( 'SELECT 1' );
-		if ( self::LEGACY_PDO ) {
+		if ( PHP_VERSION_ID < 80000 ) {
 			$this->assertSame(
 				array(
 					1 => '1',
@@ -103,8 +102,8 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		} else {
 			$this->assertSame(
 				array(
-					1 => 1,
-					0 => 1,
+					1 => '1',
+					0 => '1',
 				),
 				$result->fetch()
 			);
@@ -119,7 +118,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_query_fetch_default_mode_allow_any_args(): void {
-		if ( self::LEGACY_PDO ) {
+		if ( PHP_VERSION_ID < 80100 ) {
 			// On PHP < 8.1, fetch mode value of NULL is not allowed.
 			$result = @$this->driver->query( 'SELECT 1', null, 1, 2, 'abc', array(), true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			$this->assertFalse( $result );
@@ -131,8 +130,8 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		// In such cases, any additional arguments are ignored and not validated.
 		$expected_result = array(
 			array(
-				1 => 1,
-				0 => 1,
+				1 => '1',
+				0 => '1',
 			),
 		);
 
@@ -269,7 +268,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_fetch_default(): void {
 		// Default fetch mode is PDO::FETCH_BOTH.
 		$result = $this->driver->query( "SELECT 1, 'abc', 2" );
-		if ( self::LEGACY_PDO ) {
+		if ( PHP_VERSION_ID < 80000 ) {
 			$this->assertSame(
 				array(
 					1     => '1',
@@ -283,10 +282,10 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		} else {
 			$this->assertSame(
 				array(
-					1     => 1,
-					0     => 1,
+					1     => '1',
+					0     => '1',
 					'abc' => 'abc',
-					'2'   => 2,
+					'2'   => '2',
 				),
 				$result->fetch()
 			);
@@ -333,12 +332,39 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		);
 	}
 
+	public function test_attr_stringify_fetches(): void {
+		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$result = $this->driver->query( "SELECT 123, 1.23, 'abc', true, false" );
+		$this->assertSame(
+			array( '123', '1.23', 'abc', '1', '0' ),
+			$result->fetch( PDO::FETCH_NUM )
+		);
+
+		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
+		$result = $this->driver->query( "SELECT 123, 1.23, 'abc', true, false" );
+		$this->assertSame(
+			/*
+			 * On PHP < 8.1, "PDO::ATTR_STRINGIFY_FETCHES" set to "false" has no
+			 * effect when "PDO::ATTR_EMULATE_PREPARES" is "true" (the default).
+			 *
+			 * TODO: Consider supporting non-string values on PHP < 8.1 when both
+			 *       "PDO::ATTR_STRINGIFY_FETCHES" and "PDO::ATTR_EMULATE_PREPARES"
+			 *       are set to "false". This would require emulating the behavior,
+			 *       as PDO SQLite on PHP < 8.1 seems to always return strings.
+			 */
+			PHP_VERSION_ID < 80100
+				? array( '123', '1.23', 'abc', '1', '0' )
+				: array( 123, 1.23, 'abc', 1, 0 ),
+			$result->fetch( PDO::FETCH_NUM )
+		);
+	}
+
 	public function data_pdo_fetch_methods(): Generator {
 		// PDO::FETCH_BOTH
 		yield 'PDO::FETCH_BOTH' => array(
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_BOTH,
-			self::LEGACY_PDO
+			PHP_VERSION_ID < 80000
 				? array(
 					1     => '1',
 					2     => 'two',
@@ -348,8 +374,8 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 					5     => 'two',
 				)
 				: array(
-					1     => 1,
-					0     => 1,
+					1     => '1',
+					0     => '1',
 					'abc' => 'abc',
 					2     => 'two',
 					3     => 'two',
@@ -360,9 +386,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		yield 'PDO::FETCH_NUM' => array(
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_NUM,
-			self::LEGACY_PDO
-				? array( '1', 'abc', '2', 'two' )
-				: array( 1, 'abc', 2, 'two' ),
+			array( '1', 'abc', '2', 'two' ),
 		);
 
 		// PDO::FETCH_ASSOC
@@ -370,7 +394,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_ASSOC,
 			array(
-				1     => self::LEGACY_PDO ? '1' : 1,
+				1     => '1',
 				'abc' => 'abc',
 				2     => 'two',
 			),
@@ -381,9 +405,9 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_NAMED,
 			array(
-				1     => self::LEGACY_PDO ? '1' : 1,
+				1     => '1',
 				'abc' => 'abc',
-				2     => array( self::LEGACY_PDO ? '2' : 2, 'two' ),
+				2     => array( '2', 'two' ),
 			),
 		);
 
@@ -392,7 +416,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_OBJ,
 			(object) array(
-				1     => self::LEGACY_PDO ? '1' : 1,
+				1     => '1',
 				'abc' => 'abc',
 				2     => 'two',
 			),

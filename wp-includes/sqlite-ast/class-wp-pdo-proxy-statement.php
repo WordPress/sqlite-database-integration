@@ -35,6 +35,11 @@ if ( PHP_VERSION_ID < 80000 ) {
 		 * @return bool          True on success, false on failure.
 		 */
 		public function setFetchMode( $mode, $params = null ): bool {
+			// Do not pass additional arguments when they are NULL to prevent
+			// "fetch mode doesn't allow any extra arguments" error.
+			if ( null === $params ) {
+				return $this->setDefaultFetchMode( $mode );
+			}
 			return $this->setDefaultFetchMode( $mode, $params );
 		}
 
@@ -47,6 +52,11 @@ if ( PHP_VERSION_ID < 80000 ) {
 		 * @return array                   The result set as an array of rows.
 		 */
 		public function fetchAll( $mode = null, $class_name = null, $constructor_args = null ): array {
+			// Do not pass additional arguments when they are NULL to prevent
+			// "Extraneous additional parameters" error.
+			if ( null === $class_name && null === $constructor_args ) {
+				return $this->fetchAllRows( $mode );
+			}
 			return $this->fetchAllRows( $mode, $class_name, $constructor_args );
 		}
 	}
