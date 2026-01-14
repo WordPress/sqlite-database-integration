@@ -777,6 +777,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		};
 
 		if ( null === $fetch_mode ) {
+			if ( PHP_VERSION_ID < 80100 && func_num_args() > 1 ) {
+				trigger_error(
+					'PDO::query(): SQLSTATE[HY000]: General error: mode must be an integer',
+					E_USER_WARNING
+				);
+				return false;
+			}
+
 			// When the default FETCH_BOTH is not set explicitly, additional
 			// arguments are ignored, and the argument count is not validated.
 			$fetch_mode      = PDO::FETCH_BOTH;

@@ -3,15 +3,17 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
+	/**
+	 * On PHP < 8.1, some PDO behavior is notably different from PHP >= 8.1.
+	 * To address that, we need to use conditional assertions in some cases.
+	 */
+	const LEGACY_PDO = PHP_VERSION_ID < 80100;
+
 	/** @var WP_PDO_MySQL_On_SQLite */
 	private $driver;
 
 	public function setUp(): void {
 		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
-
-		// Set "PDO::ATTR_STRINGIFY_FETCHES" to "false" explicitly, so the tests
-		// are consistent across PHP versions ("false" is the default from 8.1).
-		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
 	}
 
 	public function test_connection(): void {
@@ -44,14 +46,26 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
 		$this->assertInstanceOf( PDOStatement::class, $result );
-		$this->assertSame(
-			array(
-				1     => 1,
-				0     => 1,
-				'abc' => 'abc',
-			),
-			$result->fetch()
-		);
+		if ( self::LEGACY_PDO ) {
+			$this->assertSame(
+				array(
+					1     => '1',
+					2     => '1',
+					'abc' => 'abc',
+					3     => 'abc',
+				),
+				$result->fetch()
+			);
+		} else {
+			$this->assertSame(
+				array(
+					1     => 1,
+					0     => 1,
+					'abc' => 'abc',
+				),
+				$result->fetch()
+			);
+		}
 	}
 
 	/**
@@ -60,9 +74,10 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_query_with_fetch_mode( $query, $mode, $expected ): void {
 		$stmt   = $this->driver->query( $query, $mode );
 		$result = $stmt->fetch();
+
 		if ( is_object( $expected ) ) {
 			$this->assertInstanceOf( get_class( $expected ), $result );
-			$this->assertEquals( $expected, $result );
+			$this->assertSame( (array) $expected, (array) $result );
 		} elseif ( PDO::FETCH_NAMED === $mode ) {
 			// PDO::FETCH_NAMED returns all array keys as strings, even numeric
 			// ones. This is not possible in plain PHP and might be a PDO bug.
@@ -77,13 +92,23 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 	public function test_query_fetch_mode_not_set(): void {
 		$result = $this->driver->query( 'SELECT 1' );
-		$this->assertSame(
-			array(
-				'1' => 1,
-				0   => 1,
-			),
-			$result->fetch()
-		);
+		if ( self::LEGACY_PDO ) {
+			$this->assertSame(
+				array(
+					1 => '1',
+					2 => '1',
+				),
+				$result->fetch()
+			);
+		} else {
+			$this->assertSame(
+				array(
+					1 => 1,
+					0 => 1,
+				),
+				$result->fetch()
+			);
+		}
 		$this->assertFalse( $result->fetch() );
 	}
 
@@ -94,6 +119,16 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_query_fetch_default_mode_allow_any_args(): void {
+		if ( self::LEGACY_PDO ) {
+			// On PHP < 8.1, fetch mode value of NULL is not allowed.
+			$result = @$this->driver->query( 'SELECT 1', null, 1, 2, 'abc', array(), true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			$this->assertFalse( $result );
+			$this->assertSame( 'PDO::query(): SQLSTATE[HY000]: General error: mode must be an integer', error_get_last()['message'] );
+			return;
+		}
+
+		// On PHP >= 8.1, NULL fetch mode is allowed to use the default fetch mode.
+		// In such cases, any additional arguments are ignored and not validated.
 		$expected_result = array(
 			array(
 				1 => 1,
@@ -234,15 +269,28 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_fetch_default(): void {
 		// Default fetch mode is PDO::FETCH_BOTH.
 		$result = $this->driver->query( "SELECT 1, 'abc', 2" );
-		$this->assertSame(
-			array(
-				1     => 1,
-				0     => 1,
-				'abc' => 'abc',
-				'2'   => 2,
-			),
-			$result->fetch()
-		);
+		if ( self::LEGACY_PDO ) {
+			$this->assertSame(
+				array(
+					1     => '1',
+					2     => '2',
+					'abc' => 'abc',
+					3     => 'abc',
+					4     => '2',
+				),
+				$result->fetch()
+			);
+		} else {
+			$this->assertSame(
+				array(
+					1     => 1,
+					0     => 1,
+					'abc' => 'abc',
+					'2'   => 2,
+				),
+				$result->fetch()
+			);
+		}
 	}
 
 	/**
@@ -251,6 +299,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	public function test_fetch( $query, $mode, $expected ): void {
 		$stmt   = $this->driver->query( $query );
 		$result = $stmt->fetch( $mode );
+
 		if ( is_object( $expected ) ) {
 			$this->assertInstanceOf( get_class( $expected ), $result );
 			$this->assertEquals( $expected, $result );
@@ -269,20 +318,31 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		yield 'PDO::FETCH_BOTH' => array(
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_BOTH,
-			array(
-				1     => 1,
-				0     => 1,
-				'abc' => 'abc',
-				'2'   => 'two',
-				'3'   => 'two',
-			),
+			self::LEGACY_PDO
+				? array(
+					1     => '1',
+					2     => 'two',
+					'abc' => 'abc',
+					3     => 'abc',
+					4     => '2',
+					5     => 'two',
+				)
+				: array(
+					1     => 1,
+					0     => 1,
+					'abc' => 'abc',
+					2     => 'two',
+					3     => 'two',
+				),
 		);
 
 		// PDO::FETCH_NUM
 		yield 'PDO::FETCH_NUM' => array(
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_NUM,
-			array( 1, 'abc', 2, 'two' ),
+			self::LEGACY_PDO
+				? array( '1', 'abc', '2', 'two' )
+				: array( 1, 'abc', 2, 'two' ),
 		);
 
 		// PDO::FETCH_ASSOC
@@ -290,9 +350,9 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_ASSOC,
 			array(
-				'1'   => 1,
+				1     => self::LEGACY_PDO ? '1' : 1,
 				'abc' => 'abc',
-				'2'   => 'two',
+				2     => 'two',
 			),
 		);
 
@@ -301,9 +361,9 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_NAMED,
 			array(
-				'1'   => 1,
+				1     => self::LEGACY_PDO ? '1' : 1,
 				'abc' => 'abc',
-				'2'   => array( 2, 'two' ),
+				2     => array( self::LEGACY_PDO ? '2' : 2, 'two' ),
 			),
 		);
 
@@ -312,9 +372,9 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			"SELECT 1, 'abc', 2, 'two' as `2`",
 			PDO::FETCH_OBJ,
 			(object) array(
-				'1'   => 1,
+				1     => self::LEGACY_PDO ? '1' : 1,
 				'abc' => 'abc',
-				'2'   => 'two',
+				2     => 'two',
 			),
 		);
 	}
