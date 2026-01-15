@@ -3510,4 +3510,41 @@ QUERY
 			array( '@@sEssIOn.sqL_moDe' ),
 		);
 	}
+
+	/**
+	 * Test CREATE TABLE with DEFAULT (now()) - GitHub issue #300
+	 * Tests that DEFAULT with function calls in parentheses works correctly.
+	 */
+	public function testCreateTableWithDefaultNowFunction() {
+		// Test the exact SQL from the issue
+		$this->assertQuery(
+			"CREATE TABLE `test_now_default` (
+				`id` int NOT NULL,
+				`updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;"
+		);
+
+		// Verify the table was created successfully
+		$results = $this->assertQuery( 'DESCRIBE test_now_default;' );
+		$this->assertCount( 2, $results );
+
+		// Verify the updated column has the correct properties
+		$updated_field = $results[1];
+		$this->assertEquals( 'updated', $updated_field->Field );
+		$this->assertEquals( 'timestamp', $updated_field->Type );
+		$this->assertEquals( 'NO', $updated_field->Null );
+
+		// Insert a row to verify the default value works
+		$this->assertQuery( 'INSERT INTO test_now_default (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM test_now_default WHERE id = 1' );
+		$this->assertCount( 1, $result );
+
+		// Verify the updated timestamp was set (should match YYYY-MM-DD HH:MM:SS format)
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated );
+
+		// Test ON UPDATE trigger works
+		$this->assertQuery( 'UPDATE test_now_default SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM test_now_default WHERE id = 2' );
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated );
+	}
 }
