@@ -687,10 +687,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			'TRUNCATE TABLE wp_comments;'
 		);
 		$actual = $this->engine->get_query_results();
-		$this->assertEquals(
-			true,
-			$actual
-		);
+		$this->assertNull( $actual );
 		$this->assertTableEmpty( 'wp_comments', true );
 	}
 

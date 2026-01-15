@@ -193,7 +193,7 @@ class WP_SQLite_Driver {
 	 * @return mixed
 	 */
 	public function get_last_return_value() {
-		return $this->mysql_on_sqlite_driver->get_last_return_value();
+		return $this->last_result;
 	}
 
 	/**

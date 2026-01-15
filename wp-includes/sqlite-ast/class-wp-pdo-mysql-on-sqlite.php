@@ -465,18 +465,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $last_result_statement;
 
 	/**
-	 * Results of the last emulated query.
+	 * Override for the number of affected rows by the last emulated query.
 	 *
-	 * @var array|null
-	 */
-	private $last_result;
-
-	/**
-	 * Return value of the last emulated query.
+	 * By default, the number of affected rows is carried by the row count value
+	 * of "$this->last_result_statement". This property serves as an override for
+	 * when the row count of the emulated query and statement don't match.
 	 *
-	 * @var mixed
+	 * @var int|null
 	 */
-	private $last_return_value;
+	private $last_affected_rows;
 
 	/**
 	 * SQLite column metadata for the last emulated query.
@@ -488,7 +485,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Number of rows found by the last SQL_CALC_FOUND_ROW query.
 	 *
-	 * @var int
+	 * @var int|null
 	 */
 	private $last_sql_calc_found_rows = null;
 
@@ -836,15 +833,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->flush();
 		$this->last_mysql_query = $query;
 
-		/**
-		 * Use "PDO::FETCH_NUM" fetch mode, as "create_result_statement_from_data()"
-		 * expects the row data to be passed as an array of values.
-		 *
-		 * @TODO: We can remove this when we use the SQLite PDOStatements directly,
-		 *        likely via a proxy, and will stop fetching the results eagerly.
-		 */
-		$this->pdo_fetch_mode = PDO::FETCH_NUM;
-
 		try {
 			// Parse the MySQL query.
 			$parser = $this->create_parser( $query );
@@ -887,20 +875,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->commit_wrapper_transaction();
 			}
 
-			/*
-			 * For now, create all statements from data loaded in memory. This is
-			 * a temporary solution until all queries set their result statement.
-			 *
-			 * TODO: Use "$this->last_result_statement" with an actual PDO SQLite
-			 *       statement whenever possible rather than loading all data.
-			 */
-			$columns       = is_array( $this->last_column_meta ) ? array_column( $this->last_column_meta, 'name' ) : array();
-			$rows          = is_array( $this->last_result ) ? $this->last_result : array();
-			$affected_rows = is_int( $this->last_return_value ) ? $this->last_return_value : 0;
+			if ( null === $this->last_result_statement ) {
+				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
+			}
 
-			$this->last_result_statement = $this->create_result_statement_from_data( $columns, $rows );
-
-			$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $affected_rows );
+			$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $this->last_affected_rows );
 			$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
 			return $stmt;
 		} catch ( Throwable $e ) {
@@ -1130,24 +1109,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 		$tokens = $lexer->remaining_tokens();
 		return new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-	}
-
-	/**
-	 * Get results of the last query.
-	 *
-	 * @return mixed
-	 */
-	public function get_query_results() {
-		return $this->last_result;
-	}
-
-	/**
-	 * Get return value of the last query() function call.
-	 *
-	 * @return mixed
-	 */
-	public function get_last_return_value() {
-		return $this->last_return_value;
 	}
 
 	/**
@@ -1443,9 +1404,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						$this->execute_drop_index_statement( $node );
 						break;
 					default:
-						$query = $this->translate( $node );
-						$this->execute_sqlite_query( $query );
-						$this->set_result_from_affected_rows();
+						$query                       = $this->translate( $node );
+						$this->last_result_statement = $this->execute_sqlite_query( $query );
 				}
 				break;
 			case 'truncateTableStatement':
@@ -1829,9 +1789,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Store column meta info. This must be done before fetching data, which
 		// seems to erase type information for expressions in the SELECT clause.
 		$this->store_last_column_meta_from_statement( $stmt );
-		$this->set_results_from_fetched_data(
-			$stmt->fetchAll( $this->pdo_fetch_mode )
-		);
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -1916,8 +1874,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 */
 		if ( null !== $on_conflict_update_list ) {
 			try {
-				$this->execute_sqlite_query( $query );
-				$this->set_result_from_affected_rows();
+				$this->last_result_statement = $this->execute_sqlite_query( $query );
 			} catch ( PDOException $e ) {
 				$unique_key_violation_prefix = 'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: ';
 				if ( '23000' === $e->getCode() && str_contains( $e->getMessage(), $unique_key_violation_prefix ) ) {
@@ -1932,22 +1889,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					 * prefix and the "<table>." part for the first column, and
 					 * then split the rest of the list by ", <table>." sequence.
 					 */
-					$column_list         = substr( $e->getMessage(), strlen( $unique_key_violation_prefix ) + strlen( $table_name ) + 1 );
-					$column_names        = explode( ", $table_name.", $column_list );
-					$quoted_column_names = array_map(
+					$column_list                 = substr( $e->getMessage(), strlen( $unique_key_violation_prefix ) + strlen( $table_name ) + 1 );
+					$column_names                = explode( ", $table_name.", $column_list );
+					$quoted_column_names         = array_map(
 						function ( $column ) {
 							return $this->quote_sqlite_identifier( $column );
 						},
 						$column_names
 					);
-					$this->execute_sqlite_query(
+					$this->last_result_statement = $this->execute_sqlite_query(
 						$query . sprintf(
 							' ON CONFLICT(%s) DO UPDATE SET %s',
 							implode( ', ', $quoted_column_names ),
 							$on_conflict_update_list
 						)
 					);
-					$this->set_result_from_affected_rows();
 				} else {
 					throw $e;
 				}
@@ -1955,8 +1911,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return;
 		}
 
-		$this->execute_sqlite_query( $query );
-		$this->set_result_from_affected_rows();
+		$this->last_result_statement = $this->execute_sqlite_query( $query );
 	}
 
 	/**
@@ -2192,8 +2147,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 		$query = implode( ' ', array_filter( $parts ) );
 
-		$this->execute_sqlite_query( $query );
-		$this->set_result_from_affected_rows();
+		$this->last_result_statement = $this->execute_sqlite_query( $query );
 	}
 
 	/**
@@ -2273,10 +2227,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			)->fetchAll( PDO::FETCH_ASSOC );
 
 			// 4. Execute DELETE statements for each table.
-			$rows = 0;
+			$affected_rows = 0;
 			if ( count( $ids ) > 0 ) {
 				foreach ( $table_aliases as $table ) {
-					$this->execute_sqlite_query(
+					$stmt           = $this->execute_sqlite_query(
 						sprintf(
 							'DELETE FROM %s AS %s WHERE rowid IN ( %s )',
 							$this->quote_sqlite_identifier( $alias_map[ $table ] ),
@@ -2284,12 +2238,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 							implode( ', ', array_column( $ids, "{$table}_rowid" ) )
 						)
 					);
-					$this->set_result_from_affected_rows();
-					$rows += $this->last_result;
+					$affected_rows += $stmt->rowCount();
 				}
 			}
 
-			$this->set_result_from_affected_rows( $rows );
+			$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
+			$this->last_affected_rows    = $affected_rows;
 			return;
 		}
 
@@ -2301,9 +2255,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			throw $this->new_access_denied_to_information_schema_exception();
 		}
 
-		$query = $this->translate( $node );
-		$this->execute_sqlite_query( $query );
-		$this->set_result_from_affected_rows();
+		$query                       = $this->translate( $node );
+		$this->last_result_statement = $this->execute_sqlite_query( $query );
 	}
 
 	/**
@@ -2354,7 +2307,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			)->fetchColumn();
 
 			if ( $table_exists ) {
-				$this->set_result_from_affected_rows( 0 );
+				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
 				return;
 			}
 		}
@@ -2522,7 +2475,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			sprintf( 'DELETE FROM %s', $this->quote_sqlite_identifier( $table_name ) )
 		);
 		try {
-			$this->execute_sqlite_query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $table_name ) );
+			$this->last_result_statement = $this->execute_sqlite_query(
+				'DELETE FROM sqlite_sequence WHERE name = ?',
+				array( $table_name )
+			);
 		} catch ( PDOException $e ) {
 			if ( str_contains( $e->getMessage(), 'no such table' ) ) {
 				// The table might not exist if no sequences are used in the DB.
@@ -2530,7 +2486,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				throw $e;
 			}
 		}
-		$this->set_result_from_affected_rows();
 	}
 
 	/**
@@ -2672,18 +2627,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
 					$sql = $this->get_mysql_create_table_statement( $table_is_temporary, $table_name );
-					if ( null === $sql ) {
-						$this->set_results_from_fetched_data( array() );
-					} else {
-						$this->set_results_from_fetched_data(
-							array(
-								array(
-									'Table'        => $table_name,
-									'Create Table' => $sql,
-								),
-							)
-						);
-					}
 
 					$this->last_column_meta = array(
 						array(
@@ -2705,6 +2648,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 							'precision'   => 31,
 						),
 					);
+
+					$this->last_result_statement = $this->create_result_statement_from_data(
+						array_column( $this->last_column_meta, 'name' ),
+						null === $sql ? array() : array( array( $table_name, $sql ) )
+					);
 					return;
 				}
 				break;
@@ -2714,14 +2662,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->execute_show_index_statement( $node );
 				return;
 			case WP_MySQL_Lexer::GRANTS_SYMBOL:
-				$this->set_results_from_fetched_data(
-					array(
-						array(
-							'Grants for root@%' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
-						),
-					)
+				$this->last_result_statement = $this->create_result_statement_from_data(
+					array( 'Grants for root@%' ),
+					array( array( 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION' ) )
 				);
-				$this->last_column_meta = array(
+				$this->last_column_meta      = array(
 					array(
 						'native_type' => 'STRING',
 						'pdo_type'    => PDO::PARAM_STR,
@@ -2740,8 +2685,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->execute_show_tables_statement( $node );
 				return;
 			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
-				$this->last_result      = true;
-				$this->last_column_meta = array(
+				$this->last_column_meta      = array(
 					array(
 						'native_type' => 'STRING',
 						'pdo_type'    => PDO::PARAM_STR,
@@ -2760,6 +2704,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						'len'         => 4096,
 						'precision'   => 0,
 					),
+				);
+				$this->last_result_statement = $this->create_result_statement_from_data(
+					array_column( $this->last_column_meta, 'name' ),
+					array()
 				);
 				return;
 		}
@@ -2805,7 +2753,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			)
 		);
 		$this->store_last_column_meta_from_statement( $stmt );
-		$this->set_results_from_fetched_data( $stmt->fetchAll( $this->pdo_fetch_mode ) );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -2839,8 +2787,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$databases = $stmt->fetchAll( $this->pdo_fetch_mode );
-		$this->set_results_from_fetched_data( $databases );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -2925,8 +2872,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$index_info = $stmt->fetchAll( $this->pdo_fetch_mode );
-		$this->set_results_from_fetched_data( $index_info );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -2988,11 +2934,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$table_info = $stmt->fetchAll( $this->pdo_fetch_mode );
-		if ( false === $table_info ) {
-			$this->set_results_from_fetched_data( array() );
-		}
-		$this->set_results_from_fetched_data( $table_info );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -3040,11 +2982,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$table_info = $stmt->fetchAll( $this->pdo_fetch_mode );
-		if ( false === $table_info ) {
-			$this->set_results_from_fetched_data( array() );
-		}
-		$this->set_results_from_fetched_data( $table_info );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -3113,11 +3051,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$column_info = $stmt->fetchAll( $this->pdo_fetch_mode );
-		if ( false === $column_info ) {
-			$this->set_results_from_fetched_data( array() );
-		}
-		$this->set_results_from_fetched_data( $column_info );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -3152,8 +3086,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		$this->store_last_column_meta_from_statement( $stmt );
-		$column_info = $stmt->fetchAll( $this->pdo_fetch_mode );
-		$this->set_results_from_fetched_data( $column_info );
+		$this->last_result_statement = $stmt;
 	}
 
 	/**
@@ -3288,7 +3221,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 		}
 
-		$this->last_result = 0;
+		$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
 	}
 
 	/**
@@ -3489,7 +3422,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			);
 		}
 
-		$this->last_column_meta = array(
+		$this->last_column_meta      = array(
 			array(
 				'native_type' => 'STRING',
 				'pdo_type'    => PDO::PARAM_STR,
@@ -3527,7 +3460,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				'precision'   => 31,
 			),
 		);
-		$this->set_results_from_fetched_data( $results );
+		$this->last_result_statement = $this->create_result_statement_from_data(
+			array_column( $this->last_column_meta, 'name' ),
+			$results
+		);
 	}
 
 	/**
@@ -4405,10 +4341,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return '(' . implode( ' || ', $args ) . ')';
 			case 'FOUND_ROWS':
 				$found_rows = $this->last_sql_calc_found_rows;
-				if ( null === $found_rows && is_array( $this->last_result ) ) {
-					$found_rows = count( $this->last_result );
-				}
-				return $found_rows;
+
+				/*
+				 * TODO: Handle case when "null === $found_rows".
+				 *
+				 * From MySQL documentation:
+				 *
+				 * In the absence of the SQL_CALC_FOUND_ROWS option in the most
+				 * recent successful SELECT statement, FOUND_ROWS() returns the
+				 * number of rows in the result set returned by that statement.
+				 *
+				 * To support this case without exhausting the last PDO statement
+				 * instance, we need to be able to re-execute the last MySQL query
+				 * (for read-only statements) and use 1 for all other statements.
+				 */
+				return $found_rows ?? 1;
 			case 'VERSION':
 				$version = (string) $this->mysql_version;
 				$value   = sprintf(
@@ -6484,8 +6431,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function flush(): void {
 		$this->last_mysql_query         = '';
 		$this->last_sqlite_queries      = array();
-		$this->last_result              = null;
-		$this->last_return_value        = null;
+		$this->last_result_statement    = null;
+		$this->last_affected_rows       = null;
 		$this->last_column_meta         = array();
 		$this->is_readonly              = false;
 		$this->wrapper_transaction_type = null;
@@ -6568,36 +6515,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$query .= ')';
 		}
 		return $pdo->query( $query );
-	}
-
-	/**
-	 * Set results of a query() call using fetched data.
-	 *
-	 * @param array $data The data to set.
-	 */
-	private function set_results_from_fetched_data( array $data ): void {
-		$this->last_result       = $data;
-		$this->last_return_value = $this->last_result;
-	}
-
-	/**
-	 * Set results of a query() call using the number of affected rows.
-	 *
-	 * @param int|null $override Override the affected rows.
-	 */
-	private function set_result_from_affected_rows( ?int $override = null ): void {
-		/*
-		 * SELECT CHANGES() is a workaround for the fact that $stmt->rowCount()
-		 * returns "0" (zero) with the SQLite driver at all times.
-		 * See: https://www.php.net/manual/en/pdostatement.rowcount.php
-		 */
-		if ( null === $override ) {
-			$affected_rows = (int) $this->execute_sqlite_query( 'SELECT CHANGES()' )->fetch()[0];
-		} else {
-			$affected_rows = $override;
-		}
-		$this->last_result       = $affected_rows;
-		$this->last_return_value = $affected_rows;
 	}
 
 	/**
