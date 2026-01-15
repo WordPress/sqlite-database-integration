@@ -3518,10 +3518,10 @@ QUERY
 	public function testCreateTableWithDefaultNowFunction() {
 		// Test the exact SQL from the issue
 		$this->assertQuery(
-			"CREATE TABLE `test_now_default` (
+			'CREATE TABLE `test_now_default` (
 				`id` int NOT NULL,
 				`updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP
-			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;"
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;'
 		);
 
 		// Verify the table was created successfully
