@@ -1062,7 +1062,7 @@ class WP_SQLite_Information_Schema_Builder {
 					SELECT
 						rowid,
 						row_number() OVER (PARTITION BY index_name ORDER BY seq_in_index) AS seq_in_index
-					FROM %s x
+					FROM %s
 					WHERE table_schema = ?
 					AND table_name = ?
 				)
