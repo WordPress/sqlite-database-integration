@@ -2093,6 +2093,25 @@ class WP_SQLite_Information_Schema_Builder {
 			return $this->get_value( $signed_literal );
 		}
 
+		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
+		$expr_with_parens = $default_attr->get_first_child_node( 'exprWithParentheses' );
+		if ( $expr_with_parens ) {
+			// For now, only support simple function calls like (now()), (CURRENT_TIMESTAMP)
+			// Check if it's (now()) or (NOW())
+			$now_tokens = $expr_with_parens->get_descendant_tokens( WP_MySQL_Lexer::NOW_SYMBOL );
+			if ( ! empty( $now_tokens ) ) {
+				return 'CURRENT_TIMESTAMP';
+			}
+
+			// Check if it's (CURRENT_TIMESTAMP) or (CURRENT_TIMESTAMP())
+			$current_ts_tokens = $expr_with_parens->get_descendant_tokens( WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL );
+			if ( ! empty( $current_ts_tokens ) ) {
+				return 'CURRENT_TIMESTAMP';
+			}
+
+			// For any other complex expressions, throw an exception
+			throw new Exception( 'DEFAULT values with complex expressions are not yet supported. Only (now()) and (CURRENT_TIMESTAMP) are currently supported.' );
+		}
 		throw new Exception( 'DEFAULT values with expressions are not yet supported.' );
 	}
 
