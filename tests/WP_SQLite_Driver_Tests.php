@@ -11238,4 +11238,28 @@ END;
 		$result = $this->engine->query( 'SELECT VERSION()' );
 		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
 	}
+
+	/**
+	 * Test CREATE TABLE with DEFAULT (now()) - GitHub issue #300
+	 * Tests that DEFAULT with function calls in parentheses works correctly in AST driver.
+	 *
+	 * @see https://github.com/WordPress/sqlite-database-integration/issues/300
+	 */
+	public function testCreateTableWithDefaultNowFunction(): void {
+		// Test the exact SQL from the issue
+		$this->assertQuery(
+			'CREATE TABLE `test_now_default` (
+				`id` int NOT NULL,
+				`updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;'
+		);
+
+		// Insert a row to verify the default value works
+		$this->assertQuery( 'INSERT INTO test_now_default (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM test_now_default WHERE id = 1' );
+		$this->assertCount( 1, $result );
+
+		// Verify the updated timestamp was set (should match YYYY-MM-DD HH:MM:SS format)
+		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated );
+	}
 }
