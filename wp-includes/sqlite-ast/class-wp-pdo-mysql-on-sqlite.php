@@ -5908,8 +5908,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$query            .= ' PRIMARY KEY AUTOINCREMENT';
 			}
 			if ( null !== $column['COLUMN_DEFAULT'] ) {
-				// @TODO: Handle defaults with expression values (DEFAULT_GENERATED).
-
 				// Handle DEFAULT CURRENT_TIMESTAMP. This works only with timestamp
 				// and datetime columns. For other column types, it's just a string.
 				if (
@@ -5917,6 +5915,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					&& ( 'timestamp' === $column['DATA_TYPE'] || 'datetime' === $column['DATA_TYPE'] )
 				) {
 					$query .= ' DEFAULT CURRENT_TIMESTAMP';
+				} elseif ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
+					// Handle DEFAULT values with expressions (DEFAULT_GENERATED).
+					// Translate the default clause from MySQL to SQLite.
+					$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();
+					$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
+					$default_clause = $this->translate( $expr );
+					$query         .= ' DEFAULT ' . $default_clause;
 				} else {
 					$query .= ' DEFAULT ' . $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
 				}
@@ -6220,7 +6225,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			) {
 				$sql .= ' DEFAULT CURRENT_TIMESTAMP';
 			} elseif ( null !== $column['COLUMN_DEFAULT'] ) {
-				$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
+				if ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
+					$sql .= ' DEFAULT ' . $column['COLUMN_DEFAULT'];
+				} else {
+					$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
+				}
 			} elseif ( 'YES' === $column['IS_NULLABLE'] ) {
 				$sql .= ' DEFAULT NULL';
 			}

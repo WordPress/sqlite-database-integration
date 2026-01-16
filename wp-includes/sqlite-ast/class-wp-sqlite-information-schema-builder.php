@@ -2096,23 +2096,22 @@ class WP_SQLite_Information_Schema_Builder {
 		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
 		$expr_with_parens = $default_attr->get_first_child_node( 'exprWithParentheses' );
 		if ( $expr_with_parens ) {
-			// For now, only support simple function calls like (now()), (CURRENT_TIMESTAMP)
-			// Check if it's (now()) or (NOW())
-			$now_tokens = $expr_with_parens->get_descendant_tokens( WP_MySQL_Lexer::NOW_SYMBOL );
-			if ( ! empty( $now_tokens ) ) {
-				return 'CURRENT_TIMESTAMP';
+			$default_clause = '';
+			foreach ( $expr_with_parens->get_descendant_tokens() as $i => $token ) {
+				if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+					// TODO: This is just a quick fix to avoid inserting whitespace
+					//       before '(', which would break function call expressions.
+					//       The proper fix is to implement a "$node->get_bytes()" API.
+					//       This same applies to the CHECK (expression) case as well.
+					$default_clause .= $token->get_bytes();
+				} else {
+					$default_clause .= ( $i > 0 ? ' ' : '' ) . $token->get_bytes();
+				}
 			}
-
-			// Check if it's (CURRENT_TIMESTAMP) or (CURRENT_TIMESTAMP())
-			$current_ts_tokens = $expr_with_parens->get_descendant_tokens( WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL );
-			if ( ! empty( $current_ts_tokens ) ) {
-				return 'CURRENT_TIMESTAMP';
-			}
-
-			// For any other complex expressions, throw an exception
-			throw new Exception( 'DEFAULT values with complex expressions are not yet supported. Only (now()) and (CURRENT_TIMESTAMP) are currently supported.' );
+			return $default_clause;
 		}
-		throw new Exception( 'DEFAULT values with expressions are not yet supported.' );
+
+		throw new Exception( 'DEFAULT value of this type is not supported.' );
 	}
 
 	/**
