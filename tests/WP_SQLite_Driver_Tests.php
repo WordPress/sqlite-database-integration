@@ -11261,5 +11261,58 @@ END;
 
 		// Verify the updated timestamp was set (should match YYYY-MM-DD HH:MM:SS format)
 		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE test_now_default' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `test_now_default` (',
+					'  `id` int NOT NULL,',
+					'  `updated` timestamp NOT NULL DEFAULT ( now( ) ) ON UPDATE CURRENT_TIMESTAMP',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci',
+				)
+			),
+			$results[0]->{'Create Table'}
+		);
+	}
+
+	public function testCreateTableWithDefaultExpressions(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id int NOT NULL,
+				col1 int NOT NULL DEFAULT (1 + 2),
+				col2 datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),
+				col3 varchar(255) NOT NULL DEFAULT (CONCAT(\'a\', \'b\'))
+			)'
+		);
+
+		// Insert a row and verify the default values
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT * FROM t WHERE id = 1' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( 3, $results[0]->col1 );
+		$this->assertStringStartsWith( ( gmdate( 'Y' ) + 1 ) . '-', $results[0]->col2 );
+		$this->assertEquals( 'ab', $results[0]->col3 );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int NOT NULL,',
+					'  `col1` int NOT NULL DEFAULT ( 1 + 2 ),',
+					'  `col2` datetime NOT NULL DEFAULT ( DATE_ADD( NOW( ) , INTERVAL 1 YEAR ) ),',
+					"  `col3` varchar(255) NOT NULL DEFAULT ( CONCAT( 'a' , 'b' ) )",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$results[0]->{'Create Table'}
+		);
 	}
 }
