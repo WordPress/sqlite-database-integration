@@ -598,6 +598,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		?string $password = null,
 		array $options = array()
 	) {
+		// PDO DSN can't include "\0" bytes; parsing stops at the first one.
+		$first_null_byte_index = strpos( $dsn, "\0" );
+		if ( false !== $first_null_byte_index ) {
+			$dsn = substr( $dsn, 0, $first_null_byte_index );
+		}
+
 		// Parse the DSN.
 		$dsn_parts = explode( ':', $dsn, 2 );
 		if ( count( $dsn_parts ) < 2 ) {
