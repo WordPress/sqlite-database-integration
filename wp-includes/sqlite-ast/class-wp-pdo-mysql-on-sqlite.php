@@ -623,8 +623,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// Restore quoted semicolons that were replaced with "\0".
 			$arg = str_replace( "\0", ';', $arg );
 
-			// PDO DSN allows whitespace before argument name.
-			$arg = ltrim( $arg );
+			// PDO DSN allows whitespace before argument name. Trim characters
+			// as per the "isspace()" C function (in the default "C" locale).
+			$arg = ltrim( $arg, " \n\r\t\v\f" );
 
 			if ( '' === $arg ) {
 				continue;
