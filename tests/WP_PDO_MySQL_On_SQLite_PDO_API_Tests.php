@@ -11,7 +11,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 		// Run all tests with stringified fetch mode results, so we can use
 		// assertions that are consistent across all tested PHP versions.
-		// The "PDO::ATTR_STRINGIFY_FETCHES" mode is tested in separately.
+		// The "PDO::ATTR_STRINGIFY_FETCHES" mode is tested separately.
 		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
 
