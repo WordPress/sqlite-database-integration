@@ -483,11 +483,26 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $last_column_meta = array();
 
 	/**
-	 * Number of rows found by the last SQL_CALC_FOUND_ROW query.
+	 * Data for emulating the "FOUND_ROWS()" function.
 	 *
-	 * @var int|null
+	 * When "SQL_CALC_FOUND_ROWS" is used, the appropriate value is stored here.
+	 * Otherwise, it's used to store the last number of found rows, or a query
+	 * that returns the rows that need to be counted for usage in "FOUND_ROWS()".
+	 *
+	 * From MySQL documentation:
+	 *   In the absence of the SQL_CALC_FOUND_ROWS option in the most recent
+	 *   successful SELECT statement, FOUND_ROWS() returns the number of rows
+	 *   in the result set returned by that statement.
+	 *
+	 * In reality, this applies to SHOW and DESCRIBE statements as well.
+	 *
+	 * The value can be:
+	 *   - integer: The number of rows to be directly returned by "FOUND_ROWS()".
+	 *   - string:  A SQLite query whose result set rows need to be counted.
+	 *
+	 * @var int|string
 	 */
-	private $last_sql_calc_found_rows = null;
+	private $found_rows = 0;
 
 	/**
 	 * Whether the current MySQL query is read-only.
@@ -902,6 +917,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				throw $this->convert_information_schema_exception( $e );
 			}
 			throw $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
+		} finally {
+			// A query that doesn't return any rows or fails sets found rows to 0.
+			if ( ! $this->is_readonly || isset( $e ) ) {
+				$this->found_rows = 0;
+			}
 		}
 	}
 
@@ -1785,9 +1805,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				'SELECT COUNT(*) AS cnt FROM (' . $this->translate( $count_expr ) . ')'
 			);
 
-			$this->last_sql_calc_found_rows = $result->fetchColumn();
+			$this->found_rows = (int) $result->fetchColumn();
 		} else {
-			$this->last_sql_calc_found_rows = null;
+			$this->found_rows = $query;
 		}
 
 		// Execute the query.
@@ -2660,6 +2680,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						array_column( $this->last_column_meta, 'name' ),
 						null === $sql ? array() : array( array( $table_name, $sql ) )
 					);
+					$this->found_rows            = null === $sql ? 0 : 1;
 					return;
 				}
 				break;
@@ -2684,6 +2705,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						'precision'   => 31,
 					),
 				);
+				$this->found_rows            = 1;
 				return;
 			case WP_MySQL_Lexer::TABLE_SYMBOL:
 				$this->execute_show_table_status_statement( $node );
@@ -2716,6 +2738,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					array_column( $this->last_column_meta, 'name' ),
 					array()
 				);
+				$this->found_rows            = 0;
 				return;
 		}
 
@@ -2743,24 +2766,24 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'collation_name' );
 		}
 
-		$stmt = $this->execute_sqlite_query(
-			sprintf(
-				'SELECT
-					COLLATION_NAME AS `Collation`,
-					CHARACTER_SET_NAME AS `Charset`,
-					ID AS `Id`,
-					IS_DEFAULT AS `Default`,
-					IS_COMPILED AS `Compiled`,
-					SORTLEN AS `Sortlen`,
-					PAD_ATTRIBUTE AS `Pad_attribute`
-				FROM (%s)
-				WHERE TRUE %s',
-				$definition,
-				$condition ?? ''
-			)
+		$query = sprintf(
+			'SELECT
+				COLLATION_NAME AS `Collation`,
+				CHARACTER_SET_NAME AS `Charset`,
+				ID AS `Id`,
+				IS_DEFAULT AS `Default`,
+				IS_COMPILED AS `Compiled`,
+				SORTLEN AS `Sortlen`,
+				PAD_ATTRIBUTE AS `Pad_attribute`
+			FROM (%s)
+			WHERE TRUE %s',
+			$definition,
+			$condition ?? ''
 		);
+		$stmt  = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -2776,25 +2799,23 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
 		}
-		$stmt = $this->execute_sqlite_query(
-			sprintf(
-				'SELECT SCHEMA_NAME AS Database
-				FROM (
-					SELECT CASE WHEN SCHEMA_NAME = ? THEN ? ELSE SCHEMA_NAME END AS SCHEMA_NAME
-					FROM %s
-					ORDER BY SCHEMA_NAME
-				)%s',
-				$this->quote_sqlite_identifier( $schemata_table ),
-				isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
-			),
-			array(
-				$this->get_saved_db_name(),
-				$this->main_db_name,
-			)
+		$query = sprintf(
+			'SELECT SCHEMA_NAME AS Database
+			FROM (
+				SELECT CASE WHEN SCHEMA_NAME = %s THEN %s ELSE SCHEMA_NAME END AS SCHEMA_NAME
+				FROM %s
+				ORDER BY SCHEMA_NAME
+			)%s',
+			$this->connection->quote( $this->get_saved_db_name() ),
+			$this->connection->quote( $this->main_db_name ),
+			$this->quote_sqlite_identifier( $schemata_table ),
+			isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
 		);
 
+		$stmt = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -2844,8 +2865,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 */
 
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
-		$stmt             = $this->execute_sqlite_query(
-			'
+		$query            = sprintf(
+			"
 				SELECT
 					TABLE_NAME AS `Table`,
 					NON_UNIQUE AS `Non_unique`,
@@ -2862,10 +2883,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					INDEX_COMMENT AS `Index_comment`,
 					IS_VISIBLE AS `Visible`,
 					EXPRESSION AS `Expression`
-				FROM ' . $this->quote_sqlite_identifier( $statistics_table ) . "
-				WHERE table_schema = ?
-				AND table_name = ?
-				$condition
+				FROM %s
+				WHERE table_schema = %s
+				AND table_name = %s
+				%s
 				ORDER BY
 					INDEX_NAME = 'PRIMARY' DESC,
 					NON_UNIQUE = '0' DESC,
@@ -2875,11 +2896,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					ROWID,
 					SEQ_IN_INDEX
 			",
-			array( $this->get_saved_db_name( $database ), $table_name )
+			$this->quote_sqlite_identifier( $statistics_table ),
+			$this->connection->quote( $this->get_saved_db_name( $database ) ),
+			$this->connection->quote( $table_name ),
+			$condition
 		);
 
+		$stmt = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -2910,38 +2936,38 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			false, // SHOW TABLE STATUS lists only non-temporary tables.
 			'tables'
 		);
-		$stmt          = $this->execute_sqlite_query(
-			sprintf(
-				'SELECT
-					table_name AS `Name`,
-					engine AS `Engine`,
-					version AS `Version`,
-					row_format AS `Row_format`,
-					table_rows AS `Rows`,
-					avg_row_length AS `Avg_row_length`,
-					data_length AS `Data_length`,
-					max_data_length AS `Max_data_length`,
-					index_length AS `Index_length`,
-					data_free AS `Data_free`,
-					auto_increment AS `Auto_increment`,
-					create_time AS `Create_time`,
-					update_time AS `Update_time`,
-					check_time AS `Check_time`,
-					table_collation AS `Collation`,
-					checksum AS `Checksum`,
-					create_options AS `Create_options`,
-					table_comment AS `Comment`
-				FROM %s
-				WHERE table_schema = ? %s
-				ORDER BY table_name',
-				$this->quote_sqlite_identifier( $tables_tables ),
-				$condition ?? ''
-			),
-			array( $this->get_saved_db_name( $database ) )
+		$query         = sprintf(
+			'SELECT
+				table_name AS `Name`,
+				engine AS `Engine`,
+				version AS `Version`,
+				row_format AS `Row_format`,
+				table_rows AS `Rows`,
+				avg_row_length AS `Avg_row_length`,
+				data_length AS `Data_length`,
+				max_data_length AS `Max_data_length`,
+				index_length AS `Index_length`,
+				data_free AS `Data_free`,
+				auto_increment AS `Auto_increment`,
+				create_time AS `Create_time`,
+				update_time AS `Update_time`,
+				check_time AS `Check_time`,
+				table_collation AS `Collation`,
+				checksum AS `Checksum`,
+				create_options AS `Create_options`,
+				table_comment AS `Comment`
+			FROM %s
+			WHERE table_schema = %s %s
+			ORDER BY table_name',
+			$this->quote_sqlite_identifier( $tables_tables ),
+			$this->connection->quote( $this->get_saved_db_name( $database ) ),
+			$condition ?? ''
 		);
 
+		$stmt = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -2976,20 +3002,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			false, // SHOW TABLES lists only non-temporary tables.
 			'tables'
 		);
-		$stmt         = $this->execute_sqlite_query(
-			sprintf(
-				'SELECT %s FROM %s WHERE table_schema = ? %s ORDER BY table_name',
-				$is_full
-					? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
-					: sprintf( 'table_name AS `Tables_in_%s`', $database ),
-				$this->quote_sqlite_identifier( $table_tables ),
-				$condition ?? ''
-			),
-			array( $this->get_saved_db_name( $database ) )
+		$query        = sprintf(
+			'SELECT %s FROM %s WHERE table_schema = %s %s ORDER BY table_name',
+			$is_full
+				? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
+				: sprintf( 'table_name AS `Tables_in_%s`', $database ),
+			$this->quote_sqlite_identifier( $table_tables ),
+			$this->connection->quote( $this->get_saved_db_name( $database ) ),
+			$condition ?? ''
 		);
 
+		$stmt = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -3039,26 +3065,27 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// Fetch column information.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-		$stmt          = $this->execute_sqlite_query(
-			sprintf(
-				'SELECT
-					column_name AS `Field`,
-					column_type AS `Type`,
-					is_nullable AS `Null`,
-					column_key AS `Key`,
-					column_default AS `Default`,
-					extra AS `Extra`
-				FROM %s
-				WHERE table_schema = ? AND table_name = ? %s
-				ORDER BY ordinal_position',
-				$this->quote_sqlite_identifier( $columns_table ),
-				$condition ?? ''
-			),
-			array( $this->get_saved_db_name( $database ), $table_name )
+		$query         = sprintf(
+			'SELECT
+				column_name AS `Field`,
+				column_type AS `Type`,
+				is_nullable AS `Null`,
+				column_key AS `Key`,
+				column_default AS `Default`,
+				extra AS `Extra`
+			FROM %s
+			WHERE table_schema = %s AND table_name = %s %s
+			ORDER BY ordinal_position',
+			$this->quote_sqlite_identifier( $columns_table ),
+			$this->connection->quote( $this->get_saved_db_name( $database ) ),
+			$this->connection->quote( $table_name ),
+			$condition ?? ''
 		);
 
+		$stmt = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -3075,25 +3102,27 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-		$stmt          = $this->execute_sqlite_query(
-			'
-				SELECT
-					column_name AS `Field`,
-					column_type AS `Type`,
-					is_nullable AS `Null`,
-					column_key AS `Key`,
-					column_default AS `Default`,
-					extra AS Extra
-				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
-				WHERE table_schema = ?
-				AND table_name = ?
-				ORDER BY ordinal_position
-			',
-			array( $this->get_saved_db_name( $database ), $table_name )
+		$query         = sprintf(
+			'SELECT
+				column_name AS `Field`,
+				column_type AS `Type`,
+				is_nullable AS `Null`,
+				column_key AS `Key`,
+				column_default AS `Default`,
+				extra AS `Extra`
+			FROM %s
+			WHERE table_schema = %s
+			AND table_name = %s
+			ORDER BY ordinal_position',
+			$this->quote_sqlite_identifier( $columns_table ),
+			$this->connection->quote( $this->get_saved_db_name( $database ) ),
+			$this->connection->quote( $table_name )
 		);
 
+		$stmt = $this->execute_sqlite_query( $query );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
+		$this->found_rows            = $query;
 	}
 
 	/**
@@ -4347,22 +4376,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			case 'CONCAT':
 				return '(' . implode( ' || ', $args ) . ')';
 			case 'FOUND_ROWS':
-				$found_rows = $this->last_sql_calc_found_rows;
-
-				/*
-				 * TODO: Handle case when "null === $found_rows".
-				 *
-				 * From MySQL documentation:
-				 *
-				 * In the absence of the SQL_CALC_FOUND_ROWS option in the most
-				 * recent successful SELECT statement, FOUND_ROWS() returns the
-				 * number of rows in the result set returned by that statement.
-				 *
-				 * To support this case without exhausting the last PDO statement
-				 * instance, we need to be able to re-execute the last MySQL query
-				 * (for read-only statements) and use 1 for all other statements.
-				 */
-				return $found_rows ?? 1;
+				$found_rows = $this->found_rows;
+				if ( is_int( $found_rows ) ) {
+					return $found_rows;
+				} elseif ( is_string( $found_rows ) ) {
+					return (int) $this->execute_sqlite_query(
+						sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows )
+					)->fetchColumn()[0];
+				} else {
+					return 0;
+				}
 			case 'VERSION':
 				$version = (string) $this->mysql_version;
 				$value   = sprintf(

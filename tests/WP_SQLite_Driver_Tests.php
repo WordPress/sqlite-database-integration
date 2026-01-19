@@ -3067,6 +3067,81 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	public function testFoundRowsWithoutSqlCalcFoundRows(): void {
+		$this->assertQuery( 'DROP TABLE _dates' );
+		$this->assertQuery( 'DROP TABLE _options' );
+
+		// CREATE TABLE
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, value TEXT, INDEX idx_value (value))' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+
+		// INSERT
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1), (2), (3)' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+
+		// SELECT
+		$this->assertQuery( 'SELECT * FROM t' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '3', $result[0]->{'FOUND_ROWS()'} );
+
+		// DESCRIBE
+		$this->assertQuery( 'DESCRIBE t' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW COLLATION
+		$this->assertQuery( 'SHOW COLLATION' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '7', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW DATABASES
+		$this->assertQuery( 'SHOW DATABASES' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW COLUMNS
+		$this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW CREATE TABLE with non-existent table
+		$this->assertQuery( 'SHOW CREATE TABLE non_existent_table' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW INDEX
+		$this->assertQuery( 'SHOW INDEX FROM t' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW GRANTS
+		$this->assertQuery( 'SHOW GRANTS' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW TABLE STATUS
+		$r      = $this->assertQuery( 'SHOW TABLE STATUS' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW TABLES
+		$this->assertQuery( 'SHOW TABLES' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW VARIABLES
+		$this->assertQuery( 'SHOW VARIABLES' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+	}
+
 	public function testComplexSelectBasedOnDates() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48');"
