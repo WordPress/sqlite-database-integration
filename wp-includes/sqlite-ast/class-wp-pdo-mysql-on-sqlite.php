@@ -630,12 +630,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			throw new PDOException( 'could not find driver' );
 		}
 
-		// PDO DSN supports semicolon quoting using double semicolon sequences.
-		// Replace ";;" with "\0" to preserve quoted semicolons in "explode()".
+		// PDO DSN supports semicolon escaping using double semicolon sequences.
+		// Replace ";;" with "\0" to preserve escaped semicolons in "explode()".
 		$args_string = str_replace( ';;', "\0", $dsn_parts[1] );
 		$args        = array();
 		foreach ( explode( ';', $args_string ) as $arg ) {
-			// Restore quoted semicolons that were replaced with "\0".
+			// Restore escaped semicolons that were replaced with "\0".
 			$arg = str_replace( "\0", ';', $arg );
 
 			// PDO DSN allows whitespace before argument name. Trim characters
