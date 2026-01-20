@@ -11407,6 +11407,36 @@ END;
 			),
 			$results[0]->{'Create Table'}
 		);
+
+		// DESCRIBE
+		$this->assertQuery( 'DESCRIBE test_now_default' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'updated',
+					'Type'    => 'timestamp',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '( now( ) )',
+					'Extra'   => 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP',
+				),
+			),
+			$results
+		);
+
+		// Verify the translated SQLite definition.
+		$result = $this->sqlite->query( 'PRAGMA table_info(test_now_default)' )->fetchAll();
+		$this->assertSame( null, $result[0]['dflt_value'] );
+		$this->assertSame( 'CURRENT_TIMESTAMP', $result[1]['dflt_value'] );
 	}
 
 	public function testCreateTableWithDefaultExpressions(): void {
@@ -11444,5 +11474,53 @@ END;
 			),
 			$results[0]->{'Create Table'}
 		);
+
+		// DESCRIBE
+		$this->assertQuery( 'DESCRIBE t' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'col1',
+					'Type'    => 'int',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '( 1 + 2 )',
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+				(object) array(
+					'Field'   => 'col2',
+					'Type'    => 'datetime',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '( DATE_ADD( NOW( ) , INTERVAL 1 YEAR ) )',
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+				(object) array(
+					'Field'   => 'col3',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => "( CONCAT( 'a' , 'b' ) )",
+					'Extra'   => 'DEFAULT_GENERATED',
+				),
+			),
+			$results
+		);
+
+		// Verify the translated SQLite definition.
+		$result = $this->sqlite->query( 'PRAGMA table_info(t)' )->fetchAll();
+		$this->assertSame( null, $result[0]['dflt_value'] );
+		$this->assertSame( '1 + 2', $result[1]['dflt_value'] );
+		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, '+' || 1 || ' YEAR')", $result[2]['dflt_value'] );
+		$this->assertSame( "('a' || 'b')", $result[3]['dflt_value'] );
 	}
 }
