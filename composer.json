@@ -55,7 +55,7 @@
 		"wp-test-start": [
 			"npm --prefix wordpress run env:start",
 			"npm --prefix wordpress run env:install",
-			"npm --prefix wordpress run env:cli -- plugin install gutenberg",
+			"npm --prefix wordpress run env:cli -- plugin install gutenberg --version=22.3.0",
 			"npm --prefix wordpress run env:cli -- plugin install query-monitor"
 		],
 		"wp-test-ensure-env": [
