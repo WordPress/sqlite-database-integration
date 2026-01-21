@@ -628,6 +628,38 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testShowFullColumns(): void {
+		$this->assertQuery( "CREATE TABLE t (id INT COMMENT 'Comment ID', name TEXT COMMENT 'Comment Name')" );
+		$result = $this->assertQuery( 'SHOW FULL COLUMNS FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'      => 'id',
+					'Type'       => 'int',
+					'Collation'  => null,
+					'Null'       => 'YES',
+					'Key'        => '',
+					'Default'    => null,
+					'Extra'      => '',
+					'Privileges' => 'select,insert,update,references',
+					'Comment'    => 'Comment ID',
+				),
+				(object) array(
+					'Field'      => 'name',
+					'Type'       => 'text',
+					'Collation'  => 'utf8mb4_0900_ai_ci',
+					'Null'       => 'YES',
+					'Key'        => '',
+					'Default'    => null,
+					'Extra'      => '',
+					'Privileges' => 'select,insert,update,references',
+					'Comment'    => 'Comment Name',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testShowColumnsLike(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT, val1 INT, val2 INT, name TEXT)' );
 		$result = $this->assertQuery( "SHOW COLUMNS FROM t LIKE 'val%'" );
