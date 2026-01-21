@@ -499,8 +499,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * The value can be:
 	 *   - integer: The number of rows to be directly returned by "FOUND_ROWS()".
 	 *   - string:  A SQLite query whose result set rows need to be counted.
+	 *   - array:   A tuple of a SQLite query and its parameters whose result
+	 *              set rows need to be counted.
 	 *
-	 * @var int|string
+	 * @var int|string|array{0: string, 1: array}
 	 */
 	private $found_rows = 0;
 
@@ -2799,23 +2801,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
 		}
-		$query = sprintf(
+		$query  = sprintf(
 			'SELECT SCHEMA_NAME AS Database
 			FROM (
-				SELECT CASE WHEN SCHEMA_NAME = %s THEN %s ELSE SCHEMA_NAME END AS SCHEMA_NAME
+				SELECT CASE WHEN SCHEMA_NAME = ? THEN ? ELSE SCHEMA_NAME END AS SCHEMA_NAME
 				FROM %s
 				ORDER BY SCHEMA_NAME
 			)%s',
-			$this->connection->quote( $this->get_saved_db_name() ),
-			$this->connection->quote( $this->main_db_name ),
 			$this->quote_sqlite_identifier( $schemata_table ),
 			isset( $condition ) ? ( ' WHERE TRUE ' . $condition ) : ''
 		);
+		$params = array(
+			$this->get_saved_db_name(),
+			$this->main_db_name,
+		);
 
-		$stmt = $this->execute_sqlite_query( $query );
+		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
-		$this->found_rows            = $query;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -2884,8 +2888,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					IS_VISIBLE AS `Visible`,
 					EXPRESSION AS `Expression`
 				FROM %s
-				WHERE table_schema = %s
-				AND table_name = %s
+				WHERE table_schema = ?
+				AND table_name = ?
 				%s
 				ORDER BY
 					INDEX_NAME = 'PRIMARY' DESC,
@@ -2897,15 +2901,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					SEQ_IN_INDEX
 			",
 			$this->quote_sqlite_identifier( $statistics_table ),
-			$this->connection->quote( $this->get_saved_db_name( $database ) ),
-			$this->connection->quote( $table_name ),
 			$condition
 		);
+		$params           = array(
+			$this->get_saved_db_name( $database ),
+			$table_name,
+		);
 
-		$stmt = $this->execute_sqlite_query( $query );
+		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
-		$this->found_rows            = $query;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -2957,17 +2963,19 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				create_options AS `Create_options`,
 				table_comment AS `Comment`
 			FROM %s
-			WHERE table_schema = %s %s
+			WHERE table_schema = ? %s
 			ORDER BY table_name',
 			$this->quote_sqlite_identifier( $tables_tables ),
-			$this->connection->quote( $this->get_saved_db_name( $database ) ),
 			$condition ?? ''
 		);
+		$params        = array(
+			$this->get_saved_db_name( $database ),
+		);
 
-		$stmt = $this->execute_sqlite_query( $query );
+		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
-		$this->found_rows            = $query;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -3003,19 +3011,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			'tables'
 		);
 		$query        = sprintf(
-			'SELECT %s FROM %s WHERE table_schema = %s %s ORDER BY table_name',
+			'SELECT %s FROM %s WHERE table_schema = ? %s ORDER BY table_name',
 			$is_full
 				? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
 				: sprintf( 'table_name AS `Tables_in_%s`', $database ),
 			$this->quote_sqlite_identifier( $table_tables ),
-			$this->connection->quote( $this->get_saved_db_name( $database ) ),
 			$condition ?? ''
 		);
+		$params       = array(
+			$this->get_saved_db_name( $database ),
+		);
 
-		$stmt = $this->execute_sqlite_query( $query );
+		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
-		$this->found_rows            = $query;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -3074,18 +3084,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				column_default AS `Default`,
 				extra AS `Extra`
 			FROM %s
-			WHERE table_schema = %s AND table_name = %s %s
+			WHERE table_schema = ? AND table_name = ? %s
 			ORDER BY ordinal_position',
 			$this->quote_sqlite_identifier( $columns_table ),
-			$this->connection->quote( $this->get_saved_db_name( $database ) ),
-			$this->connection->quote( $table_name ),
 			$condition ?? ''
 		);
+		$params        = array(
+			$this->get_saved_db_name( $database ),
+			$table_name,
+		);
 
-		$stmt = $this->execute_sqlite_query( $query );
+		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
-		$this->found_rows            = $query;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -3111,18 +3123,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				column_default AS `Default`,
 				extra AS `Extra`
 			FROM %s
-			WHERE table_schema = %s
-			AND table_name = %s
+			WHERE table_schema = ?
+			AND table_name = ?
 			ORDER BY ordinal_position',
 			$this->quote_sqlite_identifier( $columns_table ),
-			$this->connection->quote( $this->get_saved_db_name( $database ) ),
-			$this->connection->quote( $table_name )
+		);
+		$params        = array(
+			$this->get_saved_db_name( $database ),
+			$table_name,
 		);
 
-		$stmt = $this->execute_sqlite_query( $query );
+		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
 		$this->last_result_statement = $stmt;
-		$this->found_rows            = $query;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
@@ -4382,6 +4396,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				} elseif ( is_string( $found_rows ) ) {
 					return (int) $this->execute_sqlite_query(
 						sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows )
+					)->fetchColumn()[0];
+				} elseif ( is_array( $found_rows ) && isset( $found_rows[0] ) ) {
+					return (int) $this->execute_sqlite_query(
+						sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows[0] ),
+						$found_rows[1] ?? array()
 					)->fetchColumn()[0];
 				} else {
 					return 0;
