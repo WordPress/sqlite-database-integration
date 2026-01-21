@@ -5921,7 +5921,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();
 					$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
 					$default_clause = $this->translate( $expr );
-					$query         .= ' DEFAULT ' . $default_clause;
+					$query         .= sprintf( ' DEFAULT (%s)', $default_clause );
 				} else {
 					$query .= ' DEFAULT ' . $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
 				}
@@ -6049,7 +6049,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$check_clause = $this->translate( $expr );
 
 			$sql    = sprintf(
-				'  CONSTRAINT %s CHECK %s',
+				'  CONSTRAINT %s CHECK (%s)',
 				$this->quote_sqlite_identifier( $check_constraint['CONSTRAINT_NAME'] ),
 				$check_clause
 			);
@@ -6226,7 +6226,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$sql .= ' DEFAULT CURRENT_TIMESTAMP';
 			} elseif ( null !== $column['COLUMN_DEFAULT'] ) {
 				if ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
-					$sql .= ' DEFAULT ' . $column['COLUMN_DEFAULT'];
+					$sql .= sprintf( ' DEFAULT (%s)', $column['COLUMN_DEFAULT'] );
 				} else {
 					$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
 				}
@@ -6333,7 +6333,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// 9. Add CHECK constraints.
 		foreach ( $check_constraints_info as $check_constraint ) {
 			$sql    = sprintf(
-				'  CONSTRAINT %s CHECK %s%s',
+				'  CONSTRAINT %s CHECK (%s)%s',
 				$this->quote_mysql_identifier( $check_constraint['CONSTRAINT_NAME'] ),
 				$check_constraint['CHECK_CLAUSE'],
 				'NO' === $check_constraint['ENFORCED'] ? ' /*!80016 NOT ENFORCED */' : ''

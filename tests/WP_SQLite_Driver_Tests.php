@@ -9294,13 +9294,13 @@ END;
 
 					// The of the check expressions below is not 100% matching MySQL,
 					// because in MySQL the expressions are parsed and normalized.
-					'  CONSTRAINT `c1` CHECK ( id < 10 ),',
-					'  CONSTRAINT `c2` CHECK ( start_timestamp < end_timestamp ),',
-					'  CONSTRAINT `c3` CHECK ( length ( data ) < 20 ),',
-					'  CONSTRAINT `t_chk_1` CHECK ( id > 0 ),',
-					"  CONSTRAINT `t_chk_2` CHECK ( name != '' ),",
-					'  CONSTRAINT `t_chk_3` CHECK ( score > 0 AND score < 100 ),',
-					'  CONSTRAINT `t_chk_4` CHECK ( json_valid ( data ) )',
+					'  CONSTRAINT `c1` CHECK (id < 10),',
+					'  CONSTRAINT `c2` CHECK (start_timestamp < end_timestamp),',
+					'  CONSTRAINT `c3` CHECK (length(data)< 20),',
+					'  CONSTRAINT `t_chk_1` CHECK (id > 0),',
+					"  CONSTRAINT `t_chk_2` CHECK (name != ''),",
+					'  CONSTRAINT `t_chk_3` CHECK (score > 0 AND score < 100),',
+					'  CONSTRAINT `t_chk_4` CHECK (json_valid(data))',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -9326,8 +9326,8 @@ END;
 				array(
 					'CREATE TABLE `t` (',
 					'  `id` int DEFAULT NULL,',
-					'  CONSTRAINT `c` CHECK ( id > 0 ),',
-					'  CONSTRAINT `t_chk_1` CHECK ( id < 10 )',
+					'  CONSTRAINT `c` CHECK (id > 0),',
+					'  CONSTRAINT `t_chk_1` CHECK (id < 10)',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -9396,7 +9396,7 @@ END;
 				array(
 					'CREATE TABLE `t` (',
 					'  `id` int DEFAULT NULL,',
-					'  CONSTRAINT `c` CHECK ( id > 0 ) /*!80016 NOT ENFORCED */',
+					'  CONSTRAINT `c` CHECK (id > 0) /*!80016 NOT ENFORCED */',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -11401,7 +11401,7 @@ END;
 				array(
 					'CREATE TABLE `test_now_default` (',
 					'  `id` int NOT NULL,',
-					'  `updated` timestamp NOT NULL DEFAULT ( now( ) ) ON UPDATE CURRENT_TIMESTAMP',
+					'  `updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci',
 				)
 			),
@@ -11426,7 +11426,7 @@ END;
 					'Type'    => 'timestamp',
 					'Null'    => 'NO',
 					'Key'     => '',
-					'Default' => '( now( ) )',
+					'Default' => 'now()',
 					'Extra'   => 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP',
 				),
 			),
@@ -11466,9 +11466,9 @@ END;
 				array(
 					'CREATE TABLE `t` (',
 					'  `id` int NOT NULL,',
-					'  `col1` int NOT NULL DEFAULT ( 1 + 2 ),',
-					'  `col2` datetime NOT NULL DEFAULT ( DATE_ADD( NOW( ) , INTERVAL 1 YEAR ) ),',
-					"  `col3` varchar(255) NOT NULL DEFAULT ( CONCAT( 'a' , 'b' ) )",
+					'  `col1` int NOT NULL DEFAULT (1 + 2),',
+					'  `col2` datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),',
+					"  `col3` varchar(255) NOT NULL DEFAULT (CONCAT('a' , 'b'))",
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -11493,7 +11493,7 @@ END;
 					'Type'    => 'int',
 					'Null'    => 'NO',
 					'Key'     => '',
-					'Default' => '( 1 + 2 )',
+					'Default' => '1 + 2',
 					'Extra'   => 'DEFAULT_GENERATED',
 				),
 				(object) array(
@@ -11501,7 +11501,7 @@ END;
 					'Type'    => 'datetime',
 					'Null'    => 'NO',
 					'Key'     => '',
-					'Default' => '( DATE_ADD( NOW( ) , INTERVAL 1 YEAR ) )',
+					'Default' => 'DATE_ADD(NOW(), INTERVAL 1 YEAR)',
 					'Extra'   => 'DEFAULT_GENERATED',
 				),
 				(object) array(
@@ -11509,7 +11509,7 @@ END;
 					'Type'    => 'varchar(255)',
 					'Null'    => 'NO',
 					'Key'     => '',
-					'Default' => "( CONCAT( 'a' , 'b' ) )",
+					'Default' => "CONCAT('a' , 'b')",
 					'Extra'   => 'DEFAULT_GENERATED',
 				),
 			),
