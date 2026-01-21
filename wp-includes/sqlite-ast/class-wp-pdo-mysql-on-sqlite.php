@@ -3149,7 +3149,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			WHERE table_schema = ?
 			AND table_name = ?
 			ORDER BY ordinal_position',
-			$this->quote_sqlite_identifier( $columns_table ),
+			$this->quote_sqlite_identifier( $columns_table )
 		);
 		$params        = array(
 			$this->get_saved_db_name( $database ),
