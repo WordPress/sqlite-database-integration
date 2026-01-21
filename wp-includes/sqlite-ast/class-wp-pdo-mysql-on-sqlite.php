@@ -2025,7 +2025,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$temporary_table_names  = array();
 					foreach ( array_filter( array_column( $table_alias_map, 'table_name' ) ) as $table_name ) {
 						$is_temporary      = $this->information_schema_builder->temporary_table_exists( $table_name );
-						$quoted_table_name = $this->connection->quote( $table_name );
+						$quoted_table_name = $this->quote_sqlite_value( $table_name );
 						if ( $is_temporary ) {
 							$temporary_table_names[] = $quoted_table_name;
 						} else {
@@ -3728,7 +3728,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return 'NULL';
 				}
 				if ( is_string( $value ) ) {
-					return $this->connection->quote( $value );
+					return $this->quote_sqlite_value( $value );
 				}
 				return (string) $value;
 			case 'userVariable':
@@ -3739,7 +3739,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return 'NULL';
 				}
 				if ( is_string( $value ) ) {
-					return $this->connection->quote( $value );
+					return $this->quote_sqlite_value( $value );
 				}
 				return (string) $value;
 			case 'castType':
@@ -3935,7 +3935,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( strpos( $value, "\0" ) !== false ) {
 			return sprintf( "CAST(x'%s' AS TEXT)", bin2hex( $value ) );
 		}
-		return $this->connection->quote( $value );
+		return $this->quote_sqlite_value( $value );
 	}
 
 	/**
@@ -4285,7 +4285,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		switch ( $child->id ) {
 			case WP_MySQL_Lexer::DATABASE_SYMBOL:
-				return $this->connection->quote( $this->db_name );
+				return $this->quote_sqlite_value( $this->db_name );
 			case WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL:
 			case WP_MySQL_Lexer::NOW_SYMBOL:
 				/*
@@ -4413,7 +4413,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					substr( $version, 1, 2 ),
 					substr( $version, 3, 2 )
 				);
-				return $this->connection->quote( $value );
+				return $this->quote_sqlite_value( $value );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
@@ -4654,7 +4654,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						"CASE WHEN %s = 'information_schema' THEN %s ELSE %s END AS %s",
 						$quoted_column,
 						$quoted_column,
-						$this->connection->quote( $this->main_db_name ),
+						$this->quote_sqlite_value( $this->main_db_name ),
 						strtoupper( $quoted_column )
 					);
 				} else {
@@ -5035,7 +5035,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 * (That is, nullable, generated, and columns with true defaults.)
 				 */
 				$default   = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
-				$fragment .= null === $default ? 'NULL' : $this->connection->quote( $default );
+				$fragment .= null === $default ? 'NULL' : $this->quote_sqlite_value( $default );
 			} else {
 				// When a column value is included, we need to apply type casting.
 				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
@@ -5053,7 +5053,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				if ( ! $is_strict_mode && $is_insert_from_select && 'NO' === $column['IS_NULLABLE'] ) {
 					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
 					if ( null !== $implicit_default ) {
-						$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
+						$value = sprintf( 'COALESCE(%s, %s)', $value, $this->quote_sqlite_value( $implicit_default ) );
 					}
 				}
 				$fragment .= $value;
@@ -5218,7 +5218,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
 			if ( null === $expr ) {
 				// Emulate "column = DEFAULT".
-				$value = null === $default ? 'NULL' : $this->connection->quote( $default );
+				$value = null === $default ? 'NULL' : $this->quote_sqlite_value( $default );
 			} else {
 				$value = $this->translate( $expr );
 			}
@@ -5235,7 +5235,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if ( ! $is_strict_mode && ! $is_nullable && ! $is_on_duplicate_key_update ) {
 				$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
 				if ( null !== $implicit_default ) {
-					$value = sprintf( 'COALESCE(%s, %s)', $value, $this->connection->quote( $implicit_default ) );
+					$value = sprintf( 'COALESCE(%s, %s)', $value, $this->quote_sqlite_value( $implicit_default ) );
 				}
 			}
 
@@ -5628,7 +5628,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $mysql_data_type ] ?? null;
 					$fallback         = null === $implicit_default
 						? 'NULL'
-						: $this->connection->quote( $implicit_default );
+						: $this->quote_sqlite_value( $implicit_default );
 				}
 				return sprintf(
 					"CASE
@@ -5895,7 +5895,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				) {
 					$query .= ' DEFAULT CURRENT_TIMESTAMP';
 				} else {
-					$query .= ' DEFAULT ' . $this->connection->quote( $column['COLUMN_DEFAULT'] );
+					$query .= ' DEFAULT ' . $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
 				}
 			}
 			$rows[] = $query;
@@ -6406,7 +6406,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Quote an SQLite identifier.
+	 * Quote an identifier for use in an SQLite query.
 	 *
 	 * @param  string $unquoted_identifier The unquoted identifier value.
 	 * @return string                      The quoted identifier value.
@@ -6416,7 +6416,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Quote a MySQL identifier.
+	 * Quote a value for use in an SQLite query.
+	 *
+	 * @param  mixed  $value The value to quote.
+	 * @return string        The quoted value.
+	 */
+	private function quote_sqlite_value( $value ): string {
+		return $this->connection->quote( $value );
+	}
+
+	/**
+	 * Quote an identifier for use in a MySQL query.
 	 *
 	 * Wrap the identifier in backticks and escape backtick values within.
 	 *
