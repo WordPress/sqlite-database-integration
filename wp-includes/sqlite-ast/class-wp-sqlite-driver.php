@@ -10,6 +10,7 @@
  * (e.g., WP CLI SQLite Command), ensure the new PDO-based classes are loaded.
  */
 require_once __DIR__ . '/class-wp-pdo-mysql-on-sqlite.php';
+require_once __DIR__ . '/class-wp-pdo-proxy-statement.php';
 
 /**
  * Deprecated: A proxy of the WP_PDO_MySQL_On_SQLite class preserving legacy API.
