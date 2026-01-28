@@ -310,6 +310,88 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testInvalidDataTypeCacheDataForDecimalDefinition(): void {
+		// Recreate the invalid database state before the following fix:
+		//   https://github.com/WordPress/sqlite-database-integration/pull/126
+		$connection = $this->engine->get_connection();
+		$connection->query( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
+		$connection->query( 'CREATE TABLE t ( dec_col REAL )' );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'decimal', 'decimal(26,')" );
+
+		// Ensure the information schema is reconstructed correctly.
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `dec_col` float DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
+	public function testInvalidDataTypeCacheDataForDecimalDefinitionOnWooCommerceTable(): void {
+		// Recreate the invalid database state before the following fix:
+		//   https://github.com/WordPress/sqlite-database-integration/pull/126
+		$connection = $this->engine->get_connection();
+		$connection->query( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
+		$connection->query( 'CREATE TABLE wc_testing_table ( col1 REAL, col2 REAL, col3 REAL, col4 REAL )' );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('wc_testing_table', 'col1', 'decimal(26,')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('wc_testing_table', 'col2', 'decimal(19,')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('wc_testing_table', 'col3', 'decimal(3,')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('wc_testing_table', 'col4', 'decimal(5,')" );
+
+		// Ensure the information schema is reconstructed correctly.
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE wc_testing_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `wc_testing_table` (',
+					'  `col1` decimal(26,8) DEFAULT NULL,',
+					'  `col2` decimal(19,4) DEFAULT NULL,',
+					'  `col3` decimal(3,2) DEFAULT NULL,',
+					'  `col4` float DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
+	public function testInvalidDataTypeCacheDataForIndexDefinition(): void {
+		$connection = $this->engine->get_connection();
+
+		// Recreate the invalid database state before the following fix:
+		//   https://github.com/WordPress/sqlite-database-integration/commit/b5a9fbaed4d0d843f792aaa959e3d00f193ff1ee
+		//   https://github.com/Automattic/sqlite-database-integration/pull/2
+		$connection->query( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
+		$connection->query( 'CREATE TABLE t ( `timestamp` TEXT, `KEY` TEXT)' );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'timestamp', 'datetime')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'KEY', 'timestamp(timestamp)')" );
+
+		// Ensure the information schema is reconstructed correctly.
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `timestamp` datetime DEFAULT NULL,',
+					'  `KEY` text DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	private function assertQuery( $sql ) {
 		$retval = $this->engine->query( $sql );
 		$this->assertNotFalse( $retval );
