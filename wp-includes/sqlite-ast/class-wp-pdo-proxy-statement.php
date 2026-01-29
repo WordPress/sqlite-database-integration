@@ -196,7 +196,7 @@ class WP_PDO_Proxy_Statement extends PDOStatement {
 	 */
 	#[ReturnTypeWillChange]
 	public function fetchColumn( $column = 0 ) {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->statement->fetchColumn( $column );
 	}
 
 	/**

@@ -324,6 +324,70 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
+	public function test_fetch_column(): void {
+		$query = "
+			SELECT 1, 'abc', true
+			UNION ALL
+			SELECT 2, 'xyz', false
+			UNION ALL
+			SELECT 3, null, null
+		";
+
+		// Fetch first column (default).
+		$stmt = $this->driver->query( $query );
+		$this->assertSame( '1', $stmt->fetchColumn() );
+		$this->assertSame( '2', $stmt->fetchColumn() );
+		$this->assertSame( '3', $stmt->fetchColumn() );
+		$this->assertFalse( $stmt->fetchColumn() );
+
+		// Fetch second column.
+		$stmt = $this->driver->query( $query );
+		$this->assertSame( 'abc', $stmt->fetchColumn( 1 ) );
+		$this->assertSame( 'xyz', $stmt->fetchColumn( 1 ) );
+		$this->assertNull( $stmt->fetchColumn( 1 ) );
+		$this->assertFalse( $stmt->fetchColumn( 1 ) );
+
+		// Fetch third column.
+		$stmt = $this->driver->query( $query );
+		$this->assertSame( '1', $stmt->fetchColumn( 2 ) );
+		$this->assertSame( '0', $stmt->fetchColumn( 2 ) );
+		$this->assertNull( $stmt->fetchColumn( 2 ) );
+		$this->assertFalse( $stmt->fetchColumn( 2 ) );
+
+		// Fetch different columns across rows.
+		$stmt = $this->driver->query( $query );
+		$this->assertSame( '1', $stmt->fetchColumn( 0 ) );
+		$this->assertSame( 'xyz', $stmt->fetchColumn( 1 ) );
+		$this->assertNull( $stmt->fetchColumn( 2 ) );
+		$this->assertFalse( $stmt->fetchColumn() );
+	}
+
+	public function test_fetch_column_invalid_index(): void {
+		$stmt = $this->driver->query( "SELECT 1, 'abc', true" );
+
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->expectException( PDOException::class );
+			$this->expectExceptionMessage( 'Invalid column index' );
+		} else {
+			$this->expectException( ValueError::class );
+			$this->expectExceptionMessage( 'Invalid column index' );
+		}
+		$stmt->fetchColumn( 3 );
+	}
+
+	public function test_fetch_column_negative_index(): void {
+		$stmt = $this->driver->query( "SELECT 1, 'abc', true" );
+
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->expectException( PDOException::class );
+			$this->expectExceptionMessage( 'Invalid column index' );
+		} else {
+			$this->expectException( ValueError::class );
+			$this->expectExceptionMessage( 'Column index must be greater than or equal to 0' );
+		}
+		$stmt->fetchColumn( -1 );
+	}
+
 	public function test_attr_default_fetch_mode(): void {
 		$this->driver->setAttribute( PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_NUM );
 		$result = $this->driver->query( "SELECT 'a', 'b', 'c'" );
