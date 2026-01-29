@@ -2,6 +2,20 @@
 
 use PHPUnit\Framework\TestCase;
 
+// phpcs:disable Generic.Files.OneObjectStructurePerFile.MultipleFound
+class FetchObjectTestClass {
+	public $col1;
+	public $col2;
+	public $col3;
+	public $arg1;
+	public $arg2;
+
+	public function __construct( $arg1 = null, $arg2 = null ) {
+		$this->arg1 = $arg1;
+		$this->arg2 = $arg2;
+	}
+}
+
 class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	/** @var WP_PDO_MySQL_On_SQLite */
 	private $driver;
@@ -386,6 +400,42 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			$this->expectExceptionMessage( 'Column index must be greater than or equal to 0' );
 		}
 		$stmt->fetchColumn( -1 );
+	}
+
+	public function test_fetch_obj(): void {
+		// No arguments (stdClass).
+		$stmt = $this->driver->query( "SELECT 1, 'abc', true" );
+		$this->assertEquals(
+			(object) array(
+				1      => '1',
+				'abc'  => 'abc',
+				'true' => true,
+			),
+			$stmt->fetchObject()
+		);
+		$this->assertFalse( $stmt->fetchObject() );
+
+		// Custom class.
+		$stmt   = $this->driver->query( "SELECT 1 AS col1, 'abc' AS col2, true AS col3" );
+		$result = $stmt->fetchObject( FetchObjectTestClass::class );
+		$this->assertInstanceOf( FetchObjectTestClass::class, $result );
+		$this->assertSame( '1', $result->col1 );
+		$this->assertSame( 'abc', $result->col2 );
+		$this->assertSame( '1', $result->col3 );
+		$this->assertNull( $result->arg1 );
+		$this->assertNull( $result->arg2 );
+		$this->assertFalse( $stmt->fetchObject( FetchObjectTestClass::class ) );
+
+		// Custom class with constructor arguments.
+		$stmt   = $this->driver->query( "SELECT 1 AS col1, 'abc' AS col2, true AS col3" );
+		$result = $stmt->fetchObject( FetchObjectTestClass::class, array( 'val1', 'val2' ) );
+		$this->assertInstanceOf( FetchObjectTestClass::class, $result );
+		$this->assertSame( '1', $result->col1 );
+		$this->assertSame( 'abc', $result->col2 );
+		$this->assertSame( '1', $result->col3 );
+		$this->assertSame( 'val1', $result->arg1 );
+		$this->assertSame( 'val2', $result->arg2 );
+		$this->assertFalse( $stmt->fetchObject( FetchObjectTestClass::class, array( 'val1', 'val2' ) ) );
 	}
 
 	public function test_attr_default_fetch_mode(): void {

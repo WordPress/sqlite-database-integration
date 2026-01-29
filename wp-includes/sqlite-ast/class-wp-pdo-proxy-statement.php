@@ -208,7 +208,7 @@ class WP_PDO_Proxy_Statement extends PDOStatement {
 	 */
 	#[ReturnTypeWillChange]
 	public function fetchObject( $class = 'stdClass', $constructorArgs = array() ) {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->statement->fetchObject( $class, $constructorArgs );
 	}
 
 	/**
