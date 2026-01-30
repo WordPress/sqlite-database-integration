@@ -4566,6 +4566,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$is_text_string_literal = $text_string_literal && $item === $this->translate( $text_string_literal );
 		if ( $is_text_string_literal ) {
 			$alias = $text_string_literal->get_first_child_token()->get_value();
+
+			// When the literal value contains a NULL byte, MySQL truncates the
+			// resulting identifier at the position of the first one of them.
+			$fist_null_byte_pos = strpos( $alias, "\0" );
+			if ( false !== $fist_null_byte_pos ) {
+				$alias = substr( $alias, 0, $fist_null_byte_pos );
+			}
 			return sprintf( '%s AS %s', $item, $this->quote_sqlite_identifier( $alias ) );
 		}
 

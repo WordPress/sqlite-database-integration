@@ -6138,6 +6138,14 @@ END;
 		$this->assertQuery( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
 		$this->assertQuery( 'INSERT INTO t (id, name) VALUES (1, "John"), (2, "Jane")' );
 
+		// Literal with a NULL byte (no explicit alias).
+		$result = $this->assertQuery( "SELECT 'abc\0def'" );
+		$this->assertSame( array( 'abc' ), array_keys( (array) $result[0] ) );
+
+		// Literal with a NULL byte (with an explicit alias).
+		$result = $this->assertQuery( "SELECT 'abc\0def' AS `col1`" );
+		$this->assertSame( array( 'col1' ), array_keys( (array) $result[0] ) );
+
 		// Columns (no explicit alias).
 		$result = $this->assertQuery( 'SELECT id, name FROM t' );
 		$this->assertSame( array( 'id', 'name' ), array_keys( (array) $result[0] ) );
