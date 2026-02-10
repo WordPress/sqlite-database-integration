@@ -1170,14 +1170,14 @@ class WP_SQLite_Translator_Tests extends TestCase {
 					'name'     => '___tmp_table_created_at_on_update__',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER \"___tmp_table_created_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"created_at\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
+					'sql'      => "CREATE TRIGGER `___tmp_table_created_at_on_update__`\n\t\t\tAFTER UPDATE ON `_tmp_table`\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE `_tmp_table` SET `created_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
 				),
 				(object) array(
 					'type'     => 'trigger',
 					'name'     => '___tmp_table_updated_at_on_update__',
 					'tbl_name' => '_tmp_table',
 					'rootpage' => '0',
-					'sql'      => "CREATE TRIGGER \"___tmp_table_updated_at_on_update__\"\n\t\t\tAFTER UPDATE ON \"_tmp_table\"\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE \"_tmp_table\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
+					'sql'      => "CREATE TRIGGER `___tmp_table_updated_at_on_update__`\n\t\t\tAFTER UPDATE ON `_tmp_table`\n\t\t\tFOR EACH ROW\n\t\t\tBEGIN\n\t\t\t  UPDATE `_tmp_table` SET `updated_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;\n\t\t\tEND",
 				),
 			),
 			$results
@@ -3556,5 +3556,41 @@ QUERY
 		$this->assertQuery( 'UPDATE test_now_default SET id = 2 WHERE id = 1' );
 		$result = $this->assertQuery( 'SELECT * FROM test_now_default WHERE id = 2' );
 		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->updated );
+	}
+
+	public function testQuoteIdentifierEscapesBackticks() {
+		// Create a table with a backtick in the column name using double-quote
+		// quoting (MySQL syntax). The translator must properly escape the
+		// backtick when generating SQLite DDL with backtick-quoted identifiers.
+		$this->assertQuery(
+			'CREATE TABLE _tmp_backtick_test (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				"col`name" varchar(50) NOT NULL
+			);'
+		);
+
+		$this->assertQuery( "INSERT INTO _tmp_backtick_test (ID, \"col`name\") VALUES (1, 'value1')" );
+
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_backtick_test WHERE ID = 1' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'value1', $result[0]->{'col`name'} );
+
+		// Verify the column appears in DESCRIBE output.
+		$description  = $this->assertQuery( 'DESCRIBE _tmp_backtick_test' );
+		$column_names = array_map(
+			function ( $row ) {
+				return $row->Field;
+			},
+			$description
+		);
+		$this->assertContains( 'col`name', $column_names );
+
+		// Verify SHOW CREATE TABLE produces valid, parseable output.
+		$create     = $this->assertQuery( 'SHOW CREATE TABLE _tmp_backtick_test' );
+		$create_sql = $create[0]->{'Create Table'};
+		$this->assertStringContainsString( '`col``name`', $create_sql );
+
+		// Verify autoincrement detection works with backtick-quoted identifiers.
+		$this->assertStringContainsString( 'AUTO_INCREMENT', $create_sql );
 	}
 }
