@@ -6,3 +6,4 @@ composer.lock
 .DS_Store
 ._*
 /wordpress
+/.claude/settings.local.json
