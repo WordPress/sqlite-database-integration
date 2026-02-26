@@ -4,6 +4,7 @@
 		"allow": [
 			"Bash(composer install *)",
 			"Bash(composer update *)",
+			"Bash(composer run *)",
 			"Bash(composer check-cs *)",
 			"Bash(composer fix-cs *)",
 			"Bash(composer test *)",
