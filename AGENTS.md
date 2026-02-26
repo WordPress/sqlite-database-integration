@@ -6,8 +6,7 @@ MAINTENANCE: Update this file when:
 - Adding new architectural patterns or conventions
 -->
 
-# AGENTS.md
-This file provides guidance to AI coding agents when working with code in this repository.
+# AGENTS.md - SQLite Database Integration
 
 ## Project overview
 This project implements SQLite database support for MySQL-based projects.
@@ -20,7 +19,9 @@ It is a monorepo that includes the following components:
 - **WordPress plugin** — A plugin that adds SQLite support to WordPress.
 - **Test suites** — A set of extensive test suites to cover MySQL syntax and functionality.
 
-The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5, MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer (with legacy mode down to 3.27.0).
+The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5,
+MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer
+(with legacy mode down to 3.27.0).
 
 ### New and old driver
 At the moment, the project includes two MySQL-on-SQLite driver implementations:
@@ -48,6 +49,7 @@ composer run test-e2e                   # Run E2E tests (Playwright via WP env)
 
 # WordPress tests
 composer run wp-setup                   # Set up WordPress with SQLite for tests
+composer run wp-run                     # Run a WordPress repository command
 composer run wp-test-start              # Start WordPress environment (Docker)
 composer run wp-test-php                # Run WordPress PHPUnit tests
 composer run wp-test-e2e                # Run WordPress E2E tests (Playwright)
@@ -60,21 +62,38 @@ into the SQLite driver to support diverse use cases both inside and outside the
 PHP ecosystem.
 
 ### Component overview
-The following diagram shows how different types of applications can be supported
-using components from this project:
+The following diagrams show how different types of applications can be supported
+using components from this project.
 
+**PHP applications** are supported through a PDO\MySQL-compatible API:
 ```
-Consumers:            Components:
+PHP applications, Adminer, phpMyAdmin
+  ↓ PDO\MySQL API
+SQLite driver
+  ↓ PDO\SQLite
+SQLite
+```
 
-PHP applications      ─────────────────────────┐
-Adminer, phpMyAdmin                            │
-                                               │
-WordPress + plugins                            │
-WordPress Playground  ─────→ wpdb drop-in ─────┼────→ SQLite driver ────→ SQLite
-  (Studio, wp-env)                             │        (PDO API)          (DB)
-                                               │
-MySQL CLI                                      │
-Desktop clients       ─────→ MySQL proxy ──────┘
+**WordPress** projects are powered by a `wpdb` compatible drop-in:
+```
+WordPress + plugins, WordPress Playground, WordPress Studio, wp-env
+  ↓ wpdb
+wpdb drop-in
+  ↓ PDO\MySQL API
+SQLite driver
+  ↓ PDO\SQLite
+SQLite
+```
+
+**Other applications** can be run using the MySQL proxy:
+```
+MySQL CLI, Desktop clients
+  ↓ MySQL binary protocol v10
+MySQL proxy
+  ↓ PDO\MySQL API
+SQLite driver
+  ↓ PDO\SQLite
+SQLite
 ```
 
 ### Query processing pipeline
