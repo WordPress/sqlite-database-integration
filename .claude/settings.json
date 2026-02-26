@@ -15,7 +15,7 @@
 			"Bash(npm --prefix wordpress *)",
 			"Bash(npm --prefix tests/e2e *)",
 			"WebFetch(domain:developer.wordpress.org)",
-			"WebFetch(domain:www.sqlite.org)"
+			"WebFetch(domain:sqlite.org)"
 		]
 	}
 }
