@@ -1,13 +1,7 @@
 <?php
 
-require_once __DIR__ . '/../php-polyfills.php';
 require_once __DIR__ . '/wp-sqlite-schema.php';
-require_once __DIR__ . '/../wp-pdo-mysql-on-sqlite.php';
-require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-lexer.php';
-require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-token.php';
-require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
-require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-translator.php';
+require_once __DIR__ . '/../src/load.php';
 
 // When on an older SQLite version, enable unsafe back compatibility.
 $sqlite_version = ( new PDO( 'sqlite::memory:' ) )->query( 'SELECT SQLITE_VERSION();' )->fetch()[0];

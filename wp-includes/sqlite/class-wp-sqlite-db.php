@@ -335,7 +335,6 @@ class WP_SQLite_DB extends wpdb {
 				return false;
 			}
 
-			require_once __DIR__ . '/../../wp-pdo-mysql-on-sqlite.php';
 			$this->ensure_database_directory( FQDB );
 
 			try {

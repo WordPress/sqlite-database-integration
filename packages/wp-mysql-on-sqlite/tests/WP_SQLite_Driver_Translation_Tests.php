@@ -3,7 +3,7 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Driver_Translation_Tests extends TestCase {
-	const GRAMMAR_PATH = __DIR__ . '/../wp-includes/mysql/mysql-grammar.php';
+	const GRAMMAR_PATH = __DIR__ . '/../src/mysql/mysql-grammar.php';
 
 	/**
 	 * @var WP_Parser_Grammar

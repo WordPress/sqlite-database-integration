@@ -12,9 +12,9 @@ set_error_handler(
 	}
 );
 
-require_once __DIR__ . '/../../wp-includes/parser/class-wp-parser-token.php';
-require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-token.php';
-require_once __DIR__ . '/../../wp-includes/mysql/class-wp-mysql-lexer.php';
+require_once __DIR__ . '/../../src/parser/class-wp-parser-token.php';
+require_once __DIR__ . '/../../src/mysql/class-wp-mysql-token.php';
+require_once __DIR__ . '/../../src/mysql/class-wp-mysql-lexer.php';
 
 // Load the queries.
 $handle  = fopen( __DIR__ . '/../mysql/data/mysql-server-tests-queries.csv', 'r' );

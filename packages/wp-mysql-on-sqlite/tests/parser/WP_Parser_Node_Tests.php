@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../../wp-includes/parser/class-wp-parser-node.php';
+require_once __DIR__ . '/../../src/parser/class-wp-parser-node.php';
 
 use PHPUnit\Framework\TestCase;
 

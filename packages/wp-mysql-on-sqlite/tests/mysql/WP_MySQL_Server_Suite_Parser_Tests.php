@@ -7,7 +7,7 @@ use PHPUnit\Framework\TestCase;
  */
 class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	const TEST_DATA_PATH = __DIR__ . '/data/mysql-server-tests-queries.csv';
-	const GRAMMAR_PATH   = __DIR__ . '/../../wp-includes/mysql/mysql-grammar.php';
+	const GRAMMAR_PATH   = __DIR__ . '/../../src/mysql/mysql-grammar.php';
 
 	/**
 	 * Some of the queries in the test suite are known to fail parsing.

@@ -72,11 +72,22 @@ jobs:
             exit 1
           fi
 
-      - name: Install Composer dependencies
+      - name: Install Composer dependencies (root)
         uses: ramsey/composer-install@v3
         with:
           ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
 
+      - name: Install Composer dependencies (wp-mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/wp-mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
       - name: Run PHPUnit tests
-        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist 
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        working-directory: packages/wp-mysql-on-sqlite
+
+      - name: Run PHPUnit tests for the legacy driver
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist

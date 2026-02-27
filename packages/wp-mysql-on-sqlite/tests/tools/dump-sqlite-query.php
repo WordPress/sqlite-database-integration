@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../../wp-pdo-mysql-on-sqlite.php';
+require_once __DIR__ . '/../../src/load.php';
 
 $driver = new WP_SQLite_Driver(
 	new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),

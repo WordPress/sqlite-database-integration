@@ -14,8 +14,7 @@
 	<testsuites>
 		<!-- Default test suite to run all tests. -->
 		<testsuite name="default">
-			<directory suffix=".php">tests/</directory>
-			<!-- Exclude test tools. -->
+			<directory suffix="_Tests.php">tests/</directory>
 			<exclude>tests/tools</exclude>
 		</testsuite>
 	</testsuites>
