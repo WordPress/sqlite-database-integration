@@ -3593,4 +3593,113 @@ QUERY
 		// Verify autoincrement detection works with backtick-quoted identifiers.
 		$this->assertStringContainsString( 'AUTO_INCREMENT', $create_sql );
 	}
+
+	public function testDoubleQuotedStringsAreParameterized() {
+		$this->assertQuery( 'INSERT INTO _options (option_name, option_value) VALUES ("dq_name", "dq_value")' );
+
+		// The double-quoted strings should be bound as parameters, not inlined.
+		$insert_query = null;
+		foreach ( $this->engine->executed_sqlite_queries as $q ) {
+			if ( stripos( $q['sql'], 'INSERT' ) !== false && stripos( $q['sql'], '_options' ) !== false ) {
+				$insert_query = $q;
+			}
+		}
+		$this->assertNotNull( $insert_query );
+		$this->assertNotEmpty( $insert_query['params'], 'Double-quoted strings should be bound as parameters' );
+		$this->assertStringNotContainsString( 'dq_name', $insert_query['sql'], 'Value should not appear in SQL' );
+		$this->assertStringNotContainsString( 'dq_value', $insert_query['sql'], 'Value should not appear in SQL' );
+		$this->assertContains( 'dq_name', $insert_query['params'] );
+		$this->assertContains( 'dq_value', $insert_query['params'] );
+
+		// Verify the data was inserted correctly.
+		$result = $this->assertQuery( 'SELECT * FROM _options WHERE option_name = "dq_name"' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'dq_value', $result[0]->option_value );
+	}
+
+	public function testDoubleQuotedStringWithBackslashEscapeDoesNotCauseInjection() {
+		// In MySQL, \" inside double-quoted strings is an escaped double quote.
+		// The MySQL lexer produces a single token: "admin\" OR 1=1--"
+		// with value: admin" OR 1=1--
+		//
+		// Without parameterization, passing the raw token to SQLite would be:
+		//   "admin\" OR 1=1--" (SQLite sees "admin\" as identifier + SQL)
+		//
+		// With parameterization, the value is safely bound as a parameter.
+		$this->assertQuery(
+			'INSERT INTO _options (option_name, option_value) VALUES ("safe_key", "admin\" OR 1=1--")'
+		);
+
+		// Verify the injection payload is not present in the SQL sent to SQLite.
+		$insert_query = null;
+		foreach ( $this->engine->executed_sqlite_queries as $q ) {
+			if ( stripos( $q['sql'], 'INSERT' ) !== false && stripos( $q['sql'], '_options' ) !== false ) {
+				$insert_query = $q;
+			}
+		}
+		$this->assertNotNull( $insert_query );
+		$this->assertStringNotContainsString( 'OR 1=1', $insert_query['sql'], 'Injection payload should not appear in SQL' );
+		$this->assertNotEmpty( $insert_query['params'], 'Values should be bound as parameters' );
+
+		$result = $this->assertQuery( 'SELECT * FROM _options WHERE option_name = "safe_key"' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'admin" OR 1=1--', $result[0]->option_value );
+	}
+
+	public function testDateFormatWithSingleQuotesInFormat() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_dates (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				created_at DATETIME NOT NULL
+			);'
+		);
+		$this->assertQuery( "INSERT INTO _tmp_dates (created_at) VALUES ('2024-01-15 10:30:00')" );
+
+		// DATE_FORMAT with a format that produces a value — verify it works.
+		$result = $this->assertQuery(
+			"SELECT DATE_FORMAT(created_at, '%Y-%m-%d') as formatted FROM _tmp_dates"
+		);
+		$this->assertCount( 1, $result );
+		$this->assertEquals( '2024-01-15', $result[0]->formatted );
+	}
+
+	public function testIntervalExpression() {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_dates (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				created_at DATETIME NOT NULL
+			);'
+		);
+		$this->assertQuery( 'INSERT INTO _tmp_dates (created_at) VALUES (\'2024-01-15 10:30:00\')' );
+
+		$result = $this->assertQuery(
+			'SELECT DATE_ADD(created_at, INTERVAL 1 DAY) as future_date FROM _tmp_dates'
+		);
+		$this->assertCount( 1, $result );
+		$this->assertEquals( '2024-01-16 10:30:00', $result[0]->future_date );
+
+		$result = $this->assertQuery(
+			'SELECT DATE_SUB(created_at, INTERVAL 1 DAY) as past_date FROM _tmp_dates'
+		);
+		$this->assertCount( 1, $result );
+		$this->assertEquals( '2024-01-14 10:30:00', $result[0]->past_date );
+	}
+
+	public function testLikeBinaryWithSingleQuoteInPattern() {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+				name varchar(50) NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('it''s a test')" );
+		$this->assertQuery( "INSERT INTO _tmp_table (name) VALUES ('no quote here')" );
+
+		$result = $this->assertQuery(
+			"SELECT * FROM _tmp_table WHERE name LIKE BINARY 'it''s%'"
+		);
+		$this->assertCount( 1, $result );
+		$this->assertEquals( "it's a test", $result[0]->name );
+	}
 }

@@ -2251,10 +2251,7 @@ class WP_SQLite_Translator {
 	 * @return bool True if the parameter was extracted successfully, false otherwise.
 	 */
 	private function extract_bound_parameter( $token, &$params ) {
-		if ( ! $token->matches(
-			WP_SQLite_Token::TYPE_STRING,
-			WP_SQLite_Token::FLAG_STRING_SINGLE_QUOTES
-		)
+		if ( ! $token->matches( WP_SQLite_Token::TYPE_STRING )
 			|| 'AS' === $this->last_reserved_keyword
 		) {
 			return false;
@@ -2539,7 +2536,7 @@ class WP_SQLite_Translator {
 
 		$this->rewriter->add( new WP_SQLite_Token( 'STRFTIME', WP_SQLite_Token::TYPE_KEYWORD, WP_SQLite_Token::FLAG_KEYWORD_FUNCTION ) );
 		$this->rewriter->add( new WP_SQLite_Token( '(', WP_SQLite_Token::TYPE_OPERATOR ) );
-		$this->rewriter->add( new WP_SQLite_Token( "'$new_format'", WP_SQLite_Token::TYPE_STRING ) );
+		$this->rewriter->add( new WP_SQLite_Token( $this->pdo->quote( $new_format ), WP_SQLite_Token::TYPE_STRING ) );
 		$this->rewriter->add( new WP_SQLite_Token( ',', WP_SQLite_Token::TYPE_OPERATOR ) );
 
 		// Add the buffered tokens back to the stream.
@@ -2614,7 +2611,7 @@ class WP_SQLite_Translator {
 			}
 		}
 
-		$this->rewriter->add( new WP_SQLite_Token( "'{$interval_op}$num $unit'", WP_SQLite_Token::TYPE_STRING ) );
+		$this->rewriter->add( new WP_SQLite_Token( $this->pdo->quote( "{$interval_op}$num $unit" ), WP_SQLite_Token::TYPE_STRING ) );
 		return true;
 	}
 
@@ -2712,16 +2709,9 @@ class WP_SQLite_Translator {
 	 * @return string The escaped GLOB pattern.
 	 */
 	private function escape_like_to_glob( $pattern ) {
-		// Remove surrounding quotes
-		$pattern = trim( $pattern, "'\"" );
-
 		$pattern = str_replace( '%', '*', $pattern );
 		$pattern = str_replace( '_', '?', $pattern );
-
-		// No need to escape special characters in this case
-		// because GLOB doesn't require escaping in the same way LIKE does
-		// Return the pattern wrapped in single quotes
-		return "'" . $pattern . "'";
+		return $this->pdo->quote( $pattern );
 	}
 
 	/**
