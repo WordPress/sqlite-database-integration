@@ -1722,7 +1722,7 @@ class WP_SQLite_Translator {
 	 */
 	private function execute_describe() {
 		$this->rewriter->skip();
-		$this->table_name = $this->rewriter->consume()->value;
+		$this->table_name = $this->normalize_column_name( $this->rewriter->consume()->value );
 		$this->set_results_from_fetched_data(
 			$this->describe( $this->table_name )
 		);
@@ -1840,7 +1840,7 @@ class WP_SQLite_Translator {
 					WP_SQLite_Token::FLAG_KEYWORD_RESERVED
 				)
 			) {
-				$this->table_name = $token->value;
+				$this->table_name = $this->normalize_column_name( $token->value );
 			}
 
 			$this->remember_last_reserved_keyword( $token );
@@ -1919,7 +1919,7 @@ class WP_SQLite_Translator {
 		// Consume and record the table name.
 		$this->insert_columns = array();
 		$this->rewriter->consume(); // INTO.
-		$this->table_name = $this->rewriter->consume()->value; // Table name.
+		$this->table_name = $this->normalize_column_name( $this->rewriter->consume()->value ); // Table name.
 
 		/*
 		 * A list of columns is given if the opening parenthesis
@@ -2198,7 +2198,7 @@ class WP_SQLite_Translator {
 		) {
 			return false;
 		}
-		$table_name = $this->rewriter->peek_nth( 2 )->value;
+		$table_name = $this->normalize_column_name( $this->rewriter->peek_nth( 2 )->value );
 		if ( 'dual' === strtolower( $table_name ) ) {
 			return false;
 		}
