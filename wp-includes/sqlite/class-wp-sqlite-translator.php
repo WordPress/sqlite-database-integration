@@ -1494,12 +1494,13 @@ class WP_SQLite_Translator {
 
 		$quoted_table = $this->quote_identifier( $this->table_name );
 		$quoted_pk    = $this->quote_identifier( $pk_name );
-		$query        = (
-		count( $ids_to_delete )
-			? "DELETE FROM {$quoted_table} WHERE {$quoted_pk} IN (" . implode( ',', $ids_to_delete ) . ')'
-			: "DELETE FROM {$quoted_table} WHERE 0=1"
-		);
-		$this->execute_sqlite_query( $query );
+		if ( count( $ids_to_delete ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $ids_to_delete ), '?' ) );
+			$stmt         = $this->execute_sqlite_query( "DELETE FROM {$quoted_table} WHERE {$quoted_pk} IN ({$placeholders})" );
+			$stmt->execute( $ids_to_delete );
+		} else {
+			$this->execute_sqlite_query( "DELETE FROM {$quoted_table} WHERE 0=1" );
+		}
 		$this->set_result_from_affected_rows(
 			count( $ids_to_delete )
 		);
