@@ -3602,6 +3602,7 @@ QUERY
 		foreach ( $this->engine->executed_sqlite_queries as $q ) {
 			if ( stripos( $q['sql'], 'INSERT' ) !== false && stripos( $q['sql'], '_options' ) !== false ) {
 				$insert_query = $q;
+				break;
 			}
 		}
 		$this->assertNotNull( $insert_query );
@@ -3635,6 +3636,7 @@ QUERY
 		foreach ( $this->engine->executed_sqlite_queries as $q ) {
 			if ( stripos( $q['sql'], 'INSERT' ) !== false && stripos( $q['sql'], '_options' ) !== false ) {
 				$insert_query = $q;
+				break;
 			}
 		}
 		$this->assertNotNull( $insert_query );
