@@ -44,4 +44,12 @@ SQLite-backed implementation. Core WordPress code continues to use
 the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
+== Changelog ==
+
+= 2.2.18 =
+
+* Improved PDO statement compatibility by implementing the fetchColumn() and fetchObject() methods.
+* Hardened identifier and string escaping in the legacy SQLite driver.
+* Refined project tooling and release automation for future plugin updates.
+
 

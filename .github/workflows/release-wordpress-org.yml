@@ -1,0 +1,143 @@
+name: Release to WordPress.org
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag to deploy, for example v2.2.16
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'WordPress/sqlite-database-integration'
+    name: Deploy ${{ steps.release_meta.outputs.tag }} to WordPress.org
+    runs-on: ubuntu-latest
+    environment: WordPress.org
+    permissions:
+      contents: read
+    env:
+      SVN_URL: https://plugins.svn.wordpress.org/sqlite-database-integration
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+          coverage: none
+
+      - name: Determine release metadata
+        id: release_meta
+        run: |
+          TAG="${RELEASE_TAG}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must look like v2.2.19, got: $TAG"
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure the release commit is on main
+        run: |
+          git fetch origin main --depth=1
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+            echo "Release commit must be reachable from origin/main."
+            exit 1
+          fi
+
+      - name: Verify release metadata
+        run: bash ./.github/scripts/verify-release-metadata.sh "${{ steps.release_meta.outputs.version }}"
+
+      - name: Install Subversion
+        run: sudo apt-get update && sudo apt-get install -y subversion rsync
+
+      - name: Build the plugin package
+        run: |
+          mkdir build
+          git archive --format=tar HEAD | tar -xf - -C build
+          test -f build/load.php
+          test -f build/readme.txt
+          test -f build/version.php
+
+      - name: Checkout the WordPress.org SVN repository
+        run: svn checkout "$SVN_URL" svn-clone
+
+      - name: Sync trunk and create the release tag
+        run: |
+          VERSION="${{ steps.release_meta.outputs.version }}"
+
+          if [ -e "svn-clone/tags/$VERSION" ]; then
+            echo "The WordPress.org tag $VERSION already exists."
+            exit 1
+          fi
+
+          rsync -a --delete --exclude='.svn/' build/ svn-clone/trunk/
+          mkdir -p "svn-clone/tags/$VERSION"
+          rsync -a --delete --exclude='.svn/' build/ "svn-clone/tags/$VERSION/"
+
+      - name: Stage SVN changes
+        run: |
+          cd svn-clone
+
+          while IFS= read -r line; do
+            status="${line:0:1}"
+            path="${line:8}"
+
+            if [ -z "$path" ]; then
+              continue
+            fi
+
+            case "$status" in
+              '?')
+                svn add --parents "$path"
+                ;;
+              '!')
+                svn delete "$path"
+                ;;
+            esac
+          done < <(svn status)
+
+          echo "Pending SVN changes:"
+          svn status
+
+      - name: Commit the WordPress.org release
+        env:
+          SVN_USERNAME: ${{ secrets.WPORG_SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.WPORG_SVN_PASSWORD }}
+        run: |
+          if [ -z "$SVN_USERNAME" ] || [ -z "$SVN_PASSWORD" ]; then
+            echo "Missing WordPress.org SVN credentials."
+            exit 1
+          fi
+
+          cd svn-clone
+
+          if ! svn status | grep -q '.'; then
+            echo "No SVN changes to commit."
+            exit 1
+          fi
+
+          svn commit \
+            -m "Release ${{ steps.release_meta.outputs.version }}" \
+            --username "$SVN_USERNAME" \
+            --password "$SVN_PASSWORD" \
+            --non-interactive \
+            --trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other
