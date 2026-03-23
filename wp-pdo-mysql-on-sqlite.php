@@ -1,5 +1,7 @@
 <?php
 
+define( 'WP_MYSQL_ON_SQLITE_LOADER_PATH', __FILE__ );
+
 /**
  * Load the PDO MySQL-on-SQLite driver and its dependencies.
  */
