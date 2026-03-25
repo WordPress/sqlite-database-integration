@@ -12,7 +12,7 @@
 require_once dirname( __DIR__, 2 ) . '/version.php';
 
 // Require the constants file.
-require_once dirname( __DIR__, 2 ) . '/constants.php';
+require_once __DIR__ . '/../../constants.php';
 
 // Bail early if DB_ENGINE is not defined as sqlite.
 if ( ! defined( 'DB_ENGINE' ) || 'sqlite' !== DB_ENGINE ) {
@@ -48,8 +48,9 @@ if ( ! extension_loaded( 'pdo_sqlite' ) ) {
 }
 
 if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
-	require_once __DIR__ . '/../../wp-pdo-mysql-on-sqlite.php';
+	require_once __DIR__ . '/../database/load.php';
 } else {
+	require_once __DIR__ . '/php-polyfills.php';
 	require_once __DIR__ . '/class-wp-sqlite-lexer.php';
 	require_once __DIR__ . '/class-wp-sqlite-query-rewriter.php';
 	require_once __DIR__ . '/class-wp-sqlite-translator.php';
@@ -80,7 +81,7 @@ if ( defined( 'DB_NAME' ) && '' !== DB_NAME ) {
  * that are present in the GitHub repository
  * but not the plugin published on WordPress.org.
  */
-$crosscheck_tests_file_path = dirname( __DIR__, 2 ) . '/tests/class-wp-sqlite-crosscheck-db.php';
+$crosscheck_tests_file_path = __DIR__ . '/class-wp-sqlite-crosscheck-db.php';
 if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exists( $crosscheck_tests_file_path ) ) {
 	require_once $crosscheck_tests_file_path;
 	$GLOBALS['wpdb'] = new WP_SQLite_Crosscheck_DB( $db_name );
@@ -88,5 +89,5 @@ if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exi
 	$GLOBALS['wpdb'] = new WP_SQLite_DB( $db_name );
 
 	// Boot the Query Monitor plugin if it is active.
-	require_once dirname( __DIR__, 2 ) . '/integrations/query-monitor/boot.php';
+	require_once __DIR__ . '/../../integrations/query-monitor/boot.php';
 }

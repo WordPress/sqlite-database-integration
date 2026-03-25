@@ -20,7 +20,6 @@ require_once __DIR__ . '/version.php';
 
 define( 'SQLITE_MAIN_FILE', __FILE__ );
 
-require_once __DIR__ . '/php-polyfills.php';
 require_once __DIR__ . '/admin-page.php';
 require_once __DIR__ . '/activate.php';
 require_once __DIR__ . '/deactivate.php';

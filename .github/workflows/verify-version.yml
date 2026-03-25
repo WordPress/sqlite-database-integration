@@ -16,7 +16,7 @@ jobs:
       - name: Extract version from "load.php"
         id: load_version
         run: |
-          VERSION=$(grep "Version:" load.php | sed "s/.*Version: \([^ ]*\).*/\1/")
+          VERSION=$(grep "Version:" packages/sqlite-database-integration/load.php | sed "s/.*Version: \([^ ]*\).*/\1/")
           echo "load_version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Extract version from "version.php"
