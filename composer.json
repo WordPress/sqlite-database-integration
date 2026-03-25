@@ -65,7 +65,7 @@
 		],
 		"wp-test-php": [
 			"@wp-test-ensure-env @no_additional_args",
-			"rm -rf wordpress/src/wp-content/database/.ht.sqlite.php @no_additional_args",
+			"rm -rf wordpress/src/wp-content/database/.ht.sqlite @no_additional_args",
 			"npm --prefix wordpress run test:php -- @additional_args"
 		],
 		"wp-test-e2e": [
@@ -74,7 +74,7 @@
 		],
 		"wp-test-clean": [
 			"npm --prefix wordpress run env:clean",
-			"rm -rf wordpress/src/wp-content/database/.ht.sqlite.php"
+			"rm -rf wordpress/src/wp-content/database/.ht.sqlite"
 		]
 	}
 }

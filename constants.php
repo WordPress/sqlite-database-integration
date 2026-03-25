@@ -48,7 +48,7 @@ if ( ! defined( 'FQDB' ) ) {
 	if ( defined( 'DB_FILE' ) ) {
 		define( 'FQDB', FQDBDIR . DB_FILE );
 	} else {
-		define( 'FQDB', FQDBDIR . '.ht.sqlite.php' );
+		define( 'FQDB', FQDBDIR . '.ht.sqlite' );
 	}
 }
 

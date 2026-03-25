@@ -1,12 +1,6 @@
 <?php
 
-// Configure the test environment.
-error_reporting( E_ALL );
-define( 'FQDB', ':memory:' );
-define( 'FQDBDIR', __DIR__ . '/../testdb' );
-
 require_once __DIR__ . '/wp-sqlite-schema.php';
-require_once __DIR__ . '/../constants.php';
 require_once __DIR__ . '/../wp-pdo-mysql-on-sqlite.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
 require_once __DIR__ . '/../wp-includes/sqlite/class-wp-sqlite-lexer.php';
@@ -19,6 +13,11 @@ $sqlite_version = ( new PDO( 'sqlite::memory:' ) )->query( 'SELECT SQLITE_VERSIO
 if ( version_compare( $sqlite_version, WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' ) ) {
 	define( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS', true );
 }
+
+// Configure the test environment.
+error_reporting( E_ALL );
+define( 'FQDB', ':memory:' );
+define( 'FQDBDIR', __DIR__ . '/../testdb' );
 
 // Polyfill WPDB globals.
 $GLOBALS['table_prefix'] = 'wptests_';

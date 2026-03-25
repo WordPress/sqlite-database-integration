@@ -15,12 +15,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 
 		$this->engine = new WP_SQLite_Driver(
-			new WP_SQLite_Connection(
-				array(
-					'pdo'            => $this->sqlite,
-					'application_id' => 42, // Test application ID.
-				)
-			),
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
 			'wp'
 		);
 		$this->engine->query(
@@ -54,11 +49,6 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		}
 		$this->assertNotNull( $exception, 'An exception was expected, but none was thrown.' );
 		$this->assertSame( $error_message, $exception->getMessage() );
-	}
-
-	public function testApplicationID() {
-		$app_id = $this->sqlite->query( 'PRAGMA application_id' )->fetchColumn();
-		$this->assertSame( 42, (int) $app_id );
 	}
 
 	public function testRegexp() {

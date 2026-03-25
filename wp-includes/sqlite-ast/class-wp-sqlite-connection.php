@@ -63,7 +63,6 @@ class WP_SQLite_Connection {
 	 *     @type int|null    $timeout      Optional. SQLite timeout in seconds.
 	 *                                     The time to wait for a writable lock.
 	 *     @type string|null $journal_mode Optional. SQLite journal mode.
-	 *     @type int|null $application_id  Optional. SQLite application ID.
 	 * }
 	 *
 	 * @throws InvalidArgumentException When some connection options are invalid.
@@ -96,10 +95,6 @@ class WP_SQLite_Connection {
 		$journal_mode = $options['journal_mode'] ?? null;
 		if ( $journal_mode && in_array( $journal_mode, self::SQLITE_JOURNAL_MODES, true ) ) {
 			$this->query( 'PRAGMA journal_mode = ' . $journal_mode );
-		}
-
-		if ( isset( $options['application_id'] ) ) {
-			$this->query( 'PRAGMA application_id = ' . (int) $options['application_id'] );
 		}
 	}
 
