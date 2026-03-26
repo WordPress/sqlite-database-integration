@@ -7,7 +7,7 @@ class WP_MySQL_Proxy_PDO_Test extends WP_MySQL_Proxy_Test {
 	public function setUp(): void {
 		parent::setUp();
 
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\MySQL::class : PDO::class;
 		$this->pdo = new $pdo_class(
 			sprintf( 'mysql:host=127.0.0.1;port=%d', $this->port ),
 			'user',
