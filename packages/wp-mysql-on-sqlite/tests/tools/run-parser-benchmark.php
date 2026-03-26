@@ -21,7 +21,7 @@ require_once __DIR__ . '/../../src/mysql/class-wp-mysql-token.php';
 require_once __DIR__ . '/../../src/mysql/class-wp-mysql-lexer.php';
 require_once __DIR__ . '/../../src/mysql/class-wp-mysql-parser.php';
 
-function getStats( $total, $failures, $exceptions ) {
+function get_stats( $total, $failures, $exceptions ) {
 	return sprintf(
 		'Total: %5d  |  Failures: %4d / %2d%%  |  Exceptions: %4d / %2d%%',
 		$total,
@@ -40,7 +40,7 @@ $grammar      = new WP_Parser_Grammar( $grammar_data );
 $data_dir = __DIR__ . '/../mysql/data';
 $handle   = fopen( "$data_dir/mysql-server-tests-queries.csv", 'r' );
 $records  = array();
-while ( ( $record = fgetcsv( $handle ) ) !== false ) {
+while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 	$records[] = $record;
 }
 
@@ -71,12 +71,12 @@ for ( $i = 1; $i < count( $records ); $i += 1 ) {
 	}
 
 	if ( $i > 0 && 0 === $i % 1000 ) {
-		echo getStats( $i, count( $failures ), count( $exceptions ) ), "\n";
+		echo get_stats( $i, count( $failures ), count( $exceptions ) ), "\n";
 	}
 }
 $duration = microtime( true ) - $start;
 
-echo getStats( $i, count( $failures ), count( $exceptions ) ), "\n";
+echo get_stats( $i, count( $failures ), count( $exceptions ) ), "\n";
 
 // Print the results.
 printf( "\nParsed %d queries in %.5fs @ %d QPS.\n", $i, $duration, $i / $duration );
