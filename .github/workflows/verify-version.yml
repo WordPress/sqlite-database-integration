@@ -22,7 +22,7 @@ jobs:
       - name: Extract version from "version.php"
         id: const_version
         run: |
-          VERSION=$(php -r "require 'version.php'; echo SQLITE_DRIVER_VERSION;")
+          VERSION=$(php -r "require 'packages/wp-mysql-on-sqlite/src/version.php'; echo SQLITE_DRIVER_VERSION;")
           echo "const_version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Compare versions

@@ -6,7 +6,7 @@ define( 'WP_MYSQL_ON_SQLITE_LOADER_PATH', __FILE__ );
  * Load the PDO MySQL-on-SQLite driver and its dependencies.
  */
 require_once __DIR__ . '/php-polyfills.php';
-require_once __DIR__ . '/../../../version.php';
+require_once __DIR__ . '/version.php';
 require_once __DIR__ . '/parser/class-wp-parser-grammar.php';
 require_once __DIR__ . '/parser/class-wp-parser.php';
 require_once __DIR__ . '/parser/class-wp-parser-node.php';
