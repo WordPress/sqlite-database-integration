@@ -1,5 +1,5 @@
 {
-    "name": "wordpress/wp-mysql-on-sqlite",
+    "name": "wordpress/mysql-on-sqlite",
     "type": "library",
 	"scripts": {
 		"test": "phpunit"

@@ -1,5 +1,5 @@
 {
-    "name": "wordpress/wp-mysql-proxy",
+    "name": "wordpress/mysql-proxy",
     "type": "library",
 	"bin": [
 		"bin/wp-mysql-proxy.php"

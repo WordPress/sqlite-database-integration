@@ -1,11 +1,11 @@
 <?php
 
 require_once __DIR__ . '/wp-sqlite-schema.php';
-require_once __DIR__ . '/../packages/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
-require_once __DIR__ . '/../packages/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-lexer.php';
-require_once __DIR__ . '/../packages/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-token.php';
-require_once __DIR__ . '/../packages/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
-require_once __DIR__ . '/../packages/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-translator.php';
+require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-query-rewriter.php';
+require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-lexer.php';
+require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-token.php';
+require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
+require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-translator.php';
 
 // Configure the test environment.
 error_reporting( E_ALL );
@@ -43,7 +43,7 @@ if ( ! function_exists( 'apply_filters' ) ) {
 	}
 }
 
-require_once __DIR__ . '/../packages/sqlite-database-integration/wp-includes/sqlite/php-polyfills.php';
+require_once __DIR__ . '/../packages/plugin-sqlite-database-integration/wp-includes/sqlite/php-polyfills.php';
 
 if ( extension_loaded( 'mbstring' ) ) {
 

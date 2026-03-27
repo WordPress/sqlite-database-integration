@@ -34,8 +34,8 @@ services:
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
-      - ../packages/sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
-      - ../packages/wp-mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
+      - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
+      - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
 
   php:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
@@ -43,8 +43,8 @@ services:
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
-      - ../packages/sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
-      - ../packages/wp-mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
+      - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
+      - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
 
   cli:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
@@ -52,14 +52,14 @@ services:
     environment:
       WP_SQLITE_AST_DRIVER: true
     volumes:
-      - ../packages/sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
-      - ../packages/wp-mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
+      - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
+      - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
 EOF
 
 # 4. Add "db.php" to the "wp-content" directory.
 echo "Adding 'db.php' to the 'wp-content' directory..."
 rm -f "$WP_DIR"/src/wp-content/db.php
-cp "$DIR"/packages/sqlite-database-integration/db.copy "$WP_DIR"/src/wp-content/db.php
+cp "$DIR"/packages/plugin-sqlite-database-integration/db.copy "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'#__DIR__.'/plugins/sqlite-database-integration'#g" "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g" "$WP_DIR"/src/wp-content/db.php
 

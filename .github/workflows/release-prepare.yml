@@ -62,22 +62,22 @@ jobs:
         run: |
           # Update version.php
           sed -i "s/define( 'SQLITE_DRIVER_VERSION', '.*' );/define( 'SQLITE_DRIVER_VERSION', '$VERSION' );/" \
-            packages/wp-mysql-on-sqlite/src/version.php
+            packages/mysql-on-sqlite/src/version.php
 
           # Update plugin header
           sed -i "s/^\( \* Version:\).*/\1 $VERSION/" \
-            packages/sqlite-database-integration/load.php
+            packages/plugin-sqlite-database-integration/load.php
 
           # Update readme.txt stable tag
           sed -i "s/^Stable tag:.*/Stable tag:        $VERSION/" \
-            packages/sqlite-database-integration/readme.txt
+            packages/plugin-sqlite-database-integration/readme.txt
 
       - name: Update changelog in readme.txt
         env:
           VERSION: ${{ steps.release_info.outputs.version }}
           CHANGELOG: ${{ steps.release_info.outputs.changelog }}
         run: |
-          README="packages/sqlite-database-integration/readme.txt"
+          README="packages/plugin-sqlite-database-integration/readme.txt"
 
           # Build the new changelog entry.
           ENTRY=$(printf "= %s =\n\n%s\n" "$VERSION" "$CHANGELOG")

@@ -20,11 +20,11 @@ rm -f "$ZIP_FILE"
 mkdir -p "$BUILD_DIR"
 
 # Copy the plugin package.
-cp -R "$DIR/packages/sqlite-database-integration" "$PLUGIN_DIR"
+cp -R "$DIR/packages/plugin-sqlite-database-integration" "$PLUGIN_DIR"
 
 # Resolve the database symlink — replace it with a real copy of the driver.
 rm "$PLUGIN_DIR/wp-includes/database"
-cp -R "$DIR/packages/wp-mysql-on-sqlite/src" "$PLUGIN_DIR/wp-includes/database"
+cp -R "$DIR/packages/mysql-on-sqlite/src" "$PLUGIN_DIR/wp-includes/database"
 
 # Remove dev-only files.
 rm -rf "$PLUGIN_DIR/composer.json"

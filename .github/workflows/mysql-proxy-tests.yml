@@ -26,8 +26,8 @@ jobs:
         with:
           ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
-          working-directory: packages/wp-mysql-proxy
+          working-directory: packages/mysql-proxy
 
       - name: Run MySQL Proxy tests
         run: composer run test
-        working-directory: packages/wp-mysql-proxy
+        working-directory: packages/mysql-proxy
