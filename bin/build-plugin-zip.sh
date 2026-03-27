@@ -31,6 +31,9 @@ rm -rf "$PLUGIN_DIR/composer.json"
 rm -rf "$PLUGIN_DIR/vendor"
 rm -rf "$PLUGIN_DIR/node_modules"
 
+# Verify release metadata in the built plugin.
+bash "$DIR/bin/verify-release-metadata.sh" "$PLUGIN_DIR"
+
 # Create the zip archive.
 cd "$BUILD_DIR"
 zip -r "$ZIP_FILE" "sqlite-database-integration/" -x "*.DS_Store"

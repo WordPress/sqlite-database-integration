@@ -1,0 +1,51 @@
+name: Deploy to WordPress.org
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-wporg-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy plugin to WordPress.org
+    if: github.repository == 'WordPress/sqlite-database-integration'
+    runs-on: ubuntu-latest
+    environment: WordPress.org
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: bin/
+          sparse-checkout-cone-mode: false
+
+      - name: Download plugin zip from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release download "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern "sqlite-database-integration.zip" \
+            --dir .
+          unzip sqlite-database-integration.zip
+
+      - name: Verify release metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          bash bin/verify-release-metadata.sh sqlite-database-integration "$VERSION"
+
+      - name: Deploy to WordPress.org
+        uses: 10up/action-wordpress-plugin-deploy@v2
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: sqlite-database-integration
+          BUILD_DIR: sqlite-database-integration
