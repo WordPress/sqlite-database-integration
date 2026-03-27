@@ -19,6 +19,11 @@ It is a monorepo that includes the following components:
 - **WordPress plugin** — A plugin that adds SQLite support to WordPress.
 - **Test suites** — A set of extensive test suites to cover MySQL syntax and functionality.
 
+The monorepo packages are placed under the `packages` directory.
+
+The WordPress plugin links the SQLite driver using a symlink. The build script
+replaces the symlink with a copy of the driver for release.
+
 The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5,
 MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer
 (with legacy mode down to 3.27.0).
@@ -40,8 +45,15 @@ The following commands are useful for development and testing:
 composer install                        # Install dependencies
 composer run check-cs                   # Check coding standards (PHPCS)
 composer run fix-cs                     # Auto-fix coding standards (PHPCBF)
+composer run build                      # Build the plugin zip
 
-# Tests
+# SQLite driver tests (under packages/mysql-on-sqlite)
+cd packages/mysql-on-sqlite
+composer run test                       # Run unit tests
+composer run test tests/SomeTest.php    # Run specific unit test file
+composer run test -- --filter testName  # Run specific unit test class/method
+
+# SQLite Database Integration plugin tests
 composer run test                       # Run unit tests
 composer run test tests/SomeTest.php    # Run specific unit test file
 composer run test -- --filter testName  # Run specific unit test class/method
@@ -55,6 +67,20 @@ composer run wp-test-php                # Run WordPress PHPUnit tests
 composer run wp-test-e2e                # Run WordPress E2E tests (Playwright)
 composer run wp-test-clean              # Clean up WordPress environment (Docker and DB)
 ```
+
+## Release workflow
+Release is automated with GitHub Actions. It requires only two manual steps:
+
+1. **Create a draft release with a new tag and changelog.**
+  The `release-prepare` workflow will automatically:
+    - Use the draft tag to bump versions in `version.php`, `load.php`, and `readme.txt`.
+    - Add the draft release changelog entry to `readme.txt`.
+    - Build the plugin ZIP and attach it to the draft release.
+    - Create a PR (`release/<version>` → `trunk`) and link it in the draft release body.
+2. **Review and merge the PR.**
+  The `release-publish` workflow will automatically:
+    - Publish the draft release.
+    - Publish the release artifact to WordPress.org.
 
 ## Architecture
 The project consists of multiple components providing different APIs that funnel
