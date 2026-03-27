@@ -1,0 +1,38 @@
+#!/bin/bash
+
+##
+# Build the SQLite Database Integration plugin zip.
+#
+# This script copies the plugin package into ./build/sqlite-database-integration/,
+# resolves the driver symlink, removes dev-only files, and creates a zip archive.
+##
+
+set -e
+
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="$DIR/build"
+PLUGIN_DIR="$BUILD_DIR/sqlite-database-integration"
+ZIP_FILE="$BUILD_DIR/sqlite-database-integration.zip"
+
+# Clean previous build.
+rm -rf "$PLUGIN_DIR"
+rm -f "$ZIP_FILE"
+mkdir -p "$BUILD_DIR"
+
+# Copy the plugin package.
+cp -R "$DIR/packages/sqlite-database-integration" "$PLUGIN_DIR"
+
+# Resolve the database symlink — replace it with a real copy of the driver.
+rm "$PLUGIN_DIR/wp-includes/database"
+cp -R "$DIR/packages/wp-mysql-on-sqlite/src" "$PLUGIN_DIR/wp-includes/database"
+
+# Remove dev-only files.
+rm -rf "$PLUGIN_DIR/composer.json"
+rm -rf "$PLUGIN_DIR/vendor"
+rm -rf "$PLUGIN_DIR/node_modules"
+
+# Create the zip archive.
+cd "$BUILD_DIR"
+zip -r "$ZIP_FILE" "sqlite-database-integration/" -x "*.DS_Store"
+
+echo "Built: $ZIP_FILE"

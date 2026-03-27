@@ -36,6 +36,9 @@
 		"fix-cs": [
 			"@php ./vendor/bin/phpcbf"
 		],
+		"build": [
+			"./bin/build-plugin-zip.sh"
+		],
 		"test": [
 			"phpunit"
 		],
