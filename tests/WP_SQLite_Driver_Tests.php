@@ -9068,14 +9068,13 @@ END;
 					'mysqli:type'      => 8,
 				),
 				array(
-					// TODO: Fix custom "RAND()" function to behave like in MySQL.
-					'native_type'      => 'LONGLONG',          // DOUBLE in MySQL.
-					'pdo_type'         => PDO::PARAM_INT,      // PARAM_STR in MySQL.
+					'native_type'      => 'DOUBLE',
+					'pdo_type'         => PDO::PARAM_STR,
 					'flags'            => array( 'not_null' ),
 					'table'            => '',
 					'name'             => 'col_expr_19',
-					'len'              => 21,                  // 23 in MySQL.
-					'precision'        => 0,                   // 31 in MySQL.
+					'len'              => 23,
+					'precision'        => 31,
 					'sqlite:decl_type' => '',
 
 					// Additional MySQLi metadata.
@@ -9084,7 +9083,7 @@ END;
 					'mysqli:db'        => 'wp',
 					'mysqli:charsetnr' => 63,
 					'mysqli:flags'     => 0, // 32769 in MySQL.
-					'mysqli:type'      => 8, // 5 in MySQL.
+					'mysqli:type'      => 5,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
