@@ -6805,6 +6805,31 @@ END;
 		$this->assertSame( array(), (array) array_column( $result, 'id' ) );
 	}
 
+	public function testRowLeveLockingClauses() {
+		$this->assertQuery( 'CREATE TABLE t (name VARCHAR(255), value VARCHAR(255))' );
+		$this->engine->query( "INSERT INTO t (name, value) VALUES ('test_lock', '123')" );
+
+		// FOR UPDATE
+		$res = $this->assertQuery( "SELECT value FROM t WHERE name = 'test_lock' FOR UPDATE" );
+		$this->assertEquals( '123', $res[0]->value );
+
+		// FOR SHARE
+		$res = $this->assertQuery( "SELECT value FROM t WHERE name = 'test_lock' FOR SHARE" );
+		$this->assertEquals( '123', $res[0]->value );
+
+		// LOCK IN SHARE MODE
+		$res = $this->assertQuery( "SELECT value FROM t WHERE name = 'test_lock' LOCK IN SHARE MODE" );
+		$this->assertEquals( '123', $res[0]->value );
+
+		// SKIP LOCKED
+		$res = $this->assertQuery( "SELECT value FROM t WHERE name = 'test_lock' FOR UPDATE SKIP LOCKED" );
+		$this->assertEquals( '123', $res[0]->value );
+
+		// NOWAIT
+		$res = $this->assertQuery( "SELECT value FROM t WHERE name = 'test_lock' FOR UPDATE NOWAIT" );
+		$this->assertEquals( '123', $res[0]->value );
+	}
+
 	public function testSelectOrderByAmbiguousColumnResolution(): void {
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
