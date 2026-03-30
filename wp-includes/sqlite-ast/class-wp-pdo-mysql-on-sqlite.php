@@ -4287,10 +4287,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * be reasonably safe since PHP does not allow null bytes in
 		 * regular expressions anyway.
 		 */
+		$pattern = $this->translate( $node->get_first_child_node() );
+		// Fix double backslash escaping for REGEXP patterns.
+		$pattern = str_replace( '\\\\/', '/', $pattern );
+
 		if ( true === $is_binary ) {
-			return 'REGEXP CHAR(0) || ' . $this->translate( $node->get_first_child_node() );
+			return 'REGEXP CHAR(0) || ' . $pattern;
 		}
-		return 'REGEXP ' . $this->translate( $node->get_first_child_node() );
+		return 'REGEXP ' . $pattern;
 	}
 
 	/**
@@ -4366,6 +4370,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		switch ( $name ) {
+			case 'RAND':
+				if ( empty( $args ) ) {
+					return '(ABS(RANDOM()) / 9223372036854775808.0)';
+				}
+				// Seeded RAND() calls should be handled by the PHP UDF.
+				return $this->translate_sequence( $node->get_children() );
 			case 'DATE_FORMAT':
 				list ( $date, $mysql_format ) = $args;
 

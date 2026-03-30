@@ -85,4 +85,7 @@ if ( defined( 'SQLITE_DEBUG_CROSSCHECK' ) && SQLITE_DEBUG_CROSSCHECK && file_exi
 
 	// Boot the Query Monitor plugin if it is active.
 	require_once dirname( __DIR__, 2 ) . '/integrations/query-monitor/boot.php';
+
+	// Boot the SQLite Plugin Compatibility Layer.
+	require_once dirname( __DIR__, 2 ) . '/integrations/plugin-compatibility/boot.php';
 }

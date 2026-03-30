@@ -176,10 +176,15 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * This function uses mt_rand() which is four times faster than rand() and returns
 	 * the random number between 0 and 1.
 	 *
-	 * @return int
+	 * @param int|null $seed The seed value (optional).
+	 *
+	 * @return float
 	 */
-	public function rand() {
-		return mt_rand( 0, 1 );
+	public function rand( $seed = null ) {
+		if ( null !== $seed ) {
+			mt_srand( intval( $seed ) );
+		}
+		return mt_rand( 0, mt_getrandmax() ) / mt_getrandmax();
 	}
 
 	/**
