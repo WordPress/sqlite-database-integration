@@ -1830,15 +1830,27 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
 		$parts                   = array();
 		$on_conflict_update_list = null;
+		$seen_into               = false;
+		$last_modifier_index     = -1;
+		$is_insert               = false;
+
+		$table_ref  = $node->get_first_child_node( 'tableRef' );
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+
 		foreach ( $node->get_children() as $child ) {
 			$is_token = $child instanceof WP_MySQL_Token;
 			$is_node  = $child instanceof WP_Parser_Node;
 
-			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
+			if ( $is_node && 'tableRef' === $child->rule_name ) {
 				$database = $this->get_database_name( $child );
 				if ( 'information_schema' === strtolower( $database ) ) {
 					throw $this->new_access_denied_to_information_schema_exception();
 				}
+			}
+
+			if ( $is_node && in_array( $child->rule_name, array( 'insertLockOption', 'delayedOption' ), true ) ) {
+				// SQLite doesn't support these priority modifiers; skip them.
+				continue;
 			}
 
 			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
@@ -1846,10 +1858,31 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				continue;
 			}
 
+			if ( $is_token && ( WP_MySQL_Lexer::INSERT_SYMBOL === $child->id || WP_MySQL_Lexer::REPLACE_SYMBOL === $child->id ) ) {
+				$is_insert           = WP_MySQL_Lexer::INSERT_SYMBOL === $child->id;
+				$parts[]             = $this->translate( $child );
+				$last_modifier_index = count( $parts ) - 1;
+				continue;
+			}
+
 			if ( $is_token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
-				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-				$parts[] = 'OR IGNORE';
-			} elseif (
+				// Translate MySQL "INSERT IGNORE" to SQLite "INSERT OR IGNORE".
+				$parts[]             = $is_insert ? 'OR IGNORE' : 'IGNORE';
+				$last_modifier_index = count( $parts ) - 1;
+				continue;
+			}
+
+			if ( $is_token && WP_MySQL_Lexer::INTO_SYMBOL === $child->id ) {
+				$seen_into = true;
+				$part      = $this->translate( $child );
+				if ( null !== $part ) {
+					$parts[]             = $part;
+					$last_modifier_index = count( $parts ) - 1;
+				}
+				continue;
+			}
+
+			if (
 				$is_node
 				&& (
 					'insertFromConstructor' === $child->rule_name
@@ -1857,9 +1890,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					|| 'updateList' === $child->rule_name
 				)
 			) {
-				$table_ref  = $node->get_first_child_node( 'tableRef' );
-				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
+				$parts[] = $this->translate_insert_or_replace_body( $table_name, $child );
 			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
 				/*
 				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
@@ -1878,8 +1909,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$parts[] = $this->translate_update_list( $table_name, $child );
 				}
 			} else {
-				$parts[] = $this->translate( $child );
+				$part = $this->translate( $child );
+				if ( null !== $part ) {
+					$parts[] = $part;
+				}
 			}
+		}
+
+		if ( ! $seen_into && -1 !== $last_modifier_index ) {
+			array_splice( $parts, $last_modifier_index + 1, 0, array( 'INTO' ) );
 		}
 
 		$query = implode( ' ', $parts );
