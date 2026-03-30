@@ -96,6 +96,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	);
 
 	/**
+	 * Seed instances used for the LCG pseudo-random generator (RAND).
+	 *
+	 * @var int|null
+	 */
+	private $rand_seed1 = null;
+	private $rand_seed2 = null;
+
+	/**
 	 * A helper function to throw an error from SQLite expressions.
 	 *
 	 * @param string $message The error message.
@@ -178,8 +186,40 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @return int
 	 */
-	public function rand() {
-		return mt_rand( 0, 1 );
+	public function rand( $seed = null ) {
+		$max_value = 0x3FFFFFFF; // 1073741823
+
+		if ( null !== $seed ) {
+			/*
+			 * Initialize MySQL's internal 30-bit seeds.
+			 * These constants match MySQL's my_rnd_init() implementation.
+			 */
+			$n                = (int) $seed;
+			$this->rand_seed1 = ( $n * 0x10001 + 55555555 ) % $max_value;
+			$this->rand_seed2 = ( $n * 0x10000001 ) % $max_value;
+
+			// Ensure seeds are positive.
+			if ( $this->rand_seed1 < 0 ) {
+				$this->rand_seed1 += $max_value;
+			}
+			if ( $this->rand_seed2 < 0 ) {
+				$this->rand_seed2 += $max_value;
+			}
+		}
+
+		if ( null !== $this->rand_seed1 && null !== $this->rand_seed2 ) {
+			/*
+			 * MySQL's LCG (Linear Congruential Generator) recurrence:
+			 * seed1 = (seed1 * 3 + seed2) % 0x3FFFFFFF
+			 * seed2 = (seed1 + seed2 + 33) % 0x3FFFFFFF
+			 */
+			$this->rand_seed1 = ( $this->rand_seed1 * 3 + $this->rand_seed2 ) % $max_value;
+			$this->rand_seed2 = ( $this->rand_seed1 + $this->rand_seed2 + 33 ) % $max_value;
+
+			return (float) $this->rand_seed1 / (float) $max_value;
+		}
+
+		return mt_rand( 0, mt_getrandmax() ) / mt_getrandmax();
 	}
 
 	/**

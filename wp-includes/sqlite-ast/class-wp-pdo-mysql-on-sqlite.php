@@ -4366,6 +4366,18 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		switch ( $name ) {
+			case 'RAND':
+				if ( empty( $args ) ) {
+					/*
+					 * SQLite's RANDOM() returns a value between -9223372036854775808 and +9223372036854775807.
+					 * We clear the sign bit (using & 0x7FFFFFFFFFFFFFFF) to get a positive integer,
+					 * then divide by 9223372036854775808.0 to get a float between 0.0 and 1.0.
+					 * We avoid ABS() because ABS(-9223372036854775808) would overflow.
+					 */
+					return '((RANDOM() & 0x7FFFFFFFFFFFFFFF) / 9223372036854775808.0)';
+				}
+				// Seeded RAND() calls should be handled by the PHP UDF.
+				return $this->translate_sequence( $node->get_children() );
 			case 'DATE_FORMAT':
 				list ( $date, $mysql_format ) = $args;
 
