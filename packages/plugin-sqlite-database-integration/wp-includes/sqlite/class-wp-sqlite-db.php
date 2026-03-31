@@ -73,151 +73,52 @@ class WP_SQLite_DB extends wpdb {
 	/**
 	 * Retrieves the character set for the given column.
 	 *
-	 * @since 2.3.0
+	 * This overrides wpdb::get_col_charset() to enable the parent's implementation
+	 * for SQLite by temporarily setting the is_mysql flag.
+	 *
+	 * @see wpdb::get_col_charset()
 	 *
 	 * @param string $table  Table name.
 	 * @param string $column Column name.
-	 * @return string|false Column character set as a string. False if the column has
-	 *                      no character set (e.g., numeric or binary columns).
+	 * @return string|false|WP_Error Column character set as a string. False if the column has
+	 *                               no character set. WP_Error object on failure.
 	 */
 	public function get_col_charset( $table, $column ) {
-		$table_key  = strtolower( $table );
-		$column_key = strtolower( $column );
-
-		/**
-		 * Filters the column charset value before the DB is checked.
-		 *
-		 * @since 2.3.0
-		 *
-		 * @param string|null|false $charset The character set to use. Default null.
-		 * @param string            $table   The name of the table being checked.
-		 * @param string            $column  The name of the column being checked.
+		/*
+		 * The parent method returns early when `$this->is_mysql` is falsy.
+		 * Since SQLite doesn't set this flag, we enable it temporarily so
+		 * the parent can run its full logic — querying column metadata via
+		 * SHOW FULL COLUMNS (which the SQLite driver translates) and
+		 * populating the `$this->col_meta` cache.
 		 */
-		$charset = apply_filters( 'pre_get_col_charset', null, $table, $column );
-		if ( null !== $charset ) {
-			return $charset;
+		try {
+			$this->is_mysql = true;
+			return parent::get_col_charset( $table, $column );
+		} finally {
+			$this->is_mysql = null;
 		}
-
-		// Use SHOW FULL COLUMNS to get column metadata with collation info.
-		// This works because the driver translates this to query the information schema.
-		$results = $this->get_results( "SHOW FULL COLUMNS FROM `{$table_key}`" );
-
-		if ( ! $results ) {
-			return false;
-		}
-
-		// Build column metadata cache.
-		$columns = array();
-		foreach ( $results as $col ) {
-			$columns[ strtolower( $col->Field ) ] = $col;
-		}
-		$this->col_meta[ $table_key ] = $columns;
-
-		// Check if column exists.
-		if ( ! isset( $columns[ $column_key ] ) ) {
-			return false;
-		}
-
-		// Return false for non-string columns (no collation).
-		if ( empty( $columns[ $column_key ]->Collation ) ) {
-			return false;
-		}
-
-		// Extract charset from collation (e.g., 'utf8mb4_general_ci' -> 'utf8mb4').
-		list( $charset ) = explode( '_', $columns[ $column_key ]->Collation );
-		return $charset;
 	}
 
 	/**
 	 * Retrieves the maximum string length allowed in a given column.
 	 *
-	 * @since 2.3.0
+	 * This overrides wpdb::get_col_length() to enable the parent's implementation
+	 * for SQLite by temporarily setting the is_mysql flag.
+	 *
+	 * @see wpdb::get_col_length()
 	 *
 	 * @param string $table  Table name.
 	 * @param string $column Column name.
-	 * @return array|false {
-	 *     Array of column length information, false if the column has no length
-	 *     (for example, numeric column).
-	 *
-	 *     @type string $type   One of 'byte' or 'char'.
-	 *     @type int    $length The column length.
-	 * }
+	 * @return array|false|WP_Error Column length information, false if the column has
+	 *                              no length. WP_Error object on failure.
 	 */
 	public function get_col_length( $table, $column ) {
-		$table_key  = strtolower( $table );
-		$column_key = strtolower( $column );
-
-		// Check cached column metadata first.
-		if ( isset( $this->col_meta[ $table_key ][ $column_key ] ) ) {
-			$type = $this->col_meta[ $table_key ][ $column_key ]->Type;
-		} else {
-			// Query column info if not cached.
-			$results = $this->get_results( "SHOW FULL COLUMNS FROM `{$table_key}`" );
-			if ( ! $results ) {
-				return false;
-			}
-
-			$columns = array();
-			foreach ( $results as $col ) {
-				$columns[ strtolower( $col->Field ) ] = $col;
-			}
-			$this->col_meta[ $table_key ] = $columns;
-
-			if ( ! isset( $columns[ $column_key ] ) ) {
-				return false;
-			}
-			$type = $columns[ $column_key ]->Type;
-		}
-
-		// Parse the type to get length info.
-		$typeinfo = explode( '(', $type );
-		$basetype = strtolower( $typeinfo[0] );
-
-		if ( ! empty( $typeinfo[1] ) ) {
-			$length = (int) trim( $typeinfo[1], ')' );
-		} else {
-			$length = false;
-		}
-
-		switch ( $basetype ) {
-			case 'char':
-			case 'varchar':
-				return array(
-					'type'   => 'char',
-					'length' => $length,
-				);
-			case 'binary':
-			case 'varbinary':
-				return array(
-					'type'   => 'byte',
-					'length' => $length,
-				);
-			case 'tinyblob':
-			case 'tinytext':
-				return array(
-					'type'   => 'byte',
-					'length' => 255,
-				);
-			case 'blob':
-			case 'text':
-				return array(
-					'type'   => 'byte',
-					'length' => 65535,
-				);
-			case 'mediumblob':
-			case 'mediumtext':
-				return array(
-					'type'   => 'byte',
-					'length' => 16777215,
-				);
-			case 'longblob':
-			case 'longtext':
-				return array(
-					'type'   => 'byte',
-					'length' => 4294967295,
-				);
-			default:
-				return false;
+		// See get_col_charset() for an explanation of the is_mysql flag.
+		try {
+			$this->is_mysql = true;
+			return parent::get_col_length( $table, $column );
+		} finally {
+			$this->is_mysql = null;
 		}
 	}
 
@@ -267,16 +168,13 @@ class WP_SQLite_DB extends wpdb {
 
 	/**
 	 * Closes the current database connection.
-	 * Noop in SQLite.
 	 *
-	 * @return bool True to indicate the connection was successfully closed.
-	 */
-	/**
-	 * Close the database connection.
+	 * This overrides wpdb::close() while closely mirroring its implementation.
 	 *
-	 * @since 2.3.0
+	 * @see wpdb::close()
 	 *
-	 * @return bool True if connection was closed successfully.
+	 * @return bool True if the connection was successfully closed,
+	 *              false if it wasn't, or if the connection doesn't exist.
 	 */
 	public function close() {
 		if ( ! $this->dbh ) {
@@ -291,20 +189,20 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
-	 * Determines the best charset and collation for the database connection.
+	 * Determines the best charset and collation to use given a charset and collation.
 	 *
-	 * This overrides wpdb::determine_charset() to handle SQLite's lack of mysqli.
-	 * WordPress expects utf8 to be upgraded to utf8mb4 when supported.
+	 * For example, when able, utf8mb4 should be used instead of utf8.
 	 *
-	 * @since 2.3.0
+	 * This overrides wpdb::determine_charset() while closely mirroring its implementation.
+	 * The override is needed because the parent checks for a mysqli connection object.
 	 *
 	 * @param string $charset The character set to check.
 	 * @param string $collate The collation to check.
 	 * @return array {
-	 *     Array containing the determined charset and collation.
+	 *     The most appropriate character set and collation to use.
 	 *
-	 *     @type string $charset The determined character set.
-	 *     @type string $collate The determined collation.
+	 *     @type string $charset Character set.
+	 *     @type string $collate Collation.
 	 * }
 	 */
 	public function determine_charset( $charset, $collate ) {
@@ -610,14 +508,23 @@ class WP_SQLite_DB extends wpdb {
 		// Save the query count before running another query.
 		$last_query_count = count( $this->queries ?? array() );
 
-		// Check for invalid text in the query, similar to parent wpdb behavior.
+		/*
+		 * Strip invalid UTF-8 characters from non-ASCII queries.
+		 *
+		 * SQLite stores all text as UTF-8, so we simply ensure the query
+		 * contains only valid UTF-8 sequences rather than using the parent's
+		 * MySQL-specific charset detection pipeline.
+		 */
 		if ( $this->check_current_query && ! $this->check_ascii( $query ) ) {
-			$stripped_query = $this->strip_invalid_text_from_query( $query );
-			/*
-			 * strip_invalid_text_from_query() can perform queries, so we need
-			 * to flush again, just to make sure everything is clear.
-			 */
-			$this->flush();
+			if ( function_exists( 'mb_convert_encoding' ) ) {
+				$stripped_query = mb_convert_encoding( $query, 'UTF-8', 'UTF-8' );
+			} else {
+				$stripped_query = htmlspecialchars_decode(
+					htmlspecialchars( $query, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8' ),
+					ENT_NOQUOTES
+				);
+			}
+
 			if ( $stripped_query !== $query ) {
 				$this->insert_id  = 0;
 				$this->last_query = $query;
@@ -761,17 +668,18 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
-	 * Method to return what the database can do.
+	 * Determines whether the database supports a given feature.
 	 *
-	 * This overrides wpdb::has_cap() to avoid using MySQL functions.
-	 * SQLite via this driver supports all common MySQL capabilities.
+	 * This overrides wpdb::has_cap() while closely mirroring its implementation.
+	 * The override is needed because the parent's 'utf8mb4' capability check calls
+	 * mysqli_get_client_info(), which is environment-dependent and not applicable
+	 * for SQLite.
 	 *
 	 * @see wpdb::has_cap()
 	 *
 	 * @param string $db_cap The feature to check for. Accepts 'collation',
 	 *                       'group_concat', 'subqueries', 'set_charset',
-	 *                       'utf8mb4', 'utf8mb4_520', or 'identifier_placeholders'.
-	 *
+	 *                       'utf8mb4', or 'utf8mb4_520'.
 	 * @return bool Whether the database feature is supported, false otherwise.
 	 */
 	public function has_cap( $db_cap ) {
@@ -783,9 +691,9 @@ class WP_SQLite_DB extends wpdb {
 			case 'subqueries':
 			case 'set_charset':
 			case 'utf8mb4':
-			case 'utf8mb4_520':
-			case 'identifier_placeholders':
 				return true;
+			case 'utf8mb4_520':
+				return version_compare( $GLOBALS['wp_version'], '4.6', '>=' );
 		}
 
 		return false;
