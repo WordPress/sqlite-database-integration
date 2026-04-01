@@ -11,7 +11,9 @@ concurrency:
 jobs:
   deploy:
     name: Deploy plugin to WordPress.org
-    if: github.repository == 'WordPress/sqlite-database-integration'
+    if: >-
+      github.repository == 'WordPress/sqlite-database-integration'
+      && github.event.release.prerelease == false
     runs-on: ubuntu-latest
     environment: WordPress.org
     permissions:
