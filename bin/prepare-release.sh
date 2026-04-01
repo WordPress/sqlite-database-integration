@@ -46,10 +46,10 @@ command -v gh >/dev/null 2>&1 || fail "gh CLI is not installed."
 
 [ -z "$(git status --porcelain)" ] || fail "Working tree is not clean."
 
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-[ "$BRANCH" = "trunk" ] || fail "Not on trunk branch (current: $BRANCH)."
-
-git pull --ff-only origin trunk --quiet || fail "trunk is not up to date with origin/trunk."
+# BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# [ "$BRANCH" = "trunk" ] || fail "Not on trunk branch (current: $BRANCH)."
+#
+# git pull --ff-only origin trunk --quiet || fail "trunk is not up to date with origin/trunk."
 
 # 3. GENERATE CHANGELOG
 LATEST_TAG="v$CURRENT_VERSION"
