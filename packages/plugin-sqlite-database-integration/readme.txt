@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      6.9
 Requires PHP:      7.2
-Stable tag:        2.2.20
+Stable tag:        2.2.20-testing.1
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -45,3 +45,13 @@ the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
 
+
+== Changelog ==
+
+= 2.2.20-testing.1 =
+
+* Fix incorrect PHP polyfill implementations (#338)
+* Update version to v2.2.20 (#337)
+* Migrate database file from a possible legacy path (#336)
+* Revert "Add SQLite database application ID and new consistent file extension" (#335)
+* Monorepo setup + release automation (#334)
