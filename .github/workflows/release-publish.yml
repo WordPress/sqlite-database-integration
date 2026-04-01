@@ -34,6 +34,13 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
+          # Versions with a hyphen (e.g., 2.3.0-beta.1) are prereleases.
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -69,10 +76,16 @@ jobs:
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BODY: ${{ steps.changelog.outputs.body }}
         run: |
+          PRERELEASE_FLAG=""
+          if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
           gh release create "$TAG" \
             --target "$MERGE_SHA" \
             --title "$TAG" \
             --notes "$BODY" \
+            $PRERELEASE_FLAG \
             "build/sqlite-database-integration.zip"
 
       - name: Delete release branch
