@@ -5,9 +5,13 @@ on:
     types: [closed]
     branches: [trunk]
 
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
 jobs:
   publish-release:
-    name: Publish draft release
+    name: Build plugin and create GitHub release
     if: >-
       github.repository == 'WordPress/sqlite-database-integration'
       && github.event.pull_request.merged == true
@@ -30,21 +34,46 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Publish draft release
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: Build plugin zip
+        run: composer run build-sqlite-plugin-zip
+
+      - name: Extract changelog from readme.txt
+        id: changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          README="packages/plugin-sqlite-database-integration/readme.txt"
+
+          # Extract the changelog entry for this version.
+          CHANGELOG=$(awk -v version="$VERSION" '
+            $0 == "= " version " =" { found = 1; next }
+            found && /^= / { exit }
+            found { print }
+          ' "$README" | sed -e '/./,$!d' -e :a -e '/^\s*$/{ $d; N; ba; }')  # Trim leading/trailing blank lines.
+
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$CHANGELOG"
+            echo "CHANGELOG_EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          BODY: ${{ steps.changelog.outputs.body }}
         run: |
-          # Get the current release body and remove the PR note.
-          BODY=$(gh release view "$TAG" --json body --jq '.body' 2>/dev/null || echo "")
-          CLEAN_BODY=$(echo "$BODY" | grep -v "^> To publish the release, review and merge:")
-
-          # Publish the release, targeting the merge commit.
-          gh release edit "$TAG" \
-            --draft=false \
+          gh release create "$TAG" \
             --target "$MERGE_SHA" \
-            --notes "$CLEAN_BODY"
+            --title "$TAG" \
+            --notes "$BODY" \
+            "build/sqlite-database-integration.zip"
 
       - name: Delete release branch
         env:
