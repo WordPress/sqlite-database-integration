@@ -46,6 +46,7 @@ composer install                        # Install dependencies
 composer run check-cs                   # Check coding standards (PHPCS)
 composer run fix-cs                     # Auto-fix coding standards (PHPCBF)
 composer run build-sqlite-plugin-zip    # Build the plugin zip
+composer run prepare-release            # Prepare a new release
 
 # SQLite driver tests (under packages/mysql-on-sqlite)
 cd packages/mysql-on-sqlite
@@ -69,18 +70,25 @@ composer run wp-test-clean              # Clean up WordPress environment (Docker
 ```
 
 ## Release workflow
-Release is automated with GitHub Actions. It requires only two manual steps:
+Release is streamlined with a local preparation script and GitHub Actions:
 
-1. **Create a draft release with a new tag and changelog.**
-  The `release-prepare` workflow will automatically:
-    - Use the draft tag to bump versions in `version.php`, `load.php`, and `readme.txt`.
-    - Add the draft release changelog entry to `readme.txt`.
-    - Build the plugin ZIP and attach it to the draft release.
-    - Create a PR (`release/<version>` → `trunk`) and link it in the draft release body.
-2. **Review and merge the PR.**
-  The `release-publish` workflow will automatically:
-    - Publish the draft release.
-    - Publish the release artifact to WordPress.org.
+1. **Run the release preparation script locally.**
+   ```bash
+   composer run prepare-release -- <version>
+   ```
+   The script will:
+     - Bump version numbers and generate a changelog from merged PRs.
+     - Create a `release/<version>` branch with a preparation commit.
+     - Push the branch and create a PR.
+
+2. **Review the PR.**
+   Edit the changelog or push additional changes to the release branch.
+
+3. **Mark as ready and merge the PR.**
+   The `release-publish` workflow will automatically:
+     - Build the plugin ZIP.
+     - Create and publish a GitHub release with the ZIP attached.
+     - Deploy the release to WordPress.org.
 
 ## Architecture
 The project consists of multiple components providing different APIs that funnel

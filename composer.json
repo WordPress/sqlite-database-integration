@@ -39,6 +39,9 @@
 		"build-sqlite-plugin-zip": [
 			"./bin/build-sqlite-plugin-zip.sh"
 		],
+		"prepare-release": [
+			"./bin/prepare-release.sh"
+		],
 		"test": [
 			"phpunit"
 		],
