@@ -33,16 +33,16 @@ jobs:
         run: |
           gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
-            --pattern "sqlite-database-integration.zip" \
+            --pattern "plugin-sqlite-database-integration.zip" \
             --dir .
-          unzip sqlite-database-integration.zip
+          unzip plugin-sqlite-database-integration.zip
 
       - name: Verify release metadata
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           VERSION="${RELEASE_TAG#v}"
-          bash bin/verify-release-metadata.sh sqlite-database-integration "$VERSION"
+          bash bin/verify-release-metadata.sh plugin-sqlite-database-integration "$VERSION"
 
       - name: Deploy to WordPress.org
         uses: 10up/action-wordpress-plugin-deploy@v2
@@ -50,4 +50,4 @@ jobs:
           SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
           SLUG: sqlite-database-integration
-          BUILD_DIR: sqlite-database-integration
+          BUILD_DIR: plugin-sqlite-database-integration

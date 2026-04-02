@@ -86,7 +86,7 @@ jobs:
             --title "$TAG" \
             --notes "$BODY" \
             $PRERELEASE_FLAG \
-            "build/sqlite-database-integration.zip"
+            "build/plugin-sqlite-database-integration.zip"
 
       - name: Delete release branch
         env:
