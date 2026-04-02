@@ -70,7 +70,7 @@ if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
 		--limit 100 \
 		--json number,title,mergedAt \
 		--jq "sort_by(.mergedAt) | reverse | .[]
-			| \"* \\(.title) ([#\\(.number)]($REPO_URL/pull/\\(.number)))\"" 2>/dev/null || true)"
+			| \"* \\(.title) ([#\\(.number)]($REPO_URL/pull/\\(.number)))\"")"
 fi
 
 if [ -z "$CHANGELOG" ]; then
