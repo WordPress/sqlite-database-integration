@@ -69,22 +69,51 @@ jobs:
             echo "CHANGELOG_EOF"
           } >> $GITHUB_OUTPUT
 
+      - name: Get contributors from changelog PRs
+        id: contributors
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANGELOG: ${{ steps.changelog.outputs.body }}
+        run: |
+          # Extract PR numbers from changelog links like [#123](...).
+          PR_NUMBERS=$(echo "$CHANGELOG" | grep -oE '\[#[0-9]+\]' | tr -d '[]#' | sort -u)
+
+          CONTRIBUTORS=""
+          if [ -n "$PR_NUMBERS" ]; then
+            # Build a single GraphQL query to fetch all PR authors.
+            QUERY='{ repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") {'
+            while IFS= read -r PR; do
+              [ -n "$PR" ] && QUERY="$QUERY pr$PR: pullRequest(number: $PR) { author { login } }"
+            done <<< "$PR_NUMBERS"
+            QUERY="$QUERY } }"
+
+            CONTRIBUTORS=$(gh api graphql -f query="$QUERY" \
+              --jq '[.data.repository[].author.login] | unique | map("@" + .) | join(", ")' 2>/dev/null || true)
+          fi
+          echo "list=$CONTRIBUTORS" >> $GITHUB_OUTPUT
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BODY: ${{ steps.changelog.outputs.body }}
+          CONTRIBUTORS: ${{ steps.contributors.outputs.list }}
         run: |
           PRERELEASE_FLAG=""
           if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 
+          NOTES="$BODY"
+          if [ -n "$CONTRIBUTORS" ]; then
+            NOTES="$(printf '%s\n\n**Contributors:** %s' "$BODY" "$CONTRIBUTORS")"
+          fi
+
           gh release create "$TAG" \
             --target "$MERGE_SHA" \
             --title "$TAG" \
-            --notes "$BODY" \
+            --notes "$NOTES" \
             $PRERELEASE_FLAG \
             "build/plugin-sqlite-database-integration.zip"
 
