@@ -50,6 +50,7 @@ with SQLite syntax and behavior.
 
 * Support INSERT without INTO keyword ([#354](https://github.com/WordPress/sqlite-database-integration/pull/354))
 * Add tests for MySQL row-level locking clauses ([#342](https://github.com/WordPress/sqlite-database-integration/pull/342))
+* Improve automated deploy setup.
 
 = 2.2.21 =
 
