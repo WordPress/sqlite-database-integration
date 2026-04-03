@@ -9986,6 +9986,34 @@ END;
 		);
 	}
 
+	public function testInsertWithoutInto(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(255))' );
+
+		// INSERT ... VALUES
+		$this->assertQuery( "INSERT t (id, name) VALUES (1, 'a')" );
+
+		// INSERT IGNORE
+		$this->assertQuery( "INSERT IGNORE t (id, name) VALUES (1, 'a')" );
+
+		// INSERT ... SET
+		$this->assertQuery( "INSERT t SET id = 2, name = 'b'" );
+
+		// INSERT IGNORE ... SET
+		$this->assertQuery( "INSERT IGNORE t SET id = 2, name = 'b'" );
+
+		// INSERT ... SELECT
+		$this->assertQuery( "INSERT t (id, name) SELECT 3, 'c'" );
+
+		// INSERT IGNORE ... SELECT
+		$this->assertQuery( "INSERT IGNORE t (id, name) SELECT 3, 'c'" );
+
+		$res = $this->assertQuery( 'SELECT * FROM t ORDER BY id' );
+		$this->assertCount( 3, $res );
+		$this->assertEquals( 'a', $res[0]->name );
+		$this->assertEquals( 'b', $res[1]->name );
+		$this->assertEquals( 'c', $res[2]->name );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (

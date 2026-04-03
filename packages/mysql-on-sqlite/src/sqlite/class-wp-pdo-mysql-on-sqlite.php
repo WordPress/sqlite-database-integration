@@ -1835,6 +1835,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$is_node  = $child instanceof WP_Parser_Node;
 
 			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
+				// MySQL supports INSERT without the INTO keyword; SQLite requires it.
+				if ( ! $node->has_child_token( WP_MySQL_Lexer::INTO_SYMBOL ) ) {
+					$parts[] = 'INTO';
+				}
+
 				$database = $this->get_database_name( $child );
 				if ( 'information_schema' === strtolower( $database ) ) {
 					throw $this->new_access_denied_to_information_schema_exception();
