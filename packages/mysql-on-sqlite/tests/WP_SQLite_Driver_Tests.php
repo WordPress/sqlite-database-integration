@@ -9986,6 +9986,89 @@ END;
 		);
 	}
 
+	public function testConvertExpression(): void {
+		// CONVERT(expr, type) should behave like CAST(expr AS type).
+		$result = $this->assertQuery(
+			"SELECT
+				CONVERT('abc', BINARY) AS expr_1,
+				CONVERT('abc', CHAR) AS expr_2,
+				CONVERT('-10', SIGNED) AS expr_3,
+				CONVERT('-10', UNSIGNED) AS expr_4,
+				CONVERT('123.456', DECIMAL) AS expr_5,
+				CONVERT('2025-10-05', DATE) AS expr_6
+			"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'expr_1' => 'abc',
+					'expr_2' => 'abc',
+					'expr_3' => '-10',
+					'expr_4' => '-10',
+					'expr_5' => '123.456',
+					'expr_6' => '2025-10-05',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testConvertUsingExpression(): void {
+		// CONVERT(expr USING charset) converts character set.
+		// In SQLite, all text is UTF-8 — the conversion is a no-op.
+		$result = $this->assertQuery(
+			"SELECT
+				CONVERT('Customer' USING utf8mb4) AS expr_1,
+				CONVERT('test' USING utf8) AS expr_2,
+				CONVERT('data' USING latin1) AS expr_3
+			"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'expr_1' => 'Customer',
+					'expr_2' => 'test',
+					'expr_3' => 'data',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testConvertUsingWithCollate(): void {
+		$result = $this->assertQuery(
+			"SELECT CONVERT('Customer' USING utf8mb4) COLLATE utf8mb4_bin AS val"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array( 'val' => 'Customer' ),
+			),
+			$result
+		);
+	}
+
+	public function testConvertWithColumnReferences(): void {
+		$this->assertQuery( 'CREATE TABLE t (val VARCHAR(255), num VARCHAR(255))' );
+		$this->assertQuery( "INSERT INTO t (val, num) VALUES ('hello', '-42')" );
+
+		$result = $this->assertQuery(
+			'SELECT CONVERT(val, BINARY) AS v1, CONVERT(val USING utf8mb4) AS v2
+			FROM t WHERE CONVERT(num, SIGNED) < 0 ORDER BY CONVERT(val USING utf8mb4)'
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'v1' => 'hello',
+					'v2' => 'hello',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testInsertWithoutInto(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(255))' );
 

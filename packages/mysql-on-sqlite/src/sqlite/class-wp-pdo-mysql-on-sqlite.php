@@ -4221,6 +4221,27 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			);
 		}
 
+		/**
+		 * Translate MySQL CONVERT() expression.
+		 *
+		 * MySQL supports two forms of CONVERT():
+		 *   1. CONVERT(expr, type):         Equivalent to CAST(expr AS type).
+		 *   2. CONVERT(expr USING charset): Converts the character set.
+		 */
+		if ( null !== $token && WP_MySQL_Lexer::CONVERT_SYMBOL === $token->id ) {
+			$expr      = $this->translate( $node->get_first_child_node( 'expr' ) );
+			$cast_type = $node->get_first_child_node( 'castType' );
+
+			if ( null !== $cast_type ) {
+				// CONVERT(expr, type): Translate to cast expression.
+				return sprintf( 'CAST(%s AS %s)', $expr, $this->translate( $cast_type ) );
+			} else {
+				// CONVERT(expr USING charset): Keep "expr" as is (no SQLite support).
+				// TODO: Consider rejecting UTF-8-incompatible charasets.
+				return $expr;
+			}
+		}
+
 		return $this->translate_sequence( $node->get_children() );
 	}
 

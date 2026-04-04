@@ -101,6 +101,41 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testConvert(): void {
+		// CONVERT(expr, type) → CAST(expr AS type)
+		$this->assertQuery(
+			"SELECT CAST('abc' AS BLOB) AS `CONVERT('abc', BINARY)`",
+			"SELECT CONVERT('abc', BINARY)"
+		);
+
+		$this->assertQuery(
+			"SELECT CAST('abc' AS TEXT) AS `CONVERT('abc', CHAR)`",
+			"SELECT CONVERT('abc', CHAR)"
+		);
+
+		$this->assertQuery(
+			"SELECT CAST('-10' AS INTEGER) AS `CONVERT('-10', SIGNED)`",
+			"SELECT CONVERT('-10', SIGNED)"
+		);
+
+		// CONVERT(expr USING charset) → expr
+		$this->assertQuery(
+			"SELECT 'Customer' AS `Customer`",
+			"SELECT CONVERT('Customer' USING utf8mb4)"
+		);
+
+		$this->assertQuery(
+			"SELECT 'test' AS `test`",
+			"SELECT CONVERT('test' USING utf8)"
+		);
+
+		// CONVERT(expr USING charset) COLLATE collation → expr COLLATE collation
+		$this->assertQuery(
+			"SELECT 'Customer' COLLATE `utf8mb4_bin` AS `CONVERT('Customer' USING utf8mb4) COLLATE utf8mb4_bin`",
+			"SELECT CONVERT('Customer' USING utf8mb4) COLLATE utf8mb4_bin"
+		);
+	}
+
 	public function testInsert(): void {
 		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
 		$this->driver->query( 'CREATE TABLE t1 (c1 INT, c2 INT)' );
