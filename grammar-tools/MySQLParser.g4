@@ -2961,13 +2961,13 @@ bitExpr: simpleExpr %bitExpr_rr*;
 
 /*
  * @CHANGED:
- * Factored left recursion.
+ * Factored left recursion and introduced "simpleExprBody" for easier processing.
  */
 simpleExpr: %simpleExpr_collate (CONCAT_PIPES_SYMBOL %simpleExpr_collate)*;
 
-%simpleExpr_collate: %simpleExpr_factored (COLLATE_SYMBOL textOrIdentifier)?;
+%simpleExpr_collate: simpleExprBody (COLLATE_SYMBOL textOrIdentifier)?;
 
-%simpleExpr_factored:
+simpleExprBody:
     literal                                                                                              # simpleExprLiteral
     | sumExpr                                                                                            # simpleExprSum
     | variable (equal expr)?                                                                             # simpleExprVariable

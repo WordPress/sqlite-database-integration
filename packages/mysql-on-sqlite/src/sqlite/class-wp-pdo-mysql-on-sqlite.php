@@ -3691,8 +3691,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'simpleExpr':
-				return $this->translate_simple_expr( $node );
+			case 'simpleExprBody':
+				return $this->translate_simple_expr_body( $node );
 			case 'predicateOperations':
 				$token = $node->get_first_child_token();
 				if ( WP_MySQL_Lexer::LIKE_SYMBOL === $token->id ) {
@@ -4204,13 +4204,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Translate a MySQL simple expression to SQLite.
+	 * Translate a MySQL simple expression body to SQLite.
 	 *
-	 * @param WP_Parser_Node $node        The "simpleExpr" AST node.
+	 * @param WP_Parser_Node $node        The "simpleExprBody" AST node.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
-	private function translate_simple_expr( WP_Parser_Node $node ): string {
+	private function translate_simple_expr_body( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
 
 		// Translate "VALUES(col)" to "excluded.col" in ON DUPLICATE KEY UPDATE.
@@ -5350,12 +5350,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function unnest_parenthesized_expression( WP_Parser_Node $node ): WP_Parser_Node {
 		$children = $node->get_children();
 
-		// Descend the "expr -> boolPri -> predicate -> bitExpr -> simpleExpr" tree,
-		// when on each level we have only a single child node (expression nesting).
+		// Descend the "expr -> boolPri -> predicate -> bitExpr -> simpleExpr" -> "simpleExprBody"
+		// tree, when on each level we have only a single child node (expression nesting).
 		if (
 			1 === count( $children )
 			&& $children[0] instanceof WP_Parser_Node
-			&& in_array( $children[0]->rule_name, array( 'expr', 'boolPri', 'predicate', 'bitExpr', 'simpleExpr' ), true )
+			&& in_array( $children[0]->rule_name, array( 'expr', 'boolPri', 'predicate', 'bitExpr', 'simpleExpr', 'simpleExprBody' ), true )
 		) {
 			$unnested = $this->unnest_parenthesized_expression( $children[0] );
 			return $unnested === $children[0] ? $node : $unnested;
