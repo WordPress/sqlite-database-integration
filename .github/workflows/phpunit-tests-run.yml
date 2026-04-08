@@ -12,11 +12,6 @@ on:
         description: 'The version of PHP to use, in the format of X.Y'
         required: true
         type: 'string'
-      phpunit-config:
-        description: 'The PHPUnit configuration file to use'
-        required: false
-        type: 'string'
-        default: 'phpunit.xml.dist'
       sqlite:
         description: 'SQLite version to install (e.g., 3.24.0). Leave empty for latest version.'
         required: false
@@ -24,7 +19,6 @@ on:
         default: 'latest'
 env:
   LOCAL_PHP: ${{ inputs.php }}-fpm
-  PHPUNIT_CONFIG: ${{ inputs.phpunit-config }}
 
 jobs:
   phpunit-tests:
@@ -88,6 +82,3 @@ jobs:
       - name: Run PHPUnit tests
         run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist
         working-directory: packages/mysql-on-sqlite
-
-      - name: Run PHPUnit tests for the legacy driver
-        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist

@@ -43,4 +43,3 @@ jobs:
       os: ${{ matrix.os }}
       php: ${{ matrix.php }}
       sqlite: ${{ matrix.sqlite || 'latest' }}
-      phpunit-config: ${{ 'phpunit.xml.dist' }}
