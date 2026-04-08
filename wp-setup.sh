@@ -31,8 +31,6 @@ echo "Adding 'docker-compose.override.yml' to the WordPress repository..."
 cat << EOF > "$WP_DIR/docker-compose.override.yml"
 services:
   wordpress-develop:
-    environment:
-      WP_SQLITE_AST_DRIVER: true
     volumes:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
@@ -40,8 +38,6 @@ services:
   php:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
     image: wordpressdevelop/php@sha256:c0ba85936a9d1ac2c98bf3da2d62ceb0e5787a6b11e383630df0c5a5bf2534b5
-    environment:
-      WP_SQLITE_AST_DRIVER: true
     volumes:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
@@ -49,8 +45,6 @@ services:
   cli:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
     image: wordpressdevelop/cli@sha256:85ad7d7a9c3bd9a8775fc83aea7f7dfc0aad25b2bc4f7d740696b28cd2a0ef89
-    environment:
-      WP_SQLITE_AST_DRIVER: true
     volumes:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database

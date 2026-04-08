@@ -6,8 +6,6 @@ use WP_MySQL_Proxy\Logger;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-define( 'WP_SQLITE_AST_DRIVER', true );
-
 // Process CLI arguments:
 $shortopts = 'h:d:p:l:';
 $longopts  = array( 'help', 'database:', 'port:', 'log-level:' );
