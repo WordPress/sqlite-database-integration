@@ -42,9 +42,6 @@
 		"prepare-release": [
 			"./bin/prepare-release.sh"
 		],
-		"test": [
-			"phpunit"
-		],
 		"test-e2e": [
 			"@wp-test-ensure-env @no_additional_args",
 			"rm -f tests/e2e/package.json tests/e2e/node_modules @no_additional_args",
