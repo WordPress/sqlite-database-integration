@@ -28,15 +28,6 @@ The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5
 MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer
 (with legacy mode down to 3.27.0).
 
-### New and old driver
-At the moment, the project includes two MySQL-on-SQLite driver implementations:
-1. A new, AST-based MySQL-on-SQLite driver (`class-wp-pdo-mysql-on-sqlite.php`).
-2. A legacy, token-based MySQL-to-SQLite translator (`class-wp-sqlite-translator.php`).
-
-This state is temporary. The new driver will fully replace the legacy one. New features
-must always be implemented in the new driver. The legacy driver can receive small fixes.
-The new driver is under a `WP_SQLITE_AST_DRIVER` feature flag, but it is widely used.
-
 ## Commands
 The codebase is written in PHP and Composer is used to manage the project.
 The following commands are useful for development and testing:
@@ -54,10 +45,7 @@ composer run test                       # Run unit tests
 composer run test tests/SomeTest.php    # Run specific unit test file
 composer run test -- --filter testName  # Run specific unit test class/method
 
-# SQLite Database Integration plugin tests
-composer run test                       # Run unit tests
-composer run test tests/SomeTest.php    # Run specific unit test file
-composer run test -- --filter testName  # Run specific unit test class/method
+# SQLite Database Integration plugin E2E tests
 composer run test-e2e                   # Run E2E tests (Playwright via WP env)
 
 # WordPress tests

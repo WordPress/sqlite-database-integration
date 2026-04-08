@@ -15,8 +15,6 @@ SQLite integration plugin by the WordPress Team.
 
 The SQLite plugin is a community, feature plugin. The intent is to allow testing an SQLite integration with WordPress and gather feedback, with the goal of eventually landing it in WordPress core.
 
-This feature plugin includes code from the PHPMyAdmin project (specifically parts of the PHPMyAdmin/sql-parser library), licensed under the GPL v2 or later. More info on the PHPMyAdmin/sql-parser library can be found on [GitHub](https://github.com/phpmyadmin/sql-parser).
-
 == Frequently Asked Questions ==
 
 = What is the purpose of this plugin? =
