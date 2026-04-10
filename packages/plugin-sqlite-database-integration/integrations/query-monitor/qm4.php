@@ -5,6 +5,18 @@ if ( ! class_exists( 'QM_Collector' ) ) {
 }
 
 /**
+ * Data transfer object for SQLite query data.
+ */
+class SQLite_QM_Data extends QM_Data {
+	/**
+	 * SQLite queries indexed by normalized MySQL SQL text.
+	 *
+	 * @var array<string, list<string>>
+	 */
+	public $queries = array();
+}
+
+/**
  * Collector for SQLite query data.
  *
  * Extracts SQLite queries from $wpdb->queries and stores them
@@ -13,6 +25,10 @@ if ( ! class_exists( 'QM_Collector' ) ) {
 class SQLite_QM_Collector extends QM_Collector {
 	/** @var string */
 	public $id = 'sqlite';
+
+	public function get_storage(): QM_Data {
+		return new SQLite_QM_Data();
+	}
 
 	public function process(): void {
 		global $wpdb;
