@@ -9971,7 +9971,8 @@ END;
 					'expr_5'  => 'abc',
 					'expr_6'  => 'abc',                 // 'ab' In MySQL
 					'expr_7'  => '-10',
-					'expr_8'  => '-10',                 // 18446744073709551606 in MySQL
+					// @TODO: Emulate UNSIGNED cast. MySQL returns 18446744073709551606 (2^64 - 10).
+					'expr_8'  => '-10',
 					'expr_9'  => '2025-10-05 14:05:28', // 2025-10-05 in MySQL
 					'expr_10' => '2025-10-05 14:05:28', // 14:05:28 in MySQL
 					'expr_11' => '2025-10-05 14:05:28',
@@ -10005,6 +10006,7 @@ END;
 					'expr_1' => 'abc',
 					'expr_2' => 'abc',
 					'expr_3' => '-10',
+					// @TODO: Emulate UNSIGNED cast. MySQL returns 18446744073709551606 (2^64 - 10).
 					'expr_4' => '-10',
 					'expr_5' => '123.456',
 					'expr_6' => '2025-10-05',

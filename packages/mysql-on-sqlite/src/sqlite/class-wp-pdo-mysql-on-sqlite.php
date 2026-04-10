@@ -3790,6 +3790,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						return 'TEXT';
 					case WP_MySQL_Lexer::SIGNED_SYMBOL:
 					case WP_MySQL_Lexer::UNSIGNED_SYMBOL:
+						// @TODO: Emulate UNSIGNED semantics. MySQL wraps negative
+						//        values, but SQLite has no unsigned integer type.
 						return 'INTEGER';
 					case WP_MySQL_Lexer::DECIMAL_SYMBOL:
 					case WP_MySQL_Lexer::FLOAT_SYMBOL:
@@ -4234,6 +4236,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			if ( null !== $cast_type ) {
 				// CONVERT(expr, type): Translate to cast expression.
+				// TODO: Emulate UNSIGNED cast. SQLite has no unsigned integer type.
 				return sprintf( 'CAST(%s AS %s)', $expr, $this->translate( $cast_type ) );
 			} else {
 				// CONVERT(expr USING charset): Keep "expr" as is (no SQLite support).
