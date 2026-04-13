@@ -883,10 +883,32 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				null === $child_node
 				|| 'beginWork' === $child_node->rule_name
 				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
+				|| $child_node->has_child_node( 'selectStatement' )
 			) {
 				$wrap_in_transaction = false;
 			} else {
 				$wrap_in_transaction = true;
+			}
+
+			/*
+			 * Detect read-only statements before opening the wrapper transaction.
+			 *
+			 * [GRAMMAR]
+			 * simpleStatement: selectStatement | showStatement | utilityStatement | ...
+			 */
+			$statement_node = $child_node->get_first_child_node();
+			if ( null !== $statement_node ) {
+				if (
+					'selectStatement' === $statement_node->rule_name
+					|| 'showStatement' === $statement_node->rule_name
+				) {
+					$this->is_readonly = true;
+				} elseif ( 'utilityStatement' === $statement_node->rule_name ) {
+					$utility_subnode = $statement_node->get_first_child_node();
+					if ( null !== $utility_subnode && 'describeStatement' === $utility_subnode->rule_name ) {
+						$this->is_readonly = true;
+					}
+				}
 			}
 
 			if ( $wrap_in_transaction ) {
@@ -1366,7 +1388,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->execute_transaction_or_locking_statement( $node );
 				break;
 			case 'selectStatement':
-				$this->is_readonly = true;
 				$this->execute_select_statement( $node );
 				break;
 			case 'insertStatement':
@@ -1444,14 +1465,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->execute_set_statement( $node );
 				break;
 			case 'showStatement':
-				$this->is_readonly = true;
 				$this->execute_show_statement( $node );
 				break;
 			case 'utilityStatement':
 				$subtree = $node->get_first_child_node();
 				switch ( $subtree->rule_name ) {
 					case 'describeStatement':
-						$this->is_readonly = true;
 						$this->execute_describe_statement( $subtree );
 						break;
 					case 'useCommand':
