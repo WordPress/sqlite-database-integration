@@ -52,14 +52,12 @@ function sqlite_make_db_sqlite() {
 		}
 		$translator->commit();
 	} catch ( PDOException $err ) {
-		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-		$err_code = $err_data[1];
 		$translator->rollback();
 		$message  = sprintf(
 			'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
 			var_export( $query, true )
 		);
-		$message .= sprintf( 'Error message is: %s', $err_data[2] );
+		$message .= sprintf( 'Error message is: %s', $err->getMessage() );
 		wp_die( $message, 'Database Error!' );
 	}
 
