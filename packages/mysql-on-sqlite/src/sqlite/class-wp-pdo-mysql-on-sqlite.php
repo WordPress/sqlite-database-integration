@@ -896,8 +896,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			 * [GRAMMAR]
 			 * simpleStatement: selectStatement | showStatement | utilityStatement | ...
 			 */
-			$statement_node = $child_node->get_first_child_node();
-			if ( null !== $statement_node ) {
+			if ( null !== $child_node && $child_node->has_child_node() ) {
+				$statement_node = $child_node->get_first_child_node();
 				if (
 					'selectStatement' === $statement_node->rule_name
 					|| 'showStatement' === $statement_node->rule_name
