@@ -58,6 +58,54 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 	}
 
 	/**
+	 * A SHOW statement should use a deferred BEGIN (SHARED lock), not
+	 * BEGIN IMMEDIATE (RESERVED/write lock).
+	 */
+	public function testShowQueryOpensReadOnlyTransaction(): void {
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+
+		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
+		$driver     = new WP_SQLite_Driver( $connection, 'wp' );
+		$driver->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+
+		$logged_queries = array();
+		$driver->get_connection()->set_query_logger(
+			function ( string $sql, array $params ) use ( &$logged_queries ): void {
+				$logged_queries[] = $sql;
+			}
+		);
+
+		$driver->query( 'SHOW TABLES' );
+
+		$this->assertSame( 'BEGIN', $logged_queries[0] );
+	}
+
+	/**
+	 * A DESCRIBE statement should use a deferred BEGIN (SHARED lock), not
+	 * BEGIN IMMEDIATE (RESERVED/write lock).
+	 */
+	public function testDescribeQueryOpensReadOnlyTransaction(): void {
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+
+		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
+		$driver     = new WP_SQLite_Driver( $connection, 'wp' );
+		$driver->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+
+		$logged_queries = array();
+		$driver->get_connection()->set_query_logger(
+			function ( string $sql, array $params ) use ( &$logged_queries ): void {
+				$logged_queries[] = $sql;
+			}
+		);
+
+		$driver->query( 'DESCRIBE t' );
+
+		$this->assertSame( 'BEGIN', $logged_queries[0] );
+	}
+
+	/**
 	 * A SELECT on one connection should succeed even when another connection
 	 * holds an open write transaction (RESERVED lock).
 	 */
