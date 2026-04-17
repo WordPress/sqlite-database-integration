@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      6.9
 Requires PHP:      7.2
-Stable tag:        2.2.23
+Stable tag:        3.0.0-rc.1
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -43,6 +43,11 @@ the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.0.0-rc.1 =
+
+* Improve concurrent database access ([#361](https://github.com/WordPress/sqlite-database-integration/pull/361))
+* Remove legacy SQLite driver ([#358](https://github.com/WordPress/sqlite-database-integration/pull/358))
 
 = 2.2.23 =
 
