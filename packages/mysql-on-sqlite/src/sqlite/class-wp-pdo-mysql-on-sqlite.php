@@ -437,6 +437,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $connection;
 
 	/**
+	 * User-defined functions registered on the SQLite connection.
+	 *
+	 * @var WP_SQLite_PDO_User_Defined_Functions
+	 */
+	private $user_defined_functions;
+
+	/**
 	 * A service for managing MySQL INFORMATION_SCHEMA tables in SQLite.
 	 *
 	 * @var WP_SQLite_Information_Schema_Builder
@@ -724,7 +731,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->connection->query( 'PRAGMA foreign_keys = ON' );
 
 		// Register SQLite functions.
-		WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
+		$this->user_defined_functions = WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
 
 		// Load MySQL grammar.
 		if ( null === self::$mysql_grammar ) {
@@ -4395,6 +4402,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		switch ( $name ) {
+			case 'RAND':
+				/*
+				 * Unseeded RAND() compiles to a fast native SQLite expression.
+				 * In MySQL, unseeded RAND() uses the thread-level random state,
+				 * independent of any RAND(N) seeding, so we don't need PHP UDF.
+				 *
+				 * We map SQLite's RANDOM() to a float in [0, 1) by masking to
+				 * 53 bits (IEEE 754 double mantissa width) and dividing by 2^53.
+				 * This avoids the edge case where masking to 63 bits and dividing
+				 * by 2^63 could round to 1.0 due to loss of precision in double.
+				 *
+				 * Seeded RAND(N) falls through to the UDF, which implements
+				 * MySQL's deterministic LCG (Linear Congruential Generator).
+				 * The UDF also handles RAND(NULL) as RAND(0), matching MySQL.
+				 */
+				if ( 0 === count( $args ) ) {
+					return '((RANDOM() & 0x001FFFFFFFFFFFFF) / 9007199254740992.0)';
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'DATE_FORMAT':
 				list ( $date, $mysql_format ) = $args;
 
@@ -6609,6 +6635,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->last_column_meta         = array();
 		$this->is_readonly              = false;
 		$this->wrapper_transaction_type = null;
+		$this->user_defined_functions->flush();
 	}
 
 	/**

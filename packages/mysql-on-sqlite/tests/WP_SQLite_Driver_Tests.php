@@ -3742,13 +3742,292 @@ QUERY
 		$this->assertQuery( 'DELETE FROM _options' );
 	}
 
-	public function testTranslatesRandom() {
-		$this->assertIsNumeric(
-			$this->sqlite->query( 'SELECT RAND() AS rand' )->fetchColumn()
+	public function testRandUnseededReturnsFloatInRange() {
+		for ( $i = 0; $i < 100; $i++ ) {
+			$this->assertQuery( 'SELECT RAND() AS r' );
+			$results = $this->engine->get_query_results();
+			$value   = (float) $results[0]->r;
+			$this->assertGreaterThanOrEqual( 0.0, $value );
+			$this->assertLessThan( 1.0, $value );
+		}
+	}
+
+	public function testRandSeededProducesDeterministicValues() {
+		// MySQL reference values for RAND(0), RAND(1), RAND(5).
+		$seeds_and_expected = array(
+			0 => 0.15522042769494,
+			1 => 0.40540353712198,
+			5 => 0.40613597483014,
+		);
+		foreach ( $seeds_and_expected as $seed => $expected ) {
+			$this->assertQuery( "SELECT RAND($seed) AS r" );
+			$results = $this->engine->get_query_results();
+			$value   = (float) $results[0]->r;
+			$this->assertEqualsWithDelta( $expected, $value, 1e-12, "RAND($seed) mismatch" );
+		}
+	}
+
+	public function testRandSeededStateIsResetBetweenStatements() {
+		// Each statement must restart the sequence from its own seed, even when
+		// an intervening statement used a different seed. This pins down the
+		// per-statement flush contract.
+		$this->assertQuery( 'SELECT RAND(3) AS r' );
+		$first_of_3 = (float) $this->engine->get_query_results()[0]->r;
+
+		$this->assertQuery( 'SELECT RAND(5) AS r' );
+		$first_of_5 = (float) $this->engine->get_query_results()[0]->r;
+
+		$this->assertQuery( 'SELECT RAND(3) AS r' );
+		$first_of_3_again = (float) $this->engine->get_query_results()[0]->r;
+
+		$this->assertSame( $first_of_3, $first_of_3_again );
+		$this->assertNotSame( $first_of_3, $first_of_5 );
+	}
+
+	public function testRandSeededAndUnseededInSameQueryAreIndependent() {
+		// In MySQL, unseeded RAND() uses the thread-level random state and is
+		// independent of RAND(N) seeding. Running the same combined query
+		// twice must reproduce the seeded column exactly, and the unseeded
+		// columns must vary between runs (probability of collision is ~2^-53
+		// per pair, so a match would indicate a shared state bug, not luck).
+		$this->assertQuery( 'SELECT RAND(1) AS r1, RAND() AS r2, RAND() AS r3' );
+		$run1 = $this->engine->get_query_results()[0];
+
+		$this->assertQuery( 'SELECT RAND(1) AS r1, RAND() AS r2, RAND() AS r3' );
+		$run2 = $this->engine->get_query_results()[0];
+
+		// Seeded column is stable across runs.
+		$this->assertSame( (float) $run1->r1, (float) $run2->r1 );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $run1->r1, 1e-12 );
+
+		// Unseeded columns vary.
+		$this->assertTrue(
+			(float) $run1->r2 !== (float) $run2->r2
+			|| (float) $run1->r3 !== (float) $run2->r3,
+			'Unseeded RAND() must vary between identical queries.'
 		);
 
-		$this->assertIsNumeric(
-			$this->sqlite->query( 'SELECT RAND(5) AS rand' )->fetchColumn()
+		// All unseeded values are in [0, 1).
+		foreach ( array( $run1->r2, $run1->r3, $run2->r2, $run2->r3 ) as $value ) {
+			$this->assertGreaterThanOrEqual( 0.0, (float) $value );
+			$this->assertLessThan( 1.0, (float) $value );
+		}
+	}
+
+	public function testRandMultiRowReturnsDifferentValues() {
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('a', '1'), ('b', '2'), ('c', '3')" );
+		$this->assertQuery( 'SELECT RAND() AS r FROM _options' );
+		$results = $this->engine->get_query_results();
+		$values  = array_map(
+			function ( $row ) {
+				return $row->r;
+			},
+			$results
+		);
+
+		// At least two distinct values among three rows.
+		$this->assertGreaterThan( 1, count( array_unique( $values ) ) );
+	}
+
+	public function testRandSeededMultiRowProducesDeterministicSequence() {
+		// Per the MySQL docs: with a constant seed, RAND(N) is initialized
+		// once per statement and advances on each row. Values below are
+		// from the MySQL 8.4 manual example "SELECT i, RAND(3) FROM t".
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('a', '1'), ('b', '2'), ('c', '3')" );
+		$this->assertQuery( 'SELECT RAND(3) AS r FROM _options' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEqualsWithDelta( 0.90576975597606, (float) $results[0]->r, 1e-12 );
+		$this->assertEqualsWithDelta( 0.37307905813035, (float) $results[1]->r, 1e-12 );
+		$this->assertEqualsWithDelta( 0.14808605345719, (float) $results[2]->r, 1e-12 );
+
+		// A second identical query must restart the sequence from seed 3,
+		// not continue where the previous statement left off.
+		$this->assertQuery( 'SELECT RAND(3) AS r FROM _options' );
+		$results = $this->engine->get_query_results();
+		$this->assertEqualsWithDelta( 0.90576975597606, (float) $results[0]->r, 1e-12 );
+		$this->assertEqualsWithDelta( 0.37307905813035, (float) $results[1]->r, 1e-12 );
+		$this->assertEqualsWithDelta( 0.14808605345719, (float) $results[2]->r, 1e-12 );
+	}
+
+	public function testRandNonConstantSeedReinitializesPerRow() {
+		// Per the MySQL docs: with a non-constant seed (e.g. a column), the
+		// LCG is reinitialized for each row, so every row gets the first
+		// value of the sequence for its own seed. We verify this indirectly
+		// by comparing against RAND(seed) called from scalar subqueries.
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('a', '1'), ('b', '2'), ('c', '3')" );
+
+		$this->assertQuery( 'SELECT RAND(CAST(option_value AS SIGNED)) AS r FROM _options ORDER BY option_name' );
+		$per_row = $this->engine->get_query_results();
+
+		$this->assertQuery( 'SELECT RAND(1) AS r' );
+		$r1 = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(2) AS r' );
+		$r2 = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(3) AS r' );
+		$r3 = (float) $this->engine->get_query_results()[0]->r;
+
+		$this->assertEqualsWithDelta( $r1, (float) $per_row[0]->r, 1e-12 );
+		$this->assertEqualsWithDelta( $r2, (float) $per_row[1]->r, 1e-12 );
+		$this->assertEqualsWithDelta( $r3, (float) $per_row[2]->r, 1e-12 );
+	}
+
+	public function testRandOrderBy() {
+		$this->assertQuery(
+			'INSERT INTO _options (option_name, option_value) VALUES '
+			. "('a', '1'), ('b', '2'), ('c', '3'), ('d', '4'), ('e', '5')"
+		);
+
+		// Unseeded `ORDER BY RAND() LIMIT N` — the common "random sample" pattern.
+		$this->assertQuery( 'SELECT option_name FROM _options ORDER BY RAND() LIMIT 2' );
+		$rows = $this->engine->get_query_results();
+		$this->assertCount( 2, $rows );
+		foreach ( $rows as $row ) {
+			$this->assertContains( $row->option_name, array( 'a', 'b', 'c', 'd', 'e' ) );
+		}
+
+		// Seeded `ORDER BY RAND(N)` is a deterministic permutation: running the
+		// same query twice yields the same order, and every row appears once.
+		$extract = function ( $results ) {
+			return array_map(
+				function ( $row ) {
+					return $row->option_name;
+				},
+				$results
+			);
+		};
+		$this->assertQuery( 'SELECT option_name FROM _options ORDER BY RAND(1)' );
+		$first = $extract( $this->engine->get_query_results() );
+		$this->assertQuery( 'SELECT option_name FROM _options ORDER BY RAND(1)' );
+		$second = $extract( $this->engine->get_query_results() );
+		$this->assertSame( $first, $second );
+		$sorted = $first;
+		sort( $sorted );
+		$this->assertSame( array( 'a', 'b', 'c', 'd', 'e' ), $sorted );
+	}
+
+	public function testRandNullIsEquivalentToZeroSeed() {
+		// In MySQL, RAND(NULL) is equivalent to RAND(0) because val_int()
+		// on a NULL argument returns 0. Verified against MySQL 9.6.
+		$this->assertQuery( 'SELECT RAND(NULL) AS r' );
+		$this->assertEqualsWithDelta(
+			0.15522042769493574,
+			(float) $this->engine->get_query_results()[0]->r,
+			1e-12
+		);
+
+		// The same rule applies when the seed expression evaluates to NULL
+		// at runtime rather than being a literal NULL.
+		$this->assertQuery( 'SELECT RAND(NULLIF(1, 1)) AS r' );
+		$this->assertEqualsWithDelta(
+			0.15522042769493574,
+			(float) $this->engine->get_query_results()[0]->r,
+			1e-12
+		);
+	}
+
+	public function testRandFloatSeedRoundsToNearestInteger() {
+		// MySQL's val_int() on DOUBLE rounds to nearest, so RAND(3.9) is
+		// equivalent to RAND(4) and RAND(3.1) to RAND(3).
+		$this->assertQuery( 'SELECT RAND(3.9) AS r' );
+		$from_float = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(4) AS r' );
+		$from_int = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertSame( $from_int, $from_float );
+
+		$this->assertQuery( 'SELECT RAND(3.1) AS r' );
+		$from_float = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(3) AS r' );
+		$from_int = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertSame( $from_int, $from_float );
+	}
+
+	public function testRandStringSeedIsCoercedLikeMySQL() {
+		// Numeric strings are coerced through float-then-round; non-numeric
+		// strings fall back to 0, matching MySQL's val_int() semantics.
+		$this->assertQuery( "SELECT RAND('5') AS r" );
+		$from_string = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(5) AS r' );
+		$from_int = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertSame( $from_int, $from_string );
+
+		$this->assertQuery( "SELECT RAND('3.9') AS r" );
+		$from_string = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(4) AS r' );
+		$from_int = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertSame( $from_int, $from_string );
+
+		$this->assertQuery( "SELECT RAND('abc') AS r" );
+		$from_bad_string = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(0) AS r' );
+		$from_zero = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertSame( $from_zero, $from_bad_string );
+	}
+
+	public function testRandNegativeSeedIsDeterministicAndInRange() {
+		// Negative seeds fold into uint32 (matching MySQL's cast-to-uint32
+		// before the LCG init). The exact value is defined by the LCG; this
+		// test pins determinism and range, not a reference constant.
+		$this->assertQuery( 'SELECT RAND(-1) AS r' );
+		$v1 = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(-1) AS r' );
+		$v2 = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertSame( $v1, $v2 );
+		$this->assertGreaterThanOrEqual( 0.0, $v1 );
+		$this->assertLessThan( 1.0, $v1 );
+	}
+
+	public function testRandMultipleCallSitesShareLcgState() {
+		// Documented divergence from MySQL: each Item_func_rand in MySQL
+		// owns its own LCG state, so `SELECT RAND(1), RAND(1)` returns
+		// (v, v). This UDF keeps a single per-connection state, so the
+		// second call advances the shared stream and returns the next
+		// value. Pin the current behavior so any future change is explicit.
+		$this->assertQuery( 'SELECT RAND(1) AS a, RAND(1) AS b' );
+		$row = $this->engine->get_query_results()[0];
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row->a, 1e-12 );
+		$this->assertNotEquals( (float) $row->a, (float) $row->b );
+		$this->assertGreaterThanOrEqual( 0.0, (float) $row->b );
+		$this->assertLessThan( 1.0, (float) $row->b );
+	}
+
+	public function testRandSeededResetsAcrossStatementsInsideTransaction() {
+		// The per-statement flush contract must hold inside a transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SELECT RAND(1) AS r' );
+		$a = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'SELECT RAND(1) AS r' );
+		$b = (float) $this->engine->get_query_results()[0]->r;
+		$this->assertQuery( 'COMMIT' );
+		$this->assertSame( $a, $b );
+		$this->assertEqualsWithDelta( 0.40540353712198, $a, 1e-12 );
+	}
+
+	public function testRandInWhereClauseRuns() {
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('a', '1'), ('b', '2'), ('c', '3')" );
+		// Sanity: a predicate that is always true / always false.
+		$this->assertQuery( 'SELECT COUNT(*) AS c FROM _options WHERE RAND() < 2' );
+		$this->assertSame( 3, (int) $this->engine->get_query_results()[0]->c );
+		$this->assertQuery( 'SELECT COUNT(*) AS c FROM _options WHERE RAND() > 2' );
+		$this->assertSame( 0, (int) $this->engine->get_query_results()[0]->c );
+	}
+
+	public function testRandInUpdateAndInsert() {
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('a', '0')" );
+		$this->assertQuery( "UPDATE _options SET option_value = RAND(1) WHERE option_name = 'a'" );
+		$this->assertQuery( "SELECT option_value FROM _options WHERE option_name = 'a'" );
+		$this->assertEqualsWithDelta(
+			0.40540353712198,
+			(float) $this->engine->get_query_results()[0]->option_value,
+			1e-12
+		);
+
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('b', RAND(1))" );
+		$this->assertQuery( "SELECT option_value FROM _options WHERE option_name = 'b'" );
+		$this->assertEqualsWithDelta(
+			0.40540353712198,
+			(float) $this->engine->get_query_results()[0]->option_value,
+			1e-12
 		);
 	}
 
@@ -9093,14 +9372,13 @@ END;
 					'mysqli:type'      => 8,
 				),
 				array(
-					// TODO: Fix custom "RAND()" function to behave like in MySQL.
-					'native_type'      => 'LONGLONG',          // DOUBLE in MySQL.
-					'pdo_type'         => PDO::PARAM_INT,      // PARAM_STR in MySQL.
+					'native_type'      => 'DOUBLE',
+					'pdo_type'         => PDO::PARAM_STR,
 					'flags'            => array( 'not_null' ),
 					'table'            => '',
 					'name'             => 'col_expr_19',
-					'len'              => 21,                  // 23 in MySQL.
-					'precision'        => 0,                   // 31 in MySQL.
+					'len'              => 23,
+					'precision'        => 31,
 					'sqlite:decl_type' => '',
 
 					// Additional MySQLi metadata.
@@ -9109,7 +9387,7 @@ END;
 					'mysqli:db'        => 'wp',
 					'mysqli:charsetnr' => 63,
 					'mysqli:flags'     => 0, // 32769 in MySQL.
-					'mysqli:type'      => 8, // 5 in MySQL.
+					'mysqli:type'      => 5,
 				),
 				array(
 					'native_type'      => 'LONGLONG',
