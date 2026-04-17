@@ -382,6 +382,36 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 			'DELETE FROM `t` WHERE `c` = 1',
 			'DELETE FROM t WHERE c = 1'
 		);
+
+		// DELETE with LIMIT.
+		$this->assertQuery(
+			'DELETE FROM `t` WHERE rowid IN ( SELECT rowid FROM `t` LIMIT 1 )',
+			'DELETE FROM t LIMIT 1'
+		);
+
+		// DELETE with WHERE and LIMIT.
+		$this->assertQuery(
+			'DELETE FROM `t` WHERE rowid IN ( SELECT rowid FROM `t` WHERE `c` = 1 LIMIT 5 )',
+			'DELETE FROM t WHERE c = 1 LIMIT 5'
+		);
+
+		// DELETE with ORDER BY and LIMIT.
+		$this->assertQuery(
+			'DELETE FROM `t` WHERE rowid IN ( SELECT rowid FROM `t` ORDER BY `c` ASC LIMIT 1 )',
+			'DELETE FROM t ORDER BY c ASC LIMIT 1'
+		);
+
+		// DELETE with WHERE, ORDER BY, and LIMIT.
+		$this->assertQuery(
+			'DELETE FROM `t` WHERE rowid IN ( SELECT rowid FROM `t` WHERE `c` = 1 ORDER BY `c` ASC LIMIT 1 )',
+			'DELETE FROM t WHERE c = 1 ORDER BY c ASC LIMIT 1'
+		);
+
+		// DELETE with a table alias and LIMIT.
+		$this->assertQuery(
+			'DELETE FROM `t` WHERE rowid IN ( SELECT rowid FROM `t` AS `a` WHERE `a`.`c` = 1 LIMIT 1 )',
+			'DELETE FROM t AS a WHERE a.c = 1 LIMIT 1'
+		);
 	}
 
 	public function testCreateTable(): void {

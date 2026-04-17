@@ -222,6 +222,64 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals( '2003-05-27 10:08:48', $result2[0]->option_value );
 	}
 
+	public function testDeleteWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 00:00:45')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-28 00:00:45')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('third', '2003-05-29 00:00:45')"
+		);
+
+		// LIMIT only: only one row is removed even though WHERE matches every row.
+		$result = $this->assertQuery( "DELETE FROM _dates WHERE option_name LIKE '%' LIMIT 1" );
+		$this->assertSame( 1, $result );
+
+		$rows = $this->engine->query( 'SELECT option_name FROM _dates ORDER BY option_name' );
+		$this->assertCount( 2, $rows );
+
+		// ORDER BY + LIMIT: deletes the lexicographically-first remaining row.
+		$result = $this->assertQuery( 'DELETE FROM _dates ORDER BY option_name ASC LIMIT 1' );
+		$this->assertSame( 1, $result );
+
+		$rows = $this->engine->query( 'SELECT option_name FROM _dates' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'third', $rows[0]->option_name );
+	}
+
+	public function testDeleteWithoutWhereButWithLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('first', '2003-05-27 10:08:48')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('second', '2003-05-27 10:08:48')"
+		);
+
+		$result = $this->assertQuery( 'DELETE FROM _dates LIMIT 1' );
+		$this->assertSame( 1, $result );
+
+		$rows = $this->engine->query( 'SELECT option_name FROM _dates' );
+		$this->assertCount( 1, $rows );
+	}
+
+	public function testDeleteWithAliasAndLimit() {
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('a', '2003-05-27 00:00:45')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _dates (option_name, option_value) VALUES ('b', '2003-05-28 00:00:45')"
+		);
+
+		$result = $this->assertQuery( "DELETE FROM _dates AS d WHERE d.option_name = 'a' LIMIT 1" );
+		$this->assertSame( 1, $result );
+
+		$rows = $this->engine->query( 'SELECT option_name FROM _dates' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'b', $rows[0]->option_name );
+	}
+
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token

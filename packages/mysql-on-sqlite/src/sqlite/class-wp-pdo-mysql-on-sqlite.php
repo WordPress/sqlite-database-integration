@@ -2308,6 +2308,38 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			throw $this->new_access_denied_to_information_schema_exception();
 		}
 
+		/*
+		 * SQLite doesn't support DELETE with ORDER BY/LIMIT.
+		 * We need to use a subquery to emulate this behavior.
+		 *
+		 * For instance, the following query:
+		 *   DELETE FROM t WHERE c = 2 LIMIT 1;
+		 * Will be rewritten to:
+		 *   DELETE FROM t WHERE rowid IN ( SELECT rowid FROM t WHERE c = 2 LIMIT 1 );
+		 */
+		$has_order = $node->has_child_node( 'orderClause' );
+		$has_limit = $node->has_child_node( 'simpleLimitClause' );
+		if ( $has_order || $has_limit ) {
+			$where_subquery = 'SELECT rowid FROM ' . $this->translate_sequence(
+				array(
+					$table_ref,
+					$node->get_first_child_node( 'tableAlias' ),
+					$node->get_first_child_node( 'whereClause' ),
+					$node->get_first_child_node( 'orderClause' ),
+					$node->get_first_child_node( 'simpleLimitClause' ),
+				)
+			);
+
+			$query = sprintf(
+				'DELETE FROM %s WHERE rowid IN ( %s )',
+				$this->translate( $table_ref ),
+				$where_subquery
+			);
+
+			$this->last_result_statement = $this->execute_sqlite_query( $query );
+			return;
+		}
+
 		$query                       = $this->translate( $node );
 		$this->last_result_statement = $this->execute_sqlite_query( $query );
 	}
