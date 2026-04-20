@@ -2774,6 +2774,77 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals( 0, $results[0]->d );
 	}
 
+	public function testDefaultSqlModeDoesNotIncludeNoAutoValueOnZero() {
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertStringNotContainsString( 'NO_AUTO_VALUE_ON_ZERO', strtoupper( $results[0]->mode ) );
+	}
+
+	public function testAutoIncrementZeroAdvancesSequenceByDefault() {
+		// Default SQL modes do not include NO_AUTO_VALUE_ON_ZERO.
+		// Values like 0 and '0' should behave like NULL and advance the sequence.
+		$this->assertQuery(
+			"INSERT INTO _options (ID, option_name, option_value) VALUES (0, 'a', '1');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _options (ID, option_name, option_value) VALUES ('0', 'b', '2');"
+		);
+		$this->assertQuery(
+			"INSERT INTO _options (ID, option_name, option_value) VALUES (NULL, 'c', '3');"
+		);
+
+		$this->assertQuery( 'SELECT ID, option_name FROM _options ORDER BY ID;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( 1, $results[0]->ID );
+		$this->assertEquals( 'a', $results[0]->option_name );
+		$this->assertEquals( 2, $results[1]->ID );
+		$this->assertEquals( 'b', $results[1]->option_name );
+		$this->assertEquals( 3, $results[2]->ID );
+		$this->assertEquals( 'c', $results[2]->option_name );
+	}
+
+	public function testAutoIncrementZeroAdvancesSequenceForAllInsertShapes() {
+		// INSERT ... SET
+		$this->assertQuery( "INSERT INTO _options SET ID = 0, option_name = 'set', option_value = '1';" );
+
+		// INSERT ... SELECT
+		$this->assertQuery( "INSERT INTO _options (ID, option_name, option_value) SELECT 0, 'select', '2';" );
+
+		// REPLACE ... VALUES
+		$this->assertQuery( "REPLACE INTO _options (ID, option_name, option_value) VALUES ('0', 'replace', '3');" );
+
+		$this->assertQuery( 'SELECT ID, option_name FROM _options ORDER BY ID;' );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 3, $results );
+		$this->assertEquals( 1, $results[0]->ID );
+		$this->assertEquals( 2, $results[1]->ID );
+		$this->assertEquals( 3, $results[2]->ID );
+	}
+
+	public function testNoAutoValueOnZeroSqlMode() {
+		$this->assertQuery( "SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO'" );
+
+		// Literal 0 and '0' are stored as-is. Only NULL generates a value.
+		$this->assertQuery(
+			"INSERT INTO _options (ID, option_name, option_value) VALUES (0, 'a', '1');"
+		);
+
+		$this->assertQuery( "SELECT ID FROM _options WHERE option_name = 'a';" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 0, $results[0]->ID );
+
+		$this->assertQuery(
+			"INSERT INTO _options (ID, option_name, option_value) VALUES (NULL, 'b', '2');"
+		);
+		$this->assertQuery( "SELECT ID FROM _options WHERE option_name = 'b';" );
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 1, $results[0]->ID );
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (

@@ -5351,9 +5351,24 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$fragment .= null === $default ? 'NULL' : $this->quote_sqlite_value( $default );
 			} else {
 				// When a column value is included, we need to apply type casting.
-				$position   = array_search( $column['COLUMN_NAME'], $insert_list, true );
-				$identifier = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$value      = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
+				$position          = array_search( $column['COLUMN_NAME'], $insert_list, true );
+				$identifier        = $this->quote_sqlite_identifier( $select_list[ $position ] );
+				$value             = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
+				$is_auto_increment = 'auto_increment' === $column['EXTRA'];
+
+				/*
+				 * In MySQL, inserting 0 into an AUTO_INCREMENT column increments
+				 * the sequence, unless the NO_AUTO_VALUE_ON_ZERO SQL mode is set.
+				 *
+				 * In SQLite, we need to rewrite 0 to NULL to advance the sequence.
+				 * The value is cast to INTEGER before the comparison, because
+				 * SQLite treats values of different types as unequal (0 != '0').
+				 *
+				 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_no_auto_value_on_zero
+				 */
+				if ( $is_auto_increment && ! $this->is_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' ) ) {
+					$value = sprintf( 'NULLIF(CAST(%s AS INTEGER), 0)', $value );
+				}
 
 				/*
 				 * In MySQL non-STRICT mode, when inserting from a SELECT query:
@@ -5361,9 +5376,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 * When a column is declared as NOT NULL, inserting a NULL value
 				 * saves an IMPLICIT DEFAULT value instead. This behavior only
 				 * applies to the INSERT ... SELECT syntax (not VALUES or SET).
+				 *
+				 * AUTO_INCREMENT columns are excluded. A NULL value advances
+				 * the sequence regardless of the column's nullability.
 				 */
 				$is_insert_from_select = 'insertQueryExpression' === $node->rule_name;
-				if ( ! $is_strict_mode && $is_insert_from_select && 'NO' === $column['IS_NULLABLE'] ) {
+				if (
+					! $is_strict_mode
+					&& ! $is_auto_increment
+					&& $is_insert_from_select
+					&& 'NO' === $column['IS_NULLABLE']
+				) {
 					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
 					if ( null !== $implicit_default ) {
 						$value = sprintf( 'COALESCE(%s, %s)', $value, $this->quote_sqlite_value( $implicit_default ) );
