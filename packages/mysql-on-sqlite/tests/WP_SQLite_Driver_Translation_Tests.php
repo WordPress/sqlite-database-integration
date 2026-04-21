@@ -104,7 +104,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	public function testConvert(): void {
 		// CONVERT(expr, type) → CAST(expr AS type)
 		$this->assertQuery(
-			"SELECT CAST('abc' AS BLOB) AS `CONVERT('abc', BINARY)`",
+			"SELECT CAST('abc' AS TEXT) COLLATE BINARY AS `CONVERT('abc', BINARY)`",
 			"SELECT CONVERT('abc', BINARY)"
 		);
 
@@ -171,6 +171,18 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			"SELECT ( `a` || `b` ) COLLATE BINARY = 'x' AS `BINARY (a || b) = 'x'` FROM `t`",
 			"SELECT BINARY (a || b) = 'x' FROM t"
+		);
+
+		// "CAST(expr AS BINARY)" → "CAST(expr AS TEXT) COLLATE BINARY"
+		$this->assertQuery(
+			"SELECT CAST('abc' AS TEXT) COLLATE BINARY AS `CAST('abc' AS BINARY)`",
+			"SELECT CAST('abc' AS BINARY)"
+		);
+
+		// "CAST(expr AS BINARY) = expr" → "CAST(expr AS TEXT) COLLATE BINARY = expr"
+		$this->assertQuery(
+			"SELECT CAST('abc' AS TEXT) COLLATE BINARY = 'abc' AS `CAST('abc' AS BINARY) = 'abc'`",
+			"SELECT CAST('abc' AS BINARY) = 'abc'"
 		);
 	}
 

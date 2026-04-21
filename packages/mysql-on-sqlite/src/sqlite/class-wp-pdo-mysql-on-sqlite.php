@@ -4285,6 +4285,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return sprintf( '%s COLLATE BINARY', $this->translate( $expr ) );
 		}
 
+		// Translate "CAST(expr AS type)" to its SQLite equivalent.
+		if ( null !== $token && WP_MySQL_Lexer::CAST_SYMBOL === $token->id ) {
+			$expr      = $node->get_first_child_node( 'expr' );
+			$cast_type = $node->get_first_child_node( 'castType' );
+			return $this->translate_cast_expr( $expr, $cast_type );
+		}
+
 		/**
 		 * Translate MySQL CONVERT() expression.
 		 *
@@ -4293,21 +4300,42 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *   2. CONVERT(expr USING charset): Converts the character set.
 		 */
 		if ( null !== $token && WP_MySQL_Lexer::CONVERT_SYMBOL === $token->id ) {
-			$expr      = $this->translate( $node->get_first_child_node( 'expr' ) );
+			$expr      = $node->get_first_child_node( 'expr' );
 			$cast_type = $node->get_first_child_node( 'castType' );
 
 			if ( null !== $cast_type ) {
 				// CONVERT(expr, type): Translate to cast expression.
 				// TODO: Emulate UNSIGNED cast. SQLite has no unsigned integer type.
-				return sprintf( 'CAST(%s AS %s)', $expr, $this->translate( $cast_type ) );
+				return $this->translate_cast_expr( $expr, $cast_type );
 			} else {
 				// CONVERT(expr USING charset): Keep "expr" as is (no SQLite support).
 				// TODO: Consider rejecting UTF-8-incompatible charasets.
-				return $expr;
+				return $this->translate( $expr );
 			}
 		}
 
 		return $this->translate_sequence( $node->get_children() );
+	}
+
+	/**
+	 * Translate a MySQL CAST expression to SQLite.
+	 *
+	 * Shared by the CAST(expr AS type) and CONVERT(expr, type) forms.
+	 *
+	 * @param  WP_Parser_Node $expr      The "expr" AST node.
+	 * @param  WP_Parser_Node $cast_type The "castType" AST node.
+	 * @return string                    The translated SQLite expression.
+	 */
+	private function translate_cast_expr( WP_Parser_Node $expr, WP_Parser_Node $cast_type ): string {
+		/*
+		 * Translate "CAST(expr AS BINARY)" to "CAST(expr AS TEXT) COLLATE BINARY".
+		 * Emitting "CAST(expr AS BLOB)" would break equality against TEXT values
+		 * due to SQLite's storage-class ordering (BLOB > TEXT).
+		 */
+		if ( $cast_type->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+			return sprintf( 'CAST(%s AS TEXT) COLLATE BINARY', $this->translate( $expr ) );
+		}
+		return sprintf( 'CAST(%s AS %s)', $this->translate( $expr ), $this->translate( $cast_type ) );
 	}
 
 	/**
