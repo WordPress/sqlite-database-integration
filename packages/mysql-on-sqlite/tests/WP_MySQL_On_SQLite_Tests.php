@@ -266,6 +266,136 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider regexpLikeCases
+	 */
+	public function testRegexpLike( $expr, $pattern, $match_type, $expected ) {
+		$expr_sql    = null === $expr ? 'NULL' : "'" . addslashes( $expr ) . "'";
+		$pattern_sql = null === $pattern ? 'NULL' : "'" . addslashes( $pattern ) . "'";
+		$args        = $expr_sql . ', ' . $pattern_sql;
+		if ( null !== $match_type ) {
+			$args .= ", '" . addslashes( $match_type ) . "'";
+		}
+		$this->assertQuery( "SELECT REGEXP_LIKE($args) AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpLikeCases() {
+		return array(
+			// Basic matching.
+			'match'               => array( 'abc', 'abc', null, '1' ),
+			'no match'            => array( 'xbc', 'abc', null, '0' ),
+			'quantifier match'    => array( 'abbbbc', 'ab*bc', null, '1' ),
+
+			// Default is case-insensitive (matches existing REGEXP operator behavior).
+			'default i'           => array( 'ABC', 'abc', null, '1' ),
+
+			// Explicit flags.
+			'explicit c'          => array( 'ABC', 'abc', 'c', '0' ),
+			'explicit i'          => array( 'ABC', 'abc', 'i', '1' ),
+
+			// Later flag wins.
+			'ci -> c'             => array( 'ABC', 'abc', 'ci', '1' ),
+			'ic -> i'             => array( 'ABC', 'abc', 'ic', '0' ),
+
+			// Multiline.
+			'm off: ^ anchored'   => array( "abc\ndef", '^def', null, '0' ),
+			'm on: ^ per line'    => array( "abc\ndef", '^def', 'm', '1' ),
+
+			// Dot matches newline.
+			"n off: . no \\n"     => array( "a\nb", 'a.b', null, '0' ),
+			"n on: . matches \\n" => array( "a\nb", 'a.b', 'n', '1' ),
+
+			// NULL propagation.
+			'null expr'           => array( null, 'abc', null, null ),
+			'null pattern'        => array( 'abc', null, null, null ),
+		);
+	}
+
+	public function testRegexpLikeNullMatchType() {
+		// A NULL match_type returns NULL, even for an invalid pattern.
+		foreach ( array( "'abc', 'abc', NULL", "NULL, '(abc', NULL" ) as $args ) {
+			$this->assertQuery( "SELECT REGEXP_LIKE($args) AS r" );
+			$this->assertNull( $this->last_result[0]->r, $args );
+		}
+	}
+
+	/**
+	 * @dataProvider regexpLikeErrors
+	 */
+	public function testRegexpLikeErrors( $sql, $message ) {
+		$this->assertQueryError( "SELECT $sql", $message );
+	}
+
+	public static function regexpLikeErrors() {
+		return array(
+			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			'invalid flag'    => array( "REGEXP_LIKE('abc', 'a', 'x')", 'Invalid match_type flag: x.' ),
+			'extra argument'  => array(
+				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
+				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',
+			),
+		);
+	}
+
+	public function testRegexpMatchTypeMultipleFlags() {
+		// Later-wins across a four-character match_type. 'cimn' ends in 'n',
+		// so case-insensitive (last of c/i) + multiline + dotall apply.
+		$this->assertQuery( "SELECT REGEXP_LIKE('ABC', 'abc', 'cimn') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpInvalidUtf8() {
+		// Raw 0xFF is never valid UTF-8; /u rejects it, which regexp_fail
+		// translates to a dedicated error.
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE(CAST(X'FF' AS CHAR), 'a')",
+			'Invalid UTF-8 data in regular expression input.'
+		);
+	}
+
+	public function testRegexpBacktrackLimit() {
+		// Classic exponential-backtracking pattern that exceeds PCRE's default
+		// backtrack limit; exercises the PREG_BACKTRACK_LIMIT_ERROR branch of
+		// regexp_fail().
+		$subject = str_repeat( 'a', 30 );
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('$subject', '^(a?){30}a{30}\$')",
+			'Regular expression evaluation exceeded internal limits.'
+		);
+	}
+
+	public function testRegexpLegacyOperatorRegression() {
+		// The legacy REGEXP operator must keep working alongside REGEXP_LIKE.
+		$this->assertQuery( "SELECT 'abc' REGEXP 'ABC' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT 'abc' REGEXP 'xyz' AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLikeEscapedDelimiter() {
+		$this->assertQuery( "SELECT REGEXP_LIKE('/', '\\\\/') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE('/', '\\\\Q/\\\\E', 'c') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLikeNumericOperands() {
+		$this->assertQuery( 'SELECT REGEXP_LIKE(123, 2) AS r' );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpUnicodeNewlineHandling() {
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'610D62' AS CHAR), 'a.b', 'c') AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'610D62' AS CHAR), '^b', 'cm') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'610D62' AS CHAR), 'a.b', 'cu') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'61E280A862' AS CHAR), '^b', 'cm') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
