@@ -276,24 +276,25 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 	public static function regexpLikeQueries() {
 		return array(
-			'no match type'          => array( "SELECT REGEXP_LIKE('ABC', 'b') AS result", '1' ),
-			'empty match type'       => array( "SELECT REGEXP_LIKE('ABC', 'b', '') AS result", '1' ),
-			'case-sensitive'         => array( "SELECT REGEXP_LIKE('ABC', 'b', 'c') AS result", '0' ),
-			'case-insensitive'       => array( "SELECT REGEXP_LIKE('ABC', 'b', 'i') AS result", '1' ),
-			'last "i" wins'          => array( "SELECT REGEXP_LIKE('ABC', 'b', 'ci') AS result", '1' ),
-			'last "c" wins'          => array( "SELECT REGEXP_LIKE('ABC', 'b', 'ic') AS result", '0' ),
-			'single line'            => array( "SELECT REGEXP_LIKE('a\\nb', '^b') AS result", '0' ),
-			'multiline'              => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'm') AS result", '1' ),
-			'dot without line break' => array( "SELECT REGEXP_LIKE('a\\nb', 'a.b') AS result", '0' ),
-			'dot with line break'    => array( "SELECT REGEXP_LIKE('a\\nb', 'a.b', 'n') AS result", '1' ),
-			'Unix line breaks'       => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'mu') AS result", '1' ),
-			'repeated letters'       => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'mm') AS result", '1' ),
-			'NULL subject'           => array( "SELECT REGEXP_LIKE(NULL, 'b') AS result", null ),
-			'NULL pattern'           => array( "SELECT REGEXP_LIKE('ABC', NULL) AS result", null ),
-			'NULL match type'        => array( "SELECT REGEXP_LIKE('ABC', 'b', NULL) AS result", null ),
-			'NULL REGEXP subject'    => array( "SELECT NULL REGEXP 'b' AS result", null ),
-			'NULL REGEXP pattern'    => array( "SELECT 'ABC' REGEXP NULL AS result", null ),
-			'NULL NOT REGEXP'        => array( "SELECT NULL NOT REGEXP 'b' AS result", null ),
+			'no match type'                    => array( "SELECT REGEXP_LIKE('ABC', 'b') AS result", '1' ),
+			'empty match type'                 => array( "SELECT REGEXP_LIKE('ABC', 'b', '') AS result", '1' ),
+			'case-sensitive'                   => array( "SELECT REGEXP_LIKE('ABC', 'b', 'c') AS result", '0' ),
+			'case-insensitive'                 => array( "SELECT REGEXP_LIKE('ABC', 'b', 'i') AS result", '1' ),
+			'last "i" wins'                    => array( "SELECT REGEXP_LIKE('ABC', 'b', 'ci') AS result", '1' ),
+			'last "c" wins'                    => array( "SELECT REGEXP_LIKE('ABC', 'b', 'ic') AS result", '0' ),
+			'single line'                      => array( "SELECT REGEXP_LIKE('a\\nb', '^b') AS result", '0' ),
+			'multiline'                        => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'm') AS result", '1' ),
+			'dot without line break'           => array( "SELECT REGEXP_LIKE('a\\nb', 'a.b') AS result", '0' ),
+			'dot with line break'              => array( "SELECT REGEXP_LIKE('a\\nb', 'a.b', 'n') AS result", '1' ),
+			'Unix line breaks'                 => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'mu') AS result", '1' ),
+			'repeated letters'                 => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'mm') AS result", '1' ),
+			'NULL subject'                     => array( "SELECT REGEXP_LIKE(NULL, 'b') AS result", null ),
+			'NULL pattern'                     => array( "SELECT REGEXP_LIKE('ABC', NULL) AS result", null ),
+			'NULL match type'                  => array( "SELECT REGEXP_LIKE('ABC', 'b', NULL) AS result", null ),
+			'NULL match type, invalid pattern' => array( "SELECT REGEXP_LIKE('ABC', '(b', NULL) AS result", null ),
+			'NULL REGEXP subject'              => array( "SELECT NULL REGEXP 'b' AS result", null ),
+			'NULL REGEXP pattern'              => array( "SELECT 'ABC' REGEXP NULL AS result", null ),
+			'NULL NOT REGEXP'                  => array( "SELECT NULL NOT REGEXP 'b' AS result", null ),
 		);
 	}
 
@@ -309,7 +310,290 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'subject and pattern' => array( "SELECT REGEXP_LIKE('ABC', 'b', 'x')" ),
 			'NULL subject'        => array( "SELECT REGEXP_LIKE(NULL, 'b', 'x')" ),
 			'NULL pattern'        => array( "SELECT REGEXP_LIKE('ABC', NULL, 'x')" ),
+			'number'              => array( "SELECT REGEXP_LIKE('ABC', 'b', 1)" ),
 		);
+	}
+
+	/**
+	 * @dataProvider regexpLikeErrors
+	 */
+	public function testRegexpLikeErrors( $sql, $message ) {
+		$this->assertQueryError( "SELECT $sql", $message );
+	}
+
+	public static function regexpLikeErrors() {
+		return array(
+			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			'extra argument'  => array(
+				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
+				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',
+			),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpMatchTypeFlagCases
+	 */
+	public function testRegexpMatchTypeMultipleFlags( $match_type, $expected ) {
+		// "^a.b$" matches the last two lines only when case is ignored, "^" matches after
+		// a line break ("m"), and "." matches a line break ("n").
+		$this->assertQuery( "SELECT REGEXP_LIKE('X\\nA\\nB', '^a.b\$', '$match_type') AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpMatchTypeFlagCases() {
+		return array(
+			'"i" after "c"' => array( 'cimn', '1' ),
+			'"c" after "i"' => array( 'imnc', '0' ),
+			'no "m"'        => array( 'cin', '0' ),
+			'no "n"'        => array( 'cim', '0' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpLikeBinaryDataCases
+	 */
+	public function testRegexpLikeMatchesBinaryDataByBytes( $value, $sql, $expected ) {
+		// Like the REGEXP operator, REGEXP_LIKE() matches data that is not valid UTF-8
+		// byte by byte, and case-sensitively, unless the match type says otherwise.
+		$this->assertQuery( 'CREATE TABLE blobs (b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES ($value)" );
+		$this->assertQuery( "SELECT $sql AS r FROM blobs" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpLikeBinaryDataCases() {
+		return array(
+			'any byte'            => array( "X'61FF62'", "REGEXP_LIKE(b, 'a.b')", '1' ),
+			'other case'          => array( "X'61FF62'", "REGEXP_LIKE(b, 'A.B')", '0' ),
+			'ignore case'         => array( "X'61FF62'", "REGEXP_LIKE(b, 'A.B', 'i')", '1' ),
+			'match case'          => array( "X'61FF62'", "REGEXP_LIKE(b, 'a.b', 'c')", '1' ),
+			'0x85 in a character' => array( "X'78C485FF79'", "REGEXP_LIKE(b, 'x.*y')", '1' ),
+			'CR'                  => array( "X'610D62FF'", "REGEXP_LIKE(b, 'a.b')", '0' ),
+			'CR, Unix line break' => array( "X'610D62FF'", "REGEXP_LIKE(b, 'a.b', 'u')", '1' ),
+		);
+	}
+
+	public function testRegexpBacktrackLimit() {
+		// Classic exponential-backtracking pattern that exceeds PCRE's default
+		// backtrack limit; exercises the PREG_BACKTRACK_LIMIT_ERROR branch of
+		// regexp_fail().
+		$subject = str_repeat( 'a', 30 );
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('$subject', '^(a?){30}a{30}\$')",
+			'Regular expression evaluation exceeded internal limits.'
+		);
+	}
+
+	public function testRegexpLimitOnlyOnEmptySubject() {
+		// Only an empty subject exceeds the backtrack limit, so other subjects still match.
+		$pattern = 'x|(?:a?|b?){20}(?!$)';
+		$this->assertQuery(
+			"SELECT 'x' REGEXP '$pattern' AS operator_result, REGEXP_LIKE('x', '$pattern') AS like_result"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'operator_result' => '1',
+					'like_result'     => '1',
+				),
+			),
+			$this->last_result
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('', '$pattern')",
+			'Regular expression evaluation exceeded internal limits.'
+		);
+	}
+
+	public function testRegexpLegacyOperatorRegression() {
+		// The legacy REGEXP operator must keep working alongside REGEXP_LIKE.
+		$this->assertQuery( "SELECT 'abc' REGEXP 'ABC' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT 'abc' REGEXP 'xyz' AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorNullPropagation() {
+		$this->assertQuery( "SELECT NULL REGEXP 'a' AS r" );
+		$this->assertNull( $this->last_result[0]->r );
+		$this->assertQuery( "SELECT 'a' RLIKE NULL AS r" );
+		$this->assertNull( $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorInvalidPattern() {
+		$this->assertQueryError(
+			"SELECT 'abc' REGEXP '(abc'",
+			'Invalid regular expression: (abc.'
+		);
+		$this->assertQueryError(
+			"SELECT 'abc' RLIKE ''",
+			'Illegal argument to a regular expression.'
+		);
+	}
+
+	public function testRegexpLegacyOperatorEscapedDelimiter() {
+		$this->assertQuery( "SELECT '/' REGEXP '\\\\/' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT '/' REGEXP '\\\\Q/\\\\E' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorNumericOperands() {
+		$this->assertQuery( "SELECT 123 REGEXP '^12' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT 'x123' NOT REGEXP 123 AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorUtf8Handling() {
+		$this->assertQuery( "SELECT 'é' REGEXP '^.\$' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT CAST(X'FF' AS CHAR) REGEXP BINARY CAST(X'FF' AS CHAR) AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorMatchesBinaryDataByBytes() {
+		// Non-UTF-8 data is matched like MySQL binary strings: byte by byte and case-sensitively.
+		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES (1, X'61FF62'), (2, NULL)" );
+		$this->assertQuery(
+			"SELECT
+				b REGEXP 'a.b' AS any_byte,
+				b REGEXP '^a.b\$' AS anchored,
+				b REGEXP 'A' AS other_case,
+				b NOT REGEXP 'zzz' AS negated,
+				b REGEXP X'FF62' AS binary_pattern,
+				b REGEXP X'FE' AS other_byte
+			FROM blobs ORDER BY id"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'any_byte'       => '1',
+					'anchored'       => '1',
+					'other_case'     => '0',
+					'negated'        => '1',
+					'binary_pattern' => '1',
+					'other_byte'     => '0',
+				),
+				(object) array(
+					'any_byte'       => null,
+					'anchored'       => null,
+					'other_case'     => null,
+					'negated'        => null,
+					'binary_pattern' => null,
+					'other_byte'     => null,
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	/**
+	 * @dataProvider regexpBinaryLineBreakCases
+	 */
+	public function testRegexpBinaryLineBreaks( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpBinaryLineBreakCases() {
+		// MySQL reads CR and LF as line breaks in binary data, but not the byte 0x85,
+		// which is a part of characters like "ą" (0xC4 0x85).
+		return array(
+			'0x85 in a character' => array( "CAST('xąy' AS BINARY) REGEXP BINARY 'x.*y'", '1' ),
+			'0x85 alone'          => array( "X'788579' REGEXP BINARY 'x.y'", '1' ),
+			'CR'                  => array( "X'780D79' REGEXP BINARY 'x.y'", '0' ),
+			'LF'                  => array( "X'780A79' REGEXP BINARY 'x.y'", '0' ),
+		);
+	}
+
+	public function testRegexpLineBreaksInInvalidUtf8() {
+		// Data that is not valid UTF-8 is matched as binary data.
+		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES (1, X'78C485FF79')" );
+		$this->assertQuery( "SELECT b REGEXP 'x.*y' AS r FROM blobs" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpCachedPatterns() {
+		// A pattern compiles differently for text and binary data, and for each match
+		// type. The second row reuses the compiled patterns of the first one.
+		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES (1, X'61FF62'), (2, X'61FF62')" );
+		$this->assertQuery(
+			"SELECT
+				'aXb' REGEXP 'A.B' AS text_result,
+				b REGEXP 'A.B' AS bytes_result,
+				REGEXP_LIKE('aXb', 'A.B', 'c') AS match_case,
+				REGEXP_LIKE('aXb', 'A.B', 'i') AS ignore_case
+			FROM blobs ORDER BY id"
+		);
+		$row = (object) array(
+			'text_result'  => '1',
+			'bytes_result' => '0',
+			'match_case'   => '0',
+			'ignore_case'  => '1',
+		);
+		$this->assertEquals( array( $row, $row ), $this->last_result );
+	}
+
+	public function testRegexpMorePatternsThanCached() {
+		$this->assertQuery( 'CREATE TABLE patterns (id INT PRIMARY KEY, s TEXT, p TEXT)' );
+		$values = array();
+		for ( $i = 1; $i <= 200; $i++ ) {
+			$values[] = "($i, 'value $i', '^value $i\$')";
+		}
+		$this->assertQuery( 'INSERT INTO patterns VALUES ' . implode( ', ', $values ) );
+		$this->assertQuery( 'SELECT COUNT(*) AS matched FROM patterns WHERE s REGEXP p' );
+		$this->assertSame( '200', $this->last_result[0]->matched );
+		$this->assertQuery( 'SELECT COUNT(*) AS matched FROM patterns a JOIN patterns b ON a.s REGEXP b.p' );
+		$this->assertSame( '200', $this->last_result[0]->matched );
+	}
+
+	public function testRegexpLikeEscapedDelimiter() {
+		$this->assertQuery( "SELECT REGEXP_LIKE('/', '\\\\/') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE('/', '\\\\Q/\\\\E', 'c') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	/**
+	 * @dataProvider regexpUnterminatedQuoteCases
+	 */
+	public function testRegexpUnterminatedQuote( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpUnterminatedQuoteCases() {
+		// Quoted text without "\E" runs to the end of the pattern, so a trailing backslash is literal.
+		return array(
+			'trailing backslash'           => array( "REGEXP_LIKE('a\\\\', '\\\\Qa\\\\')", '1' ),
+			'trailing backslash, no match' => array( "REGEXP_LIKE('a', '\\\\Qa\\\\')", '0' ),
+			'trailing backslash, operator' => array( "'a\\\\' REGEXP '\\\\Qa\\\\'", '1' ),
+			'two trailing backslashes'     => array( "REGEXP_LIKE('a\\\\\\\\', '^\\\\Qa\\\\\\\\')", '1' ),
+			'literal dot'                  => array( "REGEXP_LIKE('a.b', '^\\\\Qa.b')", '1' ),
+			'literal dot, no match'        => array( "REGEXP_LIKE('axb', '^\\\\Qa.b')", '0' ),
+			'empty'                        => array( "REGEXP_LIKE('', '\\\\Q')", '1' ),
+		);
+	}
+
+	public function testRegexpLikeNumericOperands() {
+		$this->assertQuery( 'SELECT REGEXP_LIKE(123, 2) AS r' );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpUnicodeNewlineHandling() {
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'610D62' AS CHAR), 'a.b', 'c') AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'610D62' AS CHAR), '^b', 'cm') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'610D62' AS CHAR), 'a.b', 'cu') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_LIKE(CAST(X'61E280A862' AS CHAR), '^b', 'cm') AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
 	}
 
 	public function testInsertDateNow() {
