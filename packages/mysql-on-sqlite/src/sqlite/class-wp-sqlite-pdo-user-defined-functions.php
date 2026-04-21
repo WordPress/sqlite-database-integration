@@ -65,6 +65,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'isnull'                       => 'isnull',
 		'regexp'                       => 'regexp',
 		'regexp_like'                  => 'regexp_like',
+		'regexp_replace'               => 'regexp_replace',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -98,7 +99,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var array
 	 */
 	private $function_arities = array(
-		'regexp_like' => array( 2, 3 ),
+		'regexp_like'    => array( 2, 3 ),
+		'regexp_replace' => array( 3, 4, 5, 6 ),
 	);
 
 	/** @var string|null Last validated regex pattern. */
@@ -647,6 +649,78 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Method to emulate MySQL REGEXP_REPLACE() function.
+	 *
+	 * Uses MySQL/ICU replacement grammar: "$N" backreferences ("$0" is the
+	 * full match), "${name}" named references, and "\X" emits X (drops the
+	 * backslash).
+	 * Negative `occurrence` is clamped to 1; `pos = char_count + 1` is
+	 * accepted and can match a zero-width pattern at the end of the subject.
+	 *
+	 * @param string|null $expr        Subject string.
+	 * @param string|null $pattern     Regex pattern.
+	 * @param string|null $replacement Replacement string (supports $N backreferences).
+	 * @param int|float|string|null $pos        1-based character position to start matching.
+	 * @param int|float|string|null $occurrence Nth match to replace; 0 = all matches.
+	 * @param string|null $match_type  MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is not a valid regular expression, or pos is out of range.
+	 * @return string|null The replaced string, or NULL if any argument is NULL.
+	 */
+	public function regexp_replace( $expr, $pattern, $replacement, $pos = 1, $occurrence = 0, $match_type = '' ) {
+		if (
+			null === $expr || null === $pattern || null === $replacement
+			|| null === $pos || null === $occurrence || null === $match_type
+		) {
+			return null;
+		}
+		$compiled = $this->regexp_compile( $pattern, $match_type );
+
+		$expr        = (string) $expr;
+		$replacement = (string) $replacement;
+		$byte_start  = $this->regexp_char_to_byte_offset( $expr, (int) $pos, true );
+
+		// 0 means replace all; negative occurrences are clamped to 1 (MySQL behavior).
+		$n = (int) $occurrence;
+		if ( $n < 0 ) {
+			$n = 1;
+		}
+		if ( '' === $expr ) {
+			return $expr;
+		}
+
+		/*
+		 * List the capture group keys, by index and name. preg_match_all()
+		 * reports every group even when nothing matches, while preg_match()
+		 * omits trailing unmatched groups before PHP 7.4.
+		 */
+		preg_match_all( $compiled, '', $groups );
+		$group_keys = array_flip( array_keys( $groups ) );
+
+		// Rebuild the subject while streaming through the matches. With
+		// a positive occurrence, replace only that match.
+		$out   = substr( $expr, 0, $byte_start );
+		$cur   = $byte_start;
+		$index = 0;
+		foreach ( $this->regexp_matches( $compiled, $pattern, $expr, $byte_start ) as $match ) {
+			if ( ++$index < $n ) {
+				continue;
+			}
+			$match_start  = $match[0][1];
+			$match_length = strlen( $match[0][0] );
+			$out         .= substr( $expr, $cur, $match_start - $cur );
+			$out         .= $this->regexp_expand_replacement( $replacement, $match, $group_keys );
+			$cur          = $match_start + $match_length;
+			if ( $n > 0 ) {
+				break;
+			}
+		}
+		$out .= substr( $expr, $cur );
+
+		return $out;
+	}
+
+	/**
 	 * Method to emulate MySQL FIELD() function.
 	 *
 	 * This function gets the list argument and compares the first item to all the others.
@@ -1167,6 +1241,174 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 		}
 		return $escaped;
+	}
+
+	/**
+	 * Convert a 1-based character position into a byte offset into the UTF-8 string.
+	 *
+	 * @param string $s              UTF-8 string.
+	 * @param int    $char_pos       1-based character position.
+	 * @param bool   $allow_past_end Whether to accept char_pos == char_count + 1
+	 *                               (returns strlen($s)). MySQL allows this for
+	 *                               REGEXP_REPLACE and REGEXP_SUBSTR but not for
+	 *                               REGEXP_INSTR.
+	 *
+	 * @throws Exception If $char_pos is out of range.
+	 * @return int Byte offset into $s.
+	 */
+	private function regexp_char_to_byte_offset( $s, $char_pos, $allow_past_end = false ) {
+		if ( $char_pos < 1 ) {
+			throw new Exception( 'Index out of bounds in regular expression search.' );
+		}
+		if ( 1 === $char_pos ) {
+			return 0;
+		}
+		$byte_len = strlen( $s );
+		$chars    = 1;
+		for ( $i = 0; $i < $byte_len; $i++ ) {
+			// Count every byte that isn't a UTF-8 continuation byte.
+			if ( ( ord( $s[ $i ] ) & 0xC0 ) !== 0x80 ) {
+				if ( $chars === $char_pos ) {
+					return $i;
+				}
+				++$chars;
+			}
+		}
+		if ( $allow_past_end && $chars === $char_pos ) {
+			return $byte_len;
+		}
+		throw new Exception( 'Index out of bounds in regular expression search.' );
+	}
+
+	/**
+	 * Expand a MySQL/ICU-style replacement template for one match.
+	 *
+	 * Rules (from ICU, used by MySQL REGEXP_REPLACE):
+	 *   - "\X" for any X: emit X, drop the backslash (also applies to "\\" -> "\").
+	 *   - Trailing lone backslash: dropped.
+	 *   - "$N" (N is one or more digits): emit the Nth capture group. Consumes
+	 *     the longest digit run that forms a valid group index; any trailing
+	 *     digits become literal text.
+	 *   - "${name}": emit the named capture group. Unknown names, and names
+	 *     with characters other than letters and the digits 1-9, are an error
+	 *     (ERROR 3887). So is "${N}", as only named groups use braces.
+	 *   - "$" not followed by a digit or "{": error (ERROR 3887).
+	 *   - "$N" where N is larger than any existing group: error (ERROR 3686).
+	 *
+	 * Unmatched groups expand to an empty string.
+	 *
+	 * @param string $replacement The replacement template.
+	 * @param array  $match_data  The match in PREG_OFFSET_CAPTURE format.
+	 * @param array  $group_keys  The pattern's capture group indexes and names, as array keys.
+	 *
+	 * @throws Exception On an invalid "$..." reference.
+	 * @return string The expanded replacement.
+	 */
+	private function regexp_expand_replacement( $replacement, $match_data, $group_keys ) {
+		$out = '';
+		$len = strlen( $replacement );
+		$i   = 0;
+		while ( $i < $len ) {
+			$c = $replacement[ $i ];
+			if ( '\\' === $c ) {
+				if ( $i + 1 < $len ) {
+					$out .= $replacement[ $i + 1 ];
+					$i   += 2;
+				} else {
+					++$i;
+				}
+				continue;
+			}
+			if ( '$' === $c ) {
+				if ( $i + 1 < $len && '{' === $replacement[ $i + 1 ] ) {
+					/*
+					 * Like ICU, accept only letters and the digits 1-9 in a group name.
+					 * A name must start with a letter, or "${1}" would match group 1's
+					 * numeric key.
+					 */
+					if (
+						! preg_match( '/\G\{([A-Za-z][A-Za-z1-9]*)\}/', $replacement, $reference, 0, $i + 1 )
+						|| ! isset( $group_keys[ $reference[1] ] )
+					) {
+						throw new Exception( 'A capture group has an invalid name.' );
+					}
+					$out .= $match_data[ $reference[1] ][0] ?? '';
+					$i   += 1 + strlen( $reference[0] );
+					continue;
+				}
+				$digits = substr( $replacement, $i + 1, strspn( $replacement, '0123456789', $i + 1 ) );
+				if ( '' === $digits ) {
+					throw new Exception( 'A capture group has an invalid name.' );
+				}
+				// Longest digit prefix that refers to an existing group wins;
+				// remaining digits are emitted literally.
+				$idx      = null;
+				$consumed = 0;
+				for ( $k = strlen( $digits ); $k > 0; --$k ) {
+					$cand = (int) substr( $digits, 0, $k );
+					if ( isset( $group_keys[ $cand ] ) ) {
+						$idx      = $cand;
+						$consumed = $k;
+						break;
+					}
+				}
+				if ( null === $idx ) {
+					throw new Exception( 'Index out of bounds in regular expression search.' );
+				}
+				$out .= $match_data[ $idx ][0] ?? '';
+				$i   += 1 + $consumed;
+				continue;
+			}
+			$out .= $c;
+			++$i;
+		}
+		return $out;
+	}
+
+	/**
+	 * Iterate over matches from an offset without accumulating them in memory.
+	 *
+	 * Uses preg_match's offset argument rather than slicing the subject so
+	 * lookbehind assertions can inspect bytes preceding the search position.
+	 *
+	 * @param string $compiled PCRE-wrapped pattern.
+	 * @param string $pattern  The original MySQL regex pattern, for error messages.
+	 * @param string $subject  Full subject string.
+	 * @param int    $offset   Initial byte offset.
+	 *
+	 * @throws Exception On a preg failure.
+	 * @return Generator Matches in PREG_OFFSET_CAPTURE format.
+	 */
+	private function regexp_matches( $compiled, $pattern, $subject, $offset ) {
+		$len = strlen( $subject );
+		while ( $offset <= $len ) {
+			$r = preg_match(
+				$compiled,
+				$subject,
+				$m,
+				PREG_OFFSET_CAPTURE | PREG_UNMATCHED_AS_NULL,
+				$offset
+			);
+			if ( false === $r ) {
+				$this->regexp_fail( $pattern );
+			}
+			if ( 0 === $r ) {
+				return;
+			}
+			yield $m;
+
+			$match_start  = $m[0][1];
+			$match_length = strlen( $m[0][0] );
+			$offset       = $match_start + $match_length;
+			if ( 0 === $match_length ) {
+				// Advance past a zero-width match to avoid looping on the same offset.
+				// Skip any UTF-8 continuation bytes so the next match starts on a code point boundary.
+				++$offset;
+				while ( $offset < $len && ( ord( $subject[ $offset ] ) & 0xC0 ) === 0x80 ) {
+					++$offset;
+				}
+			}
+		}
 	}
 
 	/**
