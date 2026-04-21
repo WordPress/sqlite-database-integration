@@ -889,7 +889,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			"SHOW TABLE STATUS WHERE SUBSTR(table_name, 11, 1) = '1'"
+			"SHOW TABLE STATUS WHERE SUBSTR(Name, 11, 1) = '1'"
 		);
 		$this->assertCount(
 			1,
@@ -4562,7 +4562,7 @@ QUERY
 					'  `id` int NOT NULL AUTO_INCREMENT,',
 					'  `name` varchar(32) NOT NULL,',
 					'  PRIMARY KEY (`id`, `name`)',
-					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+					') ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$results[0]->{'Create Table'}
