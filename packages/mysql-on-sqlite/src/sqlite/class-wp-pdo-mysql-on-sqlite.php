@@ -3924,9 +3924,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return 'AUTOINCREMENT';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:
 				/*
-				 * There is no "BINARY expr" equivalent in SQLite. We look for the
-				 * keyword from a higher level to respect it in particular cases
-				 * (REGEXP, LIKE, etc.) and then remove it from the output here.
+				 * "BINARY expr" is translated in "translate_simple_expr_body()".
+				 * Returning null here is a safety net for any unhandled context
+				 * where a bare BINARY token would otherwise leak into the output.
 				 */
 				return null;
 			case WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL:
@@ -4272,6 +4272,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				'`excluded`.%s',
 				$this->translate( $node->get_first_child_node( 'simpleIdentifier' ) )
 			);
+		}
+
+		/*
+		 * Translate "BINARY expr" to "expr COLLATE BINARY".
+		 *
+		 * The MySQL BINARY operator enforces byte-by-byte string comparison.
+		 * In SQLite, COLLATE BINARY is equivalent in comparison contexts.
+		 */
+		if ( null !== $token && WP_MySQL_Lexer::BINARY_SYMBOL === $token->id ) {
+			$expr = $node->get_first_child_node( 'simpleExpr' );
+			return sprintf( '%s COLLATE BINARY', $this->translate( $expr ) );
 		}
 
 		/**

@@ -136,6 +136,44 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testBinary(): void {
+		// "BINARY expr" on the left side of comparison
+		$this->assertQuery(
+			'SELECT `a` COLLATE BINARY = `b` AS `BINARY a = b` FROM `t`',
+			'SELECT BINARY a = b FROM t'
+		);
+
+		// "BINARY expr" on the right side of comparison
+		$this->assertQuery(
+			'SELECT `a` = `b` COLLATE BINARY AS `a = BINARY b` FROM `t`',
+			'SELECT a = BINARY b FROM t'
+		);
+
+		// "BINARY literal"
+		$this->assertQuery(
+			"SELECT 'abc' COLLATE BINARY AS `BINARY 'abc'`",
+			"SELECT BINARY 'abc'"
+		);
+
+		// "BINARY expr" in ORDER BY
+		$this->assertQuery(
+			'SELECT `a` FROM `t` ORDER BY `a` COLLATE BINARY',
+			'SELECT a FROM t ORDER BY BINARY a'
+		);
+
+		// "BINARY expr" in GROUP BY
+		$this->assertQuery(
+			'SELECT `a` FROM `t` GROUP BY `a` COLLATE BINARY',
+			'SELECT a FROM t GROUP BY BINARY a'
+		);
+
+		// "BINARY expr" wrapping a parenthesized expression
+		$this->assertQuery(
+			"SELECT ( `a` || `b` ) COLLATE BINARY = 'x' AS `BINARY (a || b) = 'x'` FROM `t`",
+			"SELECT BINARY (a || b) = 'x' FROM t"
+		);
+	}
+
 	public function testInsert(): void {
 		$this->driver->query( 'CREATE TABLE t (c INT, c1 INT, c2 INT)' );
 		$this->driver->query( 'CREATE TABLE t1 (c1 INT, c2 INT)' );
