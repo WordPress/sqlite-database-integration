@@ -2378,6 +2378,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		foreach ( $constraint_queries as $query ) {
 			$this->execute_sqlite_query( $query );
 		}
+
+		// Apply AUTO_INCREMENT = N table option, if any.
+		$this->apply_auto_increment_table_option( $table_is_temporary, $table_name, $node );
 	}
 
 	/**
@@ -2451,8 +2454,18 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 		}
 
-		$this->information_schema_builder->record_alter_table( $node );
-		$this->recreate_table_from_information_schema( $table_is_temporary, $table_name, $column_map );
+		/*
+		 * Skip the expensive table rebuild when the statement only carries
+		 * table options (e.g. ALTER TABLE t AUTO_INCREMENT = N). These don't
+		 * change the schema, so the recreate would be a pointless full copy.
+		 */
+		if ( count( $node->get_descendant_nodes( 'alterListItem' ) ) > 0 ) {
+			$this->information_schema_builder->record_alter_table( $node );
+			$this->recreate_table_from_information_schema( $table_is_temporary, $table_name, $column_map );
+		}
+
+		// Apply AUTO_INCREMENT = N table option, if any.
+		$this->apply_auto_increment_table_option( $table_is_temporary, $table_name, $node );
 
 		// @TODO: Consider using a "fast path" for ALTER TABLE statements that
 		//        consist only of operations that SQLite's ALTER TABLE supports.
@@ -4914,6 +4927,83 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// @TODO: Triggers and views.
+	}
+
+	/**
+	 * Apply the AUTO_INCREMENT table option from a CREATE TABLE or ALTER TABLE
+	 * statement by adjusting the row in SQLite's "sqlite_sequence" table.
+	 *
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param WP_Parser_Node $node               The "createStatement" or "alterStatement" AST node.
+	 */
+	private function apply_auto_increment_table_option(
+		bool $table_is_temporary,
+		string $table_name,
+		WP_Parser_Node $node
+	): void {
+		// Find the last AUTO_INCREMENT = N option (MySQL uses the last one).
+		$value = null;
+		foreach ( $node->get_descendant_nodes( 'createTableOption' ) as $option ) {
+			if ( ! $option->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+				continue;
+			}
+			$number_node = $option->get_first_child_node( 'ulonglong_number' );
+			if ( null === $number_node ) {
+				continue;
+			}
+			$value = (int) $number_node->get_first_descendant_token()->get_value();
+		}
+		if ( null === $value ) {
+			return;
+		}
+
+		// Find the AUTO_INCREMENT column.
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+		$auto_column   = $this->execute_sqlite_query(
+			sprintf(
+				"SELECT column_name FROM %s
+				WHERE table_schema = ?
+				AND table_name = ?
+				AND extra = 'auto_increment'",
+				$this->quote_sqlite_identifier( $columns_table )
+			),
+			array( $this->get_saved_db_name(), $table_name )
+		)->fetchColumn();
+		if ( false === $auto_column ) {
+			return;
+		}
+
+		/*
+		 * Prepare an expression for the sequence value.
+		 *   1. Use N - 1. MySQL stores the next value, SQLite the last one.
+		 *   2. Clamp to MAX(col) like MySQL (we can't go below existing values).
+		 *
+		 * The value is inlined as an integer literal because PDO binds PHP ints
+		 * as TEXT, and SQLite's type affinity ranks TEXT above INTEGER in MAX().
+		 */
+		$schema   = $table_is_temporary ? 'temp' : 'main';
+		$seq_expr = sprintf(
+			'MAX(%d, COALESCE((SELECT MAX(%s) FROM %s), 0))',
+			$value - 1,
+			$this->quote_sqlite_identifier( $auto_column ),
+			$this->quote_sqlite_identifier( $table_name )
+		);
+
+		// Update the value in the "sqlite_sequence" table.
+		$updated = $this->execute_sqlite_query(
+			sprintf( 'UPDATE %s.sqlite_sequence SET seq = %s WHERE name = ?', $schema, $seq_expr ),
+			array( $table_name )
+		)->rowCount();
+
+		// If the sequence value does not exist yet, insert a new row.
+		// SQLite reports matched (not affected) rows, so the 0 check is safe.
+		if ( 0 === $updated ) {
+			$this->execute_sqlite_query(
+				sprintf( 'INSERT INTO %s.sqlite_sequence (name, seq) VALUES (?, %s)', $schema, $seq_expr ),
+				array( $table_name )
+			);
+		}
 	}
 
 	/**
