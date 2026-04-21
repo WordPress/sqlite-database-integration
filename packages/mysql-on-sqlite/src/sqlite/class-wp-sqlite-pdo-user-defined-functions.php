@@ -67,6 +67,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_like'                  => 'regexp_like',
 		'regexp_replace'               => 'regexp_replace',
 		'regexp_substr'                => 'regexp_substr',
+		'regexp_instr'                 => 'regexp_instr',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -103,6 +104,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_like'    => array( 2, 3 ),
 		'regexp_replace' => array( 3, 4, 5, 6 ),
 		'regexp_substr'  => array( 2, 3, 4, 5 ),
+		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
 	);
 
 	/** @var string|null Last validated regex pattern. */
@@ -758,6 +760,65 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return null;
 		}
 		return $match[0][0];
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_INSTR() function.
+	 *
+	 * Values of `occurrence` less than 1 are clamped to 1, matching MySQL.
+	 * `pos` greater than char_count is rejected (unlike SUBSTR and REPLACE).
+	 * Like MySQL, `pos` is not checked for an empty subject, where a match is
+	 * reported at `pos`.
+	 *
+	 * @param string|null $expr          Subject string.
+	 * @param string|null $pattern       Regex pattern.
+	 * @param int|float|string|null $pos           1-based character position to start matching.
+	 * @param int|float|string|null $occurrence    Which match to locate (1-based; <= 0 clamps to 1).
+	 * @param int|float|string|null $return_option 0 = start of match (default), 1 = one past end.
+	 * @param string|null $match_type    MySQL match_type flags.
+	 *
+	 * @throws Exception If the pattern is invalid, pos is out of range, or
+	 *                   return_option is not 0 or 1.
+	 * @return int|null 1-based character position, 0 if no match, NULL on NULL input.
+	 */
+	public function regexp_instr( $expr, $pattern, $pos = 1, $occurrence = 1, $return_option = 0, $match_type = '' ) {
+		if (
+			null === $expr || null === $pattern || null === $pos
+			|| null === $occurrence || null === $return_option || null === $match_type
+		) {
+			return null;
+		}
+		$ret = (int) $return_option;
+		if ( 0 !== $ret && 1 !== $ret ) {
+			throw new Exception( 'Incorrect arguments to regexp_instr: return_option must be 1 or 0.' );
+		}
+		$compiled = $this->regexp_compile( $pattern, $match_type );
+
+		$expr     = (string) $expr;
+		$position = (int) $pos;
+
+		// MySQL clamps occurrence <= 0 to 1.
+		$n = max( 1, (int) $occurrence );
+
+		$byte_start = '' === $expr ? 0 : $this->regexp_char_to_byte_offset( $expr, $position );
+		$region     = substr( $expr, $byte_start );
+
+		$match = $this->regexp_find_nth_match( $compiled, $pattern, $region, 0, $n );
+		if ( null === $match ) {
+			return 0;
+		}
+		if ( '' === $expr ) {
+			return $position;
+		}
+
+		list( $matched_text, $matched_byte_offset ) = $match[0];
+		$target_byte                                = $byte_start + $matched_byte_offset;
+		if ( 1 === $ret ) {
+			$target_byte += strlen( $matched_text );
+		}
+
+		// Every byte except a UTF-8 continuation byte starts a character.
+		return $target_byte - preg_match_all( '/[\x80-\xBF]/', substr( $expr, 0, $target_byte ) ) + 1;
 	}
 
 	/**
