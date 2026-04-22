@@ -281,13 +281,58 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	}
 
 	public function testCastAsBinary() {
-		$this->assertQuery(
-			// Use a confusing alias to make sure it replaces only the correct token
-			"SELECT CAST('ABC' AS BINARY) as `binary`;"
-		);
+		// Use a confusing alias to make sure it replaces only the correct token
+		$this->assertQuery( "SELECT CAST('ABC' AS BINARY) as `binary`" );
 		$results = $this->engine->get_query_results();
 		$this->assertCount( 1, $results );
 		$this->assertEquals( 'ABC', $results[0]->binary );
+	}
+
+	public function testBinaryOperator() {
+		// Use a NOCASE column so plain "=" is case-insensitive. This makes the
+		// BINARY operator's effect (forcing byte-by-byte comparison) visible.
+		$this->assertQuery( 'CREATE TABLE t (name TEXT COLLATE NOCASE NOT NULL)' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('abc'), ('ABC')" );
+
+		// Sanity: with NOCASE, plain "=" matches both rows.
+		$result = $this->assertQuery( "SELECT name FROM t WHERE name = 'abc' ORDER BY name" );
+		$this->assertCount( 2, $result );
+
+		// "= BINARY 'x'" forces byte-by-byte equality.
+		$result = $this->assertQuery( "SELECT name FROM t WHERE name = BINARY 'abc'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'abc', $result[0]->name );
+
+		// "BINARY x = 'X'" is symmetric.
+		$result = $this->assertQuery( "SELECT name FROM t WHERE BINARY name = 'ABC'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'ABC', $result[0]->name );
+
+		// "ORDER BY BINARY" sorts by byte value ('ABC' before 'abc').
+		$result = $this->assertQuery( 'SELECT name FROM t ORDER BY BINARY name' );
+		$this->assertEquals( 'ABC', $result[0]->name );
+		$this->assertEquals( 'abc', $result[1]->name );
+
+		// CAST(expr AS BINARY) = expr
+		$result = $this->assertQuery( "SELECT CAST('abc' AS BINARY) = 'abc' AS r" );
+		$this->assertEquals( 1, $result[0]->r );
+
+		// CONVERT(expr, BINARY) = expr
+		$result = $this->assertQuery( "SELECT CONVERT('abc', BINARY) = 'abc' AS r" );
+		$this->assertEquals( 1, $result[0]->r );
+
+		// The "information_schema.TABLES.TABLE_NAME" column uses COLLATE NOCASE.
+		// Let's verify that the BINARY override works for this scenario as well.
+		$this->assertQuery( 'CREATE TABLE CaseSensitive (id INT)' );
+
+		$result = $this->assertQuery( "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = 'casesensitive'" );
+		$this->assertCount( 1, $result );
+
+		$result = $this->assertQuery( "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = BINARY 'casesensitive'" );
+		$this->assertCount( 0, $result );
+
+		$result = $this->assertQuery( "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = BINARY 'CaseSensitive'" );
+		$this->assertCount( 1, $result );
 	}
 
 	public function testSelectFromDual() {
