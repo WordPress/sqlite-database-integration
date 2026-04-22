@@ -4696,11 +4696,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *
 		 * For example, for "SELECT 'abc'", the resulting column name is "abc"
 		 * in MySQL, but would be "'abc'" in SQLite if an alias was not used.
+		 *
+		 * Descend the AST until we reach a textStringLiteral. If at any level
+		 * we don't have a single child node, bail out; it's not a bare literal.
 		 */
-		$text_string_literal    = $node->get_first_descendant_node( 'textStringLiteral' );
-		$is_text_string_literal = $text_string_literal && $item === $this->translate( $text_string_literal );
-		if ( $is_text_string_literal ) {
-			$alias = $text_string_literal->get_first_child_token()->get_value();
+		$current = $node;
+		while ( 'textStringLiteral' !== $current->rule_name ) {
+			$children = $current->get_children();
+			if ( 1 !== count( $children ) || ! $children[0] instanceof WP_Parser_Node ) {
+				break;
+			}
+			$current = $children[0];
+		}
+		if ( 'textStringLiteral' === $current->rule_name ) {
+			$alias = $current->get_first_child_token()->get_value();
 
 			// When the literal value contains a NULL byte, MySQL truncates the
 			// resulting identifier at the position of the first one of them.

@@ -120,12 +120,12 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		// CONVERT(expr USING charset) → expr
 		$this->assertQuery(
-			"SELECT 'Customer' AS `Customer`",
+			"SELECT 'Customer' AS `CONVERT('Customer' USING utf8mb4)`",
 			"SELECT CONVERT('Customer' USING utf8mb4)"
 		);
 
 		$this->assertQuery(
-			"SELECT 'test' AS `test`",
+			"SELECT 'test' AS `CONVERT('test' USING utf8)`",
 			"SELECT CONVERT('test' USING utf8)"
 		);
 
