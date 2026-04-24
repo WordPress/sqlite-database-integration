@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      6.9
 Requires PHP:      7.2
-Stable tag:        3.0.0-rc.1
+Stable tag:        3.0.0-rc.2
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -43,6 +43,12 @@ the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.0.0-rc.2 =
+
+* Support MySQL `BINARY` operator ([#369](https://github.com/WordPress/sqlite-database-integration/pull/369))
+* Add support for `AUTO_INCREMENT` value management ([#367](https://github.com/WordPress/sqlite-database-integration/pull/367))
+* Add support for `DELETE` with `LIMIT` and `ORDER BY` ([#365](https://github.com/WordPress/sqlite-database-integration/pull/365))
 
 = 3.0.0-rc.1 =
 
