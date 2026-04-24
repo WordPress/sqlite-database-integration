@@ -2842,6 +2842,11 @@ class WP_MySQL_Lexer {
 		while ( true ) {
 			$at += strcspn( $this->sql, $quote, $at );
 
+			// Unclosed string - unexpected EOF.
+			if ( ( $this->sql[ $at ] ?? null ) !== $quote ) {
+				return null; // Invalid input.
+			}
+
 			/*
 			 * By default, quotes can be escaped with a "\".
 			 * When NO_BACKSLASH_ESCAPES SQL mode is active, the "\" treated as
@@ -2852,16 +2857,11 @@ class WP_MySQL_Lexer {
 			 * "\\\" is an escaped backslash and an escape sequence, and so on.
 			 */
 			if ( ! $no_backslash_escapes ) {
-				for ($i = 0; '\\' === $this->sql[ $at - $i - 1 ]; $i += 1);
+				for ( $i = 0; ( $at - $i - 1 ) >= 0 && '\\' === $this->sql[ $at - $i - 1 ]; $i += 1 );
 				if ( 1 === $i % 2 ) {
 					$at += 1;
 					continue;
 				}
-			}
-
-			// Unclosed string - unexpected EOF.
-			if ( ( $this->sql[ $at ] ?? null ) !== $quote ) {
-				return null; // Invalid input.
 			}
 
 			// Check if the quote is doubled.
