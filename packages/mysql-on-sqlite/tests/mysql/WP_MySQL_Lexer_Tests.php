@@ -325,6 +325,48 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * Test that a chunk boundary splitting a quoted string with a trailing
+	 * backslash does not cause an out-of-bounds string access.
+	 *
+	 * This simulates streaming SQL processing where a buffer boundary falls
+	 * inside a string literal right after a backslash escape character.
+	 */
+	public function test_chunk_boundary_inside_escaped_string(): void {
+		set_error_handler(
+			function ( $severity, $message, $file, $line ) {
+				throw new \ErrorException( $message, 0, $severity, $file, $line );
+			},
+			E_WARNING | E_NOTICE
+		);
+
+		try {
+			// Build a SQL string where a backslash falls at the chunk boundary.
+			// The string content before the boundary is padded to place the
+			// backslash at exactly position $chunk_size - 1.
+			$chunk_size = 8192;
+
+			// "SELECT '" = 8 bytes, so we need chunk_size - 8 - 1 bytes of
+			// padding before the trailing backslash to place '\' at the last
+			// byte of the chunk.
+			$padding = str_repeat( 'A', $chunk_size - 8 - 1 );
+			$sql     = "SELECT '" . $padding . "\\";
+
+			// The chunk is exactly $chunk_size bytes. The last byte is '\'.
+			// The lexer should handle this as an unclosed string without OOB.
+			$this->assertSame( $chunk_size, strlen( $sql ) );
+
+			$lexer = new WP_MySQL_Lexer( $sql );
+			while ( $lexer->next_token() ) {
+				// Consume all tokens.
+			}
+		} finally {
+			restore_error_handler();
+		}
+
+		$this->assertNull( $lexer->get_token() );
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {
