@@ -350,7 +350,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			// padding before the trailing backslash to place '\' at the last
 			// byte of the chunk.
 			$padding = str_repeat( 'A', $chunk_size - 8 - 1 );
-			$sql     = "SELECT '" . $padding . "\\";
+			$sql     = "SELECT '" . $padding . '\\';
 
 			// The chunk is exactly $chunk_size bytes. The last byte is '\'.
 			// The lexer should handle this as an unclosed string without OOB.
