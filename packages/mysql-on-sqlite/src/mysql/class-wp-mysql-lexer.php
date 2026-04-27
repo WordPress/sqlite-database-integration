@@ -2825,8 +2825,6 @@ class WP_MySQL_Lexer {
 	 * Rules:
 	 *   1. Quotes can be escaped by doubling them ('', "", ``).
 	 *   2. Backslashes escape the next character, unless NO_BACKSLASH_ESCAPES is set.
-	 *
-	 * @param string $quote The quote character - ', ", or `.
 	 */
 	private function read_quoted_text(): ?int {
 		$quote                     = $this->sql[ $this->bytes_already_read ];
