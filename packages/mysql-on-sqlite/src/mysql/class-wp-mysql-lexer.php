@@ -2112,6 +2112,13 @@ class WP_MySQL_Lexer {
 	private $sql;
 
 	/**
+	 * Byte length of the SQL payload.
+	 *
+	 * @var int
+	 */
+	private $sql_length;
+
+	/**
 	 * The version of the MySQL server that the SQL payload is intended for.
 	 *
 	 * This is used to determine which tokens are valid for the given MySQL
@@ -2189,6 +2196,7 @@ class WP_MySQL_Lexer {
 		array $sql_modes = array()
 	) {
 		$this->sql           = $sql;
+		$this->sql_length    = strlen( $sql );
 		$this->mysql_version = $mysql_version;
 
 		foreach ( $sql_modes as $sql_mode ) {
@@ -2284,10 +2292,46 @@ class WP_MySQL_Lexer {
 	 * @return WP_MySQL_Token[] An array of token objects representing the remaining tokens.
 	 */
 	public function remaining_tokens(): array {
-		$tokens = array();
-		while ( true === $this->next_token() ) {
-			$token    = $this->get_token();
-			$tokens[] = $token;
+		$tokens                            = array();
+		$no_backslash_escapes_sql_mode_set = $this->is_sql_mode_active(
+			self::SQL_MODE_NO_BACKSLASH_ESCAPES
+		);
+
+		while ( true ) {
+			if (
+				self::EOF === $this->token_type
+				|| ( null === $this->token_type && $this->bytes_already_read > 0 )
+			) {
+				$this->token_type = null;
+				break;
+			}
+
+			do {
+				$this->token_starts_at = $this->bytes_already_read;
+				$this->token_type      = $this->read_next_token();
+			} while (
+				self::WHITESPACE === $this->token_type
+				|| self::COMMENT === $this->token_type
+				|| self::MYSQL_COMMENT_START === $this->token_type
+				|| self::MYSQL_COMMENT_END === $this->token_type
+			);
+
+			if ( null === $this->token_type ) {
+				break;
+			}
+
+			$tokens[] = new WP_MySQL_Token(
+				$this->token_type,
+				$this->token_starts_at,
+				$this->bytes_already_read - $this->token_starts_at,
+				$this->sql,
+				$no_backslash_escapes_sql_mode_set
+			);
+
+			if ( self::EOF === $this->token_type ) {
+				$this->token_type = null;
+				break;
+			}
 		}
 		return $tokens;
 	}
@@ -2420,7 +2464,7 @@ class WP_MySQL_Lexer {
 		} elseif ( '-' === $byte ) {
 			if (
 				'-' === $next_byte
-				&& $this->bytes_already_read + 2 < strlen( $this->sql )
+				&& $this->bytes_already_read + 2 < $this->sql_length
 				&& strspn( $this->sql[ $this->bytes_already_read + 2 ], self::WHITESPACE_MASK ) > 0
 			) {
 				$type = $this->read_line_comment();
@@ -2685,7 +2729,7 @@ class WP_MySQL_Lexer {
 			$this->bytes_already_read += strspn( $this->sql, self::HEX_DIGIT_MASK, $this->bytes_already_read );
 			if ( $is_quoted ) {
 				if (
-					$this->bytes_already_read >= strlen( $this->sql )
+					$this->bytes_already_read >= $this->sql_length
 					|| "'" !== $this->sql[ $this->bytes_already_read ]
 				) {
 					return null; // Invalid input.
@@ -2708,7 +2752,7 @@ class WP_MySQL_Lexer {
 			$this->bytes_already_read += strspn( $this->sql, '01', $this->bytes_already_read );
 			if ( $is_quoted ) {
 				if (
-					$this->bytes_already_read >= strlen( $this->sql )
+					$this->bytes_already_read >= $this->sql_length
 					|| "'" !== $this->sql[ $this->bytes_already_read ]
 				) {
 					return null; // Invalid input.
@@ -2740,7 +2784,7 @@ class WP_MySQL_Lexer {
 					strspn( $next_byte, self::DIGIT_MASK ) > 0
 					|| (
 						( '+' === $next_byte || '-' === $next_byte )
-						&& $this->bytes_already_read + 2 < strlen( $this->sql )
+						&& $this->bytes_already_read + 2 < $this->sql_length
 						&& strspn( $this->sql[ $this->bytes_already_read + 2 ], self::DIGIT_MASK ) > 0
 					)
 				);
@@ -2838,12 +2882,11 @@ class WP_MySQL_Lexer {
 		// in which case the escape sequence is consumed and the loop continues.
 		$at = $this->bytes_already_read;
 		while ( true ) {
-			$at += strcspn( $this->sql, $quote, $at );
-
-			// Unclosed string - unexpected EOF.
-			if ( ( $this->sql[ $at ] ?? null ) !== $quote ) {
+			$quote_at = strpos( $this->sql, $quote, $at );
+			if ( false === $quote_at ) {
 				return null; // Invalid input.
 			}
+			$at = $quote_at;
 
 			/*
 			 * By default, quotes can be escaped with a "\".
@@ -2853,9 +2896,17 @@ class WP_MySQL_Lexer {
 			 * The quote is escaped only when the number of preceding backslashes
 			 * is odd - "\" is an escape sequence, "\\" is an escaped backslash,
 			 * "\\\" is an escaped backslash and an escape sequence, and so on.
+			 *
+			 * The `($at - $i - 1) >= 0` guard prevents PHP's negative-string-
+			 * offset wraparound (PHP 7.1+) when the closing-quote candidate
+			 * sits at the very start of the input. The `?? null` covers
+			 * positive out-of-range indexes belt-and-suspenders.
 			 */
 			if ( ! $no_backslash_escapes ) {
-				for ( $i = 0; ( $at - $i - 1 ) >= 0 && '\\' === $this->sql[ $at - $i - 1 ]; $i += 1 );
+				$i = 0;
+				while ( ( $at - $i - 1 ) >= 0 && '\\' === ( $this->sql[ $at - $i - 1 ] ?? null ) ) {
+					$i += 1;
+				}
 				if ( 1 === $i % 2 ) {
 					$at += 1;
 					continue;
@@ -2920,17 +2971,11 @@ class WP_MySQL_Lexer {
 	}
 
 	private function read_comment_content(): void {
-		while ( true ) {
-			$this->bytes_already_read += strcspn( $this->sql, '*', $this->bytes_already_read );
-			$this->bytes_already_read += 1; // Consume the '*'.
-			$byte                      = $this->sql[ $this->bytes_already_read ] ?? null;
-			if ( null === $byte ) {
-				break;
-			}
-			if ( '/' === $byte ) {
-				$this->bytes_already_read += 1; // Consume the '/'.
-				break;
-			}
+		$comment_end = strpos( $this->sql, '*/', $this->bytes_already_read );
+		if ( false === $comment_end ) {
+			$this->bytes_already_read = $this->sql_length;
+		} else {
+			$this->bytes_already_read = $comment_end + 2;
 		}
 	}
 
