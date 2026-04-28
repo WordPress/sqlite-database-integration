@@ -5354,7 +5354,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$position          = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier        = $this->quote_sqlite_identifier( $select_list[ $position ] );
 				$value             = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
-				$is_auto_increment = 'auto_increment' === $column['EXTRA'];
+				$is_auto_increment = str_contains( $column['EXTRA'], 'auto_increment' );
 
 				/*
 				 * In MySQL, inserting 0 into an AUTO_INCREMENT column increments
@@ -6229,7 +6229,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if (
 				'INTEGER' === $type
 				&& 'PRI' === $column['COLUMN_KEY']
-				&& 'auto_increment' !== $column['EXTRA']
+				&& ! str_contains( $column['EXTRA'], 'auto_increment' )
 				&& count( $grouped_constraints['PRIMARY'] ) === 1
 			) {
 				$type = 'INT';
@@ -6246,7 +6246,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if ( 'NO' === $column['IS_NULLABLE'] ) {
 				$query .= ' NOT NULL';
 			}
-			if ( 'auto_increment' === $column['EXTRA'] ) {
+			if ( str_contains( $column['EXTRA'], 'auto_increment' ) ) {
 				$has_autoincrement = true;
 				$query            .= ' PRIMARY KEY AUTOINCREMENT';
 			}
@@ -6557,7 +6557,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				// Nullable "timestamp" columns dump NULL explicitly.
 				$sql .= ' NULL';
 			}
-			if ( 'auto_increment' === $column['EXTRA'] ) {
+			if ( str_contains( $column['EXTRA'], 'auto_increment' ) ) {
 				$has_auto_increment = true;
 				$sql               .= ' AUTO_INCREMENT';
 			}
