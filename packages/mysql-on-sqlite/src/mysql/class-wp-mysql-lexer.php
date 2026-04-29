@@ -2404,7 +2404,27 @@ class WP_MySQL_Lexer {
 		$byte      = $this->sql[ $this->bytes_already_read ] ?? null;
 		$next_byte = $this->sql[ $this->bytes_already_read + 1 ] ?? null;
 
-		if ( "'" === $byte || '"' === $byte || '`' === $byte ) {
+		// Fast path for keywords and identifiers.
+		// These are the most common token types in MySQL payloads.
+		if (
+			(
+				( $byte >= 'a' && $byte <= 'z' )
+				|| ( $byte >= 'A' && $byte <= 'Z' )
+				|| $byte > "\x7F"
+			)
+			&& "'" !== $next_byte
+		) {
+			$started_at = $this->bytes_already_read;
+			$type       = $this->read_identifier();
+			if ( self::IDENTIFIER === $type ) {
+				// When preceded by a dot, it is always an identifier.
+				if ( $started_at > 0 && '.' === $this->sql[ $started_at - 1 ] ) {
+					$type = self::IDENTIFIER;
+				} else {
+					$type = $this->determine_identifier_or_keyword_type( $this->get_current_token_bytes() );
+				}
+			}
+		} elseif ( "'" === $byte || '"' === $byte || '`' === $byte ) {
 			$type = $this->read_quoted_text();
 		} elseif ( null !== $byte && strspn( $byte, self::DIGIT_MASK ) > 0 ) {
 			$type = $this->read_number();

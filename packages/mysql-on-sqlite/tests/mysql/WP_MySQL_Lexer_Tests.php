@@ -367,6 +367,37 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertNull( $lexer->get_token() );
 	}
 
+	/**
+	 * A charset-introducer-like name used as a qualified member (after a dot)
+	 * must lex as an identifier. A real charset introducer only appears before
+	 * a string literal, never as the member of a qualified reference.
+	 *
+	 * @dataProvider data_underscore_charset_after_dot
+	 */
+	public function test_underscore_charset_name_after_dot_is_identifier( string $sql, int $token_index, int $expected_id ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens();
+		$this->assertSame(
+			WP_MySQL_Lexer::get_token_name( $expected_id ),
+			$tokens[ $token_index ]->get_name(),
+			$sql
+		);
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:int,2:int}>
+	 */
+	public function data_underscore_charset_after_dot(): array {
+		return array(
+			// `t . _utf8` - the member name must be an identifier, not a charset.
+			'charset name after dot is identifier'  => array( 't._utf8', 2, WP_MySQL_Lexer::IDENTIFIER ),
+			'other charset name after dot'          => array( 'a._binary', 2, WP_MySQL_Lexer::IDENTIFIER ),
+			// A genuine charset introducer (before a string) stays a charset.
+			'charset introducer before string'      => array( "_utf8'x'", 0, WP_MySQL_Lexer::UNDERSCORE_CHARSET ),
+			// A non-charset underscore name after a dot stays an identifier.
+			'non-charset underscore name after dot' => array( 't._foo', 2, WP_MySQL_Lexer::IDENTIFIER ),
+		);
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {
