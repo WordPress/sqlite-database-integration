@@ -2235,6 +2235,9 @@ class WP_MySQL_Lexer {
 			return false;
 		}
 
+		// Skip leading whitespace inline for optimal performance.
+		$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
+
 		do {
 			$this->token_starts_at = $this->bytes_already_read;
 			$this->token_type      = $this->read_next_token();
@@ -2305,6 +2308,9 @@ class WP_MySQL_Lexer {
 				$this->token_type = null;
 				break;
 			}
+
+			// Skip leading whitespace inline for optimal performance.
+			$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
 
 			do {
 				$this->token_starts_at = $this->bytes_already_read;
