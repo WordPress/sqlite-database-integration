@@ -2404,6 +2404,22 @@ class WP_MySQL_Lexer {
 		$byte      = $this->sql[ $this->bytes_already_read ] ?? null;
 		$next_byte = $this->sql[ $this->bytes_already_read + 1 ] ?? null;
 
+		// A map for a single-byte symbol fast path.
+		static $single_byte_ops = array(
+			'(' => self::OPEN_PAR_SYMBOL,
+			')' => self::CLOSE_PAR_SYMBOL,
+			',' => self::COMMA_SYMBOL,
+			';' => self::SEMICOLON_SYMBOL,
+			'+' => self::PLUS_OPERATOR,
+			'~' => self::BITWISE_NOT_OPERATOR,
+			'%' => self::MOD_OPERATOR,
+			'^' => self::BITWISE_XOR_OPERATOR,
+			'?' => self::PARAM_MARKER,
+			'{' => self::OPEN_CURLY_SYMBOL,
+			'}' => self::CLOSE_CURLY_SYMBOL,
+			'=' => self::EQUAL_OPERATOR,
+		);
+
 		// Fast path for keywords and identifiers.
 		// These are the most common token types in MySQL payloads.
 		if (
@@ -2424,6 +2440,10 @@ class WP_MySQL_Lexer {
 					$type = $this->determine_identifier_or_keyword_type( $this->get_current_token_bytes() );
 				}
 			}
+		} elseif ( null !== $byte && isset( $single_byte_ops[ $byte ] ) ) {
+			// Fast path for single-byte symbols.
+			$this->bytes_already_read += 1;
+			$type                      = $single_byte_ops[ $byte ];
 		} elseif ( "'" === $byte || '"' === $byte || '`' === $byte ) {
 			$type = $this->read_quoted_text();
 		} elseif ( null !== $byte && strspn( $byte, self::DIGIT_MASK ) > 0 ) {
@@ -2435,9 +2455,6 @@ class WP_MySQL_Lexer {
 				$this->bytes_already_read += 1;
 				$type                      = self::DOT_SYMBOL;
 			}
-		} elseif ( '=' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::EQUAL_OPERATOR;
 		} elseif ( ':' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the ':'.
 			if ( '=' === $next_byte ) {
@@ -2484,9 +2501,6 @@ class WP_MySQL_Lexer {
 			} else {
 				$type = self::LOGICAL_NOT_OPERATOR;
 			}
-		} elseif ( '+' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::PLUS_OPERATOR;
 		} elseif ( '-' === $byte ) {
 			if (
 				'-' === $next_byte
@@ -2536,9 +2550,6 @@ class WP_MySQL_Lexer {
 				$this->bytes_already_read += 1;
 				$type                      = self::DIV_OPERATOR;
 			}
-		} elseif ( '%' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::MOD_OPERATOR;
 		} elseif ( '&' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the '&'.
 			if ( '&' === $next_byte ) {
@@ -2547,9 +2558,6 @@ class WP_MySQL_Lexer {
 			} else {
 				$type = self::BITWISE_AND_OPERATOR;
 			}
-		} elseif ( '^' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::BITWISE_XOR_OPERATOR;
 		} elseif ( '|' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the '|'.
 			if ( '|' === $next_byte ) {
@@ -2560,27 +2568,6 @@ class WP_MySQL_Lexer {
 			} else {
 				$type = self::BITWISE_OR_OPERATOR;
 			}
-		} elseif ( '~' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::BITWISE_NOT_OPERATOR;
-		} elseif ( ',' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::COMMA_SYMBOL;
-		} elseif ( ';' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::SEMICOLON_SYMBOL;
-		} elseif ( '(' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::OPEN_PAR_SYMBOL;
-		} elseif ( ')' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::CLOSE_PAR_SYMBOL;
-		} elseif ( '{' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::OPEN_CURLY_SYMBOL;
-		} elseif ( '}' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::CLOSE_CURLY_SYMBOL;
 		} elseif ( '@' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the '@'.
 
@@ -2604,9 +2591,6 @@ class WP_MySQL_Lexer {
 					$type = self::AT_SIGN_SYMBOL;
 				}
 			}
-		} elseif ( '?' === $byte ) {
-			$this->bytes_already_read += 1;
-			$type                      = self::PARAM_MARKER;
 		} elseif ( '\\' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the '\'.
 			if ( 'N' === $next_byte ) {
