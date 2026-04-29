@@ -1587,6 +1587,18 @@ impl WpMySqlNativeParser {
         })
     }
 
+    pub fn reset_tokens(&mut self, tokens: &mut Zval) -> PhpResult<()> {
+        let (token_source, token_ids) = export_tokens(tokens)?;
+
+        self.token_source = Arc::new(token_source);
+        self.token_ids = token_ids;
+        self.position = 0;
+        self.current_ast = None;
+        self.current_php_ast = None;
+
+        Ok(())
+    }
+
     pub fn parse(&mut self) -> PhpResult<Zval> {
         stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || {
             let ast = self.parse_native_ast()?;
