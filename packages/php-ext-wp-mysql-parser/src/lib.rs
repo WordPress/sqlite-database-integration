@@ -1298,27 +1298,27 @@ unsafe extern "C" fn ast_get_gc(
     std::ptr::null_mut()
 }
 
-/// Patch `WP_MySQL_Native_Ast`'s class entry to use a `get_gc` handler
-/// that walks the Rust-side `node_cache`. Called once during MINIT
-/// after ext-php-rs has registered the class.
-fn install_ast_gc_handler() -> PhpResult<()> {
-    let class = ClassEntry::try_find("WP_MySQL_Native_Ast")
-        .ok_or_else(|| php_error("WP_MySQL_Native_Ast class not registered"))?;
-    unsafe {
-        let class_mut = (class as *const zend_class_entry) as *mut zend_class_entry;
-        let default = (*class_mut).default_object_handlers;
-        if default.is_null() {
-            return Err(php_error(
-                "WP_MySQL_Native_Ast has no default object handlers",
-            ));
+/// Patch a freshly-constructed `WP_MySQL_Native_Ast` instance so its
+/// `zend_object.handlers->get_gc` walks the Rust-side cache.
+///
+/// PHP 8.3 introduced `zend_class_entry.default_object_handlers` which
+/// would let us patch once per class on MINIT, but PHP 8.2 has no such
+/// field; the only reliable place to install a custom `get_gc` across
+/// both is per-instance, right after the object is allocated. The
+/// patched handlers struct itself is computed lazily on first use and
+/// shared across all subsequent ASTs.
+unsafe fn install_gc_handler_for(obj: *mut zend_object) {
+    if WP_MYSQL_NATIVE_AST_HANDLERS.is_none() {
+        let original = (*obj).handlers;
+        if original.is_null() {
+            return;
         }
-        let mut patched = std::ptr::read(default);
+        let mut patched = std::ptr::read(original);
         patched.get_gc = Some(ast_get_gc);
         WP_MYSQL_NATIVE_AST_HANDLERS = Some(patched);
-        let stored = WP_MYSQL_NATIVE_AST_HANDLERS.as_ref().unwrap();
-        (*class_mut).default_object_handlers = stored as *const _;
     }
-    Ok(())
+    let stored = WP_MYSQL_NATIVE_AST_HANDLERS.as_ref().unwrap();
+    (*obj).handlers = stored as *const _;
 }
 
 /// Build a Zval that references an existing PHP object with refcount bumped.
@@ -1935,6 +1935,14 @@ impl WpMySqlNativeParser {
             }
             .into_zval(false)
             .map_err(php_error)?;
+            // Install our custom `get_gc` so PHP's cycle collector can
+            // see the cached wrappers held by the Rust-side HashMap.
+            unsafe {
+                let obj_ref = native_ast_zval
+                    .object()
+                    .ok_or_else(|| php_error("Native AST zval is not an object"))?;
+                install_gc_handler_for((obj_ref as *const ZendObject) as *mut zend_object);
+            }
             let native_ast = native_ast(&native_ast_zval)?;
             native_ast.arena.create_php_ast(&native_ast_zval)
         })
@@ -2219,13 +2227,5 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
         ))
         .function(wrap_function!(wp_sqlite_mysql_native_ast_get_start))
         .function(wrap_function!(wp_sqlite_mysql_native_ast_get_length))
-        .startup_function(module_startup)
         .info_function(php_module_info)
-}
-
-extern "C" fn module_startup(_type: i32, _module_number: i32) -> i32 {
-    if install_ast_gc_handler().is_err() {
-        return 0;
-    }
-    1
 }
