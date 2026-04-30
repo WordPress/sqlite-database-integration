@@ -10,7 +10,7 @@ use ext_php_rs::boxed::ZBox;
 
 use ext_php_rs::convert::{FromZval, IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
-use ext_php_rs::ffi::{zend_class_entry, zend_object, zend_object_handlers, zval, HashTable};
+use ext_php_rs::ffi::{zend_class_entry, zend_object, zval};
 use ext_php_rs::flags::DataType;
 use ext_php_rs::prelude::*;
 use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, ZendObject, Zval};
@@ -38,16 +38,6 @@ extern "C" {
     );
 
 }
-
-/// `Z_TYPE_INFO` for an OBJECT zval that carries a refcount.
-///
-/// PHP packs `(type | flags << 8)` into a single 32-bit word. For
-/// `IS_OBJECT` (8) plus `IS_TYPE_REFCOUNTED` (1) and `IS_TYPE_COLLECTABLE`
-/// (2) shifted into the flags byte, the value is `0x10 | 0x208 == 0x208`
-/// — but the canonical value PHP uses is `0x0a08`. We only ever read this
-/// from PHP's own headers indirectly, so the constant lives here so the
-/// gc-trace path doesn't depend on ext-php-rs exposing it.
-const PHP_IS_OBJECT_EX: u32 = 8 | (((1 << 0) | (1 << 1)) << 8);
 
 #[derive(Clone)]
 struct BinaryString(Vec<u8>);
@@ -1068,13 +1058,6 @@ pub struct WpMySqlNativeAst {
     /// bumped, skipping the allocation and four `zend_update_property`
     /// calls of the construction path.
     node_cache: RefCell<HashMap<usize, ZBox<ZendObject>>>,
-    /// Scratch buffer the custom `get_gc` handler refills on each
-    /// invocation with zvals pointing at every cached wrapper. We can't
-    /// use PHP's `zend_get_gc_buffer_*` API because PHP 8.2 builds on
-    /// Ubuntu's `shivammathur/setup-php` don't export those symbols, so
-    /// we own the buffer ourselves and hand its raw pointer to PHP via
-    /// the `(table, n)` out-params of the gc handler.
-    gc_trace: RefCell<Vec<zval>>,
 }
 
 impl NativeAstArena {
@@ -1238,95 +1221,6 @@ impl NativeAstArena {
 fn native_ast(native_ast: &Zval) -> PhpResult<&WpMySqlNativeAst> {
     <&WpMySqlNativeAst as FromZval>::from_zval(native_ast)
         .ok_or_else(|| php_error("Missing native AST handle"))
-}
-
-/// Tracks whether the GC handler has been installed on `WP_MySQL_Native_Ast`'s
-/// shared handlers struct. We patch in place rather than swapping the
-/// handlers pointer because ext-php-rs's `FromZval` for registered
-/// classes verifies identity via the handlers pointer; replacing it
-/// would make every native_ast lookup fail.
-static mut WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED: bool = false;
-
-/// Custom `get_gc` handler that exposes `WpMySqlNativeAst.node_cache` to
-/// PHP's cycle collector.
-///
-/// The cache forms `AST -> wrappers -> $native_ast property -> AST`,
-/// which PHP can't traverse on its own because the `node_cache` lives in
-/// a Rust `HashMap<usize, ZBox<ZendObject>>` opaque to the engine. By
-/// reporting each cached wrapper here, PHP's mark-and-sweep can complete
-/// the cycle and reclaim both the AST and its wrappers.
-///
-/// # Safety
-///
-/// Called by PHP's GC with a non-null `object` pointer guaranteed to
-/// belong to the registered class. `table` and `n` are non-null
-/// out-params owned by the caller. The zvals we push into the gc buffer
-/// are read-only handles for traversal — they don't transfer ownership
-/// or change refcounts, so we deliberately do *not* call `set_object`
-/// (which addrefs); we set the union directly.
-unsafe extern "C" fn ast_get_gc(
-    object: *mut zend_object,
-    table: *mut *mut zval,
-    n: *mut std::os::raw::c_int,
-) -> *mut HashTable {
-    *table = std::ptr::null_mut();
-    *n = 0;
-
-    let Some(ast) = ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
-        .and_then(|z| z.obj.as_ref())
-    else {
-        return std::ptr::null_mut();
-    };
-
-    let Ok(cache) = ast.node_cache.try_borrow() else {
-        return std::ptr::null_mut();
-    };
-    let Ok(mut trace) = ast.gc_trace.try_borrow_mut() else {
-        return std::ptr::null_mut();
-    };
-
-    trace.clear();
-    trace.reserve(cache.len());
-    for boxed in cache.values() {
-        // Build a zval pointing at the cached wrapper without bumping
-        // refcount — the GC scan just enumerates outgoing references;
-        // mutating refcounts here would un-balance the collector's
-        // accounting. Using `Zval::new` + manual field writes (rather
-        // than `Zval::set_object` which would addref) keeps the trace
-        // entries refcount-neutral.
-        let mut zv: zval = std::mem::zeroed();
-        zv.value.obj = (&**boxed) as *const ZendObject as *mut _;
-        zv.u1.type_info = PHP_IS_OBJECT_EX;
-        trace.push(zv);
-    }
-
-    *table = trace.as_mut_ptr();
-    *n = trace.len() as std::os::raw::c_int;
-    std::ptr::null_mut()
-}
-
-/// Patch a freshly-constructed `WP_MySQL_Native_Ast` instance so its
-/// shared `zend_object_handlers->get_gc` walks the Rust-side cache.
-///
-/// PHP 8.3 introduced `zend_class_entry.default_object_handlers` which
-/// would let us configure handlers once per class on MINIT, but PHP 8.2
-/// has no such field. Within ext-php-rs the per-class handlers struct
-/// is heap-allocated (via Box::leak), shared across all instances of
-/// the class, and identified by its pointer. Swapping the pointer to a
-/// copy would break ext-php-rs's `FromZval` identity check, so we
-/// instead set `get_gc` in place on the original struct. We only need
-/// to do it once per process; subsequent calls are cheap.
-unsafe fn install_gc_handler_for(obj: *mut zend_object) {
-    if WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED {
-        return;
-    }
-    let handlers = (*obj).handlers;
-    if handlers.is_null() {
-        return;
-    }
-    let handlers_mut = handlers as *mut zend_object_handlers;
-    (*handlers_mut).get_gc = Some(ast_get_gc);
-    WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED = true;
 }
 
 /// Build a Zval that references an existing PHP object with refcount bumped.
@@ -1940,19 +1834,10 @@ impl WpMySqlNativeParser {
             let native_ast_zval = WpMySqlNativeAst {
                 arena,
                 node_cache: RefCell::new(HashMap::new()),
-                gc_trace: RefCell::new(Vec::new()),
             }
             .into_zval(false)
             .map_err(php_error)?;
             let native_ast = native_ast(&native_ast_zval)?;
-            // Install our custom `get_gc` so PHP's cycle collector can
-            // see the cached wrappers held by the Rust-side HashMap.
-            unsafe {
-                let obj_ref = native_ast_zval
-                    .object()
-                    .ok_or_else(|| php_error("Native AST zval is not an object"))?;
-                install_gc_handler_for((obj_ref as *const ZendObject) as *mut zend_object);
-            }
             native_ast.arena.create_php_ast(&native_ast_zval)
         })
     }
