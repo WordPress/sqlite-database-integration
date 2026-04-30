@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use ext_php_rs::convert::{FromZval, IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
@@ -915,12 +915,6 @@ struct Rule {
     is_fragment: bool,
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-struct GrammarCacheKey {
-    low: u64,
-    high: u64,
-}
-
 impl Grammar {
     fn rule(&self, rule_id: i64) -> Option<&Rule> {
         usize::try_from(rule_id)
@@ -930,10 +924,11 @@ impl Grammar {
     }
 }
 
-// Cache only Rust-owned grammar data, keyed by exported grammar content. Zend
-// object handles are request-local and can be reused, so they must not identify
-// cached entries.
-static GRAMMAR_CACHE: OnceLock<Mutex<HashMap<GrammarCacheKey, Arc<Grammar>>>> = OnceLock::new();
+#[php_class]
+#[php(name = "WP_MySQL_Native_Grammar")]
+pub struct WpMySqlNativeGrammar {
+    grammar: Arc<Grammar>,
+}
 
 enum ParserTokenSource {
     Php(Vec<Zval>),
@@ -1685,22 +1680,16 @@ impl WpMySqlNativeParser {
 }
 
 fn export_grammar(grammar_zval: &mut Zval) -> PhpResult<Arc<Grammar>> {
+    if let Some(cached) = cached_native_grammar(grammar_zval)? {
+        return Ok(cached);
+    }
+
     let exported = php_function("wp_sqlite_mysql_native_export_grammar")?
         .try_call(vec![&*grammar_zval as &dyn IntoZvalDyn])
         .map_err(php_error)?;
     let array = exported
         .array()
         .ok_or_else(|| php_error("Exported grammar must be an array"))?;
-
-    let cache_key = grammar_cache_key(array)?;
-    if let Some(cached) = GRAMMAR_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| php_error("Grammar cache lock poisoned"))?
-        .get(&cache_key)
-    {
-        return Ok(Arc::clone(cached));
-    }
 
     let highest_terminal_id = array
         .get("highest_terminal_id")
@@ -1751,130 +1740,37 @@ fn export_grammar(grammar_zval: &mut Zval) -> PhpResult<Arc<Grammar>> {
         select_statement_rule_id,
     });
 
-    GRAMMAR_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| php_error("Grammar cache lock poisoned"))?
-        .insert(cache_key, Arc::clone(&grammar));
+    cache_native_grammar(grammar_zval, Arc::clone(&grammar))?;
 
     Ok(grammar)
 }
 
-fn grammar_cache_key(array: &ZendHashTable) -> PhpResult<GrammarCacheKey> {
-    let mut hasher = GrammarCacheHasher::new();
-    hash_grammar_array(&mut hasher, array)?;
-    Ok(hasher.finish())
+fn cached_native_grammar(grammar: &Zval) -> PhpResult<Option<Arc<Grammar>>> {
+    let object = grammar
+        .object()
+        .ok_or_else(|| php_error("Parser grammar must be an object"))?;
+    let properties = object.get_properties().map_err(php_error)?;
+    let Some(native_grammar) = properties.get("native_grammar") else {
+        return Ok(None);
+    };
+    let Some(native_grammar) = <&WpMySqlNativeGrammar as FromZval>::from_zval(native_grammar)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(Arc::clone(&native_grammar.grammar)))
 }
 
-struct GrammarCacheHasher {
-    low: u64,
-    high: u64,
-}
-
-impl GrammarCacheHasher {
-    fn new() -> Self {
-        Self {
-            low: 0xcbf29ce484222325,
-            high: 0x6c62272e07bb0142,
-        }
-    }
-
-    fn write_byte(&mut self, byte: u8) {
-        self.low ^= u64::from(byte);
-        self.low = self.low.wrapping_mul(0x100000001b3);
-        self.high ^= u64::from(byte).rotate_left(5);
-        self.high = self.high.wrapping_mul(0x100000001b3 ^ 0x9e3779b97f4a7c15);
-    }
-
-    fn write_bytes(&mut self, bytes: &[u8]) {
-        self.write_usize(bytes.len());
-        for byte in bytes {
-            self.write_byte(*byte);
-        }
-    }
-
-    fn write_i64(&mut self, value: i64) {
-        for byte in value.to_le_bytes() {
-            self.write_byte(byte);
-        }
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        for byte in value.to_le_bytes() {
-            self.write_byte(byte);
-        }
-    }
-
-    fn write_usize(&mut self, value: usize) {
-        self.write_u64(value as u64);
-    }
-
-    fn finish(self) -> GrammarCacheKey {
-        GrammarCacheKey {
-            low: self.low,
-            high: self.high,
-        }
-    }
-}
-
-fn hash_grammar_array(hasher: &mut GrammarCacheHasher, array: &ZendHashTable) -> PhpResult<()> {
-    hasher.write_usize(array.len());
-    for (key, value) in array {
-        hash_grammar_array_key(hasher, key);
-        hash_grammar_zval(hasher, value)?;
-    }
-    Ok(())
-}
-
-fn hash_grammar_zval(hasher: &mut GrammarCacheHasher, zval: &Zval) -> PhpResult<()> {
-    let zval = zval.dereference();
-    match zval.get_type() {
-        DataType::Null => hasher.write_byte(0),
-        DataType::False => hasher.write_byte(1),
-        DataType::True => hasher.write_byte(2),
-        DataType::Long => {
-            hasher.write_byte(3);
-            hasher.write_i64(
-                zval.long()
-                    .ok_or_else(|| php_error("Grammar integer value is invalid"))?,
-            );
-        }
-        DataType::String => {
-            hasher.write_byte(4);
-            hasher.write_bytes(
-                zval.str()
-                    .ok_or_else(|| php_error("Grammar string value is invalid"))?
-                    .as_bytes(),
-            );
-        }
-        DataType::Array => {
-            hasher.write_byte(5);
-            let array = zval
-                .array()
-                .ok_or_else(|| php_error("Grammar array value is invalid"))?;
-            hash_grammar_array(hasher, array)?;
-        }
-        _ => return Err(php_error("Unsupported grammar cache value")),
-    }
-
-    Ok(())
-}
-
-fn hash_grammar_array_key(hasher: &mut GrammarCacheHasher, key: ArrayKey<'_>) {
-    match key {
-        ArrayKey::Long(value) => {
-            hasher.write_byte(0);
-            hasher.write_i64(value);
-        }
-        ArrayKey::String(value) => {
-            hasher.write_byte(1);
-            hasher.write_bytes(value.as_bytes());
-        }
-        ArrayKey::Str(value) => {
-            hasher.write_byte(1);
-            hasher.write_bytes(value.as_bytes());
-        }
-    }
+fn cache_native_grammar(grammar_zval: &mut Zval, grammar: Arc<Grammar>) -> PhpResult<()> {
+    let object = grammar_zval
+        .object_mut()
+        .ok_or_else(|| php_error("Parser grammar must be an object"))?;
+    let native_grammar = WpMySqlNativeGrammar { grammar }
+        .into_zval(false)
+        .map_err(php_error)?;
+    object
+        .set_property("native_grammar", native_grammar)
+        .map_err(php_error)
 }
 
 fn export_tokens(tokens: &mut Zval) -> PhpResult<(ParserTokenSource, Vec<i64>)> {
@@ -2028,6 +1924,7 @@ extern "C" fn php_module_info(_module: *mut ModuleEntry) {
 #[php_module]
 pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
     module
+        .class::<WpMySqlNativeGrammar>()
         .class::<WpMySqlNativeAst>()
         .class::<WpMySqlNativeTokenStream>()
         .class::<WpMySqlNativeLexer>()
