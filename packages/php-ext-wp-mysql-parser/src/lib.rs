@@ -1943,14 +1943,13 @@ impl WpMySqlNativeParser {
             .into_zval(false)
             .map_err(php_error)?;
             let native_ast = native_ast(&native_ast_zval)?;
-            // Install our custom `get_gc` so PHP's cycle collector can
-            // see the cached wrappers held by the Rust-side HashMap.
-            unsafe {
-                let obj_ref = native_ast_zval
-                    .object()
-                    .ok_or_else(|| php_error("Native AST zval is not an object"))?;
-                install_gc_handler_for((obj_ref as *const ZendObject) as *mut zend_object);
-            }
+            // GC handler install temporarily disabled to localize a CI failure.
+            // unsafe {
+            //     let obj_ref = native_ast_zval
+            //         .object()
+            //         .ok_or_else(|| php_error("Native AST zval is not an object"))?;
+            //     install_gc_handler_for((obj_ref as *const ZendObject) as *mut zend_object);
+            // }
             native_ast.arena.create_php_ast(&native_ast_zval)
         })
     }
