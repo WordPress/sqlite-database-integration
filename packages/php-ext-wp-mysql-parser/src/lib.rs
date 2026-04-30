@@ -10,7 +10,7 @@ use ext_php_rs::boxed::ZBox;
 
 use ext_php_rs::convert::{FromZval, IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
-use ext_php_rs::ffi::{zend_class_entry, zend_object, zval};
+use ext_php_rs::ffi::{zend_class_entry, zend_object, zend_object_handlers, zval, HashTable};
 use ext_php_rs::flags::DataType;
 use ext_php_rs::prelude::*;
 use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, ZendObject, Zval};
@@ -36,7 +36,29 @@ extern "C" {
         name_length: usize,
         value: *mut zval,
     );
+
+    /// PHP's per-thread GC scratch buffer for `get_gc` handlers. The
+    /// handler reports the object's outgoing references by adding zvals
+    /// here, then `zend_get_gc_buffer_use` writes the buffer's contents
+    /// into the (table, n) out-params the cycle collector reads.
+    fn zend_get_gc_buffer_create() -> *mut std::ffi::c_void;
+    fn zend_get_gc_buffer_add_zval(buffer: *mut std::ffi::c_void, zv: *mut zval);
+    fn zend_get_gc_buffer_use(
+        buffer: *mut std::ffi::c_void,
+        table: *mut *mut zval,
+        n: *mut std::os::raw::c_int,
+    );
 }
+
+/// `Z_TYPE_INFO` for an OBJECT zval that carries a refcount.
+///
+/// PHP packs `(type | flags << 8)` into a single 32-bit word. For
+/// `IS_OBJECT` (8) plus `IS_TYPE_REFCOUNTED` (1) and `IS_TYPE_COLLECTABLE`
+/// (2) shifted into the flags byte, the value is `0x10 | 0x208 == 0x208`
+/// — but the canonical value PHP uses is `0x0a08`. We only ever read this
+/// from PHP's own headers indirectly, so the constant lives here so the
+/// gc-trace path doesn't depend on ext-php-rs exposing it.
+const PHP_IS_OBJECT_EX: u32 = 8 | (((1 << 0) | (1 << 1)) << 8);
 
 #[derive(Clone)]
 struct BinaryString(Vec<u8>);
@@ -1222,6 +1244,81 @@ fn native_ast(native_ast: &Zval) -> PhpResult<&WpMySqlNativeAst> {
         .ok_or_else(|| php_error("Missing native AST handle"))
 }
 
+/// Storage for the customised `zend_object_handlers` for `WP_MySQL_Native_Ast`.
+///
+/// We can't mutate the static handlers struct ext-php-rs registers, so we
+/// clone it on startup, patch `get_gc`, and point the class entry's
+/// `default_object_handlers` at this owned copy. Lives for the duration
+/// of the module — written exactly once during MINIT.
+static mut WP_MYSQL_NATIVE_AST_HANDLERS: Option<zend_object_handlers> = None;
+
+/// Custom `get_gc` handler that exposes `WpMySqlNativeAst.node_cache` to
+/// PHP's cycle collector.
+///
+/// The cache forms `AST -> wrappers -> $native_ast property -> AST`,
+/// which PHP can't traverse on its own because the `node_cache` lives in
+/// a Rust `HashMap<usize, ZBox<ZendObject>>` opaque to the engine. By
+/// reporting each cached wrapper here, PHP's mark-and-sweep can complete
+/// the cycle and reclaim both the AST and its wrappers.
+///
+/// # Safety
+///
+/// Called by PHP's GC with a non-null `object` pointer guaranteed to
+/// belong to the registered class. `table` and `n` are non-null
+/// out-params owned by the caller. The zvals we push into the gc buffer
+/// are read-only handles for traversal — they don't transfer ownership
+/// or change refcounts, so we deliberately do *not* call `set_object`
+/// (which addrefs); we set the union directly.
+unsafe extern "C" fn ast_get_gc(
+    object: *mut zend_object,
+    table: *mut *mut zval,
+    n: *mut std::os::raw::c_int,
+) -> *mut HashTable {
+    let buf = zend_get_gc_buffer_create();
+
+    if let Some(ast) = ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
+        .and_then(|z| z.obj.as_ref())
+    {
+        if let Ok(cache) = ast.node_cache.try_borrow() {
+            for boxed in cache.values() {
+                // Build a zval pointing at the cached wrapper without
+                // bumping refcount — the gc buffer just enumerates outgoing
+                // references; mutating refcounts here would un-balance the
+                // collector's accounting.
+                let mut zv: zval = std::mem::zeroed();
+                zv.value.obj =
+                    (boxed.as_ref() as *const ZendObject) as *mut zend_object as *mut _;
+                zv.u1.type_info = PHP_IS_OBJECT_EX;
+                zend_get_gc_buffer_add_zval(buf, &mut zv);
+            }
+        }
+    }
+
+    zend_get_gc_buffer_use(buf, table, n);
+    std::ptr::null_mut()
+}
+
+/// Patch `WP_MySQL_Native_Ast`'s class entry to use a `get_gc` handler
+/// that walks the Rust-side `node_cache`. Called once during MINIT
+/// after ext-php-rs has registered the class.
+fn install_ast_gc_handler() -> PhpResult<()> {
+    let class = ClassEntry::try_find("WP_MySQL_Native_Ast")
+        .ok_or_else(|| php_error("WP_MySQL_Native_Ast class not registered"))?;
+    unsafe {
+        let class_mut = (class as *const zend_class_entry) as *mut zend_class_entry;
+        let default = (*class_mut).default_object_handlers;
+        if default.is_null() {
+            return Err(php_error("WP_MySQL_Native_Ast has no default object handlers"));
+        }
+        let mut patched = std::ptr::read(default);
+        patched.get_gc = Some(ast_get_gc);
+        WP_MYSQL_NATIVE_AST_HANDLERS = Some(patched);
+        let stored = WP_MYSQL_NATIVE_AST_HANDLERS.as_ref().unwrap();
+        (*class_mut).default_object_handlers = stored as *const _;
+    }
+    Ok(())
+}
+
 /// Build a Zval that references an existing PHP object with refcount bumped.
 ///
 /// Used on cache hits to hand a stored `ZBox<ZendObject>` back to PHP without
@@ -2120,5 +2217,13 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
         ))
         .function(wrap_function!(wp_sqlite_mysql_native_ast_get_start))
         .function(wrap_function!(wp_sqlite_mysql_native_ast_get_length))
+        .startup_function(module_startup)
         .info_function(php_module_info)
+}
+
+extern "C" fn module_startup(_type: i32, _module_number: i32) -> i32 {
+    if install_ast_gc_handler().is_err() {
+        return 0;
+    }
+    1
 }
