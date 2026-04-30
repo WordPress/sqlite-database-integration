@@ -1479,9 +1479,7 @@ pub fn wp_sqlite_mysql_native_ast_get_children(
         .children
         .iter()
         .copied()
-        .map(|child| {
-            ast.cached_child_zval(native_ast_zval, child, &classes)
-        })
+        .map(|child| ast.cached_child_zval(native_ast_zval, child, &classes))
         .collect()
 }
 
@@ -1499,9 +1497,7 @@ pub fn wp_sqlite_mysql_native_ast_get_child_nodes(
         .iter()
         .copied()
         .filter(|child| ast.arena.child_node_matches(*child, rule_name.as_deref()))
-        .map(|child| {
-            ast.cached_child_zval(native_ast_zval, child, &classes)
-        })
+        .map(|child| ast.cached_child_zval(native_ast_zval, child, &classes))
         .collect()
 }
 
@@ -1519,9 +1515,7 @@ pub fn wp_sqlite_mysql_native_ast_get_child_tokens(
         .iter()
         .copied()
         .filter(|child| ast.arena.child_token_matches(*child, token_id))
-        .map(|child| {
-            ast.cached_child_zval(native_ast_zval, child, &classes)
-        })
+        .map(|child| ast.cached_child_zval(native_ast_zval, child, &classes))
         .collect()
 }
 
@@ -1538,9 +1532,7 @@ pub fn wp_sqlite_mysql_native_ast_get_descendants(
         .arena
         .descendant_stack(native_ast_node_index(node_index)?)?;
     while let Some(child) = stack.pop() {
-        descendants.push(
-            ast.cached_child_zval(native_ast_zval, child, &classes)?,
-        );
+        descendants.push(ast.cached_child_zval(native_ast_zval, child, &classes)?);
         if let NativeAstChild::Node(index) = child {
             for child in ast.arena.node(index)?.children.iter().rev() {
                 stack.push(*child);
@@ -1564,11 +1556,7 @@ pub fn wp_sqlite_mysql_native_ast_get_descendant_nodes(
         .descendant_stack(native_ast_node_index(node_index)?)?;
     while let Some(child) = stack.pop() {
         if ast.arena.child_node_matches(child, rule_name.as_deref()) {
-            descendants.push(ast.cached_child_zval(
-                native_ast_zval,
-                child,
-                &classes,
-            )?);
+            descendants.push(ast.cached_child_zval(native_ast_zval, child, &classes)?);
         }
         if let NativeAstChild::Node(index) = child {
             for child in ast.arena.node(index)?.children.iter().rev() {
@@ -1593,11 +1581,7 @@ pub fn wp_sqlite_mysql_native_ast_get_descendant_tokens(
         .descendant_stack(native_ast_node_index(node_index)?)?;
     while let Some(child) = stack.pop() {
         if ast.arena.child_token_matches(child, token_id) {
-            descendants.push(ast.cached_child_zval(
-                native_ast_zval,
-                child,
-                &classes,
-            )?);
+            descendants.push(ast.cached_child_zval(native_ast_zval, child, &classes)?);
         }
         if let NativeAstChild::Node(index) = child {
             for child in ast.arena.node(index)?.children.iter().rev() {
