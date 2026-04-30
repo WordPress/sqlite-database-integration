@@ -11,15 +11,15 @@
  * children are never materialized into PHP arrays unless something actually
  * asks for them.
  *
- * Read methods eagerly call `materialize_native_children()` — once the
- * children have been copied into PHP, `was_mutated()` returns true and the
- * call falls through to the parent implementation. The `was_mutated` flag is
- * NOT a runtime check for whether the native extension is loaded — if this
- * class is in use, the extension is loaded by definition. It tracks whether
- * THIS specific node has had its children pulled into the inherited
- * `$children` array (which happens on first read or first mutation via
- * `append_child()` / `merge_fragment()`). From that point on, the node is a
- * plain PHP-backed `WP_Parser_Node`.
+ * The hedge in those methods (`if ( $this->was_mutated() )`) is NOT a runtime
+ * check for whether the native extension is loaded — if this class is in use,
+ * the extension is loaded by definition. It checks whether THIS specific node
+ * has been mutated from PHP. A node loses its native backing the first time
+ * `append_child()` or `merge_fragment()` is called on it: those overrides
+ * invoke `materialize_native_children()`, which copies the native children
+ * into the inherited `$children` array and drops the native AST reference.
+ * From that point on, the node is a plain PHP-backed `WP_Parser_Node` and the
+ * read methods fall through to the parent implementation.
  *
  * Mutation from PHP is real and intentional — query rewriters in
  * `WP_PDO_MySQL_On_SQLite` (e.g. building synthetic `count(*)` expressions)
