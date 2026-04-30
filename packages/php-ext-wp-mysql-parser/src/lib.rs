@@ -1286,8 +1286,7 @@ unsafe extern "C" fn ast_get_gc(
                 // references; mutating refcounts here would un-balance the
                 // collector's accounting.
                 let mut zv: zval = std::mem::zeroed();
-                zv.value.obj =
-                    (boxed.as_ref() as *const ZendObject) as *mut zend_object as *mut _;
+                zv.value.obj = (boxed.as_ref() as *const ZendObject) as *mut zend_object as *mut _;
                 zv.u1.type_info = PHP_IS_OBJECT_EX;
                 zend_get_gc_buffer_add_zval(buf, &mut zv);
             }
@@ -1308,7 +1307,9 @@ fn install_ast_gc_handler() -> PhpResult<()> {
         let class_mut = (class as *const zend_class_entry) as *mut zend_class_entry;
         let default = (*class_mut).default_object_handlers;
         if default.is_null() {
-            return Err(php_error("WP_MySQL_Native_Ast has no default object handlers"));
+            return Err(php_error(
+                "WP_MySQL_Native_Ast has no default object handlers",
+            ));
         }
         let mut patched = std::ptr::read(default);
         patched.get_gc = Some(ast_get_gc);
