@@ -3,29 +3,11 @@
 /**
  * Parser node backed by a native (Rust) AST.
  *
- * Instances of this class are constructed exclusively by the native MySQL
- * parser extension: when the extension parses a query, it produces a tree of
- * `WP_MySQL_Native_Parser_Node` objects whose `$native_ast` and
- * `$native_node_index` fields point into a Rust-owned AST buffer. Read methods
- * (`get_start`, `has_child`, `get_children`, ...) delegate to the extension so
- * children are never materialized into PHP arrays unless something actually
- * asks for them.
- *
- * The hedge in those methods (`if ( $this->was_mutated() )`) is NOT a runtime
- * check for whether the native extension is loaded — if this class is in use,
- * the extension is loaded by definition. It checks whether THIS specific node
- * has been mutated from PHP. A node loses its native backing the first time
- * `append_child()` or `merge_fragment()` is called on it: those overrides
- * invoke `materialize_native_children()`, which copies the native children
- * into the inherited `$children` array and drops the native AST reference.
- * From that point on, the node is a plain PHP-backed `WP_Parser_Node` and the
- * read methods fall through to the parent implementation.
- *
- * Mutation from PHP is real and intentional — query rewriters in
- * `WP_PDO_MySQL_On_SQLite` (e.g. building synthetic `count(*)` expressions)
- * call `append_child()` on parsed nodes. The lazy-then-materialize design
- * keeps the fast path (read-only traversal) cheap while still allowing
- * mutation when callers need it.
+ * Constructed by the native MySQL parser extension. Read methods delegate
+ * into the Rust-owned AST so children are never copied into PHP unless a
+ * caller actually walks the tree. On the first mutation (append_child or
+ * merge_fragment), the node materializes its children into the inherited
+ * `$children` array and behaves like a plain WP_Parser_Node from then on.
  */
 class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 	private $native_ast        = null;
@@ -39,24 +21,13 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		$this->native_node_index = $native_node_index;
 	}
 
-	/**
-	 * Materializes any native children before mutating, then appends.
-	 *
-	 * Once a node is mutated, its native AST is no longer authoritative, so we
-	 * copy the native children into PHP storage first and drop the native
-	 * reference. Subsequent reads use the parent's PHP implementation.
-	 */
+	/** @inheritDoc */
 	public function append_child( $node ) {
 		$this->materialize_native_children();
 		parent::append_child( $node );
 	}
 
-	/**
-	 * Materializes any native children on both nodes before merging.
-	 *
-	 * @see self::append_child() for why materialization is required before
-	 * mutation.
-	 */
+	/** @inheritDoc */
 	public function merge_fragment( $node ) {
 		$this->materialize_native_children();
 		if ( $node instanceof self ) {
@@ -193,30 +164,10 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 		return wp_sqlite_mysql_native_ast_get_length( $this->native_ast, $this->native_node_index );
 	}
 
-	/**
-	 * Indicates whether this node has been mutated from PHP.
-	 *
-	 * Returns false for freshly-parsed nodes whose children still live in the
-	 * Rust-owned AST buffer; returns true once `append_child()` or
-	 * `merge_fragment()` has copied the children into the inherited
-	 * `$children` array and dropped the native AST reference.
-	 *
-	 * This is a per-instance state check, not a check for whether the native
-	 * extension is loaded.
-	 */
 	private function was_mutated(): bool {
 		return $this->was_mutated;
 	}
 
-	/**
-	 * Copies native children into the inherited PHP $children array and drops
-	 * the native AST reference for this node.
-	 *
-	 * Called before any mutation (append_child, merge_fragment) so the node's
-	 * authoritative state lives in PHP from that point on. After this runs,
-	 * was_mutated() returns true and read methods fall through to the parent
-	 * WP_Parser_Node implementation.
-	 */
 	private function materialize_native_children(): void {
 		if ( $this->was_mutated ) {
 			return;
