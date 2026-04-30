@@ -1253,9 +1253,7 @@ impl WpMySqlNativeAst {
         classes: &PhpClasses,
     ) -> PhpResult<Zval> {
         match child {
-            NativeAstChild::Node(index) => {
-                self.cached_node_zval(native_ast_zval, index, classes)
-            }
+            NativeAstChild::Node(index) => self.cached_node_zval(native_ast_zval, index, classes),
             NativeAstChild::Token(index) => self
                 .arena
                 .token_source
