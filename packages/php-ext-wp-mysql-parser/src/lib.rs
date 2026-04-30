@@ -1265,41 +1265,16 @@ static mut WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED: bool = false;
 /// or change refcounts, so we deliberately do *not* call `set_object`
 /// (which addrefs); we set the union directly.
 unsafe extern "C" fn ast_get_gc(
-    object: *mut zend_object,
+    _object: *mut zend_object,
     table: *mut *mut zval,
     n: *mut std::os::raw::c_int,
 ) -> *mut HashTable {
+    // DEBUG: report no outgoing references at all. If this prevents the
+    // PHPUnit segfault, the bug lives in the trace-zval construction
+    // below; if the segfault persists, the bug is in installing the
+    // handler itself (e.g., handlers struct in read-only memory).
     *table = std::ptr::null_mut();
     *n = 0;
-
-    let Some(ast) = ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
-        .and_then(|z| z.obj.as_ref())
-    else {
-        return std::ptr::null_mut();
-    };
-
-    let Ok(cache) = ast.node_cache.try_borrow() else {
-        return std::ptr::null_mut();
-    };
-    let Ok(mut trace) = ast.gc_trace.try_borrow_mut() else {
-        return std::ptr::null_mut();
-    };
-
-    trace.clear();
-    trace.reserve(cache.len());
-    for boxed in cache.values() {
-        // Build a zval pointing at the cached wrapper without bumping
-        // refcount — the GC scan just enumerates outgoing references;
-        // mutating refcounts here would un-balance the collector's
-        // accounting.
-        let mut zv: zval = std::mem::zeroed();
-        zv.value.obj = (boxed.as_ref() as *const ZendObject) as *mut zend_object as *mut _;
-        zv.u1.type_info = PHP_IS_OBJECT_EX;
-        trace.push(zv);
-    }
-
-    *table = trace.as_mut_ptr();
-    *n = trace.len() as std::os::raw::c_int;
     std::ptr::null_mut()
 }
 
