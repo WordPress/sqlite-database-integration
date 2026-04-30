@@ -38,7 +38,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function has_child(): bool {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::has_child();
 		}
 		return wp_sqlite_mysql_native_ast_has_child( $this->native_ast, $this->native_node_index );
@@ -46,7 +46,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function has_child_node( ?string $rule_name = null ): bool {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::has_child_node( $rule_name );
 		}
 		return wp_sqlite_mysql_native_ast_has_child_node( $this->native_ast, $this->native_node_index, $rule_name );
@@ -54,7 +54,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function has_child_token( ?int $token_id = null ): bool {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::has_child_token( $token_id );
 		}
 		return wp_sqlite_mysql_native_ast_has_child_token( $this->native_ast, $this->native_node_index, $token_id );
@@ -62,7 +62,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_first_child() {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_first_child();
 		}
 		return wp_sqlite_mysql_native_ast_get_first_child( $this->native_ast, $this->native_node_index );
@@ -70,7 +70,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_first_child_node( ?string $rule_name = null ): ?WP_Parser_Node {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_first_child_node( $rule_name );
 		}
 		return wp_sqlite_mysql_native_ast_get_first_child_node( $this->native_ast, $this->native_node_index, $rule_name );
@@ -78,7 +78,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_first_child_token( ?int $token_id = null ): ?WP_Parser_Token {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_first_child_token( $token_id );
 		}
 		return wp_sqlite_mysql_native_ast_get_first_child_token( $this->native_ast, $this->native_node_index, $token_id );
@@ -86,7 +86,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_first_descendant_node( ?string $rule_name = null ): ?WP_Parser_Node {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_first_descendant_node( $rule_name );
 		}
 		return wp_sqlite_mysql_native_ast_get_first_descendant_node( $this->native_ast, $this->native_node_index, $rule_name );
@@ -94,7 +94,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_first_descendant_token( ?int $token_id = null ): ?WP_Parser_Token {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_first_descendant_token( $token_id );
 		}
 		return wp_sqlite_mysql_native_ast_get_first_descendant_token( $this->native_ast, $this->native_node_index, $token_id );
@@ -102,7 +102,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_children(): array {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_children();
 		}
 		return wp_sqlite_mysql_native_ast_get_children( $this->native_ast, $this->native_node_index );
@@ -110,7 +110,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_child_nodes( ?string $rule_name = null ): array {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_child_nodes( $rule_name );
 		}
 		return wp_sqlite_mysql_native_ast_get_child_nodes( $this->native_ast, $this->native_node_index, $rule_name );
@@ -118,7 +118,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_child_tokens( ?int $token_id = null ): array {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_child_tokens( $token_id );
 		}
 		return wp_sqlite_mysql_native_ast_get_child_tokens( $this->native_ast, $this->native_node_index, $token_id );
@@ -126,7 +126,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_descendants(): array {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_descendants();
 		}
 		return wp_sqlite_mysql_native_ast_get_descendants( $this->native_ast, $this->native_node_index );
@@ -134,7 +134,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_descendant_nodes( ?string $rule_name = null ): array {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_descendant_nodes( $rule_name );
 		}
 		return wp_sqlite_mysql_native_ast_get_descendant_nodes( $this->native_ast, $this->native_node_index, $rule_name );
@@ -142,7 +142,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_descendant_tokens( ?int $token_id = null ): array {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_descendant_tokens( $token_id );
 		}
 		return wp_sqlite_mysql_native_ast_get_descendant_tokens( $this->native_ast, $this->native_node_index, $token_id );
@@ -150,7 +150,7 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_start(): int {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_start();
 		}
 		return wp_sqlite_mysql_native_ast_get_start( $this->native_ast, $this->native_node_index );
@@ -158,14 +158,10 @@ class WP_MySQL_Native_Parser_Node extends WP_Parser_Node {
 
 	/** @inheritDoc */
 	public function get_length(): int {
-		if ( $this->was_mutated() ) {
+		if ( $this->was_mutated ) {
 			return parent::get_length();
 		}
 		return wp_sqlite_mysql_native_ast_get_length( $this->native_ast, $this->native_node_index );
-	}
-
-	private function was_mutated(): bool {
-		return $this->was_mutated;
 	}
 
 	private function materialize_native_children(): void {
