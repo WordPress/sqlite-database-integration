@@ -1240,13 +1240,12 @@ fn native_ast(native_ast: &Zval) -> PhpResult<&WpMySqlNativeAst> {
         .ok_or_else(|| php_error("Missing native AST handle"))
 }
 
-/// Storage for the customised `zend_object_handlers` for `WP_MySQL_Native_Ast`.
-///
-/// We can't mutate the static handlers struct ext-php-rs registers, so we
-/// clone it on startup, patch `get_gc`, and point the class entry's
-/// `default_object_handlers` at this owned copy. Lives for the duration
-/// of the module — written exactly once during MINIT.
-static mut WP_MYSQL_NATIVE_AST_HANDLERS: Option<zend_object_handlers> = None;
+/// Tracks whether the GC handler has been installed on `WP_MySQL_Native_Ast`'s
+/// shared handlers struct. We patch in place rather than swapping the
+/// handlers pointer because ext-php-rs's `FromZval` for registered
+/// classes verifies identity via the handlers pointer; replacing it
+/// would make every native_ast lookup fail.
+static mut WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED: bool = false;
 
 /// Custom `get_gc` handler that exposes `WpMySqlNativeAst.node_cache` to
 /// PHP's cycle collector.
@@ -1305,26 +1304,27 @@ unsafe extern "C" fn ast_get_gc(
 }
 
 /// Patch a freshly-constructed `WP_MySQL_Native_Ast` instance so its
-/// `zend_object.handlers->get_gc` walks the Rust-side cache.
+/// shared `zend_object_handlers->get_gc` walks the Rust-side cache.
 ///
 /// PHP 8.3 introduced `zend_class_entry.default_object_handlers` which
-/// would let us patch once per class on MINIT, but PHP 8.2 has no such
-/// field; the only reliable place to install a custom `get_gc` across
-/// both is per-instance, right after the object is allocated. The
-/// patched handlers struct itself is computed lazily on first use and
-/// shared across all subsequent ASTs.
+/// would let us configure handlers once per class on MINIT, but PHP 8.2
+/// has no such field. Within ext-php-rs the per-class handlers struct
+/// is heap-allocated (via Box::leak), shared across all instances of
+/// the class, and identified by its pointer. Swapping the pointer to a
+/// copy would break ext-php-rs's `FromZval` identity check, so we
+/// instead set `get_gc` in place on the original struct. We only need
+/// to do it once per process; subsequent calls are cheap.
 unsafe fn install_gc_handler_for(obj: *mut zend_object) {
-    if WP_MYSQL_NATIVE_AST_HANDLERS.is_none() {
-        let original = (*obj).handlers;
-        if original.is_null() {
-            return;
-        }
-        let mut patched = std::ptr::read(original);
-        patched.get_gc = Some(ast_get_gc);
-        WP_MYSQL_NATIVE_AST_HANDLERS = Some(patched);
+    if WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED {
+        return;
     }
-    let stored = WP_MYSQL_NATIVE_AST_HANDLERS.as_ref().unwrap();
-    (*obj).handlers = stored as *const _;
+    let handlers = (*obj).handlers;
+    if handlers.is_null() {
+        return;
+    }
+    let handlers_mut = handlers as *mut zend_object_handlers;
+    (*handlers_mut).get_gc = Some(ast_get_gc);
+    WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED = true;
 }
 
 /// Build a Zval that references an existing PHP object with refcount bumped.
@@ -1943,13 +1943,14 @@ impl WpMySqlNativeParser {
             .into_zval(false)
             .map_err(php_error)?;
             let native_ast = native_ast(&native_ast_zval)?;
-            // GC handler install temporarily disabled to localize a CI failure.
-            // unsafe {
-            //     let obj_ref = native_ast_zval
-            //         .object()
-            //         .ok_or_else(|| php_error("Native AST zval is not an object"))?;
-            //     install_gc_handler_for((obj_ref as *const ZendObject) as *mut zend_object);
-            // }
+            // Install our custom `get_gc` so PHP's cycle collector can
+            // see the cached wrappers held by the Rust-side HashMap.
+            unsafe {
+                let obj_ref = native_ast_zval
+                    .object()
+                    .ok_or_else(|| php_error("Native AST zval is not an object"))?;
+                install_gc_handler_for((obj_ref as *const ZendObject) as *mut zend_object);
+            }
             native_ast.arena.create_php_ast(&native_ast_zval)
         })
     }
