@@ -37,17 +37,6 @@ extern "C" {
         value: *mut zval,
     );
 
-    /// PHP's per-thread GC scratch buffer for `get_gc` handlers. The
-    /// handler reports the object's outgoing references by adding zvals
-    /// here, then `zend_get_gc_buffer_use` writes the buffer's contents
-    /// into the (table, n) out-params the cycle collector reads.
-    fn zend_get_gc_buffer_create() -> *mut std::ffi::c_void;
-    fn zend_get_gc_buffer_add_zval(buffer: *mut std::ffi::c_void, zv: *mut zval);
-    fn zend_get_gc_buffer_use(
-        buffer: *mut std::ffi::c_void,
-        table: *mut *mut zval,
-        n: *mut std::os::raw::c_int,
-    );
 }
 
 /// `Z_TYPE_INFO` for an OBJECT zval that carries a refcount.
@@ -1079,6 +1068,13 @@ pub struct WpMySqlNativeAst {
     /// bumped, skipping the allocation and four `zend_update_property`
     /// calls of the construction path.
     node_cache: RefCell<HashMap<usize, ZBox<ZendObject>>>,
+    /// Scratch buffer the custom `get_gc` handler refills on each
+    /// invocation with zvals pointing at every cached wrapper. We can't
+    /// use PHP's `zend_get_gc_buffer_*` API because PHP 8.2 builds on
+    /// Ubuntu's `shivammathur/setup-php` don't export those symbols, so
+    /// we own the buffer ourselves and hand its raw pointer to PHP via
+    /// the `(table, n)` out-params of the gc handler.
+    gc_trace: RefCell<Vec<zval>>,
 }
 
 impl NativeAstArena {
@@ -1274,27 +1270,37 @@ unsafe extern "C" fn ast_get_gc(
     table: *mut *mut zval,
     n: *mut std::os::raw::c_int,
 ) -> *mut HashTable {
-    let buf = zend_get_gc_buffer_create();
+    *table = std::ptr::null_mut();
+    *n = 0;
 
-    if let Some(ast) =
-        ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
-            .and_then(|z| z.obj.as_ref())
-    {
-        if let Ok(cache) = ast.node_cache.try_borrow() {
-            for boxed in cache.values() {
-                // Build a zval pointing at the cached wrapper without
-                // bumping refcount — the gc buffer just enumerates outgoing
-                // references; mutating refcounts here would un-balance the
-                // collector's accounting.
-                let mut zv: zval = std::mem::zeroed();
-                zv.value.obj = (boxed.as_ref() as *const ZendObject) as *mut zend_object as *mut _;
-                zv.u1.type_info = PHP_IS_OBJECT_EX;
-                zend_get_gc_buffer_add_zval(buf, &mut zv);
-            }
-        }
+    let Some(ast) = ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
+        .and_then(|z| z.obj.as_ref())
+    else {
+        return std::ptr::null_mut();
+    };
+
+    let Ok(cache) = ast.node_cache.try_borrow() else {
+        return std::ptr::null_mut();
+    };
+    let Ok(mut trace) = ast.gc_trace.try_borrow_mut() else {
+        return std::ptr::null_mut();
+    };
+
+    trace.clear();
+    trace.reserve(cache.len());
+    for boxed in cache.values() {
+        // Build a zval pointing at the cached wrapper without bumping
+        // refcount — the GC scan just enumerates outgoing references;
+        // mutating refcounts here would un-balance the collector's
+        // accounting.
+        let mut zv: zval = std::mem::zeroed();
+        zv.value.obj = (boxed.as_ref() as *const ZendObject) as *mut zend_object as *mut _;
+        zv.u1.type_info = PHP_IS_OBJECT_EX;
+        trace.push(zv);
     }
 
-    zend_get_gc_buffer_use(buf, table, n);
+    *table = trace.as_mut_ptr();
+    *n = trace.len() as std::os::raw::c_int;
     std::ptr::null_mut()
 }
 
@@ -1932,6 +1938,7 @@ impl WpMySqlNativeParser {
             let native_ast_zval = WpMySqlNativeAst {
                 arena,
                 node_cache: RefCell::new(HashMap::new()),
+                gc_trace: RefCell::new(Vec::new()),
             }
             .into_zval(false)
             .map_err(php_error)?;
