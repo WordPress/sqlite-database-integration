@@ -1229,16 +1229,14 @@ fn native_ast(native_ast: &Zval) -> PhpResult<&WpMySqlNativeAst> {
 /// zval owns one strong reference, so we have to addref before publishing
 /// the pointer; otherwise the object would be freed twice (once when this
 /// zval drops, once when the cache drops).
-fn zval_from_object_addref(obj: &ZendObject) -> Zval {
-    let ptr = obj as *const ZendObject as *mut ZendObject;
+fn zval_from_object_addref(obj: &mut ZendObject) -> Zval {
+    // PHP convention: an object zval owns one strong reference, so bump
+    // the embedded zend_refcounted_h refcount before publishing the
+    // pointer; otherwise the object would be freed twice (once when this
+    // zval drops, once when the cache drops).
+    obj.gc.refcount += 1;
     let mut zv = Zval::new();
-    unsafe {
-        // zend_object embeds a zend_refcounted_h whose first field is the
-        // 32-bit refcount; bump it to claim our share before exposing the
-        // pointer to PHP.
-        (*ptr).gc.refcount += 1;
-        zv.set_object(&mut *ptr);
-    }
+    zv.set_object(obj);
     zv
 }
 
@@ -1267,9 +1265,11 @@ impl WpMySqlNativeAst {
         index: usize,
         classes: &PhpClasses,
     ) -> PhpResult<Zval> {
+        let mut cache = self.node_cache.borrow_mut();
+
         // Cache hit: skip allocation entirely and return a Zval pointing
         // at the cached wrapper with refcount bumped.
-        if let Some(boxed) = self.node_cache.borrow().get(&index) {
+        if let Some(boxed) = cache.get_mut(&index) {
             return Ok(zval_from_object_addref(boxed));
         }
 
@@ -1311,9 +1311,11 @@ impl WpMySqlNativeAst {
             idx_i64,
         )?;
 
-        let returned = zval_from_object_addref(&object);
-        self.node_cache.borrow_mut().insert(index, object);
-        Ok(returned)
+        cache.insert(index, object);
+        let stored = cache
+            .get_mut(&index)
+            .expect("just-inserted node missing from cache");
+        Ok(zval_from_object_addref(stored))
     }
 }
 
