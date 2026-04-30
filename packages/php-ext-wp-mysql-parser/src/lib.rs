@@ -1276,8 +1276,9 @@ unsafe extern "C" fn ast_get_gc(
 ) -> *mut HashTable {
     let buf = zend_get_gc_buffer_create();
 
-    if let Some(ast) = ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
-        .and_then(|z| z.obj.as_ref())
+    if let Some(ast) =
+        ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
+            .and_then(|z| z.obj.as_ref())
     {
         if let Ok(cache) = ast.node_cache.try_borrow() {
             for boxed in cache.values() {
