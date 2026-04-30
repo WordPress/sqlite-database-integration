@@ -1237,7 +1237,7 @@ fn zval_from_object_addref(obj: &ZendObject) -> Zval {
         // 32-bit refcount; bump it to claim our share before exposing the
         // pointer to PHP.
         (*ptr).gc.refcount += 1;
-        zv.set_object(ptr);
+        zv.set_object(&mut *ptr);
     }
     zv
 }
