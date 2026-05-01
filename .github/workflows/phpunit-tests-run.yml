@@ -38,7 +38,15 @@ jobs:
           else
             TAG="version-${VERSION}"
           fi
-          wget -O sqlite.tar.gz "https://sqlite.org/src/tarball/sqlite.tar.gz?r=${TAG}"
+          for attempt in 1 2 3 4 5; do
+            if wget -O sqlite.tar.gz "https://sqlite.org/src/tarball/sqlite.tar.gz?r=${TAG}"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              exit 1
+            fi
+            sleep $(( attempt * 10 ))
+          done
           tar xzf sqlite.tar.gz
           cd sqlite
           ./configure --prefix=/usr/local CFLAGS="-DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_FTS5 -DSQLITE_USE_URI -DSQLITE_ENABLE_JSON1" LDFLAGS="-lm"
