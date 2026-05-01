@@ -5,11 +5,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * `WP_MySQL_Parser instanceof WP_Parser` must hold in both modes.
  *
- * Pre-PR, the native-mode `WP_MySQL_Parser` was `extends WP_MySQL_Native_Parser`
- * (a Rust-registered class with no `WP_Parser` in its chain), so existing
- * downstream code doing `if ($parser instanceof WP_Parser)` silently
- * skipped the parser when the extension was loaded. This test pins the
- * contract for both modes.
+ * The native-mode `WP_MySQL_Parser` must not expose the Rust-registered
+ * parser directly. Existing downstream code may rely on
+ * `if ($parser instanceof WP_Parser)`, so this test pins the contract for
+ * both modes.
  */
 class WP_MySQL_Parser_Instanceof_Tests extends TestCase {
 

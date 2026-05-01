@@ -5,13 +5,13 @@ use PHPUnit\Framework\TestCase;
 /**
  * Regression tests for the per-AST identity map on native parser nodes.
  *
- * The native extension constructs a fresh PHP wrapper for every accessor
- * call. Without interning, two reads of the same logical node would yield
- * distinct objects, and a mutation made through a still-live wrapper would be
- * invisible through the second. WP_Parser_Node exposes public mutators and
- * stable child identity, so the native wrapper must preserve both.
+ * The native extension materializes PHP wrappers from Rust-owned arena nodes.
+ * Without interning, two reads of the same logical node would yield distinct
+ * objects, and a mutation made through a still-live wrapper would be invisible
+ * through the second. WP_Parser_Node exposes public mutators and stable child
+ * identity, so the native wrapper must preserve both.
  *
- * Skipped when the native extension is not loaded — the pure-PHP code
+ * Skipped when the native extension is not loaded; the pure-PHP code
  * path already has stable identity by construction.
  */
 class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
@@ -96,11 +96,9 @@ class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
 		$child = $tree->get_first_child_node();
 		$this->assertNotNull( $child );
 
-		// Mutate via the public WP_Parser_Node API — this is exactly the
-		// kind of state the reviewer worried would be lost when accessors
-		// hand back fresh wrappers. rule_name is a declared public property
-		// that the parser itself sets, so PHP 8.2's dynamic-property
-		// deprecation does not apply here.
+		// Mutate via the public WP_Parser_Node API. This catches regressions
+		// where accessors hand back fresh wrappers and lose state written
+		// through a previously returned child.
 		$child->rule_name = 'mutated-rule';
 
 		$same_child = $tree->get_first_child_node();
