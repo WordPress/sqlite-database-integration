@@ -1,0 +1,146 @@
+name: Parser Delegation Perf
+
+# Measures the wall-time cost of routing the public parser API through a
+# composed `WP_MySQL_Native_Parser` instance (this PR) instead of letting
+# `WP_MySQL_Parser` directly extend the Rust class (PR base). The parse
+# benchmark walks the full MySQL server-suite corpus on both branches —
+# the delta is the per-call delegation cost.
+
+on:
+  push:
+    paths:
+      - '.github/workflows/parser-delegation-perf.yml'
+      - 'packages/mysql-on-sqlite/src/mysql/native/**'
+      - 'packages/mysql-on-sqlite/tests/tools/run-parser-benchmark.php'
+      - 'packages/php-ext-wp-mysql-parser/**'
+  pull_request:
+    paths:
+      - '.github/workflows/parser-delegation-perf.yml'
+      - 'packages/mysql-on-sqlite/src/mysql/native/**'
+      - 'packages/mysql-on-sqlite/tests/tools/run-parser-benchmark.php'
+      - 'packages/php-ext-wp-mysql-parser/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    name: Parser delegation benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+          echo "PHP_CONFIG=$(command -v php-config)" >> "$GITHUB_ENV"
+          LIBCLANG_SO="$(find /usr/lib -name 'libclang.so*' | head -n 1)"
+          echo "LIBCLANG_PATH=$(dirname "$LIBCLANG_SO")" >> "$GITHUB_ENV"
+
+      - name: Install Composer dependencies (root)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Download MySQL test query corpus
+        working-directory: packages/mysql-on-sqlite
+        run: bash tests/tools/mysql-download-tests.sh || true
+
+      - name: Build parser extension (release)
+        run: cargo build --release
+        working-directory: packages/php-ext-wp-mysql-parser
+
+      - name: Locate built extension
+        run: |
+          EXT="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so"
+          test -f "$EXT" || { echo "Extension not built at $EXT"; exit 1; }
+          echo "NATIVE_EXT=$EXT" >> "$GITHUB_ENV"
+
+      - name: Benchmark — this PR (trait delegation)
+        working-directory: packages/mysql-on-sqlite
+        run: |
+          for i in 1 2 3; do
+            echo "=== run $i ==="
+            php -d extension="$NATIVE_EXT" tests/tools/run-parser-benchmark.php
+          done | tee "$GITHUB_WORKSPACE/this-pr.txt"
+
+      - name: Check out baseline (PR base, direct extends)
+        run: |
+          git fetch --no-tags --depth=1 origin codex/native-lazy-ast-facade
+          git worktree add ../baseline FETCH_HEAD
+
+      - name: Install Composer dependencies (baseline)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: ../baseline/packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Build baseline parser extension (release)
+        run: cargo build --release
+        working-directory: ../baseline/packages/php-ext-wp-mysql-parser
+
+      - name: Stage corpus into baseline
+        run: |
+          mkdir -p ../baseline/packages/mysql-on-sqlite/tests/mysql/data
+          cp packages/mysql-on-sqlite/tests/mysql/data/*.csv \
+             ../baseline/packages/mysql-on-sqlite/tests/mysql/data/ 2>/dev/null || true
+
+      - name: Benchmark — baseline (direct extends)
+        working-directory: ../baseline/packages/mysql-on-sqlite
+        run: |
+          BASE_EXT="$(realpath ../../packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so)"
+          for i in 1 2 3; do
+            echo "=== run $i ==="
+            php -d extension="$BASE_EXT" tests/tools/run-parser-benchmark.php
+          done | tee "$GITHUB_WORKSPACE/baseline.txt"
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo '### Parser delegation perf'
+            echo
+            echo '#### This PR (`use WP_MySQL_Native_Parser_Impl;`)'
+            echo '```'
+            cat "$GITHUB_WORKSPACE/this-pr.txt" 2>/dev/null || echo 'no output'
+            echo '```'
+            echo
+            echo '#### Baseline (`extends WP_MySQL_Native_Parser`)'
+            echo '```'
+            cat "$GITHUB_WORKSPACE/baseline.txt" 2>/dev/null || echo 'no output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parser-delegation-perf-${{ github.run_id }}
+          path: |
+            this-pr.txt
+            baseline.txt
+          if-no-files-found: warn
