@@ -8,7 +8,7 @@ license = "GPL-2.0-or-later"
 crate-type = ["cdylib"]
 
 [dependencies]
-ext-php-rs = "0.15.12"
+ext-php-rs = { version = "0.15.12", default-features = false, features = ["runtime"] }
 libc = "0.2"
 stacker = "0.1"
 
