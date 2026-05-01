@@ -25,8 +25,15 @@ if ( '1' === getenv( 'WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION' ) ) {
 	$native_parser_rules   = include __DIR__ . '/../src/mysql/mysql-grammar.php';
 	$native_parser_grammar = new WP_Parser_Grammar( $native_parser_rules );
 	$native_parser         = new WP_MySQL_Parser( $native_parser_grammar, $native_parser_tokens );
-	if ( ! ( $native_parser instanceof WP_MySQL_Native_Parser ) ) {
-		fwrite( STDERR, "WP_MySQL_Parser did not resolve to the native implementation.\n" );
+	$native_parser_reflection = new ReflectionObject( $native_parser );
+	if ( ! $native_parser_reflection->hasProperty( 'native' ) ) {
+		fwrite( STDERR, "WP_MySQL_Parser did not create a native parser delegate.\n" );
+		exit( 1 );
+	}
+	$native_parser_property = $native_parser_reflection->getProperty( 'native' );
+	$native_parser_property->setAccessible( true );
+	if ( ! ( $native_parser_property->getValue( $native_parser ) instanceof WP_MySQL_Native_Parser ) ) {
+		fwrite( STDERR, "WP_MySQL_Parser did not create a native parser delegate.\n" );
 		exit( 1 );
 	}
 
@@ -38,8 +45,15 @@ if ( '1' === getenv( 'WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION' ) ) {
 
 	$native_parser_driver        = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 	$native_parser_driver_parser = $native_parser_driver->create_parser( 'SELECT 1' );
-	if ( ! ( $native_parser_driver_parser instanceof WP_MySQL_Native_Parser ) ) {
-		fwrite( STDERR, "WP_PDO_MySQL_On_SQLite did not create a native parser.\n" );
+	$native_parser_driver_reflection = new ReflectionObject( $native_parser_driver_parser );
+	if ( ! $native_parser_driver_reflection->hasProperty( 'native' ) ) {
+		fwrite( STDERR, "WP_PDO_MySQL_On_SQLite did not create a native parser delegate.\n" );
+		exit( 1 );
+	}
+	$native_parser_driver_property = $native_parser_driver_reflection->getProperty( 'native' );
+	$native_parser_driver_property->setAccessible( true );
+	if ( ! ( $native_parser_driver_property->getValue( $native_parser_driver_parser ) instanceof WP_MySQL_Native_Parser ) ) {
+		fwrite( STDERR, "WP_PDO_MySQL_On_SQLite did not create a native parser delegate.\n" );
 		exit( 1 );
 	}
 
@@ -65,6 +79,10 @@ if ( '1' === getenv( 'WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION' ) ) {
 		$native_parser_lexer,
 		$native_parser_driver,
 		$native_parser_driver_parser,
+		$native_parser_reflection,
+		$native_parser_property,
+		$native_parser_driver_reflection,
+		$native_parser_driver_property,
 		$native_parser_driver_ast,
 		$native_parser_driver_child
 	);

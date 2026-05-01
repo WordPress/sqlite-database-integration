@@ -125,8 +125,15 @@ $tokens  = $lexer->native_token_stream();
 $rules   = include '/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/mysql/mysql-grammar.php';
 $grammar = new WP_Parser_Grammar( $rules );
 $parser  = new WP_MySQL_Parser( $grammar, $tokens );
-if ( ! ( $parser instanceof WP_MySQL_Native_Parser ) ) {
-	fwrite( STDERR, "WordPress PHP test container did not select the native parser.\n" );
+$parser_reflection = new ReflectionObject( $parser );
+if ( ! $parser_reflection->hasProperty( 'native' ) ) {
+	fwrite( STDERR, "WordPress PHP test container did not select the native parser delegate.\n" );
+	exit( 1 );
+}
+$native_property = $parser_reflection->getProperty( 'native' );
+$native_property->setAccessible( true );
+if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
+	fwrite( STDERR, "WordPress PHP test container did not select the native parser delegate.\n" );
 	exit( 1 );
 }
 
@@ -138,8 +145,15 @@ if ( ! ( $parser_ast instanceof WP_MySQL_Native_Parser_Node ) ) {
 
 $driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 $parser = $driver->create_parser( 'SELECT 1' );
-if ( ! ( $parser instanceof WP_MySQL_Native_Parser ) ) {
-	fwrite( STDERR, "WordPress PHP test container SQLite driver did not create a native parser.\n" );
+$parser_reflection = new ReflectionObject( $parser );
+if ( ! $parser_reflection->hasProperty( 'native' ) ) {
+	fwrite( STDERR, "WordPress PHP test container SQLite driver did not create a native parser delegate.\n" );
+	exit( 1 );
+}
+$native_property = $parser_reflection->getProperty( 'native' );
+$native_property->setAccessible( true );
+if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
+	fwrite( STDERR, "WordPress PHP test container SQLite driver did not create a native parser delegate.\n" );
 	exit( 1 );
 }
 $parser->next_query();

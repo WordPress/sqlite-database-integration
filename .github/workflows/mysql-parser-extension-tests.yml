@@ -79,8 +79,15 @@ jobs:
           $rules = include "src/mysql/mysql-grammar.php";
           $grammar = new WP_Parser_Grammar( $rules );
           $parser = new WP_MySQL_Parser( $grammar, $tokens );
-          if ( ! ( $parser instanceof WP_MySQL_Native_Parser ) ) {
-              fwrite( STDERR, "Native parser is not available.\n" );
+          $parser_reflection = new ReflectionObject( $parser );
+          if ( ! $parser_reflection->hasProperty( "native" ) ) {
+              fwrite( STDERR, "WP_MySQL_Parser did not select the native parser delegate.\n" );
+              exit( 1 );
+          }
+          $native_property = $parser_reflection->getProperty( "native" );
+          $native_property->setAccessible( true );
+          if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
+              fwrite( STDERR, "WP_MySQL_Parser did not select the native parser delegate.\n" );
               exit( 1 );
           }
           $ast = $parser->parse();
@@ -152,8 +159,15 @@ jobs:
           }
           $driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
           $parser = $driver->create_parser( "SELECT 1" );
-          if ( ! ( $parser instanceof WP_MySQL_Native_Parser ) ) {
-              fwrite( STDERR, "SQLite driver did not create a native parser.\n" );
+          $parser_reflection = new ReflectionObject( $parser );
+          if ( ! $parser_reflection->hasProperty( "native" ) ) {
+              fwrite( STDERR, "SQLite driver did not create a native parser delegate.\n" );
+              exit( 1 );
+          }
+          $native_property = $parser_reflection->getProperty( "native" );
+          $native_property->setAccessible( true );
+          if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
+              fwrite( STDERR, "SQLite driver did not create a native parser delegate.\n" );
               exit( 1 );
           }
           $parser->next_query();
