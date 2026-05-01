@@ -3,21 +3,19 @@
 use PHPUnit\Framework\TestCase;
 
 /**
- * Cycle-collection / memory-bound tests for the Rust-side identity cache.
+ * Memory-bound tests for the Rust-side native wrapper registry.
  *
- * The Rust extension stores cached wrappers in a HashMap. Each cached
- * wrapper has a `$native_ast` property pointing back at the AST, forming
- * a cycle the cycle collector can only reclaim when the native AST's
- * `get_gc` handler exposes the cached wrappers to PHP's collector. These
- * tests break in every direction that cycle handling can regress:
+ * The Rust extension stores AST state in a registry keyed by live PHP wrapper
+ * pointers. Cached wrappers are raw pointers, not strong PHP references, so
+ * wrappers must not pin entire ASTs after PHP drops them. These tests break in
+ * every direction that lifetime handling can regress:
  *
  * - Loops parsing many ASTs without explicit GC must not grow without
  *   bound (ordinary mode of use).
- * - Walking, mutating, and dropping an AST must reclaim the wrapper
- *   memory once `gc_collect_cycles()` runs.
+ * - Walking, mutating, and dropping an AST must reclaim the wrapper memory.
  * - Holding a child wrapper after the parent AST goes out of scope must
  *   not crash, must not corrupt memory, and the AST must stay alive as
- *   long as that child is reachable.
+ *   long as that child is reachable through the registry.
  * - Nested ASTs with overlapping lifetimes must not interfere — dropping
  *   one mustn't free another's cached wrappers.
  * - Mutating a cached wrapper before dropping the AST must still allow
@@ -55,9 +53,8 @@ class WP_MySQL_Native_Parser_Node_Cycle_Tests extends TestCase {
 	 * Hostile loop: parse and walk many ASTs in a tight loop, only
 	 * `gc_collect_cycles()` between iterations. Memory must plateau.
 	 *
-	 * Without a working gc_handler the Rust cache retains every AST's
-	 * wrappers forever — peak memory grows linearly with iteration count.
-	 * With the handler, each dropped AST's cycle is collected and the
+	 * If wrapper registry entries or cache pointers are not released, peak
+	 * memory grows linearly with iteration count. With cleanup in place, the
 	 * working set stays bounded.
 	 */
 	public function test_repeated_parse_walk_drop_does_not_leak(): void {
@@ -131,9 +128,9 @@ class WP_MySQL_Native_Parser_Node_Cycle_Tests extends TestCase {
 
 	/**
 	 * Holding a child wrapper *outlives* the variable holding the root.
-	 * The cache pinning the child must keep the AST alive (no UAF when
-	 * the bridge is called on the orphaned child). Once the child is
-	 * also dropped, GC must collect the whole graph.
+	 * The child's registry entry must keep the AST alive (no UAF when the
+	 * bridge is called on the orphaned child). Once the child is also dropped,
+	 * the registry entry must be released.
 	 */
 	public function test_orphaned_child_keeps_ast_alive_then_collects(): void {
 		$sql   = 'SELECT a, b, c FROM t WHERE a + b * c IN (1, 2, 3)';
@@ -142,9 +139,9 @@ class WP_MySQL_Native_Parser_Node_Cycle_Tests extends TestCase {
 			return $ast->get_first_descendant_node();
 		} )();
 
-		// Root variable is gone; only the child reference remains, but
-		// the cache still pins the AST through the back-reference. The
-		// child must still be functional — accessing it must not crash.
+		// Root variable is gone; only the child reference remains, but the
+		// registry entry still pins the AST. The child must still be
+		// functional — accessing it must not crash.
 		$this->assertNotNull( $child );
 		$this->assertIsString( $child->rule_name );
 		// The child's own children should also resolve without UAF.
@@ -155,16 +152,16 @@ class WP_MySQL_Native_Parser_Node_Cycle_Tests extends TestCase {
 		$child = null;
 		$grand = null;
 		gc_collect_cycles();
-		// If the cycle collected, this assertion always passes; the real
-		// signal is the absence of a segfault during teardown.
+		// If the registry entry was released, this assertion always passes;
+		// the real signal is the absence of a segfault during teardown.
 		$this->addToAssertionCount( 1 );
 	}
 
 	/**
 	 * Mutating a cached wrapper through `append_child` before dropping
 	 * the AST must not block collection. The mutated wrapper's
-	 * `$children` array now contains a non-cached node; that's an extra
-	 * edge for the gc_handler to traverse, not a reason to leak.
+	 * `$children` array now contains a non-cached node; that must not keep
+	 * stale registry/cache entries alive.
 	 */
 	public function test_mutation_before_drop_does_not_block_collection(): void {
 		$sql = 'SELECT 1 + 2';
@@ -230,9 +227,8 @@ class WP_MySQL_Native_Parser_Node_Cycle_Tests extends TestCase {
 
 	/**
 	 * Re-walk + drop + collect across many iterations. This is the
-	 * "translator pass on each query" shape of real workloads. The Rust
-	 * cache should give us the perf win of `rewalk` without the memory
-	 * cliff that a missing gc_handler creates.
+	 * "translator pass on each query" shape of real workloads. The wrapper
+	 * registry and cache must not create a memory cliff under repeated walks.
 	 */
 	public function test_rewalk_loop_stays_bounded(): void {
 		$sql = 'SELECT a, b, c, d, e FROM t WHERE (a + b) * (c - d) > e AND f IN (1,2,3,4,5)';
