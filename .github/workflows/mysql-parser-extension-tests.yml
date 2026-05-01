@@ -165,90 +165,10 @@ jobs:
         run: cargo build
         working-directory: packages/php-ext-wp-mysql-parser
 
-      - name: Run native parser smoke tests
+      - name: Verify native parser extension
         if: matrix.native
-        run: |
-          php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
-          require "src/load.php";
-          $lexer = new WP_MySQL_Lexer( "SELECT ID, post_title FROM wp_posts WHERE ID IN (1, 2, 3)" );
-          if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
-              fwrite( STDERR, "Native lexer is not available.\n" );
-              exit( 1 );
-          }
-          $tokens = $lexer->native_token_stream();
-          $rules = include "src/mysql/mysql-grammar.php";
-          $grammar = new WP_Parser_Grammar( $rules );
-          $parser = new WP_MySQL_Parser( $grammar, $tokens );
-          $parser_reflection = new ReflectionObject( $parser );
-          if ( ! $parser_reflection->hasProperty( "native" ) ) {
-              fwrite( STDERR, "WP_MySQL_Parser did not select the native parser delegate.\n" );
-              exit( 1 );
-          }
-          $native_property = $parser_reflection->getProperty( "native" );
-          $native_property->setAccessible( true );
-          if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
-              fwrite( STDERR, "WP_MySQL_Parser did not select the native parser delegate.\n" );
-              exit( 1 );
-          }
-          $ast = $parser->parse();
-          if ( ! $ast instanceof WP_MySQL_Native_Parser_Node || "query" !== $ast->rule_name ) {
-              fwrite( STDERR, "Native parser did not produce the expected query AST.\n" );
-              exit( 1 );
-          }
-          '
+        run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" tests/tools/verify-native-parser-extension.php
         working-directory: packages/mysql-on-sqlite
-
-      - name: Verify SQLite driver selects the native parser path
-        if: matrix.native
-        run: |
-          php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" -r '
-          require "packages/mysql-on-sqlite/src/load.php";
-          $lexer = new WP_MySQL_Lexer( "SELECT 1" );
-          if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
-              fwrite( STDERR, "Native lexer is not available.\n" );
-              exit( 1 );
-          }
-          $driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
-          $parser = $driver->create_parser( "SELECT 1" );
-          $parser_reflection = new ReflectionObject( $parser );
-          if ( ! $parser_reflection->hasProperty( "native" ) ) {
-              fwrite( STDERR, "SQLite driver did not create a native parser delegate.\n" );
-              exit( 1 );
-          }
-          $native_property = $parser_reflection->getProperty( "native" );
-          $native_property->setAccessible( true );
-          if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
-              fwrite( STDERR, "SQLite driver did not create a native parser delegate.\n" );
-              exit( 1 );
-          }
-          $parser->next_query();
-          $ast = $parser->get_query_ast();
-          if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
-              fwrite( STDERR, "SQLite driver did not return a native-backed AST.\n" );
-              exit( 1 );
-          }
-          $reflection = new ReflectionObject( $ast );
-          if ( $reflection->hasProperty( "native_ast" ) || $reflection->hasProperty( "native_node_index" ) ) {
-              fwrite( STDERR, "Native wrapper still stores Rust AST handle properties.\n" );
-              exit( 1 );
-          }
-          $first = $ast->get_first_child_node();
-          if ( ! ( $first instanceof WP_MySQL_Native_Parser_Node ) ) {
-              fwrite( STDERR, "Native wrapper did not return a native-backed child node.\n" );
-              exit( 1 );
-          }
-          if ( $first !== $ast->get_first_child_node() ) {
-              fwrite( STDERR, "Native wrapper identity is not stable across reads.\n" );
-              exit( 1 );
-          }
-          $synthetic = new WP_Parser_Node( 0, "synthetic" );
-          $first->append_child( $synthetic );
-          $same_first = $ast->get_first_child_node();
-          if ( $same_first !== $first || ! in_array( $synthetic, $same_first->get_children(), true ) ) {
-              fwrite( STDERR, "Materialized native wrapper was lost from the parent cache.\n" );
-              exit( 1 );
-          }
-          '
 
       - name: Run full PHPUnit suite with parser extension
         if: matrix.native

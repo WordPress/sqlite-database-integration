@@ -2,9 +2,8 @@
  * Wrap the "composer run wp-tests-php" command to process tests
  * that are expected to error and fail at the moment.
  *
- * This makes sure that the CI job passes, while explicitly tracking
- * the issues that need to be addressed. Ideally, over time this script
- * will become obsolete when all errors and failures are resolved.
+ * Unexpected errors/failures still fail the workflow. Expected failures that
+ * stop happening are reported so this allowlist can be reduced over time.
  */
 const { execSync } = require( 'child_process' );
 const fs = require( 'fs' );

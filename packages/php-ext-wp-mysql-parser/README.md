@@ -5,7 +5,7 @@ This crate builds an optional PHP extension named `wp_mysql_parser`.
 When the extension is loaded before `packages/mysql-on-sqlite/src/load.php`, it
 registers native base classes used by the public `WP_MySQL_Lexer` and
 `WP_MySQL_Parser` wrappers. Without the extension, those public wrappers extend
-the existing PHP polyfills instead.
+the pure-PHP implementations instead.
 
 ## Build
 

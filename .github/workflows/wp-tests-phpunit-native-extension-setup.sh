@@ -115,78 +115,69 @@ cat > "$WP_DIR/native-verify-extension.php" <<'EOF'
 <?php
 require_once '/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/load.php';
 
+function wp_sqlite_native_parser_verification_fail( string $message ): void {
+	fwrite( STDERR, $message . "\n" );
+	exit( 1 );
+}
+
+function wp_sqlite_assert_native_parser_delegate( WP_MySQL_Parser $parser, string $message ): void {
+	$parser_reflection = new ReflectionObject( $parser );
+	if ( ! $parser_reflection->hasProperty( 'native' ) ) {
+		wp_sqlite_native_parser_verification_fail( $message );
+	}
+
+	$native_property = $parser_reflection->getProperty( 'native' );
+	$native_property->setAccessible( true );
+	if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
+		wp_sqlite_native_parser_verification_fail( $message );
+	}
+}
+
 $lexer = new WP_MySQL_Lexer( 'SELECT 1' );
 if ( ! ( $lexer instanceof WP_MySQL_Native_Lexer ) ) {
-	fwrite( STDERR, "Native lexer is not available in the WordPress PHP test container.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'Native lexer is not available in the WordPress PHP test container.' );
 }
 
 $tokens  = $lexer->native_token_stream();
 $rules   = include '/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database/mysql/mysql-grammar.php';
 $grammar = new WP_Parser_Grammar( $rules );
 $parser  = new WP_MySQL_Parser( $grammar, $tokens );
-$parser_reflection = new ReflectionObject( $parser );
-if ( ! $parser_reflection->hasProperty( 'native' ) ) {
-	fwrite( STDERR, "WordPress PHP test container did not select the native parser delegate.\n" );
-	exit( 1 );
-}
-$native_property = $parser_reflection->getProperty( 'native' );
-$native_property->setAccessible( true );
-if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
-	fwrite( STDERR, "WordPress PHP test container did not select the native parser delegate.\n" );
-	exit( 1 );
-}
+wp_sqlite_assert_native_parser_delegate( $parser, 'WordPress PHP test container did not select the native parser delegate.' );
 
 $parser_ast = $parser->parse();
 if ( ! ( $parser_ast instanceof WP_MySQL_Native_Parser_Node ) ) {
-	fwrite( STDERR, "Native parser did not produce a native-backed AST in the WordPress PHP test container.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'Native parser did not produce a native-backed AST in the WordPress PHP test container.' );
 }
 
 $driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 $parser = $driver->create_parser( 'SELECT 1' );
-$parser_reflection = new ReflectionObject( $parser );
-if ( ! $parser_reflection->hasProperty( 'native' ) ) {
-	fwrite( STDERR, "WordPress PHP test container SQLite driver did not create a native parser delegate.\n" );
-	exit( 1 );
-}
-$native_property = $parser_reflection->getProperty( 'native' );
-$native_property->setAccessible( true );
-if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
-	fwrite( STDERR, "WordPress PHP test container SQLite driver did not create a native parser delegate.\n" );
-	exit( 1 );
-}
+wp_sqlite_assert_native_parser_delegate( $parser, 'WordPress PHP test container SQLite driver did not create a native parser delegate.' );
 $parser->next_query();
 $ast = $parser->get_query_ast();
 
 if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
-	fwrite( STDERR, "WordPress PHP test container did not select the native-backed AST.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'WordPress PHP test container did not select the native-backed AST.' );
 }
 
 $reflection = new ReflectionObject( $ast );
 if ( $reflection->hasProperty( 'native_ast' ) || $reflection->hasProperty( 'native_node_index' ) ) {
-	fwrite( STDERR, "Native wrapper still stores Rust AST handle properties.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'Native wrapper still stores Rust AST handle properties.' );
 }
 
 $first = $ast->get_first_child_node();
 if ( ! ( $first instanceof WP_MySQL_Native_Parser_Node ) ) {
-	fwrite( STDERR, "Native wrapper did not return a native-backed child node.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'Native wrapper did not return a native-backed child node.' );
 }
 
 if ( $first !== $ast->get_first_child_node() ) {
-	fwrite( STDERR, "Native wrapper identity is not stable across reads.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'Native wrapper identity is not stable across reads.' );
 }
 
 $synthetic = new WP_Parser_Node( 0, 'synthetic' );
 $first->append_child( $synthetic );
 $same_first = $ast->get_first_child_node();
 if ( $same_first !== $first || ! in_array( $synthetic, $same_first->get_children(), true ) ) {
-	fwrite( STDERR, "Materialized native wrapper was lost from the parent cache.\n" );
-	exit( 1 );
+	wp_sqlite_native_parser_verification_fail( 'Materialized native wrapper was lost from the parent cache.' );
 }
 EOF
 
@@ -197,7 +188,7 @@ const file = process.argv[2];
 const marker = "require_once ABSPATH . 'wp-settings.php';";
 const guard = [
 	'/*',
-	' * Native parser CI guard. This file is generated by the SQLite integration workflow.',
+	' * Native parser extension guard. This file is generated by the SQLite integration workflow.',
 	' */',
 	"require_once dirname( __DIR__, 3 ) . '/native-verify-extension.php';",
 ].join( '\n' );
