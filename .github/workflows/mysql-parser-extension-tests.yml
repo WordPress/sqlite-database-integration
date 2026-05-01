@@ -81,7 +81,10 @@ jobs:
               exit( 1 );
           }
           '
-          ./vendor/bin/phpunit -c ./phpunit.xml.dist tests/mysql/WP_MySQL_Lexer_Tests.php tests/parser/WP_Parser_Node_Tests.php
+        working-directory: packages/mysql-on-sqlite
+
+      - name: Run PHPUnit tests with parser extension
+        run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
         working-directory: packages/mysql-on-sqlite
 
   sqlite-driver-extension-tests:
@@ -149,3 +152,7 @@ jobs:
               exit( 1 );
           }
           '
+
+      - name: Run PHPUnit tests with SQLite driver using parser extension
+        run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        working-directory: packages/mysql-on-sqlite
