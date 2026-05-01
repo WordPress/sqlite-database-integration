@@ -55,6 +55,8 @@ jobs:
         run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
 
       - name: Run WordPress PHPUnit tests with parser extension
+        env:
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
         run: node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Stop Docker containers
