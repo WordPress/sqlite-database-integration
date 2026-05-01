@@ -5,10 +5,12 @@ on:
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
+      - 'packages/php-ext-wp-mysql-parser/**'
   pull_request:
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
+      - 'packages/php-ext-wp-mysql-parser/**'
   workflow_dispatch:
 
 concurrency:
@@ -73,17 +75,25 @@ jobs:
               fwrite( STDERR, "Native lexer is not available.\n" );
               exit( 1 );
           }
-          $tokens = $lexer->remaining_tokens();
-          $parser = new WP_MySQL_Parser( new WP_Parser_Grammar( include "src/mysql/mysql-grammar.php" ), $tokens );
+          $tokens = $lexer->native_token_stream();
+          $rules = include "src/mysql/mysql-grammar.php";
+          $grammar = new WP_Parser_Grammar( $rules );
+          $parser = new WP_MySQL_Parser( $grammar, $tokens );
+          if ( ! ( $parser instanceof WP_MySQL_Native_Parser ) ) {
+              fwrite( STDERR, "Native parser is not available.\n" );
+              exit( 1 );
+          }
           $ast = $parser->parse();
-          if ( ! $ast instanceof WP_Parser_Node || "query" !== $ast->rule_name ) {
+          if ( ! $ast instanceof WP_MySQL_Native_Parser_Node || "query" !== $ast->rule_name ) {
               fwrite( STDERR, "Native parser did not produce the expected query AST.\n" );
               exit( 1 );
           }
           '
         working-directory: packages/mysql-on-sqlite
 
-      - name: Run PHPUnit tests with parser extension
+      - name: Run full PHPUnit suite with parser extension
+        env:
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
         run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
         working-directory: packages/mysql-on-sqlite
 
@@ -142,6 +152,10 @@ jobs:
           }
           $driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=wp;" );
           $parser = $driver->create_parser( "SELECT 1" );
+          if ( ! ( $parser instanceof WP_MySQL_Native_Parser ) ) {
+              fwrite( STDERR, "SQLite driver did not create a native parser.\n" );
+              exit( 1 );
+          }
           $parser->next_query();
           $ast = $parser->get_query_ast();
           if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
@@ -171,6 +185,8 @@ jobs:
           }
           '
 
-      - name: Run PHPUnit tests with SQLite driver using parser extension
+      - name: Run full PHPUnit suite with SQLite driver using parser extension
+        env:
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
         run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
         working-directory: packages/mysql-on-sqlite
