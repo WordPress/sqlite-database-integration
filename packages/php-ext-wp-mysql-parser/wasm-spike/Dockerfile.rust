@@ -1,0 +1,63 @@
+# Layer that adds rustup + the wasm32-unknown-emscripten target on top of
+# Playground's compile-extension image.
+#
+# Base image is the one produced by `@php-wasm/compile-extension`'s
+# Dockerfile.ext, tagged as
+# `playground-php-wasm:compile-extension-php<MAJOR-MINOR>-<ASYNC>`. It
+# already contains emsdk and a wasm-targeted PHP install with headers under
+# /usr/local/include/php and a matching `php-config` on PATH — exactly what
+# ext-php-rs's bindgen step needs to succeed.
+#
+# Build with:
+#   docker build \
+#     --build-arg BASE_IMAGE=playground-php-wasm:compile-extension-php8-4-jspi \
+#     -t playground-php-wasm-ext-rust:8.4-jspi \
+#     -f Dockerfile.rust .
+
+ARG BASE_IMAGE=playground-php-wasm:compile-extension-php8-4-jspi
+
+# Stage providing a host PHP 8.4 CLI binary. ext-php-rs's build.rs shells
+# out to `php` to detect the PHP version (PHP_VERSION_ID drives the cfg
+# flags php80..php85). The wasm-targeted PHP install in /usr/local has no
+# CLI binary (--disable-cli), Ubuntu noble ships only PHP 8.3, and
+# packages.sury.org blocks our datacenter IP, so we steal a CLI from the
+# official php:8.4-cli image.
+FROM php:8.4-cli AS host-php-cli
+
+FROM ${BASE_IMAGE}
+
+COPY --from=host-php-cli /usr/local/bin/php /opt/host-php/bin/php
+COPY --from=host-php-cli /usr/local/lib/php /opt/host-php/lib/php
+COPY --from=host-php-cli /usr/local/etc/php /opt/host-php/etc/php
+COPY --from=host-php-cli /usr/local/include/php /opt/host-php/include/php
+
+ENV RUSTUP_HOME=/root/rustup \
+    CARGO_HOME=/root/cargo \
+    PATH=/root/cargo/bin:/root/rustup/bin:/usr/local/bin:/usr/bin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates build-essential \
+        libclang-dev clang llvm-dev pkg-config libxml2 libonig5 libsqlite3-0 \
+        libargon2-1 libssl3 zlib1g libreadline8 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /opt/host-php/bin/php /usr/local/bin/php-host
+
+# ext-php-rs's build.rs needs a host `php` executable to query include paths
+# from `php-config`. The wasm-targeted PHP install in /usr/local does not ship
+# a CLI binary (--disable-cli). We install Debian's host php-cli purely so the
+# build script's PHP shells out can run; bindgen still uses
+# /usr/local/bin/php-config (from PATH order) for headers — which IS the wasm
+# PHP install. Set PHP_CONFIG explicitly to make this contract obvious.
+ENV PHP_CONFIG=/usr/local/bin/php-config \
+    PHP=/opt/host-php/bin/php
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal \
+    && /root/cargo/bin/rustup target add wasm32-unknown-emscripten \
+    && /root/cargo/bin/rustup toolchain install nightly --profile minimal \
+        --component rust-src \
+    && /root/cargo/bin/rustup target add wasm32-unknown-emscripten --toolchain nightly
+
+# Make libclang discoverable for bindgen regardless of LLVM minor version.
+RUN ln -sf "$(dpkg -L libclang-dev | grep -E 'libclang.so$' | head -1)" /usr/lib/libclang.so || true
+ENV LIBCLANG_PATH=/usr/lib/llvm-18/lib

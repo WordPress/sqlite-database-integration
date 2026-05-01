@@ -1,0 +1,110 @@
+name: WASM extension build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/php-ext-wp-mysql-parser/**'
+      - '.github/workflows/wasm-spike.yml'
+  pull_request:
+    paths:
+      - 'packages/php-ext-wp-mysql-parser/**'
+      - '.github/workflows/wasm-spike.yml'
+  workflow_dispatch:
+    inputs:
+      playground-ref:
+        description: 'wordpress-playground branch/tag/SHA to build against'
+        required: false
+        default: 'trunk'
+
+jobs:
+  build-and-load:
+    name: Build wp_mysql_parser.so and load it in Playground (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4']
+        async-mode: ['jspi']
+
+    steps:
+      - name: Check out sqlite-database-integration
+        uses: actions/checkout@v4
+        with:
+          path: sqlite-database-integration
+
+      - name: Check out wordpress-playground
+        uses: actions/checkout@v4
+        with:
+          repository: WordPress/wordpress-playground
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
+          path: wordpress-playground
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: wordpress-playground/package-lock.json
+
+      - name: Install Playground deps
+        working-directory: wordpress-playground
+        run: npm ci
+
+      - name: Build @php-wasm/compile-extension base image
+        working-directory: wordpress-playground
+        run: |
+          npx @php-wasm/compile-extension --help >/dev/null 2>&1 || true
+          docker images | grep playground-php-wasm || true
+
+      - name: Build wp_mysql_parser side module
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: ${{ matrix.async-mode }}
+        run: bash build-in-docker-rust.sh
+
+      - name: Verify build artifacts exist
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        run: |
+          test -f dist/wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so
+          test -f dist/manifest.json
+          test -f dist/libwp_mysql_parser.a
+          ls -lh dist/
+
+      - name: Verify manifest sha256 matches the .so byte-for-byte
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        run: |
+          MANIFEST_SHA=$(node -e "console.log(require('./dist/manifest.json').extensions[0].artifacts[0].sha256)")
+          ACTUAL_SHA=$(sha256sum dist/wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so | cut -d' ' -f1)
+          echo "manifest: $MANIFEST_SHA"
+          echo "actual:   $ACTUAL_SHA"
+          test "$MANIFEST_SHA" = "$ACTUAL_SHA"
+
+      - name: Load the extension in Playground and parse a query
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+        run: node run-spike.mjs
+
+      - name: Upload artifacts on success
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}
+          path: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostic logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-spike-failure-php${{ matrix.php }}-${{ matrix.async-mode }}
+          path: |
+            sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/dist/
+            sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/*.log
+          if-no-files-found: ignore
+          retention-days: 14
