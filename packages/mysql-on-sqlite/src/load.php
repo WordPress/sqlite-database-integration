@@ -27,7 +27,6 @@ if ( class_exists( 'WP_MySQL_Native_Lexer', false ) ) {
 
 if ( class_exists( 'WP_MySQL_Native_Parser', false ) ) {
 	require_once __DIR__ . '/mysql/native/mysql-rust-bridge.php';
-	require_once __DIR__ . '/mysql/native/class-wp-mysql-native-ast-cache.php';
 	require_once __DIR__ . '/mysql/native/class-wp-mysql-native-parser-node.php';
 	require_once __DIR__ . '/mysql/native/class-wp-mysql-parser.php';
 } else {

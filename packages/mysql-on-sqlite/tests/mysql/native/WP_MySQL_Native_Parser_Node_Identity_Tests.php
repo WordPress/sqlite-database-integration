@@ -7,9 +7,9 @@ use PHPUnit\Framework\TestCase;
  *
  * The native extension constructs a fresh PHP wrapper for every accessor
  * call. Without interning, two reads of the same logical node would yield
- * distinct objects, and a mutation made through the first wrapper would
- * be invisible through the second. WP_Parser_Node exposes public mutators
- * and stable child identity, so the native wrapper must preserve both.
+ * distinct objects, and a mutation made through a still-live wrapper would be
+ * invisible through the second. WP_Parser_Node exposes public mutators and
+ * stable child identity, so the native wrapper must preserve both.
  *
  * Skipped when the native extension is not loaded — the pure-PHP code
  * path already has stable identity by construction.
@@ -45,6 +45,15 @@ class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
 
 		$this->assertNotNull( $first );
 		$this->assertSame( $first, $second );
+	}
+
+	public function test_native_wrapper_does_not_store_native_ast_handle(): void {
+		$tree = $this->parse( 'SELECT 1 + 2' );
+
+		$reflection = new ReflectionObject( $tree );
+
+		$this->assertFalse( $reflection->hasProperty( 'native_ast' ) );
+		$this->assertFalse( $reflection->hasProperty( 'native_node_index' ) );
 	}
 
 	public function test_get_children_returns_same_instances_across_calls(): void {
@@ -97,6 +106,23 @@ class WP_MySQL_Native_Parser_Node_Identity_Tests extends TestCase {
 		$same_child = $tree->get_first_child_node();
 		$this->assertSame( $child, $same_child );
 		$this->assertSame( 'mutated-rule', $same_child->rule_name );
+	}
+
+	public function test_materialized_child_survives_re_read_from_native_parent(): void {
+		$tree = $this->parse( 'SELECT 1 + 2' );
+
+		$child = $tree->get_first_child_node();
+		$this->assertNotNull( $child );
+
+		$synthetic = new WP_Parser_Node( 0, 'synthetic' );
+		$child->append_child( $synthetic );
+
+		$same_child = $tree->get_first_child_node();
+		$this->assertSame( $child, $same_child );
+		$this->assertTrue(
+			in_array( $synthetic, $same_child->get_children(), true ),
+			'Materialized live child wrappers must stay discoverable through the parent native cache.'
+		);
 	}
 
 	public function test_mutation_survives_parent_materialization(): void {

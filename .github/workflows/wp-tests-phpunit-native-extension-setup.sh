@@ -125,12 +125,34 @@ $driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;'
 $parser = $driver->create_parser( 'SELECT 1' );
 $parser->next_query();
 $ast = $parser->get_query_ast();
-$property = ( new ReflectionClass( $ast ) )->getProperty( 'native_ast' );
-$property->setAccessible( true );
-$native_ast = $property->getValue( $ast );
 
-if ( ! is_object( $native_ast ) || 'WP_MySQL_Native_Ast' !== get_class( $native_ast ) ) {
+if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
 	fwrite( STDERR, "WordPress PHP test container did not select the native-backed AST.\n" );
+	exit( 1 );
+}
+
+$reflection = new ReflectionObject( $ast );
+if ( $reflection->hasProperty( 'native_ast' ) || $reflection->hasProperty( 'native_node_index' ) ) {
+	fwrite( STDERR, "Native wrapper still stores Rust AST handle properties.\n" );
+	exit( 1 );
+}
+
+$first = $ast->get_first_child_node();
+if ( ! ( $first instanceof WP_MySQL_Native_Parser_Node ) ) {
+	fwrite( STDERR, "Native wrapper did not return a native-backed child node.\n" );
+	exit( 1 );
+}
+
+if ( $first !== $ast->get_first_child_node() ) {
+	fwrite( STDERR, "Native wrapper identity is not stable across reads.\n" );
+	exit( 1 );
+}
+
+$synthetic = new WP_Parser_Node( 0, 'synthetic' );
+$first->append_child( $synthetic );
+$same_first = $ast->get_first_child_node();
+if ( $same_first !== $first || ! in_array( $synthetic, $same_first->get_children(), true ) ) {
+	fwrite( STDERR, "Materialized native wrapper was lost from the parent cache.\n" );
 	exit( 1 );
 }
 EOF

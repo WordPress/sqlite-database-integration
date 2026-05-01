@@ -38,8 +38,31 @@ jobs:
           else
             TAG="version-${VERSION}"
           fi
-          wget -O sqlite.tar.gz "https://sqlite.org/src/tarball/sqlite.tar.gz?r=${TAG}"
+          SQLITE_SOURCE="https://sqlite.org/src/tarball/sqlite.tar.gz?r=${TAG}"
+          SQLITE_MIRROR="https://github.com/sqlite/sqlite/archive/refs/tags/${TAG}.tar.gz"
+          DOWNLOADED=0
+          for url in "$SQLITE_SOURCE" "$SQLITE_MIRROR"; do
+            for attempt in 1 2 3 4 5; do
+              if wget -O sqlite.tar.gz "$url"; then
+                DOWNLOADED=1
+                break 2
+              fi
+              if [ "$attempt" -lt 5 ]; then
+                sleep $(( attempt * 10 ))
+              fi
+            done
+          done
+          if [ "$DOWNLOADED" -ne 1 ]; then
+            exit 1
+          fi
           tar xzf sqlite.tar.gz
+          if [ ! -d sqlite ]; then
+            SQLITE_DIR=$(find . -maxdepth 1 -type d -name 'sqlite-*' | head -n 1)
+            if [ -z "$SQLITE_DIR" ]; then
+              exit 1
+            fi
+            mv "$SQLITE_DIR" sqlite
+          fi
           cd sqlite
           ./configure --prefix=/usr/local CFLAGS="-DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_FTS5 -DSQLITE_USE_URI -DSQLITE_ENABLE_JSON1" LDFLAGS="-lm"
           make -j$(nproc)
