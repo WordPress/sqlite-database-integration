@@ -2,6 +2,8 @@ name: MySQL Parser Extension Tests
 
 on:
   push:
+    branches:
+      - trunk
     paths:
       - '.github/workflows/mysql-parser-extension-tests.yml'
       - 'packages/mysql-on-sqlite/**'
@@ -19,9 +21,13 @@ concurrency:
 
 jobs:
   extension-tests:
-    name: PHP 8.2 / Rust extension / ubuntu-latest
+    name: PHP ${{ matrix.php }} / Rust extension / ubuntu-latest
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5' ]
 
     steps:
       - name: Checkout repository
@@ -30,7 +36,7 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: ${{ matrix.php }}
           coverage: none
           tools: phpunit-polyfills
 
@@ -59,6 +65,7 @@ jobs:
           composer-options: "--optimize-autoloader"
 
       - name: Check Rust formatting
+        if: matrix.php == '8.2'
         run: cargo fmt --check
         working-directory: packages/php-ext-wp-mysql-parser
 
@@ -97,56 +104,6 @@ jobs:
           }
           '
         working-directory: packages/mysql-on-sqlite
-
-      - name: Run full PHPUnit suite with parser extension
-        env:
-          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
-        run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
-        working-directory: packages/mysql-on-sqlite
-
-  sqlite-driver-extension-tests:
-    name: PHP 8.2 / SQLite driver / Rust extension / ubuntu-latest
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          coverage: none
-          tools: phpunit-polyfills
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libclang-dev
-          echo "PHP_CONFIG=$(command -v php-config)" >> "$GITHUB_ENV"
-          LIBCLANG_SO="$(find /usr/lib -name 'libclang.so*' | head -n 1)"
-          echo "LIBCLANG_PATH=$(dirname "$LIBCLANG_SO")" >> "$GITHUB_ENV"
-
-      - name: Install Composer dependencies (root)
-        uses: ramsey/composer-install@v3
-        with:
-          ignore-cache: "yes"
-          composer-options: "--optimize-autoloader"
-
-      - name: Install Composer dependencies (mysql-on-sqlite)
-        uses: ramsey/composer-install@v3
-        with:
-          working-directory: packages/mysql-on-sqlite
-          ignore-cache: "yes"
-          composer-options: "--optimize-autoloader"
-
-      - name: Build parser extension
-        run: cargo build
-        working-directory: packages/php-ext-wp-mysql-parser
 
       - name: Verify SQLite driver selects the native parser path
         run: |
@@ -199,7 +156,7 @@ jobs:
           }
           '
 
-      - name: Run full PHPUnit suite with SQLite driver using parser extension
+      - name: Run full PHPUnit suite with parser extension
         env:
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
         run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
