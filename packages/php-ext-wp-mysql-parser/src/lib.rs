@@ -3,14 +3,19 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::os::raw::c_char;
+use std::os::raw::c_int;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use ext_php_rs::boxed::ZBox;
 
 use ext_php_rs::convert::{FromZval, IntoZval, IntoZvalDyn};
 use ext_php_rs::exception::{PhpException, PhpResult};
-use ext_php_rs::ffi::{zend_class_entry, zend_object, zval};
+use ext_php_rs::ffi::{
+    ext_php_rs_executor_globals, zend_class_entry, zend_get_gc_buffer, zend_object,
+    zend_object_handlers, zval, HashTable, IS_OBJECT_EX,
+};
 use ext_php_rs::flags::DataType;
 use ext_php_rs::prelude::*;
 use ext_php_rs::types::{ArrayKey, ZendCallable, ZendHashTable, ZendObject, Zval};
@@ -37,6 +42,13 @@ extern "C" {
         value: *mut zval,
     );
 
+    fn zend_get_gc_buffer_grow(gc_buffer: *mut zend_get_gc_buffer);
+
+    fn zend_std_get_gc(
+        object: *mut zend_object,
+        table: *mut *mut zval,
+        n: *mut c_int,
+    ) -> *mut HashTable;
 }
 
 #[derive(Clone)]
@@ -1223,19 +1235,132 @@ fn native_ast(native_ast: &Zval) -> PhpResult<&WpMySqlNativeAst> {
         .ok_or_else(|| php_error("Missing native AST handle"))
 }
 
-/// Build a Zval that references an existing PHP object with refcount bumped.
+/// Tracks whether the GC handler has been installed on `WP_MySQL_Native_Ast`'s
+/// shared handlers struct. We patch in place rather than swapping the handlers
+/// pointer because ext-php-rs uses that pointer as part of registered-class
+/// identity checks.
+static WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED: AtomicBool = AtomicBool::new(false);
+
+/// Custom `get_gc` handler that exposes `WpMySqlNativeAst.node_cache` to PHP's
+/// cycle collector.
+///
+/// The Rust cache owns strong references to cached parser-node wrappers, and
+/// each wrapper points back at the native AST through its `$native_ast`
+/// property. Reporting the cached wrappers here gives PHP a complete view of
+/// the otherwise opaque `AST -> cache -> wrapper -> AST` cycle.
+unsafe extern "C" fn ast_get_gc(
+    object: *mut zend_object,
+    table: *mut *mut zval,
+    n: *mut c_int,
+) -> *mut HashTable {
+    *table = ptr::null_mut();
+    *n = 0;
+
+    let mut standard_table = ptr::null_mut();
+    let mut standard_count = 0;
+    let standard_properties = zend_std_get_gc(object, &mut standard_table, &mut standard_count);
+
+    let Some(ast) = ext_php_rs::types::ZendClassObject::<WpMySqlNativeAst>::from_zend_obj(&*object)
+        .and_then(|z| z.obj.as_ref())
+    else {
+        *table = standard_table;
+        *n = standard_count;
+        return standard_properties;
+    };
+
+    let Ok(cache) = ast.node_cache.try_borrow() else {
+        *table = standard_table;
+        *n = standard_count;
+        return standard_properties;
+    };
+
+    let Some(gc_buffer) = gc_buffer_create() else {
+        *table = standard_table;
+        *n = standard_count;
+        return standard_properties;
+    };
+
+    if !standard_table.is_null() {
+        for offset in 0..standard_count {
+            gc_buffer_add_zval(gc_buffer, standard_table.add(offset as usize));
+        }
+    }
+    for boxed in cache.values() {
+        gc_buffer_add_obj(gc_buffer, ptr::from_ref(boxed.as_ref()).cast_mut());
+    }
+    gc_buffer_use(gc_buffer, table, n);
+
+    standard_properties
+}
+
+unsafe fn gc_buffer_create() -> Option<*mut zend_get_gc_buffer> {
+    let executor_globals = ext_php_rs_executor_globals();
+    if executor_globals.is_null() {
+        return None;
+    }
+
+    let gc_buffer = ptr::addr_of_mut!((*executor_globals).get_gc_buffer);
+    (*gc_buffer).cur = (*gc_buffer).start;
+    Some(gc_buffer)
+}
+
+unsafe fn gc_buffer_add_obj(gc_buffer: *mut zend_get_gc_buffer, obj: *mut zend_object) {
+    if (*gc_buffer).cur == (*gc_buffer).end {
+        zend_get_gc_buffer_grow(gc_buffer);
+    }
+
+    let slot = (*gc_buffer).cur;
+    (*slot).value.obj = obj;
+    (*slot).u1.type_info = IS_OBJECT_EX;
+    (*gc_buffer).cur = (*gc_buffer).cur.add(1);
+}
+
+unsafe fn gc_buffer_add_zval(gc_buffer: *mut zend_get_gc_buffer, value: *const zval) {
+    if value.is_null() {
+        return;
+    }
+    if (*gc_buffer).cur == (*gc_buffer).end {
+        zend_get_gc_buffer_grow(gc_buffer);
+    }
+
+    let slot = (*gc_buffer).cur;
+    ptr::copy_nonoverlapping(value, slot, 1);
+    (*gc_buffer).cur = (*gc_buffer).cur.add(1);
+}
+
+unsafe fn gc_buffer_use(gc_buffer: *mut zend_get_gc_buffer, table: *mut *mut zval, n: *mut c_int) {
+    *table = (*gc_buffer).start;
+    if (*gc_buffer).start.is_null() {
+        *n = 0;
+    } else {
+        *n = (*gc_buffer).cur.offset_from((*gc_buffer).start) as c_int;
+    }
+}
+
+/// Patch `WP_MySQL_Native_Ast`'s shared `zend_object_handlers` so PHP's cycle
+/// collector can walk cached wrappers held by the Rust-side HashMap.
+unsafe fn install_gc_handler_for(obj: *mut zend_object) {
+    if WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED.load(Ordering::Acquire) {
+        return;
+    }
+
+    let handlers = (*obj).handlers;
+    if handlers.is_null() {
+        return;
+    }
+
+    let handlers_mut = handlers as *mut zend_object_handlers;
+    (*handlers_mut).get_gc = Some(ast_get_gc);
+    WP_MYSQL_NATIVE_AST_HANDLERS_PATCHED.store(true, Ordering::Release);
+}
+
+/// Build a Zval that references an existing PHP object.
 ///
 /// Used on cache hits to hand a stored `ZBox<ZendObject>` back to PHP without
-/// allocating a new wrapper. PHP convention for object zvals is that the
-/// zval owns one strong reference, so we have to addref before publishing
-/// the pointer; otherwise the object would be freed twice (once when this
-/// zval drops, once when the cache drops).
-fn zval_from_object_addref(obj: &mut ZendObject) -> Zval {
-    // PHP convention: an object zval owns one strong reference, so bump
-    // the embedded zend_refcounted_h refcount before publishing the
-    // pointer; otherwise the object would be freed twice (once when this
-    // zval drops, once when the cache drops).
-    obj.gc.refcount += 1;
+/// allocating a new wrapper. `Zval::set_object()` bumps the object refcount
+/// for the returned zval; the `ZBox` in `node_cache` owns the cache's
+/// reference.
+fn zval_from_cached_object(obj: &mut ZendObject) -> Zval {
     let mut zv = Zval::new();
     zv.set_object(obj);
     zv
@@ -1266,12 +1391,14 @@ impl WpMySqlNativeAst {
         index: usize,
         classes: &PhpClasses,
     ) -> PhpResult<Zval> {
-        let mut cache = self.node_cache.borrow_mut();
+        {
+            let mut cache = self.node_cache.borrow_mut();
 
-        // Cache hit: skip allocation entirely and return a Zval pointing
-        // at the cached wrapper with refcount bumped.
-        if let Some(boxed) = cache.get_mut(&index) {
-            return Ok(zval_from_object_addref(boxed));
+            // Cache hit: skip allocation entirely and return a Zval pointing
+            // at the cached wrapper with refcount bumped by `set_object()`.
+            if let Some(boxed) = cache.get_mut(&index) {
+                return Ok(zval_from_cached_object(boxed));
+            }
         }
 
         // Cache miss: build the wrapper as `create_php_node_with_classes`
@@ -1312,11 +1439,15 @@ impl WpMySqlNativeAst {
             idx_i64,
         )?;
 
+        let mut cache = self.node_cache.borrow_mut();
+        if let Some(boxed) = cache.get_mut(&index) {
+            return Ok(zval_from_cached_object(boxed));
+        }
         cache.insert(index, object);
         let stored = cache
             .get_mut(&index)
             .expect("just-inserted node missing from cache");
-        Ok(zval_from_object_addref(stored))
+        Ok(zval_from_cached_object(stored))
     }
 }
 
@@ -1838,6 +1969,15 @@ impl WpMySqlNativeParser {
             .into_zval(false)
             .map_err(php_error)?;
             let native_ast = native_ast(&native_ast_zval)?;
+            // Install the custom `get_gc` after ext-php-rs can resolve the
+            // object. PHP's cycle collector then sees wrappers held by the
+            // Rust-side cache.
+            unsafe {
+                let obj_ref = native_ast_zval
+                    .object()
+                    .ok_or_else(|| php_error("Native AST zval is not an object"))?;
+                install_gc_handler_for(ptr::from_ref(obj_ref).cast_mut());
+            }
             native_ast.arena.create_php_ast(&native_ast_zval)
         })
     }

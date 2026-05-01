@@ -5,14 +5,11 @@ use PHPUnit\Framework\TestCase;
 /**
  * Cycle-collection / memory-bound tests for the Rust-side identity cache.
  *
- * The Rust extension stores cached wrappers in a HashMap that PHP's GC
- * cannot see by default. Each cached wrapper has a `$native_ast` property
- * pointing back at the AST, forming a cycle the cycle collector can't
- * walk into without help. These tests are the contract for the custom
- * `gc_handler` on `WP_MySQL_Native_Ast` that exposes the cached wrappers
- * to PHP's collector — they will fail until the handler is in place and
- * working correctly. They're written to break in every direction the
- * leak can manifest:
+ * The Rust extension stores cached wrappers in a HashMap. Each cached
+ * wrapper has a `$native_ast` property pointing back at the AST, forming
+ * a cycle the cycle collector can only reclaim when the native AST's
+ * `get_gc` handler exposes the cached wrappers to PHP's collector. These
+ * tests break in every direction that cycle handling can regress:
  *
  * - Loops parsing many ASTs without explicit GC must not grow without
  *   bound (ordinary mode of use).
@@ -34,17 +31,6 @@ class WP_MySQL_Native_Parser_Node_Cycle_Tests extends TestCase {
 		if ( ! class_exists( 'WP_MySQL_Native_Parser', false ) ) {
 			$this->markTestSkipped( 'Native MySQL parser extension is not loaded.' );
 		}
-		// The Rust-side identity cache forms a reference cycle (cache ->
-		// wrapper -> $native_ast property -> WpMySqlNativeAst -> cache)
-		// that PHP's GC cannot walk into without a custom gc_handler on
-		// `zend_object_handlers->get_gc`. ext-php-rs 0.15 does not expose
-		// the primitives needed to install one safely (see PR notes), so
-		// these tests document the desired contract but stay incomplete
-		// until the cycle collector can reach the Rust map. Skipping
-		// avoids the false-positive memory failure on the CI runner.
-		$this->markTestIncomplete(
-			'Cycle collection across the Rust-side node_cache requires a custom get_gc handler that ext-php-rs 0.15 does not yet support; tracked as a follow-up.'
-		);
 		// Force a clean slate before each test — ASTs from earlier tests
 		// must not pollute the memory measurements below.
 		gc_collect_cycles();
