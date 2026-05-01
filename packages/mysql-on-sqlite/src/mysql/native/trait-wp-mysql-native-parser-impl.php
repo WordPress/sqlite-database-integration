@@ -20,12 +20,24 @@ trait WP_MySQL_Native_Parser_Impl {
 	 */
 	private $native;
 
-	public function __construct( WP_Parser_Grammar $grammar, array $tokens ) {
-		parent::__construct( $grammar, $tokens );
+	/**
+	 * @param WP_Parser_Grammar                          $grammar
+	 * @param array<WP_Parser_Token>|WP_MySQL_Native_Token_Stream $tokens
+	 */
+	public function __construct( WP_Parser_Grammar $grammar, $tokens ) {
+		// WP_Parser's `array $tokens` constructor signature can't accept
+		// the native token stream object; its `$this->tokens` /
+		// `$this->position` state is inert in native mode anyway, so we
+		// pass an empty array to satisfy the parent contract and keep
+		// the actual tokens on the native parser.
+		parent::__construct( $grammar, array() );
 		$this->native = new WP_MySQL_Native_Parser( $grammar, $tokens );
 	}
 
-	public function reset_tokens( array $tokens ): void {
+	/**
+	 * @param array<WP_Parser_Token>|WP_MySQL_Native_Token_Stream $tokens
+	 */
+	public function reset_tokens( $tokens ): void {
 		$this->native->reset_tokens( $tokens );
 	}
 
