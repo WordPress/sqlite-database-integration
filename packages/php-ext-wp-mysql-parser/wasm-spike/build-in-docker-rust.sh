@@ -86,6 +86,11 @@ docker run --rm -i \
     chmod -R u+w "$REG"
     sed -i "s/12 \* std::mem::size_of::<usize>/24 * std::mem::size_of::<usize>/" \
       "$REG/ext-php-rs-0.15.12/src/internal/property.rs"
+    # PHP.wasm does not export zend_ce_traversable as a wasm global that a
+    # side module can import. Avoid the import by resolving the interface from
+    # the runtime class table when ext-php-rs needs it.
+    sed -i 's/unsafe { zend_ce_traversable.as_ref() }.unwrap()/ClassEntry::try_find("Traversable").unwrap()/' \
+      "$REG/ext-php-rs-0.15.12/src/zend/ce.rs"
 
     # Use nightly + -Zbuild-std=std,panic_abort so libstd is rebuilt with
     # panic=abort. Without rebuilding std, the precompiled libstd still
