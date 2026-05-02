@@ -128,6 +128,17 @@ docker run --rm -i \
     sed -i 's/let stub = crate::convert::zval_to_stub(&zval);/let stub = String::from("null");/' \
       "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
 
+    # PHP.wasm exports zend_declare_class_constant_ex, but not the legacy
+    # zend_declare_class_constant helper. Use the exported API when ext-php-rs
+    # registers class constants.
+    sed -i '/zend_declare_class_constant,/a \    zend_declare_class_constant_ex,' \
+      "$REG/ext-php-rs-0.15.12/allowed_bindings.rs"
+    sed -i \
+      's/zend_declare_class_constant, zend_declare_property,/zend_declare_class_constant_ex, zend_declare_property,/' \
+      "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
+    perl -0pi -e 's/zend_declare_class_constant\(\n\s+class,\n\s+CString::new\(name\.as_str\(\)\)\?\.as_ptr\(\),\n\s+name\.len\(\),\n\s+value,\n\s+\);/let mut name = ZendStr::new_interned(name.as_str(), true);\n                zend_declare_class_constant_ex(\n                    class,\n                    name.as_mut_ptr(),\n                    value,\n                    crate::ffi::ZEND_ACC_PUBLIC as _,\n                    ptr::null_mut(),\n                );/s' \
+      "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
+
     # ext-php-rs keeps helper functions for globals in one C translation unit.
     # The Rust staticlib can pull in the whole object even when a helper is not
     # called, so mark optional PHP globals weak to keep dlopen from requiring
@@ -173,6 +184,12 @@ void ext_php_rs_zend_execute(zend_op_array *op_array) {\
     ! grep -q 'ExecutorGlobals::get().class_table()' \
       "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
     ! grep -q 'let stub = crate::convert::zval_to_stub(&zval)' \
+      "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
+    grep -q 'zend_declare_class_constant_ex,' \
+      "$REG/ext-php-rs-0.15.12/allowed_bindings.rs"
+    grep -q 'zend_declare_class_constant_ex(' \
+      "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
+    ! grep -q 'zend_declare_class_constant(' \
       "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
     ! grep -q 'return zend_compile_string' \
       "$REG/ext-php-rs-0.15.12/src/wrapper.c"
