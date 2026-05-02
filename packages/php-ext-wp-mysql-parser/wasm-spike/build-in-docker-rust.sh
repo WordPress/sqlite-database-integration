@@ -124,6 +124,7 @@ docker run --rm -i \
     # called, so mark optional PHP globals weak to keep dlopen from requiring
     # PHP.wasm exports for unused helpers.
     sed -i \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak zend_compile_string' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak executor_globals' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak compiler_globals' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak core_globals' \
@@ -147,6 +148,8 @@ docker run --rm -i \
       "$REG/ext-php-rs-0.15.12/src/zend/ce.rs"
     ! grep -q 'ExecutorGlobals::get().class_table()' \
       "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
+    grep -q '#pragma weak zend_compile_string' \
+      "$REG/ext-php-rs-0.15.12/src/wrapper.c"
     grep -q '#pragma weak file_globals' \
       "$REG/ext-php-rs-0.15.12/src/wrapper.c"
 
