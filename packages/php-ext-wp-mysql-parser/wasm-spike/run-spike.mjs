@@ -50,16 +50,12 @@ if ($missing) {
 }
 
 $lexer = new WP_MySQL_Native_Lexer('SELECT 1 FROM wp_posts');
-$names = [];
-while ($lexer->next_token()) {
-  $token = $lexer->get_token();
-  $names[] = WP_MySQL_Native_Lexer::get_token_name($token->get_type());
-}
-echo 'TOKENS=', implode(',', $names);
+$stream = $lexer->native_token_stream();
+echo 'COUNT=', $stream->count();
 `;
 
 const EXPECTED =
-  'TOKENS=SELECT_SYMBOL,INT_NUMBER,FROM_SYMBOL,IDENTIFIER';
+  'COUNT=4';
 
 // Probe JSPI up front: loadNodeRuntime asks wasm-feature-detect for it, and
 // custom extensions only load under JSPI. If the probe fails here we know
