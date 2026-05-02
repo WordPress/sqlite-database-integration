@@ -35,12 +35,21 @@ docker build \
   "$SPIKE_DIR"
 
 echo "==> Stage 1: cargo build --target wasm32-unknown-emscripten"
+echo "[diag] host CRATE_DIR=$CRATE_DIR"
+ls -la "$CRATE_DIR" || true
+echo "[diag] host OUT_DIR=$OUT_DIR"
+ls -la "$OUT_DIR" || true
 docker run --rm \
   -v "$CRATE_DIR":/src:ro \
   -v "$OUT_DIR":/out \
   --entrypoint bash \
   "$RUST_IMAGE" -lc '
-    set -e
+    set -ex
+    echo "[diag] inside container, listing / and /src"
+    ls -la / | head
+    ls -la /src 2>&1 || echo "[diag] /src not present at all"
+    mountpoint /src 2>&1 || true
+    findmnt /src 2>&1 || true
     source /root/emsdk/emsdk_env.sh
     SYSROOT=/root/emsdk/upstream/emscripten/cache/sysroot
     export CC=emcc CXX=em++ AR=emar
