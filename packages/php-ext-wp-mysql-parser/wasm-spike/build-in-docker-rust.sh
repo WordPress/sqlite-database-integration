@@ -35,21 +35,14 @@ docker build \
   "$SPIKE_DIR"
 
 echo "==> Stage 1: cargo build --target wasm32-unknown-emscripten"
-echo "[diag] host CRATE_DIR=$CRATE_DIR"
-ls -la "$CRATE_DIR" || true
-echo "[diag] host OUT_DIR=$OUT_DIR"
-ls -la "$OUT_DIR" || true
-docker run --rm \
+# Feed the container script through stdin so Docker-side comments and strings
+# cannot break host-shell quoting.
+docker run --rm -i \
   -v "$CRATE_DIR":/src:ro \
   -v "$OUT_DIR":/out \
   --entrypoint bash \
-  "$RUST_IMAGE" -lc '
+  "$RUST_IMAGE" -s <<'EOF'
     set -ex
-    echo "[diag] inside container, listing / and /src"
-    ls -la / | head
-    ls -la /src 2>&1 || echo "[diag] /src not present at all"
-    mountpoint /src 2>&1 || true
-    findmnt /src 2>&1 || true
     source /root/emsdk/emsdk_env.sh
     SYSROOT=/root/emsdk/upstream/emscripten/cache/sysroot
     export CC=emcc CXX=em++ AR=emar
@@ -79,7 +72,9 @@ docker run --rm \
     export CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS="-C relocation-model=pic -C panic=abort"
 
     # Operate on a copy so the sed Cargo.toml flip never touches /src.
-    cp -R /src /work
+    rm -rf /work
+    mkdir -p /work
+    cp -a /src/. /work/
     cd /work
     sed -i "s/crate-type = \[\"cdylib\"\]/crate-type = [\"staticlib\"]/" Cargo.toml
 
@@ -98,7 +93,7 @@ docker run --rm \
     cargo +nightly build --release --target wasm32-unknown-emscripten \
         -Zbuild-std=std,panic_abort
     cp target/wasm32-unknown-emscripten/release/libwp_mysql_parser.a /out/
-  '
+EOF
 
 echo "==> Stage 2: phpize + emconfigure + emmake (build-php-wasm-extension)"
 SRC_STAGE="$(mktemp -d)"

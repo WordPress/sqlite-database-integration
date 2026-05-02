@@ -58,6 +58,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         --component rust-src \
     && /root/cargo/bin/rustup target add wasm32-unknown-emscripten --toolchain nightly
 
-# Make libclang discoverable for bindgen regardless of LLVM minor version.
-RUN ln -sf "$(dpkg -L libclang-dev | grep -E 'libclang.so$' | head -1)" /usr/lib/libclang.so || true
-ENV LIBCLANG_PATH=/usr/lib/llvm-18/lib
+# Make libclang discoverable for bindgen regardless of the exact package path.
+RUN set -eux; \
+    libclang="$(find /usr/lib -name 'libclang.so*' -print | sort | head -1)"; \
+    test -n "$libclang"; \
+    ln -sf "$libclang" /usr/lib/libclang.so
+ENV LIBCLANG_PATH=/usr/lib
