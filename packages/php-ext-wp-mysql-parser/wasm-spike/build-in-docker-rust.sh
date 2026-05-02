@@ -86,11 +86,69 @@ docker run --rm -i \
     chmod -R u+w "$REG"
     sed -i "s/12 \* std::mem::size_of::<usize>/24 * std::mem::size_of::<usize>/" \
       "$REG/ext-php-rs-0.15.12/src/internal/property.rs"
-    # PHP.wasm does not export zend_ce_traversable as a wasm global that a
-    # side module can import. Avoid the import by resolving the interface from
-    # the runtime class table when ext-php-rs needs it.
-    sed -i 's/unsafe { zend_ce_traversable.as_ref() }.unwrap()/ClassEntry::try_find("Traversable").unwrap()/' \
+
+    # PHP.wasm does not export every Zend global as a wasm global that a side
+    # module can import. Avoid those imports by resolving class entries from
+    # the runtime class table when ext-php-rs needs them.
+    patch_class_entry() {
+      sed -i "s/unsafe { $1.as_ref() }.unwrap()/ClassEntry::try_find(\"$2\").unwrap()/" \
+        "$REG/ext-php-rs-0.15.12/src/zend/ce.rs"
+    }
+    patch_class_entry zend_standard_class_def stdClass
+    patch_class_entry zend_ce_throwable Throwable
+    patch_class_entry zend_ce_exception Exception
+    patch_class_entry zend_ce_error_exception ErrorException
+    patch_class_entry zend_ce_compile_error CompileError
+    patch_class_entry zend_ce_parse_error ParseError
+    patch_class_entry zend_ce_type_error TypeError
+    patch_class_entry zend_ce_argument_count_error ArgumentCountError
+    patch_class_entry zend_ce_value_error ValueError
+    patch_class_entry zend_ce_arithmetic_error ArithmeticError
+    patch_class_entry zend_ce_division_by_zero_error DivisionByZeroError
+    patch_class_entry zend_ce_unhandled_match_error UnhandledMatchError
+    patch_class_entry zend_ce_traversable Traversable
+    patch_class_entry zend_ce_aggregate IteratorAggregate
+    patch_class_entry zend_ce_iterator Iterator
+    patch_class_entry zend_ce_arrayaccess ArrayAccess
+    patch_class_entry zend_ce_serializable Serializable
+    patch_class_entry zend_ce_countable Countable
+    patch_class_entry zend_ce_stringable Stringable
+
+    # ClassEntry::try_find can ask Zend directly. The executor global check
+    # only forces an extra side-module import that PHP.wasm does not provide.
+    sed -i '/ExecutorGlobals::get().class_table()?;/d' \
+      "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
+
+    # ext-php-rs keeps helper functions for globals in one C translation unit.
+    # The Rust staticlib can pull in the whole object even when a helper is not
+    # called, so mark optional PHP globals weak to keep dlopen from requiring
+    # PHP.wasm exports for unused helpers.
+    sed -i \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak executor_globals' \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak compiler_globals' \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak core_globals' \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak sapi_globals' \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak file_globals' \
+      -e '/#pragma weak zend_one_char_string/a #pragma weak sapi_module' \
+      "$REG/ext-php-rs-0.15.12/src/wrapper.c"
+
+    # Avoid ext-php-rs' direct Rust import of the sapi_module global in output
+    # helpers. Route it through the weak C wrapper instead.
+    sed -i 's/ffi::{php_output_write, php_printf, sapi_module}/ffi::{php_output_write, php_printf}/' \
+      "$REG/ext-php-rs-0.15.12/src/zend/mod.rs"
+    sed -i 's/sapi_module\.ub_write/(*crate::ffi::ext_php_rs_sapi_module()).ub_write/' \
+      "$REG/ext-php-rs-0.15.12/src/zend/mod.rs"
+    sed -i 's/sapi_module\.name/(*crate::ffi::ext_php_rs_sapi_module()).name/' \
+      "$REG/ext-php-rs-0.15.12/src/zend/mod.rs"
+
+    # Verify the targeted patches matched the registry sources before doing an
+    # expensive cargo build.
+    ! grep -Eq 'unsafe \{ (zend_standard_class_def|zend_ce_[a-z_]+)\.as_ref\(\) \}\.unwrap\(\)' \
       "$REG/ext-php-rs-0.15.12/src/zend/ce.rs"
+    ! grep -q 'ExecutorGlobals::get().class_table()' \
+      "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
+    grep -q '#pragma weak file_globals' \
+      "$REG/ext-php-rs-0.15.12/src/wrapper.c"
 
     # Use nightly + -Zbuild-std=std,panic_abort so libstd is rebuilt with
     # panic=abort. Without rebuilding std, the precompiled libstd still
