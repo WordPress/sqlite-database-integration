@@ -16,7 +16,7 @@ on:
       playground-ref:
         description: 'wordpress-playground branch/tag/SHA to build against'
         required: false
-        default: 'adamziel/compile-extension'
+        default: 'adamziel/compile-extension-rust-recipe'
 
 jobs:
   build-and-load:
@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: WordPress/wordpress-playground
-          ref: ${{ github.event.inputs.playground-ref || 'adamziel/compile-extension' }}
+          ref: ${{ github.event.inputs.playground-ref || 'adamziel/compile-extension-rust-recipe' }}
           path: wordpress-playground
 
       - name: Set up Node
