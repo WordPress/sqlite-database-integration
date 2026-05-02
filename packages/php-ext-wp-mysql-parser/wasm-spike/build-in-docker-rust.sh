@@ -119,6 +119,15 @@ docker run --rm -i \
     sed -i '/ExecutorGlobals::get().class_table()?;/d' \
       "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
 
+    # Class constant stub strings are only used for generated PHP stubs, but
+    # ext-php-rs computes them during module startup by walking the actual zval.
+    # The lexer registers several large array constants, and walking those
+    # arrays imports helpers such as zend_array_count that PHP.wasm does not
+    # expose as callable side-module functions. Keep runtime constant
+    # registration intact, but use a placeholder stub value for this WASM build.
+    sed -i 's/let stub = crate::convert::zval_to_stub(&zval);/let stub = String::from("null");/' \
+      "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
+
     # ext-php-rs keeps helper functions for globals in one C translation unit.
     # The Rust staticlib can pull in the whole object even when a helper is not
     # called, so mark optional PHP globals weak to keep dlopen from requiring
@@ -163,6 +172,8 @@ void ext_php_rs_zend_execute(zend_op_array *op_array) {\
       "$REG/ext-php-rs-0.15.12/src/zend/ce.rs"
     ! grep -q 'ExecutorGlobals::get().class_table()' \
       "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
+    ! grep -q 'let stub = crate::convert::zval_to_stub(&zval)' \
+      "$REG/ext-php-rs-0.15.12/src/builders/class.rs"
     ! grep -q 'return zend_compile_string' \
       "$REG/ext-php-rs-0.15.12/src/wrapper.c"
     ! grep -q 'zend_execute(op_array' \
