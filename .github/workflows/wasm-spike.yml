@@ -71,6 +71,20 @@ jobs:
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
           echo "Resolved PHP ${{ matrix.php }} -> $RELEASE"
 
+      - name: Configure Docker DNS
+        run: |
+          # GitHub-hosted runners occasionally have a Docker daemon whose
+          # default bridge network can't resolve archive.ubuntu.com. Pin
+          # explicit public resolvers so apt-get inside the base image build
+          # can reach the Ubuntu mirrors.
+          echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          # Wait for Docker to come back up.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if docker info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+
       - name: Build playground-php-wasm:base image
         working-directory: wordpress-playground/packages/php-wasm/compile
         run: make base-image
