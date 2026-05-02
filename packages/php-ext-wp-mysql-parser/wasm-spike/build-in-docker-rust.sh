@@ -105,4 +105,22 @@ docker run --rm \
   "$BASE_IMAGE"
 
 rm -rf "$SRC_STAGE"
+
+# Emit a manifest.json matching @php-wasm/compile-extension's
+# ExtensionManifest schema so load-built-extension.mjs can dlopen the .so.
+ARTIFACT_SHA=$(sha256sum "$OUT_DIR/$ARTIFACT" | cut -d' ' -f1)
+cat > "$OUT_DIR/manifest.json" <<EOF
+{
+  "name": "wp_mysql_parser",
+  "version": "0.0.0",
+  "artifacts": [
+    {
+      "phpVersion": "${PHP_VERSION}",
+      "file": "${ARTIFACT}",
+      "sha256": "${ARTIFACT_SHA}"
+    }
+  ]
+}
+EOF
+
 echo "==> Built $OUT_DIR/$ARTIFACT"

@@ -123,7 +123,7 @@ jobs:
       - name: Verify manifest sha256 matches the .so byte-for-byte
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
         run: |
-          MANIFEST_SHA=$(node -e "console.log(require('./dist/manifest.json').extensions[0].artifacts[0].sha256)")
+          MANIFEST_SHA=$(node -e "console.log(require('./dist/manifest.json').artifacts[0].sha256)")
           ACTUAL_SHA=$(sha256sum dist/wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so | cut -d' ' -f1)
           echo "manifest: $MANIFEST_SHA"
           echo "actual:   $ACTUAL_SHA"

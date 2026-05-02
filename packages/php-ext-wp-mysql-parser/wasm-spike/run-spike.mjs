@@ -77,7 +77,6 @@ const cmd = [
   ),
   MANIFEST,
   PHP_VERSION,
-  ASYNC_MODE,
   PHP_CODE,
   EXPECTED,
 ];
