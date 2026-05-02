@@ -127,6 +127,7 @@ cat > "$OUT_DIR/manifest.json" <<EOF
   "artifacts": [
     {
       "phpVersion": "${PHP_VERSION}",
+      "asyncMode": "${ASYNC_MODE}",
       "file": "${ARTIFACT}",
       "sha256": "${ARTIFACT_SHA}"
     }
