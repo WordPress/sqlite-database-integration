@@ -53,7 +53,14 @@ docker run --rm \
     # cc-rs (used by ext-php-rs to compile wrapper.c) does not pick up
     # -fPIC by default for wasm32. The side-module link demands PIC, so
     # force it via the target-specific CFLAGS env var.
-    export CFLAGS_wasm32_unknown_emscripten="-fPIC -DZEND_ENABLE_ZVAL_LONG64 -D__x86_64__"
+    #
+    # `-sSUPPORT_LONGJMP=wasm` and `-fwasm-exceptions` must match the
+    # PHP-wasm main module's exception/longjmp ABI. Without them, the
+    # ext-php-rs `wrapper.c` is compiled with emscripten's legacy JS-based
+    # SjLj, which imports the `__THREW__` global. The main module exports
+    # only the wasm-native variants, so dlopen() rejects the side module
+    # with "bad export type for '__THREW__': undefined".
+    export CFLAGS_wasm32_unknown_emscripten="-fPIC -DZEND_ENABLE_ZVAL_LONG64 -D__x86_64__ -sSUPPORT_LONGJMP=wasm -fwasm-exceptions"
     # Tell cargo/rustc to build with PIE-friendly relocations as well.
     # `-C relocation-model=pic` is required for the side-module link.
     # `-C panic=abort` keeps the Rust archive from importing the C++
