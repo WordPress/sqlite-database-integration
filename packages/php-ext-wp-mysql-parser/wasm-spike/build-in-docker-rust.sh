@@ -124,7 +124,6 @@ docker run --rm -i \
     # called, so mark optional PHP globals weak to keep dlopen from requiring
     # PHP.wasm exports for unused helpers.
     sed -i \
-      -e '/#pragma weak zend_one_char_string/a #pragma weak zend_compile_string' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak executor_globals' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak compiler_globals' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak core_globals' \
@@ -132,6 +131,22 @@ docker run --rm -i \
       -e '/#pragma weak zend_one_char_string/a #pragma weak file_globals' \
       -e '/#pragma weak zend_one_char_string/a #pragma weak sapi_module' \
       "$REG/ext-php-rs-0.15.12/src/wrapper.c"
+
+    # php_eval is not used by this extension, but ext-php-rs exposes wrappers
+    # for it from wrapper.c. Since the wrapper object is linked into the static
+    # archive, those wrappers can still pull in PHP compile/execute symbols that
+    # PHP.wasm does not export. Stub the unused wrappers so module startup does
+    # not try to resolve them through JS import stubs.
+    sed -i '/^zend_op_array \*ext_php_rs_zend_compile_string(/,/^}/c\
+zend_op_array *ext_php_rs_zend_compile_string(zend_string *source, const char *filename) {\
+  (void) source;\
+  (void) filename;\
+  return NULL;\
+}' "$REG/ext-php-rs-0.15.12/src/wrapper.c"
+    sed -i '/^void ext_php_rs_zend_execute(/,/^}/c\
+void ext_php_rs_zend_execute(zend_op_array *op_array) {\
+  (void) op_array;\
+}' "$REG/ext-php-rs-0.15.12/src/wrapper.c"
 
     # Avoid ext-php-rs' direct Rust import of the sapi_module global in output
     # helpers. Route it through the weak C wrapper instead.
@@ -148,7 +163,9 @@ docker run --rm -i \
       "$REG/ext-php-rs-0.15.12/src/zend/ce.rs"
     ! grep -q 'ExecutorGlobals::get().class_table()' \
       "$REG/ext-php-rs-0.15.12/src/zend/class.rs"
-    grep -q '#pragma weak zend_compile_string' \
+    ! grep -q 'return zend_compile_string' \
+      "$REG/ext-php-rs-0.15.12/src/wrapper.c"
+    ! grep -q 'zend_execute(op_array' \
       "$REG/ext-php-rs-0.15.12/src/wrapper.c"
     grep -q '#pragma weak file_globals' \
       "$REG/ext-php-rs-0.15.12/src/wrapper.c"
