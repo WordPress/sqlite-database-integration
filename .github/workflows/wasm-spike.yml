@@ -53,11 +53,43 @@ jobs:
         working-directory: wordpress-playground
         run: npm ci
 
-      - name: Build @php-wasm/compile-extension base image
+      - name: Resolve PHP release for ${{ matrix.php }}
+        id: php-release
         working-directory: wordpress-playground
         run: |
-          npx @php-wasm/compile-extension --help >/dev/null 2>&1 || true
-          docker images | grep playground-php-wasm || true
+          # Mirror @php-wasm/compile-extension's resolvePHPRelease() by
+          # parsing its source map so we tag the image with the exact same
+          # PHP_VERSION value the CLI would use.
+          RELEASE=$(node -e "
+            const fs=require('fs');
+            const src=fs.readFileSync('./packages/php-wasm/compile-extension/src/compile.ts','utf8');
+            const map=Object.fromEntries([...src.matchAll(/'(\d+\.\d+)':\s*'(\d+\.\d+\.\d+)'/g)].map(m=>[m[1],m[2]]));
+            const r=map['${{ matrix.php }}'];
+            if (!r) { process.exit(1); }
+            console.log(r);
+          ")
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved PHP ${{ matrix.php }} -> $RELEASE"
+
+      - name: Build playground-php-wasm:base image
+        working-directory: wordpress-playground/packages/php-wasm/compile
+        run: make base-image
+
+      - name: Build per-version compile-extension image
+        working-directory: wordpress-playground/packages/php-wasm
+        env:
+          IMAGE_TAG: playground-php-wasm:compile-extension-php${{ matrix.php == '8.4' && '8-4' || matrix.php == '8.3' && '8-3' || matrix.php == '8.2' && '8-2' || matrix.php == '8.1' && '8-1' || matrix.php == '8.0' && '8-0' || matrix.php == '7.4' && '7-4' || matrix.php == '7.3' && '7-3' || matrix.php == '7.2' && '7-2' || matrix.php }}-${{ matrix.async-mode }}
+        run: |
+          JSPI_FLAG=no
+          if [ "${{ matrix.async-mode }}" = "jspi" ]; then JSPI_FLAG=yes; fi
+          docker build \
+            -f compile-extension/docker/Dockerfile.ext \
+            . \
+            --tag "$IMAGE_TAG" \
+            --progress=plain \
+            --build-arg "PHP_VERSION=${{ steps.php-release.outputs.release }}" \
+            --build-arg "JSPI=$JSPI_FLAG"
+          docker images | grep playground-php-wasm
 
       - name: Build wp_mysql_parser side module
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
