@@ -61,6 +61,26 @@ echo 'TOKENS=', implode(',', $names);
 const EXPECTED =
   'TOKENS=SELECT_SYMBOL,INT_NUMBER,FROM_SYMBOL,IDENTIFIER';
 
+// Probe JSPI up front: loadNodeRuntime asks wasm-feature-detect for it, and
+// custom extensions only load under JSPI. If the probe fails here we know
+// the harness will reject the side module before the runtime ever tries.
+const probe = spawnSync(
+  process.execPath,
+  [
+    '--experimental-wasm-jspi',
+    '-e',
+    "import('wasm-feature-detect').then(async ({ jspi }) => { process.exit((await jspi()) ? 0 : 42); })",
+  ],
+  { cwd: PLAYGROUND_REPO, stdio: 'inherit' }
+);
+if (probe.status !== 0) {
+  console.error(
+    `[spike] wasm-feature-detect/jspi probe failed (exit ${probe.status}). ` +
+      `Node ${process.version} cannot enable JSPI; aborting before runtime.`
+  );
+  process.exit(probe.status || 1);
+}
+
 const cmd = [
   '--experimental-wasm-jspi',
   '--experimental-strip-types',
