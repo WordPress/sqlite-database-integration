@@ -23,6 +23,34 @@ manifest generation. The local glue that remains is Rust-specific: build
 `libwp_mysql_parser.a` with the same Emscripten/PHP.wasm ABI and patch the
 vendored `ext-php-rs` registry copy so it can run as a PHP.wasm side module.
 
+## Publishing a Playground extension artifact
+
+`.github/workflows/publish-wasm-extension-artifact.yml` builds the JSPI side
+module for PHP 8.0 through 8.5, collects the side modules into one Actions
+artifact, and writes a Playground extension manifest using the sidecar format
+from WordPress/wordpress-playground#3580:
+
+```json
+{
+  "name": "wp_mysql_parser",
+  "mode": "php-extension",
+  "artifacts": [
+    {
+      "phpVersion": "8.4",
+      "sourcePath": "wp_mysql_parser-php8.4-jspi.so"
+    }
+  ]
+}
+```
+
+The published manifest deliberately uses `sourcePath` and omits the retired
+`file` and `sha256` artifact fields. The per-version build still gets whatever
+manifest the current Playground compile helper emits, but the publish job
+replaces it with the PR #3580 shape before uploading the final artifact.
+The uploaded manifest is intended for Playground builds that include that
+resolver change; older Playground loaders still expect `file`. Checksums are
+published separately in `SHA256SUMS`.
+
 ## What the Playground helper covers
 
 `@php-wasm/compile-extension` is complete enough to replace the custom
