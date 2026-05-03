@@ -17,11 +17,13 @@ would require a different binding layer, or real PHP 7.4 support in
 generated/wrapped Zend API surface itself, including PHP 8-only symbols and
 struct fields.
 
-The build uses the upstream Playground compile-extension tooling for the
-phpize side-module build, static archive force-linking, wasm-opt pass, and
-manifest generation. The local glue that remains is Rust-specific: build
-`libwp_mysql_parser.a` with the same Emscripten/PHP.wasm ABI and patch the
-vendored `ext-php-rs` registry copy so it can run as a PHP.wasm side module.
+The build uses the published `@php-wasm/compile-extension` CLI for the phpize
+side-module build, static archive force-linking, wasm-opt pass, and manifest
+generation. A sparse Playground checkout is still required for the
+`packages/php-wasm/compile` Docker assets and for CI's Playground load test.
+The local glue that remains is Rust-specific: build `libwp_mysql_parser.a`
+with the same Emscripten/PHP.wasm ABI and patch the vendored `ext-php-rs`
+registry copy so it can run as a PHP.wasm side module.
 
 ## Publishing a Playground extension artifact
 
@@ -43,13 +45,13 @@ from WordPress/wordpress-playground#3580:
 }
 ```
 
-The published manifest deliberately uses `sourcePath` and omits the retired
-`file` and `sha256` artifact fields. The per-version build still gets whatever
-manifest the current Playground compile helper emits, but the publish job
-replaces it with the PR #3580 shape before uploading the final artifact.
-The uploaded manifest is intended for Playground builds that include that
-resolver change; older Playground loaders still expect `file`. Checksums are
-published separately in `SHA256SUMS`.
+The per-version build manifest comes from `@php-wasm/compile-extension` and
+already uses `sourcePath` while omitting the retired `file` and `sha256`
+artifact fields. The publish job writes a combined all-version manifest in the
+same shape before uploading the final artifact. The uploaded manifest is
+intended for Playground builds that include the #3580 resolver change; older
+Playground loaders still expect `file`. Checksums are published separately in
+`SHA256SUMS`.
 
 ## What the Playground helper covers
 
@@ -62,8 +64,8 @@ Stage 2 path that previously lived in this spike:
 - Accepts Rust or C static archives via `--extra-ldflags` and force-links
   `.a` inputs with `--whole-archive`.
 - Runs `wasm-opt` when available.
-- Emits a manifest with `sha256` hashes that the Playground runtime can load
-  at startup.
+- Emits a `sourcePath` manifest that the Playground runtime can load at
+  startup.
 
 The helper is not a full Rust build system. This crate still needs a
 per-PHP-version prebuild step that produces a wasm32-unknown-emscripten
@@ -95,8 +97,8 @@ extension build and manifest machinery.
 | Path | What it is |
 | --- | --- |
 | `Dockerfile.rust` | Rust/nightly/host-PHP layer on top of Playground's compile-extension image. |
-| `build-in-docker-rust.sh` | Builds the Rust staticlib, then calls Playground's `@php-wasm/compile-extension` CLI. |
-| `write-extension-manifest.mjs` | Rewrites build outputs into the Playground PR #3580 manifest shape. |
+| `build-in-docker-rust.sh` | Builds the Rust staticlib, then calls the published `@php-wasm/compile-extension` CLI. |
+| `write-extension-manifest.mjs` | Writes the combined all-version artifact manifest for the publish workflow. |
 | `shim/config.m4` | Minimal phpize wrapper. |
 | `shim/wp_mysql_parser_shim.c` | Pulls the Rust `get_module()` symbol into the side-module link. |
 | `run-spike.mjs` | Loads the generated manifest in Playground and verifies the native lexer. |
@@ -113,5 +115,6 @@ PLAYGROUND_REPO=/abs/path/to/wordpress-playground PHP_VERSION=8.4 \
   node run-spike.mjs
 ```
 
-The workflow uses a sparse checkout of `WordPress/wordpress-playground` trunk
-until `@php-wasm/compile-extension` is available from npm.
+The workflow still uses a sparse checkout of `WordPress/wordpress-playground`
+for `packages/php-wasm/compile` Docker assets and the Playground loader smoke
+test, while the extension compile itself runs through the published npm CLI.

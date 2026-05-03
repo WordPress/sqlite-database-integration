@@ -21,6 +21,7 @@ ASYNC_MODE="${ASYNC_MODE:-jspi}"
 SPIKE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CRATE_DIR="$(cd "$SPIKE_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$SPIKE_DIR/dist}"
+COMPILE_EXTENSION_PACKAGE="${COMPILE_EXTENSION_PACKAGE:-@php-wasm/compile-extension@3.1.26}"
 PLAYGROUND_REPO="${PLAYGROUND_REPO:-$(cd "$SPIKE_DIR/../../../../wordpress-playground" 2>/dev/null && pwd || true)}"
 mkdir -p "$OUT_DIR"
 
@@ -30,12 +31,12 @@ if [ "$ASYNC_MODE" != "jspi" ]; then
 fi
 
 case "$PHP_VERSION" in
-  8.0) PHP_API_VERSION=20200930 ;;
-  8.1) PHP_API_VERSION=20210902 ;;
-  8.2) PHP_API_VERSION=20220829 ;;
-  8.3) PHP_API_VERSION=20230831 ;;
-  8.4) PHP_API_VERSION=20240924 ;;
-  8.5) PHP_API_VERSION=20250925 ;;
+  8.0) PHP_API_VERSION=20200930; PHP_RELEASE=8.0.30 ;;
+  8.1) PHP_API_VERSION=20210902; PHP_RELEASE=8.1.34 ;;
+  8.2) PHP_API_VERSION=20220829; PHP_RELEASE=8.2.30 ;;
+  8.3) PHP_API_VERSION=20230831; PHP_RELEASE=8.3.30 ;;
+  8.4) PHP_API_VERSION=20240924; PHP_RELEASE=8.4.20 ;;
+  8.5) PHP_API_VERSION=20250925; PHP_RELEASE=8.5.5 ;;
   7.4)
     echo "Unsupported PHP_VERSION: 7.4" >&2
     echo "The WASM Rust build uses ext-php-rs 0.15, which depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers." >&2
@@ -48,42 +49,23 @@ case "$PHP_VERSION" in
     ;;
 esac
 
-if [ -z "$PLAYGROUND_REPO" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/cli.ts" ]; then
-  echo "PLAYGROUND_REPO must point at a wordpress-playground checkout with packages/php-wasm/compile-extension." >&2
+if [ -z "$PLAYGROUND_REPO" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile/Makefile" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/docker/Dockerfile.ext" ]; then
+  echo "PLAYGROUND_REPO must point at a wordpress-playground checkout with packages/php-wasm/compile and packages/php-wasm/compile-extension/docker." >&2
   exit 1
 fi
 
 RUST_IMAGE="playground-php-wasm-ext-rust:${PHP_VERSION}-${ASYNC_MODE}"
 BASE_IMAGE="playground-php-wasm:compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}"
-NODE_TS=(
-  node
-  --experimental-strip-types
-  --experimental-transform-types
-  --disable-warning=ExperimentalWarning
-  --import "$PLAYGROUND_REPO/packages/meta/src/node-es-module-loader/register.mts"
-)
 
 echo "==> Stage 0: preparing $BASE_IMAGE via Playground compile-extension tooling"
-"${NODE_TS[@]}" -e "
-  const { pathToFileURL } = await import('node:url');
-  const docker = await import(pathToFileURL(process.argv[1]).href);
-  const compile = await import(pathToFileURL(process.argv[2]).href);
-  const context = docker.createDockerContext(process.argv[3]);
-  const phpVersion = process.argv[4];
-  const asyncMode = process.argv[5];
-  await docker.buildBaseImage(context);
-  await docker.buildExtensionImage({
-    ...context,
-    phpVersion,
-    phpRelease: compile.resolvePHPRelease(phpVersion),
-    asyncMode,
-  });
-" \
-  "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/docker.ts" \
-  "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/compile.ts" \
-  "$PLAYGROUND_REPO" \
-  "$PHP_VERSION" \
-  "$ASYNC_MODE"
+make -C "$PLAYGROUND_REPO/packages/php-wasm/compile" base-image
+docker build \
+  -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/docker/Dockerfile.ext" \
+  "$PLAYGROUND_REPO/packages/php-wasm" \
+  --tag="$BASE_IMAGE" \
+  --progress=plain \
+  --build-arg "PHP_VERSION=$PHP_RELEASE" \
+  --build-arg "JSPI=yes"
 
 echo "==> Stage 0: building $RUST_IMAGE"
 docker build \
@@ -280,7 +262,7 @@ ARTIFACT="wp_mysql_parser-php${PHP_VERSION}-${ASYNC_MODE}.so"
 
 (
   cd "$PLAYGROUND_REPO"
-  "${NODE_TS[@]}" ./packages/php-wasm/compile-extension/src/cli.ts \
+  npx --yes "$COMPILE_EXTENSION_PACKAGE" \
     --source "$SRC_STAGE" \
     --name wp_mysql_parser \
     --php-versions "$PHP_VERSION" \

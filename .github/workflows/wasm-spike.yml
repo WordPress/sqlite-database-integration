@@ -100,6 +100,7 @@ jobs:
         env:
           PHP_VERSION: ${{ matrix.php }}
           ASYNC_MODE: ${{ matrix.async-mode }}
+          COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.26'
           PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
         run: bash build-in-docker-rust.sh
 
@@ -110,14 +111,6 @@ jobs:
           test -f dist/manifest.json
           test -f dist/libwp_mysql_parser.a
           ls -lh dist/
-
-      - name: Rewrite manifest for Playground extension loading
-        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
-        env:
-          ASYNC_MODE: ${{ matrix.async-mode }}
-          EXTENSION_VERSION: ${{ github.sha }}
-        run: |
-          node write-extension-manifest.mjs dist ${{ matrix.php }}
 
       - name: Verify manifest references the built side module
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
