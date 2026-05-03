@@ -96,6 +96,7 @@ extension build and manifest machinery.
 | --- | --- |
 | `Dockerfile.rust` | Rust/nightly/host-PHP layer on top of Playground's compile-extension image. |
 | `build-in-docker-rust.sh` | Builds the Rust staticlib, then calls Playground's `@php-wasm/compile-extension` CLI. |
+| `write-extension-manifest.mjs` | Rewrites build outputs into the Playground PR #3580 manifest shape. |
 | `shim/config.m4` | Minimal phpize wrapper. |
 | `shim/wp_mysql_parser_shim.c` | Pulls the Rust `get_module()` symbol into the side-module link. |
 | `run-spike.mjs` | Loads the generated manifest in Playground and verifies the native lexer. |

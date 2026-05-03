@@ -111,14 +111,24 @@ jobs:
           test -f dist/libwp_mysql_parser.a
           ls -lh dist/
 
-      - name: Verify manifest sha256 matches the .so byte-for-byte
+      - name: Rewrite manifest for Playground extension loading
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          ASYNC_MODE: ${{ matrix.async-mode }}
+          EXTENSION_VERSION: ${{ github.sha }}
+        run: |
+          node write-extension-manifest.mjs dist ${{ matrix.php }}
+
+      - name: Verify manifest references the built side module
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
         run: |
-          MANIFEST_SHA=$(node -e "console.log(require('./dist/manifest.json').artifacts[0].sha256)")
-          ACTUAL_SHA=$(sha256sum dist/wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so | cut -d' ' -f1)
-          echo "manifest: $MANIFEST_SHA"
-          echo "actual:   $ACTUAL_SHA"
-          test "$MANIFEST_SHA" = "$ACTUAL_SHA"
+          SOURCE_PATH=$(node -e "console.log(require('./dist/manifest.json').artifacts[0].sourcePath)")
+          EXPECTED="wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so"
+          echo "manifest sourcePath: $SOURCE_PATH"
+          echo "expected artifact:   $EXPECTED"
+          test "$SOURCE_PATH" = "$EXPECTED"
+          test -f "dist/$SOURCE_PATH"
+          node -e "const artifact = require('./dist/manifest.json').artifacts[0]; if ('file' in artifact || 'sha256' in artifact) { throw new Error('manifest uses retired artifact fields'); }"
 
       - name: Load the extension in Playground and parse a query
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
