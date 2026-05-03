@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         php: ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0']
         async-mode: ['jspi']
