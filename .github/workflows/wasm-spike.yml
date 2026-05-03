@@ -16,7 +16,7 @@ on:
       playground-ref:
         description: 'wordpress-playground branch/tag/SHA to build against'
         required: false
-        default: 'adamziel/compile-extension-rust-recipe'
+        default: 'trunk'
 
 jobs:
   build-and-load:
@@ -39,8 +39,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: WordPress/wordpress-playground
-          ref: ${{ github.event.inputs.playground-ref || 'adamziel/compile-extension-rust-recipe' }}
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
           path: wordpress-playground
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /package.json
+            /package-lock.json
+            /nx.json
+            /tsconfig.base.json
+            /packages/meta/
+            /packages/nx-extensions/
+            /packages/php-wasm/cli-util/
+            /packages/php-wasm/compile-extension/
+            /packages/php-wasm/compile/
+            /packages/php-wasm/fs-journal/
+            /packages/php-wasm/logger/
+            /packages/php-wasm/node/
+            /packages/php-wasm/node-builds/8-4/
+            /packages/php-wasm/progress/
+            /packages/php-wasm/scopes/
+            /packages/php-wasm/stream-compression/
+            /packages/php-wasm/universal/
+            /packages/php-wasm/util/
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -51,25 +71,7 @@ jobs:
 
       - name: Install Playground deps
         working-directory: wordpress-playground
-        run: npm ci
-
-      - name: Resolve PHP release for ${{ matrix.php }}
-        id: php-release
-        working-directory: wordpress-playground
-        run: |
-          # Mirror @php-wasm/compile-extension's resolvePHPRelease() by
-          # parsing its source map so we tag the image with the exact same
-          # PHP_VERSION value the CLI would use.
-          RELEASE=$(node -e "
-            const fs=require('fs');
-            const src=fs.readFileSync('./packages/php-wasm/compile-extension/src/compile.ts','utf8');
-            const map=Object.fromEntries([...src.matchAll(/'(\d+\.\d+)':\s*'(\d+\.\d+\.\d+)'/g)].map(m=>[m[1],m[2]]));
-            const r=map['${{ matrix.php }}'];
-            if (!r) { process.exit(1); }
-            console.log(r);
-          ")
-          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
-          echo "Resolved PHP ${{ matrix.php }} -> $RELEASE"
+        run: npm ci --ignore-scripts
 
       - name: Configure Docker DNS
         run: |
@@ -85,31 +87,12 @@ jobs:
             sleep 2
           done
 
-      - name: Build playground-php-wasm:base image
-        working-directory: wordpress-playground/packages/php-wasm/compile
-        run: make base-image
-
-      - name: Build per-version compile-extension image
-        working-directory: wordpress-playground/packages/php-wasm
-        env:
-          IMAGE_TAG: playground-php-wasm:compile-extension-php${{ matrix.php == '8.4' && '8-4' || matrix.php == '8.3' && '8-3' || matrix.php == '8.2' && '8-2' || matrix.php == '8.1' && '8-1' || matrix.php == '8.0' && '8-0' || matrix.php == '7.4' && '7-4' || matrix.php == '7.3' && '7-3' || matrix.php == '7.2' && '7-2' || matrix.php }}-${{ matrix.async-mode }}
-        run: |
-          JSPI_FLAG=no
-          if [ "${{ matrix.async-mode }}" = "jspi" ]; then JSPI_FLAG=yes; fi
-          docker build \
-            -f compile-extension/docker/Dockerfile.ext \
-            . \
-            --tag "$IMAGE_TAG" \
-            --progress=plain \
-            --build-arg "PHP_VERSION=${{ steps.php-release.outputs.release }}" \
-            --build-arg "JSPI=$JSPI_FLAG"
-          docker images | grep playground-php-wasm
-
       - name: Build wp_mysql_parser side module
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
         env:
           PHP_VERSION: ${{ matrix.php }}
           ASYNC_MODE: ${{ matrix.async-mode }}
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
         run: bash build-in-docker-rust.sh
 
       - name: Verify build artifacts exist

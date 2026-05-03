@@ -1,8 +1,7 @@
 // Headless Playground runner for the wasm-spike. Uses the stock
-// load-built-extension.mjs harness shipped with @php-wasm/compile-extension
-// (PR #3567), which already exercises loadPHPExtension via the PR #3566
-// `manifest` source format. We feed it our manifest and a snippet of PHP
-// that pokes the Rust parser, then assert the output.
+// load-built-extension.mjs harness shipped with @php-wasm/compile-extension.
+// We feed it our manifest and a snippet of PHP that pokes the Rust parser,
+// then assert the output.
 //
 // Run with:
 //   node packages/php-ext-wp-mysql-parser/wasm-spike/run-spike.mjs
@@ -18,7 +17,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SPIKE_DIR = here;
 const MANIFEST = resolve(SPIKE_DIR, 'dist/manifest.json');
 const PHP_VERSION = '8.4';
-const ASYNC_MODE = 'jspi';
 
 if (!existsSync(MANIFEST)) {
   console.error(`[spike] Missing ${MANIFEST}. Run build-in-docker-rust.sh first.`);
@@ -93,7 +91,6 @@ const cmd = [
   ),
   MANIFEST,
   PHP_VERSION,
-  ASYNC_MODE,
   PHP_CODE,
   EXPECTED,
 ];

@@ -12,5 +12,5 @@
 extern zend_module_entry *get_module(void);
 
 /* Reference get_module so the static library is not GC'd by the linker
- * even without --whole-archive, as a belt-and-braces measure. */
+ * even if the compile-extension whole-archive path changes. */
 zend_module_entry *(*wp_mysql_parser_keep_alive)(void) = get_module;

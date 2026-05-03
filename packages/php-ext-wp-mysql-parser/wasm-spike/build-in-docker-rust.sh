@@ -4,17 +4,16 @@
 #
 #   1. cargo build --release --target wasm32-unknown-emscripten
 #      inside playground-php-wasm-ext-rust:<PHP_VERSION>-<ASYNC>, which
-#      layers rustup + a host PHP 8.4 CLI on top of the official
+#      layers rustup + a host PHP 8.4 CLI on top of the Playground
 #      compile-extension image.
 #   2. Hand the resulting libwp_mysql_parser.a + C shim + config.m4 to
-#      `build-php-wasm-extension` (the entrypoint baked into the official
-#      compile-extension image), which runs phpize + emconfigure + emmake
-#      and produces a side module .so plus runs wasm-opt.
+#      `@php-wasm/compile-extension`, which owns phpize, emconfigure,
+#      emmake, wasm-opt, and manifest generation.
 #
 # Outputs:
 #   wasm-spike/dist/libwp_mysql_parser.a  (Stage 1)
 #   wasm-spike/dist/wp_mysql_parser-php8.4-jspi.so (Stage 2, wasm side module)
-#   wasm-spike/dist/manifest.json (written by run-spike.mjs alternative path)
+#   wasm-spike/dist/manifest.json (written by @php-wasm/compile-extension)
 set -euo pipefail
 
 PHP_VERSION="${PHP_VERSION:-8.4}"
@@ -22,10 +21,50 @@ ASYNC_MODE="${ASYNC_MODE:-jspi}"
 SPIKE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CRATE_DIR="$(cd "$SPIKE_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$SPIKE_DIR/dist}"
+PLAYGROUND_REPO="${PLAYGROUND_REPO:-$(cd "$SPIKE_DIR/../../../../wordpress-playground" 2>/dev/null && pwd || true)}"
 mkdir -p "$OUT_DIR"
+
+if [ "$ASYNC_MODE" != "jspi" ]; then
+  echo "Unsupported ASYNC_MODE: $ASYNC_MODE. @php-wasm/compile-extension is JSPI-only." >&2
+  exit 1
+fi
+
+if [ -z "$PLAYGROUND_REPO" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/cli.ts" ]; then
+  echo "PLAYGROUND_REPO must point at a wordpress-playground checkout with packages/php-wasm/compile-extension." >&2
+  exit 1
+fi
 
 RUST_IMAGE="playground-php-wasm-ext-rust:${PHP_VERSION}-${ASYNC_MODE}"
 BASE_IMAGE="playground-php-wasm:compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}"
+NODE_TS=(
+  node
+  --experimental-strip-types
+  --experimental-transform-types
+  --disable-warning=ExperimentalWarning
+  --import "$PLAYGROUND_REPO/packages/meta/src/node-es-module-loader/register.mts"
+)
+
+echo "==> Stage 0: preparing $BASE_IMAGE via Playground compile-extension tooling"
+"${NODE_TS[@]}" -e "
+  const { pathToFileURL } = await import('node:url');
+  const docker = await import(pathToFileURL(process.argv[1]).href);
+  const compile = await import(pathToFileURL(process.argv[2]).href);
+  const context = docker.createDockerContext(process.argv[3]);
+  const phpVersion = process.argv[4];
+  const asyncMode = process.argv[5];
+  await docker.buildBaseImage(context);
+  await docker.buildExtensionImage({
+    ...context,
+    phpVersion,
+    phpRelease: compile.resolvePHPRelease(phpVersion),
+    asyncMode,
+  });
+" \
+  "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/docker.ts" \
+  "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/compile.ts" \
+  "$PLAYGROUND_REPO" \
+  "$PHP_VERSION" \
+  "$ASYNC_MODE"
 
 echo "==> Stage 0: building $RUST_IMAGE"
 docker build \
@@ -206,44 +245,27 @@ void ext_php_rs_zend_execute(zend_op_array *op_array) {\
     cp target/wasm32-unknown-emscripten/release/libwp_mysql_parser.a /out/
 EOF
 
-echo "==> Stage 2: phpize + emconfigure + emmake (build-php-wasm-extension)"
+echo "==> Stage 2: phpize + emconfigure + emmake (@php-wasm/compile-extension)"
 SRC_STAGE="$(mktemp -d)"
+trap 'rm -rf "$SRC_STAGE"' EXIT
 cp "$SPIKE_DIR/shim/config.m4"               "$SRC_STAGE/"
 cp "$SPIKE_DIR/shim/wp_mysql_parser_shim.c"  "$SRC_STAGE/"
 cp "$OUT_DIR/libwp_mysql_parser.a"           "$SRC_STAGE/"
 
 ARTIFACT="wp_mysql_parser-php${PHP_VERSION}-${ASYNC_MODE}.so"
 
-docker run --rm \
-  -v "$SRC_STAGE":/src:ro \
-  -v "$OUT_DIR":/out \
-  --env "EXTENSION_NAME=wp_mysql_parser" \
-  --env "PHP_VERSION_SHORT=${PHP_VERSION}" \
-  --env "ASYNC_MODE=${ASYNC_MODE}" \
-  --env "ARTIFACT_FILENAME=${ARTIFACT}" \
-  --env "OPTIMIZE=2" \
-  --env "EXTRA_LDFLAGS=/build/libwp_mysql_parser.a" \
-  --env "CONFIG_ARGS_COUNT=0" \
-  "$BASE_IMAGE"
+(
+  cd "$PLAYGROUND_REPO"
+  "${NODE_TS[@]}" ./packages/php-wasm/compile-extension/src/cli.ts \
+    --source "$SRC_STAGE" \
+    --name wp_mysql_parser \
+    --php-versions "$PHP_VERSION" \
+    --out "$OUT_DIR" \
+    --jobs 1 \
+    --extra-ldflags "/build/libwp_mysql_parser.a"
+)
 
 rm -rf "$SRC_STAGE"
-
-# Emit a manifest.json matching @php-wasm/compile-extension's
-# ExtensionManifest schema so load-built-extension.mjs can dlopen the .so.
-ARTIFACT_SHA=$(sha256sum "$OUT_DIR/$ARTIFACT" | cut -d' ' -f1)
-cat > "$OUT_DIR/manifest.json" <<EOF
-{
-  "name": "wp_mysql_parser",
-  "version": "0.0.0",
-  "artifacts": [
-    {
-      "phpVersion": "${PHP_VERSION}",
-      "asyncMode": "${ASYNC_MODE}",
-      "file": "${ARTIFACT}",
-      "sha256": "${ARTIFACT_SHA}"
-    }
-  ]
-}
-EOF
+trap - EXIT
 
 echo "==> Built $OUT_DIR/$ARTIFACT"

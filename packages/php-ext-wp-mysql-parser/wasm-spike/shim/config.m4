@@ -6,11 +6,10 @@ dnl
 dnl The staticlib is NOT linked here through PHP_ADD_LIBRARY_WITH_PATH —
 dnl libtool refuses to treat a wasm `.a` as a viable input for a `.so`
 dnl link and silently degrades the build to a static module. Instead, the
-dnl spike's wrapper (`build-in-docker-rust.sh`) passes the archive via
-dnl `EXTRA_LDFLAGS=/build/libwp_mysql_parser.a`, which the official
-dnl `build-in-docker.sh` recipe sticks into `EMCC_STATIC_ARCHIVES` and
-dnl then injects with `--whole-archive` into the libtool archive_cmds it
-dnl patches.
+dnl spike's wrapper (`build-in-docker-rust.sh`) passes the archive to
+dnl `@php-wasm/compile-extension` via `--extra-ldflags
+dnl /build/libwp_mysql_parser.a`, which injects it with `--whole-archive`
+dnl into the final libtool link.
 
 PHP_ARG_ENABLE([wp_mysql_parser],
   [whether to enable wp_mysql_parser],
