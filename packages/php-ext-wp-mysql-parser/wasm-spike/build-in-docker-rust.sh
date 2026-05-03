@@ -262,7 +262,7 @@ ARTIFACT="wp_mysql_parser-php${PHP_VERSION}-${ASYNC_MODE}.so"
 
 (
   cd "$PLAYGROUND_REPO"
-  npx --yes "$COMPILE_EXTENSION_PACKAGE" \
+  npm exec --yes --package "$COMPILE_EXTENSION_PACKAGE" -- php-wasm-compile-extension \
     --source "$SRC_STAGE" \
     --name wp_mysql_parser \
     --php-versions "$PHP_VERSION" \
