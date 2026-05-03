@@ -160,8 +160,11 @@ docker run --rm -i \
         "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
       sed -i 's/cfg(php80, php81/cfg(php74, php80, php81/' \
         "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      sed -i '1i #include <stdbool.h>' \
+        "$REG/ext-php-rs-0.15.12/src/wrapper.h"
       grep -q 'Php74 = 2019_09_02' "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
       grep -q 'ApiVersion::Php74,' "$REG/ext-php-rs-0.15.12/build.rs"
+      grep -q '#include <stdbool.h>' "$REG/ext-php-rs-0.15.12/src/wrapper.h"
     fi
 
     sed -i "s/12 \* std::mem::size_of::<usize>/24 * std::mem::size_of::<usize>/" \
