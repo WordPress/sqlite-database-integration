@@ -3,10 +3,11 @@
 ## Current status
 
 The spike now builds and loads `wp_mysql_parser` in Playground across every
-PHP version currently supported by Playground's `@php-wasm/compile-extension`
-helper: 7.4 and 8.0 through 8.5, all JSPI. CI verifies each generated side
-module by loading its manifest through Playground's compile-extension test
-harness and running a native lexer smoke test.
+PHP version supported by the current `ext-php-rs` binding layer: 8.0 through
+8.5, all JSPI. CI verifies each generated side module by loading its manifest
+through Playground's compile-extension test harness and running a native lexer
+smoke test. PHP 7.4 is outside this Rust path because `ext-php-rs` 0.15
+depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers.
 
 The build uses the upstream Playground compile-extension tooling for the
 phpize side-module build, static archive force-linking, wasm-opt pass, and

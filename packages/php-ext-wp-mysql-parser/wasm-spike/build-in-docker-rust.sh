@@ -30,7 +30,6 @@ if [ "$ASYNC_MODE" != "jspi" ]; then
 fi
 
 case "$PHP_VERSION" in
-  7.4) PHP_API_VERSION=20190902 ;;
   8.0) PHP_API_VERSION=20200930 ;;
   8.1) PHP_API_VERSION=20210902 ;;
   8.2) PHP_API_VERSION=20220829 ;;
@@ -141,31 +140,6 @@ docker run --rm -i \
     cargo fetch >/dev/null 2>&1 || true
     REG=$(find /root/cargo/registry/src -maxdepth 1 -type d -name "index.crates.io-*" | head -1)
     chmod -R u+w "$REG"
-
-    if [ "${PHP_VERSION:-}" = "7.4" ]; then
-      # ext-php-rs 0.15's runtime APIs still cover the pieces this extension
-      # uses, but its build-time version table starts at PHP 8.0. Add the
-      # PHP 7.4 Zend API so bindgen can run against Playground's 7.4 headers.
-      perl -0pi -e 's|pub enum ApiVersion \{\n|pub enum ApiVersion {\n    /// PHP 7.4\n    Php74 = 2019_09_02,\n|' \
-        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      sed -i 's/ApiVersion::Php80,/ApiVersion::Php74,/' \
-        "$REG/ext-php-rs-0.15.12/build.rs"
-      sed -i '/vec!\[/a \            ApiVersion::Php74,' \
-        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      perl -0pi -e 's/(pub fn cfg_name\(self\).*?match self \{\n)/$1            ApiVersion::Php74 => "php74",\n/s' \
-        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      perl -0pi -e 's/(pub fn define_name\(self\).*?match self \{\n)/$1            ApiVersion::Php74 => "EXT_PHP_RS_PHP_74",\n/s' \
-        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      sed -i '/match version {/a \            x if ((ApiVersion::Php74 as u32)..(ApiVersion::Php80 as u32)).contains(&x) => Ok(ApiVersion::Php74),' \
-        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      sed -i 's/cfg(php80, php81/cfg(php74, php80, php81/' \
-        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      sed -i '1i #include <stdbool.h>' \
-        "$REG/ext-php-rs-0.15.12/src/wrapper.h"
-      grep -q 'Php74 = 2019_09_02' "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
-      grep -q 'ApiVersion::Php74,' "$REG/ext-php-rs-0.15.12/build.rs"
-      grep -q '#include <stdbool.h>' "$REG/ext-php-rs-0.15.12/src/wrapper.h"
-    fi
 
     sed -i "s/12 \* std::mem::size_of::<usize>/24 * std::mem::size_of::<usize>/" \
       "$REG/ext-php-rs-0.15.12/src/internal/property.rs"
