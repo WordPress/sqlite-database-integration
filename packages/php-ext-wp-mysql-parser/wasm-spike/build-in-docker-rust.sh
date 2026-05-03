@@ -4,7 +4,7 @@
 #
 #   1. cargo build --release --target wasm32-unknown-emscripten
 #      inside playground-php-wasm-ext-rust:<PHP_VERSION>-<ASYNC>, which
-#      layers rustup + a host PHP 8.4 CLI on top of the Playground
+#      layers rustup + ext-php-rs build metadata on top of the Playground
 #      compile-extension image.
 #   2. Hand the resulting libwp_mysql_parser.a + C shim + config.m4 to
 #      `@php-wasm/compile-extension`, which owns phpize, emconfigure,
@@ -28,6 +28,20 @@ if [ "$ASYNC_MODE" != "jspi" ]; then
   echo "Unsupported ASYNC_MODE: $ASYNC_MODE. @php-wasm/compile-extension is JSPI-only." >&2
   exit 1
 fi
+
+case "$PHP_VERSION" in
+  7.4) PHP_API_VERSION=20190902 ;;
+  8.0) PHP_API_VERSION=20200930 ;;
+  8.1) PHP_API_VERSION=20210902 ;;
+  8.2) PHP_API_VERSION=20220829 ;;
+  8.3) PHP_API_VERSION=20230831 ;;
+  8.4) PHP_API_VERSION=20240924 ;;
+  8.5) PHP_API_VERSION=20250925 ;;
+  *)
+    echo "Unsupported PHP_VERSION: $PHP_VERSION" >&2
+    exit 1
+    ;;
+esac
 
 if [ -z "$PLAYGROUND_REPO" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/src/cli.ts" ]; then
   echo "PLAYGROUND_REPO must point at a wordpress-playground checkout with packages/php-wasm/compile-extension." >&2
@@ -70,6 +84,7 @@ echo "==> Stage 0: building $RUST_IMAGE"
 docker build \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   --build-arg "HOST_PHP_VERSION=$PHP_VERSION" \
+  --build-arg "HOST_PHP_API_VERSION=$PHP_API_VERSION" \
   -t "$RUST_IMAGE" \
   -f "$SPIKE_DIR/Dockerfile.rust" \
   "$SPIKE_DIR"
@@ -78,6 +93,8 @@ echo "==> Stage 1: cargo build --target wasm32-unknown-emscripten"
 # Feed the container script through stdin so Docker-side comments and strings
 # cannot break host-shell quoting.
 docker run --rm -i \
+  -e "PHP_VERSION=$PHP_VERSION" \
+  -e "PHP_API_VERSION=$PHP_API_VERSION" \
   -v "$CRATE_DIR":/src:ro \
   -v "$OUT_DIR":/out \
   --entrypoint bash \
@@ -124,6 +141,29 @@ docker run --rm -i \
     cargo fetch >/dev/null 2>&1 || true
     REG=$(find /root/cargo/registry/src -maxdepth 1 -type d -name "index.crates.io-*" | head -1)
     chmod -R u+w "$REG"
+
+    if [ "${PHP_VERSION:-}" = "7.4" ]; then
+      # ext-php-rs 0.15's runtime APIs still cover the pieces this extension
+      # uses, but its build-time version table starts at PHP 8.0. Add the
+      # PHP 7.4 Zend API so bindgen can run against Playground's 7.4 headers.
+      perl -0pi -e 's|pub enum ApiVersion \{\n|pub enum ApiVersion {\n    /// PHP 7.4\n    Php74 = 2019_09_02,\n|' \
+        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      sed -i 's/ApiVersion::Php80,/ApiVersion::Php74,/' \
+        "$REG/ext-php-rs-0.15.12/build.rs"
+      sed -i '/vec!\[/a \            ApiVersion::Php74,' \
+        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      perl -0pi -e 's/(pub fn cfg_name\(self\).*?match self \{\n)/$1            ApiVersion::Php74 => "php74",\n/s' \
+        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      perl -0pi -e 's/(pub fn define_name\(self\).*?match self \{\n)/$1            ApiVersion::Php74 => "EXT_PHP_RS_PHP_74",\n/s' \
+        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      sed -i '/match version {/a \            x if ((ApiVersion::Php74 as u32)..(ApiVersion::Php80 as u32)).contains(&x) => Ok(ApiVersion::Php74),' \
+        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      sed -i 's/cfg(php80, php81/cfg(php74, php80, php81/' \
+        "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      grep -q 'Php74 = 2019_09_02' "$REG/ext-php-rs-build-0.1.1/src/lib.rs"
+      grep -q 'ApiVersion::Php74,' "$REG/ext-php-rs-0.15.12/build.rs"
+    fi
+
     sed -i "s/12 \* std::mem::size_of::<usize>/24 * std::mem::size_of::<usize>/" \
       "$REG/ext-php-rs-0.15.12/src/internal/property.rs"
 
