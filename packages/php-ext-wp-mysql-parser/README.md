@@ -30,3 +30,12 @@ Load it for local test runs with:
 ```bash
 php -d extension=/path/to/libwp_mysql_parser.so vendor/bin/phpunit
 ```
+
+## PHP.wasm side-module build
+
+The experimental PHP.wasm side-module build lives in `wasm-spike/` and is
+verified in CI for PHP `8.0` through `8.5`.
+
+PHP `7.4` is not supported by this Rust WASM path. The build uses
+`ext-php-rs` `0.15`, which depends on PHP 8 Zend APIs and does not compile
+against PHP `7.4` headers.

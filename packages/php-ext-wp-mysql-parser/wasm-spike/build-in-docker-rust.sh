@@ -36,8 +36,14 @@ case "$PHP_VERSION" in
   8.3) PHP_API_VERSION=20230831 ;;
   8.4) PHP_API_VERSION=20240924 ;;
   8.5) PHP_API_VERSION=20250925 ;;
+  7.4)
+    echo "Unsupported PHP_VERSION: 7.4" >&2
+    echo "The WASM Rust build uses ext-php-rs 0.15, which depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers." >&2
+    exit 1
+    ;;
   *)
-    echo "Unsupported PHP_VERSION: $PHP_VERSION" >&2
+    echo "Unsupported PHP_VERSION: $PHP_VERSION. Supported values: 8.0, 8.1, 8.2, 8.3, 8.4, 8.5." >&2
+    echo "PHP 7.4 is outside this WASM Rust path because ext-php-rs 0.15 requires PHP 8 Zend APIs." >&2
     exit 1
     ;;
 esac

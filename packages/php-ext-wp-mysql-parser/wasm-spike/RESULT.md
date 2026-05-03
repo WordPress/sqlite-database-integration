@@ -9,6 +9,14 @@ through Playground's compile-extension test harness and running a native lexer
 smoke test. PHP 7.4 is outside this Rust path because `ext-php-rs` 0.15
 depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers.
 
+## PHP version scope
+
+This spike intentionally builds only PHP 8.0 through PHP 8.5. Adding PHP 7.4
+would require a different binding layer, or real PHP 7.4 support in
+`ext-php-rs`; it is not a workflow-only change. The failures are in the
+generated/wrapped Zend API surface itself, including PHP 8-only symbols and
+struct fields.
+
 The build uses the upstream Playground compile-extension tooling for the
 phpize side-module build, static archive force-linking, wasm-opt pass, and
 manifest generation. The local glue that remains is Rust-specific: build
