@@ -55,7 +55,7 @@ echo 'COUNT=', $stream->count();
 `;
 
 const EXPECTED =
-  'COUNT=4';
+  'COUNT=5';
 
 // Probe JSPI up front: loadNodeRuntime asks wasm-feature-detect for it, and
 // custom extensions only load under JSPI. If the probe fails here we know
