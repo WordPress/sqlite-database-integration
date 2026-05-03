@@ -21,6 +21,10 @@ The build uses the published `@php-wasm/compile-extension` CLI for the phpize
 side-module build, static archive force-linking, wasm-opt pass, and manifest
 generation. A sparse Playground checkout is still required for the
 `packages/php-wasm/compile` Docker assets and for CI's Playground load test.
+The CLI is installed into an isolated temporary npm prefix before it is run;
+the sparse Playground workspace also contains an unbuilt local
+`@php-wasm/compile-extension` package, so relying on workspace `.bin` links
+would bypass the published package.
 The local glue that remains is Rust-specific: build `libwp_mysql_parser.a`
 with the same Emscripten/PHP.wasm ABI and patch the vendored `ext-php-rs`
 registry copy so it can run as a PHP.wasm side module.
@@ -117,4 +121,5 @@ PLAYGROUND_REPO=/abs/path/to/wordpress-playground PHP_VERSION=8.4 \
 
 The workflow still uses a sparse checkout of `WordPress/wordpress-playground`
 for `packages/php-wasm/compile` Docker assets and the Playground loader smoke
-test, while the extension compile itself runs through the published npm CLI.
+test, while the extension compile itself runs through an isolated install of
+the published npm CLI.

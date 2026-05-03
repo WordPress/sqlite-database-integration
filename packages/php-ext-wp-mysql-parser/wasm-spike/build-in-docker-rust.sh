@@ -253,16 +253,20 @@ EOF
 
 echo "==> Stage 2: phpize + emconfigure + emmake (@php-wasm/compile-extension)"
 SRC_STAGE="$(mktemp -d)"
-trap 'rm -rf "$SRC_STAGE"' EXIT
+CLI_STAGE="$(mktemp -d)"
+trap 'rm -rf "$SRC_STAGE" "$CLI_STAGE"' EXIT
 cp "$SPIKE_DIR/shim/config.m4"               "$SRC_STAGE/"
 cp "$SPIKE_DIR/shim/wp_mysql_parser_shim.c"  "$SRC_STAGE/"
 cp "$OUT_DIR/libwp_mysql_parser.a"           "$SRC_STAGE/"
 
 ARTIFACT="wp_mysql_parser-php${PHP_VERSION}-${ASYNC_MODE}.so"
+COMPILE_EXTENSION_CLI="$CLI_STAGE/node_modules/@php-wasm/compile-extension/cli.js"
+
+npm install --prefix "$CLI_STAGE" --no-audit --no-fund --ignore-scripts "$COMPILE_EXTENSION_PACKAGE"
 
 (
   cd "$PLAYGROUND_REPO"
-  npm exec --yes --package "$COMPILE_EXTENSION_PACKAGE" -- php-wasm-compile-extension \
+  node "$COMPILE_EXTENSION_CLI" \
     --source "$SRC_STAGE" \
     --name wp_mysql_parser \
     --php-versions "$PHP_VERSION" \
