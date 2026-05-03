@@ -2,10 +2,11 @@
 
 ## Current status
 
-The spike now builds and loads `wp_mysql_parser` in Playground on PHP 8.4
-JSPI. CI verifies the generated side module by loading its manifest through
-Playground's `@php-wasm/compile-extension` test harness and running a native
-lexer smoke test.
+The spike now builds and loads `wp_mysql_parser` in Playground across every
+PHP version currently supported by Playground's `@php-wasm/compile-extension`
+helper: 7.4 and 8.0 through 8.5, all JSPI. CI verifies each generated side
+module by loading its manifest through Playground's compile-extension test
+harness and running a native lexer smoke test.
 
 The build uses the upstream Playground compile-extension tooling for the
 phpize side-module build, static archive force-linking, wasm-opt pass, and
@@ -27,10 +28,11 @@ Stage 2 path that previously lived in this spike:
 - Emits a manifest with `sha256` hashes that the Playground runtime can load
   at startup.
 
-The helper is not a full Rust build system. This crate still needs a prebuild
-step that produces a wasm32-unknown-emscripten `staticlib`, plus a tiny phpize
-shim (`config.m4` and `wp_mysql_parser_shim.c`) so the helper has a normal
-extension source directory to compile.
+The helper is not a full Rust build system. This crate still needs a
+per-PHP-version prebuild step that produces a wasm32-unknown-emscripten
+`staticlib` with matching PHP headers and host PHP CLI version, plus a tiny
+phpize shim (`config.m4` and `wp_mysql_parser_shim.c`) so the helper has a
+normal extension source directory to compile.
 
 ## Remaining local compatibility patches
 
@@ -69,7 +71,7 @@ cd packages/php-ext-wp-mysql-parser/wasm-spike
 PLAYGROUND_REPO=/abs/path/to/wordpress-playground \
   bash build-in-docker-rust.sh
 
-PLAYGROUND_REPO=/abs/path/to/wordpress-playground \
+PLAYGROUND_REPO=/abs/path/to/wordpress-playground PHP_VERSION=8.4 \
   node run-spike.mjs
 ```
 

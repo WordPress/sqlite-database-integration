@@ -12,7 +12,7 @@
 #
 # Outputs:
 #   wasm-spike/dist/libwp_mysql_parser.a  (Stage 1)
-#   wasm-spike/dist/wp_mysql_parser-php8.4-jspi.so (Stage 2, wasm side module)
+#   wasm-spike/dist/wp_mysql_parser-php<version>-jspi.so (Stage 2, wasm side module)
 #   wasm-spike/dist/manifest.json (written by @php-wasm/compile-extension)
 set -euo pipefail
 
@@ -69,6 +69,7 @@ echo "==> Stage 0: preparing $BASE_IMAGE via Playground compile-extension toolin
 echo "==> Stage 0: building $RUST_IMAGE"
 docker build \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+  --build-arg "HOST_PHP_VERSION=$PHP_VERSION" \
   -t "$RUST_IMAGE" \
   -f "$SPIKE_DIR/Dockerfile.rust" \
   "$SPIKE_DIR"

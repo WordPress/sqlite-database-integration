@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const SPIKE_DIR = here;
 const MANIFEST = resolve(SPIKE_DIR, 'dist/manifest.json');
-const PHP_VERSION = '8.4';
+const PHP_VERSION = process.env.PHP_VERSION || '8.4';
 
 if (!existsSync(MANIFEST)) {
   console.error(`[spike] Missing ${MANIFEST}. Run build-in-docker-rust.sh first.`);

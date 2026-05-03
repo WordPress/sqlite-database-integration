@@ -11,18 +11,27 @@
 # Build with:
 #   docker build \
 #     --build-arg BASE_IMAGE=playground-php-wasm:compile-extension-php8-4-jspi \
+#     --build-arg HOST_PHP_VERSION=8.4 \
 #     -t playground-php-wasm-ext-rust:8.4-jspi \
 #     -f Dockerfile.rust .
 
 ARG BASE_IMAGE=playground-php-wasm:compile-extension-php8-4-jspi
+ARG HOST_PHP_VERSION=8.4
 
-# Stage providing a host PHP 8.4 CLI binary. ext-php-rs's build.rs shells
+# Stage providing a host PHP CLI binary. ext-php-rs's build.rs shells
 # out to `php` to detect the PHP version (PHP_VERSION_ID drives the cfg
-# flags php80..php85). The wasm-targeted PHP install in /usr/local has no
-# CLI binary (--disable-cli), Ubuntu noble ships only PHP 8.3, and
-# packages.sury.org blocks our datacenter IP, so we steal a CLI from the
-# official php:8.4-cli image.
-FROM php:8.4-cli AS host-php-cli
+# flags such as php74, php80, and php85). The wasm-targeted PHP install in
+# /usr/local has no CLI binary (--disable-cli), so copy a matching CLI from
+# the official PHP image for the target version.
+FROM php:${HOST_PHP_VERSION}-cli AS host-php-cli
+
+RUN set -eux; \
+    mkdir -p /opt/host-php/libdeps; \
+    ldd /usr/local/bin/php \
+        | awk '($2 == "=>") { print $3 } ($1 ~ /^\//) { print $1 }' \
+        | grep -v '^$' \
+        | sort -u \
+        | while read -r lib; do cp -L "$lib" /opt/host-php/libdeps/; done
 
 FROM ${BASE_IMAGE}
 
@@ -30,16 +39,19 @@ COPY --from=host-php-cli /usr/local/bin/php /opt/host-php/bin/php
 COPY --from=host-php-cli /usr/local/lib/php /opt/host-php/lib/php
 COPY --from=host-php-cli /usr/local/etc/php /opt/host-php/etc/php
 COPY --from=host-php-cli /usr/local/include/php /opt/host-php/include/php
+COPY --from=host-php-cli /opt/host-php/libdeps /opt/host-php/libdeps
 
 ENV RUSTUP_HOME=/root/rustup \
     CARGO_HOME=/root/cargo \
-    PATH=/root/cargo/bin:/root/rustup/bin:/usr/local/bin:/usr/bin:/bin
+    PATH=/root/cargo/bin:/root/rustup/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_LIBRARY_PATH=/opt/host-php/libdeps:/opt/host-php/lib
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates build-essential \
         libclang-dev clang llvm-dev pkg-config libxml2 libonig5 libsqlite3-0 \
         libargon2-1 libssl3 zlib1g libreadline8 \
     && rm -rf /var/lib/apt/lists/* \
+    && /opt/host-php/bin/php -v \
     && ln -sf /opt/host-php/bin/php /usr/local/bin/php-host
 
 # ext-php-rs's build.rs needs a host `php` executable to query include paths
