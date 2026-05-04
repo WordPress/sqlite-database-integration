@@ -131,3 +131,8 @@ The workflow still uses a sparse checkout of `WordPress/wordpress-playground`
 for `packages/php-wasm/compile` Docker assets and the Playground loader smoke
 test, while the extension compile itself runs through an isolated install of
 the published npm CLI.
+
+Follow-up for Playground: make `@php-wasm/compile-extension` self-contained so
+external extension projects do not need to shallow or sparse checkout
+`WordPress/wordpress-playground` just to access Docker assets or test harness
+files.

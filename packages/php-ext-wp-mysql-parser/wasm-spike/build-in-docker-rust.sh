@@ -21,7 +21,7 @@ ASYNC_MODE="${ASYNC_MODE:-jspi}"
 SPIKE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CRATE_DIR="$(cd "$SPIKE_DIR/.." && pwd)"
 OUT_DIR="${OUT_DIR:-$SPIKE_DIR/dist}"
-COMPILE_EXTENSION_PACKAGE="${COMPILE_EXTENSION_PACKAGE:-@php-wasm/compile-extension@3.1.26}"
+COMPILE_EXTENSION_PACKAGE="${COMPILE_EXTENSION_PACKAGE:-@php-wasm/compile-extension@3.1.27}"
 PLAYGROUND_REPO="${PLAYGROUND_REPO:-$(cd "$SPIKE_DIR/../../../../wordpress-playground" 2>/dev/null && pwd || true)}"
 mkdir -p "$OUT_DIR"
 

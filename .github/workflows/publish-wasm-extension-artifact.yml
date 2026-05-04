@@ -101,7 +101,7 @@ jobs:
         env:
           PHP_VERSION: ${{ matrix.php }}
           ASYNC_MODE: jspi
-          COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.26'
+          COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.27'
           PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
         run: bash build-in-docker-rust.sh
 
