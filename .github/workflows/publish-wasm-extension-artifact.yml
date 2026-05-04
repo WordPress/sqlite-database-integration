@@ -19,7 +19,7 @@ on:
         default: '30'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -198,3 +198,48 @@ jobs:
           path: build/wp_mysql_parser-wasm-extension/
           if-no-files-found: error
           retention-days: ${{ github.event.inputs.retention-days || '30' }}
+
+      - name: Publish static extension bundle to gh-pages
+        env:
+          BUNDLE_DIR: build/wp_mysql_parser-wasm-extension
+          EXTENSION_PATH: wp_mysql_parser-wasm-extension
+          GITHUB_TOKEN: ${{ github.token }}
+          SITE_BRANCH: gh-pages
+          VERSION_PATH: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          pages_dir="$(mktemp -d)"
+          git init "$pages_dir"
+          git -C "$pages_dir" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$pages_dir" config http.https://github.com/.extraheader "AUTHORIZATION: bearer ${GITHUB_TOKEN}"
+          git -C "$pages_dir" config user.name "github-actions[bot]"
+          git -C "$pages_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git -C "$pages_dir" ls-remote --exit-code --heads origin "$SITE_BRANCH" >/dev/null 2>&1; then
+            git -C "$pages_dir" fetch --depth=1 origin "$SITE_BRANCH"
+            git -C "$pages_dir" checkout -B "$SITE_BRANCH" FETCH_HEAD
+          else
+            git -C "$pages_dir" checkout --orphan "$SITE_BRANCH"
+          fi
+
+          mkdir -p "$pages_dir/$EXTENSION_PATH"
+          rm -rf "$pages_dir/$EXTENSION_PATH/$VERSION_PATH" "$pages_dir/$EXTENSION_PATH/latest"
+          mkdir -p "$pages_dir/$EXTENSION_PATH/$VERSION_PATH" "$pages_dir/$EXTENSION_PATH/latest"
+          cp -R "$BUNDLE_DIR"/. "$pages_dir/$EXTENSION_PATH/$VERSION_PATH/"
+          cp -R "$BUNDLE_DIR"/. "$pages_dir/$EXTENSION_PATH/latest/"
+          touch "$pages_dir/.nojekyll"
+
+          git -C "$pages_dir" add .nojekyll "$EXTENSION_PATH"
+          if git -C "$pages_dir" diff --cached --quiet; then
+            echo "No gh-pages changes to publish."
+            exit 0
+          fi
+
+          git -C "$pages_dir" commit -m "Publish wp_mysql_parser WASM extension ${VERSION_PATH}"
+          git -C "$pages_dir" push origin "HEAD:$SITE_BRANCH"
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          echo "Published latest manifest: https://${owner}.github.io/${repo}/${EXTENSION_PATH}/latest/manifest.json"
+          echo "Published immutable manifest: https://${owner}.github.io/${repo}/${EXTENSION_PATH}/${VERSION_PATH}/manifest.json"

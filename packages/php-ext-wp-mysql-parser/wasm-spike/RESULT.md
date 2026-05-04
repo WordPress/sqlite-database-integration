@@ -33,8 +33,9 @@ registry copy so it can run as a PHP.wasm side module.
 
 `.github/workflows/publish-wasm-extension-artifact.yml` builds the JSPI side
 module for PHP 8.0 through 8.5, collects the side modules into one Actions
-artifact, and writes a Playground extension manifest using the sidecar format
-from WordPress/wordpress-playground#3580:
+artifact, publishes the same bundle to the `gh-pages` branch, and writes a
+Playground extension manifest using the sidecar format from
+WordPress/wordpress-playground#3580:
 
 ```json
 {
@@ -52,10 +53,17 @@ from WordPress/wordpress-playground#3580:
 The per-version build manifest comes from `@php-wasm/compile-extension` and
 already uses `sourcePath` while omitting the retired `file` and `sha256`
 artifact fields. The publish job writes a combined all-version manifest in the
-same shape before uploading the final artifact. The uploaded manifest is
-intended for Playground builds that include the #3580 resolver change; older
-Playground loaders still expect `file`. Checksums are published separately in
-`SHA256SUMS`.
+same shape before uploading the final Actions artifact and publishing the
+static bundle to GitHub Pages. The public URLs are:
+
+- `https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json`
+- `https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/<commit-sha>/manifest.json`
+
+The uploaded manifest is intended for Playground builds that include the #3580
+resolver change; older Playground loaders still expect `file`. Checksums are
+published separately in `SHA256SUMS`. The repository's GitHub Pages source
+must be configured to publish from the `gh-pages` branch root for these URLs to
+resolve.
 
 ## What the Playground helper covers
 
