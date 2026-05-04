@@ -54,6 +54,42 @@ if [ -z "$PLAYGROUND_REPO" ] || [ ! -f "$PLAYGROUND_REPO/packages/php-wasm/compi
   exit 1
 fi
 
+patch_compile_extension_cli() {
+  local cli_path="$1"
+
+  # The npm CLI currently rebuilds the Docker images itself. This script has
+  # already prepared those exact images in Stage 0, so patch the pinned CLI to
+  # reuse them and fail loudly if the installed package changes shape.
+  node --input-type=module - "$cli_path" <<'NODE'
+import { readFileSync, writeFileSync } from 'node:fs';
+
+const cliPath = process.argv[2];
+let source = readFileSync(cliPath, 'utf8');
+
+const replacements = [
+  [
+    'async function k(e){await p("make",["base-image"],{cwd:e.compileRoot})}',
+    'async function k(e){if(process.env.COMPILE_EXTENSION_SKIP_IMAGE_BUILD==="1"){await p("docker",["image","inspect","playground-php-wasm:base"],{stdio:"ignore"});console.log("Skipping compile-extension base image build; using existing playground-php-wasm:base");return}await p("make",["base-image"],{cwd:e.compileRoot})}',
+  ],
+  [
+    'async function j(e){const t=$(e);return await p("docker",["build","-f","compile-extension/docker/Dockerfile.ext",".",`--tag=${t}`,"--progress=plain","--build-arg",`PHP_VERSION=${e.phpRelease}`,"--build-arg","JSPI=yes"],{cwd:e.phpWasmRoot}),t}',
+    'async function j(e){const t=$(e);if(process.env.COMPILE_EXTENSION_SKIP_IMAGE_BUILD==="1"){await p("docker",["image","inspect",t],{stdio:"ignore"});console.log(`Skipping compile-extension image build; using existing ${t}`);return t}return await p("docker",["build","-f","compile-extension/docker/Dockerfile.ext",".",`--tag=${t}`,"--progress=plain","--build-arg",`PHP_VERSION=${e.phpRelease}`,"--build-arg","JSPI=yes"],{cwd:e.phpWasmRoot}),t}',
+  ],
+];
+
+for (const [from, to] of replacements) {
+  if (!source.includes(from)) {
+    throw new Error(`Unable to patch @php-wasm/compile-extension CLI. Missing pattern: ${from}`);
+  }
+  source = source.replace(from, to);
+}
+
+writeFileSync(cliPath, source);
+NODE
+
+  grep -q 'COMPILE_EXTENSION_SKIP_IMAGE_BUILD' "$cli_path"
+}
+
 RUST_IMAGE="playground-php-wasm-ext-rust:${PHP_VERSION}-${ASYNC_MODE}"
 BASE_IMAGE="playground-php-wasm:compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}"
 
@@ -275,10 +311,11 @@ ARTIFACT="wp_mysql_parser-php${PHP_VERSION}-${ASYNC_MODE}.so"
 COMPILE_EXTENSION_CLI="$CLI_STAGE/node_modules/@php-wasm/compile-extension/cli.js"
 
 npm install --prefix "$CLI_STAGE" --no-audit --no-fund --ignore-scripts "$COMPILE_EXTENSION_PACKAGE"
+patch_compile_extension_cli "$COMPILE_EXTENSION_CLI"
 
 (
   cd "$PLAYGROUND_REPO"
-  node "$COMPILE_EXTENSION_CLI" \
+  COMPILE_EXTENSION_SKIP_IMAGE_BUILD=1 node "$COMPILE_EXTENSION_CLI" \
     --source "$SRC_STAGE" \
     --name wp_mysql_parser \
     --php-versions "$PHP_VERSION" \
