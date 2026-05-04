@@ -2301,6 +2301,8 @@ class WP_MySQL_Lexer {
 		);
 
 		while ( true ) {
+			// Bail on EOF, or on a null token type once at least one byte has
+			// been consumed (read_next_token() hit invalid input mid-stream).
 			if (
 				self::EOF === $this->token_type
 				|| ( null === $this->token_type && $this->bytes_already_read > 0 )
@@ -2421,7 +2423,11 @@ class WP_MySQL_Lexer {
 		);
 
 		// Fast path for keywords and identifiers.
-		// These are the most common token types in MySQL payloads.
+		// `$byte > "\x7F"` catches any non-ASCII byte (0x80-0xFF); read_identifier()
+		// restricts the accepted identifier codepoints to U+0080-U+FFFF.
+		// `"'" !== $next_byte` defers x'..', n'..' and similar special
+		// literals to their dedicated branches below; only single quotes
+		// form those, regardless of SQL mode.
 		if (
 			(
 				( $byte >= 'a' && $byte <= 'z' )
