@@ -4418,7 +4418,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 * The UDF also handles RAND(NULL) as RAND(0), matching MySQL.
 				 */
 				if ( 0 === count( $args ) ) {
-					return '((RANDOM() & 0x001FFFFFFFFFFFFF) / 9007199254740992.0)';
+					return '((RANDOM() & ((1 << 53) - 1)) / ((1 << 53) * 1.0))';
 				}
 				return $this->translate_sequence( $node->get_children() );
 			case 'DATE_FORMAT':
