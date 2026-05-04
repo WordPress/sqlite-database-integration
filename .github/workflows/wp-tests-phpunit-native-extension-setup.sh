@@ -94,7 +94,7 @@ LIBCLANG_PATH="$(dirname "$LIBCLANG_SO")"
 export LIBCLANG_PATH
 
 cd /var/native-parser-extension-src
-cargo build
+cargo build --release
 EOF
 
 chmod +x "$WP_DIR/native-build-extension.sh"
@@ -103,7 +103,7 @@ cd "$WP_DIR"
 node tools/local-env/scripts/docker.js run --rm php sh /var/www/native-build-extension.sh
 
 mkdir -p "$RUNTIME_DIR"
-cp "$ROOT_DIR/packages/php-ext-wp-mysql-parser/target/debug/libwp_mysql_parser.so" "$RUNTIME_DIR/libwp_mysql_parser.so"
+cp "$ROOT_DIR/packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so" "$RUNTIME_DIR/libwp_mysql_parser.so"
 printf '%s\n' 'extension=/var/native-parser-extension/libwp_mysql_parser.so' > "$RUNTIME_DIR/wp-mysql-parser.ini"
 
 add_volume_to_service php "$EXTENSION_RUNTIME_VOLUME"
