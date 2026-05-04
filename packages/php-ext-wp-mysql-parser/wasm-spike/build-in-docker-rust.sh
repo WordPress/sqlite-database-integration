@@ -56,31 +56,14 @@ fi
 
 RUST_IMAGE="playground-php-wasm-ext-rust:${PHP_VERSION}-${ASYNC_MODE}"
 BASE_IMAGE="playground-php-wasm:compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}"
-DOCKER_BUILD_CACHE="${DOCKER_BUILD_CACHE:-}"
-DOCKER_BUILD_CACHE_SCOPE_PREFIX="${DOCKER_BUILD_CACHE_SCOPE_PREFIX:-wp-mysql-parser-wasm}"
-
-docker_build() {
-  local cache_scope="$1"
-  shift
-
-  if [ "$DOCKER_BUILD_CACHE" = "gha" ]; then
-    docker buildx build --load \
-      --cache-from "type=gha,scope=${DOCKER_BUILD_CACHE_SCOPE_PREFIX}-${cache_scope}" \
-      --cache-to "type=gha,mode=max,scope=${DOCKER_BUILD_CACHE_SCOPE_PREFIX}-${cache_scope}" \
-      "$@"
-    return
-  fi
-
-  docker build "$@"
-}
 
 echo "==> Stage 0: preparing $BASE_IMAGE via Playground compile-extension tooling"
 BASE_IMAGE_DIR="$PLAYGROUND_REPO/packages/php-wasm/compile/base-image"
-docker_build "base-image" \
+docker build \
   -f "$BASE_IMAGE_DIR/Dockerfile" \
   --tag="playground-php-wasm:base" \
   "$BASE_IMAGE_DIR"
-docker_build "compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}" \
+docker build \
   -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/docker/Dockerfile.ext" \
   --tag="$BASE_IMAGE" \
   --progress=plain \
@@ -89,7 +72,7 @@ docker_build "compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}" \
   "$PLAYGROUND_REPO/packages/php-wasm"
 
 echo "==> Stage 0: building $RUST_IMAGE"
-docker_build "rust-php${PHP_VERSION//./-}-${ASYNC_MODE}" \
+docker build \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   --build-arg "HOST_PHP_VERSION=$PHP_VERSION" \
   --build-arg "HOST_PHP_API_VERSION=$PHP_API_VERSION" \

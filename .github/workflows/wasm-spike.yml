@@ -77,9 +77,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: wordpress-playground/package-lock.json
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Install Playground deps
         working-directory: wordpress-playground
         run: npm ci --ignore-scripts
@@ -90,8 +87,6 @@ jobs:
           PHP_VERSION: ${{ matrix.php }}
           ASYNC_MODE: ${{ matrix.async-mode }}
           COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.27'
-          DOCKER_BUILD_CACHE: gha
-          DOCKER_BUILD_CACHE_SCOPE_PREFIX: wp-mysql-parser-wasm
           PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
         run: bash build-in-docker-rust.sh
 
