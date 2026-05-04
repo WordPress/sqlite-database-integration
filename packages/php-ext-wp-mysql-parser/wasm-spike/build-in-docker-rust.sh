@@ -58,11 +58,19 @@ RUST_IMAGE="playground-php-wasm-ext-rust:${PHP_VERSION}-${ASYNC_MODE}"
 BASE_IMAGE="playground-php-wasm:compile-extension-php${PHP_VERSION//./-}-${ASYNC_MODE}"
 
 echo "==> Stage 0: preparing $BASE_IMAGE via Playground compile-extension tooling"
-BASE_IMAGE_DIR="$PLAYGROUND_REPO/packages/php-wasm/compile/base-image"
-docker build \
-  -f "$BASE_IMAGE_DIR/Dockerfile" \
-  --tag="playground-php-wasm:base" \
-  "$BASE_IMAGE_DIR"
+if [ "${SKIP_BASE_IMAGE_BUILD:-}" = "1" ]; then
+  if ! docker image inspect playground-php-wasm:base >/dev/null 2>&1; then
+    echo "SKIP_BASE_IMAGE_BUILD=1 requires a preloaded playground-php-wasm:base image." >&2
+    exit 1
+  fi
+  echo "==> Stage 0: using preloaded playground-php-wasm:base"
+else
+  BASE_IMAGE_DIR="$PLAYGROUND_REPO/packages/php-wasm/compile/base-image"
+  docker build \
+    -f "$BASE_IMAGE_DIR/Dockerfile" \
+    --tag="playground-php-wasm:base" \
+    "$BASE_IMAGE_DIR"
+fi
 docker build \
   -f "$PLAYGROUND_REPO/packages/php-wasm/compile-extension/docker/Dockerfile.ext" \
   --tag="$BASE_IMAGE" \

@@ -26,8 +26,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  base-image:
+    name: Build shared Playground base image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out wordpress-playground
+        uses: actions/checkout@v4
+        with:
+          repository: WordPress/wordpress-playground
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
+          path: wordpress-playground
+          sparse-checkout: |
+            packages/php-wasm/compile/base-image
+
+      - name: Build Playground base image
+        run: |
+          docker build \
+            -f wordpress-playground/packages/php-wasm/compile/base-image/Dockerfile \
+            --tag playground-php-wasm:base \
+            wordpress-playground/packages/php-wasm/compile/base-image
+
+      - name: Save Playground base image
+        run: docker save --output "${RUNNER_TEMP}/playground-php-wasm-base.tar" playground-php-wasm:base
+
+      - name: Upload Playground base image
+        uses: actions/upload-artifact@v4
+        with:
+          name: playground-php-wasm-base-image
+          path: ${{ runner.temp }}/playground-php-wasm-base.tar
+          if-no-files-found: error
+          retention-days: 1
+
   build:
     name: Build wp_mysql_parser.so (PHP ${{ matrix.php }})
+    needs: base-image
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -83,6 +117,15 @@ jobs:
           cache: 'npm'
           cache-dependency-path: wordpress-playground/package-lock.json
 
+      - name: Download Playground base image
+        uses: actions/download-artifact@v4
+        with:
+          name: playground-php-wasm-base-image
+          path: ${{ runner.temp }}/playground-base-image
+
+      - name: Load Playground base image
+        run: docker load --input "${RUNNER_TEMP}/playground-base-image/playground-php-wasm-base.tar"
+
       - name: Install Playground deps
         working-directory: wordpress-playground
         run: npm ci --ignore-scripts
@@ -94,6 +137,7 @@ jobs:
           ASYNC_MODE: jspi
           COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.27'
           PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          SKIP_BASE_IMAGE_BUILD: '1'
         run: bash build-in-docker-rust.sh
 
       - name: Verify side module exists
