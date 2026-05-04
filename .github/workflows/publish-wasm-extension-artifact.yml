@@ -87,15 +87,6 @@ jobs:
         working-directory: wordpress-playground
         run: npm ci --ignore-scripts
 
-      - name: Configure Docker DNS
-        run: |
-          echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if docker info >/dev/null 2>&1; then break; fi
-            sleep 2
-          done
-
       - name: Build wp_mysql_parser side module
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
         env:
@@ -118,17 +109,6 @@ jobs:
           path: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/dist/wp_mysql_parser-php${{ matrix.php }}-jspi.so
           if-no-files-found: error
           retention-days: ${{ github.event.inputs.retention-days || '30' }}
-
-      - name: Upload diagnostic logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm-extension-publish-failure-php${{ matrix.php }}
-          path: |
-            sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/dist/
-            sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/*.log
-          if-no-files-found: ignore
-          retention-days: 14
 
   package:
     name: Package extension manifest
