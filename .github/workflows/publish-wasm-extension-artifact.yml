@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 6
       matrix:
         # The Rust WASM path uses ext-php-rs 0.15, which depends on PHP 8
         # Zend APIs. PHP 7.4 cannot be added here by extending the matrix.
@@ -83,6 +83,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: wordpress-playground/package-lock.json
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Install Playground deps
         working-directory: wordpress-playground
         run: npm ci --ignore-scripts
@@ -93,6 +96,8 @@ jobs:
           PHP_VERSION: ${{ matrix.php }}
           ASYNC_MODE: jspi
           COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.27'
+          DOCKER_BUILD_CACHE: gha
+          DOCKER_BUILD_CACHE_SCOPE_PREFIX: wp-mysql-parser-wasm
           PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
         run: bash build-in-docker-rust.sh
 
