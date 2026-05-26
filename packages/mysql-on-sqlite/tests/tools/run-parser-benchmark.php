@@ -4,6 +4,10 @@
  * This script runs the MySQL parser on all queries from the MySQL server suite.
  * It tracks parsing failures and exceptions and measures parsing performance.
  * This is an end-to-end benchmark that includes lexing time in the results.
+ *
+ * Options:
+ *   --json       Print machine-readable benchmark output.
+ *   --limit=N    Only benchmark the first N queries.
  */
 
 // Throw exception if anything fails.
@@ -13,13 +17,17 @@ set_error_handler(
 	}
 );
 
-require_once __DIR__ . '/../../src/parser/class-wp-parser-grammar.php';
-require_once __DIR__ . '/../../src/parser/class-wp-parser-node.php';
-require_once __DIR__ . '/../../src/parser/class-wp-parser-token.php';
-require_once __DIR__ . '/../../src/parser/class-wp-parser.php';
-require_once __DIR__ . '/../../src/mysql/class-wp-mysql-token.php';
-require_once __DIR__ . '/../../src/mysql/class-wp-mysql-lexer.php';
-require_once __DIR__ . '/../../src/mysql/class-wp-mysql-parser.php';
+$json  = in_array( '--json', $argv, true );
+$limit = null;
+foreach ( $argv as $arg ) {
+	if ( 0 === strpos( $arg, '--limit=' ) ) {
+		$limit = max( 1, (int) substr( $arg, strlen( '--limit=' ) ) );
+	}
+}
+
+// Use the integration loader so an already-loaded native extension selects
+// the same public lexer/parser classes that runtime code uses.
+require_once __DIR__ . '/../../src/load.php';
 
 function get_stats( $total, $failures, $exceptions ) {
 	return sprintf(
@@ -36,24 +44,28 @@ function get_stats( $total, $failures, $exceptions ) {
 $grammar_data = include __DIR__ . '/../../src/mysql/mysql-grammar.php';
 $grammar      = new WP_Parser_Grammar( $grammar_data );
 
-// Load the queries.
+// Load the bounded checked-in corpus before timing so file IO is excluded
+// from the benchmark.
 $data_dir = __DIR__ . '/../mysql/data';
 $handle   = fopen( "$data_dir/mysql-server-tests-queries.csv", 'r' );
-$records  = array();
+$queries  = array();
 while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
-	$records[] = $record;
+	$query = $record[0] ?? null;
+	if ( null === $query || '' === $query ) {
+		continue;
+	}
+	$queries[] = $query;
+	if ( null !== $limit && count( $queries ) >= $limit ) {
+		break;
+	}
 }
 
 // Run the parser.
 $failures   = array();
 $exceptions = array();
+$processed  = 0;
 $start      = microtime( true );
-for ( $i = 1; $i < count( $records ); $i += 1 ) {
-	$query = $records[ $i ][0];
-	if ( null === $query ) {
-		continue;
-	}
-
+foreach ( $queries as $query ) {
 	try {
 		$lexer  = new WP_MySQL_Lexer( $query );
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
@@ -72,13 +84,33 @@ for ( $i = 1; $i < count( $records ); $i += 1 ) {
 		$exceptions[] = $query;
 	}
 
-	if ( $i > 0 && 0 === $i % 1000 ) {
-		echo get_stats( $i, count( $failures ), count( $exceptions ) ), "\n";
+	$processed += 1;
+	if ( ! $json && $processed > 0 && 0 === $processed % 1000 ) {
+		echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
 	}
 }
 $duration = microtime( true ) - $start;
+$qps      = $processed / $duration;
 
-echo get_stats( $i, count( $failures ), count( $exceptions ) ), "\n";
+if ( $json ) {
+	echo json_encode(
+		array(
+			'benchmark'        => 'mysql-parser',
+			'implementation'   => class_exists( 'WP_MySQL_Native_Parser', false ) ? 'native-extension' : 'php',
+			'extension_loaded' => extension_loaded( 'wp_mysql_parser' ),
+			'queries'          => $processed,
+			'duration'         => $duration,
+			'qps'              => $qps,
+			'failures'         => count( $failures ),
+			'exceptions'       => count( $exceptions ),
+			'php_version'      => PHP_VERSION,
+		),
+		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+	), "\n";
+	exit;
+}
+
+echo get_stats( $processed, count( $failures ), count( $exceptions ) ), "\n";
 
 // Print the results.
-printf( "\nParsed %d queries in %.5fs @ %d QPS.\n", $i, $duration, $i / $duration );
+printf( "\nParsed %d queries in %.5fs @ %d QPS.\n", $processed, $duration, $qps );
