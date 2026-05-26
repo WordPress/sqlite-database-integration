@@ -7,8 +7,8 @@
       "name": "MySQL lexer",
       "implementation": "Pure PHP",
       "queries": 69577,
-      "duration": 0.9885420799255371,
-      "qps": 70383.44792084213,
+      "duration": 0.9723801612854004,
+      "qps": 71553.2903386525,
       "speedup": null,
       "notes": "Measured by tests/tools/run-native-extension-benchmark.php --json."
     },
@@ -16,21 +16,32 @@
       "name": "MySQL lexer",
       "implementation": "Native extension",
       "queries": 69577,
-      "duration": 0.20811200141906738,
-      "qps": 334324.7843736575,
-      "speedup": 4.7500484027105525,
+      "duration": 0.2027750015258789,
+      "qps": 343124.1498036449,
+      "speedup": 4.795365079365079,
       "notes": "Measured by tests/tools/run-native-extension-benchmark.php --json with wp_mysql_parser loaded."
     },
     {
       "name": "MySQL parser",
       "implementation": "Pure PHP",
       "queries": 69577,
-      "duration": 9.678236961364746,
-      "qps": 7189.015962075475,
+      "duration": 9.918637990951538,
+      "qps": 7014.773607371588,
       "speedup": null,
       "failures": 9,
       "exceptions": 0,
       "notes": "Measured by tests/tools/run-parser-benchmark.php --json."
+    },
+    {
+      "name": "MySQL parser",
+      "implementation": "Native extension",
+      "queries": 69577,
+      "duration": 0.6421267986297607,
+      "qps": 108353.98888268,
+      "speedup": 15.446529949555375,
+      "failures": 9,
+      "exceptions": 0,
+      "notes": "Measured by tests/tools/run-parser-benchmark.php --json with wp_mysql_parser loaded."
     }
   ]
 }
