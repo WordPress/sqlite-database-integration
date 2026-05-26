@@ -35,7 +35,12 @@ function sqlite_make_db_sqlite() {
 	}
 
 	$translator = new WP_SQLite_Driver(
-		new WP_SQLite_Connection( array( 'pdo' => $pdo ) ),
+		new WP_SQLite_Connection(
+			array(
+				'pdo'          => $pdo,
+				'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+			)
+		),
 		$wpdb->dbname
 	);
 	$query      = null;

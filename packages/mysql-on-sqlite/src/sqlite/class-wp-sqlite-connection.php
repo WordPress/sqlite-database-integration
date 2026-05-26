@@ -20,6 +20,16 @@ class WP_SQLite_Connection {
 	const DEFAULT_SQLITE_TIMEOUT = 10;
 
 	/**
+	 * The default SQLite journal mode.
+	 */
+	const DEFAULT_SQLITE_JOURNAL_MODE = 'WAL';
+
+	/**
+	 * The default SQLite synchronous setting for WAL mode.
+	 */
+	const DEFAULT_SQLITE_WAL_SYNCHRONOUS = 'NORMAL';
+
+	/**
 	 * The supported SQLite journal modes.
 	 *
 	 * See: https://www.sqlite.org/pragma.html#pragma_journal_mode
@@ -31,6 +41,18 @@ class WP_SQLite_Connection {
 		'MEMORY',
 		'WAL',
 		'OFF',
+	);
+
+	/**
+	 * The supported SQLite synchronous settings.
+	 *
+	 * See: https://www.sqlite.org/pragma.html#pragma_synchronous
+	 */
+	const SQLITE_SYNCHRONOUS_SETTINGS = array(
+		'OFF',
+		'NORMAL',
+		'FULL',
+		'EXTRA',
 	);
 
 	/**
@@ -62,7 +84,9 @@ class WP_SQLite_Connection {
 	 *                                     If not provided, a new PDO instance will be created.
 	 *     @type int|null    $timeout      Optional. SQLite timeout in seconds.
 	 *                                     The time to wait for a writable lock.
-	 *     @type string|null $journal_mode Optional. SQLite journal mode.
+	 *     @type string|null $journal_mode Optional. SQLite journal mode. Defaults to WAL.
+	 *     @type string|null $synchronous  Optional. SQLite synchronous setting. Defaults to
+	 *                                     NORMAL when the effective journal mode is WAL.
 	 * }
 	 *
 	 * @throws InvalidArgumentException When some connection options are invalid.
@@ -92,9 +116,28 @@ class WP_SQLite_Connection {
 		$this->pdo->setAttribute( PDO::ATTR_TIMEOUT, $timeout );
 
 		// Configure SQLite journal mode.
-		$journal_mode = $options['journal_mode'] ?? null;
+		$effective_journal_mode = null;
+		$journal_mode           = $options['journal_mode'] ?? self::DEFAULT_SQLITE_JOURNAL_MODE;
+		if ( is_string( $journal_mode ) ) {
+			$journal_mode = strtoupper( $journal_mode );
+		}
 		if ( $journal_mode && in_array( $journal_mode, self::SQLITE_JOURNAL_MODES, true ) ) {
-			$this->query( 'PRAGMA journal_mode = ' . $journal_mode );
+			$effective_journal_mode = strtoupper(
+				(string) $this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn()
+			);
+		}
+
+		// Configure SQLite synchronous setting. In WAL mode, default to NORMAL.
+		// Otherwise, use SQLite's default value.
+		$synchronous = $options['synchronous'] ?? null;
+		if ( null === $synchronous && 'WAL' === $effective_journal_mode ) {
+			$synchronous = self::DEFAULT_SQLITE_WAL_SYNCHRONOUS;
+		}
+		if ( is_string( $synchronous ) ) {
+			$synchronous = strtoupper( $synchronous );
+		}
+		if ( $synchronous && in_array( $synchronous, self::SQLITE_SYNCHRONOUS_SETTINGS, true ) ) {
+			$this->query( 'PRAGMA synchronous = ' . $synchronous );
 		}
 	}
 
