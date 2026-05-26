@@ -8,38 +8,84 @@
 :root { color-scheme: light; --bg: #f6f7f7; --fg: #1e1e1e; --muted: #50575e; --brand: #3858e9; --card: #fff; --border: #dcdcde; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
-main { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0; }
+main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0; }
 .hero { background: linear-gradient(135deg, #fff, #eef2ff); border: 1px solid var(--border); border-radius: 18px; padding: 40px; }
 h1 { font-size: clamp(2rem, 5vw, 4rem); line-height: 1.05; margin: 0 0 16px; }
 h2 { margin-top: 40px; }
+h3 { margin-top: 0; }
 p { color: var(--muted); }
+.muted { color: var(--muted); font-size: .925rem; }
 a { color: var(--brand); }
 .button { display: inline-block; margin: 14px 12px 0 0; padding: 12px 18px; border-radius: 999px; background: var(--brand); color: #fff; text-decoration: none; font-weight: 700; }
 .button.secondary { background: #fff; color: var(--brand); border: 1px solid var(--brand); }
+.button.small { margin: 0; padding: 8px 12px; font-size: .925rem; white-space: nowrap; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 24px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
 code, pre { background: #fff; border: 1px solid var(--border); border-radius: 8px; }
 code { padding: 2px 5px; }
 pre { padding: 16px; overflow: auto; }
 table { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid var(--border); }
-th, td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; }
+th, td { border-bottom: 1px solid var(--border); padding: 12px; text-align: left; vertical-align: top; }
+th { background: #f0f0f1; }
 .badge { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; background: #fff; color: var(--muted); }
+@media (max-width: 760px) { table, thead, tbody, th, td, tr { display: block; } thead { display: none; } td { border-bottom: 0; } tr { border-bottom: 1px solid var(--border); padding: 8px 0; } }
 </style>
 </head>
 <body>
 <main>
 <section class="hero">
-<p class="badge">WordPress + SQLite + Native parser extension</p>
+<p class="badge">WordPress + SQLite</p>
 <h1>SQLite Database Integration</h1>
-<p>Run WordPress on SQLite and try the optional native MySQL parser extension in your browser with WordPress Playground.</p>
-<a class="button" href="https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json">Test in Playground</a>
+<p>Run WordPress on SQLite. If you want to try the optional native MySQL parser extension, use a published WASM build below or open the ready-made Playground demo.</p>
+<a class="button" href="https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json">Test latest in Playground</a>
 <a class="button secondary" href="native-extension/">Native extension details</a>
 </section>
+
 <section class="grid">
-<div class="card"><h2>Native PHP extension</h2><p><code>wp_mysql_parser</code> accelerates the MySQL lexer/parser path while keeping the pure-PHP implementation as the fallback.</p></div>
-<div class="card"><h2>WASM build</h2><p>The Playground build is published as PHP 8.0–8.5 JSPI side modules and loaded with the <code>php-extension</code> query parameter.</p></div>
-<div class="card"><h2>Benchmarks</h2><p>The demo page verifies that the extension is loaded and runs a small in-browser benchmark.</p></div>
+<div class="card"><h2>Quick start</h2><p>Use the plugin to run WordPress with SQLite instead of MySQL. The native parser extension is optional and the pure-PHP parser remains the fallback.</p></div>
+<div class="card"><h2>WASM builds</h2><p>Each release below has a manifest URL for WordPress Playground and checksums for the published side modules.</p></div>
+<div class="card"><h2>Benchmarks</h2><p>The demo verifies <code>extension_loaded('wp_mysql_parser')</code>, runs a browser benchmark, and links to the latest published benchmark data.</p></div>
 </section>
+
+<h2>Published WASM extension releases</h2>
+<p>Pick a release, inspect its manifest, or launch WordPress Playground with that exact <code>wp_mysql_parser</code> WASM extension.</p>
+<table>
+<thead><tr><th>Release</th><th>PHP builds</th><th>Links</th><th>Try it</th></tr></thead>
+<tbody>
+<tr>
+<td><strong>latest</strong><br><span class="muted">Current pointer to b31fc53ea599</span></td>
+<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
+<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json">manifest.json</a><br><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/SHA256SUMS">SHA256SUMS</a></td>
+<td><a class="button small" href="https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json">Run in Playground</a></td>
+</tr>
+<tr>
+<td><strong>b31fc53ea599</strong><br><span class="muted">Pinned build b31fc53ea599</span></td>
+<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
+<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/b31fc53ea599d1a2211b75f4a3486b39e63ce01f/manifest.json">manifest.json</a><br><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/b31fc53ea599d1a2211b75f4a3486b39e63ce01f/SHA256SUMS">SHA256SUMS</a></td>
+<td><a class="button small" href="https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fb31fc53ea599d1a2211b75f4a3486b39e63ce01f%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json">Run in Playground</a></td>
+</tr>
+<tr>
+<td><strong>4f3aab1a5b03</strong><br><span class="muted">Pinned build 4f3aab1a5b03</span></td>
+<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
+<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/4f3aab1a5b03b00f42d7b5141ac6a11f9c752256/manifest.json">manifest.json</a><br><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/4f3aab1a5b03b00f42d7b5141ac6a11f9c752256/SHA256SUMS">SHA256SUMS</a></td>
+<td><a class="button small" href="https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2F4f3aab1a5b03b00f42d7b5141ac6a11f9c752256%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json">Run in Playground</a></td>
+</tr>
+</tbody>
+</table>
+
+<h2>Run with Playground CLI</h2>
+<p>The browser links use Playground's <code>php-extension</code> query parameter. Locally, pass the same manifest URL to <code>@wp-playground/cli</code> with <code>--php-extension</code> before PHP starts.</p>
+<pre><code>npx @wp-playground/cli@latest server \
+  --php=8.4 \
+  --php-extension=https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json \
+  --blueprint=https://wordpress.github.io/sqlite-database-integration/native-extension/blueprint.json</code></pre>
+<p>For CI or a headless smoke test, run the Blueprint without starting a server:</p>
+<pre><code>npx @wp-playground/cli@latest run-blueprint \
+  --php=8.4 \
+  --php-extension=https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json \
+  --blueprint=https://wordpress.github.io/sqlite-database-integration/native-extension/blueprint.json</code></pre>
+<p>Replace the manifest URL with any pinned release from the table to test that exact build.</p>
+
 </main>
 </body>
 </html>
