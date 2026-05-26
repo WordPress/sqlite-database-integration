@@ -5,62 +5,150 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SQLite Database Integration</title>
 <style>
-:root { color-scheme: light; --bg: #f6f7f7; --fg: #1e1e1e; --muted: #50575e; --brand: #3858e9; --card: #fff; --border: #dcdcde; }
+:root {
+  color-scheme: light;
+  --bg: #f6f7f7;
+  --fg: #1e1e1e;
+  --muted: #50575e;
+  --brand: #3858e9;
+  --card: #fff;
+  --border: #dcdcde;
+}
 * { box-sizing: border-box; }
-body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
-main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0; }
-.hero { background: linear-gradient(135deg, #fff, #eef2ff); border: 1px solid var(--border); border-radius: 18px; padding: 40px; }
-h1 { font-size: clamp(2rem, 5vw, 4rem); line-height: 1.05; margin: 0 0 16px; }
-h2 { margin-top: 40px; }
-h3 { margin-top: 0; }
-p { color: var(--muted); }
-.muted { color: var(--muted); font-size: .925rem; }
+body {
+  margin: 0;
+  font: 22px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+main {
+  width: min(1180px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 86px 0 96px;
+}
+h1 {
+  font-size: clamp(4rem, 9vw, 7.25rem);
+  line-height: .95;
+  letter-spacing: -0.07em;
+  margin: 0 0 40px;
+}
+h2 {
+  font-size: clamp(2.25rem, 5vw, 3.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+  margin: 92px 0 28px;
+}
+h3 {
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  margin: 0 0 24px;
+}
+p { color: var(--muted); margin: 0 0 22px; }
 a { color: var(--brand); }
-.button { display: inline-block; margin: 14px 12px 0 0; padding: 12px 18px; border-radius: 999px; background: var(--brand); color: #fff; text-decoration: none; font-weight: 700; }
-.button.secondary { background: #fff; color: var(--brand); border: 1px solid var(--brand); }
-.button.small { margin: 0; padding: 8px 12px; font-size: .925rem; white-space: nowrap; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 24px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
-code, pre { background: #fff; border: 1px solid var(--border); border-radius: 8px; }
-code { padding: 2px 5px; }
-pre { padding: 16px; overflow: auto; }
-table { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid var(--border); }
-th, td { border-bottom: 1px solid var(--border); padding: 12px; text-align: left; vertical-align: top; }
-th { background: #f0f0f1; }
-.badge { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; background: #fff; color: var(--muted); }
-@media (max-width: 760px) { table, thead, tbody, th, td, tr { display: block; } thead { display: none; } td { border-bottom: 0; } tr { border-bottom: 1px solid var(--border); padding: 8px 0; } }
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+pre {
+  margin: 22px 0 0;
+  padding: 24px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font-size: clamp(1rem, 2vw, 1.5rem);
+  line-height: 1.45;
+}
+pre code {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.lead {
+  max-width: 1120px;
+  font-size: clamp(1.35rem, 2.8vw, 2rem);
+  line-height: 1.45;
+  margin-bottom: 0;
+}
+.quick-start { display: grid; gap: 24px; }
+.quick-card {
+  min-height: 290px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: clamp(28px, 5vw, 48px);
+}
+.playground-button {
+  display: inline-block;
+  margin-top: 28px;
+  line-height: 0;
+}
+.playground-button img {
+  display: block;
+  width: min(360px, 100%);
+  height: auto;
+}
+.muted { color: var(--muted); font-size: .9em; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--border);
+  font-size: clamp(1rem, 2vw, 1.35rem);
+}
+th, td {
+  border-bottom: 1px solid var(--border);
+  padding: 24px 14px;
+  text-align: left;
+  vertical-align: middle;
+}
+th {
+  background: #f0f0f1;
+  color: var(--fg);
+  font-weight: 800;
+}
+td strong { font-weight: 800; }
+#benchmark { margin-top: 28px; }
+@media (max-width: 760px) {
+  main { width: min(100% - 28px, 1180px); padding-top: 52px; }
+  h1 { font-size: clamp(3rem, 18vw, 5rem); }
+  body { font-size: 18px; }
+  table, thead, tbody, th, td, tr { display: block; }
+  thead { display: none; }
+  td { border-bottom: 0; padding: 10px 16px; }
+  tr { border-bottom: 1px solid var(--border); padding: 16px 0; }
+}
 </style>
 </head>
 <body>
 <main>
-<section class="hero">
-<p class="badge">WordPress + SQLite</p>
-<h1>SQLite Database Integration</h1>
-<p>Run WordPress on SQLite. The optional native MySQL parser extension is available as a WebAssembly build for WordPress Playground.</p>
-<a class="button" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Try in Playground web</a>
-</section>
-
 <section>
-<h2>What is this?</h2>
-<p>SQLite Database Integration lets WordPress use SQLite instead of MySQL. The optional <code>wp_mysql_parser</code> extension accelerates the MySQL lexer/parser path used by the SQLite driver; when the extension is unavailable, WordPress keeps using the pure-PHP parser fallback.</p>
+<h1>Run 5x faster with the PHP Extension</h1>
+<p class="lead">Run WordPress on SQLite. Install the optional <code>wp_mysql_parser</code> extension to run the hot MySQL lexer/parser code path as fast native code. The SQLite Database Integration plugin detects the extension and automatically upgrades your site's performance.</p>
 </section>
 
 <section>
 <h2>Quick start</h2>
-<div class="grid">
-<div class="card">
+<div class="quick-start">
+<section class="quick-card">
 <h3>Try in Playground web</h3>
-<p>Open a browser Playground with the latest published WASM extension and a small demo/benchmark page. The browser demo is pinned to PHP 8.3 because the current Playground browser runtime crashes while loading this extension on PHP 8.4.</p>
-<a class="button" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Open Playground</a>
-</div>
-<div class="card">
-<h3>Run with Playground CLI</h3>
+<p>Run the latest version of <code>wp_mysql_parser</code> in WordPress Playground.</p>
+<a class="playground-button" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json"><img src="assets/playground-preview-button.svg" alt="Try in WordPress Playground"></a>
+</section>
+<section class="quick-card">
+<h3>Try in Playground CLI</h3>
 <p>Use the same manifest URL locally. <code>--php-extension</code> must be passed before PHP starts.</p>
 <pre><code>npx @wp-playground/cli@latest server \
   --php=8.3 \
   --php-extension=https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json \
   --blueprint=https://wordpress.github.io/sqlite-database-integration/blueprint.json</code></pre>
-</div>
+</section>
 </div>
 </section>
 
@@ -74,25 +162,25 @@ th { background: #f0f0f1; }
 <td><strong>latest</strong><br><span class="muted">Current pointer to 255109019180</span></td>
 <td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
 <td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json">manifest.json</a></td>
-<td><a class="button small" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
+<td><a href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
 </tr>
 <tr>
 <td><strong>e5513936c800</strong><br><span class="muted">Pinned build e5513936c800</span></td>
 <td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
 <td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/e5513936c800f14b6795e7fce71505afad331b11/manifest.json">manifest.json</a></td>
-<td><a class="button small" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fe5513936c800f14b6795e7fce71505afad331b11%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
+<td><a href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fe5513936c800f14b6795e7fce71505afad331b11%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
 </tr>
 <tr>
 <td><strong>b31fc53ea599</strong><br><span class="muted">Pinned build b31fc53ea599</span></td>
 <td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
 <td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/b31fc53ea599d1a2211b75f4a3486b39e63ce01f/manifest.json">manifest.json</a></td>
-<td><a class="button small" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fb31fc53ea599d1a2211b75f4a3486b39e63ce01f%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
+<td><a href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fb31fc53ea599d1a2211b75f4a3486b39e63ce01f%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
 </tr>
 <tr>
 <td><strong>4f3aab1a5b03</strong><br><span class="muted">Pinned build 4f3aab1a5b03</span></td>
 <td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
 <td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/4f3aab1a5b03b00f42d7b5141ac6a11f9c752256/manifest.json">manifest.json</a></td>
-<td><a class="button small" href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2F4f3aab1a5b03b00f42d7b5141ac6a11f9c752256%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
+<td><a href="https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2F4f3aab1a5b03b00f42d7b5141ac6a11f9c752256%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
 </tr>
 </tbody>
 </table>
@@ -100,14 +188,15 @@ th { background: #f0f0f1; }
 
 <section>
 <h2>Benchmarks</h2>
+<p>Latest published native-vs-PHP measurements for the checked-in MySQL query corpus.</p>
 <div id="benchmark">Loading benchmark.json…</div>
-<p>Published benchmark data: <a href="benchmark.json">benchmark.json</a>.</p>
+<p class="muted">Raw benchmark data: <a href="benchmark.json">benchmark.json</a>.</p>
 </section>
 
 <script>
 fetch('benchmark.json').then(r => r.json()).then(data => {
   const rows = data.results.map(row => `<tr><td>${row.name}</td><td>${row.implementation}</td><td>${row.queries}</td><td>${row.qps ? Math.round(row.qps).toLocaleString() : 'n/a'}</td><td>${row.speedup ? row.speedup.toFixed(2) + 'x' : '—'}</td></tr>`).join('');
-  document.getElementById('benchmark').innerHTML = `<table><thead><tr><th>Benchmark</th><th>Implementation</th><th>Queries</th><th>QPS</th><th>Speedup</th></tr></thead><tbody>${rows}</tbody></table><p>Environment: ${data.environment}. Updated: ${data.updated}.</p>`;
+  document.getElementById('benchmark').innerHTML = `<table><thead><tr><th>Benchmark</th><th>Implementation</th><th>Queries</th><th>QPS</th><th>Speedup</th></tr></thead><tbody>${rows}</tbody></table><p class="muted">Environment: ${data.environment}. Updated: ${data.updated}.</p>`;
 }).catch(() => {
   document.getElementById('benchmark').textContent = 'Benchmark data is not available yet.';
 });
