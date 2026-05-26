@@ -1,0 +1,36 @@
+{
+  "updated": "2026-05-26",
+  "environment": "Apple Silicon macOS, PHP 8.4.5 CLI, Rust release build of wp_mysql_parser loaded with php -d extension",
+  "artifact_manifest": "https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json",
+  "results": [
+    {
+      "name": "MySQL lexer",
+      "implementation": "Pure PHP",
+      "queries": 69577,
+      "duration": 0.9885420799255371,
+      "qps": 70383.44792084213,
+      "speedup": null,
+      "notes": "Measured by tests/tools/run-native-extension-benchmark.php --json."
+    },
+    {
+      "name": "MySQL lexer",
+      "implementation": "Native extension",
+      "queries": 69577,
+      "duration": 0.20811200141906738,
+      "qps": 334324.7843736575,
+      "speedup": 4.7500484027105525,
+      "notes": "Measured by tests/tools/run-native-extension-benchmark.php --json with wp_mysql_parser loaded."
+    },
+    {
+      "name": "MySQL parser",
+      "implementation": "Pure PHP",
+      "queries": 69577,
+      "duration": 9.678236961364746,
+      "qps": 7189.015962075475,
+      "speedup": null,
+      "failures": 9,
+      "exceptions": 0,
+      "notes": "Measured by tests/tools/run-parser-benchmark.php --json."
+    }
+  ]
+}

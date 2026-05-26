@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQLite Database Integration</title>
+<style>
+:root { color-scheme: light; --bg: #f6f7f7; --fg: #1e1e1e; --muted: #50575e; --brand: #3858e9; --card: #fff; --border: #dcdcde; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+main { width: min(980px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0; }
+.hero { background: linear-gradient(135deg, #fff, #eef2ff); border: 1px solid var(--border); border-radius: 18px; padding: 40px; }
+h1 { font-size: clamp(2rem, 5vw, 4rem); line-height: 1.05; margin: 0 0 16px; }
+h2 { margin-top: 40px; }
+p { color: var(--muted); }
+a { color: var(--brand); }
+.button { display: inline-block; margin: 14px 12px 0 0; padding: 12px 18px; border-radius: 999px; background: var(--brand); color: #fff; text-decoration: none; font-weight: 700; }
+.button.secondary { background: #fff; color: var(--brand); border: 1px solid var(--brand); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 24px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+code, pre { background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+code { padding: 2px 5px; }
+pre { padding: 16px; overflow: auto; }
+table { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid var(--border); }
+th, td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; }
+.badge { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; background: #fff; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<section class="hero">
+<p class="badge">WordPress + SQLite + Native parser extension</p>
+<h1>SQLite Database Integration</h1>
+<p>Run WordPress on SQLite and try the optional native MySQL parser extension in your browser with WordPress Playground.</p>
+<a class="button" href="https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json">Test in Playground</a>
+<a class="button secondary" href="native-extension/">Native extension details</a>
+</section>
+<section class="grid">
+<div class="card"><h2>Native PHP extension</h2><p><code>wp_mysql_parser</code> accelerates the MySQL lexer/parser path while keeping the pure-PHP implementation as the fallback.</p></div>
+<div class="card"><h2>WASM build</h2><p>The Playground build is published as PHP 8.0–8.5 JSPI side modules and loaded with the <code>php-extension</code> query parameter.</p></div>
+<div class="card"><h2>Benchmarks</h2><p>The demo page verifies that the extension is loaded and runs a small in-browser benchmark.</p></div>
+</section>
+</main>
+</body>
+</html>
