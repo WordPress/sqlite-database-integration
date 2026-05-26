@@ -60,7 +60,7 @@ composer run wp-test-clean              # Clean up WordPress environment (Docker
 The default code path is pure PHP. For environments that can load PHP extensions, the optional `wp_mysql_parser` extension accelerates the MySQL lexer/parser used by the SQLite driver.
 
 - [Published WASM release list, manifest links, Playground links, and native extension overview](https://wordpress.github.io/sqlite-database-integration/)
-- [Build, verification, and benchmark docs](packages/php-ext-wp-mysql-parser/README.md)
+- [Build, load, and benchmark docs](packages/php-ext-wp-mysql-parser/README.md)
 
 Latest local measurement (Apple Silicon macOS, PHP 8.4.5 CLI, 2026-05-26): the native lexer path processed the MySQL test corpus at ~343k QPS versus ~72k QPS for pure PHP (~4.80x), and the native parser path processed it at ~108k QPS versus ~7k QPS for pure PHP (~15.45x).
 

@@ -6,19 +6,18 @@ When the extension is loaded before `packages/mysql-on-sqlite/src/load.php`, it 
 
 ## Published WASM build for Playground
 
-Published WASM builds are listed on this repository's GitHub Pages site, with manifest links, checksums, and a “Run in Playground” link for each release:
+Published WASM builds are listed on this repository's GitHub Pages site, with manifest links and a “Run in Playground” link for each release:
 
 <https://wordpress.github.io/sqlite-database-integration/>
 
 The current build is also available directly:
 
 - Manifest: <https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json>
-- Checksums: <https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/SHA256SUMS>
 - Supported PHP versions: 8.0, 8.1, 8.2, 8.3, 8.4, and 8.5.
 
-Use this Playground URL to load the extension and open the demo/benchmark page:
+Use this Playground URL to load the extension and open the demo/benchmark page. The browser demo is pinned to PHP 8.3 because the current Playground browser runtime crashes while loading this extension on PHP 8.4.
 
-<https://playground.wordpress.net/?php=8.4&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json>
+<https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json>
 
 ## Build the native extension locally
 
@@ -56,22 +55,6 @@ From the repository root, load it for local verification or benchmarks:
 ```bash
 php -d extension=/absolute/path/to/libwp_mysql_parser.so -m | grep wp_mysql_parser
 php -d extension=/absolute/path/to/libwp_mysql_parser.so packages/mysql-on-sqlite/tests/tools/verify-native-parser-extension.php
-```
-
-## Verify the WASM artifacts
-
-Download the manifest and checksums:
-
-```bash
-curl -O https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json
-curl -O https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/SHA256SUMS
-```
-
-Each `.so` listed in the manifest is published next to the manifest and can be checked against `SHA256SUMS`:
-
-```bash
-curl -O https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/wp_mysql_parser-php8.4-jspi.so
-shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
 ## Benchmarks
