@@ -54,10 +54,12 @@ code {
   padding: 1px 8px;
 }
 pre {
+  display: block;
+  width: 100%;
   margin: 16px 0 0;
   padding: 16px;
   max-width: 100%;
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: hidden;
   background: #fff;
   border: 1px solid var(--border);
@@ -68,6 +70,7 @@ pre {
 pre code {
   display: block;
   width: max-content;
+  max-width: none;
   min-width: 100%;
   white-space: pre;
   padding: 0;
@@ -81,9 +84,10 @@ pre code {
   line-height: 1.4;
   margin-bottom: 0;
 }
-.quick-start { display: grid; gap: 18px; }
+.quick-start { display: grid; gap: 18px; min-width: 0; }
 .quick-card {
   min-height: 0;
+  min-width: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 18px;
