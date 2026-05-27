@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SQLite Database Integration</title>
+<title>SQLite Database Integration for WordPress</title>
+<meta name="description" content="Run WordPress with SQLite using the SQLite Database Integration plugin.">
+<script type="module" src="https://playground.wordpress.net/php-code-snippet.js"></script>
 <style>
 :root {
   color-scheme: light;
@@ -11,40 +13,22 @@
   --fg: #1e1e1e;
   --muted: #50575e;
   --brand: #3858e9;
+  --brand-dark: #1f3ad7;
   --card: #fff;
   --border: #dcdcde;
+  --ink: #111827;
+  --good: #008a20;
 }
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 body {
   margin: 0;
-  font: 18px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: var(--bg);
+  font: 18px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, #eef2ff 0, rgba(238, 242, 255, 0) 38rem),
+    var(--bg);
   color: var(--fg);
 }
-main {
-  width: min(1120px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: 56px 0 72px;
-}
-h1 {
-  font-size: clamp(3rem, 7vw, 5.25rem);
-  line-height: .95;
-  letter-spacing: -0.055em;
-  margin: 0 0 26px;
-}
-h2 {
-  font-size: clamp(1.85rem, 3.6vw, 2.75rem);
-  line-height: 1.05;
-  letter-spacing: -0.045em;
-  margin: 58px 0 20px;
-}
-h3 {
-  font-size: clamp(1.25rem, 2.2vw, 1.65rem);
-  line-height: 1.15;
-  letter-spacing: -0.035em;
-  margin: 0 0 16px;
-}
-p { color: var(--muted); margin: 0 0 16px; }
 a { color: var(--brand); }
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -53,163 +37,387 @@ code {
   border-radius: 10px;
   padding: 1px 8px;
 }
-pre {
-  display: block;
-  width: 100%;
-  margin: 16px 0 0;
-  padding: 16px;
-  max-width: 100%;
-  overflow-x: scroll;
-  overflow-y: hidden;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  font-size: clamp(.85rem, 1.35vw, 1rem);
-  line-height: 1.4;
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(16px);
+  background: rgba(246, 247, 247, .84);
+  border-bottom: 1px solid rgba(220, 220, 222, .8);
 }
-pre code {
-  display: block;
-  width: max-content;
-  max-width: none;
-  min-width: 100%;
-  white-space: pre;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+.nav {
+  width: min(1120px, calc(100% - 48px));
+  min-height: 68px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
 }
-.lead {
-  max-width: 980px;
-  font-size: clamp(1.05rem, 2vw, 1.35rem);
-  line-height: 1.4;
-  margin-bottom: 0;
-}
-.quick-start { display: grid; gap: 18px; min-width: 0; }
-.quick-card {
-  min-height: 0;
-  min-width: 0;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: clamp(22px, 3vw, 34px);
-}
-.playground-button {
-  display: inline-block;
-  margin-top: 16px;
-  line-height: 0;
-}
-.playground-button img {
-  display: block;
-  width: min(300px, 100%);
-  height: auto;
-}
-.muted { color: var(--muted); font-size: .9em; }
-table {
-  border-collapse: collapse;
-  width: 100%;
-  background: #fff;
-  border: 1px solid var(--border);
-  font-size: clamp(.9rem, 1.5vw, 1rem);
-}
-th, td {
-  border-bottom: 1px solid var(--border);
-  padding: 14px 12px;
-  text-align: left;
-  vertical-align: middle;
-}
-th {
-  background: #f0f0f1;
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   color: var(--fg);
   font-weight: 800;
+  text-decoration: none;
+  letter-spacing: -.02em;
 }
-td strong { font-weight: 800; }
-#benchmark { margin-top: 16px; }
-@media (max-width: 760px) {
-  main { width: min(100% - 28px, 1180px); padding-top: 52px; }
-  h1 { font-size: clamp(3rem, 18vw, 5rem); }
+.logo-mark {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  background: var(--brand);
+  font-size: 18px;
+  line-height: 1;
+}
+.nav-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 18px;
+  font-size: 15px;
+}
+.nav-links a {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 650;
+}
+.nav-links a:hover { color: var(--brand); }
+main {
+  width: min(1120px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 56px 0 72px;
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr);
+  gap: clamp(28px, 5vw, 56px);
+  align-items: center;
+}
+h1 {
+  max-width: 780px;
+  font-size: clamp(3.25rem, 7.2vw, 6.25rem);
+  line-height: .92;
+  letter-spacing: -0.065em;
+  margin: 0 0 26px;
+}
+h2 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.05;
+  letter-spacing: -0.05em;
+  margin: 72px 0 18px;
+}
+h3 {
+  font-size: clamp(1.2rem, 2vw, 1.55rem);
+  line-height: 1.18;
+  letter-spacing: -0.035em;
+  margin: 0 0 12px;
+}
+p { color: var(--muted); margin: 0 0 16px; }
+.lead {
+  max-width: 760px;
+  font-size: clamp(1.08rem, 2vw, 1.38rem);
+  line-height: 1.42;
+}
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .86);
+  color: var(--muted);
+  font-size: .88rem;
+  font-weight: 750;
+}
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 800;
+  border: 1px solid var(--brand);
+}
+.button:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
+.button.secondary {
+  background: #fff;
+  color: var(--brand);
+}
+.button.secondary:hover { background: #eef2ff; }
+.hero-card, .card, .snippet-wrap {
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: 0 18px 60px rgba(17, 24, 39, .06);
+}
+.hero-card { padding: clamp(22px, 3.2vw, 34px); }
+.status-list {
+  display: grid;
+  gap: 16px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.status-list li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.check {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--good);
+  font-weight: 900;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 24px;
+}
+.card { padding: clamp(22px, 3vw, 30px); }
+.card p:last-child { margin-bottom: 0; }
+.flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+.step {
+  position: relative;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #fff;
+}
+.step-number {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 16px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: var(--brand);
+  font-weight: 850;
+}
+.snippet-section {
+  display: grid;
+  grid-template-columns: minmax(260px, .58fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+  margin-top: 24px;
+}
+.snippet-wrap { min-width: 0; padding: 14px; }
+.snippet-wrap php-snippet { display: block; }
+.callout {
+  margin-top: 28px;
+  padding: 22px;
+  border-left: 5px solid var(--brand);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--muted);
+}
+.link-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 18px 0 0;
+  list-style: none;
+}
+.link-list a { font-weight: 750; text-decoration: none; }
+.footer-note {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-size: .95rem;
+}
+@media (max-width: 880px) {
   body { font-size: 16px; }
-  table, thead, tbody, th, td, tr { display: block; }
-  thead { display: none; }
-  td { border-bottom: 0; padding: 10px 16px; }
-  tr { border-bottom: 1px solid var(--border); padding: 16px 0; }
+  .nav { align-items: flex-start; flex-direction: column; padding: 16px 0; gap: 12px; }
+  .nav-links { justify-content: flex-start; }
+  main { padding-top: 44px; }
+  .hero, .snippet-section { grid-template-columns: 1fr; }
+  .grid, .flow { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  main, .nav { width: min(100% - 28px, 1120px); }
+  h1 { font-size: clamp(3rem, 16vw, 4.6rem); }
 }
 </style>
 </head>
 <body>
+<header class="site-header">
+  <nav class="nav" aria-label="Main navigation">
+    <a class="logo" href="./"><span class="logo-mark">◌</span><span>SQLite Database Integration</span></a>
+    <div class="nav-links">
+      <a href="#why-sqlite">Why SQLite</a>
+      <a href="#try-it">Try it</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="native-extension/">Native PHP extension</a>
+      <a href="https://github.com/WordPress/sqlite-database-integration">GitHub</a>
+    </div>
+  </nav>
+</header>
 <main>
-<section>
-<h1>Run 5x faster with the PHP Extension</h1>
-<p class="lead">Run WordPress on SQLite. Install the optional <code>wp_mysql_parser</code> extension to run the hot MySQL lexer/parser code path as fast native code. The SQLite Database Integration plugin detects the extension and automatically upgrades your site's performance.</p>
+<section class="hero" aria-labelledby="hero-title">
+  <div>
+    <p class="eyebrow">WordPress feature plugin · SQLite-backed database layer</p>
+    <h1 id="hero-title">WordPress without a database server.</h1>
+    <p class="lead">SQLite Database Integration lets WordPress run on a local SQLite database while core, plugins, and themes keep using the familiar <code>$wpdb</code> APIs. It is the easiest way to test SQLite support for WordPress and help shape the path toward core.</p>
+    <div class="cta-row">
+      <a class="button" href="https://playground.wordpress.net/?blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fsqlite-demo-blueprint.json">Try the plugin in Playground</a>
+      <a class="button secondary" href="https://github.com/WordPress/sqlite-database-integration/releases">Download release</a>
+    </div>
+  </div>
+  <aside class="hero-card" aria-label="What you get">
+    <h2 style="font-size:clamp(1.5rem,2.6vw,2.25rem);margin:0 0 10px;">A WordPress database in one file</h2>
+    <p>No MySQL server to provision. No credentials to juggle. Just WordPress, a SQLite database file, and the same APIs your code already knows.</p>
+    <ul class="status-list">
+      <li><span class="check">✓</span><span><strong>Great for local development</strong><br><span style="color:var(--muted)">Spin up disposable WordPress sites quickly.</span></span></li>
+      <li><span class="check">✓</span><span><strong>Designed for WordPress compatibility</strong><br><span style="color:var(--muted)">Translates MySQL-flavored queries for SQLite.</span></span></li>
+      <li><span class="check">✓</span><span><strong>Pure PHP by default</strong><br><span style="color:var(--muted)">The optional native extension is a performance upgrade, not a requirement.</span></span></li>
+    </ul>
+  </aside>
+</section>
+
+<section id="why-sqlite">
+  <h2>Why SQLite for WordPress?</h2>
+  <div class="grid">
+    <article class="card">
+      <h3>Fewer moving parts</h3>
+      <p>SQLite keeps the database next to the site. That makes demos, tests, previews, and small environments easier to package and reset.</p>
+    </article>
+    <article class="card">
+      <h3>Same WordPress APIs</h3>
+      <p>Code keeps calling <code>$wpdb</code>, core APIs, and normal plugin hooks. The database layer adapts the SQL underneath.</p>
+    </article>
+    <article class="card">
+      <h3>A path to core feedback</h3>
+      <p>This feature plugin is a place to test compatibility, report edge cases, and improve SQLite support with real WordPress workloads.</p>
+    </article>
+  </div>
+</section>
+
+<section id="try-it">
+  <h2>Try the programming model</h2>
+  <div class="snippet-section">
+    <div>
+      <p class="lead" style="font-size:1.12rem;">The important promise is boring in the best way: use WordPress the way you already do. This runnable example creates a custom table, writes rows with <code>$wpdb->insert()</code>, and reads them back.</p>
+      <p>Click <strong>Run</strong> to execute it in WordPress Playground. The first run downloads the runtime; later snippets on the page reuse it.</p>
+      <div class="callout"><strong>Dev note:</strong> the snippet intentionally uses MySQL-style DDL. The SQLite database layer handles translation so plugin code can stay close to normal WordPress conventions.</div>
+    </div>
+    <div class="snippet-wrap">
+      <php-snippet name="sqlite-wpdb-demo.php" php="8.4">
+        <script type="application/x-php">
+<?php
+require '/wordpress/wp-load.php';
+
+global $wpdb;
+
+$table = $wpdb->prefix . 'sqlite_notes';
+$wpdb->query( "DROP TABLE IF EXISTS `$table`" );
+$wpdb->query(
+    "CREATE TABLE `$table` (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        title varchar(255) NOT NULL,
+        views bigint(20) unsigned NOT NULL DEFAULT 0,
+        PRIMARY KEY  (id)
+    )"
+);
+
+$wpdb->insert(
+    $table,
+    array(
+        'title' => 'Hello SQLite',
+        'views' => 12,
+    )
+);
+$wpdb->insert(
+    $table,
+    array(
+        'title' => 'No database server required',
+        'views' => 7,
+    )
+);
+
+$rows = $wpdb->get_results( "SELECT title, views FROM `$table` ORDER BY id" );
+foreach ( $rows as $row ) {
+    printf( "%s has %d views\n", $row->title, $row->views );
+}
+        </script>
+        <script type="text/expected-output">
+Hello SQLite has 12 views
+No database server required has 7 views
+        </script>
+      </php-snippet>
+    </div>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <h2>How it fits together</h2>
+  <div class="flow">
+    <div class="step"><span class="step-number">1</span><h3>WordPress calls <code>$wpdb</code></h3><p>Core, plugins, and themes issue familiar WordPress database calls.</p></div>
+    <div class="step"><span class="step-number">2</span><h3>The drop-in intercepts queries</h3><p>The plugin replaces the database drop-in so requests flow through the SQLite driver.</p></div>
+    <div class="step"><span class="step-number">3</span><h3>MySQL SQL is translated</h3><p>The lexer, parser, and emulation layer adapt MySQL syntax and behavior to SQLite.</p></div>
+    <div class="step"><span class="step-number">4</span><h3>SQLite stores the data</h3><p>The site runs against an embedded database file instead of an external MySQL server.</p></div>
+  </div>
 </section>
 
 <section>
-<h2>Quick start</h2>
-<div class="quick-start">
-<section class="quick-card">
-<h3>Try in Playground web</h3>
-<p>Run the latest version of <code>wp_mysql_parser</code> in WordPress Playground.</p>
-<a class="playground-button" href="https://playground.wordpress.net/?php=8.5&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json"><img src="assets/playground-preview-button.svg" alt="Try in WordPress Playground"></a>
-</section>
-<section class="quick-card">
-<h3>Try in Playground CLI</h3>
-<p>Use the same manifest URL locally. <code>--php-extension</code> must be passed before PHP starts.</p>
-<pre><code>npx @wp-playground/cli@latest server \
-  --php=8.5 \
-  --php-extension=https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json \
-  --blueprint=https://wordpress.github.io/sqlite-database-integration/blueprint.json</code></pre>
-</section>
-</div>
-</section>
-
-<section>
-<h2>Published WASM extension releases</h2>
-<p>Pick a release, inspect its manifest, or launch WordPress Playground with that exact <code>wp_mysql_parser</code> WASM extension.</p>
-<table>
-<thead><tr><th>Release</th><th>PHP builds</th><th>Manifest</th><th>Try it</th></tr></thead>
-<tbody>
-<tr>
-<td><strong>latest</strong><br><span class="muted">Current pointer to 255109019180</span></td>
-<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
-<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json">manifest.json</a></td>
-<td><a href="https://playground.wordpress.net/?php=8.5&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
-</tr>
-<tr>
-<td><strong>e5513936c800</strong><br><span class="muted">Pinned build e5513936c800</span></td>
-<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
-<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/e5513936c800f14b6795e7fce71505afad331b11/manifest.json">manifest.json</a></td>
-<td><a href="https://playground.wordpress.net/?php=8.5&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fe5513936c800f14b6795e7fce71505afad331b11%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
-</tr>
-<tr>
-<td><strong>b31fc53ea599</strong><br><span class="muted">Pinned build b31fc53ea599</span></td>
-<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
-<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/b31fc53ea599d1a2211b75f4a3486b39e63ce01f/manifest.json">manifest.json</a></td>
-<td><a href="https://playground.wordpress.net/?php=8.5&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Fb31fc53ea599d1a2211b75f4a3486b39e63ce01f%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
-</tr>
-<tr>
-<td><strong>4f3aab1a5b03</strong><br><span class="muted">Pinned build 4f3aab1a5b03</span></td>
-<td><code>8.5, 8.4, 8.3, 8.2, 8.1, 8.0</code></td>
-<td><a href="https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/4f3aab1a5b03b00f42d7b5141ac6a11f9c752256/manifest.json">manifest.json</a></td>
-<td><a href="https://playground.wordpress.net/?php=8.5&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2F4f3aab1a5b03b00f42d7b5141ac6a11f9c752256%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json">Run in Playground</a></td>
-</tr>
-</tbody>
-</table>
+  <h2>Go deeper</h2>
+  <div class="grid">
+    <article class="card">
+      <h3>Install and test</h3>
+      <p>Download a release, test your plugin or theme, and report compatibility issues.</p>
+      <ul class="link-list">
+        <li><a href="https://github.com/WordPress/sqlite-database-integration/releases">Releases →</a></li>
+        <li><a href="https://github.com/WordPress/sqlite-database-integration/issues/new">Report an issue →</a></li>
+      </ul>
+    </article>
+    <article class="card">
+      <h3>Native PHP extension</h3>
+      <p>For hosts that can load extensions, <code>wp_mysql_parser</code> accelerates the parser hot path. It is optional.</p>
+      <ul class="link-list">
+        <li><a href="native-extension/">Native extension page →</a></li>
+      </ul>
+    </article>
+    <article class="card">
+      <h3>Contribute</h3>
+      <p>The project is part of the WordPress performance work. Code, tests, docs, and real-world feedback are all useful.</p>
+      <ul class="link-list">
+        <li><a href="https://github.com/WordPress/sqlite-database-integration">Repository →</a></li>
+        <li><a href="https://make.wordpress.org/performance/handbook/get-involved/">Get involved →</a></li>
+      </ul>
+    </article>
+  </div>
 </section>
 
-<section>
-<h2>Benchmarks</h2>
-<p>Latest published native-vs-PHP measurements for the checked-in MySQL query corpus.</p>
-<div id="benchmark">Loading benchmark.json…</div>
-<p class="muted">Raw benchmark data: <a href="benchmark.json">benchmark.json</a>.</p>
-</section>
-
-<script>
-fetch('benchmark.json').then(r => r.json()).then(data => {
-  const rows = data.results.map(row => `<tr><td>${row.name}</td><td>${row.implementation}</td><td>${row.queries}</td><td>${row.qps ? Math.round(row.qps).toLocaleString() : 'n/a'}</td><td>${row.speedup ? row.speedup.toFixed(2) + 'x' : '—'}</td></tr>`).join('');
-  document.getElementById('benchmark').innerHTML = `<table><thead><tr><th>Benchmark</th><th>Implementation</th><th>Queries</th><th>QPS</th><th>Speedup</th></tr></thead><tbody>${rows}</tbody></table><p class="muted">Environment: ${data.environment}. Updated: ${data.updated}.</p>`;
-}).catch(() => {
-  document.getElementById('benchmark').textContent = 'Benchmark data is not available yet.';
-});
-</script>
+<p class="footer-note">SQLite Database Integration is a WordPress feature plugin. The native parser extension is available from the top navigation for readers who specifically want performance and WASM artifact details.</p>
 </main>
 </body>
 </html>
