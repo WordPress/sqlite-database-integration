@@ -106,6 +106,12 @@ jobs:
             /packages/php-wasm/node-builds/8-3/
             /packages/php-wasm/node-builds/8-4/
             /packages/php-wasm/node-builds/8-5/
+            /packages/php-wasm/web-builds/8-0/
+            /packages/php-wasm/web-builds/8-1/
+            /packages/php-wasm/web-builds/8-2/
+            /packages/php-wasm/web-builds/8-3/
+            /packages/php-wasm/web-builds/8-4/
+            /packages/php-wasm/web-builds/8-5/
             /packages/php-wasm/progress/
             /packages/php-wasm/scopes/
             /packages/php-wasm/stream-compression/
@@ -160,6 +166,14 @@ jobs:
           test "$SOURCE_PATH" = "$EXPECTED"
           test -f "dist/$SOURCE_PATH"
           node -e "const artifact = require('./dist/manifest.json').artifacts[0]; if ('file' in artifact || 'sha256' in artifact) { throw new Error('manifest uses retired artifact fields'); }"
+
+      - name: Check Playground browser runtime compatibility
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: ${{ matrix.async-mode }}
+        run: node check-playground-web-compat.mjs
 
       - name: Load the extension in Playground and parse a query
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike

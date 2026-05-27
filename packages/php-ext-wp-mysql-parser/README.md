@@ -15,9 +15,12 @@ The current build is also available directly:
 - Manifest: <https://wordpress.github.io/sqlite-database-integration/wp_mysql_parser-wasm-extension/latest/manifest.json>
 - Supported PHP versions: 8.0, 8.1, 8.2, 8.3, 8.4, and 8.5.
 
-Use this Playground URL to load the extension and open the demo/benchmark page. The browser demo is pinned to PHP 8.3 because the current Playground browser runtime crashes while loading this extension on PHP 8.4.
+Use this Playground URL to load the extension and open the demo/benchmark page.
+The published manifest contains PHP 8.0 through 8.5 side modules, and CI checks
+that every side module imports only symbols exported by the matching Playground
+browser runtime.
 
-<https://playground.wordpress.net/?php=8.3&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fnative-extension%2Fblueprint.json>
+<https://playground.wordpress.net/?php=8.5&php-extension=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fwp_mysql_parser-wasm-extension%2Flatest%2Fmanifest.json&blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fblueprint.json>
 
 ## Build the native extension locally
 
