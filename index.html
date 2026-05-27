@@ -143,6 +143,12 @@ p { color: var(--muted); margin: 0 0 16px; }
   gap: 12px;
   margin-top: 28px;
 }
+.native-note {
+  max-width: 720px;
+  margin-top: 16px;
+  font-size: .98rem;
+}
+.native-note a { font-weight: 750; }
 .button {
   display: inline-flex;
   align-items: center;
@@ -274,9 +280,6 @@ p { color: var(--muted); margin: 0 0 16px; }
   <nav class="nav" aria-label="Main navigation">
     <a class="logo" href="./"><span class="logo-mark">◌</span><span>SQLite Database Integration</span></a>
     <div class="nav-links">
-      <a href="#why-sqlite">Why SQLite</a>
-      <a href="#try-it">Try it</a>
-      <a href="#how-it-works">How it works</a>
       <a href="native-extension/">Native PHP extension</a>
       <a href="https://github.com/WordPress/sqlite-database-integration">GitHub</a>
     </div>
@@ -287,11 +290,12 @@ p { color: var(--muted); margin: 0 0 16px; }
   <div>
     <p class="eyebrow">WordPress feature plugin · SQLite-backed database layer</p>
     <h1 id="hero-title">WordPress without a database server.</h1>
-    <p class="lead">SQLite Database Integration lets WordPress run on a local SQLite database while core, plugins, and themes keep using the familiar <code>$wpdb</code> APIs. It is the easiest way to test SQLite support for WordPress and help shape the path toward core.</p>
+    <p class="lead">SQLite Database Integration lets WordPress run on a local SQLite database while core, plugins, and themes keep using the familiar <code>$wpdb</code> APIs. It powers WordPress Playground's in-browser WordPress runtime and gives the broader ecosystem a feature plugin for testing SQLite support.</p>
     <div class="cta-row">
-      <a class="button" href="https://playground.wordpress.net/?blueprint-url=https%3A%2F%2Fwordpress.github.io%2Fsqlite-database-integration%2Fsqlite-demo-blueprint.json">Try the plugin in Playground</a>
-      <a class="button secondary" href="https://github.com/WordPress/sqlite-database-integration/releases">Download release</a>
+      <a class="button" href="https://playground.wordpress.net/">Open WordPress Playground</a>
+      <a class="button secondary" href="https://github.com/WordPress/sqlite-database-integration/releases">Download the plugin</a>
     </div>
+    <p class="native-note">Need more parser throughput? The optional <a href="native-extension/">Native PHP extension</a> accelerates the MySQL parser hot path while keeping the plugin pure PHP by default.</p>
   </div>
   <aside class="hero-card" aria-label="What you get">
     <h2 style="font-size:clamp(1.5rem,2.6vw,2.25rem);margin:0 0 10px;">A WordPress database in one file</h2>
@@ -327,8 +331,8 @@ p { color: var(--muted); margin: 0 0 16px; }
   <div class="snippet-section">
     <div>
       <p class="lead" style="font-size:1.12rem;">The important promise is boring in the best way: use WordPress the way you already do. This runnable example creates a custom table, writes rows with <code>$wpdb->insert()</code>, and reads them back.</p>
-      <p>Click <strong>Run</strong> to execute it in WordPress Playground. The first run downloads the runtime; later snippets on the page reuse it.</p>
-      <div class="callout"><strong>Dev note:</strong> the snippet intentionally uses MySQL-style DDL. The SQLite database layer handles translation so plugin code can stay close to normal WordPress conventions.</div>
+      <p>Click <strong>Run</strong> to execute it in WordPress Playground. Playground already runs WordPress on this SQLite database layer; the first run downloads the runtime, and later snippets on the page reuse it.</p>
+      <div class="callout"><strong>Dev note:</strong> the snippet intentionally uses MySQL-style DDL. The SQLite database layer handles translation so plugin code can stay close to normal WordPress conventions. For higher-throughput parsing, see the optional <a href="native-extension/">Native PHP extension</a>.</div>
     </div>
     <div class="snippet-wrap">
       <php-snippet name="sqlite-wpdb-demo.php" php="8.4">
@@ -417,7 +421,7 @@ No database server required has 7 views
   </div>
 </section>
 
-<p class="footer-note">SQLite Database Integration is a WordPress feature plugin. The native parser extension is available from the top navigation for readers who specifically want performance and WASM artifact details.</p>
+<p class="footer-note">SQLite Database Integration is a WordPress feature plugin. WordPress Playground uses this database layer for in-browser WordPress, and the optional native parser extension is available for readers who specifically want performance and WASM artifact details.</p>
 </main>
 </body>
 </html>
