@@ -109,6 +109,12 @@ jobs:
             /packages/php-wasm/node-builds/8-3/
             /packages/php-wasm/node-builds/8-4/
             /packages/php-wasm/node-builds/8-5/
+            /packages/php-wasm/web-builds/8-0/
+            /packages/php-wasm/web-builds/8-1/
+            /packages/php-wasm/web-builds/8-2/
+            /packages/php-wasm/web-builds/8-3/
+            /packages/php-wasm/web-builds/8-4/
+            /packages/php-wasm/web-builds/8-5/
             /packages/php-wasm/progress/
             /packages/php-wasm/scopes/
             /packages/php-wasm/stream-compression/
@@ -150,6 +156,14 @@ jobs:
         run: |
           test -f dist/wp_mysql_parser-php${{ matrix.php }}-jspi.so
           ls -lh dist/wp_mysql_parser-php${{ matrix.php }}-jspi.so
+
+      - name: Check Playground browser runtime compatibility
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: jspi
+        run: node check-playground-web-compat.mjs
 
       - name: Upload side module
         uses: actions/upload-artifact@v4
