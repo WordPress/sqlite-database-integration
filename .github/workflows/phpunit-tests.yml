@@ -128,6 +128,16 @@ jobs:
         if: matrix.extension
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust build
+        if: matrix.extension
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/php-ext-wp-mysql-parser
+          # Segregate by PHP version: the extension links against the PHP headers
+          # of the matrix's php-config, so a build cached for one PHP version is
+          # ABI-incompatible with another (Zend module API mismatch on load).
+          key: php-${{ matrix.php }}
+
       - name: Install native build dependencies
         if: matrix.extension
         run: |
