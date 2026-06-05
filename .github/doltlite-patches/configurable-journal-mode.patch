@@ -1,0 +1,70 @@
+Emulate configurable journal modes for the compatibility suite
+
+Doltlite's chunk store has no rollback-journal or WAL sidecars, so upstream
+reports a fixed WAL mode and ignores PRAGMA journal_mode changes. The
+PDO-compatible mysql-on-sqlite API exposes journal mode configuration and
+follows stock SQLite behavior when WAL cannot be opened.
+
+Use the existing pager-shim journalMode field as logical compatibility state.
+Start file databases in SQLite's default DELETE mode, allow the normal VDBE
+journal-mode transitions, and reject a WAL transition when the database
+directory is not writable. The storage engine remains unchanged.
+
+diff --git a/src/pager_shim.c b/src/pager_shim.c
+index d41e656..c362474 100644
+--- a/src/pager_shim.c
++++ b/src/pager_shim.c
+@@ -554,7 +554,7 @@ PagerShim *pagerShimCreate(
+    || strcmp(pShim->zFilename, ":memory:")==0 ){
+     pShim->journalMode = PAGER_JOURNALMODE_MEMORY;
+   }else{
+-    pShim->journalMode = PAGER_JOURNALMODE_WAL;
++    pShim->journalMode = PAGER_JOURNALMODE_DELETE;
+   }
+   pShim->eLock        = 0;
+   pShim->iDataVersion = 1;
+diff --git a/src/prolly_btree.c b/src/prolly_btree.c
+index 9cd8b18..8b1130b 100644
+--- a/src/prolly_btree.c
++++ b/src/prolly_btree.c
+@@ -9959,4 +9959,24 @@ int doltliteCheckRepoGraphIntegrity(Btree *p, int mxErr, int *pnErr){
+ int sqlite3BtreeSetVersion(Btree *p, int iVersion){
++  if( iVersion==2 && p->pBt->pPagerShim ){
++    PagerShim *pShim = p->pBt->pPagerShim;
++    const char *zSlash = strrchr(pShim->zFilename, '/');
++    char *zDir;
++    int isWritable = 0;
++    int rc;
++    if( zSlash ){
++      int nDir = (int)(zSlash - pShim->zFilename);
++      if( nDir==0 ) nDir = 1;
++      zDir = sqlite3_mprintf("%.*s", nDir, pShim->zFilename);
++    }else{
++      zDir = sqlite3_mprintf(".");
++    }
++    if( !zDir ) return SQLITE_NOMEM;
++    rc = sqlite3OsAccess(pShim->pVfs, zDir,
++                         SQLITE_ACCESS_READWRITE, &isWritable);
++    sqlite3_free(zDir);
++    if( rc!=SQLITE_OK ) return rc;
++    if( !isWritable ) return SQLITE_CANTOPEN;
++  }
+   if( p->inTrans!=TRANS_WRITE ){
+     int rc = sqlite3BtreeBeginTrans(p, 2, 0);
+     if( rc!=SQLITE_OK ) return rc;
+diff --git a/src/vdbe.c b/src/vdbe.c
+index fae65b0..2ec8d06 100644
+--- a/src/vdbe.c
++++ b/src/vdbe.c
+@@ -8514,11 +8514,0 @@ case OP_JournalMode: {    /* out2 */
+-#ifdef DOLTLITE_PROLLY
+-  if( eNew!=eOld && sqlite3BtreeIsDoltliteFormat(pBt) ){
+-    /* doltlite keeps data in a content-addressed chunk store with no
+-    ** rollback-journal or WAL sidecar, so journal_mode is inapplicable.
+-    ** Follow SQLite's convention of silently ignoring an inapplicable
+-    ** journal_mode request (as auto_vacuum already is) rather than erroring:
+-    ** keep the fixed mode and report it back. */
+-    eNew = eOld;
+-  }
+-#endif
+-

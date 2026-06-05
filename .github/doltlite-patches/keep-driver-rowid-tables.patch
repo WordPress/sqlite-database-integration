@@ -1,0 +1,17 @@
+Keep mysql-on-sqlite tables as rowid tables
+
+Doltlite auto-converts ordinary primary-key tables without an integer rowid
+to WITHOUT ROWID. mysql-on-sqlite currently relies on rowid access for
+table recreation, limited UPDATE/DELETE rewrites, on-update triggers,
+zero-column result statements, and information-schema ordering. Keep the
+tables in rowid mode for the Doltlite compatibility test run.
+
+--- a/src/build.c
++++ b/src/build.c
+@@ -2794,5 +2794,5 @@ void sqlite3EndTable(
+    && (p->tabFlags & TF_HasPrimaryKey)!=0
+    && p->iPKey<0
+    && (tabOpts & TF_WithoutRowid)==0 ){
+-    tabOpts |= TF_WithoutRowid;
++    /* patched off in CI: keep mysql-on-sqlite tables as rowid tables */ (void)0;
+   }

@@ -1,0 +1,47 @@
+Strip SQL comments while canonicalizing sqlite_schema SQL
+
+Doltlite canonicalizes schema SQL by collapsing whitespace before storing
+sqlite_schema rows after rollback and restore paths. When the SQL contains
+line comments, collapsing newlines while preserving `--` makes the comment
+consume the rest of the CREATE statement. SQLite then reports a malformed
+schema with incomplete input.
+
+Skip line and block comments outside quoted strings during schema SQL
+canonicalization. This keeps canonicalized schema text parseable while
+preserving the existing whitespace normalization behavior.
+
+diff --git a/src/doltlite_hashof.c b/src/doltlite_hashof.c
+index 1563b18..7f8e073 100644
+--- a/src/doltlite_hashof.c
++++ b/src/doltlite_hashof.c
+@@ -223,6 +223,30 @@ char *doltliteCanonicalizeSchemaSql(const char *zSql, const char *zName){
+       if( c=='"' ) inDouble = 0;
+       continue;
+     }
++    if( c=='-' && z[1]=='-' ){
++      z += 2;
++      while( *z && *z!='\n' && *z!='\r' ) z++;
++      pendingSpace = 1;
++      if( *z==0 ){
++        z--;
++      }else if( z[0]=='\r' && z[1]=='\n' ){
++        z++;
++      }
++      continue;
++    }
++    if( c=='/' && z[1]=='*' ){
++      const char *zEnd = z + 2;
++      while( zEnd[0] && !(zEnd[0]=='*' && zEnd[1]=='/') ){
++        zEnd++;
++      }
++      pendingSpace = 1;
++      if( zEnd[0]=='*' ){
++        z = zEnd + 1;
++      }else{
++        z = zEnd - 1;
++      }
++      continue;
++    }
+     if( c=='\'' ){
+       if( pendingSpace && sqlite3_str_length(pStr)>0 ){
+         sqlite3_str_appendchar(pStr, 1, ' ');

@@ -1,0 +1,131 @@
+name: PHPUnit Tests (Doltlite)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} / Doltlite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '8.3' ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Doltlite build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential zlib1g-dev tcl-dev
+
+      - name: Check out Doltlite
+        uses: actions/checkout@v4
+        with:
+          repository: dolthub/doltlite
+          ref: 0745bbab29778393780b220d2a91fc5fa753853f
+          path: doltlite-src
+
+      - name: Patch Doltlite for mysql-on-sqlite compatibility
+        # Keep driver tables as rowid tables, preserve schema SQL comments
+        # safely across rollback, and expose SQLite-compatible logical journal
+        # modes through Doltlite's pager shim.
+        run: |
+          patch -d doltlite-src -p1 --no-backup-if-mismatch \
+            < .github/doltlite-patches/keep-driver-rowid-tables.patch
+          patch -d doltlite-src -p1 --no-backup-if-mismatch \
+            < .github/doltlite-patches/canonicalize-schema-sql-comments.patch
+          patch -d doltlite-src -p1 --no-backup-if-mismatch \
+            < .github/doltlite-patches/configurable-journal-mode.patch
+
+      - name: Build Doltlite shared library
+        run: |
+          mkdir -p build
+          cd build
+          # Same feature set we enable for stock-SQLite runs. PHP's pdo_sqlite
+          # pulls in sqlite3_column_table_name, which needs COLUMN_METADATA.
+          CFLAGS="-DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_FTS5 -DSQLITE_USE_URI -DSQLITE_ENABLE_JSON1" \
+            ../configure
+          make -j"$(nproc)" doltlite-lib
+          ls -la libdoltlite* sqlite3.h
+        working-directory: doltlite-src
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '${{ matrix.php }}'
+          tools: phpunit-polyfills
+
+      - name: Install Doltlite as the system libsqlite3
+        # Replace the system libsqlite3 the dynamic linker resolves for
+        # pdo_sqlite with the Doltlite build. This is more reliable than
+        # LD_PRELOAD, which loses to pdo_sqlite's DT_NEEDED on libsqlite3.so.0.
+        run: |
+          SRC="${GITHUB_WORKSPACE}/doltlite-src/build/libdoltlite.so"
+          test -f "$SRC"
+
+          # Drop the build into /usr/local/lib and update the linker cache before
+          # replacing the system libsqlite3 soname. Running ldconfig after the
+          # replacement can restore Ubuntu's stock libsqlite3.so.0 symlink.
+          sudo install -m 0755 "$SRC" /usr/local/lib/libdoltlite.so
+          sudo ln -sf /usr/local/lib/libdoltlite.so /usr/local/lib/libdoltlite.so.0
+
+          sudo ldconfig
+
+          sudo ln -sf /usr/local/lib/libdoltlite.so /usr/local/lib/libsqlite3.so
+          sudo ln -sf /usr/local/lib/libdoltlite.so /usr/local/lib/libsqlite3.so.0
+
+          MULTIARCH_DIR="$(dirname "$(readlink -f /lib/x86_64-linux-gnu/libsqlite3.so.0)")"
+          sudo rm -f "${MULTIARCH_DIR}/libsqlite3.so.0"
+          sudo ln -s /usr/local/lib/libdoltlite.so "${MULTIARCH_DIR}/libsqlite3.so.0"
+
+          echo "libsqlite3.so.0 target:"
+          readlink -f /lib/x86_64-linux-gnu/libsqlite3.so.0
+
+          echo "ldd pdo_sqlite:"
+          ldd "$(php -r 'echo ini_get("extension_dir");')/pdo_sqlite.so"
+
+      - name: Verify Doltlite is active and the rowid patch is applied
+        run: |
+          VERSION=$(php -r 'echo (new PDO("sqlite::memory:"))->query("SELECT SQLITE_VERSION()")->fetch()[0];')
+          ENGINE=$(php -r 'echo (new PDO("sqlite::memory:"))->query("SELECT doltlite_engine()")->fetch()[0];')
+          echo "SQLITE_VERSION()  = ${VERSION}"
+          echo "doltlite_engine() = ${ENGINE}"
+          if [ "${ENGINE}" != "prolly" ]; then
+            echo "::error::Doltlite is not active (expected doltlite_engine() = 'prolly', got '${ENGINE}')"
+            exit 1
+          fi
+          STATS_ROWID=$(php -r '
+            $db = new PDO("sqlite::memory:");
+            $db->exec("CREATE TABLE _wp_sqlite_mysql_information_schema_statistics (table_schema TEXT, table_name TEXT, index_name TEXT, seq_in_index INT, PRIMARY KEY (table_schema, table_name, index_name, seq_in_index)) STRICT");
+            $db->exec("INSERT INTO _wp_sqlite_mysql_information_schema_statistics VALUES (\"s\", \"t\", \"i\", 1)");
+            echo $db->query("SELECT rowid FROM _wp_sqlite_mysql_information_schema_statistics")->fetch()[0];
+          ' 2>&1)
+          echo "statistics metadata rowid = ${STATS_ROWID}"
+          if ! [[ "${STATS_ROWID}" =~ ^[0-9]+$ ]]; then
+            echo "::error::rowid-preservation patch did not take effect: ${STATS_ROWID}"
+            exit 1
+          fi
+
+      - name: Install Composer dependencies (root)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Run PHPUnit tests against Doltlite
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        working-directory: packages/mysql-on-sqlite
