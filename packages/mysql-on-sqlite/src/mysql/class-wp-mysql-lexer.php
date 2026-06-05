@@ -2438,12 +2438,19 @@ class WP_MySQL_Lexer {
 		) {
 			$started_at = $this->bytes_already_read;
 			$type       = $this->read_identifier();
-			if ( self::IDENTIFIER === $type ) {
+			if (
+				self::IDENTIFIER === $type
 				// When preceded by a dot, it is always an identifier.
-				if ( $started_at > 0 && '.' === $this->sql[ $started_at - 1 ] ) {
-					$type = self::IDENTIFIER;
-				} else {
-					$type = $this->determine_identifier_or_keyword_type( $this->get_current_token_bytes() );
+				&& ! ( $started_at > 0 && '.' === $this->sql[ $started_at - 1 ] )
+			) {
+				// Inline the keyword lookup on the hot identifier path: most
+				// identifiers are not keywords, so this avoids two method calls
+				// (token-bytes extraction + keyword determination) per token.
+				$keyword = self::TOKENS[ strtoupper(
+					substr( $this->sql, $started_at, $this->bytes_already_read - $started_at )
+				) ] ?? self::IDENTIFIER;
+				if ( self::IDENTIFIER !== $keyword ) {
+					$type = $this->resolve_keyword_type( $keyword );
 				}
 			}
 		} elseif ( null !== $byte && isset( $single_byte_ops[ $byte ] ) ) {
@@ -2996,13 +3003,20 @@ class WP_MySQL_Lexer {
 	}
 
 	private function determine_identifier_or_keyword_type( string $value ): int {
-		$value = strtoupper( $value );
-
-		// Lookup the string in the token table.
-		$type = self::TOKENS[ $value ] ?? self::IDENTIFIER;
+		$type = self::TOKENS[ strtoupper( $value ) ] ?? self::IDENTIFIER;
 		if ( self::IDENTIFIER === $type ) {
 			return self::IDENTIFIER;
 		}
+		return $this->resolve_keyword_type( $type );
+	}
+
+	/**
+	 * Resolve a keyword token id matched in self::TOKENS, applying version gating,
+	 * function-call lookahead, the SQL_MODE_HIGH_NOT_PRECEDENCE rule, and synonyms.
+	 *
+	 * @param int $type A token id already matched in self::TOKENS (never IDENTIFIER).
+	 */
+	private function resolve_keyword_type( int $type ): int {
 
 		// Apply MySQL version specifics (positive number: >= <version>, negative number: < <version>).
 		if ( isset( self::VERSIONS[ $type ] ) ) {
