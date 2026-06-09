@@ -9,14 +9,16 @@ const { execSync } = require( 'child_process' );
 const fs = require( 'fs' );
 const path = require( 'path' );
 
+const repositoryRoot = path.join( __dirname, '..', '..' );
+const backend = normalizeBackend( process.env.WP_TEST_DB_BACKEND || 'sqlite' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 
-const expectedErrors = [
+const sqliteExpectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
 	'Tests_DB_Charset::test_set_charset_changes_the_connection_collation',
 ];
 
-const expectedFailures = [
+const sqliteExpectedFailures = [
 	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
 	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
 	'Tests_Comment::test_wp_new_comment_respects_comment_field_lengths',
@@ -66,19 +68,19 @@ const expectedFailures = [
 	'Tests_DB_dbDelta::test_spatial_indices',
 	'Tests_DB::test_charset_switched_to_utf8mb4',
 	'Tests_DB::test_close',
-	'Tests_DB::test_delete_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_delete_value_too_long_for_field with data set "too long"',
 	'Tests_DB::test_has_cap',
-	'Tests_DB::test_insert_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_insert_value_too_long_for_field with data set "too long"',
 	'Tests_DB::test_mysqli_flush_sync',
 	'Tests_DB::test_non_unicode_collations',
 	'Tests_DB::test_pre_get_col_charset_filter',
 	'Tests_DB::test_process_fields_on_nonexistent_table',
-	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_process_fields_value_too_long_for_field with data set "too long"',
 	'Tests_DB::test_query_value_contains_invalid_chars',
-	'Tests_DB::test_replace_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_replace_value_too_long_for_field with data set "too long"',
 	'Tests_DB::test_replace',
 	'Tests_DB::test_supports_collation',
-	'Tests_DB::test_update_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_update_value_too_long_for_field with data set "too long"',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #1',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #2',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #3',
@@ -90,15 +92,118 @@ const expectedFailures = [
 	'WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query',
 ];
 
-console.log( 'Running WordPress PHPUnit tests with expected failures tracking...' );
+const expectedByBackend = {
+	mysql: {
+		errors: [],
+		failures: [],
+	},
+	sqlite: {
+		errors: sqliteExpectedErrors,
+		failures: sqliteExpectedFailures,
+	},
+	postgresql: {
+		errors: [],
+		failures: [],
+	},
+};
+
+console.log( `Running WordPress PHPUnit tests with ${ backend } expected-result tracking...` );
 if ( requiresNativeParserExtension ) {
 	console.log( 'Native parser extension is required for this PHPUnit run.' );
 }
-console.log( 'Expected errors:', expectedErrors );
-console.log( 'Expected failures:', expectedFailures );
+console.log( 'Expected errors:', expectedByBackend[ backend ].errors );
+console.log( 'Expected failures:', expectedByBackend[ backend ].failures );
+
+try {
+	if ( requiresNativeParserExtension ) {
+		verifyNativeParserExtension();
+	}
+
+	try {
+		execSync(
+			'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose',
+			{ stdio: 'inherit' }
+		);
+		console.log( '\nAll tests passed, checking if expected errors/failures occurred...' );
+	} catch ( error ) {
+		console.log( '\nSome tests errored/failed. Analyzing results...' );
+	}
+
+	const junitOutputFile = path.join( repositoryRoot, 'wordpress', 'phpunit-results.xml' );
+	if ( ! fs.existsSync( junitOutputFile ) ) {
+		console.error( 'Error: JUnit output file not found.' );
+		writeResultSummary( emptySummary() );
+		process.exit( 1 );
+	}
+
+	const testcases = readJunitTestcases( junitOutputFile );
+	const summary = summarizeTestcases( testcases );
+	writeResultSummary( summary );
+
+	const actualErrors = testcases.filter( testcase => testcase.hasError ).map( testcase => testcase.name );
+	const actualFailures = testcases.filter( testcase => testcase.hasFailure ).map( testcase => testcase.name );
+
+	let isSuccess = true;
+	const expectedErrors = expectedByBackend[ backend ].errors;
+	const expectedFailures = expectedByBackend[ backend ].failures;
+
+	const unexpectedNonErrors = expectedErrors.filter( test => ! actualErrors.includes( test ) );
+	if ( unexpectedNonErrors.length > 0 ) {
+		console.error( '\nThe following tests were expected to error but did not:' );
+		unexpectedNonErrors.forEach( test => console.error( `  - ${ test }` ) );
+		isSuccess = false;
+	}
+
+	const unexpectedPasses = expectedFailures.filter( test => ! actualFailures.includes( test ) );
+	if ( unexpectedPasses.length > 0 ) {
+		console.error( '\nThe following tests were expected to fail but passed:' );
+		unexpectedPasses.forEach( test => console.error( `  - ${ test }` ) );
+		isSuccess = false;
+	}
+
+	const unexpectedErrors = actualErrors.filter( test => ! expectedErrors.includes( test ) );
+	if ( unexpectedErrors.length > 0 ) {
+		console.error( '\nThe following tests errored unexpectedly:' );
+		unexpectedErrors.forEach( test => console.error( `  - ${ test }` ) );
+		isSuccess = false;
+	}
+
+	const unexpectedFailures = actualFailures.filter( test => ! expectedFailures.includes( test ) );
+	if ( unexpectedFailures.length > 0 ) {
+		console.error( '\nThe following tests failed unexpectedly:' );
+		unexpectedFailures.forEach( test => console.error( `  - ${ test }` ) );
+		isSuccess = false;
+	}
+
+	if ( isSuccess ) {
+		console.log( '\nAll tests behaved as expected.' );
+		process.exit( 0 );
+	}
+
+	console.log( '\nSome tests did not behave as expected.' );
+	process.exit( 1 );
+} catch ( error ) {
+	console.error( '\nScript execution error:', error.message );
+	writeResultSummary( emptySummary() );
+	process.exit( 1 );
+}
+
+function normalizeBackend( value ) {
+	const normalized = String( value ).toLowerCase();
+
+	if ( [ 'postgres', 'pgsql', 'postgresql' ].includes( normalized ) ) {
+		return 'postgresql';
+	}
+
+	if ( [ 'mysql', 'sqlite' ].includes( normalized ) ) {
+		return normalized;
+	}
+
+	throw new Error( `Unsupported WP_TEST_DB_BACKEND: ${ value }` );
+}
 
 function verifyNativeParserExtension() {
-	const verifier = path.join( __dirname, '..', '..', 'wordpress', 'native-verify-extension.php' );
+	const verifier = path.join( repositoryRoot, 'wordpress', 'native-verify-extension.php' );
 	if ( ! fs.existsSync( verifier ) ) {
 		console.error( `Error: Native parser verifier not found at ${ verifier }.` );
 		process.exit( 1 );
@@ -111,95 +216,148 @@ function verifyNativeParserExtension() {
 	);
 }
 
-try {
-	if ( requiresNativeParserExtension ) {
-		verifyNativeParserExtension();
-	}
-
-	try {
-		execSync(
-			`composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose`,
-			{ stdio: 'inherit' }
-		);
-		console.log( '\n⚠️ All tests passed, checking if expected errors/failures occurred...' );
-	} catch ( error ) {
-		console.log( '\n⚠️ Some tests errored/failed (expected). Analyzing results...' );
-	}
-
-	// Read the JUnit XML test output:
-	const junitOutputFile = path.join( __dirname, '..', '..', 'wordpress', 'phpunit-results.xml' );
-	if ( ! fs.existsSync( junitOutputFile ) ) {
-		console.error( 'Error: JUnit output file not found!' );
-		process.exit( 1 );
-	}
+function readJunitTestcases( junitOutputFile ) {
+	const parserPath = require.resolve( 'fast-xml-parser', {
+		paths: [
+			path.join( repositoryRoot, 'wordpress', 'node_modules' ),
+			repositoryRoot,
+		],
+	} );
+	const { XMLParser } = require( parserPath );
+	const parser = new XMLParser( {
+		attributeNamePrefix: '',
+		ignoreAttributes: false,
+		isArray: name => [
+			'testsuite',
+			'testcase',
+			'error',
+			'failure',
+			'skipped',
+			'incomplete',
+			'risky',
+			'warning',
+		].includes( name ),
+	} );
 	const junitXml = fs.readFileSync( junitOutputFile, 'utf8' );
+	const parsed = parser.parse( junitXml );
+	const testcases = [];
+	collectTestcases( parsed, testcases, false );
+	return testcases.map( normalizeTestcase );
+}
 
-	// Extract test info from the XML:
-	const actualErrors = [];
-	const actualFailures = [];
-	for ( const testcase of junitXml.matchAll( /<testcase([^>]*)\/>|<testcase([^>]*)>([\s\S]*?)<\/testcase>/g ) ) {
-		const attributes = {};
-		const attributesString = testcase[2] ?? testcase[1];
-		for ( const attribute of attributesString.matchAll( /(\w+)="([^"]*)"/g ) ) {
-			attributes[attribute[1]] = attribute[2];
+function collectTestcases( node, testcases, isTestcase ) {
+	if ( Array.isArray( node ) ) {
+		node.forEach( child => collectTestcases( child, testcases, isTestcase ) );
+		return;
+	}
+
+	if ( ! node || typeof node !== 'object' ) {
+		return;
+	}
+
+	if ( isTestcase ) {
+		testcases.push( node );
+		return;
+	}
+
+	if ( node.testcase ) {
+		collectTestcases( node.testcase, testcases, true );
+	}
+
+	if ( node.testsuite ) {
+		collectTestcases( node.testsuite, testcases, false );
+	}
+
+	if ( node.testsuites ) {
+		collectTestcases( node.testsuites, testcases, false );
+	}
+}
+
+function normalizeTestcase( testcase ) {
+	const className = testcase.class || '';
+	const testName = testcase.name || '';
+	const fullName = className ? `${ className }::${ testName }` : testName;
+
+	return {
+		name: fullName,
+		hasError: hasChild( testcase, 'error' ),
+		hasFailure: hasChild( testcase, 'failure' ),
+		hasSkipped: hasChild( testcase, 'skipped' ),
+		hasIncomplete: hasChild( testcase, 'incomplete' ),
+		hasRisky: hasChild( testcase, 'risky' ),
+		hasWarning: hasChild( testcase, 'warning' ),
+	};
+}
+
+function hasChild( testcase, childName ) {
+	return Array.isArray( testcase[ childName ] ) && testcase[ childName ].length > 0;
+}
+
+function summarizeTestcases( testcases ) {
+	const summary = emptySummary();
+
+	for ( const testcase of testcases ) {
+		summary.total += 1;
+
+		if ( testcase.hasError ) {
+			summary.errors += 1;
 		}
-
-		const content = testcase[3] ?? '';
-		const fqn = attributes.class ? `${attributes.class}::${attributes.name}` : attributes.name;
-		const hasError = content.includes( '<error' );
-		const hasFailure = content.includes( '<failure' );
-
-		if ( hasError ) {
-			actualErrors.push( fqn );
+		if ( testcase.hasFailure ) {
+			summary.failures += 1;
 		}
-
-		if ( hasFailure ) {
-			actualFailures.push( fqn );
+		if ( testcase.hasSkipped ) {
+			summary.skipped += 1;
+		}
+		if ( testcase.hasIncomplete ) {
+			summary.incomplete += 1;
+		}
+		if ( testcase.hasRisky ) {
+			summary.risky += 1;
+		}
+		if ( testcase.hasWarning ) {
+			summary.warnings += 1;
+		}
+		if (
+			! testcase.hasError
+			&& ! testcase.hasFailure
+			&& ! testcase.hasSkipped
+			&& ! testcase.hasIncomplete
+			&& ! testcase.hasRisky
+			&& ! testcase.hasWarning
+		) {
+			summary.passed += 1;
 		}
 	}
 
-	let isSuccess = true;
+	return summary;
+}
 
-	// Check if all expected errors actually errored
-	const unexpectedNonErrors = expectedErrors.filter( test => ! actualErrors.includes( test ) );
-	if ( unexpectedNonErrors.length > 0 ) {
-		console.error( '\n❌ The following tests were expected to error but did not:' );
-		unexpectedNonErrors.forEach( test => console.error( `  - ${test}` ) );
-		isSuccess = false;
-	}
+function emptySummary() {
+	return {
+		backend,
+		total: 0,
+		passed: 0,
+		errors: 0,
+		failures: 0,
+		skipped: 0,
+		incomplete: 0,
+		risky: 0,
+		warnings: 0,
+	};
+}
 
-	// Check if all expected failures actually failed
-	const unexpectedPasses = expectedFailures.filter( test => ! actualFailures.includes( test ) );
-	if ( unexpectedPasses.length > 0 ) {
-		console.error( '\n❌ The following tests were expected to fail but passed:' );
-		unexpectedPasses.forEach( test => console.error( `  - ${test}` ) );
-		isSuccess = false;
-	}
+function writeResultSummary( summary ) {
+	const outputPath = path.join( repositoryRoot, `wp-phpunit-results-${ backend }.json` );
+	fs.writeFileSync( outputPath, `${ JSON.stringify( summary, null, 2 ) }\n` );
 
-	// Check for unexpected errors
-	const unexpectedErrors = actualErrors.filter( test => ! expectedErrors.includes( test ) );
-	if ( unexpectedErrors.length > 0 ) {
-		console.error( '\n❌ The following tests errored unexpectedly:' );
-		unexpectedErrors.forEach( test => console.error( `  - ${test}` ) );
-		isSuccess = false;
+	if ( process.env.GITHUB_OUTPUT ) {
+		const output = [
+			`backend=${ summary.backend }`,
+			`total=${ summary.total }`,
+			`passed=${ summary.passed }`,
+			`errors=${ summary.errors }`,
+			`failures=${ summary.failures }`,
+		].join( '\n' );
+		fs.appendFileSync( process.env.GITHUB_OUTPUT, `${ output }\n` );
 	}
-
-	// Check for unexpected failures
-	const unexpectedFailures = actualFailures.filter( test => ! expectedFailures.includes( test ) );
-	if ( unexpectedFailures.length > 0 ) {
-		console.error( '\n❌ The following tests failed unexpectedly:' );
-		unexpectedFailures.forEach( test => console.error( `  - ${test}` ) );
-		isSuccess = false;
-	}
-
-	if ( isSuccess ) {
-		console.log( '\n✅ All tests behaved as expected!' );
-		process.exit( 0 );
-	} else {
-		console.log( '\n❌ Some tests did not behave as expected!' );
-		process.exit( 1 );
-	}
-} catch ( error ) {
-	console.error( '\n❌ Script execution error:', error.message );
-	process.exit( 1 );
 }

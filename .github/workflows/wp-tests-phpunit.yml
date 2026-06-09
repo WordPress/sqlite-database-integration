@@ -11,8 +11,8 @@ on:
 permissions: {}
 
 jobs:
-  test:
-    name: WordPress PHPUnit Tests
+  mysql-baseline:
+    name: WordPress PHPUnit Tests / MySQL baseline
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -31,11 +31,203 @@ jobs:
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
       - name: Run WordPress PHPUnit tests
+        env:
+          WP_TEST_DB_BACKEND: mysql
         run: node .github/workflows/wp-tests-phpunit-run.js
+
+      - name: Upload PHPUnit count
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp-phpunit-mysql
+          path: wp-phpunit-results-mysql.json
+          if-no-files-found: warn
 
       - name: Stop Docker containers
         if: always()
         run: composer run wp-test-clean
+
+  sqlite-test:
+    name: WordPress PHPUnit Tests / SQLite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set UID and GID for PHP in WordPress images
+        run: |
+          echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
+          echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Run WordPress PHPUnit tests
+        env:
+          WP_TEST_DB_BACKEND: sqlite
+        run: node .github/workflows/wp-tests-phpunit-run.js
+
+      - name: Upload PHPUnit count
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp-phpunit-sqlite
+          path: wp-phpunit-results-sqlite.json
+          if-no-files-found: warn
+
+      - name: Stop Docker containers
+        if: always()
+        run: composer run wp-test-clean
+
+  postgresql-test:
+    name: WordPress PHPUnit Tests / PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set UID and GID for PHP in WordPress images
+        run: |
+          echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
+          echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Run WordPress PHPUnit tests
+        env:
+          WP_TEST_DB_BACKEND: postgresql
+        run: node .github/workflows/wp-tests-phpunit-run.js
+
+      - name: Upload PHPUnit count
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp-phpunit-postgresql
+          path: wp-phpunit-results-postgresql.json
+          if-no-files-found: warn
+
+      - name: Stop Docker containers
+        if: always()
+        run: composer run wp-test-clean
+
+  update-pr-description:
+    name: Update PR PHPUnit Progress
+    needs:
+      - mysql-baseline
+      - sqlite-test
+      - postgresql-test
+    if: github.event_name == 'pull_request' && always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # Required to download artifacts.
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Download PHPUnit count artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wp-phpunit-*
+          path: wp-phpunit-artifacts
+
+      - name: Update PR description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require( 'fs' );
+            const path = require( 'path' );
+
+            const artifactRoot = path.join( process.cwd(), 'wp-phpunit-artifacts' );
+            const startMarker = '<!-- wp-phpunit-progress:start -->';
+            const endMarker = '<!-- wp-phpunit-progress:end -->';
+
+            function findResultFile( backend ) {
+              const expected = `wp-phpunit-results-${ backend }.json`;
+              const stack = [ artifactRoot ];
+
+              while ( stack.length > 0 ) {
+                const current = stack.pop();
+                if ( ! fs.existsSync( current ) ) {
+                  continue;
+                }
+
+                const stat = fs.statSync( current );
+                if ( stat.isDirectory() ) {
+                  for ( const child of fs.readdirSync( current ) ) {
+                    stack.push( path.join( current, child ) );
+                  }
+                  continue;
+                }
+
+                if ( path.basename( current ) === expected ) {
+                  return current;
+                }
+              }
+
+              return null;
+            }
+
+            function readResult( backend ) {
+              const file = findResultFile( backend );
+              if ( ! file ) {
+                return { backend, total: 0, passed: 0 };
+              }
+
+              return JSON.parse( fs.readFileSync( file, 'utf8' ) );
+            }
+
+            function formatNumber( value ) {
+              return Number( value || 0 ).toLocaleString( 'en-US' );
+            }
+
+            function renderProgressBar( current, target ) {
+              const width = 20;
+              const ratio = target > 0 ? Math.min( current / target, 1 ) : 0;
+              const filled = Math.round( ratio * width );
+              const percent = target > 0 ? Math.round( ratio * 100 ) : 0;
+              return `[${ '#'.repeat( filled ) }${ '-'.repeat( width - filled ) }] ${ percent }%`;
+            }
+
+            const sqlite = readResult( 'sqlite' );
+            const postgresql = readResult( 'postgresql' );
+            const progress = renderProgressBar( postgresql.passed, sqlite.passed );
+            const generated = [
+              startMarker,
+              `WordPress PHPUnit: SQLite ${ formatNumber( sqlite.passed ) } passed; PostgreSQL ${ formatNumber( postgresql.passed ) } passed`,
+              `\`${ progress }\``,
+              endMarker,
+            ].join( '\n' );
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const pull = await github.rest.pulls.get( { owner, repo, pull_number } );
+            const body = pull.data.body || '';
+            const startIndex = body.indexOf( startMarker );
+            const endIndex = body.indexOf( endMarker );
+
+            let nextBody;
+            if ( startIndex !== -1 && endIndex !== -1 && endIndex > startIndex ) {
+              nextBody = [
+                body.slice( 0, startIndex ),
+                generated,
+                body.slice( endIndex + endMarker.length ),
+              ].join( '' );
+            } else if ( body.trim().length > 0 ) {
+              nextBody = `${ body }\n\n${ generated }`;
+            } else {
+              nextBody = generated;
+            }
+
+            await github.rest.pulls.update( { owner, repo, pull_number, body: nextBody } );
 
   native-parser-test:
     name: WordPress PHPUnit Tests / Rust extension
@@ -57,6 +249,8 @@ jobs:
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
       - name: Set up WordPress test environment
+        env:
+          WP_TEST_DB_BACKEND: sqlite
         run: composer run wp-setup
 
       - name: Build and load parser extension in WordPress PHP containers
@@ -65,7 +259,16 @@ jobs:
       - name: Run WordPress PHPUnit tests with parser extension
         env:
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
+          WP_TEST_DB_BACKEND: sqlite
         run: node .github/workflows/wp-tests-phpunit-run.js
+
+      - name: Upload PHPUnit count
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp-phpunit-sqlite-native
+          path: wp-phpunit-results-sqlite.json
+          if-no-files-found: warn
 
       - name: Stop Docker containers
         if: always()

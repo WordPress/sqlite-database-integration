@@ -24,17 +24,30 @@ if ( ! $sqlite_plugin_implementation_folder_path || ! file_exists( $sqlite_plugi
 	return;
 }
 
+// Resolve the selected backend. The unreplaced placeholder keeps existing
+// copy-paste installs on SQLite.
+$database_engine = defined( 'DB_ENGINE' )
+	? DB_ENGINE
+	: ( defined( 'DATABASE_ENGINE' ) ? DATABASE_ENGINE : '{DATABASE_ENGINE}' );
+if ( '{DATABASE_ENGINE}' === $database_engine ) {
+	$database_engine = 'sqlite';
+}
+$database_engine = strtolower( (string) $database_engine );
+if ( in_array( $database_engine, array( 'postgres', 'pgsql', 'postgresql' ), true ) ) {
+	$database_engine = 'postgresql';
+}
+
 // Constant for backward compatibility.
 if ( ! defined( 'DATABASE_TYPE' ) ) {
-	define( 'DATABASE_TYPE', 'sqlite' );
+	define( 'DATABASE_TYPE', $database_engine );
 }
-// Define SQLite constant.
+// Define database engine constant.
 if ( ! defined( 'DB_ENGINE' ) ) {
-	define( 'DB_ENGINE', 'sqlite' );
+	define( 'DB_ENGINE', $database_engine );
 }
 
 // Require the implementation from the plugin.
-require_once $sqlite_plugin_implementation_folder_path . '/wp-includes/sqlite/db.php';
+require_once $sqlite_plugin_implementation_folder_path . '/wp-includes/db.php';
 
 // Activate the performance-lab plugin if it is not already activated.
 add_action(
