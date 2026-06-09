@@ -128,6 +128,7 @@ services:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
     depends_on:
+      mysql: !reset null
       php:
         condition: service_started
       postgres:
@@ -159,10 +160,13 @@ services:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
     depends_on:
+      mysql: !reset null
       php:
         condition: service_started
       postgres:
         condition: service_healthy
+
+  mysql: !reset null
 
   postgres:
     image: postgres:16-alpine
@@ -184,6 +188,7 @@ services:
       retries: 10
 
 volumes:
+  mysql: !reset null
   postgres: {}
 EOF
 fi
