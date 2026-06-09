@@ -568,6 +568,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLES returns MySQL-shaped catalog rows.
+	 */
+	public function test_show_tables_returns_mysql_shaped_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$tables = $driver->query( "SHOW TABLES LIKE 'wptests_%'" );
+
+		$this->assertCount( 3, $tables );
+		$this->assertSame( 'wptests_options', $tables[0]->Tables_in_wptests );
+		$this->assertSame( 'wptests_posts', $tables[1]->Tables_in_wptests );
+		$this->assertSame( 'wptests_view', $tables[2]->Tables_in_wptests );
+		$this->assertSame( "SHOW TABLES LIKE 'wptests_%'", $driver->get_last_mysql_query() );
+		$this->assertSame( 'Tables_in_wptests', $driver->get_last_column_meta()[0]['name'] );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'information_schema.tables', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW TABLES', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_%' ), $queries[0]['params'] );
+
+		$full_tables = $driver->query( "SHOW FULL TABLES LIKE 'wptests_%'" );
+
+		$this->assertCount( 3, $full_tables );
+		$this->assertSame( 'wptests_options', $full_tables[0]->Tables_in_wptests );
+		$this->assertSame( 'BASE TABLE', $full_tables[0]->Table_type );
+		$this->assertSame( 'wptests_view', $full_tables[2]->Tables_in_wptests );
+		$this->assertSame( 'VIEW', $full_tables[2]->Table_type );
+		$this->assertSame( 'Tables_in_wptests', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 'Table_type', $driver->get_last_column_meta()[1]['name'] );
+	}
+
+	/**
 	 * Tests MySQL-only runtime SET statements are ignored before reaching PDO.
 	 */
 	public function test_mysql_runtime_set_statements_are_noops(): void {
@@ -638,6 +671,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
 		$pdo->exec(
+			'CREATE TABLE information_schema.tables (
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				table_type TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
 			'CREATE TABLE information_schema.columns (
 				table_schema TEXT NOT NULL,
 				table_name TEXT NOT NULL,
@@ -669,6 +709,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 
+		$pdo->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', 'wptests_options', 'BASE TABLE'),
+				('public', 'wptests_posts', 'BASE TABLE'),
+				('public', 'wptests_view', 'VIEW'),
+				('other', 'other_table', 'BASE TABLE')"
+		);
 		$pdo->exec(
 			"INSERT INTO information_schema.columns
 				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, is_nullable, column_default, is_identity)
