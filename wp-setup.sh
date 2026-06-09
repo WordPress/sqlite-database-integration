@@ -104,6 +104,10 @@ FROM wordpressdevelop/php@sha256:c0ba85936a9d1ac2c98bf3da2d62ceb0e5787a6b11e3836
 
 USER root
 
+RUN if command -v git > /dev/null; then \
+		git config --global --add safe.directory /var/www; \
+	fi
+
 RUN if command -v apt-get > /dev/null; then \
 		apt-get update \
 		&& apt-get install -y --no-install-recommends libpq-dev \
@@ -121,6 +125,10 @@ EOF
 FROM wordpressdevelop/cli@sha256:85ad7d7a9c3bd9a8775fc83aea7f7dfc0aad25b2bc4f7d740696b28cd2a0ef89
 
 USER root
+
+RUN if command -v git > /dev/null; then \
+		git config --global --add safe.directory /var/www; \
+	fi
 
 RUN if command -v apt-get > /dev/null; then \
 		apt-get update \
