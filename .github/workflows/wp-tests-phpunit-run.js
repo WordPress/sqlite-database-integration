@@ -313,6 +313,11 @@ function validateGeneratedBackendFiles() {
 		);
 		assertFileDoesNotContain(
 			installScript,
+			'install_wp_importer();',
+			'install.js does not call WP-CLI plugin installation for PostgreSQL'
+		);
+		assertFileDoesNotContain(
+			installScript,
 			`core \${ installCommand }`,
 			'install.js does not call the MySQL-backed core install command for PostgreSQL'
 		);

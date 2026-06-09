@@ -197,6 +197,12 @@ const replacements = [
 		],
 	},
 	{
+		from: "install_wp_importer();",
+		to: [
+			"// Skip WP-CLI plugin installation until the PostgreSQL runtime is wired.",
+		],
+	},
+	{
 		from: "\t\twp_cli( 'db reset --yes' );",
 		to: [
 			"\t\t// PostgreSQL databases are created by the compose init SQL.",
