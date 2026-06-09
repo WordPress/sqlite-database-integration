@@ -39,6 +39,15 @@ fi
 
 # 2. Clone the WordPress repository, if it doesn't exist.
 echo "Cleaning up the WordPress repository..."
+if [ -d "$WP_DIR" ]; then
+	UNWRITABLE_WORDPRESS_PATH="$(find "$WP_DIR" -type d ! -writable -print -quit 2>/dev/null || true)"
+	if [ -n "$UNWRITABLE_WORDPRESS_PATH" ]; then
+		echo 'Error: Cannot clean the WordPress repository because it contains non-writable generated files.' >&2
+		echo "First non-writable path: $UNWRITABLE_WORDPRESS_PATH" >&2
+		echo "Fix ownership or remove '$WP_DIR' with appropriate permissions, then rerun this command." >&2
+		exit 1
+	fi
+fi
 rm -rf "$WP_DIR"
 echo "Cloning the WordPress repository..."
 git clone --depth 1 --branch "$WP_VERSION" https://github.com/WordPress/wordpress-develop.git "$WP_DIR"

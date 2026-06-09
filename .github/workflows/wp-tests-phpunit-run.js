@@ -370,6 +370,28 @@ function validateGeneratedBackendFiles() {
 			'mysql: !reset null',
 			'docker-compose.override.yml removes inherited MySQL services and dependencies'
 		);
+		assertFileContainsCount(
+			composeOverride,
+			'mysql: !reset null',
+			4,
+			'docker-compose.override.yml resets both inherited MySQL dependencies, the MySQL service, and the MySQL volume'
+		);
+		assertFileContainsCount(
+			composeOverride,
+			'    depends_on:\n      mysql: !reset null\n      php:',
+			2,
+			'docker-compose.override.yml removes inherited MySQL dependencies from WordPress and CLI services'
+		);
+		assertFileContains(
+			composeOverride,
+			'\n  mysql: !reset null\n\n  postgres:',
+			'docker-compose.override.yml removes the inherited MySQL service before defining PostgreSQL'
+		);
+		assertFileContains(
+			composeOverride,
+			'\nvolumes:\n  mysql: !reset null\n  postgres: {}',
+			'docker-compose.override.yml removes the inherited MySQL volume'
+		);
 		assertFileContains(
 			postgresqlPhpDockerfile,
 			'docker-php-ext-install pdo_pgsql',
@@ -422,6 +444,14 @@ function assertFileContains( file, expected, description ) {
 	const contents = readGeneratedFile( file );
 	if ( ! contents.includes( expected ) ) {
 		throw new Error( `Expected ${ description } in ${ file }.` );
+	}
+}
+
+function assertFileContainsCount( file, expected, count, description ) {
+	const contents = readGeneratedFile( file );
+	const actual = contents.split( expected ).length - 1;
+	if ( actual !== count ) {
+		throw new Error( `Expected ${ description } in ${ file }; found ${ actual }, expected ${ count }.` );
 	}
 }
 
