@@ -590,7 +590,7 @@ class MySQL_Protocol {
 			$value   = unpack( 'v', $payload, $offset )[1];
 			$offset += 2;
 		} elseif ( 0xfd === $first_byte ) {
-			$value   = unpack( 'VX', $payload, $offset )[1];
+			$value   = unpack( 'V', substr( $payload, $offset, 3 ) . "\0" )[1];
 			$offset += 3;
 		} else {
 			$value   = unpack( 'P', $payload, $offset )[1];

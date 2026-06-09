@@ -148,6 +148,134 @@ PHP
 	}
 
 	/**
+	 * Tests db_connect() with a reusable PostgreSQL PDO and connection lifecycle methods.
+	 */
+	public function test_db_connect_reuses_global_postgresql_pdo_and_exposes_connection_lifecycle(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $dbuser     = '';
+	public $dbpassword = '';
+	public $dbname     = '';
+	public $dbhost     = '';
+	public $ready      = false;
+	public $is_mysql   = true;
+	public $last_error = 'previous error';
+	public $charset    = '';
+	public $bail_calls = array();
+
+	public function init_charset() {
+		$this->charset = 'utf8mb4';
+	}
+
+	public function parse_db_host( $host ) {
+		return false;
+	}
+
+	public function bail( $message, $error_code = '500' ) {
+		$this->bail_calls[] = array( $message, $error_code );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Connect_Fake_PDO extends PDO {
+	public $attributes = array();
+
+	public function __construct() {}
+
+	public function setAttribute( $attribute, $value ): bool {
+		$this->attributes[ $attribute ] = $value;
+		return true;
+	}
+
+	public function getAttribute( $attribute ): mixed {
+		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+			return 'pgsql';
+		}
+
+		if ( PDO::ATTR_SERVER_VERSION === $attribute ) {
+			return 'PostgreSQL 16 test';
+		}
+
+		return $this->attributes[ $attribute ] ?? null;
+	}
+}
+
+$pdo             = new WP_PostgreSQL_DB_Connect_Fake_PDO();
+$GLOBALS['@pdo'] = $pdo;
+
+$db             = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$db->dbuser     = 'wptests_user';
+$db->dbpassword = 'wptests_password';
+$db->dbname     = 'wptests';
+$db->dbhost     = 'localhost';
+
+$connect_result = $db->db_connect( false );
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver          = $driver_property->getValue( $db );
+
+$select_other_result   = $db->select( 'other', $driver );
+$ready_after_other     = $db->ready;
+$select_current_result = $db->select( 'wptests', $driver );
+$ready_after_current   = $db->ready;
+$server_info           = $db->db_server_info();
+$close_result          = $db->close();
+$ready_after_close     = $db->ready;
+$driver_after_close    = $driver_property->getValue( $db );
+$second_close_result   = $db->close();
+
+wp_postgresql_db_test_respond(
+	array(
+		'connect_result'        => $connect_result,
+		'ready_after_connect'   => $select_current_result && $ready_after_current,
+		'is_mysql'              => $db->is_mysql,
+		'last_error'            => $db->last_error,
+		'charset'               => $db->charset,
+		'bail_calls'            => $db->bail_calls,
+		'reused_global_pdo'     => $pdo === $GLOBALS['@pdo'],
+		'server_info'           => $server_info,
+		'select_other_result'   => $select_other_result,
+		'ready_after_other'     => $ready_after_other,
+		'select_current_result' => $select_current_result,
+		'ready_after_current'   => $ready_after_current,
+		'close_result'          => $close_result,
+		'ready_after_close'     => $ready_after_close,
+		'driver_after_close'    => null === $driver_after_close,
+		'second_close_result'   => $second_close_result,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'connect_result'        => true,
+				'ready_after_connect'   => true,
+				'is_mysql'              => false,
+				'last_error'            => '',
+				'charset'               => 'utf8mb4',
+				'bail_calls'            => array(),
+				'reused_global_pdo'     => true,
+				'server_info'           => 'PostgreSQL 16 test',
+				'select_other_result'   => false,
+				'ready_after_other'     => false,
+				'select_current_result' => true,
+				'ready_after_current'   => true,
+				'close_result'          => true,
+				'ready_after_close'     => false,
+				'driver_after_close'    => true,
+				'second_close_result'   => false,
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests query state, metadata, and SAVEQUERIES mapping.
 	 */
 	public function test_query_maps_backend_state_to_wpdb_fields(): void {

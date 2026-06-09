@@ -129,6 +129,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests a simple SELECT with a trailing LIMIT translates uppercase WHERE identifiers.
+	 */
+	public function test_simple_select_with_bare_uppercase_id_where_and_limit_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_title TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_title) VALUES (1, \'Hello\')' );
+
+		$select = 'SELECT * FROM wptests_posts WHERE ID = 1 LIMIT 1';
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT * FROM wptests_posts WHERE "ID" = 1 LIMIT 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests COUNT projections translate uppercase aggregate identifiers.
+	 */
+	public function test_simple_select_count_with_bare_uppercase_id_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, user_login TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (1, \'admin\')' );
+
+		$select = 'SELECT COUNT(ID) as c FROM wptests_users';
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->c );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT COUNT("ID") as c FROM wptests_users',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests mixed-case comment SELECT identifiers are quoted for PostgreSQL.
 	 */
 	public function test_simple_select_with_mixed_case_comment_identifiers_is_translated_to_postgresql(): void {

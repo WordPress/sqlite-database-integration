@@ -715,8 +715,8 @@ ORDER BY c.ordinal_position';
 	 * Translate simple single-table MySQL SELECT statements to PostgreSQL.
 	 *
 	 * This intentionally covers only the WordPress read shapes that need
-	 * identifier quoting for PostgreSQL. Joins, grouping, limits, subqueries,
-	 * functions, aliases, and MySQL-only SELECT modifiers fall through unchanged.
+	 * identifier quoting for PostgreSQL. Joins, grouping, subqueries, most
+	 * functions, and MySQL-only SELECT modifiers fall through unchanged.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -740,9 +740,7 @@ ORDER BY c.ordinal_position';
 			WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
 			WP_MySQL_Lexer::INTO_SYMBOL,
 			WP_MySQL_Lexer::JOIN_SYMBOL,
-			WP_MySQL_Lexer::LIMIT_SYMBOL,
 			WP_MySQL_Lexer::LOCK_SYMBOL,
-			WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
 			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
 			WP_MySQL_Lexer::SELECT_SYMBOL,
 			WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
@@ -753,7 +751,17 @@ ORDER BY c.ordinal_position';
 			return null;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		$select_end     = $statement_end;
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
+		if ( null !== $limit_position ) {
+			if ( ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+				return null;
+			}
+
+			$select_end = $limit_position;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $select_end );
 		if ( null === $from_position || 1 === $from_position ) {
 			return null;
 		}
@@ -773,10 +781,10 @@ ORDER BY c.ordinal_position';
 		$where_end      = null;
 		$order_position = null;
 
-		if ( $position < $statement_end && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
+		if ( $position < $select_end && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
 			$where_position = $position;
-			$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $position + 1, $statement_end );
-			$where_end      = $order_position ?? $statement_end;
+			$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $position + 1, $select_end );
+			$where_end      = $order_position ?? $select_end;
 
 			if (
 				$where_position + 1 >= $where_end
@@ -788,22 +796,22 @@ ORDER BY c.ordinal_position';
 			$position = $where_end;
 		}
 
-		if ( $position < $statement_end && WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position ]->id ) {
+		if ( $position < $select_end && WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position ]->id ) {
 			$order_position = $position;
-			if ( ! $this->is_supported_simple_select_order_by_clause( $tokens, $order_position, $statement_end ) ) {
+			if ( ! $this->is_supported_simple_select_order_by_clause( $tokens, $order_position, $select_end ) ) {
 				return null;
 			}
 
-			$position = $statement_end;
+			$position = $select_end;
 		}
 
-		if ( $position !== $statement_end ) {
+		if ( $position !== $select_end ) {
 			return null;
 		}
 
 		$sql = sprintf(
 			'SELECT %s FROM %s',
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 1, $from_position ),
+			$this->translate_simple_select_projection_to_postgresql( $tokens, 1, $from_position ),
 			$this->translate_mysql_identifier_token_to_postgresql( $table_token )
 		);
 
@@ -817,9 +825,13 @@ ORDER BY c.ordinal_position';
 
 		if ( null !== $order_position ) {
 			$sql .= ' ORDER BY ' . $this->translate_mysql_token_to_postgresql( $tokens[ $order_position + 2 ] );
-			if ( isset( $tokens[ $order_position + 3 ] ) && $order_position + 3 < $statement_end ) {
+			if ( isset( $tokens[ $order_position + 3 ] ) && $order_position + 3 < $select_end ) {
 				$sql .= ' ' . $tokens[ $order_position + 3 ]->get_bytes();
 			}
+		}
+
+		if ( null !== $limit_position ) {
+			$sql .= ' LIMIT ' . $tokens[ $limit_position + 1 ]->get_bytes();
 		}
 
 		return $sql;
@@ -1012,6 +1024,10 @@ ORDER BY c.ordinal_position';
 			return true;
 		}
 
+		if ( $this->is_supported_simple_select_count_projection( $tokens, $start, $end ) ) {
+			return true;
+		}
+
 		for ( $i = $start; $i < $end; $i++ ) {
 			if ( null === $this->get_mysql_identifier_token_value( $tokens[ $i ] ?? null ) ) {
 				return false;
@@ -1028,6 +1044,59 @@ ORDER BY c.ordinal_position';
 		}
 
 		return false;
+	}
+
+	/**
+	 * Validate the supported COUNT(identifier) projection shape.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection token position.
+	 * @param int             $end    Final projection token position, exclusive.
+	 * @return bool Whether the aggregate projection is supported.
+	 */
+	private function is_supported_simple_select_count_projection( array $tokens, int $start, int $end ): bool {
+		if (
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
+			|| WP_MySQL_Lexer::COUNT_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
+			|| null === $this->get_mysql_identifier_token_value( $tokens[ $start + 2 ] )
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $start + 3 ]->id
+		) {
+			return false;
+		}
+
+		if ( $start + 4 === $end ) {
+			return true;
+		}
+
+		return $start + 6 === $end
+			&& WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $start + 4 ]->id
+			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $start + 5 ] );
+	}
+
+	/**
+	 * Translate a supported simple SELECT projection to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection token position.
+	 * @param int             $end    Final projection token position, exclusive.
+	 * @return string PostgreSQL projection SQL.
+	 */
+	private function translate_simple_select_projection_to_postgresql( array $tokens, int $start, int $end ): string {
+		if ( $this->is_supported_simple_select_count_projection( $tokens, $start, $end ) ) {
+			$sql = sprintf(
+				'COUNT(%s)',
+				$this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start + 2 ] )
+			);
+
+			if ( $start + 6 === $end ) {
+				$sql .= ' ' . $tokens[ $start + 4 ]->get_bytes() . ' ' . $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start + 5 ] );
+			}
+
+			return $sql;
+		}
+
+		return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end );
 	}
 
 	/**
@@ -1111,6 +1180,35 @@ ORDER BY c.ordinal_position';
 				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $start + 3 ]->id
 				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $start + 3 ]->id
 			);
+	}
+
+	/**
+	 * Validate a safe trailing SELECT LIMIT clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  LIMIT token position.
+	 * @param int             $end    Final clause token position, exclusive.
+	 * @return bool Whether the LIMIT clause is supported.
+	 */
+	private function is_supported_simple_select_limit_clause( array $tokens, int $start, int $end ): bool {
+		if (
+			$start + 2 !== $end
+			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $start ]->id
+			|| ! in_array(
+				$tokens[ $start + 1 ]->id,
+				array(
+					WP_MySQL_Lexer::INT_NUMBER,
+					WP_MySQL_Lexer::LONG_NUMBER,
+					WP_MySQL_Lexer::ULONGLONG_NUMBER,
+				),
+				true
+			)
+		) {
+			return false;
+		}
+
+		return ctype_digit( $tokens[ $start + 1 ]->get_value() );
 	}
 
 	/**
