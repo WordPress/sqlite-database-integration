@@ -134,7 +134,7 @@ PHP
 			'prepared_string'     => $db->prepare( 'SELECT %s', "Bob's" ),
 		)
 	);
-	PHP
+PHP
 		);
 
 		$this->assertTrue( $result['has_identifier_cap'] );
