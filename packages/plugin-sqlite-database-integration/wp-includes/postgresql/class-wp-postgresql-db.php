@@ -357,9 +357,9 @@ class WP_PostgreSQL_DB extends wpdb {
 			return null;
 		}
 
-		$passed_as_array = isset( $args[0] ) && is_array( $args[0] ) && 1 === count( $args );
-		$prepare_args    = $passed_as_array ? $args[0] : $args;
-		$identifiers     = array();
+		$passed_as_array  = isset( $args[0] ) && is_array( $args[0] ) && 1 === count( $args );
+		$prepare_args     = $passed_as_array ? $args[0] : $args;
+		$identifiers      = array();
 		static $marker_id = 0;
 
 		foreach ( $scan['identifier_arg_indexes'] as $index => $arg_index ) {
@@ -368,9 +368,9 @@ class WP_PostgreSQL_DB extends wpdb {
 			}
 
 			++$marker_id;
-			$marker                      = '__wp_pg_identifier_' . spl_object_hash( $this ) . '_' . $marker_id . '_' . $index . '__';
-			$identifiers[ $marker ]      = $this->quote_identifier( $prepare_args[ $arg_index ] );
-			$prepare_args[ $arg_index ]  = $marker;
+			$marker                     = '__wp_pg_identifier_' . spl_object_hash( $this ) . '_' . $marker_id . '_' . $index . '__';
+			$identifiers[ $marker ]     = $this->quote_identifier( $prepare_args[ $arg_index ] );
+			$prepare_args[ $arg_index ] = $marker;
 		}
 
 		return array(
@@ -394,8 +394,8 @@ class WP_PostgreSQL_DB extends wpdb {
 		$placeholder_index      = 0;
 		$rewritten              = '';
 		$has_identifier         = false;
-		$has_numbered          = false;
-		$has_escaped_candidate = false;
+		$has_numbered           = false;
+		$has_escaped_candidate  = false;
 		$identifier_arg_indexes = array();
 
 		while ( $position < $length ) {
