@@ -82,6 +82,42 @@ elif [ "$WP_TEST_DB_BACKEND" = "postgresql" ]; then
 	cat << 'EOF' > "$WP_DIR/tools/local-env/postgres-init.sql"
 CREATE DATABASE wordpress_develop_tests;
 EOF
+	cat << 'EOF' > "$WP_DIR/tools/local-env/Dockerfile.postgresql-php"
+FROM wordpressdevelop/php@sha256:c0ba85936a9d1ac2c98bf3da2d62ceb0e5787a6b11e383630df0c5a5bf2534b5
+
+USER root
+
+RUN if command -v apt-get > /dev/null; then \
+		apt-get update \
+		&& apt-get install -y --no-install-recommends libpq-dev \
+		&& docker-php-ext-install pdo_pgsql \
+		&& rm -rf /var/lib/apt/lists/*; \
+	elif command -v apk > /dev/null; then \
+		apk add --no-cache postgresql-dev \
+		&& docker-php-ext-install pdo_pgsql; \
+	else \
+		echo 'Unsupported PHP base image: cannot install pdo_pgsql.' >&2; \
+		exit 1; \
+	fi
+EOF
+	cat << 'EOF' > "$WP_DIR/tools/local-env/Dockerfile.postgresql-cli"
+FROM wordpressdevelop/cli@sha256:85ad7d7a9c3bd9a8775fc83aea7f7dfc0aad25b2bc4f7d740696b28cd2a0ef89
+
+USER root
+
+RUN if command -v apt-get > /dev/null; then \
+		apt-get update \
+		&& apt-get install -y --no-install-recommends libpq-dev \
+		&& docker-php-ext-install pdo_pgsql \
+		&& rm -rf /var/lib/apt/lists/*; \
+	elif command -v apk > /dev/null; then \
+		apk add --no-cache postgresql-dev \
+		&& docker-php-ext-install pdo_pgsql; \
+	else \
+		echo 'Unsupported CLI base image: cannot install pdo_pgsql.' >&2; \
+		exit 1; \
+	fi
+EOF
 	cat << EOF > "$WP_DIR/docker-compose.override.yml"
 services:
   wordpress-develop:
@@ -99,7 +135,10 @@ services:
 
   php:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
-    image: wordpressdevelop/php@sha256:c0ba85936a9d1ac2c98bf3da2d62ceb0e5787a6b11e383630df0c5a5bf2534b5
+    image: wordpressdevelop/php-postgresql:local
+    build:
+      context: .
+      dockerfile: tools/local-env/Dockerfile.postgresql-php
     environment:
       DB_ENGINE: postgresql
       DATABASE_ENGINE: postgresql
@@ -109,7 +148,10 @@ services:
 
   cli:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
-    image: wordpressdevelop/cli@sha256:85ad7d7a9c3bd9a8775fc83aea7f7dfc0aad25b2bc4f7d740696b28cd2a0ef89
+    image: wordpressdevelop/cli-postgresql:local
+    build:
+      context: .
+      dockerfile: tools/local-env/Dockerfile.postgresql-cli
     environment:
       DB_ENGINE: postgresql
       DATABASE_ENGINE: postgresql

@@ -300,10 +300,32 @@ function validateGeneratedBackendFiles() {
 
 	if ( 'postgresql' === backend ) {
 		const installScript = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'scripts', 'install.js' );
+		const postgresqlPhpDockerfile = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'Dockerfile.postgresql-php' );
+		const postgresqlCliDockerfile = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'Dockerfile.postgresql-cli' );
 		assertFileContains(
 			composeOverride,
 			'postgres:',
 			'docker-compose.override.yml defines a PostgreSQL service'
+		);
+		assertFileContains(
+			composeOverride,
+			'Dockerfile.postgresql-php',
+			'docker-compose.override.yml builds a PostgreSQL PHP image'
+		);
+		assertFileContains(
+			composeOverride,
+			'Dockerfile.postgresql-cli',
+			'docker-compose.override.yml builds a PostgreSQL CLI image'
+		);
+		assertFileContains(
+			postgresqlPhpDockerfile,
+			'docker-php-ext-install pdo_pgsql',
+			'PostgreSQL PHP Dockerfile installs pdo_pgsql'
+		);
+		assertFileContains(
+			postgresqlCliDockerfile,
+			'docker-php-ext-install pdo_pgsql',
+			'PostgreSQL CLI Dockerfile installs pdo_pgsql'
 		);
 		assertFileContains(
 			installScript,
