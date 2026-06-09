@@ -23,6 +23,24 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL DSN construction does not include credentials.
+	 */
+	public function test_build_dsn_keeps_credentials_out_of_structured_dsn(): void {
+		$this->assertSame(
+			'pgsql:host=localhost;port=5432;dbname=wp',
+			WP_PostgreSQL_Connection::build_dsn(
+				array(
+					'host'     => 'localhost',
+					'port'     => 5432,
+					'dbname'   => 'wp',
+					'user'     => 'wp_user',
+					'password' => 'secret',
+				)
+			)
+		);
+	}
+
+	/**
 	 * Tests PostgreSQL DSN construction requires a database name.
 	 *
 	 * @dataProvider data_missing_dbname_options
