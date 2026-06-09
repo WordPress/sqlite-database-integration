@@ -126,6 +126,11 @@ try {
 		verifyPostgreSqlPhpExtension();
 	}
 
+	const junitOutputFile = path.join( repositoryRoot, 'wordpress', 'phpunit-results.xml' );
+	removeStaleTestOutput( junitOutputFile );
+	removeStaleTestOutput( getResultSummaryFile() );
+
+	let phpunitCommandError = null;
 	try {
 		execSync(
 			'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose',
@@ -133,12 +138,17 @@ try {
 		);
 		console.log( '\nAll tests passed, checking if expected errors/failures occurred...' );
 	} catch ( error ) {
+		phpunitCommandError = error;
 		console.log( '\nSome tests errored/failed. Analyzing results...' );
 	}
 
-	const junitOutputFile = path.join( repositoryRoot, 'wordpress', 'phpunit-results.xml' );
 	if ( ! fs.existsSync( junitOutputFile ) ) {
 		console.error( 'Error: JUnit output file not found.' );
+		writeResultSummary( emptySummary() );
+		process.exit( 1 );
+	}
+	if ( 0 === fs.statSync( junitOutputFile ).size ) {
+		console.error( 'Error: JUnit output file is empty.' );
 		writeResultSummary( emptySummary() );
 		process.exit( 1 );
 	}
@@ -146,6 +156,11 @@ try {
 	const testcases = readJunitTestcases( junitOutputFile );
 	const summary = summarizeTestcases( testcases );
 	writeResultSummary( summary );
+	if ( 0 === summary.total ) {
+		const failureContext = phpunitCommandError ? ' after the PHPUnit command failed' : '';
+		console.error( `Error: JUnit output did not contain any test cases${ failureContext }.` );
+		process.exit( 1 );
+	}
 
 	const actualErrors = testcases.filter( testcase => testcase.hasError ).map( testcase => testcase.name );
 	const actualFailures = testcases.filter( testcase => testcase.hasFailure ).map( testcase => testcase.name );
@@ -490,6 +505,12 @@ function readGeneratedFile( file ) {
 	return fs.readFileSync( file, 'utf8' );
 }
 
+function removeStaleTestOutput( file ) {
+	if ( fs.existsSync( file ) ) {
+		fs.unlinkSync( file );
+	}
+}
+
 function readJunitTestcases( junitOutputFile ) {
 	const parserPath = require.resolve( 'fast-xml-parser', {
 		paths: [
@@ -621,7 +642,7 @@ function emptySummary() {
 }
 
 function writeResultSummary( summary ) {
-	const outputPath = path.join( repositoryRoot, `wp-phpunit-results-${ backend }.json` );
+	const outputPath = getResultSummaryFile();
 	fs.writeFileSync( outputPath, `${ JSON.stringify( summary, null, 2 ) }\n` );
 
 	if ( process.env.GITHUB_OUTPUT ) {
@@ -634,4 +655,8 @@ function writeResultSummary( summary ) {
 		].join( '\n' );
 		fs.appendFileSync( process.env.GITHUB_OUTPUT, `${ output }\n` );
 	}
+}
+
+function getResultSummaryFile() {
+	return path.join( repositoryRoot, `wp-phpunit-results-${ backend }.json` );
 }
