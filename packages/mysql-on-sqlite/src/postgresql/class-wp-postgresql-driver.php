@@ -160,6 +160,16 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_describe_query( $describe_table_name, $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$show_tables_query = $this->get_show_tables_query( $query );
+		if ( null !== $show_tables_query ) {
+			return $this->execute_show_tables_query(
+				$show_tables_query['full'],
+				$show_tables_query['like'],
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
 		$translated_query = $this->translate_wordpress_options_regexp_delete_query( $query );
 		if ( null !== $translated_query ) {
 			$query = $translated_query;
@@ -254,6 +264,56 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW TABLES statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{full: bool, like: string|null}|null SHOW TABLES options, or null when unsupported.
+	 */
+	private function get_show_tables_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		$is_full  = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::FULL_SYMBOL === $tokens[ $position ]->id ) {
+			$is_full = true;
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$like = null;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
+			if (
+				! isset( $tokens[ $position + 1 ] )
+				|| (
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $position + 1 ]->id
+					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $position + 1 ]->id
+				)
+			) {
+				return null;
+			}
+
+			$like      = $tokens[ $position + 1 ]->get_value();
+			$position += 2;
+		}
+
+		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return null;
+		}
+
+		return array(
+			'full' => $is_full,
+			'like' => $like,
+		);
+	}
+
+	/**
 	 * Execute a MySQL DESCRIBE/DESC statement through PostgreSQL catalogs.
 	 *
 	 * @param string $table_name          Table name.
@@ -265,6 +325,47 @@ class WP_PostgreSQL_Driver {
 		$sql    = $this->get_describe_catalog_query();
 		$params = array( 'public', $table_name );
 		$stmt   = $this->connection->query( $sql, $params );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
+		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+
+		return $this->last_result;
+	}
+
+	/**
+	 * Execute a MySQL SHOW TABLES statement through PostgreSQL catalogs.
+	 *
+	 * @param bool        $is_full          Whether this is SHOW FULL TABLES.
+	 * @param string|null $like             Optional MySQL LIKE pattern.
+	 * @param int         $fetch_mode       PDO fetch mode.
+	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed SHOW TABLES result rows.
+	 */
+	private function execute_show_tables_query( bool $is_full, ?string $like, $fetch_mode, ...$fetch_mode_args ) {
+		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $this->db_name );
+		$sql          = sprintf(
+			'SELECT table_name AS %s%s
+FROM information_schema.tables
+WHERE table_schema = ?
+	AND table_type IN (\'BASE TABLE\', \'VIEW\')',
+			$table_column,
+			$is_full ? ', CASE WHEN table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : ''
+		);
+		$params       = array( 'public' );
+
+		if ( null !== $like ) {
+			$sql     .= " AND table_name LIKE ? ESCAPE '\\'";
+			$params[] = $like;
+		}
+
+		$sql .= '
+ORDER BY table_name';
+
+		$stmt = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $sql,
