@@ -5,6 +5,17 @@
  * @package wp-sqlite-integration
  */
 
+if ( ! class_exists( 'WP_PostgreSQL_Driver', false ) ) {
+	require_once __DIR__ . '/../database/postgresql/class-wp-postgresql-connection.php';
+	require_once __DIR__ . '/../database/postgresql/class-wp-postgresql-driver.php';
+}
+
+/*
+ * The PostgreSQL drop-in uses PDO through the backend driver. Enable PDO
+ * type checks in this compatibility layer:
+ * phpcs:disable WordPress.DB.RestrictedClasses.mysql__PDO
+ */
+
 /**
  * PostgreSQL-backed wpdb replacement.
  *
@@ -12,6 +23,13 @@
  * of reusing the SQLite file-backed connection path.
  */
 class WP_PostgreSQL_DB extends wpdb {
+	/**
+	 * Database handle.
+	 *
+	 * @var WP_PostgreSQL_Driver|null
+	 */
+	protected $dbh;
+
 	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
@@ -55,15 +73,28 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Connects to the PostgreSQL database.
+	 * Changes the current SQL mode.
 	 *
-	 * @param bool $allow_bail Not used.
-	 * @return false
+	 * PostgreSQL does not expose MySQL sql_mode. The MySQL-emulation layer will
+	 * own this state once query translation is implemented.
+	 *
+	 * @param array $modes Optional. A list of SQL modes to set. Default empty array.
 	 */
-	public function db_connect( $allow_bail = true ) {
-		$this->ready      = false;
-		$this->last_error = 'The PostgreSQL backend is selected, but the PostgreSQL MySQL-emulation driver has not been implemented yet.';
-		return false;
+	public function set_sql_mode( $modes = array() ) {}
+
+	/**
+	 * Closes the current database connection.
+	 *
+	 * @return bool True when an open connection existed.
+	 */
+	public function close() {
+		if ( ! $this->dbh ) {
+			return false;
+		}
+
+		$this->dbh   = null;
+		$this->ready = false;
+		return true;
 	}
 
 	/**
@@ -71,19 +102,127 @@ class WP_PostgreSQL_DB extends wpdb {
 	 *
 	 * @param string        $db  Database name.
 	 * @param resource|null $dbh Optional link identifier.
+	 * @return bool Whether the selected database matches the configured database.
 	 */
 	public function select( $db, $dbh = null ) {
-		$this->ready = false;
+		if ( null === $dbh ) {
+			$dbh = $this->dbh;
+		}
+
+		$this->ready = $dbh instanceof WP_PostgreSQL_Driver && (string) $db === (string) $this->dbname;
+		return $this->ready;
+	}
+
+	/**
+	 * Escapes string data without using mysqli.
+	 *
+	 * @param string $data The string to escape.
+	 * @return string Escaped string.
+	 */
+	public function _real_escape( $data ) {
+		if ( ! is_scalar( $data ) ) {
+			return '';
+		}
+
+		$escaped = addslashes( (string) $data );
+		if ( $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			$quoted = $this->dbh->get_connection()->quote( (string) $data );
+			if ( false !== $quoted && 2 <= strlen( $quoted ) && "'" === $quoted[0] && "'" === substr( $quoted, -1 ) ) {
+				$escaped = substr( $quoted, 1, -1 );
+			}
+		}
+
+		return $this->add_placeholder_escape( $escaped );
+	}
+
+	/**
+	 * Quotes a PostgreSQL identifier.
+	 *
+	 * @param string $identifier Identifier to escape.
+	 * @return string Escaped identifier.
+	 */
+	public function quote_identifier( $identifier ) {
+		return WP_PostgreSQL_Connection::quote_identifier_value( (string) $identifier );
+	}
+
+	/**
+	 * Method to flush cached data.
+	 */
+	public function flush() {
+		$this->last_result   = array();
+		$this->col_info      = null;
+		$this->last_query    = null;
+		$this->rows_affected = 0;
+		$this->num_rows      = 0;
+		$this->last_error    = '';
+		$this->result        = null;
+	}
+
+	/**
+	 * Connects to the PostgreSQL database.
+	 *
+	 * @param bool $allow_bail Whether to bail on connection failure.
+	 * @return bool Whether the connection succeeded.
+	 */
+	public function db_connect( $allow_bail = true ) {
+		$this->is_mysql = false;
+
+		if ( $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			$this->ready = true;
+			return true;
+		}
+
+		$this->ready      = false;
+		$this->last_error = '';
+		$this->init_charset();
+
+		if ( null === $this->dbname || '' === (string) $this->dbname ) {
+			$this->last_error = 'The database name was not set. The PostgreSQL backend requires DB_NAME.';
+			if ( $allow_bail ) {
+				$this->bail( $this->last_error, 'db_connect_fail' );
+			}
+			return false;
+		}
+
+		try {
+			$connection      = new WP_PostgreSQL_Connection( $this->get_connection_options() );
+			$this->dbh       = new WP_PostgreSQL_Driver( $connection, $this->dbname );
+			$GLOBALS['@pdo'] = $connection->get_pdo();
+			$this->ready     = true;
+			$this->set_sql_mode();
+			return true;
+		} catch ( Throwable $e ) {
+			$this->dbh        = null;
+			$this->ready      = false;
+			$this->last_error = $this->format_error_message( $e );
+
+			if ( $allow_bail ) {
+				$this->bail( $this->last_error, 'db_connect_fail' );
+			}
+
+			return false;
+		}
 	}
 
 	/**
 	 * Method to dummy out wpdb::check_connection().
 	 *
-	 * @param bool $allow_bail Not used.
-	 * @return bool
+	 * @param bool $allow_bail Whether to bail on connection failure.
+	 * @return bool Whether the connection is alive.
 	 */
 	public function check_connection( $allow_bail = true ) {
-		return false;
+		if ( $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			try {
+				$this->dbh->get_connection()->query( 'SELECT 1' );
+				return true;
+			} catch ( Throwable $e ) {
+				$this->last_error = $this->format_error_message( $e );
+				$this->dbh        = null;
+				$this->ready      = false;
+			}
+		}
+
+		return $this->db_connect( $allow_bail );
 	}
 
 	/**
@@ -103,7 +242,82 @@ class WP_PostgreSQL_DB extends wpdb {
 			$property->setAccessible( false );
 		}
 
+		if ( null === $query ) {
+			return parent::prepare( $query, ...$args );
+		}
+
+		$prepared = $this->prepare_postgresql_identifiers( (string) $query, $args );
+		if ( $prepared['changed'] ) {
+			return parent::prepare( $prepared['query'], $prepared['args'] );
+		}
+
 		return parent::prepare( $query, ...$args );
+	}
+
+	/**
+	 * Performs a database query.
+	 *
+	 * @param string $query Database query.
+	 * @return int|bool Boolean true for CREATE, ALTER, TRUNCATE and DROP queries.
+	 *                  Number of rows affected/selected for all other queries.
+	 *                  Boolean false on error.
+	 */
+	public function query( $query ) {
+		if ( ! $this->ready ) {
+			return false;
+		}
+
+		$query = apply_filters( 'query', $query );
+
+		if ( ! $query ) {
+			$this->insert_id = 0;
+			return false;
+		}
+
+		$this->flush();
+		$this->func_call  = "\$db->query(\"$query\")";
+		$this->last_query = $query;
+
+		$last_query_count = count( $this->queries ?? array() );
+		$this->_do_query( $query );
+
+		if ( $this->last_error ) {
+			if ( $this->insert_id && in_array( $this->get_statement_keyword( $query ), array( 'insert', 'replace' ), true ) ) {
+				$this->insert_id = 0;
+			}
+
+			$this->print_error();
+			return false;
+		}
+
+		$statement_type = $this->get_statement_keyword( $query );
+		if ( in_array( $statement_type, array( 'create', 'alter', 'truncate', 'drop' ), true ) ) {
+			$return_val = true;
+		} elseif ( in_array( $statement_type, array( 'insert', 'delete', 'update', 'replace' ), true ) ) {
+			$this->rows_affected = $this->dbh->get_last_return_value();
+
+			if ( in_array( $statement_type, array( 'insert', 'replace' ), true ) ) {
+				$this->insert_id = $this->dbh->get_insert_id();
+			}
+
+			$return_val = $this->rows_affected;
+		} else {
+			$num_rows = 0;
+
+			if ( is_array( $this->result ) ) {
+				$this->last_result = $this->result;
+				$num_rows          = count( $this->result );
+			}
+
+			$this->num_rows = $num_rows;
+			$return_val     = $num_rows;
+		}
+
+		if ( defined( 'SAVEQUERIES' ) && SAVEQUERIES && isset( $this->queries[ $last_query_count ] ) ) {
+			$this->queries[ $last_query_count ]['postgresql_queries'] = $this->dbh->get_last_postgresql_queries();
+		}
+
+		return $return_val;
 	}
 
 	/**
@@ -113,7 +327,7 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @return bool Whether the database feature is supported.
 	 */
 	public function has_cap( $db_cap ) {
-		return 'subqueries' === strtolower( $db_cap );
+		return in_array( strtolower( $db_cap ), array( 'identifier_placeholders', 'subqueries' ), true );
 	}
 
 	/**
@@ -131,6 +345,293 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @return string Server info.
 	 */
 	public function db_server_info() {
-		return 'PostgreSQL backend pending implementation';
+		if ( $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			return $this->dbh->get_postgresql_version();
+		}
+		return 'PostgreSQL backend pending connection';
+	}
+
+	/**
+	 * Internal function to perform the PostgreSQL query call.
+	 *
+	 * @param string $query The query to run.
+	 */
+	private function _do_query( $query ) {
+		if ( defined( 'SAVEQUERIES' ) && SAVEQUERIES ) {
+			$this->timer_start();
+		}
+
+		try {
+			$this->result = $this->dbh->query( $query );
+		} catch ( Throwable $e ) {
+			$this->last_error = $this->format_error_message( $e );
+		}
+
+		++$this->num_queries;
+
+		if ( defined( 'SAVEQUERIES' ) && SAVEQUERIES ) {
+			$this->log_query(
+				$query,
+				$this->timer_stop(),
+				$this->get_caller(),
+				$this->time_start,
+				array()
+			);
+		}
+	}
+
+	/**
+	 * Method to set the class variable $col_info.
+	 *
+	 * This overrides wpdb::load_col_info(), which uses mysqli metadata.
+	 */
+	protected function load_col_info() {
+		if ( $this->col_info ) {
+			return;
+		}
+		$this->col_info = array();
+		foreach ( $this->dbh->get_last_column_meta() as $column ) {
+			$this->col_info[] = (object) array(
+				'name'       => $column['name'],
+				'orgname'    => $column['mysqli:orgname'],
+				'table'      => $column['table'],
+				'orgtable'   => $column['mysqli:orgtable'],
+				'def'        => '',
+				'db'         => $column['mysqli:db'],
+				'catalog'    => 'def',
+				'max_length' => 0,
+				'length'     => $column['len'],
+				'charsetnr'  => $column['mysqli:charsetnr'],
+				'flags'      => $column['mysqli:flags'],
+				'type'       => $column['mysqli:type'],
+				'decimals'   => $column['precision'],
+			);
+		}
+	}
+
+	/**
+	 * Builds PostgreSQL connection options from wpdb constructor state.
+	 *
+	 * @return array
+	 */
+	private function get_connection_options() {
+		$host = $this->dbhost;
+		$port = null;
+
+		$host_data = $this->parse_db_host( $this->dbhost );
+		if ( $host_data ) {
+			list( $host, $port, $socket ) = $host_data;
+
+			if ( null !== $socket && '' !== $socket ) {
+				$host        = $this->get_postgresql_socket_host( $socket );
+				$socket_port = $this->get_postgresql_socket_port( $socket );
+				if ( null === $port && null !== $socket_port ) {
+					$port = $socket_port;
+				}
+			}
+		}
+
+		$options = array(
+			'host'     => $host,
+			'port'     => $port,
+			'dbname'   => $this->dbname,
+			'user'     => $this->dbuser,
+			'password' => $this->dbpassword,
+		);
+
+		if ( isset( $GLOBALS['@pdo'] ) && $GLOBALS['@pdo'] instanceof PDO && $this->is_postgresql_pdo( $GLOBALS['@pdo'] ) ) {
+			$options['pdo'] = $GLOBALS['@pdo'];
+		}
+
+		return $options;
+	}
+
+	/**
+	 * Returns the libpq socket directory when DB_HOST includes a socket file.
+	 *
+	 * @param string $socket Socket path or directory.
+	 * @return string PostgreSQL host option.
+	 */
+	private function get_postgresql_socket_host( $socket ) {
+		$socket_file = basename( $socket );
+		if ( 0 === strpos( $socket_file, '.s.PGSQL.' ) ) {
+			return dirname( $socket );
+		}
+		return $socket;
+	}
+
+	/**
+	 * Returns the PostgreSQL port encoded in a socket file path.
+	 *
+	 * @param string $socket Socket path or directory.
+	 * @return int|null PostgreSQL port.
+	 */
+	private function get_postgresql_socket_port( $socket ) {
+		$prefix      = '.s.PGSQL.';
+		$socket_file = basename( $socket );
+		if ( 0 !== strpos( $socket_file, $prefix ) ) {
+			return null;
+		}
+
+		$port = substr( $socket_file, strlen( $prefix ) );
+		return ctype_digit( $port ) ? (int) $port : null;
+	}
+
+	/**
+	 * Checks whether a reusable PDO object is PostgreSQL-backed.
+	 *
+	 * @param PDO $pdo PDO instance.
+	 * @return bool Whether the PDO driver is PostgreSQL.
+	 */
+	private function is_postgresql_pdo( PDO $pdo ) {
+		try {
+			return 'pgsql' === $pdo->getAttribute( PDO::ATTR_DRIVER_NAME );
+		} catch ( Throwable $e ) {
+			return false;
+		}
+	}
+
+	/**
+	 * Rewrites %i placeholders into PostgreSQL-quoted identifier strings.
+	 *
+	 * @param string $query Query statement with placeholders.
+	 * @param array  $args  Placeholder arguments.
+	 * @return array
+	 */
+	private function prepare_postgresql_identifiers( $query, array $args ) {
+		$passed_as_array = isset( $args[0] ) && is_array( $args[0] ) && 1 === count( $args );
+		if ( $passed_as_array ) {
+			$args = $args[0];
+		}
+
+		$length            = strlen( $query );
+		$output            = '';
+		$placeholder_index = 0;
+		$changed           = false;
+
+		for ( $i = 0; $i < $length; $i++ ) {
+			if ( '%' !== $query[ $i ] ) {
+				$output .= $query[ $i ];
+				continue;
+			}
+
+			if ( $i + 1 < $length && '%' === $query[ $i + 1 ] ) {
+				$output .= '%%';
+				++$i;
+				continue;
+			}
+
+			$placeholder = $this->parse_prepare_placeholder_at( $query, $i );
+			if ( ! $placeholder ) {
+				$output .= '%';
+				continue;
+			}
+
+			if ( 'i' === $placeholder['type'] ) {
+				$arg_index = null !== $placeholder['arg_index'] ? $placeholder['arg_index'] : $placeholder_index;
+				if ( array_key_exists( $arg_index, $args ) ) {
+					$args[ $arg_index ] = $this->quote_identifier( $args[ $arg_index ] );
+				}
+				$format  = '' === $placeholder['format'] ? '+' : $placeholder['format'];
+				$output .= '%' . $format . 's';
+				$changed = true;
+			} else {
+				$output .= substr( $query, $i, $placeholder['length'] );
+			}
+
+			$i += $placeholder['length'] - 1;
+			++$placeholder_index;
+		}
+
+		return array(
+			'query'   => $output,
+			'args'    => $args,
+			'changed' => $changed,
+		);
+	}
+
+	/**
+	 * Parses one wpdb::prepare() placeholder at the given string offset.
+	 *
+	 * @param string $query  Query statement.
+	 * @param int    $offset Offset of the percent sign.
+	 * @return array|null Placeholder information, or null if invalid.
+	 */
+	private function parse_prepare_placeholder_at( $query, $offset ) {
+		$allowed_format = '(?:[1-9][0-9]*[$])?[-+0-9]*(?: |0|\'.)?[-+0-9]*(?:\.[0-9]+)?';
+		$segment        = substr( $query, $offset );
+
+		if ( ! preg_match( '/^%(' . $allowed_format . ')([sdfFi])/', $segment, $matches ) ) {
+			return null;
+		}
+
+		$format    = $matches[1];
+		$arg_index = null;
+		$dollar    = strpos( $format, '$' );
+		if ( false !== $dollar ) {
+			$arg_index = ( (int) substr( $format, 0, $dollar ) ) - 1;
+		}
+
+		return array(
+			'type'      => $matches[2],
+			'length'    => strlen( $matches[0] ),
+			'arg_index' => $arg_index,
+			'format'    => $format,
+		);
+	}
+
+	/**
+	 * Returns the first SQL statement keyword.
+	 *
+	 * @param string $query SQL query.
+	 * @return string Lowercase statement keyword, or empty string.
+	 */
+	private function get_statement_keyword( $query ) {
+		$length = strlen( $query );
+		$i      = 0;
+
+		while ( $i < $length ) {
+			$char = $query[ $i ];
+			if ( ctype_space( $char ) ) {
+				++$i;
+				continue;
+			}
+
+			if ( '-' === $char && $i + 1 < $length && '-' === $query[ $i + 1 ] ) {
+				$i += 2;
+				while ( $i < $length && "\n" !== $query[ $i ] ) {
+					++$i;
+				}
+				continue;
+			}
+
+			if ( '/' === $char && $i + 1 < $length && '*' === $query[ $i + 1 ] ) {
+				$i += 2;
+				while ( $i + 1 < $length && ! ( '*' === $query[ $i ] && '/' === $query[ $i + 1 ] ) ) {
+					++$i;
+				}
+				$i += 2;
+				continue;
+			}
+
+			break;
+		}
+
+		$start = $i;
+		while ( $i < $length && ( ctype_alpha( $query[ $i ] ) || '_' === $query[ $i ] ) ) {
+			++$i;
+		}
+
+		return strtolower( substr( $query, $start, $i - $start ) );
+	}
+
+	/**
+	 * Format PostgreSQL driver error message.
+	 *
+	 * @param Throwable $e Error.
+	 * @return string Error message.
+	 */
+	private function format_error_message( Throwable $e ) {
+		return $e->getMessage();
 	}
 }

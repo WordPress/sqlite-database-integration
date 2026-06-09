@@ -6,11 +6,12 @@
  */
 
 require_once __DIR__ . '/../database/version.php';
+require_once __DIR__ . '/../database/load.php';
 require_once __DIR__ . '/../../constants.php';
 
 if (
 	! defined( 'DB_ENGINE' )
-	|| 'postgresql' !== sqlite_database_integration_normalize_db_engine( DB_ENGINE )
+	|| 'postgresql' !== wp_sqlite_database_integration_normalize_db_engine( DB_ENGINE )
 ) {
 	return;
 }

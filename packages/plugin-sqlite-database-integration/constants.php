@@ -6,14 +6,14 @@
  * @package wp-sqlite-integration
  */
 
-if ( ! function_exists( 'sqlite_database_integration_normalize_db_engine' ) ) {
+if ( ! function_exists( 'wp_sqlite_database_integration_normalize_db_engine' ) ) {
 	/**
 	 * Normalizes supported database engine names.
 	 *
 	 * @param string $engine Database engine name.
 	 * @return string Canonical database engine name.
 	 */
-	function sqlite_database_integration_normalize_db_engine( $engine ) {
+	function wp_sqlite_database_integration_normalize_db_engine( $engine ) {
 		$engine = strtolower( (string) $engine );
 
 		if ( in_array( $engine, array( 'postgres', 'pgsql', 'postgresql' ), true ) ) {
@@ -30,7 +30,7 @@ if ( ! defined( 'DB_ENGINE' ) ) {
 		define( 'DB_ENGINE', 'sqlite' );
 	} elseif ( defined( 'DATABASE_ENGINE' ) ) {
 		// backwards compatibility with previous versions of the plugin.
-		define( 'DB_ENGINE', sqlite_database_integration_normalize_db_engine( DATABASE_ENGINE ) );
+		define( 'DB_ENGINE', wp_sqlite_database_integration_normalize_db_engine( DATABASE_ENGINE ) );
 	} else {
 		define( 'DB_ENGINE', 'mysql' );
 	}

@@ -29,7 +29,8 @@ if ( ! $sqlite_plugin_implementation_folder_path || ! file_exists( $sqlite_plugi
 $database_engine = defined( 'DB_ENGINE' )
 	? DB_ENGINE
 	: ( defined( 'DATABASE_ENGINE' ) ? DATABASE_ENGINE : '{DATABASE_ENGINE}' );
-if ( '{DATABASE_ENGINE}' === $database_engine ) {
+$unreplaced_database_engine = '{' . 'DATABASE_ENGINE' . '}';
+if ( $unreplaced_database_engine === $database_engine ) {
 	$database_engine = 'sqlite';
 }
 $database_engine = strtolower( (string) $database_engine );

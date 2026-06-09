@@ -6,6 +6,10 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Disable permissions for all available scopes by default.
 # Any needed permissions should be configured at the job level.
 permissions: {}
@@ -51,6 +55,7 @@ jobs:
     name: WordPress PHPUnit Tests / PostgreSQL
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    continue-on-error: true
     permissions:
       contents: read # Required to clone the repo.
 
@@ -186,6 +191,11 @@ jobs:
             }
 
             const pull = await github.rest.pulls.get( { owner, repo, pull_number } );
+            if ( pull.data.head.sha !== context.payload.pull_request.head.sha ) {
+              core.warning( 'Skipping PR body update because a newer PR head is available.' );
+              return;
+            }
+
             const body = pull.data.body || '';
             const startIndex = body.indexOf( startMarker );
             const endIndex = body.indexOf( endMarker );
