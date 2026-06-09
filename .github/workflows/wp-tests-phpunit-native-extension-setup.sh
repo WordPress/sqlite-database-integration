@@ -14,6 +14,11 @@ if [ ! -f "$COMPOSE_OVERRIDE" ]; then
 	exit 1
 fi
 
+if ! grep -Fq 'DB_ENGINE: sqlite' "$COMPOSE_OVERRIDE" || ! grep -Fq 'DATABASE_ENGINE: sqlite' "$COMPOSE_OVERRIDE"; then
+	echo "Stale $COMPOSE_OVERRIDE. Run WP_TEST_DB_BACKEND=sqlite composer run wp-setup before this helper." >&2
+	exit 1
+fi
+
 add_volume_to_service() {
 	local service="$1"
 	local volume="$2"

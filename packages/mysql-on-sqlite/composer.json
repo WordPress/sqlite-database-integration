@@ -1,6 +1,8 @@
 {
     "name": "wordpress/mysql-on-sqlite",
+    "description": "A MySQL emulation layer on top of SQLite with a PDO-compatible API.",
     "type": "library",
+    "license": "GPL-2.0-or-later",
 	"scripts": {
 		"test": "phpunit"
 	},

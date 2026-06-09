@@ -392,7 +392,17 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @return bool Whether the database feature is supported.
 	 */
 	public function has_cap( $db_cap ) {
-		return 'subqueries' === strtolower( $db_cap );
+		switch ( strtolower( $db_cap ) ) {
+			case 'collation':
+			case 'group_concat':
+			case 'subqueries':
+			case 'identifier_placeholders':
+				return true;
+			case 'set_charset':
+				return version_compare( $this->db_version(), '5.0.7', '>=' );
+		}
+
+		return false;
 	}
 
 	/**

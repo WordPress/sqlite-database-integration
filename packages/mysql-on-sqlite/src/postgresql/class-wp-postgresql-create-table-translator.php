@@ -342,10 +342,15 @@ class WP_PostgreSQL_Create_Table_Translator {
 			throw new InvalidArgumentException( 'Expected identifier node.' );
 		}
 
-		foreach ( $node->get_descendant_tokens() as $token ) {
+		$tokens = $node->get_descendant_tokens();
+		foreach ( $tokens as $token ) {
 			if ( WP_MySQL_Lexer::IDENTIFIER === $token->id || WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
 				return $token->get_value();
 			}
+		}
+
+		if ( 1 === count( $tokens ) && '' !== $tokens[0]->get_value() ) {
+			return $tokens[0]->get_value();
 		}
 
 		throw new InvalidArgumentException( 'Expected identifier token.' );

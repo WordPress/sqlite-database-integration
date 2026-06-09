@@ -52,6 +52,108 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple WordPress INSERT statements are translated to PostgreSQL.
+	 */
+	public function test_simple_wordpress_insert_with_backticks_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users (user_login TEXT NOT NULL)' );
+
+		$insert = "INSERT INTO `wptests_users` (`user_login`) VALUES ('admin')";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame( $insert, $driver->get_last_mysql_query() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( 'INSERT INTO "wptests_users" ("user_login") VALUES (\'admin\')', $queries[0]['sql'] );
+		$this->assertSame( array(), $queries[0]['params'] );
+
+		$rows = $driver->query( "SELECT user_login FROM wptests_users WHERE user_login = 'admin'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'admin', $rows[0]->user_login );
+	}
+
+	/**
+	 * Tests backticked SELECT identifiers are translated to PostgreSQL quoting.
+	 */
+	public function test_simple_select_with_backticked_identifiers_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, "post_title" TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", "post_title") VALUES (1, \'Hello\')' );
+
+		$select = 'SELECT `ID`, `post_title` FROM `wptests_posts` WHERE `ID` = 1';
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+		$this->assertSame( 'Hello', $rows[0]->post_title );
+		$this->assertSame( $select, $driver->get_last_mysql_query() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "ID", "post_title" FROM "wptests_posts" WHERE "ID" = 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests bare uppercase ID SELECT identifiers are quoted for PostgreSQL.
+	 */
+	public function test_simple_select_with_bare_uppercase_id_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, user_login TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (1, \'admin\')' );
+
+		$select = 'SELECT ID, user_login FROM wptests_users WHERE ID = 1';
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+		$this->assertSame( 'admin', $rows[0]->user_login );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "ID", user_login FROM wptests_users WHERE "ID" = 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests mixed-case comment SELECT identifiers are quoted for PostgreSQL.
+	 */
+	public function test_simple_select_with_mixed_case_comment_identifiers_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY, "comment_post_ID" INTEGER NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID") VALUES (7, 1)' );
+
+		$select = 'SELECT comment_ID FROM wptests_comments WHERE comment_post_ID = 1 ORDER BY comment_ID DESC';
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->comment_ID );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "comment_ID" FROM wptests_comments WHERE "comment_post_ID" = 1 ORDER BY "comment_ID" DESC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests successive queries reset result metadata and backend query logs.
 	 */
 	public function test_query_resets_per_query_state(): void {
@@ -122,12 +224,283 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress options upserts are translated to PostgreSQL ON CONFLICT.
+	 */
+	public function test_wordpress_options_upsert_is_translated_to_postgresql_on_conflict(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wp_options (
+				option_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL,
+				autoload TEXT NOT NULL
+			)'
+		);
+
+		$insert = "INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.org', 'yes')
+			ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
+			                        `option_value` = VALUES(`option_value`),
+			                        `autoload` = VALUES(`autoload`);";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame( $insert, $driver->get_last_mysql_query() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wp_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$update = "INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.net', 'no')
+			ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
+			                        `option_value` = VALUES(`option_value`),
+			                        `autoload` = VALUES(`autoload`);";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wp_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wp_options WHERE option_name = 'siteurl'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'http://example.net', $rows[0]->option_value );
+		$this->assertSame( 'no', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests simple WordPress UPDATE statements are translated to PostgreSQL.
+	 */
+	public function test_simple_wordpress_update_with_backticks_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wp_options (
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('key1', 'value1')" );
+
+		$update = "UPDATE `wp_options` SET `option_value` = 'value2' WHERE `option_name` = 'key1'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( $update, $driver->get_last_mysql_query() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wp_options" SET "option_value" = \'value2\' WHERE "option_name" = \'key1\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value FROM wp_options WHERE option_name = 'key1'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'value2', $rows[0]->option_value );
+	}
+
+	/**
+	 * Tests simple WordPress DELETE statements are translated to PostgreSQL.
+	 */
+	public function test_simple_wordpress_delete_with_backticks_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wp_options (
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('siteurl', 'http://example.org')" );
+		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('home', 'http://example.org')" );
+
+		$delete = "DELETE FROM `wp_options` WHERE `option_name` = 'siteurl'";
+
+		$this->assertSame( 1, $driver->query( $delete ) );
+		$this->assertSame( $delete, $driver->get_last_mysql_query() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DELETE FROM "wp_options" WHERE "option_name" = \'siteurl\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT option_name FROM wp_options ORDER BY option_name' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'home', $rows[0]->option_name );
+	}
+
+	/**
+	 * Tests bare uppercase ID in simple DELETE WHERE clauses is quoted.
+	 */
+	public function test_simple_delete_with_bare_uppercase_id_where_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, user_login TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (1, \'admin\')' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (2, \'editor\')' );
+
+		$delete = 'DELETE FROM wptests_users WHERE ID != 1';
+
+		$this->assertSame( 1, $driver->query( $delete ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DELETE FROM "wptests_users" WHERE "ID" != 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests UPDATE shapes with top-level commas still reach the backend unchanged.
+	 */
+	public function test_unsupported_update_with_comma_still_reaches_backend(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wp_options (
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL,
+				autoload TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('key1', 'value1', 'no')" );
+
+		$update = "UPDATE `wp_options` SET `option_value` = 'value2', `autoload` = 'yes' WHERE `option_name` = 'key1'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => $update,
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wp_options WHERE option_name = 'key1'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'value2', $rows[0]->option_value );
+		$this->assertSame( 'yes', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests unsupported ON DUPLICATE KEY INSERT shapes still reach PDO.
+	 */
+	public function test_unsupported_options_upsert_still_reaches_backend(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wp_options (
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL,
+				autoload TEXT NOT NULL
+			)'
+		);
+
+		$this->expectException( PDOException::class );
+
+		$driver->query(
+			"INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.org', 'yes')
+			ON DUPLICATE KEY UPDATE `option_value` = 'http://example.net'"
+		);
+	}
+
+	/**
+	 * Tests DESCRIBE for a missing table returns an empty catalog result.
+	 */
+	public function test_describe_missing_table_returns_empty_result(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( 'DESCRIBE wptests_missing' );
+
+		$this->assertSame( array(), $result );
+		$this->assertSame( 'DESCRIBE wptests_missing', $driver->get_last_mysql_query() );
+		$this->assertSame( 6, $driver->get_last_column_count() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'information_schema.columns', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'DESCRIBE', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_missing' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests DESC returns MySQL-shaped column metadata for an existing table.
+	 */
+	public function test_desc_existing_table_returns_mysql_shaped_column_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( 'DESC `wptests_options`;' );
+
+		$this->assertCount( 4, $result );
+		$this->assertSame( 'DESC `wptests_options`;', $driver->get_last_mysql_query() );
+
+		$this->assertSame( 'option_id', $result[0]->Field );
+		$this->assertSame( 'bigint', $result[0]->Type );
+		$this->assertSame( 'NO', $result[0]->Null );
+		$this->assertSame( 'PRI', $result[0]->Key );
+		$this->assertNull( $result[0]->Default );
+		$this->assertSame( 'auto_increment', $result[0]->Extra );
+
+		$this->assertSame( 'option_name', $result[1]->Field );
+		$this->assertSame( 'varchar(191)', $result[1]->Type );
+		$this->assertSame( 'NO', $result[1]->Null );
+		$this->assertSame( 'UNI', $result[1]->Key );
+		$this->assertNull( $result[1]->Default );
+		$this->assertSame( '', $result[1]->Extra );
+
+		$this->assertSame( 'option_value', $result[2]->Field );
+		$this->assertSame( 'text', $result[2]->Type );
+		$this->assertSame( '', $result[2]->Key );
+
+		$this->assertSame( 'autoload', $result[3]->Field );
+		$this->assertSame( 'varchar(20)', $result[3]->Type );
+		$this->assertSame( "'yes'::character varying", $result[3]->Default );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'information_schema.columns', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'DESC `wptests_options`', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+	}
+
+	/**
 	 * Tests MySQL-only runtime SET statements are ignored before reaching PDO.
 	 */
 	public function test_mysql_runtime_set_statements_are_noops(): void {
 		$driver = $this->create_driver();
 
 		$queries = array(
+			'SET autocommit = 0',
+			'SET autocommit = 1;',
 			'SET default_storage_engine = InnoDB',
 			'SET storage_engine = InnoDB',
 			'SET foreign_key_checks = 0',
@@ -178,5 +551,71 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver(): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Install a small information_schema fixture into the injected PDO.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_information_schema_fixture( WP_PostgreSQL_Driver $driver ): void {
+		$pdo = $driver->get_connection()->get_pdo();
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
+		$pdo->exec(
+			'CREATE TABLE information_schema.columns (
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				column_name TEXT NOT NULL,
+				ordinal_position INTEGER NOT NULL,
+				data_type TEXT NOT NULL,
+				character_maximum_length INTEGER,
+				is_nullable TEXT NOT NULL,
+				column_default TEXT,
+				is_identity TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE information_schema.table_constraints (
+				constraint_schema TEXT NOT NULL,
+				constraint_name TEXT NOT NULL,
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				constraint_type TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE information_schema.key_column_usage (
+				constraint_schema TEXT NOT NULL,
+				constraint_name TEXT NOT NULL,
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				column_name TEXT NOT NULL
+			)'
+		);
+
+		$pdo->exec(
+			"INSERT INTO information_schema.columns
+				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, is_nullable, column_default, is_identity)
+			VALUES
+				('public', 'wptests_options', 'option_id', 1, 'bigint', NULL, 'NO', NULL, 'YES'),
+				('public', 'wptests_options', 'option_name', 2, 'character varying', 191, 'NO', NULL, 'NO'),
+				('public', 'wptests_options', 'option_value', 3, 'text', NULL, 'NO', NULL, 'NO'),
+				('public', 'wptests_options', 'autoload', 4, 'character varying', 20, 'NO', '''yes''::character varying', 'NO')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.table_constraints
+				(constraint_schema, constraint_name, table_schema, table_name, constraint_type)
+			VALUES
+				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'PRIMARY KEY'),
+				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'UNIQUE')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.key_column_usage
+				(constraint_schema, constraint_name, table_schema, table_name, column_name)
+			VALUES
+				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'option_id'),
+				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'option_name')"
+		);
 	}
 }

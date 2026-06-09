@@ -265,7 +265,7 @@ function ensureWordPressTestEnvironment() {
 
 function ensurePostgreSqlWordPressTestEnvironment() {
 	execSync(
-		'cd wordpress && if [ -z "$(node tools/local-env/scripts/docker.js ps -q)" ]; then npm run env:start && npm run env:install; fi',
+		'cd wordpress && npm run env:start && npm run env:install',
 		{
 			env: {
 				...process.env,
@@ -404,6 +404,11 @@ function validateGeneratedBackendFiles() {
 		);
 		assertFileContains(
 			installScript,
+			"const { existsSync, renameSync, readFileSync, writeFileSync } = require( 'fs' );",
+			'install.js imports guarded wp-config file helpers'
+		);
+		assertFileContains(
+			installScript,
 			'--dbhost=postgres',
 			'install.js creates wp-config.php with the PostgreSQL host'
 		);
@@ -411,6 +416,21 @@ function validateGeneratedBackendFiles() {
 			installScript,
 			'--skip-check',
 			'install.js skips MySQL-style connection checks while creating PostgreSQL wp-config.php'
+		);
+		assertFileContains(
+			installScript,
+			"if ( existsSync( 'src/wp-config.php' ) ) {",
+			'install.js guards moving generated src/wp-config.php'
+		);
+		assertFileContains(
+			installScript,
+			"if ( ! existsSync( 'wp-config.php' ) ) {",
+			'install.js checks that wp-config.php was generated'
+		);
+		assertFileContains(
+			installScript,
+			'wp-config.php was not generated.',
+			'install.js reports a missing generated wp-config.php'
 		);
 		assertFileContains(
 			installScript,

@@ -30,6 +30,14 @@ case "$WP_TEST_DB_BACKEND" in
 		;;
 esac
 
+WP_SETUP_LOCK_DIR="$DIR/.wp-setup.lock"
+if ! mkdir "$WP_SETUP_LOCK_DIR" 2>/dev/null; then
+	echo 'Error: Another wp-setup.sh process is already running for this checkout.' >&2
+	echo "If no setup process is running, remove '$WP_SETUP_LOCK_DIR' and rerun this command." >&2
+	exit 1
+fi
+trap 'rmdir "$WP_SETUP_LOCK_DIR" 2>/dev/null || true' EXIT
+
 # 1. Ensure that Git is installed.
 echo "Checking if Git is installed..."
 if ! command -v git &> /dev/null; then
@@ -231,6 +239,12 @@ const fs = require( 'fs' );
 const file = process.argv[2];
 const replacements = [
 	{
+		from: "const { renameSync, readFileSync, writeFileSync } = require( 'fs' );",
+		to: [
+			"const { existsSync, renameSync, readFileSync, writeFileSync } = require( 'fs' );",
+		],
+	},
+	{
 		from: "wp_cli( 'config create --dbname=wordpress_develop --dbuser=root --dbpass=password --dbhost=mysql --path=/var/www/src --force' );",
 		to: [
 			"wp_cli( 'config create --dbname=wordpress_develop --dbuser=root --dbpass=password --dbhost=postgres --path=/var/www/src --force --skip-check' );",
@@ -242,6 +256,17 @@ const replacements = [
 		from: "\t.replace( 'localhost', 'mysql' )",
 		to: [
 			"\t.replace( 'localhost', 'postgres' )",
+		],
+	},
+	{
+		from: "renameSync( 'src/wp-config.php', 'wp-config.php' );",
+		to: [
+			"if ( existsSync( 'src/wp-config.php' ) ) {",
+			"\trenameSync( 'src/wp-config.php', 'wp-config.php' );",
+			"}",
+			"if ( ! existsSync( 'wp-config.php' ) ) {",
+			"\tthrow new Error( 'wp-config.php was not generated.' );",
+			"}",
 		],
 	},
 	{
@@ -278,9 +303,26 @@ const replacements = [
 	},
 ];
 
+const input = fs.readFileSync( file, 'utf8' ).split( '\n' );
+const containsLines = ( lines, expected ) => {
+	for ( let index = 0; index <= lines.length - expected.length; index++ ) {
+		let matches = true;
+		for ( let offset = 0; offset < expected.length; offset++ ) {
+			if ( lines[ index + offset ] !== expected[ offset ] ) {
+				matches = false;
+				break;
+			}
+		}
+		if ( matches ) {
+			return true;
+		}
+	}
+	return false;
+};
+
 const found = new Set();
 const output = [];
-for ( const line of fs.readFileSync( file, 'utf8' ).split( '\n' ) ) {
+for ( const line of input ) {
 	const replacement = replacements.find( candidate => candidate.from === line );
 	if ( replacement ) {
 		found.add( replacement.from );
@@ -291,7 +333,7 @@ for ( const line of fs.readFileSync( file, 'utf8' ).split( '\n' ) ) {
 }
 
 for ( const replacement of replacements ) {
-	if ( ! found.has( replacement.from ) ) {
+	if ( ! found.has( replacement.from ) && ! containsLines( input, replacement.to ) ) {
 		throw new Error( `Expected line not found in ${ file }: ${ replacement.from }` );
 	}
 }
