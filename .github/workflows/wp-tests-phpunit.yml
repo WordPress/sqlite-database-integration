@@ -172,6 +172,19 @@ jobs:
 
             const { owner, repo } = context.repo;
             const pull_number = context.payload.pull_request.number;
+            const headRepo = context.payload.pull_request.head.repo.full_name;
+            const baseRepo = `${ owner }/${ repo }`;
+
+            await core.summary
+              .addRaw( generated )
+              .addRaw( '\n' )
+              .write();
+
+            if ( headRepo !== baseRepo ) {
+              core.warning( 'Skipping PR body update for forked PR because pull_request GITHUB_TOKEN is read-only.' );
+              return;
+            }
+
             const pull = await github.rest.pulls.get( { owner, repo, pull_number } );
             const body = pull.data.body || '';
             const startIndex = body.indexOf( startMarker );
