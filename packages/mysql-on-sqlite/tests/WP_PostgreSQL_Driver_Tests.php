@@ -52,6 +52,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests successive queries reset result metadata and backend query logs.
+	 */
+	public function test_query_resets_per_query_state(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'SELECT 1 AS id' );
+		$this->assertSame( 1, $driver->get_last_column_count() );
+		$this->assertCount( 1, $driver->get_last_postgresql_queries() );
+
+		$result = $driver->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
+
+		$this->assertSame( $result, $driver->get_query_results() );
+		$this->assertSame( 'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)', $driver->get_last_mysql_query() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+	}
+
+	/**
 	 * Tests insert IDs are cast to integers when numeric.
 	 */
 	public function test_get_insert_id_casts_numeric_strings(): void {
@@ -75,6 +102,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$stmt = $driver->get_connection()->query( "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 't'" );
 		$this->assertFalse( $stmt->fetchColumn() );
+	}
+
+	/**
+	 * Tests the transaction alias and commit delegate to PDO.
+	 */
+	public function test_transaction_alias_and_commit_delegate_to_pdo(): void {
+		$driver = $this->create_driver();
+
+		$driver->begin_transaction();
+		$driver->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
+		$driver->query( "INSERT INTO t (value) VALUES ('first')" );
+		$driver->commit();
+
+		$rows = $driver->query( 'SELECT value FROM t' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'first', $rows[0]->value );
 	}
 
 	/**
