@@ -12,7 +12,7 @@ class WP_PostgreSQL_DB_Tests extends TestCase {
 	public function test_has_cap_matches_wordpress_db_expectations(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+	require_once getcwd() . '/bootstrap.php';
 
 class wpdb {}
 
@@ -62,6 +62,89 @@ PHP
 			),
 			$result['capabilities']
 		);
+	}
+
+	/**
+	 * Tests real wpdb identifier placeholders use PostgreSQL identifier quotes.
+	 */
+	public function test_real_wpdb_prepare_identifier_placeholders_use_postgresql_quotes(): void {
+		$wpdb_file = __DIR__ . '/../../../wordpress/src/wp-includes/class-wpdb.php';
+		if ( ! is_readable( $wpdb_file ) ) {
+			$this->markTestSkipped( 'Real WordPress wpdb class is not available.' );
+		}
+
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+	require_once getcwd() . '/bootstrap.php';
+
+	function wp_load_translations_early() {}
+	function __( $text ) {
+		return $text;
+	}
+	function _doing_it_wrong() {}
+	function has_filter() {
+		return false;
+	}
+	function add_filter() {
+		return true;
+	}
+
+	require_once getcwd() . '/../../../wordpress/src/wp-includes/class-wpdb.php';
+	require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+	class WP_PostgreSQL_DB_Prepare_Fake_Connection extends WP_PostgreSQL_Connection {
+		public function __construct() {}
+
+		public function quote( $value, int $type = PDO::PARAM_STR ): string {
+			return "'" . str_replace( "'", "''", (string) $value ) . "'";
+		}
+	}
+
+	class WP_PostgreSQL_DB_Prepare_Fake_Driver extends WP_PostgreSQL_Driver {
+		private $connection;
+
+		public function __construct() {
+			$this->connection = new WP_PostgreSQL_DB_Prepare_Fake_Connection();
+		}
+
+		public function get_connection(): WP_PostgreSQL_Connection {
+			return $this->connection;
+		}
+	}
+
+	$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+	$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+	$driver_property->setAccessible( true );
+	$driver_property->setValue( $db, new WP_PostgreSQL_DB_Prepare_Fake_Driver() );
+
+	$db->charset = 'utf8mb4';
+
+	wp_postgresql_db_test_respond(
+		array(
+			'has_identifier_cap'  => $db->has_cap( 'identifier_placeholders' ),
+			'quoted_table'        => $db->quote_identifier( 'wptests_options' ),
+			'quoted_weird'        => $db->quote_identifier( 'weird"name' ),
+			'prepared_identifier' => $db->prepare(
+				'SELECT * FROM %i WHERE %i = %s',
+				'wptests_options',
+				'option_name',
+				"Bob's"
+			),
+			'prepared_string'     => $db->prepare( 'SELECT %s', "Bob's" ),
+		)
+	);
+	PHP
+		);
+
+		$this->assertTrue( $result['has_identifier_cap'] );
+		$this->assertSame( '"wptests_options"', $result['quoted_table'] );
+		$this->assertSame( '"weird""name"', $result['quoted_weird'] );
+		$this->assertSame(
+			'SELECT * FROM "wptests_options" WHERE "option_name" = \'Bob\'\'s\'',
+			$result['prepared_identifier']
+		);
+		$this->assertSame( "SELECT 'Bob''s'", $result['prepared_string'] );
 	}
 
 	/**

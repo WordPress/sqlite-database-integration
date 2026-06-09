@@ -316,7 +316,216 @@ class WP_PostgreSQL_DB extends wpdb {
 			return parent::prepare( $query, ...$args );
 		}
 
-		return parent::prepare( $query, ...$args );
+		$identifier_prepare = $this->prepare_identifier_placeholders( $query, $args );
+		if ( null === $identifier_prepare ) {
+			return parent::prepare( $query, ...$args );
+		}
+
+		if ( $identifier_prepare['passed_as_array'] ) {
+			$prepared = parent::prepare( $identifier_prepare['query'], $identifier_prepare['args'] );
+		} else {
+			$prepared = parent::prepare( $identifier_prepare['query'], ...$identifier_prepare['args'] );
+		}
+
+		if ( ! is_string( $prepared ) ) {
+			return $prepared;
+		}
+
+		return strtr( $prepared, $identifier_prepare['identifiers'] );
+	}
+
+	/**
+	 * Rewrites common unnumbered identifier placeholders for PostgreSQL quoting.
+	 *
+	 * Core wpdb::prepare() hardcodes %i as a MySQL-backticked placeholder. This
+	 * adapter supports the common unnumbered %i form by letting core prepare all
+	 * non-identifier values, then replacing unquoted marker values with
+	 * PostgreSQL-quoted identifiers. Numbered or formatted identifier placeholders
+	 * fall back to core behavior until they can be mapped safely.
+	 *
+	 * @param string $query Query statement with placeholders.
+	 * @param array  $args  Variables to substitute.
+	 * @return array|null Rewritten prepare data, or null to use parent behavior.
+	 */
+	private function prepare_identifier_placeholders( $query, array $args ) {
+		if ( ! is_string( $query ) || false === strpos( $query, '%i' ) ) {
+			return null;
+		}
+
+		$scan = $this->rewrite_identifier_placeholder_query( $query );
+		if ( null === $scan ) {
+			return null;
+		}
+
+		$passed_as_array = isset( $args[0] ) && is_array( $args[0] ) && 1 === count( $args );
+		$prepare_args    = $passed_as_array ? $args[0] : $args;
+		$identifiers     = array();
+		static $marker_id = 0;
+
+		foreach ( $scan['identifier_arg_indexes'] as $index => $arg_index ) {
+			if ( ! array_key_exists( $arg_index, $prepare_args ) ) {
+				continue;
+			}
+
+			++$marker_id;
+			$marker                      = '__wp_pg_identifier_' . spl_object_hash( $this ) . '_' . $marker_id . '_' . $index . '__';
+			$identifiers[ $marker ]      = $this->quote_identifier( $prepare_args[ $arg_index ] );
+			$prepare_args[ $arg_index ]  = $marker;
+		}
+
+		return array(
+			'query'           => $scan['query'],
+			'args'            => $prepare_args,
+			'identifiers'     => $identifiers,
+			'passed_as_array' => $passed_as_array,
+		);
+	}
+
+	/**
+	 * Scans a prepare query and rewrites supported identifier placeholders.
+	 *
+	 * @param string $query Query statement with placeholders.
+	 * @return array|null Rewritten query data, or null when unsupported.
+	 */
+	private function rewrite_identifier_placeholder_query( string $query ) {
+		$length                 = strlen( $query );
+		$position               = 0;
+		$copy_from              = 0;
+		$placeholder_index      = 0;
+		$rewritten              = '';
+		$has_identifier         = false;
+		$has_numbered          = false;
+		$has_escaped_candidate = false;
+		$identifier_arg_indexes = array();
+
+		while ( $position < $length ) {
+			if ( '%' !== $query[ $position ] ) {
+				++$position;
+				continue;
+			}
+
+			$run_start = $position;
+			while ( $position < $length && '%' === $query[ $position ] ) {
+				++$position;
+			}
+
+			$run_length = $position - $run_start;
+			if ( 0 === $run_length % 2 ) {
+				continue;
+			}
+
+			$placeholder_start = $position - 1;
+			$placeholder       = $this->read_prepare_placeholder( $query, $position );
+			if ( null === $placeholder ) {
+				continue;
+			}
+
+			if ( 1 < $run_length ) {
+				$has_escaped_candidate = true;
+			}
+			if ( $placeholder['numbered'] ) {
+				$has_numbered = true;
+			}
+
+			if ( 'i' === $placeholder['type'] ) {
+				if ( '' !== $placeholder['format'] || 1 < $run_length ) {
+					return null;
+				}
+
+				$has_identifier           = true;
+				$identifier_arg_indexes[] = $placeholder_index;
+				$rewritten               .= substr( $query, $copy_from, $placeholder_start - $copy_from ) . '%0s';
+				$copy_from                = $placeholder['end'];
+			}
+
+			$position = $placeholder['end'];
+			++$placeholder_index;
+		}
+
+		if ( ! $has_identifier || $has_numbered || $has_escaped_candidate ) {
+			return null;
+		}
+
+		return array(
+			'query'                  => $rewritten . substr( $query, $copy_from ),
+			'identifier_arg_indexes' => $identifier_arg_indexes,
+		);
+	}
+
+	/**
+	 * Reads a wpdb::prepare() placeholder after the opening percent sign.
+	 *
+	 * @param string $query  Query statement with placeholders.
+	 * @param int    $offset Offset immediately after the opening percent sign.
+	 * @return array|null Placeholder metadata, or null when no placeholder matches.
+	 */
+	private function read_prepare_placeholder( string $query, int $offset ) {
+		$length       = strlen( $query );
+		$format_start = $offset;
+		$position     = $offset;
+		$numbered     = false;
+
+		if ( $position < $length && '1' <= $query[ $position ] && '9' >= $query[ $position ] ) {
+			$digits_start = $position;
+			while ( $position < $length && ctype_digit( $query[ $position ] ) ) {
+				++$position;
+			}
+
+			if ( $position < $length && '$' === $query[ $position ] ) {
+				$numbered = true;
+				++$position;
+			} else {
+				$position = $digits_start;
+			}
+		}
+
+		while ( $position < $length && $this->is_prepare_format_flag( $query[ $position ] ) ) {
+			++$position;
+		}
+
+		if ( $position < $length ) {
+			if ( ' ' === $query[ $position ] ) {
+				++$position;
+			} elseif ( "'" === $query[ $position ] && $position + 1 < $length ) {
+				$position += 2;
+			}
+		}
+
+		while ( $position < $length && $this->is_prepare_format_flag( $query[ $position ] ) ) {
+			++$position;
+		}
+
+		if ( $position < $length && '.' === $query[ $position ] ) {
+			++$position;
+			if ( $position >= $length || ! ctype_digit( $query[ $position ] ) ) {
+				return null;
+			}
+
+			while ( $position < $length && ctype_digit( $query[ $position ] ) ) {
+				++$position;
+			}
+		}
+
+		if ( $position >= $length || false === strpos( 'sdfFi', $query[ $position ] ) ) {
+			return null;
+		}
+
+		return array(
+			'format'   => substr( $query, $format_start, $position - $format_start ),
+			'type'     => $query[ $position ],
+			'end'      => $position + 1,
+			'numbered' => $numbered,
+		);
+	}
+
+	/**
+	 * Checks whether a character is allowed in a wpdb prepare format segment.
+	 *
+	 * @param string $char Character to inspect.
+	 * @return bool Whether the character is a format flag, sign, or width digit.
+	 */
+	private function is_prepare_format_flag( string $char ): bool {
+		return ctype_digit( $char ) || '-' === $char || '+' === $char;
 	}
 
 	/**
