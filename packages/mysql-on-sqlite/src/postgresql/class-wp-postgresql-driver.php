@@ -687,8 +687,10 @@ ORDER BY c.ordinal_position';
 	 * Translate simple single-row MySQL INSERT statements to PostgreSQL.
 	 *
 	 * WordPress CRUD helpers emit a narrow INSERT INTO table (columns) VALUES
-	 * (...) shape. MySQL-specific modifiers, INSERT ... SELECT/SET, missing
-	 * column lists, multi-row values, and trailing clauses fall through unchanged.
+	 * (...) shape. INSERT IGNORE uses PostgreSQL's conflict no-op syntax for
+	 * the same simple VALUES shape. Other MySQL-specific modifiers,
+	 * INSERT ... SELECT/SET, missing column lists, multi-row values, and
+	 * trailing clauses fall through unchanged.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -700,6 +702,12 @@ ORDER BY c.ordinal_position';
 		}
 
 		$position = 1;
+		$ignore   = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
+			$ignore = true;
+			++$position;
+		}
+
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::INTO_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
@@ -733,12 +741,14 @@ ORDER BY c.ordinal_position';
 			return null;
 		}
 
-		return sprintf(
+		$sql = sprintf(
 			'INSERT INTO %s (%s) %s',
 			$this->connection->quote_identifier( $table_name ),
 			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $values_start, $values_end )
 		);
+
+		return $ignore ? $sql . ' ON CONFLICT DO NOTHING' : $sql;
 	}
 
 	/**
