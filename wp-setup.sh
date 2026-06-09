@@ -177,7 +177,7 @@ const replacements = [
 	{
 		from: "wp_cli( 'config create --dbname=wordpress_develop --dbuser=root --dbpass=password --dbhost=mysql --path=/var/www/src --force' );",
 		to: [
-			"wp_cli( 'config create --dbname=wordpress_develop --dbuser=root --dbpass=password --dbhost=postgres --path=/var/www/src --force' );",
+			"wp_cli( 'config create --dbname=wordpress_develop --dbuser=root --dbpass=password --dbhost=postgres --path=/var/www/src --force --skip-check' );",
 			"wp_cli( 'config set DB_ENGINE postgresql --type=constant' );",
 			"wp_cli( 'config set DATABASE_ENGINE postgresql --type=constant' );",
 		],

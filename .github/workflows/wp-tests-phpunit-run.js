@@ -293,6 +293,11 @@ function validateGeneratedBackendFiles() {
 		);
 		assertFileContains(
 			installScript,
+			'--skip-check',
+			'install.js skips MySQL-style connection checks while creating PostgreSQL wp-config.php'
+		);
+		assertFileContains(
+			installScript,
 			"config set DB_ENGINE postgresql",
 			'install.js writes DB_ENGINE=postgresql'
 		);
