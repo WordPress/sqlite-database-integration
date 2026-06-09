@@ -144,6 +144,17 @@ class WP_PostgreSQL_Driver {
 		$this->reset_query_state();
 		$this->last_mysql_query = $query;
 
+		if ( $this->is_noop_mysql_runtime_setting( $query ) ) {
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
+		if ( $this->is_create_table_query( $query ) ) {
+			return $this->execute_postgresql_statements(
+				( new WP_PostgreSQL_Create_Table_Translator() )->translate_schema( $query )
+			);
+		}
+
 		$stmt                            = $this->connection->query( $query );
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $query,
@@ -158,6 +169,26 @@ class WP_PostgreSQL_Driver {
 			$this->last_result      = $stmt->rowCount();
 		}
 
+		return $this->last_result;
+	}
+
+	/**
+	 * Execute translated PostgreSQL statements for a single MySQL-facing query.
+	 *
+	 * @param string[] $statements PostgreSQL SQL statements to execute.
+	 * @return mixed Return value from the last executed statement.
+	 */
+	private function execute_postgresql_statements( array $statements ) {
+		foreach ( $statements as $statement ) {
+			$stmt                            = $this->connection->query( $statement );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $statement,
+				'params' => array(),
+			);
+			$this->last_result               = $stmt->rowCount();
+		}
+
+		$this->last_column_meta = array();
 		return $this->last_result;
 	}
 
@@ -235,6 +266,135 @@ class WP_PostgreSQL_Driver {
 		$this->last_column_meta        = array();
 		$this->last_mysql_query        = null;
 		$this->last_postgresql_queries = array();
+	}
+
+	/**
+	 * Check whether a query is a supported MySQL CREATE TABLE statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query should be translated before execution.
+	 */
+	private function is_create_table_query( string $query ): bool {
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		return isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id
+			&& $this->has_mysql_create_table_marker( $tokens );
+	}
+
+	/**
+	 * Check whether a CREATE TABLE query contains MySQL install-schema syntax.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the query should use the install DDL translator.
+	 */
+	private function has_mysql_create_table_marker( array $tokens ): bool {
+		foreach ( $tokens as $token ) {
+			if (
+				in_array(
+					$token->id,
+					array(
+						WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
+						WP_MySQL_Lexer::CHARSET_SYMBOL,
+						WP_MySQL_Lexer::UNSIGNED_SYMBOL,
+					),
+					true
+				)
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a MySQL runtime setting is intentionally ignored.
+	 *
+	 * WordPress PHPUnit bootstrap emits MySQL-only SET statements before schema
+	 * installation. PostgreSQL has no equivalent state for these settings, so they
+	 * should not be sent to PDO. Keep this intentionally narrow so unsupported SET
+	 * statements still fail visibly.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query should be treated as a successful no-op.
+	 */
+	private function is_noop_mysql_runtime_setting( string $query ): bool {
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$position = 1;
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::GLOBAL_SYMBOL,
+					WP_MySQL_Lexer::LOCAL_SYMBOL,
+					WP_MySQL_Lexer::SESSION_SYMBOL,
+				),
+				true
+			)
+		) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::IDENTIFIER !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		$variable = strtolower( $tokens[ $position ]->get_value() );
+		if (
+			! in_array(
+				$variable,
+				array(
+					'default_storage_engine',
+					'foreign_key_checks',
+					'sql_mode',
+					'storage_engine',
+				),
+				true
+			)
+		) {
+			return false;
+		}
+
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		$has_value = false;
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
+			if ( WP_MySQL_Lexer::SEMICOLON_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				break;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				return false;
+			}
+
+			$has_value = true;
+			++$position;
+		}
+
+		return $has_value && isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF === $tokens[ $position ]->id;
 	}
 
 	/**

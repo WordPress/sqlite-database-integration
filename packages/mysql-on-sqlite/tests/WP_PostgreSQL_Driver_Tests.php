@@ -122,6 +122,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL-only runtime SET statements are ignored before reaching PDO.
+	 */
+	public function test_mysql_runtime_set_statements_are_noops(): void {
+		$driver = $this->create_driver();
+
+		$queries = array(
+			'SET default_storage_engine = InnoDB',
+			'SET storage_engine = InnoDB',
+			'SET foreign_key_checks = 0',
+			'SET foreign_key_checks = 1',
+			"SET SESSION sql_mode = ''",
+			"SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver->query( 'SELECT 1 AS previous_value' );
+
+			$this->assertSame( 0, $driver->query( $query ) );
+			$this->assertSame( $query, $driver->get_last_mysql_query() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+			$this->assertSame( array(), $driver->get_last_column_meta() );
+			$this->assertSame( 0, $driver->get_last_column_count() );
+			$this->assertSame( 0, $driver->get_last_return_value() );
+		}
+	}
+
+	/**
+	 * Tests unsupported SET statements are still sent to PDO.
+	 */
+	public function test_unsupported_set_statement_still_reaches_backend(): void {
+		$driver = $this->create_driver();
+
+		$this->expectException( PDOException::class );
+
+		$driver->query( 'SET unsupported_setting = 1' );
+	}
+
+	/**
+	 * Tests multi-assignment SET statements are not silently ignored.
+	 */
+	public function test_multi_assignment_set_statement_still_reaches_backend(): void {
+		$driver = $this->create_driver();
+
+		$this->expectException( PDOException::class );
+
+		$driver->query( 'SET foreign_key_checks = 0, unsupported_setting = 1' );
+	}
+
+	/**
 	 * Creates a PostgreSQL driver backed by an injected in-memory PDO.
 	 *
 	 * @return WP_PostgreSQL_Driver
