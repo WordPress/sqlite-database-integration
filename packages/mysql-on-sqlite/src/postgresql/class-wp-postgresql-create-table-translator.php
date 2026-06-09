@@ -218,6 +218,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$postgresql_type = $length ? sprintf( '%s(%d)', $type, $length ) : $type;
 		} elseif ( in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'datetime', 'timestamp', 'date', 'time', 'year' ), true ) ) {
 			$postgresql_type = 'text';
+		} elseif ( in_array( $type, array( 'tinyblob', 'blob', 'mediumblob', 'longblob' ), true ) ) {
+			$postgresql_type = 'bytea';
 		} else {
 			throw new InvalidArgumentException( sprintf( 'Unsupported MySQL column type for PostgreSQL install DDL: %s.', $type ) );
 		}

@@ -831,7 +831,7 @@ ORDER BY c.ordinal_position';
 		}
 
 		if ( null !== $limit_position ) {
-			$sql .= ' LIMIT ' . $tokens[ $limit_position + 1 ]->get_bytes();
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
 
 		return $sql;
@@ -1192,23 +1192,55 @@ ORDER BY c.ordinal_position';
 	 */
 	private function is_supported_simple_select_limit_clause( array $tokens, int $start, int $end ): bool {
 		if (
-			$start + 2 !== $end
-			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
 			|| WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $start ]->id
-			|| ! in_array(
-				$tokens[ $start + 1 ]->id,
-				array(
-					WP_MySQL_Lexer::INT_NUMBER,
-					WP_MySQL_Lexer::LONG_NUMBER,
-					WP_MySQL_Lexer::ULONGLONG_NUMBER,
-				),
-				true
-			)
 		) {
 			return false;
 		}
 
-		return ctype_digit( $tokens[ $start + 1 ]->get_value() );
+		if ( $start + 2 === $end ) {
+			return $this->is_supported_simple_select_limit_number( $tokens[ $start + 1 ] );
+		}
+
+		return $start + 4 === $end
+			&& isset( $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
+			&& WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $start + 2 ]->id
+			&& $this->is_supported_simple_select_limit_number( $tokens[ $start + 1 ] )
+			&& $this->is_supported_simple_select_limit_number( $tokens[ $start + 3 ] );
+	}
+
+	/**
+	 * Validate a LIMIT number token.
+	 *
+	 * @param WP_MySQL_Token $token MySQL lexer token.
+	 * @return bool Whether the token is a supported non-negative integer.
+	 */
+	private function is_supported_simple_select_limit_number( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::INT_NUMBER,
+				WP_MySQL_Lexer::LONG_NUMBER,
+				WP_MySQL_Lexer::ULONGLONG_NUMBER,
+			),
+			true
+		) && ctype_digit( $token->get_value() );
+	}
+
+	/**
+	 * Translate a supported trailing SELECT LIMIT clause to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  LIMIT token position.
+	 * @param int             $end    Final clause token position, exclusive.
+	 * @return string PostgreSQL LIMIT clause.
+	 */
+	private function translate_simple_select_limit_clause_to_postgresql( array $tokens, int $start, int $end ): string {
+		if ( $start + 4 === $end ) {
+			return ' LIMIT ' . $tokens[ $start + 3 ]->get_bytes() . ' OFFSET ' . $tokens[ $start + 1 ]->get_bytes();
+		}
+
+		return ' LIMIT ' . $tokens[ $start + 1 ]->get_bytes();
 	}
 
 	/**

@@ -204,6 +204,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL offset,count LIMIT syntax is translated to PostgreSQL.
+	 */
+	public function test_simple_select_with_mysql_offset_count_limit_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY, "comment_post_ID" INTEGER NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID") VALUES (7, 1)' );
+
+		$select = 'SELECT comment_ID FROM wptests_comments WHERE comment_post_ID = 1 ORDER BY comment_ID ASC LIMIT 0,500';
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->comment_ID );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "comment_ID" FROM wptests_comments WHERE "comment_post_ID" = 1 ORDER BY "comment_ID" ASC LIMIT 500 OFFSET 0',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests successive queries reset result metadata and backend query logs.
 	 */
 	public function test_query_resets_per_query_state(): void {

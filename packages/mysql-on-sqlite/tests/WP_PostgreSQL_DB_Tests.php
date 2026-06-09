@@ -213,11 +213,13 @@ $db->dbpassword = 'wptests_password';
 $db->dbname     = 'wptests';
 $db->dbhost     = 'localhost';
 
-$connect_result = $db->db_connect( false );
+$connect_result      = $db->db_connect( false );
+$ready_after_connect = $db->ready;
 
 $driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
 $driver_property->setAccessible( true );
-$driver          = $driver_property->getValue( $db );
+$driver                 = $driver_property->getValue( $db );
+$driver_uses_global_pdo = $driver->get_connection()->get_pdo() === $pdo;
 
 $select_other_result   = $db->select( 'other', $driver );
 $ready_after_other     = $db->ready;
@@ -232,12 +234,12 @@ $second_close_result   = $db->close();
 wp_postgresql_db_test_respond(
 	array(
 		'connect_result'        => $connect_result,
-		'ready_after_connect'   => $select_current_result && $ready_after_current,
+		'ready_after_connect'   => $ready_after_connect,
 		'is_mysql'              => $db->is_mysql,
 		'last_error'            => $db->last_error,
 		'charset'               => $db->charset,
 		'bail_calls'            => $db->bail_calls,
-		'reused_global_pdo'     => $pdo === $GLOBALS['@pdo'],
+		'driver_uses_global_pdo' => $driver_uses_global_pdo,
 		'server_info'           => $server_info,
 		'select_other_result'   => $select_other_result,
 		'ready_after_other'     => $ready_after_other,
@@ -260,7 +262,7 @@ PHP
 				'last_error'            => '',
 				'charset'               => 'utf8mb4',
 				'bail_calls'            => array(),
-				'reused_global_pdo'     => true,
+				'driver_uses_global_pdo' => true,
 				'server_info'           => 'PostgreSQL 16 test',
 				'select_other_result'   => false,
 				'ready_after_other'     => false,
