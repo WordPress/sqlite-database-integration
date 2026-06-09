@@ -246,11 +246,6 @@ class WP_PostgreSQL_DB extends wpdb {
 			return parent::prepare( $query, ...$args );
 		}
 
-		$prepared = $this->prepare_postgresql_identifiers( (string) $query, $args );
-		if ( $prepared['changed'] ) {
-			return parent::prepare( $prepared['query'], $prepared['args'] );
-		}
-
 		return parent::prepare( $query, ...$args );
 	}
 
@@ -327,7 +322,7 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @return bool Whether the database feature is supported.
 	 */
 	public function has_cap( $db_cap ) {
-		return in_array( strtolower( $db_cap ), array( 'identifier_placeholders', 'subqueries' ), true );
+		return 'subqueries' === strtolower( $db_cap );
 	}
 
 	/**
@@ -489,95 +484,6 @@ class WP_PostgreSQL_DB extends wpdb {
 		} catch ( Throwable $e ) {
 			return false;
 		}
-	}
-
-	/**
-	 * Rewrites %i placeholders into PostgreSQL-quoted identifier strings.
-	 *
-	 * @param string $query Query statement with placeholders.
-	 * @param array  $args  Placeholder arguments.
-	 * @return array
-	 */
-	private function prepare_postgresql_identifiers( $query, array $args ) {
-		$passed_as_array = isset( $args[0] ) && is_array( $args[0] ) && 1 === count( $args );
-		if ( $passed_as_array ) {
-			$args = $args[0];
-		}
-
-		$length            = strlen( $query );
-		$output            = '';
-		$placeholder_index = 0;
-		$changed           = false;
-
-		for ( $i = 0; $i < $length; $i++ ) {
-			if ( '%' !== $query[ $i ] ) {
-				$output .= $query[ $i ];
-				continue;
-			}
-
-			if ( $i + 1 < $length && '%' === $query[ $i + 1 ] ) {
-				$output .= '%%';
-				++$i;
-				continue;
-			}
-
-			$placeholder = $this->parse_prepare_placeholder_at( $query, $i );
-			if ( ! $placeholder ) {
-				$output .= '%';
-				continue;
-			}
-
-			if ( 'i' === $placeholder['type'] ) {
-				$arg_index = null !== $placeholder['arg_index'] ? $placeholder['arg_index'] : $placeholder_index;
-				if ( array_key_exists( $arg_index, $args ) ) {
-					$args[ $arg_index ] = $this->quote_identifier( $args[ $arg_index ] );
-				}
-				$format  = '' === $placeholder['format'] ? '+' : $placeholder['format'];
-				$output .= '%' . $format . 's';
-				$changed = true;
-			} else {
-				$output .= substr( $query, $i, $placeholder['length'] );
-			}
-
-			$i += $placeholder['length'] - 1;
-			++$placeholder_index;
-		}
-
-		return array(
-			'query'   => $output,
-			'args'    => $args,
-			'changed' => $changed,
-		);
-	}
-
-	/**
-	 * Parses one wpdb::prepare() placeholder at the given string offset.
-	 *
-	 * @param string $query  Query statement.
-	 * @param int    $offset Offset of the percent sign.
-	 * @return array|null Placeholder information, or null if invalid.
-	 */
-	private function parse_prepare_placeholder_at( $query, $offset ) {
-		$allowed_format = '(?:[1-9][0-9]*[$])?[-+0-9]*(?: |0|\'.)?[-+0-9]*(?:\.[0-9]+)?';
-		$segment        = substr( $query, $offset );
-
-		if ( ! preg_match( '/^%(' . $allowed_format . ')([sdfFi])/', $segment, $matches ) ) {
-			return null;
-		}
-
-		$format    = $matches[1];
-		$arg_index = null;
-		$dollar    = strpos( $format, '$' );
-		if ( false !== $dollar ) {
-			$arg_index = ( (int) substr( $format, 0, $dollar ) ) - 1;
-		}
-
-		return array(
-			'type'      => $matches[2],
-			'length'    => strlen( $matches[0] ),
-			'arg_index' => $arg_index,
-			'format'    => $format,
-		);
 	}
 
 	/**

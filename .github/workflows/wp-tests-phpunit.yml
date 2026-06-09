@@ -104,8 +104,14 @@ jobs:
       - name: Download PHPUnit count artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: wp-phpunit-*
           path: wp-phpunit-artifacts
+          pattern: wp-phpunit-sqlite
+
+      - name: Download PostgreSQL PHPUnit count artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: wp-phpunit-artifacts
+          pattern: wp-phpunit-postgresql
 
       - name: Update PR description
         uses: actions/github-script@v7

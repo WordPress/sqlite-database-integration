@@ -121,6 +121,9 @@ try {
 	if ( requiresNativeParserExtension ) {
 		verifyNativeParserExtension();
 	}
+	if ( 'postgresql' === backend ) {
+		verifyPostgreSqlPhpExtension();
+	}
 
 	try {
 		execSync(
@@ -219,6 +222,20 @@ function verifyNativeParserExtension() {
 	);
 }
 
+function verifyPostgreSqlPhpExtension() {
+	verifyContainerPhpExtension( 'php', 'pdo_pgsql' );
+	verifyContainerPhpExtension( 'cli', 'pdo_pgsql' );
+}
+
+function verifyContainerPhpExtension( service, extensionName ) {
+	const phpCode = `if ( ! extension_loaded( '${ extensionName }' ) ) { fwrite( STDERR, '${ extensionName } is missing in the ${ service } container.\\n' ); exit( 1 ); }`;
+	const runArgs = 'cli' === service ? '--rm --entrypoint php cli' : '--rm php php';
+	execSync(
+		`cd wordpress && node tools/local-env/scripts/docker.js run ${ runArgs } -r "${ phpCode }"`,
+		{ stdio: 'inherit' }
+	);
+}
+
 function ensureWordPressTestEnvironment() {
 	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
 }
@@ -261,6 +278,30 @@ function validateGeneratedBackendFiles() {
 		`DATABASE_ENGINE: ${ backend }`,
 		`docker-compose.override.yml sets DATABASE_ENGINE=${ backend }`
 	);
+
+	if ( 'postgresql' === backend ) {
+		const installScript = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'scripts', 'install.js' );
+		assertFileContains(
+			composeOverride,
+			'postgres:',
+			'docker-compose.override.yml defines a PostgreSQL service'
+		);
+		assertFileContains(
+			installScript,
+			'--dbhost=postgres',
+			'install.js creates wp-config.php with the PostgreSQL host'
+		);
+		assertFileContains(
+			installScript,
+			"config set DB_ENGINE postgresql",
+			'install.js writes DB_ENGINE=postgresql'
+		);
+		assertFileContains(
+			installScript,
+			"define( 'DATABASE_ENGINE', 'postgresql' );",
+			'install.js writes DATABASE_ENGINE=postgresql to wp-tests-config.php'
+		);
+	}
 }
 
 function assertFileContains( file, expected, description ) {

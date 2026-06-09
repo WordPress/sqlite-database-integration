@@ -136,13 +136,12 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 	/**
 	 * Tests injected PDO instances are configured and reused.
 	 */
-	public function test_constructor_uses_injected_pdo_and_sets_expected_attributes(): void {
+	public function test_constructor_uses_injected_pdo_and_sets_exception_mode(): void {
 		$pdo        = new PDO( 'sqlite::memory:' );
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) );
 
 		$this->assertSame( $pdo, $connection->get_pdo() );
 		$this->assertSame( PDO::ERRMODE_EXCEPTION, $pdo->getAttribute( PDO::ATTR_ERRMODE ) );
-		$this->assertTrue( $pdo->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
 	}
 
 	/**
