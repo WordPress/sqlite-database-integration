@@ -237,7 +237,26 @@ function verifyContainerPhpExtension( service, extensionName ) {
 }
 
 function ensureWordPressTestEnvironment() {
+	if ( 'postgresql' === backend ) {
+		ensurePostgreSqlWordPressTestEnvironment();
+		return;
+	}
+
 	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
+}
+
+function ensurePostgreSqlWordPressTestEnvironment() {
+	execSync( 'if [ ! -f wordpress/src/wp-load.php ]; then composer run wp-setup; fi', { stdio: 'inherit' } );
+	execSync(
+		'cd wordpress && if [ -z "$(node tools/local-env/scripts/docker.js ps -q)" ]; then npm run env:start && npm run env:install; fi',
+		{
+			env: {
+				...process.env,
+				COMPOSE_IGNORE_ORPHANS: 'true',
+			},
+			stdio: 'inherit',
+		}
+	);
 }
 
 function validateGeneratedBackendFiles() {
