@@ -196,6 +196,24 @@ const replacements = [
 			"\t.concat( \"define( 'FS_METHOD', 'direct' );\\n\" );",
 		],
 	},
+	{
+		from: "\t\twp_cli( 'db reset --yes' );",
+		to: [
+			"\t\t// PostgreSQL databases are created by the compose init SQL.",
+		],
+	},
+	{
+		from: "\t\tconst installCommand = process.env.LOCAL_MULTISITE === 'true'  ? 'multisite-install' : 'install';",
+		to: [
+			"\t\t// Skip WP-CLI site installation; the PHPUnit bootstrap owns the test schema.",
+		],
+	},
+	{
+		from: "\t\twp_cli( `core ${ installCommand } --title=\"WordPress Develop\" --admin_user=admin --admin_password=password --admin_email=test@test.com --skip-email --url=http://localhost:${process.env.LOCAL_PORT}` );",
+		to: [
+			"\t\t// The PostgreSQL scaffold cannot use WP-CLI's MySQL-backed install commands.",
+		],
+	},
 ];
 
 const found = new Set();

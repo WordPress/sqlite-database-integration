@@ -306,6 +306,16 @@ function validateGeneratedBackendFiles() {
 			"define( 'DATABASE_ENGINE', 'postgresql' );",
 			'install.js writes DATABASE_ENGINE=postgresql to wp-tests-config.php'
 		);
+		assertFileDoesNotContain(
+			installScript,
+			"wp_cli( 'db reset --yes' );",
+			'install.js does not call the MySQL-backed db reset command for PostgreSQL'
+		);
+		assertFileDoesNotContain(
+			installScript,
+			`core \${ installCommand }`,
+			'install.js does not call the MySQL-backed core install command for PostgreSQL'
+		);
 	}
 }
 
