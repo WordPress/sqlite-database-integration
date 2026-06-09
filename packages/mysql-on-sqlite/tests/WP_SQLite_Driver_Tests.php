@@ -4241,7 +4241,7 @@ QUERY
 			'CREATE TABLE _tmp_table (
               ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
               name varchar(20)
-       	    )'
+            )'
 		);
 
 		// Insert data into the table
