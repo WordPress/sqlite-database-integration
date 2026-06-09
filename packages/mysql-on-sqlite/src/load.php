@@ -43,3 +43,4 @@ require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-reconstructor
 require_once __DIR__ . '/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
 require_once __DIR__ . '/sqlite/class-wp-pdo-mysql-on-sqlite.php';
 require_once __DIR__ . '/sqlite/class-wp-pdo-proxy-statement.php';
+require_once __DIR__ . '/postgresql/class-wp-postgresql-connection.php';

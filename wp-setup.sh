@@ -98,7 +98,7 @@ if [ "$WP_TEST_DB_BACKEND" = "sqlite" ]; then
 elif [ "$WP_TEST_DB_BACKEND" = "postgresql" ]; then
 	# 5. Rewrite helper class WpdbExposedMethodsForTesting to extend WP_PostgreSQL_DB.
 	echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_PostgreSQL_DB..."
-	sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExposedMethodsForTesting extends WP_PostgreSQL_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
+	sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#require_once ABSPATH . 'wp-content/plugins/sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';\nclass WpdbExposedMethodsForTesting extends WP_PostgreSQL_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
 fi
 
 # 6. Install dependencies.
