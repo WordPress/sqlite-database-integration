@@ -223,15 +223,32 @@ function verifyNativeParserExtension() {
 }
 
 function verifyPostgreSqlPhpExtension() {
-	verifyContainerPhpExtension( 'php', 'pdo_pgsql' );
-	verifyContainerPhpExtension( 'cli', 'pdo_pgsql' );
+	const verifier = writePostgreSqlPhpExtensionVerifier();
+	verifyContainerPhpExtension( 'php', verifier );
+	verifyContainerPhpExtension( 'cli', verifier );
 }
 
-function verifyContainerPhpExtension( service, extensionName ) {
-	const phpCode = `if ( ! extension_loaded( '${ extensionName }' ) ) { fwrite( STDERR, '${ extensionName } is missing in the ${ service } container.\\n' ); exit( 1 ); }`;
+function writePostgreSqlPhpExtensionVerifier() {
+	const verifier = path.join( repositoryRoot, 'wordpress', 'postgresql-verify-extension.php' );
+	fs.writeFileSync(
+		verifier,
+		`<?php
+$extension = 'pdo_pgsql';
+if ( ! extension_loaded( $extension ) ) {
+\tfwrite( STDERR, $extension . " is missing in this container.\\n" );
+\texit( 1 );
+}
+echo $extension . " is loaded.\\n";
+`
+	);
+	return verifier;
+}
+
+function verifyContainerPhpExtension( service, verifier ) {
 	const runArgs = 'cli' === service ? '--rm --entrypoint php cli' : '--rm php php';
+	const containerPath = `/var/www/${ path.basename( verifier ) }`;
 	execSync(
-		`cd wordpress && node tools/local-env/scripts/docker.js run ${ runArgs } -r "${ phpCode }"`,
+		`cd wordpress && node tools/local-env/scripts/docker.js run ${ runArgs } ${ containerPath }`,
 		{ stdio: 'inherit' }
 	);
 }
