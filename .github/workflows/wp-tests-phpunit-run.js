@@ -115,6 +115,7 @@ console.log( 'Expected errors:', expectedByBackend[ backend ].errors );
 console.log( 'Expected failures:', expectedByBackend[ backend ].failures );
 
 try {
+	ensureGeneratedBackendFiles();
 	ensureWordPressTestEnvironment();
 	validateGeneratedBackendFiles();
 
@@ -263,7 +264,6 @@ function ensureWordPressTestEnvironment() {
 }
 
 function ensurePostgreSqlWordPressTestEnvironment() {
-	execSync( 'if [ ! -f wordpress/src/wp-load.php ]; then composer run wp-setup; fi', { stdio: 'inherit' } );
 	execSync(
 		'cd wordpress && if [ -z "$(node tools/local-env/scripts/docker.js ps -q)" ]; then npm run env:start && npm run env:install; fi',
 		{
@@ -274,6 +274,37 @@ function ensurePostgreSqlWordPressTestEnvironment() {
 			stdio: 'inherit',
 		}
 	);
+}
+
+function ensureGeneratedBackendFiles() {
+	if ( 'mysql' === backend ) {
+		return;
+	}
+
+	const wpLoad = path.join( repositoryRoot, 'wordpress', 'src', 'wp-load.php' );
+	if ( ! fs.existsSync( wpLoad ) ) {
+		runWordPressSetup();
+		validateGeneratedBackendFiles();
+		return;
+	}
+
+	try {
+		validateGeneratedBackendFiles();
+	} catch ( error ) {
+		console.error( `Generated WordPress checkout is stale for ${ backend }: ${ error.message }` );
+		runWordPressSetup();
+		validateGeneratedBackendFiles();
+	}
+}
+
+function runWordPressSetup() {
+	execSync( 'composer run wp-setup', {
+		env: {
+			...process.env,
+			WP_TEST_DB_BACKEND: backend,
+		},
+		stdio: 'inherit',
+	} );
 }
 
 function validateGeneratedBackendFiles() {
