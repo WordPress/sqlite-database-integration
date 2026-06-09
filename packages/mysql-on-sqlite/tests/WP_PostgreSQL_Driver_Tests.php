@@ -449,9 +449,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests UPDATE shapes with top-level commas still reach the backend unchanged.
+	 * Tests multi-assignment WordPress UPDATE statements are translated to PostgreSQL.
 	 */
-	public function test_unsupported_update_with_comma_still_reaches_backend(): void {
+	public function test_multi_assignment_wordpress_update_with_backticks_is_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
 		$driver->query(
@@ -469,7 +469,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => $update,
+					'sql'    => 'UPDATE "wp_options" SET "option_value" = \'value2\', "autoload" = \'yes\' WHERE "option_name" = \'key1\'',
 					'params' => array(),
 				),
 			),

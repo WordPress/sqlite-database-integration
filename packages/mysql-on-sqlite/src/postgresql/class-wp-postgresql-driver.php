@@ -791,7 +791,6 @@ ORDER BY c.ordinal_position';
 		}
 
 		$unsupported_tokens = array(
-			WP_MySQL_Lexer::COMMA_SYMBOL,
 			WP_MySQL_Lexer::JOIN_SYMBOL,
 			WP_MySQL_Lexer::LIMIT_SYMBOL,
 			WP_MySQL_Lexer::ORDER_SYMBOL,
@@ -808,7 +807,10 @@ ORDER BY c.ordinal_position';
 		);
 
 		if ( null !== $where_position ) {
-			if ( $where_position + 1 >= $statement_end ) {
+			if (
+				$where_position + 1 >= $statement_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+			) {
 				return null;
 			}
 
@@ -1116,10 +1118,39 @@ ORDER BY c.ordinal_position';
 	 * @return bool Whether the SET clause is supported.
 	 */
 	private function is_supported_simple_update_set_clause( array $tokens, int $start, int $end ): bool {
-		return $start + 2 < $end
-			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $start ] ?? null )
-			&& isset( $tokens[ $start + 1 ] )
-			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $start + 1 ]->id;
+		for ( $position = $start; $position < $end; ) {
+			if (
+				null === $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null )
+				|| ! isset( $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position + 1 ]->id
+			) {
+				return false;
+			}
+
+			$value_start    = $position + 2;
+			$assignment_end = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$value_start,
+				$end
+			) ?? $end;
+
+			if (
+				$value_start >= $assignment_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $value_start, $assignment_end )
+			) {
+				return false;
+			}
+
+			$position = $assignment_end;
+			if ( $position === $end ) {
+				return true;
+			}
+
+			++$position;
+		}
+
+		return false;
 	}
 
 	/**
