@@ -366,6 +366,11 @@ function validateGeneratedBackendFiles() {
 			'docker-compose.override.yml builds a PostgreSQL CLI image'
 		);
 		assertFileContains(
+			composeOverride,
+			'mysql: !reset null',
+			'docker-compose.override.yml removes inherited MySQL services and dependencies'
+		);
+		assertFileContains(
 			postgresqlPhpDockerfile,
 			'docker-php-ext-install pdo_pgsql',
 			'PostgreSQL PHP Dockerfile installs pdo_pgsql'
