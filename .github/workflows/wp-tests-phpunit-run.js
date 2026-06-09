@@ -115,6 +115,9 @@ console.log( 'Expected errors:', expectedByBackend[ backend ].errors );
 console.log( 'Expected failures:', expectedByBackend[ backend ].failures );
 
 try {
+	ensureWordPressTestEnvironment();
+	validateGeneratedBackendFiles();
+
 	if ( requiresNativeParserExtension ) {
 		verifyNativeParserExtension();
 	}
@@ -214,6 +217,72 @@ function verifyNativeParserExtension() {
 		'cd wordpress && node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php',
 		{ stdio: 'inherit' }
 	);
+}
+
+function ensureWordPressTestEnvironment() {
+	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
+}
+
+function validateGeneratedBackendFiles() {
+	if ( 'mysql' === backend ) {
+		return;
+	}
+
+	const generatedDropin = path.join( repositoryRoot, 'wordpress', 'src', 'wp-content', 'db.php' );
+	const composeOverride = path.join( repositoryRoot, 'wordpress', 'docker-compose.override.yml' );
+
+	assertFileContains(
+		generatedDropin,
+		`: '${ backend }'`,
+		`generated db.php default backend is ${ backend }`
+	);
+	assertFileContains(
+		generatedDropin,
+		"$unreplaced_database_engine = '{' . 'DATABASE_ENGINE' . '}';",
+		'generated db.php uses a split database-engine sentinel'
+	);
+	assertFileContains(
+		generatedDropin,
+		"/wp-includes/db.php'",
+		'generated db.php loads the backend dispatcher'
+	);
+	assertFileDoesNotContain(
+		generatedDropin,
+		"require_once $sqlite_plugin_implementation_folder_path . '/wp-includes/sqlite/db.php';",
+		'generated db.php does not load the SQLite drop-in directly'
+	);
+	assertFileContains(
+		composeOverride,
+		`DB_ENGINE: ${ backend }`,
+		`docker-compose.override.yml sets DB_ENGINE=${ backend }`
+	);
+	assertFileContains(
+		composeOverride,
+		`DATABASE_ENGINE: ${ backend }`,
+		`docker-compose.override.yml sets DATABASE_ENGINE=${ backend }`
+	);
+}
+
+function assertFileContains( file, expected, description ) {
+	const contents = readGeneratedFile( file );
+	if ( ! contents.includes( expected ) ) {
+		throw new Error( `Expected ${ description } in ${ file }.` );
+	}
+}
+
+function assertFileDoesNotContain( file, unexpected, description ) {
+	const contents = readGeneratedFile( file );
+	if ( contents.includes( unexpected ) ) {
+		throw new Error( `Expected ${ description } in ${ file }.` );
+	}
+}
+
+function readGeneratedFile( file ) {
+	if ( ! fs.existsSync( file ) ) {
+		throw new Error( `Expected generated file to exist: ${ file }.` );
+	}
+
+	return fs.readFileSync( file, 'utf8' );
 }
 
 function readJunitTestcases( junitOutputFile ) {
