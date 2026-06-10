@@ -1225,23 +1225,50 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
+		$temporary         = ! empty( $matches['temporary'] );
+		$table_identifiers = array();
+		foreach ( $table_names as $table_name ) {
+			$table_identifiers[] = $temporary
+				? $this->get_temporary_drop_table_identifier( $table_name )
+				: $this->connection->quote_identifier( $table_name );
+		}
+
 		return array(
 			'statements' => array(
 				sprintf(
 					'DROP TABLE %s%s',
 					! empty( $matches['if_exists'] ) ? 'IF EXISTS ' : '',
-					implode(
-						', ',
-						array_map(
-							array( $this->connection, 'quote_identifier' ),
-							$table_names
-						)
-					)
+					implode( ', ', $table_identifiers )
 				),
 			),
 			'tables'     => $table_names,
-			'temporary'  => ! empty( $matches['temporary'] ),
+			'temporary'  => $temporary,
 		);
+	}
+
+	/**
+	 * Get the backend table identifier for a MySQL DROP TEMPORARY TABLE target.
+	 *
+	 * @param string $table_name MySQL table identifier value.
+	 * @return string PostgreSQL table identifier constrained to the temporary schema.
+	 */
+	private function get_temporary_drop_table_identifier( string $table_name ): string {
+		return $this->get_temporary_drop_table_schema_name() . '.' . $this->connection->quote_identifier( $table_name );
+	}
+
+	/**
+	 * Get the backend temporary schema name.
+	 *
+	 * @return string Backend temporary schema name.
+	 */
+	private function get_temporary_drop_table_schema_name(): string {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+
+		if ( 'sqlite' === $driver_name ) {
+			return 'temp';
+		}
+
+		return 'pg_temp';
 	}
 
 	/**
@@ -2755,24 +2782,6 @@ show_index_rows AS (
 		$this->last_column_meta        = array();
 		$this->last_mysql_query        = null;
 		$this->last_postgresql_queries = array();
-	}
-
-	/**
-	 * Translate MySQL DROP TEMPORARY TABLE cleanup statements.
-	 *
-	 * @param string $query MySQL query.
-	 * @return string|null PostgreSQL query, or null when unsupported.
-	 */
-	private function translate_mysql_drop_temporary_table_query( string $query ): ?string {
-		if ( ! preg_match( '/^\s*DROP\s+TEMPORARY\s+TABLE\s+(IF\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?\s*;?\s*$/i', $query, $matches ) ) {
-			return null;
-		}
-
-		return sprintf(
-			'DROP TABLE %s%s',
-			'' !== $matches[1] ? 'IF EXISTS ' : '',
-			$this->connection->quote_identifier( $matches[2] )
-		);
 	}
 
 	/**

@@ -132,16 +132,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$driver->query( 'CREATE TEMPORARY TABLE wptests_temp_cleanup (value TEXT)' );
 
+		$this->assertTrue( $this->sqlite_table_exists( $driver, 'temp', 'wptests_temp_cleanup' ) );
 		$this->assertSame( 0, $driver->query( 'DROP TEMPORARY TABLE wptests_temp_cleanup' ) );
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'DROP TABLE "wptests_temp_cleanup"',
+					'sql'    => 'DROP TABLE temp."wptests_temp_cleanup"',
 					'params' => array(),
 				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
+		$this->assertFalse( $this->sqlite_table_exists( $driver, 'temp', 'wptests_temp_cleanup' ) );
+	}
+
+	/**
+	 * Tests temporary drops never delete a permanent table when no temp table exists.
+	 */
+	public function test_drop_temporary_table_without_matching_temp_table_does_not_drop_permanent_table(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_permanent_temp_probe (id INTEGER NOT NULL)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_permanent_temp_probe (id int NOT NULL)' );
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_permanent_temp_probe' );
+
+		try {
+			$driver->query( 'DROP TEMPORARY TABLE wptests_permanent_temp_probe' );
+			$this->fail( 'DROP TEMPORARY TABLE without an active temp table should fail without dropping the permanent table.' );
+		} catch ( PDOException $exception ) {
+			$this->assertNotSame( '', $exception->getMessage() );
+		}
+
+		$this->assertTrue( $this->sqlite_table_exists( $driver, 'main', 'wptests_permanent_temp_probe' ) );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_permanent_temp_probe' ) );
+	}
+
+	/**
+	 * Tests temporary IF EXISTS drops no-op without deleting a permanent table.
+	 */
+	public function test_drop_temporary_table_if_exists_without_matching_temp_table_does_not_drop_permanent_table(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_permanent_temp_exists_probe (id INTEGER NOT NULL)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_permanent_temp_exists_probe (id int NOT NULL)' );
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_permanent_temp_exists_probe' );
+
+		$driver->query( 'DROP TEMPORARY TABLE IF EXISTS wptests_permanent_temp_exists_probe' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP TABLE IF EXISTS temp."wptests_permanent_temp_exists_probe"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertTrue( $this->sqlite_table_exists( $driver, 'main', 'wptests_permanent_temp_exists_probe' ) );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_permanent_temp_exists_probe' ) );
 	}
 
 	/**
@@ -1582,6 +1632,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver(): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Check whether an injected SQLite backend table exists.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $schema     SQLite schema name.
+	 * @param string               $table_name Table name.
+	 * @return bool Whether the table exists.
+	 */
+	private function sqlite_table_exists( WP_PostgreSQL_Driver $driver, string $schema, string $table_name ): bool {
+		if ( 'temp' === $schema ) {
+			$catalog = 'sqlite_temp_master';
+		} elseif ( 'main' === $schema ) {
+			$catalog = 'sqlite_master';
+		} else {
+			throw new InvalidArgumentException( 'Unsupported SQLite schema for test table lookup.' );
+		}
+
+		$stmt = $driver->get_connection()->query(
+			sprintf(
+				"SELECT name FROM %s WHERE type = 'table' AND name = ?",
+				$catalog
+			),
+			array( $table_name )
+		);
+
+		return false !== $stmt->fetchColumn();
 	}
 
 	/**
