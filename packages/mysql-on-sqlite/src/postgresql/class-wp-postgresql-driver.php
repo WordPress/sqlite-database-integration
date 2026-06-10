@@ -4384,6 +4384,18 @@ WHERE option_name IN (
 			$fragment_token_id   = $token->id;
 			$translated_fragment = $this->translate_mysql_limit_offset_count_to_postgresql( $tokens, $i, $end );
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_field_function_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_integer_cast_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_regexp_operator_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_rand_function_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_time_extract_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -4460,6 +4472,352 @@ WHERE option_name IN (
 			'offset_position' => $position + 1,
 			'count_position'  => $position + 3,
 		);
+	}
+
+	/**
+	 * Translate MySQL FIELD(expr, value, ...) to a PostgreSQL CASE expression.
+	 *
+	 * PostgreSQL does not coerce unknown text and integer values the same way
+	 * MySQL FIELD() does. Cast both sides of each comparison to text to keep the
+	 * WordPress ordering use-cases executable across mixed ID/name arguments.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_field_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, 'field' );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || count( $arguments ) < 2 ) {
+			return null;
+		}
+
+		$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+
+		$clauses = array(
+			sprintf( 'WHEN %s IS NULL THEN 0', $value_sql ),
+		);
+
+		for ( $i = 1; $i < count( $arguments ); $i++ ) {
+			$argument_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$arguments[ $i ]['start'],
+				$arguments[ $i ]['end']
+			);
+
+			$clauses[] = sprintf(
+				'WHEN CAST(%1$s AS text) = CAST(%2$s AS text) THEN %3$d',
+				$value_sql,
+				$argument_sql,
+				$i
+			);
+		}
+
+		return array(
+			'sql'      => 'CASE ' . implode( ' ', $clauses ) . ' ELSE 0 END',
+			'token_id' => WP_MySQL_Lexer::CASE_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Translate MySQL CAST(expr AS SIGNED/UNSIGNED [INTEGER]) to PostgreSQL.
+	 *
+	 * Both SIGNED and UNSIGNED map to bigint. This preserves WordPress meta
+	 * comparison/query execution but does not emulate MySQL UNSIGNED wraparound.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CAST token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_integer_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_integer_cast_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => sprintf( 'CAST(%s AS bigint)', $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL integer CAST expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CAST token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_integer_cast_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$as_position    = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::AS_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $as_position
+			|| $as_position <= $position + 2
+			|| null === $this->get_postgresql_integer_cast_type( $tokens, $as_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $as_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
+	 * Get the PostgreSQL type for supported MySQL integer cast type tokens.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First cast type token.
+	 * @param int             $end    Final cast type token, exclusive.
+	 * @return string|null PostgreSQL type SQL, or null when unsupported.
+	 */
+	private function get_postgresql_integer_cast_type( array $tokens, int $start, int $end ): ?string {
+		if (
+			! isset( $tokens[ $start ] )
+			|| ! in_array(
+				$tokens[ $start ]->id,
+				array(
+					WP_MySQL_Lexer::SIGNED_SYMBOL,
+					WP_MySQL_Lexer::UNSIGNED_SYMBOL,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		if ( $start + 1 === $end ) {
+			return 'bigint';
+		}
+
+		if (
+			$start + 2 === $end
+			&& isset( $tokens[ $start + 1 ] )
+			&& in_array(
+				$tokens[ $start + 1 ]->id,
+				array(
+					WP_MySQL_Lexer::INT_SYMBOL,
+					WP_MySQL_Lexer::INTEGER_SYMBOL,
+				),
+				true
+			)
+		) {
+			return 'bigint';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Translate MySQL REGEXP/RLIKE operators to PostgreSQL regex operators.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Operator token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_regexp_operator_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if (
+			WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position ]->id
+			&& ! $this->is_mysql_regexp_binary_predicate( $tokens, $position + 1, $end )
+		) {
+			return array(
+				'sql'      => '~',
+				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
+				'position' => $position,
+			);
+		}
+
+		if (
+			isset( $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position + 1 ]->id
+			&& ! $this->is_mysql_regexp_binary_predicate( $tokens, $position + 2, $end )
+		) {
+			return array(
+				'sql'      => '!~',
+				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
+				'position' => $position + 1,
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a REGEXP predicate starts with the unsupported BINARY modifier.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position First right-hand predicate token.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return bool Whether the predicate uses REGEXP BINARY/RLIKE BINARY.
+	 */
+	private function is_mysql_regexp_binary_predicate( array $tokens, int $position, int $end ): bool {
+		return $position < $end
+			&& isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $position ]->id;
+	}
+
+	/**
+	 * Translate MySQL RAND() and RAND(seed) calls to PostgreSQL random().
+	 *
+	 * PostgreSQL setseed() is session-stateful, so RAND(seed) deliberately maps
+	 * to random() for now instead of leaking deterministic seed state into later
+	 * statements. Seeded deterministic ordering is left for a higher-fidelity
+	 * emulation path.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_rand_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, 'rand' );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || count( $arguments ) > 1 ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => 'random()',
+			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a MySQL identifier function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int             $position      Function token position.
+	 * @param int             $end           Final token position, exclusive.
+	 * @param string          $function_name Lowercase function name to match.
+	 * @return array{arguments_start: int, arguments_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_function_call_bounds( array $tokens, int $position, int $end, string $function_name ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::IDENTIFIER !== $tokens[ $position ]->id
+			|| strtolower( $tokens[ $position ]->get_value() ) !== $function_name
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		return array(
+			'arguments_start' => $position + 2,
+			'arguments_end'   => $after_close - 1,
+			'close'           => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Split a bounded token range into top-level comma-separated arguments.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First argument token position.
+	 * @param int             $end    Final argument token position, exclusive.
+	 * @return array<int, array{start: int, end: int}>|null Argument bounds, or null when malformed.
+	 */
+	private function split_top_level_mysql_arguments( array $tokens, int $start, int $end ): ?array {
+		if ( $start === $end ) {
+			return array();
+		}
+
+		$arguments      = array();
+		$argument_start = $start;
+		$depth          = 0;
+
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $i ]->id ) {
+				if ( $argument_start === $i ) {
+					return null;
+				}
+
+				$arguments[]    = array(
+					'start' => $argument_start,
+					'end'   => $i,
+				);
+				$argument_start = $i + 1;
+			}
+		}
+
+		if ( 0 !== $depth || $argument_start === $end ) {
+			return null;
+		}
+
+		$arguments[] = array(
+			'start' => $argument_start,
+			'end'   => $end,
+		);
+
+		return $arguments;
 	}
 
 	/**
@@ -4940,6 +5298,22 @@ WHERE option_name IN (
 			}
 
 			if ( null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'field' ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_integer_cast_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->translate_mysql_regexp_operator_to_postgresql( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'rand' ) ) {
 				return true;
 			}
 

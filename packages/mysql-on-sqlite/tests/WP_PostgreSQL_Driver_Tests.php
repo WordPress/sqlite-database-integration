@@ -1020,6 +1020,167 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL FIELD() expressions are translated for PostgreSQL ordering.
+	 */
+	public function test_field_function_is_translated_to_postgresql_case_expression(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_name) VALUES (1, \'alpha\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_name) VALUES (2, \'beta\')' );
+
+		$select = 'SELECT ID FROM wptests_posts WHERE ID IN (1, 2) ORDER BY FIELD(ID, 2, 1)';
+		$rows   = $driver->query( $select );
+
+		$this->assertSame( '2', $rows[0]->ID );
+		$this->assertSame( '1', $rows[1]->ID );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "ID" FROM wptests_posts WHERE "ID" IN (1, 2) ORDER BY CASE WHEN "ID" IS NULL THEN 0 WHEN CAST("ID" AS text) = CAST(2 AS text) THEN 1 WHEN CAST("ID" AS text) = CAST(1 AS text) THEN 2 ELSE 0 END',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests lowercase field() calls trigger PostgreSQL compatibility translation.
+	 */
+	public function test_lowercase_field_function_triggers_postgresql_rewrite(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts (post_name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts (post_name) VALUES (\'alpha\')' );
+		$driver->query( 'INSERT INTO wptests_posts (post_name) VALUES (\'beta\')' );
+
+		$rows = $driver->query( "SELECT post_name FROM wptests_posts ORDER BY field(post_name, 'beta', 'alpha')" );
+
+		$this->assertSame( 'beta', $rows[0]->post_name );
+		$this->assertSame( 'alpha', $rows[1]->post_name );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT post_name FROM wptests_posts ORDER BY CASE WHEN post_name IS NULL THEN 0 WHEN CAST(post_name AS text) = CAST(\'beta\' AS text) THEN 1 WHEN CAST(post_name AS text) = CAST(\'alpha\' AS text) THEN 2 ELSE 0 END',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests FIELD() returns zero for NULL and missing values.
+	 */
+	public function test_field_function_returns_zero_for_null_and_missing_values(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( "SELECT FIELD(NULL, 1) AS null_position, FIELD('missing', 'alpha') AS missing_position, FIELD('alpha', 'beta', 'alpha') AS alpha_position" );
+
+		$this->assertSame( '0', $rows[0]->null_position );
+		$this->assertSame( '0', $rows[0]->missing_position );
+		$this->assertSame( '2', $rows[0]->alpha_position );
+	}
+
+	/**
+	 * Tests MySQL SIGNED and UNSIGNED casts are translated to PostgreSQL bigint casts.
+	 */
+	public function test_signed_and_unsigned_casts_are_translated_to_postgresql_bigint(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_postmeta (meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_postmeta (meta_value) VALUES (\'10\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (meta_value) VALUES (\'2\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (meta_value) VALUES (\'-1\')' );
+
+		$select = 'SELECT meta_value FROM wptests_postmeta WHERE CAST(meta_value AS SIGNED) > 0 ORDER BY CAST(meta_value AS UNSIGNED INTEGER) DESC';
+		$rows   = $driver->query( $select );
+
+		$this->assertSame( '10', $rows[0]->meta_value );
+		$this->assertSame( '2', $rows[1]->meta_value );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT meta_value FROM wptests_postmeta WHERE CAST(meta_value AS bigint) > 0 ORDER BY CAST(meta_value AS bigint) DESC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests lowercase signed integer casts trigger PostgreSQL compatibility translation.
+	 */
+	public function test_lowercase_signed_integer_cast_triggers_postgresql_rewrite(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( "SELECT cast('7' as signed integer) AS cast_value" );
+
+		$this->assertSame( '7', $rows[0]->cast_value );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "SELECT CAST('7' AS bigint) AS cast_value",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests RAND() and RAND(seed) are translated without mutating session seed state.
+	 */
+	public function test_rand_functions_are_translated_to_postgresql_random(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_links (link_id INTEGER PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO wptests_links (link_id) VALUES (1)' );
+		$driver->query( 'INSERT INTO wptests_links (link_id) VALUES (2)' );
+
+		$rows = $driver->query( 'SELECT link_id FROM wptests_links ORDER BY RAND(7) LIMIT 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT link_id FROM wptests_links ORDER BY random() LIMIT 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$driver->query( 'SELECT rand() AS random_value' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT random() AS random_value',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests MySQL-only expression names inside string literals are not rewritten.
+	 */
+	public function test_expression_rewrite_does_not_replace_string_literals(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT 'FIELD(ID, 1)', 'CAST(meta_value AS SIGNED)', 'RAND()' AS literal_value";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			"SELECT 'FIELD(ID, 1)', 'CAST(meta_value AS SIGNED)', 'RAND()' AS literal_value",
+			$sql
+		);
+	}
+
+	/**
 	 * Tests SELECT DISTINCT term ID queries include ORDER BY expressions.
 	 */
 	public function test_distinct_term_id_order_by_name_includes_order_expression_for_postgresql(): void {
