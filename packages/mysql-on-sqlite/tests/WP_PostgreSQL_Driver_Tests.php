@@ -2467,6 +2467,114 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests Site Health's information_schema.TABLES query returns MySQL-shaped rows.
+	 */
+	public function test_information_schema_tables_site_health_query_returns_mysql_shape_with_single_quoted_aliases(): void {
+		$driver = $this->create_driver( 'wordpress_develop_tests' );
+		$this->install_information_schema_fixture( $driver );
+		$this->install_site_health_table_count_fixture( $driver );
+
+		$query = "SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) as 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+				AND TABLE_NAME IN ('wptests_comments','wptests_options','wptests_posts','wptests_terms','wptests_users')
+			GROUP BY TABLE_NAME;";
+		$rows  = $driver->query( $query );
+
+		usort(
+			$rows,
+			static function ( $left, $right ): int {
+				return strcmp( $left->table, $right->table );
+			}
+		);
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( array( 'table', 'rows', 'bytes' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame(
+			array(
+				array( 'wptests_options', '2', '0' ),
+				array( 'wptests_posts', '1', '0' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->table, $row->rows, $row->bytes );
+				},
+				$rows
+			)
+		);
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString( 'AS "table"', $sql );
+		$this->assertStringContainsString( 'AS "rows"', $sql );
+		$this->assertStringContainsString( 'AS "bytes"', $sql );
+		$this->assertStringNotContainsString( "AS 'table'", $sql );
+		$this->assertStringNotContainsString( "AS 'rows'", $sql );
+		$this->assertStringNotContainsString( "AS 'bytes'", $sql );
+		$this->assertStringContainsString( '"information_schema"."tables"', $sql );
+		$this->assertStringContainsString( "\"TABLE_SCHEMA\" = 'wordpress_develop_tests'", $sql );
+		$this->assertStringNotContainsString( '"wordpress_develop_tests"', $sql );
+	}
+
+	/**
+	 * Tests single-quoted aliases do not turn catalog predicate literals into identifiers.
+	 */
+	public function test_information_schema_tables_site_health_single_quoted_alias_preserves_predicate_string_literals(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_site_health_table_count_fixture( $driver );
+
+		$query = "SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) AS 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wptests' AND TABLE_NAME = 'wptests_options'
+			GROUP BY TABLE_NAME";
+		$rows  = $driver->query( $query );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests_options', $rows[0]->table );
+		$this->assertSame( '2', $rows[0]->rows );
+		$this->assertSame( '0', $rows[0]->bytes );
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString( 'AS "table"', $sql );
+		$this->assertStringContainsString( "\"TABLE_SCHEMA\" = 'wptests'", $sql );
+		$this->assertStringContainsString( "TABLE_NAME = 'wptests_options'", $sql );
+		$this->assertStringNotContainsString( '"wptests"', $sql );
+	}
+
+	/**
+	 * Tests unsupported information_schema.TABLES shapes do not enter the Site Health translator.
+	 */
+	public function test_information_schema_tables_site_health_unsupported_shapes_fail_closed(): void {
+		$driver = $this->create_driver();
+		$queries = array(
+			"SELECT COUNT(*) AS 'rows'
+				FROM information_schema.TABLES
+				WHERE TABLE_SCHEMA = 'wptests' AND TABLE_NAME IN ('wptests_options')
+				GROUP BY TABLE_NAME",
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) AS 'bytes'
+				FROM information_schema.TABLES
+				WHERE TABLE_ROWS > 0
+				GROUP BY TABLE_NAME",
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) AS 'bytes'
+				FROM information_schema.TABLES
+				WHERE TABLE_SCHEMA = 'wptests' AND TABLE_NAME IN ('wptests_options')
+				GROUP BY TABLE_NAME
+				ORDER BY TABLE_NAME",
+		);
+
+		foreach ( $queries as $query ) {
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_information_schema_tables_site_health_query',
+					$query
+				),
+				$query
+			);
+		}
+	}
+
+	/**
 	 * Tests SHOW INDEX returns MySQL-shaped PostgreSQL catalog rows.
 	 */
 	public function test_show_index_returns_mysql_shaped_catalog_rows(): void {
@@ -2669,9 +2777,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 *
 	 * @return WP_PostgreSQL_Driver
 	 */
-	private function create_driver(): WP_PostgreSQL_Driver {
+	private function create_driver( string $db_name = 'wptests' ): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
-		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		return new WP_PostgreSQL_Driver( $connection, $db_name );
 	}
 
 	/**
@@ -2936,6 +3044,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_show_index_driver(): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Driver_Show_Index_Fixture_Connection();
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Install backend tables used by Site Health TABLE_ROWS emulation tests.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_site_health_table_count_fixture( WP_PostgreSQL_Driver $driver ): void {
+		$pdo         = $driver->get_connection()->get_pdo();
+		$connection  = $driver->get_connection();
+		$table_names = array(
+			'wptests_comments',
+			'wptests_options',
+			'wptests_posts',
+			'wptests_terms',
+			'wptests_users',
+		);
+
+		foreach ( $table_names as $table_name ) {
+			$pdo->exec(
+				sprintf(
+					'CREATE TABLE %s (id INTEGER)',
+					$connection->quote_identifier( $table_name )
+				)
+			);
+		}
+
+		$pdo->exec( 'INSERT INTO ' . $connection->quote_identifier( 'wptests_options' ) . ' (id) VALUES (1), (2)' );
+		$pdo->exec( 'INSERT INTO ' . $connection->quote_identifier( 'wptests_posts' ) . ' (id) VALUES (1)' );
 	}
 
 	/**

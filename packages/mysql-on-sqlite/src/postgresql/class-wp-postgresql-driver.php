@@ -425,6 +425,12 @@ class WP_PostgreSQL_Driver {
 
 		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
 
+		$translated_query = $this->translate_information_schema_tables_site_health_query( $query );
+		if ( null !== $translated_query ) {
+			$query                     = $translated_query;
+			$translated_for_postgresql = true;
+		}
+
 		$translated_query = $this->translate_simple_mysql_select_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
@@ -3892,6 +3898,442 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate WordPress Site Health's MySQL information_schema.TABLES query.
+	 *
+	 * WordPress asks MySQL for TABLE_ROWS and data/index lengths, which
+	 * PostgreSQL's information_schema.tables does not expose. Keep this rewrite
+	 * constrained to the Site Health projection and predicates so other catalog
+	 * shapes continue to fail visibly.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when the query is unsupported.
+	 */
+	private function translate_information_schema_tables_site_health_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		if ( null === $from_position || 1 === $from_position ) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $statement_end );
+		$group_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $from_position + 1, $statement_end );
+		if (
+			null === $where_position
+			|| null === $group_position
+			|| $where_position > $group_position
+			|| ! isset( $tokens[ $group_position + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_position + 1 ]->id
+		) {
+			return null;
+		}
+
+		if (
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				1,
+				$statement_end,
+				array(
+					WP_MySQL_Lexer::DISTINCT_SYMBOL,
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::JOIN_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		if ( ! $this->is_information_schema_tables_reference( $tokens, $from_position + 1, $where_position ) ) {
+			return null;
+		}
+
+		$projection_items = $this->parse_mysql_select_projection_items( $tokens, 1, $from_position );
+		if ( null === $projection_items ) {
+			return null;
+		}
+
+		$projection_sql = $this->get_information_schema_tables_site_health_projection_sql( $tokens, $projection_items );
+		if ( null === $projection_sql ) {
+			return null;
+		}
+
+		$where_clause = $this->parse_information_schema_tables_site_health_where_clause( $tokens, $where_position + 1, $group_position );
+		if ( null === $where_clause ) {
+			return null;
+		}
+
+		if ( ! $this->is_information_schema_tables_site_health_group_by_clause( $tokens, $group_position + 2, $statement_end ) ) {
+			return null;
+		}
+
+		return sprintf(
+			'SELECT %s FROM (%s) AS %s WHERE %s GROUP BY %s',
+			implode( ', ', $projection_sql ),
+			$this->get_information_schema_tables_site_health_relation_sql( $where_clause['table_names'] ),
+			$this->connection->quote_identifier( '__wp_pg_information_schema_tables' ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $group_position ),
+			$this->connection->quote_identifier( 'table_name' )
+		);
+	}
+
+	/**
+	 * Check whether a token range is exactly information_schema.TABLES.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First table-reference token position.
+	 * @param int             $end    Final table-reference token position, exclusive.
+	 * @return bool Whether the range references information_schema.TABLES.
+	 */
+	private function is_information_schema_tables_reference( array $tokens, int $start, int $end ): bool {
+		return $start + 3 === $end
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start ] ?? null, 'information_schema' )
+			&& isset( $tokens[ $start + 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start + 2 ] ?? null, 'tables' );
+	}
+
+	/**
+	 * Build Site Health's supported information_schema.TABLES projection list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $projection_items Parsed projection items.
+	 * @return string[]|null PostgreSQL projection SQL, or null when unsupported.
+	 */
+	private function get_information_schema_tables_site_health_projection_sql( array $tokens, array $projection_items ): ?array {
+		if ( 3 !== count( $projection_items ) ) {
+			return null;
+		}
+
+		$expected = array(
+			array(
+				'alias' => 'table',
+				'type'  => 'table_name',
+			),
+			array(
+				'alias' => 'rows',
+				'type'  => 'table_rows',
+			),
+			array(
+				'alias' => 'bytes',
+				'type'  => 'data_index_sum',
+			),
+		);
+
+		$projection_sql = array();
+		foreach ( $expected as $index => $expected_projection ) {
+			$projection_item = $projection_items[ $index ];
+			if ( strtolower( $projection_item['alias'] ) !== $expected_projection['alias'] ) {
+				return null;
+			}
+
+			if (
+				'table_name' === $expected_projection['type']
+				&& $this->is_information_schema_tables_column_expression(
+					$tokens,
+					$projection_item['expression_start'],
+					$projection_item['expression_end'],
+					'table_name'
+				)
+			) {
+				$projection_sql[] = sprintf(
+					'%s AS %s',
+					$this->connection->quote_identifier( 'table_name' ),
+					$this->connection->quote_identifier( $projection_item['alias'] )
+				);
+				continue;
+			}
+
+			if (
+				'table_rows' === $expected_projection['type']
+				&& $this->is_information_schema_tables_column_expression(
+					$tokens,
+					$projection_item['expression_start'],
+					$projection_item['expression_end'],
+					'table_rows'
+				)
+			) {
+				$projection_sql[] = sprintf(
+					'MAX(%s) AS %s',
+					$this->connection->quote_identifier( 'TABLE_ROWS' ),
+					$this->connection->quote_identifier( $projection_item['alias'] )
+				);
+				continue;
+			}
+
+			if (
+				'data_index_sum' === $expected_projection['type']
+				&& $this->is_information_schema_tables_data_index_sum_expression(
+					$tokens,
+					$projection_item['expression_start'],
+					$projection_item['expression_end']
+				)
+			) {
+				$projection_sql[] = sprintf(
+					'SUM(%s + %s) AS %s',
+					$this->connection->quote_identifier( 'data_length' ),
+					$this->connection->quote_identifier( 'index_length' ),
+					$this->connection->quote_identifier( $projection_item['alias'] )
+				);
+				continue;
+			}
+
+			return null;
+		}
+
+		return $projection_sql;
+	}
+
+	/**
+	 * Check whether a projection expression is a supported information_schema.TABLES column.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token position.
+	 * @param int             $end    Final expression token position, exclusive.
+	 * @param string          $column Expected column name.
+	 * @return bool Whether the expression is the expected column.
+	 */
+	private function is_information_schema_tables_column_expression( array $tokens, int $start, int $end, string $column ): bool {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		return $bounds['start'] + 1 === $bounds['end']
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $bounds['start'] ] ?? null, $column );
+	}
+
+	/**
+	 * Check whether a projection expression is SUM(data_length + index_length).
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token position.
+	 * @param int             $end    Final expression token position, exclusive.
+	 * @return bool Whether the expression is the supported size aggregate.
+	 */
+	private function is_information_schema_tables_data_index_sum_expression( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		return $start + 6 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ], $tokens[ $start + 5 ] )
+			&& WP_MySQL_Lexer::SUM_SYMBOL === $tokens[ $start ]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start + 1 ]->id
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start + 2 ], 'data_length' )
+			&& WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $start + 3 ]->id
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start + 4 ], 'index_length' )
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $start + 5 ]->id;
+	}
+
+	/**
+	 * Parse a supported Site Health information_schema.TABLES WHERE clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First WHERE predicate token position.
+	 * @param int             $end    Final WHERE predicate token position, exclusive.
+	 * @return array{table_names: string[]}|null Parsed WHERE data, or null when unsupported.
+	 */
+	private function parse_information_schema_tables_site_health_where_clause( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$position      = $start;
+		$seen_columns  = array();
+		$table_names   = array();
+		$required_seen = array(
+			'table_schema' => false,
+			'table_name'   => false,
+		);
+
+		while ( $position < $end ) {
+			$term = $this->parse_information_schema_tables_site_health_where_term( $tokens, $position, $end );
+			if ( null === $term || isset( $seen_columns[ $term['column'] ] ) ) {
+				return null;
+			}
+
+			$seen_columns[ $term['column'] ] = true;
+			if ( isset( $required_seen[ $term['column'] ] ) ) {
+				$required_seen[ $term['column'] ] = true;
+			}
+			if ( 'table_name' === $term['column'] ) {
+				$table_names = $term['table_names'];
+			}
+			$position = $term['position'];
+
+			if ( $position === $end ) {
+				break;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+			++$position;
+		}
+
+		if ( ! $required_seen['table_schema'] || ! $required_seen['table_name'] || empty( $table_names ) ) {
+			return null;
+		}
+
+		return array(
+			'table_names' => array_values( array_unique( $table_names ) ),
+		);
+	}
+
+	/**
+	 * Parse one supported information_schema.TABLES WHERE term.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Current token position.
+	 * @param int             $end      Final WHERE predicate token position, exclusive.
+	 * @return array{column: string, position: int, table_names: string[]}|null Parsed term, or null when unsupported.
+	 */
+	private function parse_information_schema_tables_site_health_where_term( array $tokens, int $position, int $end ): ?array {
+		if ( $this->is_mysql_identifier_like_token_value( $tokens[ $position ] ?? null, 'table_schema' ) ) {
+			if (
+				! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+				|| WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position + 1 ]->id
+				|| ! $this->is_mysql_string_literal_token( $tokens[ $position + 2 ] )
+			) {
+				return null;
+			}
+
+			return array(
+				'column'      => 'table_schema',
+				'position'    => $position + 3,
+				'table_names' => array(),
+			);
+		}
+
+		if ( ! $this->is_mysql_identifier_like_token_value( $tokens[ $position ] ?? null, 'table_name' ) ) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position + 1 ]->id
+			&& $this->is_mysql_string_literal_token( $tokens[ $position + 2 ] )
+		) {
+			return array(
+				'column'      => 'table_name',
+				'position'    => $position + 3,
+				'table_names' => array( $tokens[ $position + 2 ]->get_value() ),
+			);
+		}
+
+		if (
+			! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $position + 1 ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 2 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 2, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $position + 3, $after_close - 1 );
+		if ( null === $items || count( $items ) < 1 ) {
+			return null;
+		}
+
+		$table_names = array();
+		foreach ( $items as $item ) {
+			if ( ! $this->is_mysql_string_literal_range( $tokens, $item['start'], $item['end'] ) ) {
+				return null;
+			}
+			$table_names[] = $tokens[ $item['start'] ]->get_value();
+		}
+
+		return array(
+			'column'      => 'table_name',
+			'position'    => $after_close,
+			'table_names' => $table_names,
+		);
+	}
+
+	/**
+	 * Check whether the GROUP BY clause is exactly GROUP BY TABLE_NAME.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First GROUP BY expression token position.
+	 * @param int             $end    Final GROUP BY token position, exclusive.
+	 * @return bool Whether the grouping shape is supported.
+	 */
+	private function is_information_schema_tables_site_health_group_by_clause( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start ] ?? null, 'table_name' );
+	}
+
+	/**
+	 * Build the derived relation that emulates MySQL information_schema.TABLES columns.
+	 *
+	 * @param string[] $table_names Table names from the validated TABLE_NAME predicate.
+	 * @return string PostgreSQL relation SQL.
+	 */
+	private function get_information_schema_tables_site_health_relation_sql( array $table_names ): string {
+		return sprintf(
+			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s, %14$s, %15$s)',
+			$this->connection->quote_identifier( 'table_name' ),
+			$this->connection->quote( $this->db_name ),
+			$this->connection->quote_identifier( 'TABLE_SCHEMA' ),
+			$this->get_information_schema_tables_site_health_table_rows_sql( $table_names ),
+			$this->connection->quote_identifier( 'data_length' ),
+			$this->connection->quote_identifier( 'index_length' ),
+			$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
+			$this->connection->quote_identifier( 'table_schema' ),
+			$this->connection->quote( 'public' ),
+			$this->connection->quote_identifier( 'table_type' ),
+			$this->connection->quote( 'BASE TABLE' ),
+			$this->connection->quote( 'VIEW' ),
+			$this->connection->quote( self::MYSQL_COLUMN_METADATA_TABLE ),
+			$this->connection->quote( self::MYSQL_INDEX_METADATA_TABLE ),
+			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE )
+		);
+	}
+
+	/**
+	 * Build a CASE expression for Site Health TABLE_ROWS emulation.
+	 *
+	 * @param string[] $table_names Table names from the validated TABLE_NAME predicate.
+	 * @return string PostgreSQL row-count expression SQL.
+	 */
+	private function get_information_schema_tables_site_health_table_rows_sql( array $table_names ): string {
+		$cases = array();
+		foreach ( $table_names as $table_name ) {
+			$cases[] = sprintf(
+				'WHEN %s THEN (SELECT COUNT(*) FROM %s)',
+				$this->connection->quote( $table_name ),
+				$this->connection->quote_identifier( $table_name )
+			);
+		}
+
+		return sprintf(
+			'CASE %s %s ELSE 0 END AS %s',
+			$this->connection->quote_identifier( 'table_name' ),
+			implode( ' ', $cases ),
+			$this->connection->quote_identifier( 'TABLE_ROWS' )
+		);
+	}
+
+	/**
 	 * Translate SELECT DISTINCT queries whose ORDER BY expression is not selected.
 	 *
 	 * PostgreSQL requires ORDER BY expressions in SELECT DISTINCT statements to
@@ -6950,6 +7392,30 @@ WHERE option_name IN (
 		}
 
 		return null;
+	}
+
+	/**
+	 * Check whether a token is an identifier-like token with the expected value.
+	 *
+	 * Some MySQL information_schema column names, such as TABLE_NAME, are lexed
+	 * as keyword tokens. Treat them like identifiers only in explicit catalog
+	 * translator contexts.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @param string              $value Expected identifier value.
+	 * @return bool Whether the token has the expected identifier-like value.
+	 */
+	private function is_mysql_identifier_like_token_value( ?WP_MySQL_Token $token, string $value ): bool {
+		if ( null === $token ) {
+			return false;
+		}
+
+		$identifier = $this->get_mysql_identifier_token_value( $token );
+		if ( null === $identifier && WP_MySQL_Lexer::TABLE_NAME_SYMBOL === $token->id ) {
+			$identifier = $token->get_value();
+		}
+
+		return null !== $identifier && strtolower( $identifier ) === strtolower( $value );
 	}
 
 	/**
