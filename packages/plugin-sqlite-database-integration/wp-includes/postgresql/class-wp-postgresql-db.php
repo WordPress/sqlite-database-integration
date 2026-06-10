@@ -34,6 +34,13 @@ class WP_PostgreSQL_DB extends wpdb {
 	protected $dbh;
 
 	/**
+	 * MySQL charset metadata for PostgreSQL temporary tables.
+	 *
+	 * @var array
+	 */
+	private $postgresql_temporary_charset_metadata = array();
+
+	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
 	 * @var bool
@@ -523,19 +530,55 @@ class WP_PostgreSQL_DB extends wpdb {
 			return;
 		}
 
-		if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
-			$table_name = $this->get_postgresql_create_table_name( $query );
-			if ( null !== $table_name ) {
-				$this->clear_postgresql_table_charset_cache( array( $table_name ) );
+		if ( ! class_exists( 'WP_PostgreSQL_Create_Table_Translator', false ) ) {
+			if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
+				$table_name = $this->get_postgresql_create_table_name( $query );
+				if ( null !== $table_name ) {
+					$this->clear_postgresql_table_charset_cache( array( $table_name ) );
+				}
 			}
 			return;
 		}
 
-		if ( ! class_exists( 'WP_PostgreSQL_Create_Table_Translator', false ) ) {
+		if ( ! $this->is_postgresql_mysql_charset_metadata_create_query( $query ) ) {
+			if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
+				$table_name = $this->get_postgresql_create_table_name( $query );
+				if ( null !== $table_name ) {
+					$this->clear_postgresql_table_charset_cache( array( $table_name ) );
+				}
+			}
 			return;
 		}
 
-		if ( ! $this->is_postgresql_mysql_charset_metadata_create_query( $query ) ) {
+		if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
+			try {
+				$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query );
+				foreach ( $metadata as $table ) {
+					if ( empty( $table['table_name'] ) ) {
+						continue;
+					}
+
+					$table_name = (string) $table['table_name'];
+					$tablekey   = $this->get_postgresql_metadata_key( $table_name );
+					$this->clear_postgresql_table_charset_cache( array( $table_name ) );
+
+					$rows = array();
+					foreach ( (array) ( $table['columns'] ?? array() ) as $column ) {
+						$rows[] = array(
+							'column_name'    => (string) $column['name'],
+							'column_type'    => (string) $column['type'],
+							'collation_name' => $column['collation'],
+						);
+					}
+
+					$columns = $this->format_postgresql_charset_column_rows( $rows );
+					if ( ! empty( $columns ) ) {
+						$this->postgresql_temporary_charset_metadata[ $tablekey ] = $columns;
+					}
+				}
+			} catch ( Throwable $e ) {
+				return;
+			}
 			return;
 		}
 
@@ -647,7 +690,11 @@ class WP_PostgreSQL_DB extends wpdb {
 	private function clear_postgresql_table_charset_cache( array $tables ): void {
 		foreach ( $tables as $table ) {
 			$tablekey = $this->get_postgresql_metadata_key( (string) $table );
-			unset( $this->table_charset[ $tablekey ], $this->col_meta[ $tablekey ] );
+			unset(
+				$this->table_charset[ $tablekey ],
+				$this->col_meta[ $tablekey ],
+				$this->postgresql_temporary_charset_metadata[ $tablekey ]
+			);
 		}
 	}
 
@@ -809,10 +856,20 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		if ( null !== $temp_schema ) {
+			$tablekey = $this->get_postgresql_metadata_key( $table );
+			if ( array_key_exists( $tablekey, $this->postgresql_temporary_charset_metadata ) ) {
+				return $this->postgresql_temporary_charset_metadata[ $tablekey ];
+			}
+
 			return $this->get_native_postgresql_column_charset_metadata( $table, $temp_schema );
 		}
 
 		$columns = $this->get_stored_postgresql_column_charset_metadata( $table );
+		if ( false !== $columns && ! empty( $columns ) ) {
+			return $columns;
+		}
+
+		$columns = $this->get_driver_postgresql_column_charset_metadata( $table );
 		if ( false !== $columns && ! empty( $columns ) ) {
 			return $columns;
 		}
@@ -873,6 +930,73 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		return $this->format_postgresql_charset_column_rows( $rows );
+	}
+
+	/**
+	 * Load MySQL charset metadata through the PostgreSQL driver's SHOW COLUMNS path.
+	 *
+	 * The driver stores MySQL-facing column metadata as part of CREATE TABLE
+	 * translation. Reusing it keeps wpdb charset checks aligned with DESCRIBE and
+	 * SHOW FULL COLUMNS without depending on the adapter side table being present.
+	 *
+	 * @param string $table Table name.
+	 * @return array|false Column metadata, or false when unavailable.
+	 */
+	private function get_driver_postgresql_column_charset_metadata( string $table ) {
+		if ( ! $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			return false;
+		}
+
+		$table_name = $this->normalize_postgresql_table_name( $table );
+		if ( '' === $table_name ) {
+			return false;
+		}
+
+		try {
+			$rows = $this->dbh->query(
+				'SHOW FULL COLUMNS FROM ' . $this->quote_postgresql_mysql_identifier( $table_name ),
+				PDO::FETCH_ASSOC
+			);
+		} catch ( Throwable $e ) {
+			return false;
+		}
+
+		if ( ! is_array( $rows ) || empty( $rows ) ) {
+			return false;
+		}
+
+		$metadata_rows = array();
+		foreach ( $rows as $row ) {
+			if ( is_object( $row ) ) {
+				$row = get_object_vars( $row );
+			}
+
+			if ( ! is_array( $row ) || empty( $row['Field'] ) ) {
+				continue;
+			}
+
+			$metadata_rows[] = array(
+				'column_name'    => $row['Field'],
+				'column_type'    => $row['Type'] ?? '',
+				'collation_name' => $row['Collation'] ?? null,
+			);
+		}
+
+		if ( empty( $metadata_rows ) ) {
+			return false;
+		}
+
+		return $this->format_postgresql_charset_column_rows( $metadata_rows );
+	}
+
+	/**
+	 * Quote an identifier for a MySQL statement handled by the PostgreSQL driver.
+	 *
+	 * @param string $identifier Identifier.
+	 * @return string Backtick-quoted MySQL identifier.
+	 */
+	private function quote_postgresql_mysql_identifier( string $identifier ): string {
+		return '`' . str_replace( '`', '``', $identifier ) . '`';
 	}
 
 	/**
