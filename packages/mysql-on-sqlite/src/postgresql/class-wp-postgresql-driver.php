@@ -4502,12 +4502,17 @@ WHERE option_name IN (
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_postgresql_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
-		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$date_text_pattern   = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}'";
-		$zero_date_condition = sprintf(
+		$expression_text_sql      = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$date_text_pattern        = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}'";
+		$zero_date_condition      = sprintf(
 			'%1$s ~ %2$s AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
 			$expression_text_sql,
 			$date_text_pattern
+		);
+		$timestamp_expression_sql = sprintf(
+			'CASE WHEN %1$s THEN NULL ELSE %2$s END',
+			$zero_date_condition,
+			$expression_text_sql
 		);
 
 		return sprintf(
@@ -4515,7 +4520,7 @@ WHERE option_name IN (
 			$zero_date_condition,
 			$this->get_postgresql_zero_date_extract_part_sql( $unit, $expression_text_sql ),
 			$unit,
-			$expression_sql
+			$timestamp_expression_sql
 		);
 	}
 

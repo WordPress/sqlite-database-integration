@@ -1140,6 +1140,100 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 9 FOR 2) AS integer)', $sql );
 		$this->assertStringContainsString( "THEN CASE WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 12 FOR 2) AS integer) ELSE 0 END", $sql );
 		$this->assertStringNotContainsString( 'SELECT CAST(EXTRACT(YEAR FROM CAST(post_date AS timestamp)) AS integer) AS y', $sql );
+		$this->assertStringContainsString( 'CAST(EXTRACT(YEAR FROM CAST(CASE WHEN CAST(post_date AS text)', $sql );
+		$this->assertStringContainsString( 'THEN NULL ELSE CAST(post_date AS text) END AS timestamp)', $sql );
+	}
+
+	/**
+	 * Tests literal MySQL zero-date extraction SQL guards the timestamp cast.
+	 */
+	public function test_mysql_date_time_extract_functions_guard_literal_zero_dates_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$literals          = array(
+			'0000-00-00 00:00:00',
+			'0000-00-00',
+			'2020-00-15 00:00:00',
+			'2020-01-00 00:00:00',
+			'2026-06-10 14:08:09',
+		);
+		$extract_functions = array(
+			array(
+				'name' => 'YEAR',
+				'unit' => 'YEAR',
+			),
+			array(
+				'name' => 'MONTH',
+				'unit' => 'MONTH',
+			),
+			array(
+				'name' => 'DAYOFMONTH',
+				'unit' => 'DAY',
+			),
+			array(
+				'name' => 'DAY',
+				'unit' => 'DAY',
+			),
+			array(
+				'name' => 'HOUR',
+				'unit' => 'HOUR',
+			),
+			array(
+				'name' => 'MINUTE',
+				'unit' => 'MINUTE',
+			),
+			array(
+				'name' => 'SECOND',
+				'unit' => 'SECOND',
+			),
+		);
+
+		foreach ( $literals as $literal ) {
+			$expression_sql      = "'" . $literal . "'";
+			$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+			foreach ( $extract_functions as $extract_function ) {
+				$function_sql = sprintf( '%s(%s)', $extract_function['name'], $expression_sql );
+				$sql          = $this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					'SELECT ' . $function_sql . ' AS extracted_value'
+				);
+				$expected_sql = 'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( $extract_function['unit'], $expression_sql ) . ' AS extracted_value';
+
+				$this->assertSame(
+					$expected_sql,
+					$sql,
+					$function_sql
+				);
+				$this->assertStringContainsString(
+					'CAST(EXTRACT(' . $extract_function['unit'] . ' FROM CAST(CASE WHEN ' . $expression_text_sql,
+					$sql,
+					$function_sql
+				);
+				$this->assertStringContainsString(
+					'THEN NULL ELSE ' . $expression_text_sql . ' END AS timestamp)',
+					$sql,
+					$function_sql
+				);
+				$this->assertStringNotContainsString(
+					'CAST(EXTRACT(' . $extract_function['unit'] . ' FROM CAST(' . $expression_sql . ' AS timestamp))',
+					$sql,
+					$function_sql
+				);
+			}
+		}
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT EXTRACT(DAY FROM '2020-01-00 00:00:00') AS extracted_value"
+		);
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', "'2020-01-00 00:00:00'" ) . ' AS extracted_value',
+			$sql
+		);
 	}
 
 	/**
@@ -1865,9 +1959,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_expected_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
-		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition = sprintf(
+		$expression_text_sql      = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_condition      = sprintf(
 			'%1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}\' AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
+			$expression_text_sql
+		);
+		$timestamp_expression_sql = sprintf(
+			'CASE WHEN %1$s THEN NULL ELSE %2$s END',
+			$zero_date_condition,
 			$expression_text_sql
 		);
 
@@ -1876,7 +1975,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$zero_date_condition,
 			$this->get_expected_zero_date_extract_part_sql( $unit, $expression_text_sql ),
 			$unit,
-			$expression_sql
+			$timestamp_expression_sql
 		);
 	}
 
