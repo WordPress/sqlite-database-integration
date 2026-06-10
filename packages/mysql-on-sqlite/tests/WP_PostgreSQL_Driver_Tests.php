@@ -1219,6 +1219,154 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests integer-column IN predicates coerce string literals using stored MySQL metadata.
+	 */
+	public function test_integer_column_in_string_literals_use_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_comments (
+				`comment_ID` bigint(20) unsigned NOT NULL,
+				`comment_post_ID` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`comment_approved` varchar(20) NOT NULL DEFAULT "1",
+				PRIMARY KEY (`comment_ID`)
+			)'
+		);
+		$driver->query(
+			'INSERT INTO wptests_comments (`comment_ID`, `comment_post_ID`, `comment_approved`) ' .
+			'VALUES (1, 0, \'0\')'
+		);
+		$driver->query(
+			'INSERT INTO wptests_comments (`comment_ID`, `comment_post_ID`, `comment_approved`) ' .
+			'VALUES (2, 1, \'0\')'
+		);
+		$driver->query(
+			'INSERT INTO wptests_comments (`comment_ID`, `comment_post_ID`, `comment_approved`) ' .
+			'VALUES (3, 0, \'1\')'
+		);
+
+		$select = "SELECT comment_post_ID, COUNT(comment_ID) as num_comments
+			FROM wptests_comments
+			WHERE comment_post_ID IN ('') AND comment_approved = '0'
+			GROUP BY comment_post_ID";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0', $rows[0]->comment_post_ID );
+		$this->assertSame( '1', $rows[0]->num_comments );
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString(
+			'"comment_post_ID" IN (' . $this->get_expected_mysql_integer_cast_sql( "''" ) . ')',
+			$sql
+		);
+		$this->assertStringContainsString( "comment_approved = '0'", $sql );
+		$this->assertStringNotContainsString( 'CAST(comment_approved AS text)', $sql );
+	}
+
+	/**
+	 * Tests SQL_CALC_FOUND_ROWS user searches coerce bad ID terms without breaking LIKE terms.
+	 */
+	public function test_sql_calc_found_rows_user_search_coerces_integer_id_string_predicate(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_users (
+				`ID` bigint(20) unsigned NOT NULL,
+				`user_login` varchar(60) NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_users (`ID`, `user_login`) VALUES (1, \'admin\')' );
+		$driver->query( 'INSERT INTO wptests_users (`ID`, `user_login`) VALUES (2, \'match-yololololo\')' );
+
+		$select = "SELECT SQL_CALC_FOUND_ROWS ID, user_login
+			FROM wptests_users
+			WHERE ID = 'yololololo' OR user_login LIKE '%yololololo%'
+			ORDER BY ID ASC";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->ID );
+		$this->assertSame( 'match-yololololo', $rows[0]->user_login );
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringNotContainsString( 'SQL_CALC_FOUND_ROWS', $sql );
+		$this->assertStringContainsString(
+			'"ID" = ' . $this->get_expected_mysql_integer_cast_sql( "'yololololo'" ),
+			$sql
+		);
+		$this->assertStringContainsString( "user_login LIKE '%yololololo%'", $sql );
+	}
+
+	/**
+	 * Tests text columns keep lexical string comparisons even when numeric-looking values are present.
+	 */
+	public function test_text_columns_preserve_lexical_string_comparisons(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_users (
+				`ID` bigint(20) unsigned NOT NULL,
+				`user_login` varchar(60) NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`meta_id` bigint(20) unsigned NOT NULL,
+				`meta_value` longtext NOT NULL,
+				PRIMARY KEY (`meta_id`)
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_users (`ID`, `user_login`) VALUES (7, \'007\')' );
+		$driver->query( 'INSERT INTO wptests_users (`ID`, `user_login`) VALUES (8, \'7\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (`meta_id`, `meta_value`) VALUES (1, \'10abc\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (`meta_id`, `meta_value`) VALUES (2, \'10\')' );
+
+		$user_rows = $driver->query( "SELECT ID FROM wptests_users WHERE user_login = '007'" );
+
+		$this->assertCount( 1, $user_rows );
+		$this->assertSame( '7', $user_rows[0]->ID );
+		$this->assertStringNotContainsString( 'SUBSTRING(CAST', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$meta_rows = $driver->query( "SELECT meta_id FROM wptests_postmeta WHERE meta_value = '10abc'" );
+
+		$this->assertCount( 1, $meta_rows );
+		$this->assertSame( '1', $meta_rows[0]->meta_id );
+		$this->assertStringNotContainsString( 'SUBSTRING(CAST', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests ambiguous unqualified integer references do not guess a table.
+	 */
+	public function test_ambiguous_unqualified_integer_reference_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_left_ids (
+				`ID` bigint(20) NOT NULL,
+				`label` varchar(20) NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_right_ids (
+				`ID` bigint(20) NOT NULL,
+				`label` varchar(20) NOT NULL
+			)'
+		);
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT * FROM wptests_left_ids, wptests_right_ids WHERE ID = 'abc'"
+		);
+
+		$this->assertSame( 'SELECT * FROM wptests_left_ids, wptests_right_ids WHERE "ID" = \'abc\'', $sql );
+		$this->assertStringNotContainsString( 'SUBSTRING(CAST', $sql );
+	}
+
+	/**
 	 * Tests MySQL SIGNED and UNSIGNED casts coerce text safely for PostgreSQL.
 	 */
 	public function test_signed_and_unsigned_casts_coerce_mysql_text_values_for_postgresql(): void {

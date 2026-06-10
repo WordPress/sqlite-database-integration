@@ -1014,6 +1014,57 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Get the stored MySQL type for a table column.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string|null MySQL column type, or null when unavailable.
+	 */
+	private function get_mysql_table_column_type(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?string {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT column_type FROM %s
+				WHERE table_schema = ?
+					AND table_name = ?
+					AND LOWER(column_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $column_name )
+		);
+
+		$column_type = $stmt->fetchColumn();
+		return false === $column_type ? null : (string) $column_type;
+	}
+
+	/**
+	 * Check whether stored MySQL metadata exists for a table.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @return bool Whether metadata exists.
+	 */
+	private function mysql_table_has_column_metadata( string $table_schema, string $table_name ): bool {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? LIMIT 1',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		return false !== $stmt->fetchColumn();
+	}
+
+	/**
 	 * Translate supported dbDelta ALTER TABLE statements to PostgreSQL.
 	 *
 	 * @param string $query MySQL ALTER TABLE query.
@@ -3700,11 +3751,13 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$sql .= ' WHERE ' . $this->translate_mysql_token_sequence_to_postgresql(
+			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
-				$statement_end
+				$statement_end,
+				$this->get_mysql_single_table_scope( $table_name )
 			);
+			$sql      .= ' WHERE ' . $where_sql['sql'];
 		}
 
 		return $sql;
@@ -3815,11 +3868,13 @@ WHERE option_name IN (
 		);
 
 		if ( null !== $where_position ) {
-			$sql .= ' WHERE ' . $this->translate_mysql_token_sequence_to_postgresql(
+			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
-				$where_end
+				$where_end,
+				$this->get_mysql_single_table_scope( $table_name )
 			);
+			$sql      .= ' WHERE ' . $where_sql['sql'];
 		}
 
 		if ( null !== $order_position ) {
@@ -4647,6 +4702,16 @@ WHERE option_name IN (
 			$select_end = $limit_position;
 		}
 
+		$contextual_sql = $this->translate_mysql_select_statement_with_integer_string_coercion(
+			$tokens,
+			2,
+			$statement_end,
+			false
+		);
+		if ( null !== $contextual_sql ) {
+			return $contextual_sql;
+		}
+
 		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, 2, $select_end );
 		if ( null !== $limit_position ) {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
@@ -4690,6 +4755,18 @@ WHERE option_name IN (
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		if ( null === $statement_end ) {
 			return null;
+		}
+
+		if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id ) {
+			$contextual_sql = $this->translate_mysql_select_statement_with_integer_string_coercion(
+				$tokens,
+				1,
+				$statement_end,
+				true
+			);
+			if ( null !== $contextual_sql ) {
+				return $contextual_sql;
+			}
 		}
 
 		if ( ! $this->needs_mysql_compatible_rewrite( $tokens, 0, $statement_end ) ) {
@@ -5046,6 +5123,643 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate a SELECT while coercing integer-column string literals in its WHERE clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens                   MySQL lexer token stream.
+	 * @param int             $projection_start         First token after SELECT modifiers to render.
+	 * @param int             $statement_end            Final statement token position, exclusive.
+	 * @param bool            $require_predicate_change Whether unchanged predicates should fall through.
+	 * @return string|null PostgreSQL SELECT SQL, or null when no safe contextual translation applies.
+	 */
+	private function translate_mysql_select_statement_with_integer_string_coercion(
+		array $tokens,
+		int $projection_start,
+		int $statement_end,
+		bool $require_predicate_change
+	): ?string {
+		$where_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::WHERE_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		if ( null === $where_position ) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			$projection_start,
+			$where_position
+		);
+		if ( null === $from_position ) {
+			return null;
+		}
+
+		$scope = $this->get_mysql_select_scope( $tokens, $from_position + 1, $where_position );
+		if ( null === $scope ) {
+			return null;
+		}
+
+		$where_end = $this->find_first_top_level_mysql_token(
+			$tokens,
+			array(
+				WP_MySQL_Lexer::FOR_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::LOCK_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+				WP_MySQL_Lexer::UNION_SYMBOL,
+			),
+			$where_position + 1,
+			$statement_end
+		) ?? $statement_end;
+
+		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			$where_position + 1,
+			$where_end,
+			$scope
+		);
+		if ( $require_predicate_change && ! $where_sql['changed'] ) {
+			return null;
+		}
+
+		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $where_position )
+			. ' WHERE ' . $where_sql['sql'];
+
+		if ( $where_end < $statement_end ) {
+			$sql .= ' ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_end, $statement_end );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Translate predicate tokens with metadata-backed integer string coercion.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First predicate token position.
+	 * @param int             $end    Final predicate token position, exclusive.
+	 * @param array           $scope  Statement table scope.
+	 * @return array{sql: string, changed: bool} Translated predicate SQL and change flag.
+	 */
+	private function translate_mysql_predicate_token_sequence_to_postgresql(
+		array $tokens,
+		int $start,
+		int $end,
+		array $scope
+	): array {
+		$chunks        = array();
+		$segment_start = $start;
+		$changed       = false;
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$after_subquery = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+				if ( null !== $after_subquery ) {
+					$position = $after_subquery - 1;
+					continue;
+				}
+			}
+
+			$translated_predicate = $this->translate_mysql_integer_column_string_predicate_to_postgresql(
+				$tokens,
+				$position,
+				$end,
+				$scope
+			);
+			if ( null === $translated_predicate ) {
+				continue;
+			}
+
+			if ( $segment_start < $position ) {
+				$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $position );
+			}
+
+			$chunks[]      = $translated_predicate['sql'];
+			$segment_start = $translated_predicate['position'] + 1;
+			$position      = $translated_predicate['position'];
+			$changed       = true;
+		}
+
+		if ( ! $changed ) {
+			return array(
+				'sql'     => $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end ),
+				'changed' => false,
+			);
+		}
+
+		if ( $segment_start < $end ) {
+			$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $end );
+		}
+
+		return array(
+			'sql'     => implode( ' ', array_filter( $chunks, 'strlen' ) ),
+			'changed' => true,
+		);
+	}
+
+	/**
+	 * Translate one integer-column predicate against string literals.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $end      Final predicate token position, exclusive.
+	 * @param array           $scope    Statement table scope.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_integer_column_string_predicate_to_postgresql(
+		array $tokens,
+		int $position,
+		int $end,
+		array $scope
+	): ?array {
+		$in_predicate = $this->translate_mysql_integer_column_string_in_predicate_to_postgresql(
+			$tokens,
+			$position,
+			$end,
+			$scope
+		);
+		if ( null !== $in_predicate ) {
+			return $in_predicate;
+		}
+
+		return $this->translate_mysql_integer_column_string_comparison_to_postgresql(
+			$tokens,
+			$position,
+			$end,
+			$scope
+		);
+	}
+
+	/**
+	 * Translate an integer-column IN list containing string literals.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $end      Final predicate token position, exclusive.
+	 * @param array           $scope    Statement table scope.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_integer_column_string_in_predicate_to_postgresql(
+		array $tokens,
+		int $position,
+		int $end,
+		array $scope
+	): ?array {
+		$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+		if ( null === $reference ) {
+			return null;
+		}
+
+		$in_position = $reference['end'];
+		$not_sql     = '';
+		if (
+			isset( $tokens[ $in_position ], $tokens[ $in_position + 1 ] )
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $in_position ]->id
+			&& WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $in_position + 1 ]->id
+		) {
+			$not_sql      = ' NOT';
+			$in_position += 1;
+		}
+
+		if (
+			! isset( $tokens[ $in_position ], $tokens[ $in_position + 1 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $in_position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $in_position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $in_position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $in_position + 2, $after_close - 1 );
+		if ( null === $items ) {
+			return null;
+		}
+
+		$changed  = false;
+		$item_sql = array();
+		foreach ( $items as $item ) {
+			if ( $this->is_mysql_string_literal_range( $tokens, $item['start'], $item['end'] ) ) {
+				$item_sql[] = $this->get_postgresql_mysql_integer_cast_sql(
+					$this->translate_mysql_token_to_postgresql( $tokens[ $item['start'] ] )
+				);
+				$changed    = true;
+				continue;
+			}
+
+			$item_sql[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $item['start'], $item['end'] );
+		}
+
+		if ( ! $changed ) {
+			return null;
+		}
+
+		if ( ! $this->is_mysql_integer_column_reference( $reference, $scope ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'%s%s IN (%s)',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] ),
+				$not_sql,
+				implode( ', ', $item_sql )
+			),
+			'position' => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Translate an integer-column comparison against a string literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $end      Final predicate token position, exclusive.
+	 * @param array           $scope    Statement table scope.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_integer_column_string_comparison_to_postgresql(
+		array $tokens,
+		int $position,
+		int $end,
+		array $scope
+	): ?array {
+		$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+		if (
+			null !== $reference
+			&& isset( $tokens[ $reference['end'] ], $tokens[ $reference['end'] + 1 ] )
+			&& $reference['end'] + 1 < $end
+			&& $this->is_mysql_comparison_operator_token( $tokens[ $reference['end'] ] )
+			&& $this->is_mysql_string_literal_token( $tokens[ $reference['end'] + 1 ] )
+			&& $this->is_mysql_integer_column_reference( $reference, $scope )
+		) {
+			return array(
+				'sql'      => sprintf(
+					'%s %s %s',
+					$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] ),
+					$tokens[ $reference['end'] ]->get_bytes(),
+					$this->get_postgresql_mysql_integer_cast_sql(
+						$this->translate_mysql_token_to_postgresql( $tokens[ $reference['end'] + 1 ] )
+					)
+				),
+				'position' => $reference['end'] + 1,
+			);
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! $this->is_mysql_string_literal_token( $tokens[ $position ] )
+			|| ! $this->is_mysql_comparison_operator_token( $tokens[ $position + 1 ] )
+		) {
+			return null;
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $position + 2, $end );
+		if ( null === $reference || ! $this->is_mysql_integer_column_reference( $reference, $scope ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'%s %s %s',
+				$this->get_postgresql_mysql_integer_cast_sql(
+					$this->translate_mysql_token_to_postgresql( $tokens[ $position ] )
+				),
+				$tokens[ $position + 1 ]->get_bytes(),
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
+			),
+			'position' => $reference['end'] - 1,
+		);
+	}
+
+	/**
+	 * Build a single-table statement scope.
+	 *
+	 * @param string      $table_name Table name.
+	 * @param string|null $alias      Optional table alias.
+	 * @param string      $schema     Metadata schema.
+	 * @return array Statement scope.
+	 */
+	private function get_mysql_single_table_scope(
+		string $table_name,
+		?string $alias = null,
+		string $schema = 'public'
+	): array {
+		$table = array(
+			'schema' => $this->resolve_mysql_table_schema_for_introspection( $schema, $table_name ),
+			'table'  => $table_name,
+		);
+
+		return array(
+			'tables'  => array( $table ),
+			'aliases' => array(
+				strtolower( null === $alias ? $table_name : $alias ) => $table,
+			),
+		);
+	}
+
+	/**
+	 * Parse top-level SELECT table references into a metadata lookup scope.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First FROM-clause token after FROM.
+	 * @param int             $end    Final FROM-clause token, exclusive.
+	 * @return array|null Statement scope, or null when ambiguous/unsupported.
+	 */
+	private function get_mysql_select_scope( array $tokens, int $start, int $end ): ?array {
+		$scope       = array(
+			'tables'  => array(),
+			'aliases' => array(),
+			'unknown' => false,
+		);
+		$position    = $start;
+		$expect_next = true;
+
+		while ( $position < $end ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				$after_parentheses = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+				if ( null === $after_parentheses ) {
+					return null;
+				}
+
+				$position = $after_parentheses;
+				if ( $expect_next ) {
+					$scope['unknown'] = true;
+					$position         = $this->skip_mysql_table_alias( $tokens, $position, $end );
+					$expect_next      = false;
+				}
+				continue;
+			}
+
+			if ( $expect_next ) {
+				$reference = $this->parse_mysql_table_reference( $tokens, $position, $end );
+				if ( null === $reference ) {
+					return null;
+				}
+
+				$table = array(
+					'schema' => $this->resolve_mysql_table_schema_for_introspection( $reference['schema'], $reference['table'] ),
+					'table'  => $reference['table'],
+				);
+				$alias = strtolower( null === $reference['alias'] ? $reference['table'] : $reference['alias'] );
+				if ( isset( $scope['aliases'][ $alias ] ) ) {
+					return null;
+				}
+
+				$scope['tables'][]          = $table;
+				$scope['aliases'][ $alias ] = $table;
+				$position                   = $reference['position'];
+				$expect_next                = false;
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id
+				|| $this->is_mysql_join_token( $tokens[ $position ] )
+			) {
+				$expect_next = true;
+			}
+
+			++$position;
+		}
+
+		return empty( $scope['tables'] ) || $expect_next ? null : $scope;
+	}
+
+	/**
+	 * Parse a simple table reference and optional alias.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Table reference start position.
+	 * @param int             $end      Final FROM-clause token, exclusive.
+	 * @return array{schema: string, table: string, alias: string|null, position: int}|null Parsed table reference.
+	 */
+	private function parse_mysql_table_reference( array $tokens, int $position, int $end ): ?array {
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		$schema = 'public';
+		$table  = $first_identifier;
+		++$position;
+
+		if ( $position + 1 < $end && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) {
+			$second_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $second_identifier ) {
+				return null;
+			}
+
+			$schema    = $first_identifier;
+			$table     = $second_identifier;
+			$position += 2;
+		}
+
+		$alias = null;
+		if ( $position + 1 < $end && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+			$alias = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $alias ) {
+				return null;
+			}
+
+			$position += 2;
+		} else {
+			$implicit_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null !== $implicit_alias ) {
+				$alias = $implicit_alias;
+				++$position;
+			}
+		}
+
+		return array(
+			'schema'   => $schema,
+			'table'    => $table,
+			'alias'    => $alias,
+			'position' => $position,
+		);
+	}
+
+	/**
+	 * Skip a derived-table alias when one is present.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Current token position.
+	 * @param int             $end      Final FROM-clause token, exclusive.
+	 * @return int Position after the alias.
+	 */
+	private function skip_mysql_table_alias( array $tokens, int $position, int $end ): int {
+		if ( $position + 1 < $end && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+			return null === $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null )
+				? $position
+				: $position + 2;
+		}
+
+		return null === $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null )
+			? $position
+			: $position + 1;
+	}
+
+	/**
+	 * Check whether a token starts a JOIN table operand.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a JOIN separator.
+	 */
+	private function is_mysql_join_token( WP_MySQL_Token $token ): bool {
+		return WP_MySQL_Lexer::JOIN_SYMBOL === $token->id || WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $token->id;
+	}
+
+	/**
+	 * Parse a simple column reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Column reference start position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{start: int, end: int, qualifier: string|null, column: string}|null Parsed reference.
+	 */
+	private function parse_mysql_column_reference( array $tokens, int $position, int $end ): ?array {
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		if ( $position + 2 < $end && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position + 1 ]->id ) {
+			$column = $this->get_mysql_identifier_token_value( $tokens[ $position + 2 ] ?? null );
+			if ( null === $column ) {
+				return null;
+			}
+
+			return array(
+				'start'     => $position,
+				'end'       => $position + 3,
+				'qualifier' => $first_identifier,
+				'column'    => $column,
+			);
+		}
+
+		return array(
+			'start'     => $position,
+			'end'       => $position + 1,
+			'qualifier' => null,
+			'column'    => $first_identifier,
+		);
+	}
+
+	/**
+	 * Check whether a column reference resolves to one integer-family MySQL column.
+	 *
+	 * @param array $reference Parsed column reference.
+	 * @param array $scope     Statement table scope.
+	 * @return bool Whether the reference is a known integer column.
+	 */
+	private function is_mysql_integer_column_reference( array $reference, array $scope ): bool {
+		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope );
+		return null !== $column_type && $this->is_mysql_integer_family_column_type( $column_type );
+	}
+
+	/**
+	 * Resolve a column reference to stored MySQL column type metadata.
+	 *
+	 * @param array $reference Parsed column reference.
+	 * @param array $scope     Statement table scope.
+	 * @return string|null MySQL column type, or null when missing/ambiguous.
+	 */
+	private function get_mysql_column_type_for_reference( array $reference, array $scope ): ?string {
+		if ( null !== $reference['qualifier'] ) {
+			$alias = strtolower( $reference['qualifier'] );
+			if ( ! isset( $scope['aliases'][ $alias ] ) ) {
+				return null;
+			}
+
+			$table = $scope['aliases'][ $alias ];
+			return $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] );
+		}
+
+		if ( ! empty( $scope['unknown'] ) ) {
+			return null;
+		}
+
+		$matched_type = null;
+		foreach ( $scope['tables'] as $table ) {
+			if (
+				count( $scope['tables'] ) > 1
+				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
+			) {
+				return null;
+			}
+
+			$column_type = $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] );
+			if ( null === $column_type ) {
+				continue;
+			}
+
+			if ( null !== $matched_type ) {
+				return null;
+			}
+
+			$matched_type = $column_type;
+		}
+
+		return $matched_type;
+	}
+
+	/**
+	 * Check whether a token range is exactly one string literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First token position.
+	 * @param int             $end    Final token position, exclusive.
+	 * @return bool Whether the range is one string literal.
+	 */
+	private function is_mysql_string_literal_range( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end && isset( $tokens[ $start ] ) && $this->is_mysql_string_literal_token( $tokens[ $start ] );
+	}
+
+	/**
+	 * Check whether a token is a string literal.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a string literal.
+	 */
+	private function is_mysql_string_literal_token( WP_MySQL_Token $token ): bool {
+		return WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id;
+	}
+
+	/**
+	 * Check whether a token is a simple comparison operator.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a comparison operator.
+	 */
+	private function is_mysql_comparison_operator_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::EQUAL_OPERATOR,
+				WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+				WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+				WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+				WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+				WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
+			),
+			true
+		);
+	}
+
+	/**
 	 * Validate the simple expression fragments used by translated DML/SELECT.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -5276,6 +5990,44 @@ WHERE option_name IN (
 			}
 
 			if ( 0 === $depth && $token_id === $tokens[ $i ]->id ) {
+				return $i;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Find the first top-level token matching any supplied token ID.
+	 *
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int[]           $token_ids Token IDs to find.
+	 * @param int             $start     First token position, inclusive.
+	 * @param int             $end       Final token position, exclusive.
+	 * @return int|null Token position, or null when not found.
+	 */
+	private function find_first_top_level_mysql_token( array $tokens, array $token_ids, int $start, int $end ): ?int {
+		$lookup = array();
+		foreach ( $token_ids as $token_id ) {
+			$lookup[ $token_id ] = true;
+		}
+
+		$depth = 0;
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 === $depth && isset( $lookup[ $tokens[ $i ]->id ] ) ) {
 				return $i;
 			}
 		}
