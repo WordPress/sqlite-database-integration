@@ -2162,6 +2162,113 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress DATE_ADD queries are translated for PostgreSQL.
+	 */
+	public function test_wordpress_date_add_queries_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DATE_ADD(comment_date_gmt, INTERVAL '0' SECOND) FROM wptests_comments WHERE comment_approved = '1' ORDER BY comment_date_gmt DESC LIMIT 1";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'comment_date_gmt', "'0'", 'second' ) . " FROM wptests_comments WHERE comment_approved = '1' ORDER BY comment_date_gmt DESC LIMIT 1",
+			$sql
+		);
+		$this->assertStringNotContainsString( 'DATE_ADD', $sql );
+	}
+
+	/**
+	 * Tests DATE_SUB queries are detected even without another rewrite trigger.
+	 */
+	public function test_mysql_date_sub_queries_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = 'SELECT DATE_SUB(post_date_gmt, INTERVAL 1 DAY) AS older';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '-', 'post_date_gmt', '1', 'day' ) . ' AS older',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'DATE_SUB', $sql );
+	}
+
+	/**
+	 * Tests DATE_ADD supports the simple MySQL interval units used by WordPress.
+	 */
+	public function test_mysql_date_add_supports_simple_interval_units_for_postgresql(): void {
+		$driver = $this->create_driver();
+		$units  = array(
+			'SECOND' => 'second',
+			'MINUTE' => 'minute',
+			'HOUR'   => 'hour',
+			'DAY'    => 'day',
+			'WEEK'   => 'week',
+			'MONTH'  => 'month',
+			'YEAR'   => 'year',
+		);
+
+		foreach ( $units as $mysql_unit => $postgresql_unit ) {
+			$select = 'SELECT DATE_ADD(post_date_gmt, INTERVAL 2 ' . $mysql_unit . ') AS shifted';
+			$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+			$this->assertSame(
+				'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'post_date_gmt', '2', $postgresql_unit ) . ' AS shifted',
+				$sql,
+				$mysql_unit
+			);
+		}
+	}
+
+	/**
+	 * Tests DATE_ADD parsing handles nested expressions and lowercase interval syntax.
+	 */
+	public function test_mysql_date_add_handles_nested_and_lowercase_interval_arguments(): void {
+		$driver = $this->create_driver();
+
+		$select = 'SELECT DATE_ADD(COALESCE(post_date_gmt, post_date), interval (1 + 1) day) AS shifted';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'COALESCE (post_date_gmt, post_date)', '(1 + 1)', 'day' ) . ' AS shifted',
+			$sql
+		);
+	}
+
+	/**
+	 * Tests DATE_ADD timestamp casts are guarded for MySQL zero-date values.
+	 */
+	public function test_mysql_date_add_guards_zero_date_timestamp_casts_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DATE_ADD('0000-00-00 00:00:00', INTERVAL 1 DAY) AS shifted";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', "'0000-00-00 00:00:00'", '1', 'day' ) . ' AS shifted',
+			$sql
+		);
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "THEN NULL ELSE CAST('0000-00-00 00:00:00' AS text) END AS timestamp", $sql );
+		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
+	}
+
+	/**
+	 * Tests unsupported DATE_ADD interval units fall through without semantic rewriting.
+	 */
+	public function test_mysql_date_add_with_unsupported_interval_unit_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT DATE_ADD(post_date_gmt, INTERVAL 1 DAY_SECOND) AS shifted'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
 	 * Tests unsupported ON DUPLICATE KEY INSERT shapes still reach PDO.
 	 */
 	public function test_unsupported_options_upsert_still_reaches_backend(): void {
@@ -3055,6 +3162,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Get expected PostgreSQL SQL for MySQL DATE_ADD/DATE_SUB arithmetic.
+	 *
+	 * @param string $operator       PostgreSQL interval operator.
+	 * @param string $expression_sql PostgreSQL date/time expression SQL.
+	 * @param string $value_sql      PostgreSQL interval value SQL.
+	 * @param string $unit           PostgreSQL interval unit.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_date_arithmetic_sql( string $operator, string $expression_sql, string $value_sql, string $unit ): string {
+		return sprintf(
+			'(%1$s %2$s (%3$s * INTERVAL \'1 %4$s\'))',
+			$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql ),
+			$operator,
+			$this->get_expected_mysql_interval_value_sql( $value_sql ),
+			$unit
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for a MySQL-compatible interval value.
+	 *
+	 * @param string $value_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_interval_value_sql( string $value_sql ): string {
+		return sprintf( 'CAST(%s AS double precision)', $this->get_expected_mysql_integer_cast_sql( $value_sql ) );
+	}
+
+	/**
 	 * Get expected zero-date-safe PostgreSQL date/time extract SQL.
 	 *
 	 * @param string $unit           PostgreSQL EXTRACT unit.
@@ -3062,23 +3198,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_expected_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
-		$expression_text_sql      = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition      = sprintf(
-			'%1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}\' AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
-			$expression_text_sql
-		);
-		$timestamp_expression_sql = sprintf(
-			'CASE WHEN %1$s THEN NULL ELSE %2$s END',
-			$zero_date_condition,
-			$expression_text_sql
-		);
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_condition = $this->get_expected_zero_date_condition_sql( $expression_text_sql );
 
 		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM CAST(%4$s AS timestamp)) AS integer) END',
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM %4$s) AS integer) END',
 			$zero_date_condition,
 			$this->get_expected_zero_date_extract_part_sql( $unit, $expression_text_sql ),
 			$unit,
-			$timestamp_expression_sql
+			$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql )
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL that casts a MySQL date/time without casting zero dates.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_zero_date_safe_timestamp_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+		return sprintf(
+			'CAST(CASE WHEN %1$s THEN NULL ELSE %2$s END AS timestamp)',
+			$this->get_expected_zero_date_condition_sql( $expression_text_sql ),
+			$expression_text_sql
+		);
+	}
+
+	/**
+	 * Get expected condition that detects MySQL zero or partial-zero date strings.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL condition SQL.
+	 */
+	private function get_expected_zero_date_condition_sql( string $expression_text_sql ): string {
+		return sprintf(
+			'%1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}\' AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
+			$expression_text_sql
 		);
 	}
 

@@ -7215,6 +7215,9 @@ WHERE option_name IN (
 				$translated_fragment = $this->translate_mysql_rand_function_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_time_extract_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -7754,6 +7757,166 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate MySQL DATE_ADD(expr, INTERVAL value unit) and DATE_SUB(...) calls.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_date_arithmetic_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_date_arithmetic_function_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+		$value_sql      = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['interval_value_start'],
+			$bounds['interval_value_end']
+		);
+
+		return array(
+			'sql'      => sprintf(
+				'(%1$s %2$s (%3$s * INTERVAL %4$s))',
+				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+				$bounds['operator'],
+				$this->get_postgresql_mysql_interval_value_sql( $value_sql ),
+				$this->connection->quote( '1 ' . $bounds['interval_unit'] )
+			),
+			'token_id' => $tokens[ $position ]->id,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL DATE_ADD/DATE_SUB expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{operator: string, expression_start: int, expression_end: int, interval_value_start: int, interval_value_end: int, interval_unit: string, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_date_arithmetic_function_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::DATE_ADD_SYMBOL,
+					WP_MySQL_Lexer::DATE_SUB_SYMBOL,
+				),
+				true
+			)
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
+		if ( null === $arguments || 2 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$interval = $this->get_mysql_interval_argument_bounds( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+		if ( null === $interval ) {
+			return null;
+		}
+
+		return array(
+			'operator'             => WP_MySQL_Lexer::DATE_SUB_SYMBOL === $tokens[ $position ]->id ? '-' : '+',
+			'expression_start'     => $arguments[0]['start'],
+			'expression_end'       => $arguments[0]['end'],
+			'interval_value_start' => $interval['value_start'],
+			'interval_value_end'   => $interval['value_end'],
+			'interval_unit'        => $interval['unit'],
+			'close'                => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL INTERVAL value unit argument.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First interval token position.
+	 * @param int             $end    Final interval token position, exclusive.
+	 * @return array{value_start: int, value_end: int, unit: string}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_interval_argument_bounds( array $tokens, int $start, int $end ): ?array {
+		if (
+			$start + 3 > $end
+			|| ! isset( $tokens[ $start ], $tokens[ $end - 1 ] )
+			|| WP_MySQL_Lexer::INTERVAL_SYMBOL !== $tokens[ $start ]->id
+		) {
+			return null;
+		}
+
+		$unit = $this->get_postgresql_simple_interval_unit( $tokens[ $end - 1 ] );
+		if ( null === $unit ) {
+			return null;
+		}
+
+		return array(
+			'value_start' => $start + 1,
+			'value_end'   => $end - 1,
+			'unit'        => $unit,
+		);
+	}
+
+	/**
+	 * Get a PostgreSQL interval unit for supported simple MySQL interval units.
+	 *
+	 * @param WP_MySQL_Token $token MySQL interval unit token.
+	 * @return string|null PostgreSQL interval unit, or null when unsupported.
+	 */
+	private function get_postgresql_simple_interval_unit( WP_MySQL_Token $token ): ?string {
+		switch ( $token->id ) {
+			case WP_MySQL_Lexer::SECOND_SYMBOL:
+				return 'second';
+
+			case WP_MySQL_Lexer::MINUTE_SYMBOL:
+				return 'minute';
+
+			case WP_MySQL_Lexer::HOUR_SYMBOL:
+				return 'hour';
+
+			case WP_MySQL_Lexer::DAY_SYMBOL:
+				return 'day';
+
+			case WP_MySQL_Lexer::WEEK_SYMBOL:
+				return 'week';
+
+			case WP_MySQL_Lexer::MONTH_SYMBOL:
+				return 'month';
+
+			case WP_MySQL_Lexer::YEAR_SYMBOL:
+				return 'year';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL-compatible interval value.
+	 *
+	 * @param string $value_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_interval_value_sql( string $value_sql ): string {
+		return sprintf( 'CAST(%s AS double precision)', $this->get_postgresql_mysql_integer_cast_sql( $value_sql ) );
+	}
+
+	/**
 	 * Translate supported MySQL date/time extract functions to PostgreSQL.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -7793,25 +7956,47 @@ WHERE option_name IN (
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_postgresql_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
-		$expression_text_sql      = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$date_text_pattern        = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}'";
-		$zero_date_condition      = sprintf(
-			'%1$s ~ %2$s AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
-			$expression_text_sql,
-			$date_text_pattern
-		);
-		$timestamp_expression_sql = sprintf(
-			'CASE WHEN %1$s THEN NULL ELSE %2$s END',
-			$zero_date_condition,
-			$expression_text_sql
-		);
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_condition = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
 
 		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM CAST(%4$s AS timestamp)) AS integer) END',
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM %4$s) AS integer) END',
 			$zero_date_condition,
 			$this->get_postgresql_zero_date_extract_part_sql( $unit, $expression_text_sql ),
 			$unit,
-			$timestamp_expression_sql
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL that casts a MySQL date/time expression without casting zero dates.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_zero_date_safe_timestamp_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+		return sprintf(
+			'CAST(CASE WHEN %1$s THEN NULL ELSE %2$s END AS timestamp)',
+			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
+			$expression_text_sql
+		);
+	}
+
+	/**
+	 * Get a condition that detects MySQL zero or partial-zero date strings.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL condition SQL.
+	 */
+	private function get_postgresql_zero_date_condition_sql( string $expression_text_sql ): string {
+		$date_text_pattern = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}'";
+
+		return sprintf(
+			'%1$s ~ %2$s AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
+			$expression_text_sql,
+			$date_text_pattern
 		);
 	}
 
@@ -8286,6 +8471,10 @@ WHERE option_name IN (
 			}
 
 			if ( null !== $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'rand' ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_date_arithmetic_function_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 
