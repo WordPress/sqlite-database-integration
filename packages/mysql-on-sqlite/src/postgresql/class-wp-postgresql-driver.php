@@ -2968,7 +2968,7 @@ show_index_rows AS (
 		}
 
 		return sprintf(
-			'DELETE FROM %s WHERE %s ~ %s',
+			'DELETE FROM %s WHERE %s ~* %s',
 			$this->connection->quote_identifier( $table_name ),
 			$this->connection->quote_identifier( $column ),
 			$this->connection->quote( $tokens[6]->get_value() )
@@ -4553,9 +4553,30 @@ WHERE option_name IN (
 		);
 
 		return array(
-			'sql'      => sprintf( 'CAST(%s AS bigint)', $expression_sql ),
+			'sql'      => $this->get_postgresql_mysql_integer_cast_sql( $expression_sql ),
 			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
 			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL-compatible integer text coercion.
+	 *
+	 * MySQL accepts text values when casting to SIGNED/UNSIGNED and coerces the
+	 * leading integer prefix, or zero when no prefix exists. PostgreSQL bigint
+	 * casts reject those values, so extract a safe prefix before casting.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_integer_cast_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$integer_pattern     = $this->connection->quote( '^[[:space:]]*[+-]?[0-9]+' );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE CAST(COALESCE(SUBSTRING(%1$s, %2$s), \'0\') AS bigint) END',
+			$expression_text_sql,
+			$integer_pattern
 		);
 	}
 
@@ -4666,7 +4687,7 @@ WHERE option_name IN (
 			&& ! $this->is_mysql_regexp_binary_predicate( $tokens, $position + 1, $end )
 		) {
 			return array(
-				'sql'      => '~',
+				'sql'      => '~*',
 				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
 				'position' => $position,
 			);
@@ -4679,7 +4700,7 @@ WHERE option_name IN (
 			&& ! $this->is_mysql_regexp_binary_predicate( $tokens, $position + 2, $end )
 		) {
 			return array(
-				'sql'      => '!~',
+				'sql'      => '!~*',
 				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
 				'position' => $position + 1,
 			);

@@ -35,7 +35,7 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame(
 			array(
-				'sql'    => 'DELETE FROM "wptests_options" WHERE "option_name" ~ \'^_transient_feed_\'',
+				'sql'    => 'DELETE FROM "wptests_options" WHERE "option_name" ~* \'^_transient_feed_\'',
 				'params' => array(),
 			),
 			end( $logged_queries )
@@ -43,13 +43,13 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests REGEXP, RLIKE, and NOT REGEXP predicates use PostgreSQL regex operators.
+	 * Tests REGEXP, RLIKE, and NOT REGEXP predicates use case-insensitive PostgreSQL regex operators.
 	 */
-	public function test_regexp_predicates_are_translated_to_postgresql_regex_operators(): void {
+	public function test_regexp_predicates_are_translated_to_postgresql_case_insensitive_regex_operators(): void {
 		$driver = $this->create_driver();
 
 		$this->assertSame(
-			"SELECT * FROM wptests_postmeta WHERE meta_key ~ '^foo'",
+			"SELECT * FROM wptests_postmeta WHERE meta_key ~* '^foo'",
 			$this->translate_driver_query_with_private_method(
 				$driver,
 				'translate_mysql_compatible_query',
@@ -57,7 +57,7 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 			)
 		);
 		$this->assertSame(
-			"SELECT * FROM wptests_postmeta WHERE meta_key !~ '^foo'",
+			"SELECT * FROM wptests_postmeta WHERE meta_key !~* '^foo'",
 			$this->translate_driver_query_with_private_method(
 				$driver,
 				'translate_mysql_compatible_query',
@@ -65,11 +65,43 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 			)
 		);
 		$this->assertSame(
-			"SELECT * FROM wptests_postmeta WHERE meta_key ~ '^foo'",
+			"SELECT * FROM wptests_postmeta WHERE meta_key ~* '^foo'",
 			$this->translate_driver_query_with_private_method(
 				$driver,
 				'translate_mysql_compatible_query',
 				"SELECT * FROM wptests_postmeta WHERE meta_key RLIKE '^foo'"
+			)
+		);
+	}
+
+	/**
+	 * Tests default REGEXP collation behavior is represented by case-insensitive operators.
+	 */
+	public function test_regexp_predicates_match_mysql_case_insensitive_collation_shape(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			"SELECT 'rss_123' ~* '^RSS_.+$' AS is_match",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT 'rss_123' REGEXP '^RSS_.+$' AS is_match"
+			)
+		);
+		$this->assertSame(
+			"SELECT 'rss_123' !~* '^RSS_.+$' AS is_not_match",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT 'rss_123' NOT REGEXP '^RSS_.+$' AS is_not_match"
+			)
+		);
+		$this->assertSame(
+			"SELECT 'rss_123' ~* '^RSS_.+$' AS is_match",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT 'rss_123' RLIKE '^RSS_.+$' AS is_match"
 			)
 		);
 	}
@@ -81,7 +113,7 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$this->assertSame(
-			"SELECT * FROM wptests_posts WHERE wptests_posts.\"ID\" ~ '^[0-9]+$'",
+			"SELECT * FROM wptests_posts WHERE wptests_posts.\"ID\" ~* '^[0-9]+$'",
 			$this->translate_driver_query_with_private_method(
 				$driver,
 				'translate_mysql_compatible_query',

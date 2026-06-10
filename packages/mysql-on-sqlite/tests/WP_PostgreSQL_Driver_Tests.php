@@ -1084,25 +1084,87 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests MySQL SIGNED and UNSIGNED casts are translated to PostgreSQL bigint casts.
+	 * Tests MySQL SIGNED and UNSIGNED casts coerce text safely for PostgreSQL.
 	 */
-	public function test_signed_and_unsigned_casts_are_translated_to_postgresql_bigint(): void {
-		$driver = $this->create_driver();
+	public function test_signed_and_unsigned_casts_coerce_mysql_text_values_for_postgresql(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
 
-		$driver->query( 'CREATE TABLE wptests_postmeta (meta_value TEXT NOT NULL)' );
-		$driver->query( 'INSERT INTO wptests_postmeta (meta_value) VALUES (\'10\')' );
-		$driver->query( 'INSERT INTO wptests_postmeta (meta_value) VALUES (\'2\')' );
-		$driver->query( 'INSERT INTO wptests_postmeta (meta_value) VALUES (\'-1\')' );
+		$driver->query( 'CREATE TABLE wptests_postmeta (post_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
 
-		$select = 'SELECT meta_value FROM wptests_postmeta WHERE CAST(meta_value AS SIGNED) > 0 ORDER BY CAST(meta_value AS UNSIGNED INTEGER) DESC';
+		$values = array(
+			array( 1, '' ),
+			array( 2, '   ' ),
+			array( 3, 'abc' ),
+			array( 4, '10abc' ),
+			array( 5, '-7xyz' ),
+			array( 6, '+8' ),
+			array( 7, '42' ),
+			array( 8, '+' ),
+			array( 9, '-' ),
+			array( 10, '  15xyz' ),
+		);
+
+		foreach ( $values as $value ) {
+			$driver->query(
+				sprintf(
+					'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (%d, \'score\', %s)',
+					$value[0],
+					$driver->get_connection()->quote( $value[1] )
+				)
+			);
+		}
+
+		$select = 'SELECT post_id, meta_value, CAST(meta_value AS SIGNED) AS signed_value, CAST(meta_value AS UNSIGNED) AS unsigned_value FROM wptests_postmeta ORDER BY post_id';
 		$rows   = $driver->query( $select );
 
-		$this->assertSame( '10', $rows[0]->meta_value );
-		$this->assertSame( '2', $rows[1]->meta_value );
+		$this->assertSame(
+			array(
+				array( '', '0', '0' ),
+				array( '   ', '0', '0' ),
+				array( 'abc', '0', '0' ),
+				array( '10abc', '10', '10' ),
+				array( '-7xyz', '-7', '-7' ),
+				array( '+8', '8', '8' ),
+				array( '42', '42', '42' ),
+				array( '+', '0', '0' ),
+				array( '-', '0', '0' ),
+				array( '  15xyz', '15', '15' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->meta_value, $row->signed_value, $row->unsigned_value );
+				},
+				$rows
+			)
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'meta_value' );
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'SELECT meta_value FROM wptests_postmeta WHERE CAST(meta_value AS bigint) > 0 ORDER BY CAST(meta_value AS bigint) DESC',
+					'sql'    => 'SELECT post_id, meta_value, ' . $meta_value_cast_sql . ' AS signed_value, ' . $meta_value_cast_sql . ' AS unsigned_value FROM wptests_postmeta ORDER BY post_id',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$select = "SELECT post_id, meta_value FROM wptests_postmeta WHERE meta_key = 'score' AND CAST(meta_value AS SIGNED) > 0 ORDER BY CAST(meta_value AS UNSIGNED INTEGER) DESC, post_id ASC";
+		$rows   = $driver->query( $select );
+
+		$this->assertSame(
+			array( '42', '  15xyz', '10abc', '+8' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->meta_value;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "SELECT post_id, meta_value FROM wptests_postmeta WHERE meta_key = 'score' AND " . $meta_value_cast_sql . ' > 0 ORDER BY ' . $meta_value_cast_sql . ' DESC, post_id ASC',
 					'params' => array(),
 				),
 			),
@@ -1114,7 +1176,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests lowercase signed integer casts trigger PostgreSQL compatibility translation.
 	 */
 	public function test_lowercase_signed_integer_cast_triggers_postgresql_rewrite(): void {
-		$driver = $this->create_driver();
+		$driver = $this->create_driver_with_postgresql_substring_function();
 
 		$rows = $driver->query( "SELECT cast('7' as signed integer) AS cast_value" );
 
@@ -1122,7 +1184,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "SELECT CAST('7' AS bigint) AS cast_value",
+					'sql'    => 'SELECT ' . $this->get_expected_mysql_integer_cast_sql( "'7'" ) . ' AS cast_value',
 					'params' => array(),
 				),
 			),
@@ -1171,11 +1233,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_expression_rewrite_does_not_replace_string_literals(): void {
 		$driver = $this->create_driver();
 
-		$select = "SELECT 'FIELD(ID, 1)', 'CAST(meta_value AS SIGNED)', 'RAND()' AS literal_value";
+		$select = "SELECT 'FIELD(ID, 1)', 'CAST(meta_value AS SIGNED)', 'CAST(meta_value AS UNSIGNED)', 'RAND()' AS literal_value";
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertSame(
-			"SELECT 'FIELD(ID, 1)', 'CAST(meta_value AS SIGNED)', 'RAND()' AS literal_value",
+			"SELECT 'FIELD(ID, 1)', 'CAST(meta_value AS SIGNED)', 'CAST(meta_value AS UNSIGNED)', 'RAND()' AS literal_value",
 			$sql
 		);
 	}
@@ -2093,6 +2155,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Creates a PostgreSQL driver with a SQLite shim for SUBSTRING(text, pattern).
+	 *
+	 * @return WP_PostgreSQL_Driver
+	 */
+	private function create_driver_with_postgresql_substring_function(): WP_PostgreSQL_Driver {
+		$pdo_class  = class_exists( 'Pdo\Sqlite' ) ? 'Pdo\Sqlite' : PDO::class;
+		$pdo        = new $pdo_class( 'sqlite::memory:' );
+		$substring  = static function ( $value, $pattern ): ?string {
+			if ( null === $value ) {
+				return null;
+			}
+
+			$php_pattern = '/' . str_replace( '/', '\\/', (string) $pattern ) . '/';
+			if ( 1 === preg_match( $php_pattern, (string) $value, $matches ) ) {
+				return $matches[0];
+			}
+
+			return null;
+		};
+
+		if ( method_exists( $pdo, 'createFunction' ) ) {
+			$pdo->createFunction( 'SUBSTRING', $substring, 2 );
+		} else {
+			$pdo->sqliteCreateFunction( 'SUBSTRING', $substring, 2 );
+		}
+
+		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) );
+		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
 	 * Translate a query by calling a private driver translator.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver      Driver under test.
@@ -2110,6 +2203,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		return $translator( $method_name, $query );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL-compatible integer casts.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_integer_cast_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE CAST(COALESCE(SUBSTRING(%1$s, \'^[[:space:]]*[+-]?[0-9]+\'), \'0\') AS bigint) END',
+			$expression_text_sql
+		);
 	}
 
 	/**
