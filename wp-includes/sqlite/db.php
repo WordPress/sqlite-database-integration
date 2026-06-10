@@ -34,17 +34,30 @@ if ( ! extension_loaded( 'pdo' ) ) {
 }
 
 if ( ! extension_loaded( 'pdo_sqlite' ) ) {
-	wp_die(
-		new WP_Error(
-			'pdo_driver_not_loaded',
-			sprintf(
-				'<h1>%1$s</h1><p>%2$s</p>',
-				'PDO Driver for SQLite is missing',
-				'Your PHP installation appears not to have the right PDO drivers loaded. These are required for this version of WordPress and the type of database you have specified.'
-			)
-		),
-		'PDO Driver for SQLite is missing.'
-	);
+	/*
+	 * Without the PDO SQLite driver, fall back to the bundled pure-PHP
+	 * database engine. The fallback requires the new SQLite driver — the
+	 * legacy translator can only work with the pdo_sqlite extension.
+	 */
+	if ( defined( 'WP_SQLITE_AST_DRIVER' ) && ! WP_SQLITE_AST_DRIVER ) {
+		wp_die(
+			new WP_Error(
+				'pdo_driver_not_loaded',
+				sprintf(
+					'<h1>%1$s</h1><p>%2$s</p>',
+					'PDO Driver for SQLite is missing',
+					'Your PHP installation appears not to have the right PDO drivers loaded. The legacy SQLite driver requires the PDO SQLite driver. Either enable the pdo_sqlite extension, or remove the "WP_SQLITE_AST_DRIVER" constant to use the bundled pure-PHP database engine.'
+				)
+			),
+			'PDO Driver for SQLite is missing.'
+		);
+	}
+
+	require_once dirname( __DIR__ ) . '/php-engine/load.php';
+
+	if ( ! defined( 'WP_SQLITE_AST_DRIVER' ) ) {
+		define( 'WP_SQLITE_AST_DRIVER', true );
+	}
 }
 
 require_once __DIR__ . '/class-wp-sqlite-lexer.php';

@@ -132,9 +132,36 @@ class WP_PHP_Engine {
 	private $pragma_values = array();
 
 	/**
+	 * The open handle of the database file (for locking and I/O).
+	 *
+	 * @var resource|null
+	 */
+	private $file_handle;
+
+	/**
+	 * The generation token of the last loaded or saved file state.
+	 *
+	 * Every save writes a new unique token to the file header. When the
+	 * token on disk no longer matches, another process has saved in the
+	 * meantime and the in-memory state needs to be reloaded.
+	 *
+	 * @var string|null
+	 */
+	private $file_generation;
+
+	/**
+	 * Whether this connection holds the exclusive write lock.
+	 *
+	 * @var bool
+	 */
+	private $write_lock_held = false;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param string|null $path The database file path, or null/':memory:'.
+	 *
+	 * @throws WP_PHP_Engine_SQL_Exception When the database file cannot be used.
 	 */
 	public function __construct( $path = null ) {
 		$this->path      = null === $path || ':memory:' === $path || '' === $path ? null : $path;
@@ -146,8 +173,39 @@ class WP_PHP_Engine {
 			'views'     => array(),
 			'sequences' => array(),
 		);
-		if ( null !== $this->path && file_exists( $this->path ) && filesize( $this->path ) > 0 ) {
-			$this->load_from_disk();
+		if ( null !== $this->path ) {
+			$this->open_database_file();
+		}
+	}
+
+	/**
+	 * Destructor: release the file handle.
+	 */
+	public function __destruct() {
+		if ( null !== $this->file_handle ) {
+			flock( $this->file_handle, LOCK_UN );
+			fclose( $this->file_handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+	}
+
+	/**
+	 * Open (or create) the database file and load its contents.
+	 *
+	 * @throws WP_PHP_Engine_SQL_Exception When the file cannot be opened or
+	 *                                     is not a WP_PHP_Engine database.
+	 */
+	private function open_database_file() {
+		$handle = fopen( $this->path, 'c+b' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		if ( false === $handle ) {
+			throw new WP_PHP_Engine_SQL_Exception( 'unable to open database file', 'HY000', 14 );
+		}
+		$this->file_handle = $handle;
+
+		flock( $this->file_handle, LOCK_SH );
+		try {
+			$this->reload_if_changed();
+		} finally {
+			flock( $this->file_handle, LOCK_UN );
 		}
 	}
 
@@ -158,7 +216,40 @@ class WP_PHP_Engine {
 	 */
 
 	/**
+	 * Statement types that can modify the database.
+	 *
+	 * @var array<string, bool>
+	 */
+	private static $write_statement_types = array(
+		'insert'              => true,
+		'update'              => true,
+		'delete'              => true,
+		'create_table'        => true,
+		'create_table_as'     => true,
+		'create_index'        => true,
+		'create_trigger'      => true,
+		'create_view'         => true,
+		'drop'                => true,
+		'alter_rename_table'  => true,
+		'alter_rename_column' => true,
+		'alter_add_column'    => true,
+		'alter_drop_column'   => true,
+		'begin'               => true,
+		'commit'              => true,
+		'rollback'            => true,
+		'rollback_to'         => true,
+		'savepoint'           => true,
+		'release'             => true,
+	);
+
+	/**
 	 * Execute an SQL string with bound parameters.
+	 *
+	 * For file-backed databases, write statements run under an exclusive
+	 * file lock with a fresh state reload, so that concurrent requests
+	 * serialize their read-modify-write cycles instead of clobbering each
+	 * other. A transaction holds the exclusive lock from BEGIN until
+	 * COMMIT or ROLLBACK, like SQLite does.
 	 *
 	 * @param  string $sql    The SQL string.
 	 * @param  array  $params The bound parameter values.
@@ -173,12 +264,39 @@ class WP_PHP_Engine {
 			'decl'    => array(),
 			'changes' => 0,
 		);
+
+		$is_write = false;
+		foreach ( $statements as $statement ) {
+			if ( isset( self::$write_statement_types[ $statement['t'] ] ) ) {
+				$is_write = true;
+				break;
+			}
+		}
+
+		// Synchronize file-backed databases with other processes.
+		if ( null !== $this->file_handle && ! $this->in_transaction() ) {
+			if ( $is_write ) {
+				$this->acquire_write_lock();
+				$this->reload_if_changed();
+			} else {
+				flock( $this->file_handle, LOCK_SH );
+				$this->reload_if_changed();
+				flock( $this->file_handle, LOCK_UN );
+			}
+		}
+
 		try {
 			foreach ( $statements as $statement ) {
 				$result = $this->execute_statement( $statement, $params );
 			}
 		} catch ( WP_PHP_Engine_Constraint_Exception $e ) {
 			throw $e->inner;
+		} finally {
+			// Persist and release the lock, unless a transaction is open.
+			if ( null !== $this->file_handle && $is_write && ! $this->in_transaction() ) {
+				$this->save_to_disk();
+				$this->release_write_lock();
+			}
 		}
 		return $result;
 	}
@@ -444,7 +562,6 @@ class WP_PHP_Engine {
 				}
 				$this->transaction_stack       = array();
 				$this->in_explicit_transaction = false;
-				$this->save_to_disk();
 				return $this->empty_result();
 
 			case 'rollback':
@@ -469,9 +586,6 @@ class WP_PHP_Engine {
 					throw new WP_PHP_Engine_SQL_Exception( 'no such savepoint: ' . $statement['name'] );
 				}
 				$this->transaction_stack = array_slice( $this->transaction_stack, 0, $index );
-				if ( 0 === count( $this->transaction_stack ) && ! $this->in_explicit_transaction ) {
-					$this->save_to_disk();
-				}
 				return $this->empty_result();
 
 			case 'rollback_to':
@@ -551,9 +665,6 @@ class WP_PHP_Engine {
 		} catch ( Exception $e ) {
 			$this->db = $snapshot;
 			throw $e;
-		}
-		if ( 0 === count( $this->transaction_stack ) ) {
-			$this->save_to_disk();
 		}
 		return $result;
 	}
@@ -651,8 +762,7 @@ class WP_PHP_Engine {
 			}
 
 			try {
-				$this->insert_row( $lower, $candidate, $explicit_rowid, $statement, $evaluator );
-				$changes += 1;
+				$changes += $this->insert_row( $lower, $candidate, $explicit_rowid, $statement, $evaluator );
 			} catch ( WP_PHP_Engine_Constraint_Exception $e ) {
 				if ( 'IGNORE' === $statement['or'] ) {
 					continue;
@@ -690,6 +800,7 @@ class WP_PHP_Engine {
 	 * @param  mixed                   $explicit_rowid An explicitly specified bare rowid.
 	 * @param  array                   $statement      The INSERT statement node.
 	 * @param  WP_PHP_Engine_Evaluator $evaluator      The evaluator.
+	 * @return int                                     The number of affected rows (0 or 1).
 	 * @throws WP_PHP_Engine_Constraint_Exception On constraint violations (catchable for OR IGNORE).
 	 */
 	private function insert_row( $lower, $candidate, $explicit_rowid, $statement, $evaluator ) {
@@ -789,10 +900,9 @@ class WP_PHP_Engine {
 			} elseif ( null !== $statement['upsert'] ) {
 				$upsert = $statement['upsert'];
 				if ( 'nothing' === $upsert['do'] ) {
-					return;
+					return 0;
 				}
-				$this->upsert_update( $lower, $conflict_rowid, $candidate, $upsert, $evaluator );
-				return;
+				return $this->upsert_update( $lower, $conflict_rowid, $candidate, $upsert, $evaluator );
 			} else {
 				$names = array();
 				foreach ( $conflict_cols as $col ) {
@@ -828,6 +938,8 @@ class WP_PHP_Engine {
 
 		// Fire AFTER INSERT triggers.
 		$this->fire_triggers( $lower, 'INSERT', null, $candidate, $rowid, null );
+
+		return 1;
 	}
 
 	/**
@@ -836,8 +948,9 @@ class WP_PHP_Engine {
 	 * @param string                  $lower          The lowercase table name.
 	 * @param int                     $conflict_rowid The rowid of the conflicting row.
 	 * @param array                   $candidate      The proposed (excluded) row.
-	 * @param array                   $upsert         The upsert AST node.
-	 * @param WP_PHP_Engine_Evaluator $evaluator      The evaluator.
+	 * @param  array                   $upsert         The upsert AST node.
+	 * @param  WP_PHP_Engine_Evaluator $evaluator      The evaluator.
+	 * @return int                                     The number of affected rows (0 or 1).
 	 */
 	private function upsert_update( $lower, $conflict_rowid, $candidate, $upsert, $evaluator ) {
 		$table    = $this->db['tables'][ $lower ];
@@ -850,7 +963,7 @@ class WP_PHP_Engine {
 
 		if ( null !== $upsert['where'] ) {
 			if ( ! WP_PHP_Engine_Values::is_truthy( $evaluator->eval( $upsert['where'], $frame ) ) ) {
-				return;
+				return 0;
 			}
 		}
 
@@ -864,6 +977,8 @@ class WP_PHP_Engine {
 		}
 
 		$this->update_row( $lower, $conflict_rowid, $new_row, $evaluator, array_map( 'strtolower', array_column( $upsert['set'], 'col' ) ) );
+
+		return 1;
 	}
 
 	/*
@@ -2234,9 +2349,6 @@ class WP_PHP_Engine {
 				unset( $this->db['views'][ $lower ] );
 				break;
 		}
-		if ( 0 === count( $this->transaction_stack ) ) {
-			$this->save_to_disk();
-		}
 		return $this->empty_result();
 	}
 
@@ -2297,9 +2409,6 @@ class WP_PHP_Engine {
 			}
 		}
 
-		if ( 0 === count( $this->transaction_stack ) ) {
-			$this->save_to_disk();
-		}
 		return $this->empty_result();
 	}
 
@@ -2372,9 +2481,6 @@ class WP_PHP_Engine {
 			}
 		}
 
-		if ( 0 === count( $this->transaction_stack ) ) {
-			$this->save_to_disk();
-		}
 		return $this->empty_result();
 	}
 
@@ -2434,9 +2540,6 @@ class WP_PHP_Engine {
 		}
 
 		$this->db['tables'][ $lower ] = $table;
-		if ( 0 === count( $this->transaction_stack ) ) {
-			$this->save_to_disk();
-		}
 		return $this->empty_result();
 	}
 
@@ -2478,9 +2581,6 @@ class WP_PHP_Engine {
 			unset( $table['rows'][ $rowid ][ $col_lower ] );
 		}
 		$this->db['tables'][ $lower ] = $table;
-		if ( 0 === count( $this->transaction_stack ) ) {
-			$this->save_to_disk();
-		}
 		return $this->empty_result();
 	}
 
@@ -2911,39 +3011,130 @@ class WP_PHP_Engine {
 
 	/*
 	 * ----------------------------------------------------------------------
-	 * Persistence.
+	 * Persistence and file locking.
+	 *
+	 * The database file format is a single header line followed by the
+	 * serialized database state:
+	 *
+	 *   WP_PHP_ENGINE|1|<generation-token>\n<serialized state>
+	 *
+	 * The generation token changes on every save. Connections compare it
+	 * against the last token they saw to detect (and reload) state saved
+	 * by other processes. All access happens through one persistent file
+	 * handle, which also carries the flock()-based locks — shared for
+	 * reads and exclusive for the whole read-modify-write cycle of write
+	 * statements (or a whole transaction).
 	 * ----------------------------------------------------------------------
 	 */
 
 	/**
-	 * Load the database state from disk.
+	 * The database file format magic prefix.
 	 */
-	private function load_from_disk() {
-		$data = file_get_contents( $this->path );
-		if ( false === $data || '' === $data ) {
+	const FILE_MAGIC = 'WP_PHP_ENGINE|1|';
+
+	/**
+	 * Acquire the exclusive write lock (blocking).
+	 */
+	private function acquire_write_lock() {
+		if ( $this->write_lock_held ) {
 			return;
 		}
-		$db = unserialize( $data ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
-		if ( is_array( $db ) && isset( $db['tables'] ) ) {
-			$this->db = $db;
+		flock( $this->file_handle, LOCK_EX );
+		$this->write_lock_held = true;
+	}
+
+	/**
+	 * Release the exclusive write lock.
+	 */
+	private function release_write_lock() {
+		if ( ! $this->write_lock_held ) {
+			return;
 		}
+		flock( $this->file_handle, LOCK_UN );
+		$this->write_lock_held = false;
+	}
+
+	/**
+	 * Reload the database state when another process has saved a newer one.
+	 *
+	 * Must be called with at least a shared lock held, and never inside
+	 * a transaction.
+	 *
+	 * @throws WP_PHP_Engine_SQL_Exception When the file is not a WP_PHP_Engine database.
+	 */
+	private function reload_if_changed() {
+		rewind( $this->file_handle );
+		$header = fgets( $this->file_handle );
+		if ( false === $header || '' === trim( $header ) ) {
+			// A new, empty database file.
+			return;
+		}
+		if ( 0 !== strpos( $header, self::FILE_MAGIC ) ) {
+			throw new WP_PHP_Engine_SQL_Exception(
+				'file is not a WP_PHP_Engine database (refusing to overwrite an unrecognized file)',
+				'HY000',
+				26 // SQLITE_NOTADB.
+			);
+		}
+		$generation = trim( substr( $header, strlen( self::FILE_MAGIC ) ) );
+		if ( $generation === $this->file_generation ) {
+			return;
+		}
+
+		$data = stream_get_contents( $this->file_handle );
+		$db   = false !== $data ? unserialize( $data ) : false; // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+		if ( ! is_array( $db ) || ! isset( $db['tables'] ) ) {
+			throw new WP_PHP_Engine_SQL_Exception( 'database disk image is malformed', 'HY000', 11 );
+		}
+
+		// Carry over this connection's temporary tables and indexes.
+		foreach ( $this->db['tables'] as $key => $table ) {
+			if ( 0 === strpos( $key, 'temp.' ) ) {
+				$db['tables'][ $key ] = $table;
+			}
+		}
+		foreach ( $this->db['indexes'] as $key => $index ) {
+			if ( 0 === strpos( $key, 'temp.' ) ) {
+				$db['indexes'][ $key ] = $index;
+			}
+		}
+
+		$this->db              = $db;
+		$this->file_generation = $generation;
 	}
 
 	/**
 	 * Save the database state to disk (for file-backed databases).
+	 *
+	 * Must be called with the exclusive write lock held.
 	 */
 	private function save_to_disk() {
-		if ( null === $this->path ) {
+		if ( null === $this->file_handle ) {
 			return;
 		}
-		// Temporary tables are not persisted.
+
+		// Temporary tables and indexes are not persisted.
 		$db = $this->db;
 		foreach ( $db['tables'] as $lower => $table ) {
-			if ( $table['temp'] ) {
+			if ( 0 === strpos( $lower, 'temp.' ) ) {
 				unset( $db['tables'][ $lower ] );
 			}
 		}
-		file_put_contents( $this->path, serialize( $db ), LOCK_EX ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+		foreach ( $db['indexes'] as $lower => $index ) {
+			if ( 0 === strpos( $lower, 'temp.' ) ) {
+				unset( $db['indexes'][ $lower ] );
+			}
+		}
+
+		$generation = uniqid( '', true );
+		$payload    = self::FILE_MAGIC . $generation . "\n" . serialize( $db ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+
+		rewind( $this->file_handle );
+		ftruncate( $this->file_handle, 0 );
+		fwrite( $this->file_handle, $payload ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		fflush( $this->file_handle );
+
+		$this->file_generation = $generation;
 	}
 }
 

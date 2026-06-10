@@ -61,9 +61,9 @@ function sqlite_integration_admin_screen() {
 					);
 				?>
 			</p>
-		<?php elseif ( ! extension_loaded( 'pdo_sqlite' ) ) : ?>
+		<?php elseif ( ! extension_loaded( 'pdo' ) ) : ?>
 			<div class="notice notice-error">
-				<p><?php esc_html_e( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
+				<p><?php esc_html_e( 'We detected that the PDO extension is missing from your server. Please make sure that PDO is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
 			</div>
 		<?php elseif ( file_exists( $db_dropin_path ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) && ! $override_db_dropin ) : ?>
 			<?php if ( defined( 'PERFLAB_SQLITE_DB_DROPIN_VERSION' ) ) : ?>

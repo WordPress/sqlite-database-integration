@@ -148,23 +148,15 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 	 */
 	#[\ReturnTypeWillChange]
 	public function bindValue( $param, $value, $type = PDO::PARAM_STR ) {
-		if ( PDO::PARAM_BOOL === $type ) {
-			$value = $value ? 1 : 0;
-		} elseif ( PDO::PARAM_NULL === $type ) {
-			$value = null;
-		} elseif ( PDO::PARAM_INT === $type && null !== $value ) {
-			$value = (int) $value;
-		}
-		if ( is_int( $param ) ) {
-			$this->bound_params[ $param - 1 ] = $value;
-		} else {
-			$this->bound_params[ ltrim( (string) $param, ':' ) ] = $value;
-		}
+		$this->bound_params[ $this->normalize_param_key( $param ) ] = $this->convert_bound_value( $value, $type );
 		return true;
 	}
 
 	/**
-	 * Bind a variable to a parameter (bound by value at execute time here).
+	 * Bind a variable to a parameter by reference.
+	 *
+	 * Like in PDO, the variable is evaluated at execute() time, so changes
+	 * made to it after binding are picked up.
 	 *
 	 * @param  mixed $param          The parameter identifier.
 	 * @param  mixed $var            The variable.
@@ -175,7 +167,44 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 	 */
 	#[\ReturnTypeWillChange]
 	public function bindParam( $param, &$var, $type = PDO::PARAM_STR, $max_length = 0, $driver_options = null ) {
-		return $this->bindValue( $param, $var, $type );
+		$key                        = $this->normalize_param_key( $param );
+		$binding                    = array(
+			'is_bound_reference' => true,
+			'type'               => $type,
+		);
+		$binding['var']             = &$var;
+		$this->bound_params[ $key ] = $binding;
+		return true;
+	}
+
+	/**
+	 * Normalize a parameter identifier to the engine's array key.
+	 *
+	 * @param  mixed $param The parameter identifier (1-based int or name).
+	 * @return int|string   The array key.
+	 */
+	private function normalize_param_key( $param ) {
+		return is_int( $param ) ? $param - 1 : ltrim( (string) $param, ':' );
+	}
+
+	/**
+	 * Apply a PDO::PARAM_* type to a bound value.
+	 *
+	 * @param  mixed $value The value.
+	 * @param  int   $type  The parameter type.
+	 * @return mixed        The converted value.
+	 */
+	private function convert_bound_value( $value, $type ) {
+		if ( PDO::PARAM_BOOL === $type ) {
+			return $value ? 1 : 0;
+		}
+		if ( PDO::PARAM_NULL === $type ) {
+			return null;
+		}
+		if ( PDO::PARAM_INT === $type && null !== $value ) {
+			return (int) $value;
+		}
+		return $value;
 	}
 
 	/**
@@ -186,7 +215,19 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 	 */
 	#[\ReturnTypeWillChange]
 	public function execute( $params = null ) {
-		$bound = null !== $params ? $this->normalize_execute_params( $params ) : $this->bound_params;
+		if ( null !== $params ) {
+			$bound = $this->normalize_execute_params( $params );
+		} else {
+			// Resolve by-reference bindings to their current values.
+			$bound = array();
+			foreach ( $this->bound_params as $key => $value ) {
+				if ( is_array( $value ) && isset( $value['is_bound_reference'] ) ) {
+					$bound[ $key ] = $this->convert_bound_value( $value['var'], $value['type'] );
+				} else {
+					$bound[ $key ] = $value;
+				}
+			}
+		}
 		try {
 			$result = $this->engine->execute( $this->sql, $bound );
 		} catch ( PDOException $e ) {

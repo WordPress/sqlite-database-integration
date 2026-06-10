@@ -76,8 +76,22 @@ class WP_SQLite_Connection {
 			if ( ! isset( $options['path'] ) || ! is_string( $options['path'] ) ) {
 				throw new InvalidArgumentException( 'Option "path" is required when "connection" is not provided.' );
 			}
-			$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
-			$this->pdo = new $pdo_class( 'sqlite:' . $options['path'] );
+
+			/*
+			 * When the PDO SQLite driver is not available, or when explicitly
+			 * requested with the WP_SQLITE_FORCE_PHP_ENGINE constant, fall back
+			 * to the bundled pure-PHP database engine. It refuses to open files
+			 * in other formats, so it can never overwrite a real SQLite file.
+			 */
+			$force_php_engine = defined( 'WP_SQLITE_FORCE_PHP_ENGINE' ) && WP_SQLITE_FORCE_PHP_ENGINE;
+			$has_pdo_sqlite   = in_array( 'sqlite', PDO::getAvailableDrivers(), true );
+			if ( $force_php_engine || ! $has_pdo_sqlite ) {
+				require_once __DIR__ . '/../php-engine/load.php';
+				$this->pdo = new WP_PHP_Engine_PDO( 'php-engine:' . $options['path'] );
+			} else {
+				$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+				$this->pdo = new $pdo_class( 'sqlite:' . $options['path'] );
+			}
 		}
 
 		// Throw exceptions on error.

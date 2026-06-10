@@ -9,8 +9,10 @@
 	},
 	"require": {
 		"php": ">=7.2",
-		"ext-pdo": "*",
-		"ext-pdo_sqlite": "*"
+		"ext-pdo": "*"
+	},
+	"suggest": {
+		"ext-pdo_sqlite": "Recommended. Without the PDO SQLite driver, the plugin falls back to the bundled (slower) pure-PHP database engine."
 	},
 	"require-dev": {
 		"ext-mbstring": "*",

@@ -19,13 +19,21 @@ function sqlite_plugin_admin_notice() {
 		return;
 	}
 
-	// If PDO SQLite is not loaded, bail early.
-	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
+	// If PDO is not loaded at all, bail early.
+	if ( ! extension_loaded( 'pdo' ) ) {
 		printf(
 			'<div class="notice notice-error"><p>%s</p></div>',
-			esc_html__( 'The SQLite Integration plugin is active, but the PDO SQLite extension is missing from your server. Please make sure that PDO SQLite is enabled in your PHP installation.', 'sqlite-database-integration' )
+			esc_html__( 'The SQLite Integration plugin is active, but the PDO extension is missing from your server. Please make sure that PDO is enabled in your PHP installation.', 'sqlite-database-integration' )
 		);
 		return;
+	}
+
+	// Without the PDO SQLite driver, the bundled pure-PHP database engine is used.
+	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
+		printf(
+			'<div class="notice notice-warning"><p>%s</p></div>',
+			esc_html__( 'The PDO SQLite driver is missing from your server, so the SQLite Integration plugin is using its bundled pure-PHP database engine. This works, but is slower than SQLite — consider enabling the pdo_sqlite extension.', 'sqlite-database-integration' )
+		);
 	}
 
 	/*
