@@ -304,7 +304,9 @@ class WP_PostgreSQL_Driver {
 		if ( $this->is_create_table_query( $query ) ) {
 			$translator = new WP_PostgreSQL_Create_Table_Translator();
 			$result     = $this->execute_postgresql_statements( $translator->translate_schema( $query ) );
-			if ( ! $this->is_temporary_create_table_query( $query ) ) {
+			if ( $this->is_temporary_create_table_query( $query ) ) {
+				$this->store_mysql_temporary_schema_metadata( $query );
+			} else {
 				$this->store_mysql_schema_metadata( $query );
 			}
 			return $result;
@@ -319,10 +321,12 @@ class WP_PostgreSQL_Driver {
 
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
+			$metadata_targets = $this->get_mysql_schema_metadata_drop_targets(
+				$drop_query['tables'],
+				$drop_query['temporary']
+			);
 			$result = $this->execute_postgresql_statements( $drop_query['statements'] );
-			if ( ! $drop_query['temporary'] ) {
-				$this->delete_mysql_schema_metadata_for_tables( $drop_query['tables'] );
-			}
+			$this->delete_mysql_schema_metadata_for_table_targets( $metadata_targets );
 			return $result;
 		}
 
@@ -638,33 +642,73 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
+		$this->store_mysql_schema_metadata_for_schema( $query, 'public' );
+	}
+
+	/**
+	 * Store MySQL-facing schema metadata for translated CREATE TEMPORARY TABLE statements.
+	 *
+	 * @param string $query MySQL CREATE TEMPORARY TABLE query.
+	 */
+	private function store_mysql_temporary_schema_metadata( string $query ): void {
+		$this->store_mysql_schema_metadata_for_schema(
+			$query,
+			array( $this, 'get_temporary_schema_for_metadata_table' )
+		);
+	}
+
+	/**
+	 * Store MySQL-facing schema metadata for translated CREATE TABLE statements in one backend schema.
+	 *
+	 * @param string          $query        MySQL CREATE TABLE query.
+	 * @param string|callable $table_schema Metadata schema, or resolver receiving the table name.
+	 */
+	private function store_mysql_schema_metadata_for_schema( string $query, $table_schema ): void {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query, true );
 		foreach ( $metadata_tables as $metadata ) {
-			$table_schema = 'public';
-			$table_name   = $metadata['table_name'];
+			$schema_name = is_callable( $table_schema )
+				? (string) call_user_func( $table_schema, $metadata['table_name'] )
+				: (string) $table_schema;
+			$table_name  = $metadata['table_name'];
 
-			$this->delete_mysql_schema_metadata_for_tables( array( $table_name ) );
+			$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $schema_name );
 
 			$column_nullable = array();
 			foreach ( $metadata['columns'] as $column ) {
-				$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+				$this->insert_mysql_column_metadata( $schema_name, $table_name, $column );
 				$column_nullable[ strtolower( $column['name'] ) ] = $column['nullable'] ?? 'YES';
 			}
 
 			foreach ( $metadata['indexes'] ?? array() as $index ) {
-				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
+				$this->insert_mysql_index_metadata( $schema_name, $table_name, $index, $column_nullable );
 			}
 		}
+	}
+
+	/**
+	 * Get the metadata schema name for an active temporary table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string Metadata schema name.
+	 */
+	private function get_temporary_schema_for_metadata_table( string $table_name ): string {
+		$schema_name = $this->get_active_temporary_table_schema( $table_name );
+		if ( null !== $schema_name ) {
+			return $schema_name;
+		}
+
+		return $this->get_temporary_drop_table_schema_name();
 	}
 
 	/**
 	 * Delete stored MySQL schema metadata for dropped tables.
 	 *
 	 * @param string[] $table_names Table names.
+	 * @param string   $table_schema Metadata schema name.
 	 */
-	private function delete_mysql_schema_metadata_for_tables( array $table_names ): void {
+	private function delete_mysql_schema_metadata_for_tables( array $table_names, string $table_schema = 'public' ): void {
 		if ( empty( $table_names ) ) {
 			return;
 		}
@@ -672,7 +716,7 @@ class WP_PostgreSQL_Driver {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		foreach ( $table_names as $table_name ) {
-			$params = array( 'public', $table_name );
+			$params = array( $table_schema, $table_name );
 			$this->connection->query(
 				sprintf(
 					'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
@@ -686,6 +730,20 @@ class WP_PostgreSQL_Driver {
 					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 				),
 				$params
+			);
+		}
+	}
+
+	/**
+	 * Delete stored MySQL schema metadata for concrete schema/table targets.
+	 *
+	 * @param array[] $targets Metadata targets.
+	 */
+	private function delete_mysql_schema_metadata_for_table_targets( array $targets ): void {
+		foreach ( $targets as $target ) {
+			$this->delete_mysql_schema_metadata_for_tables(
+				array( $target['table'] ),
+				$target['schema']
 			);
 		}
 	}
@@ -1244,6 +1302,37 @@ class WP_PostgreSQL_Driver {
 			'tables'     => $table_names,
 			'temporary'  => $temporary,
 		);
+	}
+
+	/**
+	 * Get the MySQL metadata rows that should be removed after a DROP TABLE.
+	 *
+	 * @param string[] $table_names Table names.
+	 * @param bool     $temporary   Whether the DROP TABLE explicitly targets temporary tables.
+	 * @return array[] Metadata targets.
+	 */
+	private function get_mysql_schema_metadata_drop_targets( array $table_names, bool $temporary ): array {
+		$targets = array();
+
+		foreach ( $table_names as $table_name ) {
+			$temporary_schema = $this->get_active_temporary_table_schema( $table_name );
+			if ( null !== $temporary_schema ) {
+				$targets[] = array(
+					'schema' => $temporary_schema,
+					'table'  => $table_name,
+				);
+				continue;
+			}
+
+			if ( ! $temporary ) {
+				$targets[] = array(
+					'schema' => 'public',
+					'table'  => $table_name,
+				);
+			}
+		}
+
+		return $targets;
 	}
 
 	/**
@@ -1850,7 +1939,10 @@ class WP_PostgreSQL_Driver {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$sql    = $this->get_describe_catalog_query();
-		$params = array( 'public', $table_name );
+		$params = array(
+			$this->resolve_mysql_table_schema_for_introspection( 'public', $table_name ),
+			$table_name,
+		);
 		$stmt   = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
@@ -1878,7 +1970,10 @@ class WP_PostgreSQL_Driver {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$sql    = $this->get_show_columns_catalog_query( $is_full );
-		$params = array( $schema_name, $table_name );
+		$params = array(
+			$this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name ),
+			$table_name,
+		);
 
 		if ( null !== $like ) {
 			$sql     .= " AND field_name LIKE ? ESCAPE '\\'";
@@ -2145,7 +2240,10 @@ ORDER BY table_name';
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$sql    = $this->get_show_index_catalog_query();
-		$params = array( 'public', $table_name );
+		$params = array(
+			$this->resolve_mysql_table_schema_for_introspection( 'public', $table_name ),
+			$table_name,
+		);
 
 		if ( null !== $key_name ) {
 			$sql     .= '
@@ -2173,6 +2271,56 @@ ORDER BY
 		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Resolve the backend schema for an unqualified MySQL table introspection query.
+	 *
+	 * @param string $schema_name Requested schema name.
+	 * @param string $table_name  Requested table name.
+	 * @return string Backend schema name.
+	 */
+	private function resolve_mysql_table_schema_for_introspection( string $schema_name, string $table_name ): string {
+		if ( 'public' !== $schema_name ) {
+			return $schema_name;
+		}
+
+		$temporary_schema = $this->get_active_temporary_table_schema( $table_name );
+		return null === $temporary_schema ? $schema_name : $temporary_schema;
+	}
+
+	/**
+	 * Get the active temporary schema for a table name.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string|null Temporary schema name, or null when no active temporary table exists.
+	 */
+	private function get_active_temporary_table_schema( string $table_name ): ?string {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+
+		if ( 'sqlite' === $driver_name ) {
+			$stmt = $this->connection->query(
+				"SELECT name FROM sqlite_temp_master WHERE type = 'table' AND LOWER(name) = LOWER(?) LIMIT 1",
+				array( $table_name )
+			);
+
+			return false === $stmt->fetchColumn() ? null : 'temp';
+		}
+
+		$stmt = $this->connection->query(
+			'SELECT n.nspname
+			FROM pg_catalog.pg_class c
+			INNER JOIN pg_catalog.pg_namespace n
+				ON n.oid = c.relnamespace
+			WHERE n.oid = pg_my_temp_schema()
+				AND lower(c.relname) = lower(?)
+				AND c.relkind IN (\'r\', \'p\')
+			LIMIT 1',
+			array( $table_name )
+		);
+
+		$schema_name = $stmt->fetchColumn();
+		return false === $schema_name ? null : (string) $schema_name;
 	}
 
 	/**

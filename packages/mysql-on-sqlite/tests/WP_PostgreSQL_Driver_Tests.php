@@ -250,6 +250,75 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests temporary CREATE TABLE stores isolated MySQL metadata for dbDelta introspection.
+	 */
+	public function test_temporary_create_stores_temporary_mysql_schema_metadata_for_dbdelta_introspection(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE wptests_dbdelta_temp_probe (permanent_value INTEGER NOT NULL)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_dbdelta_temp_probe (permanent_value int NOT NULL)' );
+
+		$public_columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_temp_probe' );
+		$this->assertSame( array( 'permanent_value' ), array_column( $public_columns_before, 'column_name' ) );
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_dbdelta_temp_probe (
+				`id` bigint(20) NOT NULL,
+				`references` varchar(255) NOT NULL,
+				PRIMARY KEY (`id`),
+				KEY `compound_key` (`id`,`references`(191))
+			)'
+		);
+
+		$temp_columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_temp_probe', 'temp' );
+		$this->assertSame( array( 'id', 'references' ), array_column( $temp_columns, 'column_name' ) );
+		$this->assertSame( array( 'bigint(20)', 'varchar(255)' ), array_column( $temp_columns, 'column_type' ) );
+		$this->assertSame( $public_columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_temp_probe' ) );
+
+		$describe = $driver->query( 'DESCRIBE wptests_dbdelta_temp_probe' );
+		$this->assertSame( 'id', $describe[0]->Field );
+		$this->assertSame( 'PRI', $describe[0]->Key );
+		$this->assertSame( 'references', $describe[1]->Field );
+		$this->assertSame( 'MUL', $describe[1]->Key );
+		$this->assertSame( array( 'temp', 'wptests_dbdelta_temp_probe' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$temp_indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_dbdelta_temp_probe', 'temp' );
+		$this->assertSame( array( 'PRIMARY', 'compound_key', 'compound_key' ), array_column( $temp_indexes, 'key_name' ) );
+		$this->assertSame( array( 'id', 'id', 'references' ), array_column( $temp_indexes, 'column_name' ) );
+		$this->assertSame( '191', $temp_indexes[2]['sub_part'] );
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_dbdelta_temp_probe' );
+
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_temp_probe', 'temp' ) );
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_dbdelta_temp_probe', 'temp' ) );
+		$this->assertSame( $public_columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_temp_probe' ) );
+	}
+
+	/**
+	 * Tests unqualified DROP TABLE removes active temporary metadata before permanent metadata.
+	 */
+	public function test_unqualified_drop_table_removes_temporary_metadata_without_clobbering_permanent_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_dbdelta_shadow_drop (permanent_value INTEGER NOT NULL)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_dbdelta_shadow_drop (permanent_value int NOT NULL)' );
+
+		$public_columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_shadow_drop' );
+
+		$driver->query( 'CREATE TEMPORARY TABLE wptests_dbdelta_shadow_drop (`temp_value` varchar(50) NOT NULL)' );
+		$temp_columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_shadow_drop', 'temp' );
+		$this->assertSame( array( 'temp_value' ), array_column( $temp_columns, 'column_name' ) );
+
+		$driver->query( 'DROP TABLE IF EXISTS wptests_dbdelta_shadow_drop' );
+
+		$this->assertFalse( $this->sqlite_table_exists( $driver, 'temp', 'wptests_dbdelta_shadow_drop' ) );
+		$this->assertTrue( $this->sqlite_table_exists( $driver, 'main', 'wptests_dbdelta_shadow_drop' ) );
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_shadow_drop', 'temp' ) );
+		$this->assertSame( $public_columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_dbdelta_shadow_drop' ) );
+	}
+
+	/**
 	 * Tests plain CHAR columns do not route through the MySQL DDL translator.
 	 */
 	public function test_create_table_with_plain_char_and_check_preserves_constraint(): void {
@@ -1667,9 +1736,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 *
 	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
 	 * @param string               $table_name Table name.
+	 * @param string               $schema     Metadata schema name.
 	 * @return array Stored metadata rows.
 	 */
-	private function get_mysql_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name ): array {
+	private function get_mysql_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
 		$stmt = $driver->get_connection()->query(
 			sprintf(
 				'SELECT column_name, column_type, character_set_name, collation_name, is_nullable, column_default, extra
@@ -1678,7 +1748,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				ORDER BY ordinal_position',
 				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
 			),
-			array( 'public', $table_name )
+			array( $schema, $table_name )
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
@@ -1689,9 +1759,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 *
 	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
 	 * @param string               $table_name Table name.
+	 * @param string               $schema     Metadata schema name.
 	 * @return array Stored metadata rows.
 	 */
-	private function get_mysql_index_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name ): array {
+	private function get_mysql_index_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
 		$stmt = $driver->get_connection()->query(
 			sprintf(
 				'SELECT key_name, seq_in_index, column_name, non_unique, index_type, sub_part, nullable
@@ -1700,7 +1771,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				ORDER BY index_ordinal, seq_in_index',
 				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
 			),
-			array( 'public', $table_name )
+			array( $schema, $table_name )
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
