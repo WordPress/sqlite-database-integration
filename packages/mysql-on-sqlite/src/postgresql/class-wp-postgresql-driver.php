@@ -368,6 +368,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$translated_for_postgresql = false;
+		$dml_identity_repair_query = null;
 
 		$translated_query = $this->translate_wordpress_options_regexp_delete_query( $query );
 		if ( null !== $translated_query ) {
@@ -396,19 +397,23 @@ class WP_PostgreSQL_Driver {
 		$replace_query        = $this->translate_simple_mysql_replace_query( $query );
 		if ( null !== $replace_query ) {
 			if ( null !== $replace_query['conflict_column'] ) {
-				$replace_return_value = $this->replace_conflict_exists(
+				$replace_conflict_exists           = $this->replace_conflict_exists(
 					$replace_query['table_name'],
 					$replace_query['conflict_column'],
 					$replace_query['conflict_value']
-				) ? 2 : 1;
+				);
+				$replace_return_value              = $replace_conflict_exists ? 2 : 1;
+				$replace_query['inserted_new_row'] = ! $replace_conflict_exists;
 			}
 			$query                     = $replace_query['sql'];
+			$dml_identity_repair_query = $replace_query;
 			$translated_for_postgresql = true;
 		}
 
-		$translated_query = $this->translate_simple_mysql_insert_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
+		$insert_query = $this->translate_simple_mysql_insert_query( $query );
+		if ( null !== $insert_query ) {
+			$query                     = $insert_query['sql'];
+			$dml_identity_repair_query = $insert_query;
 			$translated_for_postgresql = true;
 		}
 
@@ -451,6 +456,8 @@ class WP_PostgreSQL_Driver {
 			'params' => array(),
 		);
 
+		$affected_rows = $stmt->rowCount();
+
 		if ( $stmt->columnCount() > 0 ) {
 			$this->last_column_meta = $this->normalize_column_meta( $stmt );
 			$this->last_result      = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
@@ -459,10 +466,14 @@ class WP_PostgreSQL_Driver {
 			}
 		} else {
 			$this->last_column_meta = array();
-			$this->last_result      = $stmt->rowCount();
+			$this->last_result      = $affected_rows;
 			if ( null !== $replace_return_value ) {
 				$this->last_result = $replace_return_value;
 			}
+		}
+
+		if ( null !== $dml_identity_repair_query ) {
+			$this->repair_dml_identity_sequences_after_success( $dml_identity_repair_query, $affected_rows );
 		}
 
 		return $this->last_result;
@@ -3211,10 +3222,14 @@ WHERE option_name IN (
 		$conflict_column = $this->get_simple_replace_conflict_column( $table_name, $columns );
 		if ( null === $conflict_column ) {
 			return array(
-				'sql'             => $sql,
-				'table_name'      => $table_name,
-				'conflict_column' => null,
-				'conflict_value'  => null,
+				'action'           => 'replace',
+				'sql'              => $sql,
+				'table_name'       => $table_name,
+				'columns'          => $columns,
+				'values'           => $values,
+				'conflict_column'  => null,
+				'conflict_value'   => null,
+				'inserted_new_row' => true,
 			);
 		}
 
@@ -3240,15 +3255,19 @@ WHERE option_name IN (
 		}
 
 		return array(
-			'sql'             => sprintf(
+			'action'           => 'replace',
+			'sql'              => sprintf(
 				'%s ON CONFLICT (%s) DO UPDATE SET %s',
 				$sql,
 				$this->connection->quote_identifier( $conflict_column ),
 				implode( ', ', $assignments )
 			),
-			'table_name'      => $table_name,
-			'conflict_column' => $conflict_column,
-			'conflict_value'  => $values[ $conflict_index ],
+			'table_name'       => $table_name,
+			'columns'          => $columns,
+			'values'           => $values,
+			'conflict_column'  => $conflict_column,
+			'conflict_value'   => $values[ $conflict_index ],
+			'inserted_new_row' => true,
 		);
 	}
 
@@ -3324,9 +3343,9 @@ WHERE option_name IN (
 	 * trailing clauses fall through unchanged.
 	 *
 	 * @param string $query MySQL query.
-	 * @return string|null PostgreSQL query, or null when the query is unsupported.
+	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
 	 */
-	private function translate_simple_mysql_insert_query( string $query ): ?string {
+	private function translate_simple_mysql_insert_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -3359,27 +3378,263 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$values_start = $position;
 		++$position;
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
-		if ( null === $statement_end ) {
-			return null;
-		}
-
-		$values_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-		if ( null === $values_end || $values_end !== $statement_end ) {
+		$values = $this->parse_mysql_value_list( $tokens, $position );
+		if ( null === $values || count( $columns ) !== count( $values ) || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
 
 		$sql = sprintf(
-			'INSERT INTO %s (%s) %s',
+			'INSERT INTO %s (%s) VALUES (%s)',
 			$this->connection->quote_identifier( $table_name ),
 			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $values_start, $values_end )
+			implode( ', ', $values )
 		);
 
-		return $ignore ? $sql . ' ON CONFLICT DO NOTHING' : $sql;
+		return array(
+			'action'           => 'insert',
+			'sql'              => $ignore ? $sql . ' ON CONFLICT DO NOTHING' : $sql,
+			'table_name'       => $table_name,
+			'columns'          => $columns,
+			'values'           => $values,
+			'ignore'           => $ignore,
+			'inserted_new_row' => true,
+		);
+	}
+
+	/**
+	 * Repair PostgreSQL identity sequences for successful explicit identity writes.
+	 *
+	 * @param array $dml_query     Translated DML query metadata.
+	 * @param int   $affected_rows Backend affected row count.
+	 */
+	private function repair_dml_identity_sequences_after_success( array $dml_query, int $affected_rows ): void {
+		if ( $affected_rows <= 0 ) {
+			return;
+		}
+
+		if ( isset( $dml_query['inserted_new_row'] ) && ! $dml_query['inserted_new_row'] ) {
+			return;
+		}
+
+		if (
+			! isset( $dml_query['table_name'], $dml_query['columns'], $dml_query['values'] )
+			|| ! is_array( $dml_query['columns'] )
+			|| ! is_array( $dml_query['values'] )
+		) {
+			return;
+		}
+
+		$explicit_identity_columns = $this->get_explicit_dml_identity_column_lookup(
+			$dml_query['columns'],
+			$dml_query['values']
+		);
+		if ( empty( $explicit_identity_columns ) || ! $this->is_postgresql_catalog_available_for_dml_identity_repair() ) {
+			return;
+		}
+
+		$table_name   = (string) $dml_query['table_name'];
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$metadata     = $this->get_dml_identity_column_metadata( $table_schema, $table_name );
+
+		foreach ( $metadata as $column_metadata ) {
+			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+			if ( ! isset( $explicit_identity_columns[ strtolower( $column_name ) ] ) ) {
+				continue;
+			}
+
+			if ( ! $this->is_existing_dbdelta_column_identity( $column_metadata ) ) {
+				continue;
+			}
+
+			$sequence_schema = (string) ( $column_metadata['sequence_schema'] ?? '' );
+			$sequence_name   = (string) ( $column_metadata['sequence_name'] ?? '' );
+			if ( '' === $sequence_schema || '' === $sequence_name ) {
+				continue;
+			}
+
+			$this->repair_postgresql_identity_sequence(
+				$table_schema,
+				$table_name,
+				$column_name,
+				$sequence_schema,
+				$sequence_name
+			);
+		}
+	}
+
+	/**
+	 * Get explicitly supplied non-default DML identity columns.
+	 *
+	 * @param string[] $columns DML column names.
+	 * @param string[] $values  Translated DML value expressions.
+	 * @return array<string, bool> Lowercase column lookup.
+	 */
+	private function get_explicit_dml_identity_column_lookup( array $columns, array $values ): array {
+		$explicit_columns = array();
+
+		foreach ( $columns as $index => $column ) {
+			if ( ! isset( $values[ $index ] ) || ! $this->is_explicit_dml_identity_value( (string) $values[ $index ] ) ) {
+				continue;
+			}
+
+			$explicit_columns[ strtolower( (string) $column ) ] = true;
+		}
+
+		return $explicit_columns;
+	}
+
+	/**
+	 * Check whether a DML value is an explicit identity value.
+	 *
+	 * DEFAULT and NULL do not represent caller-supplied auto_increment values.
+	 *
+	 * @param string $value_sql Translated value SQL.
+	 * @return bool Whether the value is explicit.
+	 */
+	private function is_explicit_dml_identity_value( string $value_sql ): bool {
+		$value_sql = trim( $value_sql );
+		if ( '' === $value_sql ) {
+			return false;
+		}
+
+		return ! in_array( strtoupper( $value_sql ), array( 'DEFAULT', 'NULL' ), true );
+	}
+
+	/**
+	 * Get PostgreSQL/MySQL metadata for DML identity repair.
+	 *
+	 * @param string $table_schema Backend table schema.
+	 * @param string $table_name   Table name.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_dml_identity_column_metadata( string $table_schema, string $table_name ): array {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT
+					c.column_name,
+					c.data_type,
+					c.is_identity,
+					c.column_default,
+					cm.column_type AS mysql_column_type,
+					cm.extra AS mysql_extra,
+					seq_ns.nspname AS sequence_schema,
+					seq.relname AS sequence_name
+				FROM information_schema.columns c
+				LEFT JOIN %s cm
+					ON cm.table_schema = c.table_schema
+					AND cm.table_name = c.table_name
+					AND cm.column_name = c.column_name
+				LEFT JOIN LATERAL (
+					SELECT pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass AS sequence_oid
+				) identity_sequence ON TRUE
+				LEFT JOIN pg_catalog.pg_class seq
+					ON seq.oid = identity_sequence.sequence_oid
+				LEFT JOIN pg_catalog.pg_namespace seq_ns
+					ON seq_ns.oid = seq.relnamespace
+				WHERE c.table_schema = ?
+					AND c.table_name = ?
+				ORDER BY c.ordinal_position',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Check whether PostgreSQL catalog metadata is available for identity repair.
+	 *
+	 * @return bool Whether catalog-backed identity repair can run.
+	 */
+	private function is_postgresql_catalog_available_for_dml_identity_repair(): bool {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if ( 'pgsql' === $driver_name ) {
+			return true;
+		}
+
+		if ( 'sqlite' === $driver_name ) {
+			return $this->sqlite_information_schema_columns_table_exists();
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether the SQLite test shim has an information_schema.columns fixture.
+	 *
+	 * @return bool Whether the fixture table exists.
+	 */
+	private function sqlite_information_schema_columns_table_exists(): bool {
+		$stmt = $this->connection->query( 'PRAGMA database_list' );
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $database ) {
+			if ( isset( $database['name'] ) && 'information_schema' === $database['name'] ) {
+				$tables = $this->connection->query(
+					"SELECT 1 FROM information_schema.sqlite_master WHERE type = 'table' AND name = 'columns' LIMIT 1"
+				);
+				return false !== $tables->fetchColumn();
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Monotonically synchronize a PostgreSQL identity sequence with its table.
+	 *
+	 * @param string $table_schema    Backend table schema.
+	 * @param string $table_name      Table name.
+	 * @param string $column_name     Identity column name.
+	 * @param string $sequence_schema Sequence schema.
+	 * @param string $sequence_name   Sequence name.
+	 */
+	private function repair_postgresql_identity_sequence(
+		string $table_schema,
+		string $table_name,
+		string $column_name,
+		string $sequence_schema,
+		string $sequence_name
+	): void {
+		$sequence_identifier = $this->get_postgresql_qualified_identifier( $sequence_schema, $sequence_name );
+		$sql                 = sprintf(
+			'WITH sequence_state AS (
+				SELECT last_value, is_called FROM %1$s
+			),
+			table_state AS (
+				SELECT MAX(%2$s) AS max_identity_value FROM %3$s
+			)
+			SELECT pg_catalog.setval(CAST(? AS regclass), table_state.max_identity_value, true)
+			FROM sequence_state, table_state
+			WHERE table_state.max_identity_value IS NOT NULL
+				AND (
+					table_state.max_identity_value > sequence_state.last_value
+					OR (table_state.max_identity_value = sequence_state.last_value AND NOT sequence_state.is_called)
+				)',
+			$sequence_identifier,
+			$this->connection->quote_identifier( $column_name ),
+			$this->get_postgresql_qualified_identifier( $table_schema, $table_name )
+		);
+		$params              = array( $sequence_identifier );
+
+		$this->connection->query( $sql, $params );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+	}
+
+	/**
+	 * Quote a schema-qualified PostgreSQL identifier.
+	 *
+	 * @param string $schema_name Schema name.
+	 * @param string $object_name Object name.
+	 * @return string Quoted schema-qualified identifier.
+	 */
+	private function get_postgresql_qualified_identifier( string $schema_name, string $object_name ): string {
+		return $this->connection->quote_identifier( $schema_name ) . '.' . $this->connection->quote_identifier( $object_name );
 	}
 
 	/**

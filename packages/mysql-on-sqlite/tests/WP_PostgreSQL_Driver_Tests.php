@@ -76,6 +76,91 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests explicit identity INSERT statements repair PostgreSQL sequences after success.
+	 */
+	public function test_explicit_identity_insert_repairs_sequence_after_success(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_terms', 'term_id', 'wptests_terms_term_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+
+		$insert = "INSERT INTO `wptests_terms` (`term_id`, `name`) VALUES (7, 'identity')";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame( 'INSERT INTO "wptests_terms" ("term_id", "name") VALUES (7, \'identity\')', $queries[0]['sql'] );
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_terms', 'term_id', 'wptests_terms_term_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
+	 * Tests implicit identity INSERT statements do not repair PostgreSQL sequences.
+	 */
+	public function test_implicit_identity_insert_does_not_repair_sequence(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_terms', 'term_id', 'wptests_terms_term_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+
+		$insert = "INSERT INTO `wptests_terms` (`name`) VALUES ('implicit')";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( 'INSERT INTO "wptests_terms" ("name") VALUES (\'implicit\')', $queries[0]['sql'] );
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
+	 * Tests INSERT IGNORE no-op conflicts do not repair PostgreSQL sequences.
+	 */
+	public function test_insert_ignore_noop_does_not_repair_sequence(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_terms', 'term_id', 'wptests_terms_term_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_terms (term_id, name) VALUES (7, \'existing\')' );
+
+		$insert = "INSERT IGNORE INTO `wptests_terms` (`term_id`, `name`) VALUES (7, 'duplicate')";
+
+		$this->assertSame( 0, $driver->query( $insert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( 'INSERT INTO "wptests_terms" ("term_id", "name") VALUES (7, \'duplicate\') ON CONFLICT DO NOTHING', $queries[0]['sql'] );
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
+	 * Tests failed explicit identity INSERT statements do not repair PostgreSQL sequences.
+	 */
+	public function test_failed_identity_insert_does_not_repair_sequence(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_terms', 'term_id', 'wptests_terms_term_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_terms (term_id, name) VALUES (7, \'existing\')' );
+
+		try {
+			$driver->query( "INSERT INTO `wptests_terms` (`term_id`, `name`) VALUES (7, 'duplicate')" );
+			$this->fail( 'Duplicate explicit identity INSERT should fail before sequence repair.' );
+		} catch ( PDOException $e ) {
+			$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+		}
+	}
+
+	/**
 	 * Tests simple WordPress REPLACE statements update through PostgreSQL upserts.
 	 */
 	public function test_simple_wordpress_replace_with_existing_id_is_translated_to_postgresql(): void {
@@ -100,6 +185,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'Walter Replace Sobchak', $rows[0]->display_name );
+	}
+
+	/**
+	 * Tests REPLACE insert paths with explicit identity values repair PostgreSQL sequences.
+	 */
+	public function test_replace_insert_path_with_explicit_identity_repairs_sequence(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_users', 'ID', 'wptests_users_ID_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, display_name TEXT NOT NULL)' );
+
+		$replace = "REPLACE INTO `wptests_users` (`ID`, `display_name`) VALUES (2, 'Donny Kerabatsos')";
+
+		$this->assertSame( 1, $driver->query( $replace ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_users" ("ID", "display_name") VALUES (2, \'Donny Kerabatsos\') ON CONFLICT ("ID") DO UPDATE SET "ID" = excluded."ID", "display_name" = excluded."display_name"',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_users', 'ID', 'wptests_users_ID_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
+	 * Tests REPLACE conflict update paths do not repair PostgreSQL sequences.
+	 */
+	public function test_replace_conflict_update_path_does_not_repair_sequence(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_users', 'ID', 'wptests_users_ID_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, display_name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", display_name) VALUES (2, \'Walter Sobchak\')' );
+
+		$replace = "REPLACE INTO `wptests_users` (`ID`, `display_name`) VALUES (2, 'Walter Replace Sobchak')";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_users" ("ID", "display_name") VALUES (2, \'Walter Replace Sobchak\') ON CONFLICT ("ID") DO UPDATE SET "ID" = excluded."ID", "display_name" = excluded."display_name"',
+			$queries[0]['sql']
+		);
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
 	}
 
 	/**
@@ -2392,6 +2527,51 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Get a DML identity metadata fixture row.
+	 *
+	 * @param string $table_name    Table name.
+	 * @param string $column_name   Identity column name.
+	 * @param string $sequence_name Sequence name.
+	 * @return array[] Fixture metadata rows.
+	 */
+	private function get_dml_identity_metadata_fixture( string $table_name, string $column_name, string $sequence_name ): array {
+		return array(
+			array(
+				'table_schema'      => 'public',
+				'table_name'        => $table_name,
+				'column_name'       => $column_name,
+				'ordinal_position'  => 1,
+				'data_type'         => 'bigint',
+				'is_identity'       => 'YES',
+				'column_default'    => null,
+				'mysql_column_type' => 'bigint(20)',
+				'mysql_extra'       => 'auto_increment',
+				'sequence_schema'   => 'public',
+				'sequence_name'     => $sequence_name,
+			),
+		);
+	}
+
+	/**
+	 * Assert that a logged query is a guarded identity sequence repair query.
+	 *
+	 * @param array  $query         Logged query.
+	 * @param string $table_name    Table name.
+	 * @param string $column_name   Identity column name.
+	 * @param string $sequence_name Sequence name.
+	 */
+	private function assert_sequence_repair_query( array $query, string $table_name, string $column_name, string $sequence_name ): void {
+		$sequence_identifier = '"public"."' . $sequence_name . '"';
+
+		$this->assertSame( array( $sequence_identifier ), $query['params'] );
+		$this->assertStringContainsString( 'SELECT last_value, is_called FROM ' . $sequence_identifier, $query['sql'] );
+		$this->assertStringContainsString( 'MAX("' . $column_name . '") AS max_identity_value FROM "public"."' . $table_name . '"', $query['sql'] );
+		$this->assertStringContainsString( 'SELECT pg_catalog.setval(CAST(? AS regclass), table_state.max_identity_value, true)', $query['sql'] );
+		$this->assertStringContainsString( 'table_state.max_identity_value > sequence_state.last_value', $query['sql'] );
+		$this->assertStringContainsString( 'NOT sequence_state.is_called', $query['sql'] );
+	}
+
+	/**
 	 * Creates a PostgreSQL driver with a SQLite shim for SUBSTRING(text, pattern).
 	 *
 	 * @return WP_PostgreSQL_Driver
@@ -2699,25 +2879,133 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
  */
 class WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection extends WP_PostgreSQL_Connection {
 	/**
-	 * Constructor.
+	 * Whether DML identity metadata rows are installed.
+	 *
+	 * @var bool
 	 */
-	public function __construct() {
+	private $has_identity_metadata_fixture = false;
+
+	/**
+	 * Number of sequence repair queries executed.
+	 *
+	 * @var int
+	 */
+	private $sequence_sync_query_count = 0;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param array[] $identity_metadata_rows Optional fixture identity metadata rows.
+	 */
+	public function __construct( array $identity_metadata_rows = array() ) {
 		parent::__construct( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
+
+		if ( ! empty( $identity_metadata_rows ) ) {
+			$this->install_information_schema_marker();
+			$this->install_identity_metadata_fixture( $identity_metadata_rows );
+			$this->has_identity_metadata_fixture = true;
+		}
 	}
 
 	/**
-	 * Execute a query, accepting PostgreSQL ALTER TABLE statements as no-ops.
+	 * Execute a query against PostgreSQL test fixtures when needed.
 	 *
 	 * @param string $sql    SQL query.
 	 * @param array  $params Query parameters.
 	 * @return PDOStatement Statement.
 	 */
 	public function query( string $sql, array $params = array() ): PDOStatement {
+		if ( $this->has_identity_metadata_fixture && false !== strpos( $sql, 'pg_catalog.pg_get_serial_sequence' ) ) {
+			return parent::query(
+				'SELECT
+					column_name,
+					data_type,
+					is_identity,
+					column_default,
+					mysql_column_type,
+					mysql_extra,
+					sequence_schema,
+					sequence_name
+				FROM dml_identity_metadata_fixture
+				WHERE table_schema = ?
+					AND table_name = ?
+				ORDER BY ordinal_position',
+				array( $params[0] ?? '', $params[1] ?? '' )
+			);
+		}
+
+		if ( $this->has_identity_metadata_fixture && false !== strpos( $sql, 'pg_catalog.setval' ) ) {
+			++$this->sequence_sync_query_count;
+			return parent::query( 'SELECT 1' );
+		}
+
 		if ( 0 === strpos( $sql, 'ALTER TABLE ' ) ) {
 			return parent::query( 'SELECT 1 WHERE 0 = 1' );
 		}
 
 		return parent::query( $sql, $params );
+	}
+
+	/**
+	 * Get the number of sequence repair queries executed.
+	 *
+	 * @return int Sequence repair query count.
+	 */
+	public function get_sequence_sync_query_count(): int {
+		return $this->sequence_sync_query_count;
+	}
+
+	/**
+	 * Install the information_schema marker used by the SQLite test shim.
+	 */
+	private function install_information_schema_marker(): void {
+		$pdo = $this->get_pdo();
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
+		$pdo->exec( 'CREATE TABLE information_schema.columns (table_schema TEXT)' );
+	}
+
+	/**
+	 * Install identity metadata rows.
+	 *
+	 * @param array[] $identity_metadata_rows Fixture identity metadata rows.
+	 */
+	private function install_identity_metadata_fixture( array $identity_metadata_rows ): void {
+		parent::query(
+			'CREATE TABLE dml_identity_metadata_fixture (
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				column_name TEXT NOT NULL,
+				ordinal_position INTEGER NOT NULL,
+				data_type TEXT NOT NULL,
+				is_identity TEXT NOT NULL,
+				column_default TEXT,
+				mysql_column_type TEXT,
+				mysql_extra TEXT NOT NULL,
+				sequence_schema TEXT,
+				sequence_name TEXT
+			)'
+		);
+
+		foreach ( $identity_metadata_rows as $row ) {
+			parent::query(
+				'INSERT INTO dml_identity_metadata_fixture
+					(table_schema, table_name, column_name, ordinal_position, data_type, is_identity, column_default, mysql_column_type, mysql_extra, sequence_schema, sequence_name)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+				array(
+					$row['table_schema'] ?? 'public',
+					$row['table_name'],
+					$row['column_name'],
+					$row['ordinal_position'] ?? 1,
+					$row['data_type'] ?? 'bigint',
+					$row['is_identity'] ?? 'YES',
+					$row['column_default'] ?? null,
+					$row['mysql_column_type'] ?? 'bigint(20)',
+					$row['mysql_extra'] ?? 'auto_increment',
+					$row['sequence_schema'] ?? 'public',
+					$row['sequence_name'],
+				)
+			);
+		}
 	}
 }
 
