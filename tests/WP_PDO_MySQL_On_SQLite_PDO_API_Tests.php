@@ -4,10 +4,20 @@ use PHPUnit\Framework\TestCase;
 
 class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	/** @var WP_PDO_MySQL_On_SQLite */
-	private $driver;
+	protected $driver;
+
+	/**
+	 * Create the driver instance to run the tests on.
+	 *
+	 * This can be overridden to run the test suite against other backends,
+	 * such as the pure-PHP database engine (WP_PHP_Engine_PDO).
+	 */
+	protected function create_driver(): WP_PDO_MySQL_On_SQLite {
+		return new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+	}
 
 	public function setUp(): void {
-		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+		$this->driver = $this->create_driver();
 
 		// Run all tests with stringified fetch mode results, so we can use
 		// assertions that are consistent across all tested PHP versions.

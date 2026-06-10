@@ -88,10 +88,10 @@ SQL;
  */
 class WP_SQLite_Driver_Query_Tests extends TestCase {
 	/** @var WP_SQLite_Driver */
-	private $engine;
+	protected $engine;
 
 	/** @var PDO */
-	private $sqlite;
+	protected $sqlite;
 
 	/**
 	 *  Before each test, we create a new volatile database and WordPress tables.
@@ -99,13 +99,23 @@ class WP_SQLite_Driver_Query_Tests extends TestCase {
 	 * @return void
 	 * @throws Exception
 	 */
+	/**
+	 * Create the PDO instance to run the tests on.
+	 *
+	 * This can be overridden to run the test suite against other backends,
+	 * such as the pure-PHP database engine (WP_PHP_Engine_PDO).
+	 */
+	protected function create_pdo(): PDO {
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		return new $pdo_class( 'sqlite::memory:' );
+	}
+
 	public function setUp(): void {
 		/* This is the DDL for WordPress tables in SQLite syntax. */
 		global $tables;
 		$queries = explode( ';', $tables );
 
-		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
-		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
+		$this->sqlite = $this->create_pdo();
 		$this->engine = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
 			'wp'

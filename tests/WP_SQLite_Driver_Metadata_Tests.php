@@ -4,15 +4,25 @@ use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	/** @var WP_SQLite_Driver */
-	private $engine;
+	protected $engine;
 
 	/** @var PDO */
-	private $sqlite;
+	protected $sqlite;
+
+	/**
+	 * Create the PDO instance to run the tests on.
+	 *
+	 * This can be overridden to run the test suite against other backends,
+	 * such as the pure-PHP database engine (WP_PHP_Engine_PDO).
+	 */
+	protected function create_pdo(): PDO {
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		return new $pdo_class( 'sqlite::memory:' );
+	}
 
 	// Before each test, we create a new database
 	public function setUp(): void {
-		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
-		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
+		$this->sqlite = $this->create_pdo();
 		$this->engine = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
 			'wp'
