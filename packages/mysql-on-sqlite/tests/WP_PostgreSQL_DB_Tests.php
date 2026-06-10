@@ -198,7 +198,7 @@ PHP
 				'tis620' => bin2hex( str_repeat( "\xcc\xe3", 5 ) ),
 			),
 			$result
-			);
+		);
 	}
 
 	/**
@@ -595,7 +595,14 @@ class WP_PostgreSQL_DB_Connect_Fake_PDO extends PDO {
 		return true;
 	}
 
-	public function getAttribute( $attribute ): mixed {
+	/**
+	 * Get a fake PDO attribute.
+	 *
+	 * @param int $attribute PDO attribute.
+	 * @return mixed Attribute value.
+	 */
+	#[\ReturnTypeWillChange]
+	public function getAttribute( $attribute ) {
 		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
 			return 'pgsql';
 		}

@@ -702,9 +702,9 @@ class WP_PostgreSQL_Driver {
 		$table_name   = $metadata['table'];
 
 		if ( 'add_column' === $metadata['operation'] ) {
-			$column                     = $metadata['column'];
-			$column['ordinal']          = $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
-			$column_nullable            = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
+			$column            = $metadata['column'];
+			$column['ordinal'] = $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
+			$column_nullable   = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
 			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
 			foreach ( $metadata['indexes'] ?? array() as $index ) {
 				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
@@ -1492,8 +1492,8 @@ class WP_PostgreSQL_Driver {
 
 		if ( preg_match( '/^\s*CREATE\s+PROCEDURE\s+`?([A-Za-z0-9_]+)`?\s*\(\s*\)\s+BEGIN\s+(.*?)\s*;\s*END\s*;?\s*$/is', $query, $matches ) ) {
 			$this->procedures[ strtolower( $matches[1] ) ] = trim( $matches[2] );
-			$this->last_result                            = 0;
-			$this->last_column_meta                       = array();
+			$this->last_result                             = 0;
+			$this->last_column_meta                        = array();
 			return $this->last_result;
 		}
 
@@ -1739,9 +1739,9 @@ class WP_PostgreSQL_Driver {
 
 		return array(
 			'schema' => $schema_name,
-			'table' => $table_name,
-			'full'  => $is_full,
-			'like'  => $like,
+			'table'  => $table_name,
+			'full'   => $is_full,
+			'like'   => $like,
 		);
 	}
 
@@ -3459,7 +3459,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 2, $statement_end );
+		$from_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 2, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 2, $statement_end );
 		if (
 			null === $from_position
@@ -4567,17 +4567,17 @@ WHERE option_name IN (
 			if (
 				in_array(
 					$token->id,
-						array(
-							WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
-							WP_MySQL_Lexer::BACK_TICK_QUOTED_ID,
-							WP_MySQL_Lexer::CHARSET_SYMBOL,
-							WP_MySQL_Lexer::COLLATE_SYMBOL,
-							WP_MySQL_Lexer::ENGINE_SYMBOL,
-							WP_MySQL_Lexer::FULLTEXT_SYMBOL,
-							WP_MySQL_Lexer::ROW_FORMAT_SYMBOL,
-							WP_MySQL_Lexer::SPATIAL_SYMBOL,
-							WP_MySQL_Lexer::UNSIGNED_SYMBOL,
-						),
+					array(
+						WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
+						WP_MySQL_Lexer::BACK_TICK_QUOTED_ID,
+						WP_MySQL_Lexer::CHARSET_SYMBOL,
+						WP_MySQL_Lexer::COLLATE_SYMBOL,
+						WP_MySQL_Lexer::ENGINE_SYMBOL,
+						WP_MySQL_Lexer::FULLTEXT_SYMBOL,
+						WP_MySQL_Lexer::ROW_FORMAT_SYMBOL,
+						WP_MySQL_Lexer::SPATIAL_SYMBOL,
+						WP_MySQL_Lexer::UNSIGNED_SYMBOL,
+					),
 					true
 				)
 			) {

@@ -674,7 +674,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( 'WITH expired_transients AS', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'DELETE FROM "wptests_options"', $queries[0]['sql'] );
-		$this->assertStringContainsString( "SUBSTR(a.option_name, 12)", $queries[0]['sql'] );
+		$this->assertStringContainsString( 'SUBSTR(a.option_name, 12)', $queries[0]['sql'] );
 
 		$rows = $driver->query( 'SELECT option_name FROM wptests_options ORDER BY option_name' );
 
@@ -1091,10 +1091,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_show_columns_accepts_table_qualification_forms(): void {
 		$cases = array(
-			'SHOW COLUMNS IN wptests_options'                  => array( 'public', 'wptests_options' ),
-			'SHOW COLUMNS FROM public.wptests_options'         => array( 'public', 'wptests_options' ),
-			'SHOW COLUMNS FROM wptests_options FROM public'    => array( 'public', 'wptests_options' ),
-			'SHOW COLUMNS IN wptests_options IN public'        => array( 'public', 'wptests_options' ),
+			'SHOW COLUMNS IN wptests_options'           => array( 'public', 'wptests_options' ),
+			'SHOW COLUMNS FROM public.wptests_options'  => array( 'public', 'wptests_options' ),
+			'SHOW COLUMNS FROM wptests_options FROM public' => array( 'public', 'wptests_options' ),
+			'SHOW COLUMNS IN wptests_options IN public' => array( 'public', 'wptests_options' ),
 		);
 
 		foreach ( $cases as $query => $params ) {
