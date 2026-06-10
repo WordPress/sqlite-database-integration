@@ -1348,6 +1348,87 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported DISTINCT SELECT modifiers do not enter the grouped rewrite.
+	 */
+	public function test_distinct_order_by_unsupported_select_modifier_fails_closed(): void {
+		$driver    = $this->create_driver();
+		$modifiers = array(
+			'HIGH_PRIORITY',
+			'SQL_BIG_RESULT',
+			'SQL_BUFFER_RESULT',
+			'SQL_CACHE',
+			'SQL_NO_CACHE',
+			'SQL_SMALL_RESULT',
+			'STRAIGHT_JOIN',
+		);
+
+		foreach ( $modifiers as $modifier ) {
+			$sql = $this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_distinct_order_by_query',
+				sprintf(
+					'SELECT DISTINCT %s t.term_id FROM wptests_terms AS t ORDER BY t.name ASC',
+					$modifier
+				)
+			);
+
+			$this->assertNull( $sql, sprintf( '%s should fall through unchanged.', $modifier ) );
+		}
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_distinct_order_by_query',
+			'SELECT DISTINCT SQL_CALC_FOUND_ROWS HIGH_PRIORITY t.term_id FROM wptests_terms AS t ORDER BY t.name ASC'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
+	 * Tests keyword-like DISTINCT projection aliases are matched in ORDER BY.
+	 */
+	public function test_distinct_order_by_keyword_projection_alias_preserves_projected_order(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID") VALUES (2023)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID") VALUES (2024)' );
+
+		$rows = $driver->query( 'SELECT DISTINCT ID AS year FROM wptests_users ORDER BY year DESC' );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( '2024', $rows[0]->year );
+		$this->assertSame( '2023', $rows[1]->year );
+		$this->assertSame( array( 'year' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT DISTINCT "ID" AS year FROM wptests_users ORDER BY year DESC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests date archive aliases can satisfy DISTINCT ORDER BY references.
+	 */
+	public function test_distinct_date_archive_keyword_projection_aliases_match_order_by_items(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_distinct_order_by_query',
+			'SELECT DISTINCT YEAR( post_date ) AS year, MONTH( post_date ) AS month
+			FROM wptests_posts
+			ORDER BY year DESC, month DESC'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
 	 * Tests date archive DISTINCT queries order by hidden aggregate post dates.
 	 */
 	public function test_distinct_date_archive_order_by_uses_hidden_aggregate_sort_column(): void {

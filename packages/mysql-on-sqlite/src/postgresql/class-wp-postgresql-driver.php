@@ -3610,6 +3610,10 @@ WHERE option_name IN (
 			++$position;
 		}
 
+		if ( isset( $tokens[ $position ] ) && $this->is_unsupported_distinct_select_modifier( $tokens[ $position ] ) ) {
+			return null;
+		}
+
 		$projection_start = $position;
 		$statement_end    = $this->get_mysql_statement_end_position( $tokens, $projection_start );
 		if ( null === $statement_end ) {
@@ -3730,6 +3734,28 @@ WHERE option_name IN (
 			$order_position,
 			$limit_position,
 			$statement_end
+		);
+	}
+
+	/**
+	 * Check whether a token is an unsupported SELECT modifier for this rewrite.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is an unsupported modifier.
+	 */
+	private function is_unsupported_distinct_select_modifier( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+				WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL,
+				WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL,
+				WP_MySQL_Lexer::SQL_CACHE_SYMBOL,
+				WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL,
+				WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			),
+			true
 		);
 	}
 
@@ -4019,7 +4045,7 @@ WHERE option_name IN (
 				return $ordinal;
 			}
 
-			$alias = $this->get_mysql_identifier_token_value( $tokens[ $start ] );
+			$alias = $this->get_mysql_order_by_alias_token_value( $tokens[ $start ] );
 			if ( null !== $alias ) {
 				foreach ( $projection_items as $index => $projection_item ) {
 					if ( strtolower( $alias ) === strtolower( $projection_item['alias'] ) ) {
@@ -4027,6 +4053,34 @@ WHERE option_name IN (
 					}
 				}
 			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get a one-token ORDER BY alias reference.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return string|null Alias value, or null when unsupported.
+	 */
+	private function get_mysql_order_by_alias_token_value( ?WP_MySQL_Token $token ): ?string {
+		if ( null === $token ) {
+			return null;
+		}
+
+		$identifier = $this->get_mysql_identifier_token_value( $token );
+		if ( null !== $identifier ) {
+			return $identifier;
+		}
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return null;
+		}
+
+		$value = $token->get_value();
+		if ( $this->is_mysql_unquoted_projection_alias_value( $value ) ) {
+			return $value;
 		}
 
 		return null;
