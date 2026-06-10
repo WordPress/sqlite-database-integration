@@ -1540,6 +1540,165 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $meta_rows );
 		$this->assertSame( '1', $meta_rows[0]->meta_id );
 		$this->assertStringNotContainsString( 'SUBSTRING(CAST', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$like_rows = $driver->query( "SELECT meta_id FROM wptests_postmeta WHERE meta_value LIKE '10%' ORDER BY meta_id" );
+
+		$this->assertCount( 2, $like_rows );
+		$this->assertSame( '1', $like_rows[0]->meta_id );
+		$this->assertSame( '2', $like_rows[1]->meta_id );
+		$this->assertStringContainsString( "meta_value LIKE '10%'", $driver->get_last_postgresql_queries()[0]['sql'] );
+		$this->assertStringNotContainsString( 'SUBSTRING(CAST', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests text metadata columns use MySQL numeric coercion when compared with numeric literals.
+	 */
+	public function test_text_metadata_numeric_literal_comparisons_use_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'score', '100')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'score', '')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, 'score', 'abc')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (4, 'score', '20abc')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (5, 'other', '1')" );
+
+		$rows = $driver->query(
+			"SELECT post_id FROM wptests_postmeta WHERE meta_key = 'score' AND meta_value < 50 ORDER BY post_id"
+		);
+
+		$this->assertSame(
+			array( '2', '3', '4' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->post_id;
+				},
+				$rows
+			)
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'meta_value' );
+		$sql                 = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString( $meta_value_cast_sql . ' < 50', $sql );
+		$this->assertStringContainsString( "meta_key = 'score'", $sql );
+
+		$mirrored_rows = $driver->query(
+			"SELECT post_id FROM wptests_postmeta WHERE meta_key = 'score' AND 50 > meta_value ORDER BY post_id"
+		);
+
+		$this->assertSame(
+			array( '2', '3', '4' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->post_id;
+				},
+				$mirrored_rows
+			)
+		);
+		$this->assertStringContainsString( '50 > ' . $meta_value_cast_sql, $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests text metadata columns use MySQL numeric coercion for ORDER BY column + 0.
+	 */
+	public function test_text_metadata_plus_zero_order_by_uses_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'score', '10')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'score', '2')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, 'score', 'abc')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (4, 'score', '')" );
+
+		$rows = $driver->query(
+			"SELECT post_id FROM wptests_postmeta WHERE meta_key = 'score' ORDER BY meta_value+0 ASC, post_id ASC"
+		);
+
+		$this->assertSame(
+			array( '3', '4', '2', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->post_id;
+				},
+				$rows
+			)
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'meta_value' );
+		$this->assertStringContainsString(
+			'ORDER BY ' . $meta_value_cast_sql . ' ASC, post_id ASC',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+	}
+
+	/**
+	 * Tests DISTINCT ORDER BY rewrites keep numeric metadata ordering safe.
+	 */
+	public function test_distinct_text_metadata_plus_zero_order_by_uses_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_terms (
+				`term_id` bigint(20) unsigned NOT NULL,
+				`name` varchar(200) NOT NULL DEFAULT "",
+				PRIMARY KEY (`term_id`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_termmeta (
+				`meta_id` bigint(20) unsigned NOT NULL,
+				`term_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_terms (`term_id`, `name`) VALUES (1, 'one')" );
+		$driver->query( "INSERT INTO wptests_terms (`term_id`, `name`) VALUES (2, 'two')" );
+		$driver->query( "INSERT INTO wptests_terms (`term_id`, `name`) VALUES (3, 'three')" );
+		$driver->query(
+			"INSERT INTO wptests_termmeta (`meta_id`, `term_id`, `meta_key`, `meta_value`) VALUES (1, 1, 'score', '10')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_termmeta (`meta_id`, `term_id`, `meta_key`, `meta_value`) VALUES (2, 2, 'score', '2')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_termmeta (`meta_id`, `term_id`, `meta_key`, `meta_value`) VALUES (3, 3, 'score', 'abc')"
+		);
+
+		$rows = $driver->query(
+			"SELECT DISTINCT t.term_id
+			FROM wptests_terms AS t INNER JOIN wptests_termmeta ON ( t.term_id = wptests_termmeta.term_id )
+			WHERE wptests_termmeta.meta_key = 'score'
+			ORDER BY wptests_termmeta.meta_value+0 ASC"
+		);
+
+		$this->assertSame(
+			array( '3', '2', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->term_id;
+				},
+				$rows
+			)
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'wptests_termmeta.meta_value' );
+		$this->assertStringContainsString(
+			'MIN(' . $meta_value_cast_sql . ') AS "__wp_pg_order_0"',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
 	}
 
 	/**
