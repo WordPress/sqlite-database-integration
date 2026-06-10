@@ -2467,7 +2467,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests Site Health's information_schema.TABLES query returns MySQL-shaped rows.
+	 * Tests Site Health's information_schema.TABLES query returns rows for existing catalog tables only.
 	 */
 	public function test_information_schema_tables_site_health_query_returns_mysql_shape_with_single_quoted_aliases(): void {
 		$driver = $this->create_driver( 'wordpress_develop_tests' );
@@ -2477,7 +2477,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$query = "SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) as 'bytes'
 			FROM information_schema.TABLES
 			WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
-				AND TABLE_NAME IN ('wptests_comments','wptests_options','wptests_posts','wptests_terms','wptests_users')
+				AND TABLE_NAME IN ('wptests_options','wptests_missing','wptests_posts')
 			GROUP BY TABLE_NAME;";
 		$rows  = $driver->query( $query );
 
@@ -2513,6 +2513,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '"information_schema"."tables"', $sql );
 		$this->assertStringContainsString( "\"TABLE_SCHEMA\" = 'wordpress_develop_tests'", $sql );
 		$this->assertStringNotContainsString( '"wordpress_develop_tests"', $sql );
+		$this->assertStringNotContainsString( 'FROM "wptests_missing"', $sql );
+		$this->assertStringNotContainsString( 'FROM "public"."wptests_missing"', $sql );
 	}
 
 	/**
@@ -3052,27 +3054,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @param WP_PostgreSQL_Driver $driver Driver under test.
 	 */
 	private function install_site_health_table_count_fixture( WP_PostgreSQL_Driver $driver ): void {
-		$pdo         = $driver->get_connection()->get_pdo();
-		$connection  = $driver->get_connection();
-		$table_names = array(
-			'wptests_comments',
-			'wptests_options',
-			'wptests_posts',
-			'wptests_terms',
-			'wptests_users',
-		);
+		$pdo        = $driver->get_connection()->get_pdo();
+		$connection = $driver->get_connection();
+		$schema     = $connection->quote_identifier( 'public' );
 
-		foreach ( $table_names as $table_name ) {
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		foreach ( array( 'wptests_options', 'wptests_posts' ) as $table_name ) {
 			$pdo->exec(
 				sprintf(
-					'CREATE TABLE %s (id INTEGER)',
+					'CREATE TABLE %s.%s (id INTEGER)',
+					$schema,
 					$connection->quote_identifier( $table_name )
 				)
 			);
 		}
 
-		$pdo->exec( 'INSERT INTO ' . $connection->quote_identifier( 'wptests_options' ) . ' (id) VALUES (1), (2)' );
-		$pdo->exec( 'INSERT INTO ' . $connection->quote_identifier( 'wptests_posts' ) . ' (id) VALUES (1)' );
+		$options_table = $schema . '.' . $connection->quote_identifier( 'wptests_options' );
+		$posts_table   = $schema . '.' . $connection->quote_identifier( 'wptests_posts' );
+
+		$pdo->exec( 'INSERT INTO ' . $options_table . ' (id) VALUES (1), (2)' );
+		$pdo->exec( 'INSERT INTO ' . $posts_table . ' (id) VALUES (1)' );
 	}
 
 	/**

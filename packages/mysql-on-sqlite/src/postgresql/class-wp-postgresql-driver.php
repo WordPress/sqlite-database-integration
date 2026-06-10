@@ -3985,10 +3985,12 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$existing_table_names = $this->get_information_schema_tables_site_health_existing_table_names( $where_clause['table_names'] );
+
 		return sprintf(
 			'SELECT %s FROM (%s) AS %s WHERE %s GROUP BY %s',
 			implode( ', ', $projection_sql ),
-			$this->get_information_schema_tables_site_health_relation_sql( $where_clause['table_names'] ),
+			$this->get_information_schema_tables_site_health_relation_sql( $existing_table_names ),
 			$this->connection->quote_identifier( '__wp_pg_information_schema_tables' ),
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $group_position ),
 			$this->connection->quote_identifier( 'table_name' )
@@ -4283,18 +4285,67 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Build the derived relation that emulates MySQL information_schema.TABLES columns.
+	 * Get requested Site Health table names that exist in the PostgreSQL catalog.
 	 *
 	 * @param string[] $table_names Table names from the validated TABLE_NAME predicate.
+	 * @return string[] Existing table names in requested order.
+	 */
+	private function get_information_schema_tables_site_health_existing_table_names( array $table_names ): array {
+		if ( empty( $table_names ) ) {
+			return array();
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (?, ?, ?) AND %1$s IN (%5$s)',
+				$this->connection->quote_identifier( 'table_name' ),
+				$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
+				$this->connection->quote_identifier( 'table_schema' ),
+				$this->connection->quote_identifier( 'table_type' ),
+				$placeholders
+			),
+			array_merge(
+				array(
+					'public',
+					'BASE TABLE',
+					'VIEW',
+					self::MYSQL_COLUMN_METADATA_TABLE,
+					self::MYSQL_INDEX_METADATA_TABLE,
+					self::MYSQL_CHARSET_METADATA_TABLE,
+				),
+				$table_names
+			)
+		);
+
+		$existing_table_names = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $table_name ) {
+			$existing_table_names[ (string) $table_name ] = true;
+		}
+
+		return array_values(
+			array_filter(
+				$table_names,
+				static function ( string $table_name ) use ( $existing_table_names ): bool {
+					return isset( $existing_table_names[ $table_name ] );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Build the derived relation that emulates MySQL information_schema.TABLES columns.
+	 *
+	 * @param string[] $existing_table_names Table names validated against information_schema.tables.
 	 * @return string PostgreSQL relation SQL.
 	 */
-	private function get_information_schema_tables_site_health_relation_sql( array $table_names ): string {
+	private function get_information_schema_tables_site_health_relation_sql( array $existing_table_names ): string {
 		return sprintf(
 			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s, %14$s, %15$s)',
 			$this->connection->quote_identifier( 'table_name' ),
 			$this->connection->quote( $this->db_name ),
 			$this->connection->quote_identifier( 'TABLE_SCHEMA' ),
-			$this->get_information_schema_tables_site_health_table_rows_sql( $table_names ),
+			$this->get_information_schema_tables_site_health_table_rows_sql( $existing_table_names ),
 			$this->connection->quote_identifier( 'data_length' ),
 			$this->connection->quote_identifier( 'index_length' ),
 			$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
@@ -4310,18 +4361,25 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Build a CASE expression for Site Health TABLE_ROWS emulation.
+	 * Build a Site Health TABLE_ROWS expression for existing catalog tables.
 	 *
-	 * @param string[] $table_names Table names from the validated TABLE_NAME predicate.
+	 * @param string[] $existing_table_names Table names validated against information_schema.tables.
 	 * @return string PostgreSQL row-count expression SQL.
 	 */
-	private function get_information_schema_tables_site_health_table_rows_sql( array $table_names ): string {
+	private function get_information_schema_tables_site_health_table_rows_sql( array $existing_table_names ): string {
+		if ( empty( $existing_table_names ) ) {
+			return sprintf(
+				'0 AS %s',
+				$this->connection->quote_identifier( 'TABLE_ROWS' )
+			);
+		}
+
 		$cases = array();
-		foreach ( $table_names as $table_name ) {
+		foreach ( $existing_table_names as $table_name ) {
 			$cases[] = sprintf(
 				'WHEN %s THEN (SELECT COUNT(*) FROM %s)',
 				$this->connection->quote( $table_name ),
-				$this->connection->quote_identifier( $table_name )
+				$this->get_postgresql_qualified_identifier( 'public', $table_name )
 			);
 		}
 
