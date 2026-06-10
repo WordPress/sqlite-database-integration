@@ -325,7 +325,7 @@ class WP_PostgreSQL_Driver {
 				$drop_query['tables'],
 				$drop_query['temporary']
 			);
-			$result = $this->execute_postgresql_statements( $drop_query['statements'] );
+			$result           = $this->execute_postgresql_statements( $drop_query['statements'] );
 			$this->delete_mysql_schema_metadata_for_table_targets( $metadata_targets );
 			return $result;
 		}
