@@ -179,12 +179,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 		$driver->store_mysql_schema_metadata(
-			"CREATE TABLE wptests_comments (
+			'CREATE TABLE wptests_comments (
 				comment_ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 				comment_author tinytext NOT NULL,
 				comment_content text NOT NULL,
 				PRIMARY KEY (comment_ID)
-			)"
+			)'
 		);
 		$driver->set_sql_mode( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION' );
 
@@ -1583,7 +1583,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'meta_value' );
+		$meta_value_cast_sql = $this->get_expected_mysql_numeric_cast_sql( 'meta_value' );
 		$sql                 = $driver->get_last_postgresql_queries()[0]['sql'];
 		$this->assertStringContainsString( $meta_value_cast_sql . ' < 50', $sql );
 		$this->assertStringContainsString( "meta_key = 'score'", $sql );
@@ -1602,6 +1602,24 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 		$this->assertStringContainsString( '50 > ' . $meta_value_cast_sql, $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (6, 'score', '1.7')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (7, 'score', '1.2')" );
+
+		$decimal_rows = $driver->query(
+			"SELECT post_id FROM wptests_postmeta WHERE meta_key = 'score' AND meta_value < 1.5 ORDER BY post_id"
+		);
+
+		$this->assertSame(
+			array( '2', '3', '7' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->post_id;
+				},
+				$decimal_rows
+			)
+		);
+		$this->assertStringContainsString( $meta_value_cast_sql . ' < 1.5', $driver->get_last_postgresql_queries()[0]['sql'] );
 	}
 
 	/**
@@ -1621,6 +1639,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'score', '2')" );
 		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, 'score', 'abc')" );
 		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (4, 'score', '')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (5, 'decimal', '1.7')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (6, 'decimal', '1.2')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (7, 'decimal', '2')" );
 
 		$rows = $driver->query(
 			"SELECT post_id FROM wptests_postmeta WHERE meta_key = 'score' ORDER BY meta_value+0 ASC, post_id ASC"
@@ -1636,7 +1657,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'meta_value' );
+		$meta_value_cast_sql = $this->get_expected_mysql_numeric_cast_sql( 'meta_value' );
+		$this->assertStringContainsString(
+			'ORDER BY ' . $meta_value_cast_sql . ' ASC, post_id ASC',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$decimal_rows = $driver->query(
+			"SELECT post_id FROM wptests_postmeta WHERE meta_key = 'decimal' ORDER BY meta_value+0 ASC, post_id ASC"
+		);
+
+		$this->assertSame(
+			array( '6', '5', '7' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->post_id;
+				},
+				$decimal_rows
+			)
+		);
 		$this->assertStringContainsString(
 			'ORDER BY ' . $meta_value_cast_sql . ' ASC, post_id ASC',
 			$driver->get_last_postgresql_queries()[0]['sql']
@@ -1694,7 +1733,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'wptests_termmeta.meta_value' );
+		$meta_value_cast_sql = $this->get_expected_mysql_numeric_cast_sql( 'wptests_termmeta.meta_value' );
 		$this->assertStringContainsString(
 			'MIN(' . $meta_value_cast_sql . ') AS "__wp_pg_order_0"',
 			$driver->get_last_postgresql_queries()[0]['sql']
@@ -3177,7 +3216,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests unsupported information_schema.TABLES shapes do not enter the Site Health translator.
 	 */
 	public function test_information_schema_tables_site_health_unsupported_shapes_fail_closed(): void {
-		$driver = $this->create_driver();
+		$driver  = $this->create_driver();
 		$queries = array(
 			"SELECT COUNT(*) AS 'rows'
 				FROM information_schema.TABLES
@@ -3547,6 +3586,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL ELSE CAST(COALESCE(SUBSTRING(%1$s, \'^[[:space:]]*[+-]?[0-9]+\'), \'0\') AS bigint) END',
 			$expression_text_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL-compatible decimal text coercion.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_numeric_cast_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$substring_sql       = array();
+		$numeric_patterns    = array(
+			'^[[:space:]]*[+-]?[0-9]+[.][0-9]*[eE][+-]?[0-9]+',
+			'^[[:space:]]*[+-]?[.][0-9]+[eE][+-]?[0-9]+',
+			'^[[:space:]]*[+-]?[0-9]+[eE][+-]?[0-9]+',
+			'^[[:space:]]*[+-]?[0-9]+[.][0-9]*',
+			'^[[:space:]]*[+-]?[.][0-9]+',
+			'^[[:space:]]*[+-]?[0-9]+',
+		);
+
+		foreach ( $numeric_patterns as $pattern ) {
+			$substring_sql[] = sprintf(
+				'SUBSTRING(%1$s, \'%2$s\')',
+				$expression_text_sql,
+				$pattern
+			);
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE CAST(COALESCE(%2$s, \'0\') AS numeric) END',
+			$expression_text_sql,
+			implode( ', ', $substring_sql )
 		);
 	}
 

@@ -3814,6 +3814,7 @@ WHERE option_name IN (
 
 			$columns[] = $column_name;
 			$values[]  = $default_sql;
+
 			$supplied_columns[ strtolower( $column_name ) ] = true;
 		}
 	}
@@ -5158,18 +5159,18 @@ WHERE option_name IN (
 				);
 
 			$items[] = array(
-				'expression_start'  => $range['start'],
-				'expression_end'    => $expression_end,
-				'sql'               => $expression_sql['sql'],
-				'direction'         => $direction,
+				'expression_start'   => $range['start'],
+				'expression_end'     => $expression_end,
+				'sql'                => $expression_sql['sql'],
+				'direction'          => $direction,
 				'direction_explicit' => $direction_explicit,
-				'projection_index'  => $this->find_mysql_projection_for_order_expression(
+				'projection_index'   => $this->find_mysql_projection_for_order_expression(
 					$tokens,
 					$range['start'],
 					$expression_end,
 					$projection_items
 				),
-				'changed'           => $expression_sql['changed'],
+				'changed'            => $expression_sql['changed'],
 			);
 		}
 
@@ -6613,7 +6614,7 @@ WHERE option_name IN (
 		}
 
 		$first_clause_position = min( array_filter( array( $where_position, $order_position ), 'is_int' ) );
-		$from_position = $this->find_top_level_mysql_token(
+		$from_position         = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::FROM_SYMBOL,
 			$projection_start,
@@ -7154,7 +7155,7 @@ WHERE option_name IN (
 				return array(
 					'sql'      => sprintf(
 						'%s %s %s',
-						$this->get_postgresql_mysql_integer_cast_sql(
+						$this->get_postgresql_mysql_numeric_cast_sql(
 							$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
 						),
 						$tokens[ $reference['end'] ]->get_bytes(),
@@ -7184,7 +7185,7 @@ WHERE option_name IN (
 				'%s %s %s',
 				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $literal['start'], $literal['end'] ),
 				$tokens[ $literal['end'] ]->get_bytes(),
-				$this->get_postgresql_mysql_integer_cast_sql(
+				$this->get_postgresql_mysql_numeric_cast_sql(
 					$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
 				)
 			),
@@ -7220,7 +7221,7 @@ WHERE option_name IN (
 				&& $this->is_mysql_zero_numeric_literal_range( $tokens, $literal['start'], $literal['end'] )
 			) {
 				return array(
-					'sql'      => $this->get_postgresql_mysql_integer_cast_sql(
+					'sql'      => $this->get_postgresql_mysql_numeric_cast_sql(
 						$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
 					),
 					'position' => $literal['end'] - 1,
@@ -7244,7 +7245,7 @@ WHERE option_name IN (
 		}
 
 		return array(
-			'sql'      => $this->get_postgresql_mysql_integer_cast_sql(
+			'sql'      => $this->get_postgresql_mysql_numeric_cast_sql(
 				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
 			),
 			'position' => $reference['end'] - 1,
@@ -8210,6 +8211,42 @@ WHERE option_name IN (
 			'CASE WHEN %1$s IS NULL THEN NULL ELSE CAST(COALESCE(SUBSTRING(%1$s, %2$s), \'0\') AS bigint) END',
 			$expression_text_sql,
 			$integer_pattern
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL-compatible decimal text coercion.
+	 *
+	 * MySQL text values in numeric expression contexts use the leading numeric
+	 * prefix, including decimal and exponent forms, or zero when no prefix exists.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_numeric_cast_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$substring_sql       = array();
+		$numeric_patterns    = array(
+			'^[[:space:]]*[+-]?[0-9]+[.][0-9]*[eE][+-]?[0-9]+',
+			'^[[:space:]]*[+-]?[.][0-9]+[eE][+-]?[0-9]+',
+			'^[[:space:]]*[+-]?[0-9]+[eE][+-]?[0-9]+',
+			'^[[:space:]]*[+-]?[0-9]+[.][0-9]*',
+			'^[[:space:]]*[+-]?[.][0-9]+',
+			'^[[:space:]]*[+-]?[0-9]+',
+		);
+
+		foreach ( $numeric_patterns as $pattern ) {
+			$substring_sql[] = sprintf(
+				'SUBSTRING(%1$s, %2$s)',
+				$expression_text_sql,
+				$this->connection->quote( $pattern )
+			);
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE CAST(COALESCE(%2$s, \'0\') AS numeric) END',
+			$expression_text_sql,
+			implode( ', ', $substring_sql )
 		);
 	}
 
