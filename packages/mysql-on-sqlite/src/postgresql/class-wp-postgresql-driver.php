@@ -4212,15 +4212,17 @@ WHERE option_name IN (
 	 * @return bool Whether the token is a supported non-negative integer.
 	 */
 	private function is_supported_simple_select_limit_number( WP_MySQL_Token $token ): bool {
+		$is_parameter_marker = WP_MySQL_Lexer::PARAM_MARKER === $token->id;
 		return in_array(
 			$token->id,
 			array(
 				WP_MySQL_Lexer::INT_NUMBER,
 				WP_MySQL_Lexer::LONG_NUMBER,
+				WP_MySQL_Lexer::PARAM_MARKER,
 				WP_MySQL_Lexer::ULONGLONG_NUMBER,
 			),
 			true
-		) && ctype_digit( $token->get_value() );
+		) && ( $is_parameter_marker || ctype_digit( $token->get_value() ) );
 	}
 
 	/**
@@ -4380,11 +4382,18 @@ WHERE option_name IN (
 		for ( $i = $start; $i < $end; $i++ ) {
 			$token              = $tokens[ $i ];
 			$fragment_token_id  = $token->id;
-			$convert_expression = $this->translate_mysql_convert_using_to_postgresql( $tokens, $i, $end );
-			if ( null !== $convert_expression ) {
-				$fragment          = $convert_expression['sql'];
-				$fragment_token_id = $convert_expression['token_id'];
-				$i                 = $convert_expression['position'];
+			$translated_fragment = $this->translate_mysql_limit_offset_count_to_postgresql( $tokens, $i, $end );
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_date_time_extract_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_convert_using_to_postgresql( $tokens, $i, $end );
+			}
+
+			if ( null !== $translated_fragment ) {
+				$fragment          = $translated_fragment['sql'];
+				$fragment_token_id = $translated_fragment['token_id'];
+				$i                 = $translated_fragment['position'];
 			} else {
 				$fragment = $this->translate_mysql_token_to_postgresql( $token, $tokens[ $i + 1 ] ?? null );
 			}
@@ -4401,6 +4410,217 @@ WHERE option_name IN (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Translate MySQL LIMIT offset,count syntax to PostgreSQL LIMIT count OFFSET offset.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position LIMIT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_limit_offset_count_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_limit_offset_count_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$sql = 'LIMIT ' . $tokens[ $bounds['count_position'] ]->get_bytes()
+			. ' OFFSET ' . $tokens[ $bounds['offset_position'] ]->get_bytes();
+
+		return array(
+			'sql'      => $sql,
+			'token_id' => WP_MySQL_Lexer::LIMIT_SYMBOL,
+			'position' => $bounds['count_position'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a MySQL LIMIT offset,count clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position LIMIT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{offset_position: int, count_position: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_limit_offset_count_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+			|| WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position + 2 ]->id
+			|| $position + 4 !== $end
+			|| ! $this->is_supported_simple_select_limit_number( $tokens[ $position + 1 ] )
+			|| ! $this->is_supported_simple_select_limit_number( $tokens[ $position + 3 ] )
+		) {
+			return null;
+		}
+
+		return array(
+			'offset_position' => $position + 1,
+			'count_position'  => $position + 3,
+		);
+	}
+
+	/**
+	 * Translate supported MySQL date/time extract functions to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_date_time_extract_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_extract_function_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => sprintf(
+				'CAST(EXTRACT(%s FROM CAST(%s AS timestamp)) AS integer)',
+				$bounds['unit'],
+				$expression_sql
+			),
+			'token_id' => $tokens[ $position ]->id,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for supported MySQL date/time extract forms.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{unit: string, expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_extract_function_bounds( array $tokens, int $position, int $end ): ?array {
+		if ( ! isset( $tokens[ $position ], $tokens[ $position + 1 ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::EXTRACT_SYMBOL === $tokens[ $position ]->id ) {
+			return $this->get_mysql_extract_keyword_bounds( $tokens, $position, $end );
+		}
+
+		return $this->get_mysql_date_time_function_bounds( $tokens, $position, $end );
+	}
+
+	/**
+	 * Get token bounds for EXTRACT(unit FROM expr).
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position EXTRACT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{unit: string, expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_extract_keyword_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position + 3 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+			|| WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position + 3 ]->id
+		) {
+			return null;
+		}
+
+		$unit = $this->get_mysql_date_time_extract_unit( $tokens[ $position + 2 ] );
+		if ( null === $unit ) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close || $position + 4 >= $after_close - 1 ) {
+			return null;
+		}
+
+		return array(
+			'unit'             => $unit,
+			'expression_start' => $position + 4,
+			'expression_end'   => $after_close - 1,
+			'close'            => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Get token bounds for YEAR(expr), MONTH(expr), DAY(expr), and similar calls.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{unit: string, expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_date_time_function_bounds( array $tokens, int $position, int $end ): ?array {
+		$unit = $this->get_mysql_date_time_extract_unit( $tokens[ $position ] );
+		if (
+			null === $unit
+			|| ! isset( $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		if (
+			$position + 2 >= $close_position
+			|| null !== $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$position + 2,
+				$close_position
+			)
+		) {
+			return null;
+		}
+
+		return array(
+			'unit'             => $unit,
+			'expression_start' => $position + 2,
+			'expression_end'   => $close_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
+	 * Get the PostgreSQL EXTRACT unit for a MySQL date/time token.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return string|null PostgreSQL EXTRACT unit, or null when unsupported.
+	 */
+	private function get_mysql_date_time_extract_unit( WP_MySQL_Token $token ): ?string {
+		switch ( $token->id ) {
+			case WP_MySQL_Lexer::YEAR_SYMBOL:
+				return 'YEAR';
+
+			case WP_MySQL_Lexer::MONTH_SYMBOL:
+				return 'MONTH';
+
+			case WP_MySQL_Lexer::DAY_SYMBOL:
+			case WP_MySQL_Lexer::DAYOFMONTH_SYMBOL:
+				return 'DAY';
+
+			case WP_MySQL_Lexer::HOUR_SYMBOL:
+				return 'HOUR';
+
+			case WP_MySQL_Lexer::MINUTE_SYMBOL:
+				return 'MINUTE';
+
+			case WP_MySQL_Lexer::SECOND_SYMBOL:
+				return 'SECOND';
+		}
+
+		return null;
 	}
 
 	/**
@@ -4645,6 +4865,14 @@ WHERE option_name IN (
 			}
 
 			if ( null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_limit_offset_count_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_extract_function_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 
