@@ -11,13 +11,14 @@ if ( ! function_exists( 'postgresql_make_db_current_silent' ) ) {
 	 *
 	 * @return bool True when schema installation succeeds.
 	 */
-	function postgresql_make_db_current_silent() {
+	function postgresql_make_db_current_silent( $tables = 'all' ) {
 		global $wpdb;
 
 		include_once ABSPATH . 'wp-admin/includes/schema.php';
 
 		$translator = new WP_PostgreSQL_Create_Table_Translator();
-		$statements = $translator->translate_schema( wp_get_db_schema() );
+		$schema     = 'all' === $tables ? wp_get_db_schema() : wp_get_db_schema( $tables );
+		$statements = $translator->translate_schema( $schema );
 
 		foreach ( $statements as $statement ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Generated from parsed WordPress schema DDL.
@@ -31,7 +32,24 @@ if ( ! function_exists( 'postgresql_make_db_current_silent' ) ) {
 			}
 		}
 
+		if ( $wpdb->dbh instanceof WP_PostgreSQL_Driver ) {
+			$wpdb->dbh->store_mysql_schema_metadata( $schema );
+		}
+
 		return true;
+	}
+}
+
+if ( ! function_exists( 'install_network' ) ) {
+	/**
+	 * Create WordPress multisite global tables for PostgreSQL.
+	 */
+	function install_network() {
+		if ( ! defined( 'WP_INSTALLING_NETWORK' ) ) {
+			define( 'WP_INSTALLING_NETWORK', true );
+		}
+
+		postgresql_make_db_current_silent( 'global' );
 	}
 }
 
@@ -66,6 +84,21 @@ if ( ! function_exists( 'wp_install' ) ) {
 		wp_check_mysql_version();
 		wp_cache_flush();
 		postgresql_make_db_current_silent();
+
+		/*
+		 * Ensure update checks are delayed after installation.
+		 *
+		 * This prevents users being presented with a maintenance mode screen
+		 * immediately after installation.
+		 */
+		wp_unschedule_hook( 'wp_version_check' );
+		wp_unschedule_hook( 'wp_update_plugins' );
+		wp_unschedule_hook( 'wp_update_themes' );
+
+		wp_schedule_event( time() + HOUR_IN_SECONDS, 'twicedaily', 'wp_version_check' );
+		wp_schedule_event( time() + ( 1.5 * HOUR_IN_SECONDS ), 'twicedaily', 'wp_update_plugins' );
+		wp_schedule_event( time() + ( 2 * HOUR_IN_SECONDS ), 'twicedaily', 'wp_update_themes' );
+
 		populate_options();
 		populate_roles();
 
@@ -74,7 +107,7 @@ if ( ! function_exists( 'wp_install' ) ) {
 		update_option( 'blog_public', $is_public );
 
 		// Freshness of site - in the future, this could get more specific about actions taken, perhaps.
-		update_option( 'fresh_site', 1 );
+		update_option( 'fresh_site', 1, false );
 
 		if ( $language ) {
 			update_option( 'WPLANG', $language );

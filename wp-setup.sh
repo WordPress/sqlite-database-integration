@@ -11,7 +11,7 @@ set -e
 WP_VERSION="6.7.2"
 WP_TEST_DB_BACKEND="${WP_TEST_DB_BACKEND:-${1:-sqlite}}"
 
-DIR="$(dirname "$0")"
+DIR="$(cd "$(dirname "$0")" && pwd)"
 WP_DIR="$DIR/wordpress"
 
 case "$WP_TEST_DB_BACKEND" in
@@ -50,10 +50,18 @@ echo "Cleaning up the WordPress repository..."
 if [ -d "$WP_DIR" ]; then
 	UNWRITABLE_WORDPRESS_PATH="$(find "$WP_DIR" -type d ! -writable -print -quit 2>/dev/null || true)"
 	if [ -n "$UNWRITABLE_WORDPRESS_PATH" ]; then
-		echo 'Error: Cannot clean the WordPress repository because it contains non-writable generated files.' >&2
-		echo "First non-writable path: $UNWRITABLE_WORDPRESS_PATH" >&2
-		echo "Fix ownership or remove '$WP_DIR' with appropriate permissions, then rerun this command." >&2
-		exit 1
+		echo "Fixing ownership for Docker-generated WordPress files..."
+		if command -v docker > /dev/null; then
+			docker run --rm -v "$WP_DIR":/workspace --user 0:0 alpine:3.20 chown -R "$(id -u):$(id -g)" /workspace || true
+		fi
+
+		UNWRITABLE_WORDPRESS_PATH="$(find "$WP_DIR" -type d ! -writable -print -quit 2>/dev/null || true)"
+		if [ -n "$UNWRITABLE_WORDPRESS_PATH" ]; then
+			echo 'Error: Cannot clean the WordPress repository because it contains non-writable generated files.' >&2
+			echo "First non-writable path: $UNWRITABLE_WORDPRESS_PATH" >&2
+			echo "Fix ownership or remove '$WP_DIR' with appropriate permissions, then rerun this command." >&2
+			exit 1
+		fi
 	fi
 fi
 rm -rf "$WP_DIR"
@@ -105,7 +113,8 @@ FROM wordpressdevelop/php@sha256:c0ba85936a9d1ac2c98bf3da2d62ceb0e5787a6b11e3836
 USER root
 
 RUN if command -v git > /dev/null; then \
-		git config --global --add safe.directory /var/www; \
+		git config --system --add safe.directory /var/www \
+		|| git config --global --add safe.directory /var/www; \
 	fi
 
 RUN if command -v apt-get > /dev/null; then \
@@ -127,7 +136,8 @@ FROM wordpressdevelop/cli@sha256:85ad7d7a9c3bd9a8775fc83aea7f7dfc0aad25b2bc4f7d7
 USER root
 
 RUN if command -v git > /dev/null; then \
-		git config --global --add safe.directory /var/www; \
+		git config --system --add safe.directory /var/www \
+		|| git config --global --add safe.directory /var/www; \
 	fi
 
 RUN if command -v apt-get > /dev/null; then \

@@ -114,6 +114,86 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL charset metadata is extracted from CREATE TABLE statements.
+	 */
+	public function test_extract_schema_metadata_preserves_mysql_charsets(): void {
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+
+		$this->assertSame(
+			array(
+				array(
+					'table_name' => 'wp_charset_test',
+					'columns'    => array(
+						array(
+							'name'      => 'a',
+							'type'      => 'varchar(50)',
+							'charset'   => 'latin1',
+							'collation' => 'latin1_swedish_ci',
+							'ordinal'   => 1,
+						),
+						array(
+							'name'      => 'b',
+							'type'      => 'text',
+							'charset'   => 'koi8r',
+							'collation' => 'koi8r_general_ci',
+							'ordinal'   => 2,
+						),
+						array(
+							'name'      => 'c',
+							'type'      => 'binary',
+							'charset'   => null,
+							'collation' => null,
+							'ordinal'   => 3,
+						),
+						array(
+							'name'      => 'd',
+							'type'      => 'int',
+							'charset'   => null,
+							'collation' => null,
+							'ordinal'   => 4,
+						),
+					),
+				),
+			),
+			$translator->extract_schema_metadata(
+				'CREATE TABLE wp_charset_test (
+					a VARCHAR(50) CHARACTER SET latin1,
+					b TEXT COLLATE koi8r_general_ci,
+					c BINARY,
+					d INT
+				) DEFAULT CHARSET utf8mb3'
+			)
+		);
+	}
+
+	/**
+	 * Tests numeric precision and scale are preserved in DDL and metadata.
+	 */
+	public function test_numeric_precision_and_scale_are_preserved(): void {
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$sql        = 'CREATE TABLE wp_numeric_test (
+			amount DECIMAL(10,2) NOT NULL,
+			ratio NUMERIC(12,6),
+			score FLOAT(10,3),
+			measure DOUBLE(8,4)
+		)';
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_numeric_test\" (\n  \"amount\" numeric(10,2) NOT NULL,\n  \"ratio\" numeric(12,6),\n  \"score\" numeric(10,3),\n  \"measure\" numeric(8,4)\n)",
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql );
+
+		$this->assertSame( 'decimal(10,2)', $metadata[0]['columns'][0]['type'] );
+		$this->assertSame( 'numeric(12,6)', $metadata[0]['columns'][1]['type'] );
+		$this->assertSame( 'float(10,3)', $metadata[0]['columns'][2]['type'] );
+		$this->assertSame( 'double(8,4)', $metadata[0]['columns'][3]['type'] );
+	}
+
+	/**
 	 * Tests unsupported CREATE TABLE ... SELECT statements are rejected.
 	 */
 	public function test_translate_rejects_create_table_as_select(): void {

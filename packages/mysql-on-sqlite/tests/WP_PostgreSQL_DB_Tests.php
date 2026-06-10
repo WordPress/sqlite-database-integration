@@ -65,6 +65,260 @@ PHP
 	}
 
 	/**
+	 * Tests the wpdb adapter applies set_charset() to the PostgreSQL driver state.
+	 */
+	public function test_set_charset_updates_postgresql_driver_session_state(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $charset = 'utf8mb4';
+	public $collate = '';
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ),
+	'wptests'
+);
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$db->set_charset( $driver, 'utf8', 'utf8_general_ci' );
+
+$collation = $driver->query( "SHOW VARIABLES WHERE Variable_name='collation_connection'" );
+$charset   = $driver->query( "SHOW VARIABLES WHERE Variable_name='character_set_client'" );
+
+wp_postgresql_db_test_respond(
+	array(
+		'charset'   => $charset[0]->Value,
+		'collation' => $collation[0]->Value,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'charset'   => 'utf8',
+				'collation' => 'utf8_general_ci',
+			),
+			$result
+		);
+	}
+
+	/**
+	 * Tests the PostgreSQL adapter strips legacy charset text without MySQL.
+	 */
+	public function test_strip_invalid_text_handles_legacy_charsets_in_php(): void {
+		if ( ! function_exists( 'mb_convert_encoding' ) ) {
+			$this->markTestSkipped( 'mbstring is required for legacy charset conversion.' );
+		}
+
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+function mbstring_binary_safe_encoding() {}
+function reset_mbstring_encoding() {}
+function __( $text ) {
+	return $text;
+}
+
+class WP_Error {}
+
+class wpdb {
+	public $charset = 'big5';
+	public $collate = '';
+
+	public function check_ascii( $text ) {
+		return 1 === preg_match( '/^[\x00-\x7F]*$/', $text );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$method = new ReflectionMethod( WP_PostgreSQL_DB::class, 'strip_invalid_text' );
+$method->setAccessible( true );
+
+$utf8 = "a\xe5\x85\xb1b";
+$big5 = mb_convert_encoding( $utf8, 'BIG-5', 'UTF-8' );
+
+$big5_result = $method->invoke(
+	$db,
+	array(
+		array(
+			'charset' => 'big5',
+			'value'   => str_repeat( $big5, 10 ),
+			'length'  => array(
+				'type'   => 'byte',
+				'length' => 10,
+			),
+		),
+	)
+);
+
+$db->charset = 'tis620';
+$tis620_result = $method->invoke(
+	$db,
+	array(
+		array(
+			'charset' => 'tis620',
+			'value'   => str_repeat( "\xcc\xe3", 10 ),
+			'length'  => array(
+				'type'   => 'char',
+				'length' => 10,
+			),
+		),
+	)
+);
+
+wp_postgresql_db_test_respond(
+	array(
+		'big5'   => bin2hex( $big5_result[0]['value'] ),
+		'tis620' => bin2hex( $tis620_result[0]['value'] ),
+	)
+);
+PHP
+		);
+
+		$big5 = mb_convert_encoding( "a\xe5\x85\xb1b", 'BIG-5', 'UTF-8' );
+
+		$this->assertSame(
+			array(
+				'big5'   => bin2hex( str_repeat( $big5, 2 ) . 'a' ),
+				'tis620' => bin2hex( str_repeat( "\xcc\xe3", 5 ) ),
+			),
+			$result
+			);
+	}
+
+	/**
+	 * Tests query validation lets charset-aware stripping handle non-UTF-8 SQL.
+	 */
+	public function test_query_uses_strip_invalid_text_for_non_utf8_sql(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+function wp_load_translations_early() {}
+function __( $text ) {
+	return $text;
+}
+if ( ! function_exists( 'apply_filters' ) ) {
+	function apply_filters( $hook_name, $value ) {
+		return $value;
+	}
+}
+
+class wpdb {
+	public $ready               = true;
+	public $insert_id           = 0;
+	public $last_query          = null;
+	public $func_call           = null;
+	public $last_error          = '';
+	public $queries             = array();
+	public $num_queries         = 0;
+	public $last_result         = array();
+	public $col_info            = null;
+	public $rows_affected       = 0;
+	public $num_rows            = 0;
+	public $result              = null;
+	public $suppress_errors     = true;
+	public $show_errors         = false;
+	public $check_current_query = true;
+	public $strip_calls         = array();
+
+	public function check_ascii( $text ) {
+		return 1 === preg_match( '/^[\x00-\x7F]*$/', $text );
+	}
+
+	public function strip_invalid_text_from_query( $query ) {
+		$this->strip_calls[] = $query;
+		return $query;
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Invalid_Text_Fake_Driver extends WP_PostgreSQL_Driver {
+	private $queries = array();
+
+	public function __construct() {}
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+		return 1;
+	}
+
+	public function get_last_return_value() {
+		return 1;
+	}
+
+	public function get_insert_id() {
+		return 0;
+	}
+
+	public function get_last_postgresql_queries(): array {
+		return array();
+	}
+
+	public function get_last_column_meta(): array {
+		return array();
+	}
+
+	public function get_recorded_queries(): array {
+		return $this->queries;
+	}
+}
+
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$driver = new WP_PostgreSQL_DB_Invalid_Text_Fake_Driver();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$query  = "INSERT INTO binary_probe (payload) VALUES ('\xff')";
+$return = $db->query( $query );
+
+$queries = $driver->get_recorded_queries();
+wp_postgresql_db_test_respond(
+	array(
+		'return'              => $return,
+		'strip_calls'         => count( $db->strip_calls ),
+		'strip_query_hex'     => bin2hex( $db->strip_calls[0] ?? '' ),
+		'driver_query_hex'    => bin2hex( $queries[0] ?? '' ),
+		'last_error'          => $db->last_error,
+		'check_current_query' => $db->check_current_query,
+	)
+);
+PHP
+		);
+
+		$query = "INSERT INTO binary_probe (payload) VALUES ('\xff')";
+		$this->assertSame(
+			array(
+				'return'              => 1,
+				'strip_calls'         => 1,
+				'strip_query_hex'     => bin2hex( $query ),
+				'driver_query_hex'    => bin2hex( $query ),
+				'last_error'          => '',
+				'check_current_query' => true,
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests real wpdb identifier placeholders use PostgreSQL identifier quotes.
 	 */
 	public function test_real_wpdb_prepare_identifier_placeholders_use_postgresql_quotes(): void {
@@ -141,10 +395,10 @@ PHP
 		$this->assertSame( '"wptests_options"', $result['quoted_table'] );
 		$this->assertSame( '"weird""name"', $result['quoted_weird'] );
 		$this->assertSame(
-			'SELECT * FROM "wptests_options" WHERE "option_name" = \'Bob\'\'s\'',
+			'SELECT * FROM `wptests_options` WHERE `option_name` = \'Bob\\\'s\'',
 			$result['prepared_identifier']
 		);
-		$this->assertSame( "SELECT 'Bob''s'", $result['prepared_string'] );
+		$this->assertSame( "SELECT 'Bob\\'s'", $result['prepared_string'] );
 	}
 
 	/**
@@ -258,7 +512,7 @@ PHP
 			array(
 				'connect_result'         => true,
 				'ready_after_connect'    => true,
-				'is_mysql'               => false,
+				'is_mysql'               => true,
 				'last_error'             => '',
 				'charset'                => 'utf8mb4',
 				'bail_calls'             => array(),
@@ -273,7 +527,8 @@ PHP
 				'driver_after_close'     => true,
 				'second_close_result'    => false,
 			),
-			$result
+			$result,
+			'The PostgreSQL wpdb adapter keeps is_mysql=true so WordPress runs charset and length validation paths.'
 		);
 	}
 
