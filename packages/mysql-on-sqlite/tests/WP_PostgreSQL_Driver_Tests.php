@@ -1243,9 +1243,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests SELECT DISTINCT term ID queries include ORDER BY expressions.
+	 * Tests SELECT DISTINCT term ID queries hide ORDER BY expressions.
 	 */
-	public function test_distinct_term_id_order_by_name_includes_order_expression_for_postgresql(): void {
+	public function test_distinct_term_id_order_by_name_preserves_visible_projection_with_limit(): void {
 		$driver = $this->create_driver();
 
 		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
@@ -1256,25 +1256,120 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (10, 1, 'category')" );
 		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (20, 2, 'category')" );
 		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (1, 10)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (1, 10)' );
 		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (1, 20)' );
 
 		$select = "SELECT DISTINCT t.term_id
 			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
 			WHERE tt.taxonomy IN ('category') AND tr.object_id IN (1)
-			ORDER BY t.name ASC";
+			ORDER BY t.name ASC
+			LIMIT 10";
 		$rows   = $driver->query( $select );
 
+		$this->assertCount( 2, $rows );
 		$this->assertSame( '2', $rows[0]->term_id );
 		$this->assertSame( '1', $rows[1]->term_id );
+		$this->assertSame( array( 'term_id' ), array_keys( get_object_vars( $rows[0] ) ) );
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'SELECT DISTINCT t.term_id, t.name FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id WHERE tt.taxonomy IN (\'category\') AND tr.object_id IN (1) ORDER BY t.name ASC',
+					'sql'    => 'SELECT "__wp_pg_distinct"."term_id" AS "term_id" FROM (SELECT t.term_id AS "term_id", MIN(t.name) AS "__wp_pg_order_0" FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id WHERE tt.taxonomy IN (\'category\') AND tr.object_id IN (1) GROUP BY t.term_id) AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 10',
 					'params' => array(),
 				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
+	}
+
+	/**
+	 * Tests SELECT DISTINCT term ID queries hide relationship order columns.
+	 */
+	public function test_distinct_term_id_order_by_term_order_preserves_visible_projection(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_taxonomy (term_taxonomy_id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL, taxonomy TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_relationships (object_id INTEGER NOT NULL, term_taxonomy_id INTEGER NOT NULL, term_order INTEGER NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (1, 'Beta')" );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (2, 'Alpha')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (10, 1, 'category')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (20, 2, 'category')" );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES (1, 10, 2)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES (1, 20, 1)' );
+
+		$rows = $driver->query(
+			"SELECT DISTINCT t.term_id
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy IN ('category') AND tr.object_id IN (1)
+			ORDER BY tr.term_order ASC
+			LIMIT 100"
+		);
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( '2', $rows[0]->term_id );
+		$this->assertSame( '1', $rows[1]->term_id );
+		$this->assertSame( array( 'term_id' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "__wp_pg_distinct"."term_id" AS "term_id" FROM (SELECT t.term_id AS "term_id", MIN(tr.term_order) AS "__wp_pg_order_0" FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id WHERE tt.taxonomy IN (\'category\') AND tr.object_id IN (1) GROUP BY t.term_id) AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 100',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests parenthesized user ID DISTINCT queries keep user_login ordering hidden.
+	 */
+	public function test_distinct_parenthesized_user_id_order_by_hides_login_order_column(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, user_login TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (1, \'zeta\')' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (2, \'alpha\')' );
+
+		$rows = $driver->query( 'SELECT DISTINCT(wptests_users.ID) FROM wptests_users WHERE 1=1  ORDER BY user_login LIMIT 0, 50' );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( '2', $rows[0]->ID );
+		$this->assertSame( '1', $rows[1]->ID );
+		$this->assertSame( array( 'ID' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "__wp_pg_distinct"."ID" AS "ID" FROM (SELECT (wptests_users."ID") AS "ID", MIN(user_login) AS "__wp_pg_order_0" FROM wptests_users WHERE 1 = 1 GROUP BY (wptests_users."ID")) AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 50 OFFSET 0',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests date archive DISTINCT queries order by hidden aggregate post dates.
+	 */
+	public function test_distinct_date_archive_order_by_uses_hidden_aggregate_sort_column(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DISTINCT YEAR( post_date ) AS year, MONTH( post_date ) AS month
+			FROM wptests_posts
+			WHERE post_type = 'foo'
+			AND post_status != 'auto-draft' AND post_status != 'trash'
+			ORDER BY post_date DESC";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_distinct_order_by_query', $select );
+
+		$year_sql  = $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' );
+		$month_sql = $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' );
+		$this->assertSame(
+			'SELECT "__wp_pg_distinct"."year" AS "year", "__wp_pg_distinct"."month" AS "month" FROM (SELECT ' . $year_sql . ' AS "year", ' . $month_sql . ' AS "month", MAX(post_date) AS "__wp_pg_order_0" FROM wptests_posts WHERE post_type = \'foo\' AND post_status != \'auto-draft\' AND post_status != \'trash\' GROUP BY ' . $year_sql . ', ' . $month_sql . ') AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" DESC',
+			$sql
+		);
+
+		$outer_projection = substr( $sql, 0, strpos( $sql, ' FROM (' ) );
+		$this->assertStringNotContainsString( '__wp_pg_order_0', $outer_projection );
+		$this->assertStringNotContainsString( 'SELECT DISTINCT', $sql );
 	}
 
 	/**
@@ -1328,6 +1423,67 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( '2', $rows[0]->{'FOUND_ROWS()'} );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests DISTINCT SQL_CALC_FOUND_ROWS queries strip the modifier before PostgreSQL.
+	 */
+	public function test_distinct_sql_calc_found_rows_select_strips_modifier_and_orders_safely(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY, user_login TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_usermeta (user_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (1, \'zeta\')' );
+		$driver->query( 'INSERT INTO wptests_users ("ID", user_login) VALUES (2, \'alpha\')' );
+		$driver->query( 'INSERT INTO wptests_usermeta (user_id, meta_key, meta_value) VALUES (1, \'foo\', \'bar\')' );
+		$driver->query( 'INSERT INTO wptests_usermeta (user_id, meta_key, meta_value) VALUES (1, \'foo\', \'baz\')' );
+		$driver->query( 'INSERT INTO wptests_usermeta (user_id, meta_key, meta_value) VALUES (2, \'foo\', \'bar\')' );
+
+		$select = "SELECT DISTINCT SQL_CALC_FOUND_ROWS wptests_users.ID
+			FROM wptests_users INNER JOIN wptests_usermeta ON ( wptests_users.ID = wptests_usermeta.user_id )
+			WHERE 1=1 AND wptests_usermeta.meta_key = 'foo'
+			ORDER BY user_login ASC
+			LIMIT 0, 10";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( '2', $rows[0]->ID );
+		$this->assertSame( '1', $rows[1]->ID );
+		$this->assertSame( array( 'ID' ), array_keys( get_object_vars( $rows[0] ) ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringNotContainsString( 'SQL_CALC_FOUND_ROWS', $queries[0]['sql'] );
+		$this->assertSame(
+			'SELECT "__wp_pg_distinct"."ID" AS "ID" FROM (SELECT wptests_users."ID" AS "ID", MIN(user_login) AS "__wp_pg_order_0" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\' GROUP BY wptests_users."ID") AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 10 OFFSET 0',
+			$queries[0]['sql']
+		);
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests grouped DISTINCT ORDER BY shapes fail closed for later SELECT passes.
+	 */
+	public function test_distinct_order_by_grouped_shape_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_distinct_order_by_query',
+			'SELECT DISTINCT t.term_id, COUNT(*) AS term_tt_count FROM wptests_terms AS t GROUP BY t.term_id ORDER BY t.name ASC'
+		);
+
+		$this->assertNull( $sql );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_distinct_order_by_query',
+			'SELECT DISTINCT wptests_users.ID FROM wptests_users WHERE wptests_users.ID IN (SELECT user_id FROM wptests_usermeta) ORDER BY user_login ASC'
+		);
+
+		$this->assertNull( $sql );
 	}
 
 	/**

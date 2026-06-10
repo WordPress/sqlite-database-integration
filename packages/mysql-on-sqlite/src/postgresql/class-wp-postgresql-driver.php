@@ -418,6 +418,8 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
+		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
+
 		$translated_query = $this->translate_simple_mysql_select_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
@@ -430,12 +432,10 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
-		$is_sql_calc_found_rows_query = false;
-		$translated_query             = $this->translate_sql_calc_found_rows_select_query( $query );
+		$translated_query = $this->translate_sql_calc_found_rows_select_query( $query );
 		if ( null !== $translated_query ) {
-			$query                        = $translated_query;
-			$is_sql_calc_found_rows_query = true;
-			$translated_for_postgresql    = true;
+			$query                     = $translated_query;
+			$translated_for_postgresql = true;
 		}
 
 		if ( ! $translated_for_postgresql ) {
@@ -3585,30 +3585,66 @@ WHERE option_name IN (
 	 * Translate SELECT DISTINCT queries whose ORDER BY expression is not selected.
 	 *
 	 * PostgreSQL requires ORDER BY expressions in SELECT DISTINCT statements to
-	 * appear in the projection. WordPress term queries commonly select only
-	 * term_id while ordering by t.name; adding the order expression preserves the
-	 * first result column used by wpdb::get_col().
+	 * appear in the projection. Grouping by the visible projection and ordering
+	 * by a hidden aggregate keeps the MySQL-visible result shape and avoids
+	 * changing DISTINCT cardinality.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
 	 */
 	private function translate_distinct_order_by_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
-		if (
-			! isset( $tokens[0], $tokens[1] )
-			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::DISTINCT_SYMBOL !== $tokens[1]->id
-		) {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		$position = 1;
+		if ( WP_MySQL_Lexer::DISTINCT_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$has_sql_calc_found_rows = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL === $tokens[ $position ]->id ) {
+			$has_sql_calc_found_rows = true;
+			++$position;
+		}
+
+		$projection_start = $position;
+		$statement_end    = $this->get_mysql_statement_end_position( $tokens, $projection_start );
 		if ( null === $statement_end ) {
 			return null;
 		}
 
-		$from_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 2, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 2, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		$select_end     = $limit_position ?? $statement_end;
+		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			return null;
+		}
+
+		$order_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::ORDER_SYMBOL,
+			$projection_start,
+			$select_end
+		);
+		if ( null === $order_position ) {
+			return $has_sql_calc_found_rows
+				? 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $statement_end )
+				: null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			$projection_start,
+			$order_position
+		);
 		if (
 			null === $from_position
 			|| null === $order_position
@@ -3619,48 +3655,653 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$order_end = $order_position + 3;
 		if (
-			isset( $tokens[ $order_position + 3 ], $tokens[ $order_position + 4 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $order_position + 3 ]->id
-			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $order_position + 4 ] )
-		) {
-			$order_end = $order_position + 5;
-		}
-
-		if ( $order_end > $statement_end || $order_position + 2 === $order_end ) {
-			return null;
-		}
-
-		$after_order_expression = $order_end;
-		if (
-			isset( $tokens[ $after_order_expression ] )
-			&& $after_order_expression < $statement_end
-			&& (
-				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $after_order_expression ]->id
-				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $after_order_expression ]->id
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				$projection_start,
+				$select_end,
+				array(
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
 			)
 		) {
-			++$after_order_expression;
-		}
-
-		if ( $after_order_expression !== $statement_end ) {
 			return null;
 		}
 
-		$order_expression = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $order_position + 2, $order_end );
-		$projection       = $this->translate_mysql_token_sequence_to_postgresql( $tokens, 2, $from_position );
-
-		if ( false !== stripos( $projection, $order_expression ) ) {
+		if (
+			$this->contains_mysql_token(
+				$tokens,
+				$projection_start,
+				$select_end,
+				array(
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::AVG_SYMBOL,
+					WP_MySQL_Lexer::COUNT_SYMBOL,
+					WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL,
+					WP_MySQL_Lexer::MAX_SYMBOL,
+					WP_MySQL_Lexer::MIN_SYMBOL,
+					WP_MySQL_Lexer::SUM_SYMBOL,
+				)
+			)
+		) {
 			return null;
 		}
 
-		return sprintf(
-			'SELECT DISTINCT %s, %s %s',
-			$projection,
-			$order_expression,
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end )
+		$projection_items = $this->parse_mysql_select_projection_items( $tokens, $projection_start, $from_position );
+		if ( null === $projection_items ) {
+			return null;
+		}
+
+		$order_items = $this->parse_mysql_select_order_by_items(
+			$tokens,
+			$order_position + 2,
+			$select_end,
+			$projection_items
 		);
+		if ( null === $order_items ) {
+			return null;
+		}
+
+		$has_hidden_order_expression = false;
+		foreach ( $order_items as $order_item ) {
+			if ( null === $order_item['projection_index'] ) {
+				$has_hidden_order_expression = true;
+				break;
+			}
+		}
+
+		if ( ! $has_hidden_order_expression ) {
+			return $has_sql_calc_found_rows
+				? 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $statement_end )
+				: null;
+		}
+
+		return $this->build_distinct_order_by_grouped_query(
+			$tokens,
+			$projection_items,
+			$order_items,
+			$from_position,
+			$order_position,
+			$limit_position,
+			$statement_end
+		);
+	}
+
+	/**
+	 * Parse SELECT projection items with expression bounds and visible aliases.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection token position.
+	 * @param int             $end    Final projection token position, exclusive.
+	 * @return array<int, array{expression_start: int, expression_end: int, sql: string, alias: string}>|null Projection items.
+	 */
+	private function parse_mysql_select_projection_items( array $tokens, int $start, int $end ): ?array {
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $ranges || count( $ranges ) < 1 ) {
+			return null;
+		}
+
+		$items        = array();
+		$alias_lookup = array();
+		foreach ( $ranges as $range ) {
+			$item = $this->parse_mysql_select_projection_item( $tokens, $range['start'], $range['end'] );
+			if ( null === $item ) {
+				return null;
+			}
+
+			$alias_key = strtolower( $item['alias'] );
+			if ( isset( $alias_lookup[ $alias_key ] ) ) {
+				return null;
+			}
+
+			$alias_lookup[ $alias_key ] = true;
+			$items[]                    = $item;
+		}
+
+		return $items;
+	}
+
+	/**
+	 * Parse one SELECT projection item.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection item token position.
+	 * @param int             $end    Final projection item token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, sql: string, alias: string}|null Projection item.
+	 */
+	private function parse_mysql_select_projection_item( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$expression_start = $start;
+		$expression_end   = $end;
+		$alias            = null;
+		$as_position      = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $start, $end );
+
+		if ( null !== $as_position ) {
+			if ( $as_position <= $start || $as_position + 2 !== $end ) {
+				return null;
+			}
+
+			$alias = $this->get_mysql_projection_alias_token_value( $tokens[ $as_position + 1 ] ?? null );
+			if ( null === $alias ) {
+				return null;
+			}
+
+			$expression_end = $as_position;
+		} else {
+			$implicit_alias = $this->get_mysql_implicit_projection_alias( $tokens, $start, $end );
+			if ( null !== $implicit_alias ) {
+				$alias          = $implicit_alias;
+				$expression_end = $end - 1;
+			}
+		}
+
+		if ( $expression_start >= $expression_end ) {
+			return null;
+		}
+
+		if ( null === $alias ) {
+			$alias = $this->get_mysql_select_expression_default_output_name( $tokens, $expression_start, $expression_end );
+			if ( null === $alias ) {
+				return null;
+			}
+		}
+
+		return array(
+			'expression_start' => $expression_start,
+			'expression_end'   => $expression_end,
+			'sql'              => $this->translate_mysql_token_sequence_to_postgresql( $tokens, $expression_start, $expression_end ),
+			'alias'            => $alias,
+		);
+	}
+
+	/**
+	 * Get an explicit projection alias token value.
+	 *
+	 * MySQL permits string-literal aliases in projection context. Keep that
+	 * context local so predicate string literals continue to render as values.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return string|null Alias value, or null when unsupported.
+	 */
+	private function get_mysql_projection_alias_token_value( ?WP_MySQL_Token $token ): ?string {
+		if ( null === $token ) {
+			return null;
+		}
+
+		$identifier = $this->get_mysql_identifier_token_value( $token );
+		if ( null !== $identifier ) {
+			return $identifier;
+		}
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return $token->get_value();
+		}
+
+		$value = $token->get_value();
+		if ( $this->is_mysql_unquoted_projection_alias_value( $value ) ) {
+			return $value;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token value is safe as an unquoted MySQL projection alias.
+	 *
+	 * @param string $value Token value.
+	 * @return bool Whether the value is identifier-shaped.
+	 */
+	private function is_mysql_unquoted_projection_alias_value( string $value ): bool {
+		if ( '' === $value ) {
+			return false;
+		}
+
+		$first_character = $value[0];
+		if ( '_' !== $first_character && ! ctype_alpha( $first_character ) ) {
+			return false;
+		}
+
+		for ( $i = 1, $length = strlen( $value ); $i < $length; $i++ ) {
+			$character = $value[ $i ];
+			if ( '_' !== $character && '$' !== $character && ! ctype_alnum( $character ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Get an implicit projection alias when a complex expression is followed by a name.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection item token position.
+	 * @param int             $end    Final projection item token position, exclusive.
+	 * @return string|null Alias value, or null when absent.
+	 */
+	private function get_mysql_implicit_projection_alias( array $tokens, int $start, int $end ): ?string {
+		if ( $start + 1 >= $end ) {
+			return null;
+		}
+
+		$alias = $this->get_mysql_identifier_token_value( $tokens[ $end - 1 ] ?? null );
+		if ( null === $alias ) {
+			return null;
+		}
+
+		if ( isset( $tokens[ $end - 2 ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $end - 2 ]->id ) {
+			return null;
+		}
+
+		return $alias;
+	}
+
+	/**
+	 * Infer the default visible name for a projected expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token position.
+	 * @param int             $end    Final expression token position, exclusive.
+	 * @return string|null Output column name, or null when unsupported.
+	 */
+	private function get_mysql_select_expression_default_output_name( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		if ( $start + 1 === $end ) {
+			return $this->get_mysql_identifier_token_value( $tokens[ $start ] ?? null );
+		}
+
+		if (
+			$start + 3 <= $end
+			&& isset( $tokens[ $end - 2 ], $tokens[ $end - 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $end - 2 ]->id
+		) {
+			return $this->get_mysql_identifier_token_value( $tokens[ $end - 1 ] );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse ORDER BY items and connect them to projected expressions when possible.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int             $start            First ORDER BY item token position.
+	 * @param int             $end              Final ORDER BY token position, exclusive.
+	 * @param array           $projection_items Parsed projection items.
+	 * @return array<int, array{expression_start: int, expression_end: int, sql: string, direction: string, projection_index: int|null}>|null ORDER BY items.
+	 */
+	private function parse_mysql_select_order_by_items( array $tokens, int $start, int $end, array $projection_items ): ?array {
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $ranges || count( $ranges ) < 1 ) {
+			return null;
+		}
+
+		$items = array();
+		foreach ( $ranges as $range ) {
+			$expression_end = $range['end'];
+			$direction      = 'ASC';
+
+			if (
+				isset( $tokens[ $expression_end - 1 ] )
+				&& (
+					WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $expression_end - 1 ]->id
+					|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $expression_end - 1 ]->id
+				)
+			) {
+				$direction = WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $expression_end - 1 ]->id ? 'DESC' : 'ASC';
+				--$expression_end;
+			}
+
+			if ( $range['start'] >= $expression_end ) {
+				return null;
+			}
+
+			$items[] = array(
+				'expression_start' => $range['start'],
+				'expression_end'   => $expression_end,
+				'sql'              => $this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$range['start'],
+					$expression_end
+				),
+				'direction'        => $direction,
+				'projection_index' => $this->find_mysql_projection_for_order_expression(
+					$tokens,
+					$range['start'],
+					$expression_end,
+					$projection_items
+				),
+			);
+		}
+
+		return $items;
+	}
+
+	/**
+	 * Find a projection item that satisfies an ORDER BY expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int             $start            First ORDER BY expression token.
+	 * @param int             $end              Final ORDER BY expression token, exclusive.
+	 * @param array           $projection_items Parsed projection items.
+	 * @return int|null Projection item index, or null when not projected.
+	 */
+	private function find_mysql_projection_for_order_expression( array $tokens, int $start, int $end, array $projection_items ): ?int {
+		foreach ( $projection_items as $index => $projection_item ) {
+			if (
+				$this->are_mysql_token_ranges_equivalent(
+					$tokens,
+					$start,
+					$end,
+					$projection_item['expression_start'],
+					$projection_item['expression_end']
+				)
+			) {
+				return $index;
+			}
+		}
+
+		if ( $start + 1 === $end ) {
+			$ordinal = $this->get_mysql_order_by_ordinal_projection_index( $tokens[ $start ], count( $projection_items ) );
+			if ( null !== $ordinal ) {
+				return $ordinal;
+			}
+
+			$alias = $this->get_mysql_identifier_token_value( $tokens[ $start ] );
+			if ( null !== $alias ) {
+				foreach ( $projection_items as $index => $projection_item ) {
+					if ( strtolower( $alias ) === strtolower( $projection_item['alias'] ) ) {
+						return $index;
+					}
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Resolve a positional ORDER BY item to a projection index.
+	 *
+	 * @param WP_MySQL_Token $token            ORDER BY token.
+	 * @param int            $projection_count Number of projected columns.
+	 * @return int|null Zero-based projection index, or null when unsupported.
+	 */
+	private function get_mysql_order_by_ordinal_projection_index( WP_MySQL_Token $token, int $projection_count ): ?int {
+		if (
+			! in_array( $token->id, array( WP_MySQL_Lexer::INT_NUMBER, WP_MySQL_Lexer::LONG_NUMBER ), true )
+			|| ! ctype_digit( $token->get_value() )
+		) {
+			return null;
+		}
+
+		$ordinal = (int) $token->get_value();
+		if ( $ordinal < 1 || $ordinal > $projection_count ) {
+			return null;
+		}
+
+		return $ordinal - 1;
+	}
+
+	/**
+	 * Check whether a bounded token range contains any token IDs.
+	 *
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int             $start     First token position, inclusive.
+	 * @param int             $end       Final token position, exclusive.
+	 * @param int[]           $token_ids Token IDs to detect.
+	 * @return bool Whether any token ID was found.
+	 */
+	private function contains_mysql_token( array $tokens, int $start, int $end, array $token_ids ): bool {
+		$lookup = array();
+		foreach ( $token_ids as $token_id ) {
+			$lookup[ $token_id ] = true;
+		}
+
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( isset( $lookup[ $tokens[ $i ]->id ] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Build a grouped derived-table rewrite for DISTINCT ORDER BY queries.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $projection_items Parsed projection items.
+	 * @param array           $order_items      Parsed ORDER BY items.
+	 * @param int             $from_position    FROM token position.
+	 * @param int             $order_position   ORDER token position.
+	 * @param int|null        $limit_position   LIMIT token position, or null.
+	 * @param int             $statement_end    Final statement token position, exclusive.
+	 * @return string PostgreSQL query.
+	 */
+	private function build_distinct_order_by_grouped_query(
+		array $tokens,
+		array $projection_items,
+		array $order_items,
+		int $from_position,
+		int $order_position,
+		?int $limit_position,
+		int $statement_end
+	): string {
+		$derived_table_alias        = '__wp_pg_distinct';
+		$quoted_derived_table_alias = $this->connection->quote_identifier( $derived_table_alias );
+		$inner_projection_sql       = array();
+		$outer_projection_sql       = array();
+		$group_by_sql               = array();
+
+		foreach ( $projection_items as $projection_item ) {
+			$quoted_alias           = $this->connection->quote_identifier( $projection_item['alias'] );
+			$inner_projection_sql[] = $projection_item['sql'] . ' AS ' . $quoted_alias;
+			$outer_projection_sql[] = sprintf(
+				'%s.%s AS %s',
+				$quoted_derived_table_alias,
+				$quoted_alias,
+				$quoted_alias
+			);
+			$group_by_sql[]         = $projection_item['sql'];
+		}
+
+		foreach ( $order_items as $index => $order_item ) {
+			if ( null !== $order_item['projection_index'] ) {
+				continue;
+			}
+
+			$aggregate_function     = 'DESC' === $order_item['direction'] ? 'MAX' : 'MIN';
+			$quoted_order_alias     = $this->connection->quote_identifier( $this->get_distinct_order_by_hidden_alias( $index ) );
+			$inner_projection_sql[] = sprintf(
+				'%s(%s) AS %s',
+				$aggregate_function,
+				$order_item['sql'],
+				$quoted_order_alias
+			);
+		}
+
+		$sql = sprintf(
+			'SELECT %s FROM (SELECT %s %s GROUP BY %s) AS %s ORDER BY %s',
+			implode( ', ', $outer_projection_sql ),
+			implode( ', ', $inner_projection_sql ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $order_position ),
+			implode( ', ', $group_by_sql ),
+			$quoted_derived_table_alias,
+			$this->get_distinct_order_by_outer_order_sql( $projection_items, $order_items, $quoted_derived_table_alias )
+		);
+
+		if ( null !== $limit_position ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Get the hidden ORDER BY alias for a parsed order item.
+	 *
+	 * @param int $index ORDER BY item index.
+	 * @return string Hidden alias.
+	 */
+	private function get_distinct_order_by_hidden_alias( int $index ): string {
+		return '__wp_pg_order_' . $index;
+	}
+
+	/**
+	 * Build the outer ORDER BY clause for a grouped DISTINCT rewrite.
+	 *
+	 * @param array  $projection_items           Parsed projection items.
+	 * @param array  $order_items                Parsed ORDER BY items.
+	 * @param string $quoted_derived_table_alias Quoted derived table alias.
+	 * @return string Outer ORDER BY SQL.
+	 */
+	private function get_distinct_order_by_outer_order_sql( array $projection_items, array $order_items, string $quoted_derived_table_alias ): string {
+		$order_sql = array();
+
+		foreach ( $order_items as $index => $order_item ) {
+			if ( null !== $order_item['projection_index'] ) {
+				$order_alias = $projection_items[ $order_item['projection_index'] ]['alias'];
+			} else {
+				$order_alias = $this->get_distinct_order_by_hidden_alias( $index );
+			}
+
+			$order_sql[] = sprintf(
+				'%s.%s %s',
+				$quoted_derived_table_alias,
+				$this->connection->quote_identifier( $order_alias ),
+				$order_item['direction']
+			);
+		}
+
+		return implode( ', ', $order_sql );
+	}
+
+	/**
+	 * Check whether two expression token ranges are structurally equivalent.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int             $left_start  First left expression token.
+	 * @param int             $left_end    Final left expression token, exclusive.
+	 * @param int             $right_start First right expression token.
+	 * @param int             $right_end   Final right expression token, exclusive.
+	 * @return bool Whether the token ranges are equivalent.
+	 */
+	private function are_mysql_token_ranges_equivalent(
+		array $tokens,
+		int $left_start,
+		int $left_end,
+		int $right_start,
+		int $right_end
+	): bool {
+		$left_bounds  = $this->normalize_mysql_expression_bounds( $tokens, $left_start, $left_end );
+		$right_bounds = $this->normalize_mysql_expression_bounds( $tokens, $right_start, $right_end );
+
+		$left_start  = $left_bounds['start'];
+		$left_end    = $left_bounds['end'];
+		$right_start = $right_bounds['start'];
+		$right_end   = $right_bounds['end'];
+
+		if ( $left_end - $left_start !== $right_end - $right_start ) {
+			return false;
+		}
+
+		for ( $left = $left_start, $right = $right_start; $left < $left_end; $left++, $right++ ) {
+			if ( ! $this->are_mysql_tokens_equivalent( $tokens[ $left ], $tokens[ $right ] ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Normalize expression bounds by removing full-range wrapper parentheses.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token.
+	 * @param int             $end    Final expression token, exclusive.
+	 * @return array{start: int, end: int} Normalized bounds.
+	 */
+	private function normalize_mysql_expression_bounds( array $tokens, int $start, int $end ): array {
+		while (
+			$start + 2 <= $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start ]->id
+			&& $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end ) === $end
+		) {
+			++$start;
+			--$end;
+		}
+
+		return array(
+			'start' => $start,
+			'end'   => $end,
+		);
+	}
+
+	/**
+	 * Check whether two individual MySQL tokens are structurally equivalent.
+	 *
+	 * @param WP_MySQL_Token $left  Left token.
+	 * @param WP_MySQL_Token $right Right token.
+	 * @return bool Whether the tokens are equivalent.
+	 */
+	private function are_mysql_tokens_equivalent( WP_MySQL_Token $left, WP_MySQL_Token $right ): bool {
+		$left_identifier  = $this->get_mysql_identifier_token_value( $left );
+		$right_identifier = $this->get_mysql_identifier_token_value( $right );
+		if ( null !== $left_identifier || null !== $right_identifier ) {
+			return null !== $left_identifier
+				&& null !== $right_identifier
+				&& strtolower( $left_identifier ) === strtolower( $right_identifier );
+		}
+
+		if ( $left->id !== $right->id ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $left->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $left->id ) {
+			return $left->get_value() === $right->get_value();
+		}
+
+		return strtolower( $left->get_bytes() ) === strtolower( $right->get_bytes() );
+	}
+
+	/**
+	 * Check whether a SELECT query uses the MySQL SQL_CALC_FOUND_ROWS modifier.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query asks for FOUND_ROWS tracking.
+	 */
+	private function is_sql_calc_found_rows_select_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		if ( null === $this->get_mysql_statement_end_position( $tokens, 1 ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL === $tokens[1]->id ) {
+			return true;
+		}
+
+		return isset( $tokens[2] )
+			&& WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL === $tokens[2]->id;
 	}
 
 	/**
