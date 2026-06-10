@@ -4380,8 +4380,8 @@ WHERE option_name IN (
 		$previous_token_id = null;
 
 		for ( $i = $start; $i < $end; $i++ ) {
-			$token              = $tokens[ $i ];
-			$fragment_token_id  = $token->id;
+			$token               = $tokens[ $i ];
+			$fragment_token_id   = $token->id;
 			$translated_fragment = $this->translate_mysql_limit_offset_count_to_postgresql( $tokens, $i, $end );
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_time_extract_to_postgresql( $tokens, $i, $end );
@@ -4483,13 +4483,83 @@ WHERE option_name IN (
 		);
 
 		return array(
-			'sql'      => sprintf(
-				'CAST(EXTRACT(%s FROM CAST(%s AS timestamp)) AS integer)',
-				$bounds['unit'],
-				$expression_sql
-			),
+			'sql'      => $this->get_postgresql_zero_date_safe_extract_sql( $bounds['unit'], $expression_sql ),
 			'token_id' => $tokens[ $position ]->id,
 			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL date/time extract that preserves MySQL zero-date behavior.
+	 *
+	 * PostgreSQL rejects MySQL zero-ish dates such as 0000-00-00 during timestamp
+	 * casts. Detect those text-backed values first and extract the requested
+	 * numeric part directly from the text; keep valid dates on PostgreSQL's
+	 * timestamp EXTRACT path.
+	 *
+	 * @param string $unit           PostgreSQL EXTRACT unit.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$date_text_pattern   = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}'";
+		$zero_date_condition = sprintf(
+			'%1$s ~ %2$s AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
+			$expression_text_sql,
+			$date_text_pattern
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM CAST(%4$s AS timestamp)) AS integer) END',
+			$zero_date_condition,
+			$this->get_postgresql_zero_date_extract_part_sql( $unit, $expression_text_sql ),
+			$unit,
+			$expression_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL that extracts one part from a zero-ish MySQL date string.
+	 *
+	 * @param string $unit                PostgreSQL EXTRACT unit.
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_zero_date_extract_part_sql( string $unit, string $expression_text_sql ): string {
+		$date_time_text_pattern = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
+
+		switch ( $unit ) {
+			case 'YEAR':
+				return sprintf( 'CAST(SUBSTRING(%s FROM 1 FOR 4) AS integer)', $expression_text_sql );
+
+			case 'MONTH':
+				return sprintf( 'CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer)', $expression_text_sql );
+
+			case 'DAY':
+				return sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql );
+
+			case 'HOUR':
+				$start = 12;
+				break;
+
+			case 'MINUTE':
+				$start = 15;
+				break;
+
+			case 'SECOND':
+				$start = 18;
+				break;
+
+			default:
+				return sprintf( 'CAST(EXTRACT(%s FROM CAST(%s AS timestamp)) AS integer)', $unit, $expression_text_sql );
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s ~ %2$s THEN CAST(SUBSTRING(%1$s FROM %3$d FOR 2) AS integer) ELSE 0 END',
+			$expression_text_sql,
+			$date_time_text_pattern,
+			$start
 		);
 	}
 

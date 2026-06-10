@@ -529,26 +529,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests MySQL offset,count LIMIT variants are translated to LIMIT/OFFSET.
 	 */
 	public function test_mysql_offset_count_limit_variants_are_translated_to_postgresql(): void {
-		$driver = new WP_PostgreSQL_Driver( new WP_PostgreSQL_Driver_SQL_Capture_Connection(), 'wptests' );
+		$driver = $this->create_driver();
 
 		$cases = array(
-			'SELECT * FROM wptests_posts LIMIT 0, 10'  => 'SELECT * FROM wptests_posts LIMIT 10 OFFSET 0',
-			'SELECT * FROM wptests_posts LIMIT 5, 10'  => 'SELECT * FROM wptests_posts LIMIT 10 OFFSET 5',
+			'SELECT * FROM wptests_posts LIMIT 0, 10'    => 'SELECT * FROM wptests_posts LIMIT 10 OFFSET 0',
+			'SELECT * FROM wptests_posts LIMIT 5, 10'    => 'SELECT * FROM wptests_posts LIMIT 10 OFFSET 5',
 			"SELECT * FROM wptests_posts LIMIT\n0 ,\n10" => 'SELECT * FROM wptests_posts LIMIT 10 OFFSET 0',
-			'SELECT * FROM wptests_posts LIMIT ?, ?'  => 'SELECT * FROM wptests_posts LIMIT ? OFFSET ?',
+			'SELECT * FROM wptests_posts LIMIT ?, ?'     => 'SELECT * FROM wptests_posts LIMIT ? OFFSET ?',
 		);
 
 		foreach ( $cases as $mysql_sql => $postgresql_sql ) {
-			$driver->query( $mysql_sql );
-
 			$this->assertSame(
-				array(
-					array(
-						'sql'    => $postgresql_sql,
-						'params' => array(),
-					),
-				),
-				$driver->get_last_postgresql_queries()
+				$postgresql_sql,
+				$this->translate_driver_query_with_private_method( $driver, 'translate_simple_mysql_select_query', $mysql_sql )
 			);
 		}
 	}
@@ -557,7 +550,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests PostgreSQL LIMIT count OFFSET offset syntax is preserved.
 	 */
 	public function test_existing_limit_offset_clause_is_preserved(): void {
-		$driver = new WP_PostgreSQL_Driver( new WP_PostgreSQL_Driver_SQL_Capture_Connection(), 'wptests' );
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts (ID INTEGER)' );
 
 		$select = 'SELECT * FROM wptests_posts LIMIT 10 OFFSET 5';
 
@@ -1116,36 +1111,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests MySQL date/time extraction functions are translated for PostgreSQL.
 	 */
 	public function test_mysql_date_time_extract_functions_are_translated_to_postgresql(): void {
-		$driver = new WP_PostgreSQL_Driver( new WP_PostgreSQL_Driver_Date_Extract_Fixture_Connection(), 'wptests' );
+		$driver = $this->create_driver();
 
 		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, DAYOFMONTH(post_date) AS d, DAY(post_date) AS day_value, HOUR(post_date) AS h, MINUTE(post_date) AS i, SECOND(post_date) AS s, EXTRACT(DAY FROM post_date) AS extracted_day FROM wptests_posts WHERE ID = 1';
-		$rows   = $driver->query( $select );
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
-		$this->assertCount( 1, $rows );
-		$this->assertSame( '2026', $rows[0]->y );
-		$this->assertSame( '6', $rows[0]->m );
-		$this->assertSame( '10', $rows[0]->d );
-		$this->assertSame( '10', $rows[0]->day_value );
-		$this->assertSame( '14', $rows[0]->h );
-		$this->assertSame( '8', $rows[0]->i );
-		$this->assertSame( '9', $rows[0]->s );
-		$this->assertSame( '10', $rows[0]->extracted_day );
 		$this->assertSame(
-			array(
-				array(
-					'sql'    => 'SELECT CAST(EXTRACT(YEAR FROM CAST(post_date AS timestamp)) AS integer) AS y, CAST(EXTRACT(MONTH FROM CAST(post_date AS timestamp)) AS integer) AS m, CAST(EXTRACT(DAY FROM CAST(post_date AS timestamp)) AS integer) AS d, CAST(EXTRACT(DAY FROM CAST(post_date AS timestamp)) AS integer) AS day_value, CAST(EXTRACT(HOUR FROM CAST(post_date AS timestamp)) AS integer) AS h, CAST(EXTRACT(MINUTE FROM CAST(post_date AS timestamp)) AS integer) AS i, CAST(EXTRACT(SECOND FROM CAST(post_date AS timestamp)) AS integer) AS s, CAST(EXTRACT(DAY FROM CAST(post_date AS timestamp)) AS integer) AS extracted_day FROM wptests_posts WHERE "ID" = 1',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' ) . ' AS y, ' . $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' ) . ' AS m, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS d, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS day_value, ' . $this->get_expected_zero_date_safe_extract_sql( 'HOUR', 'post_date' ) . ' AS h, ' . $this->get_expected_zero_date_safe_extract_sql( 'MINUTE', 'post_date' ) . ' AS i, ' . $this->get_expected_zero_date_safe_extract_sql( 'SECOND', 'post_date' ) . ' AS s, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS extracted_day FROM wptests_posts WHERE "ID" = 1',
+			$sql
 		);
+	}
+
+	/**
+	 * Tests generated date/time extraction SQL is safe for MySQL zero-date values.
+	 */
+	public function test_mysql_date_time_extract_functions_are_zero_date_safe_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, DAYOFMONTH(post_date) AS d, HOUR(post_date) AS h FROM wptests_posts WHERE post_date = \'0000-00-00 00:00:00\'';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertStringContainsString( "CASE WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST(post_date AS text) FROM 1 FOR 4) = '0000'", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST(post_date AS text) FROM 6 FOR 2) = '00'", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST(post_date AS text) FROM 9 FOR 2) = '00'", $sql );
+		$this->assertStringContainsString( 'THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 1 FOR 4) AS integer)', $sql );
+		$this->assertStringContainsString( 'THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 6 FOR 2) AS integer)', $sql );
+		$this->assertStringContainsString( 'THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 9 FOR 2) AS integer)', $sql );
+		$this->assertStringContainsString( "THEN CASE WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 12 FOR 2) AS integer) ELSE 0 END", $sql );
+		$this->assertStringNotContainsString( 'SELECT CAST(EXTRACT(YEAR FROM CAST(post_date AS timestamp)) AS integer) AS y', $sql );
 	}
 
 	/**
 	 * Tests representative WordPress date archive queries do not reach PostgreSQL with raw MySQL functions.
 	 */
 	public function test_wordpress_date_query_extract_functions_are_translated_to_postgresql(): void {
-		$driver = new WP_PostgreSQL_Driver( new WP_PostgreSQL_Driver_Date_Extract_Fixture_Connection(), 'wptests' );
+		$driver = $this->create_driver();
 
 		$select = "SELECT post_id FROM wptests_postmeta, wptests_posts
 			WHERE ID = post_id
@@ -1156,16 +1157,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			AND MONTH(post_date) = 6
 			AND DAYOFMONTH(post_date) = 10";
 
-		$driver->query( $select );
+		$sql = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertSame(
-			array(
-				array(
-					'sql'    => 'SELECT post_id FROM wptests_postmeta, wptests_posts WHERE "ID" = post_id AND post_type = \'post\' AND meta_key = \'_wp_old_slug\' AND meta_value = \'foo-bar\' AND CAST(EXTRACT(YEAR FROM CAST(post_date AS timestamp)) AS integer) = 2026 AND CAST(EXTRACT(MONTH FROM CAST(post_date AS timestamp)) AS integer) = 6 AND CAST(EXTRACT(DAY FROM CAST(post_date AS timestamp)) AS integer) = 10',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+			'SELECT post_id FROM wptests_postmeta, wptests_posts WHERE "ID" = post_id AND post_type = \'post\' AND meta_key = \'_wp_old_slug\' AND meta_value = \'foo-bar\' AND ' . $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' ) . ' = 2026 AND ' . $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' ) . ' = 6 AND ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' = 10',
+			$sql
 		);
 	}
 
@@ -1842,6 +1838,90 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Translate a query by calling a private driver translator.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver      Driver under test.
+	 * @param string               $method_name Private driver method name.
+	 * @param string               $query       MySQL query.
+	 * @return string|null PostgreSQL SQL, or null when unsupported.
+	 */
+	private function translate_driver_query_with_private_method( WP_PostgreSQL_Driver $driver, string $method_name, string $query ): ?string {
+		$translator = Closure::bind(
+			function ( string $bound_method_name, string $bound_query ): ?string {
+				return $this->$bound_method_name( $bound_query );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		return $translator( $method_name, $query );
+	}
+
+	/**
+	 * Get expected zero-date-safe PostgreSQL date/time extract SQL.
+	 *
+	 * @param string $unit           PostgreSQL EXTRACT unit.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_condition = sprintf(
+			'%1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}\' AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
+			$expression_text_sql
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM CAST(%4$s AS timestamp)) AS integer) END',
+			$zero_date_condition,
+			$this->get_expected_zero_date_extract_part_sql( $unit, $expression_text_sql ),
+			$unit,
+			$expression_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL that extracts one part from a zero-ish date string.
+	 *
+	 * @param string $unit                PostgreSQL EXTRACT unit.
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_zero_date_extract_part_sql( string $unit, string $expression_text_sql ): string {
+		switch ( $unit ) {
+			case 'YEAR':
+				return sprintf( 'CAST(SUBSTRING(%s FROM 1 FOR 4) AS integer)', $expression_text_sql );
+
+			case 'MONTH':
+				return sprintf( 'CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer)', $expression_text_sql );
+
+			case 'DAY':
+				return sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql );
+
+			case 'HOUR':
+				$start = 12;
+				break;
+
+			case 'MINUTE':
+				$start = 15;
+				break;
+
+			case 'SECOND':
+				$start = 18;
+				break;
+
+			default:
+				throw new InvalidArgumentException( 'Unsupported test extract unit.' );
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}\' THEN CAST(SUBSTRING(%1$s FROM %2$d FOR 2) AS integer) ELSE 0 END',
+			$expression_text_sql,
+			$start
+		);
+	}
+
+	/**
 	 * Check whether an injected SQLite backend table exists.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
@@ -2006,65 +2086,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'option_id'),
 				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'option_name')"
 		);
-	}
-}
-
-/**
- * Fixture connection that records translated SELECT SQL without executing it.
- */
-class WP_PostgreSQL_Driver_SQL_Capture_Connection extends WP_PostgreSQL_Connection {
-	/**
-	 * Constructor.
-	 */
-	public function __construct() {
-		parent::__construct( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
-	}
-
-	/**
-	 * Execute a query, returning an empty result for captured SELECT statements.
-	 *
-	 * @param string $sql    SQL query.
-	 * @param array  $params Query parameters.
-	 * @return PDOStatement Statement.
-	 */
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( 0 === strpos( $sql, 'SELECT ' ) ) {
-			return parent::query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		return parent::query( $sql, $params );
-	}
-}
-
-/**
- * Fixture connection that accepts PostgreSQL EXTRACT syntax in driver tests.
- */
-class WP_PostgreSQL_Driver_Date_Extract_Fixture_Connection extends WP_PostgreSQL_Driver_SQL_Capture_Connection {
-	/**
-	 * Execute a query, returning MySQL-compatible date/time extract values.
-	 *
-	 * @param string $sql    SQL query.
-	 * @param array  $params Query parameters.
-	 * @return PDOStatement Statement.
-	 */
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'EXTRACT(' ) ) {
-			$stmt = $this->get_pdo()->prepare(
-				'SELECT
-					2026 AS y,
-					6 AS m,
-					10 AS d,
-					10 AS day_value,
-					14 AS h,
-					8 AS i,
-					9 AS s,
-					10 AS extracted_day'
-			);
-			$stmt->execute();
-			return $stmt;
-		}
-
-		return parent::query( $sql, $params );
 	}
 }
 
