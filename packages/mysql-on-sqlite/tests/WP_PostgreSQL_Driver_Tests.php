@@ -2160,9 +2160,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @return WP_PostgreSQL_Driver
 	 */
 	private function create_driver_with_postgresql_substring_function(): WP_PostgreSQL_Driver {
-		$pdo_class  = class_exists( 'Pdo\Sqlite' ) ? 'Pdo\Sqlite' : PDO::class;
-		$pdo        = new $pdo_class( 'sqlite::memory:' );
-		$substring  = static function ( $value, $pattern ): ?string {
+		$pdo_class = class_exists( 'Pdo\Sqlite' ) ? 'Pdo\Sqlite' : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+		$substring = static function ( $value, $pattern ): ?string {
 			if ( null === $value ) {
 				return null;
 			}
