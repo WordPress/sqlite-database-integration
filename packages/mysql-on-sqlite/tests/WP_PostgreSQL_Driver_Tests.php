@@ -76,6 +76,124 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict INSERT statements append metadata-derived NOT NULL defaults.
+	 */
+	public function test_non_strict_insert_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_comments (
+				comment_ID INTEGER PRIMARY KEY,
+				comment_author TEXT NOT NULL,
+				comment_author_email TEXT NOT NULL,
+				comment_content TEXT NOT NULL,
+				comment_parent INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_comments (
+				comment_ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				comment_author tinytext NOT NULL,
+				comment_author_email varchar(100) NOT NULL DEFAULT '',
+				comment_content text NOT NULL,
+				comment_parent bigint(20) unsigned NOT NULL DEFAULT '0',
+				PRIMARY KEY (comment_ID)
+			)"
+		);
+
+		$comment_insert = 'INSERT INTO `wptests_comments` (`comment_ID`) VALUES (1)';
+
+		$this->assertSame( 1, $driver->query( $comment_insert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_comments" ("comment_ID", "comment_author", "comment_author_email", "comment_content", "comment_parent") VALUES (1, \'\', \'\', \'\', \'0\')',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$comments = $driver->query( 'SELECT comment_author, comment_author_email, comment_content, comment_parent FROM wptests_comments WHERE comment_ID = 1' );
+		$this->assertSame( '', $comments[0]->comment_author );
+		$this->assertSame( '', $comments[0]->comment_author_email );
+		$this->assertSame( '', $comments[0]->comment_content );
+		$this->assertSame( '0', $comments[0]->comment_parent );
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				"ID" INTEGER PRIMARY KEY,
+				post_date TEXT NOT NULL,
+				post_content TEXT NOT NULL,
+				post_title TEXT NOT NULL,
+				post_excerpt TEXT NOT NULL,
+				post_status TEXT NOT NULL,
+				post_parent INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_posts (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_content longtext NOT NULL,
+				post_title text NOT NULL,
+				post_excerpt text NOT NULL,
+				post_status varchar(20) NOT NULL DEFAULT 'publish',
+				post_parent bigint(20) unsigned NOT NULL DEFAULT '0',
+				PRIMARY KEY (ID)
+			)"
+		);
+
+		$post_insert = "INSERT INTO `wptests_posts` (`ID`, `post_title`) VALUES (1, 'Post 1')";
+
+		$this->assertSame( 1, $driver->query( $post_insert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_posts" ("ID", "post_title", "post_date", "post_content", "post_excerpt", "post_status", "post_parent") VALUES (1, \'Post 1\', \'0000-00-00 00:00:00\', \'\', \'\', \'publish\', \'0\')',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$posts = $driver->query( 'SELECT post_date, post_content, post_excerpt, post_status, post_parent FROM wptests_posts WHERE ID = 1' );
+		$this->assertSame( '0000-00-00 00:00:00', $posts[0]->post_date );
+		$this->assertSame( '', $posts[0]->post_content );
+		$this->assertSame( '', $posts[0]->post_excerpt );
+		$this->assertSame( 'publish', $posts[0]->post_status );
+		$this->assertSame( '0', $posts[0]->post_parent );
+	}
+
+	/**
+	 * Tests strict SQL mode leaves omitted NOT NULL INSERT columns to fail visibly.
+	 */
+	public function test_strict_insert_does_not_append_omitted_not_null_defaults(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_comments (
+				comment_ID INTEGER PRIMARY KEY,
+				comment_author TEXT NOT NULL,
+				comment_content TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_comments (
+				comment_ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				comment_author tinytext NOT NULL,
+				comment_content text NOT NULL,
+				PRIMARY KEY (comment_ID)
+			)"
+		);
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION' );
+
+		$this->expectException( PDOException::class );
+
+		$driver->query( 'INSERT INTO `wptests_comments` (`comment_ID`) VALUES (1)' );
+	}
+
+	/**
 	 * Tests explicit identity INSERT statements repair PostgreSQL sequences after success.
 	 */
 	public function test_explicit_identity_insert_repairs_sequence_after_success(): void {
@@ -185,6 +303,49 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'Walter Replace Sobchak', $rows[0]->display_name );
+	}
+
+	/**
+	 * Tests non-strict REPLACE applies omitted NOT NULL defaults on insert and conflict paths.
+	 */
+	public function test_non_strict_replace_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$replace      = "REPLACE INTO `wptests_options` (`option_name`) VALUES ('siteurl')";
+		$expected_sql = 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"';
+
+		$this->assertSame( 1, $driver->query( $replace ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => $expected_sql,
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+		$this->assertSame( '', $rows[0]->option_value );
+		$this->assertSame( 'yes', $rows[0]->autoload );
+
+		$driver->query( "UPDATE wptests_options SET option_value = 'custom', autoload = 'no' WHERE option_name = 'siteurl'" );
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => $expected_sql,
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+		$this->assertSame( '', $rows[0]->option_value );
+		$this->assertSame( 'yes', $rows[0]->autoload );
 	}
 
 	/**
@@ -863,6 +1024,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'value2', $rows[0]->option_value );
+	}
+
+	/**
+	 * Tests non-strict UPDATE coerces exact NULL assignments for NOT NULL columns.
+	 */
+	public function test_non_strict_update_null_coerces_not_null_columns_to_metadata_defaults(): void {
+		$driver = $this->create_driver();
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('cron', 'serialized', 'no')" );
+
+		$update = "UPDATE `wptests_options` SET `option_value` = NULL, `autoload` = NULL WHERE `option_name` = 'cron'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_options" SET "option_value" = \'\', "autoload" = \'yes\' WHERE "option_name" = \'cron\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'cron'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '', $rows[0]->option_value );
+		$this->assertSame( 'yes', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests strict SQL mode leaves UPDATE NULL assignments to fail visibly.
+	 */
+	public function test_strict_update_null_does_not_coerce_not_null_columns(): void {
+		$driver = $this->create_driver();
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('cron', 'serialized', 'no')" );
+		$driver->set_sql_mode( 'STRICT_ALL_TABLES' );
+
+		$this->expectException( PDOException::class );
+
+		$driver->query( "UPDATE `wptests_options` SET `option_value` = NULL WHERE `option_name` = 'cron'" );
 	}
 
 	/**
@@ -3038,6 +3243,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->expectException( PDOException::class );
 
 		$driver->query( 'SET foreign_key_checks = 0, unsupported_setting = 1' );
+	}
+
+	/**
+	 * Install a PostgreSQL-like options table and matching MySQL column metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_options_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_options (
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL,
+				autoload TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_options (
+				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				option_name varchar(191) NOT NULL DEFAULT '',
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			)"
+		);
 	}
 
 	/**

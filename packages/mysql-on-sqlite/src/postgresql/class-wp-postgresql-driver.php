@@ -3275,6 +3275,8 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$this->append_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns, $values );
+
 		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES (%s)',
 			$this->connection->quote_identifier( $table_name ),
@@ -3446,6 +3448,8 @@ WHERE option_name IN (
 		if ( null === $values || count( $columns ) !== count( $values ) || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
+
+		$this->append_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns, $values );
 
 		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES (%s)',
@@ -3749,10 +3753,15 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$set_sql = $this->translate_simple_mysql_update_set_clause( $table_name, $tokens, $position, $set_end );
+		if ( null === $set_sql ) {
+			return null;
+		}
+
 		$sql = sprintf(
 			'UPDATE %s SET %s',
 			$this->connection->quote_identifier( $table_name ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $position, $set_end )
+			$set_sql
 		);
 
 		if ( null !== $where_position ) {
@@ -3773,6 +3782,306 @@ WHERE option_name IN (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
+	 *
+	 * @param string   $table_name Table name.
+	 * @param string[] $columns    DML columns, mutated when defaults are appended.
+	 * @param string[] $values     DML values, mutated when defaults are appended.
+	 */
+	private function append_non_strict_dml_defaults_for_omitted_columns( string $table_name, array &$columns, array &$values ): void {
+		if ( $this->is_mysql_strict_sql_mode_active() ) {
+			return;
+		}
+
+		$supplied_columns = array();
+		foreach ( $columns as $column ) {
+			$supplied_columns[ strtolower( (string) $column ) ] = true;
+		}
+
+		foreach ( $this->get_mysql_dml_column_metadata( $table_name ) as $column_metadata ) {
+			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+			if ( '' === $column_name || isset( $supplied_columns[ strtolower( $column_name ) ] ) ) {
+				continue;
+			}
+
+			$default_sql = $this->get_non_strict_dml_default_sql_for_column( $column_metadata );
+			if ( null === $default_sql ) {
+				continue;
+			}
+
+			$columns[] = $column_name;
+			$values[]  = $default_sql;
+			$supplied_columns[ strtolower( $column_name ) ] = true;
+		}
+	}
+
+	/**
+	 * Translate a supported simple UPDATE SET clause with non-strict NULL coercion.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      First SET-clause token position.
+	 * @param int              $end        Final SET-clause token position, exclusive.
+	 * @return string|null PostgreSQL SET SQL, or null when unsupported.
+	 */
+	private function translate_simple_mysql_update_set_clause( string $table_name, array $tokens, int $start, int $end ): ?string {
+		$column_metadata = $this->is_mysql_strict_sql_mode_active()
+			? array()
+			: $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$assignments     = array();
+
+		for ( $position = $start; $position < $end; ) {
+			$target_column = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $target_column ) {
+				return null;
+			}
+
+			if ( ! isset( $tokens[ $position + 1 ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position + 1 ]->id ) {
+				return null;
+			}
+
+			$value_start    = $position + 2;
+			$assignment_end = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$value_start,
+				$end
+			) ?? $end;
+
+			if ( $value_start >= $assignment_end ) {
+				return null;
+			}
+
+			$value_sql           = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $assignment_end );
+			$target_column_key   = strtolower( $target_column );
+			$target_metadata     = $column_metadata[ $target_column_key ] ?? null;
+			$coerced_default_sql = null;
+
+			if ( null !== $target_metadata && $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end ) ) {
+				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
+			}
+
+			$assignments[] = sprintf(
+				'%s = %s',
+				$this->connection->quote_identifier( $target_column ),
+				null === $coerced_default_sql ? $value_sql : $coerced_default_sql
+			);
+
+			$position = $assignment_end;
+			if ( $position === $end ) {
+				break;
+			}
+
+			++$position;
+		}
+
+		return count( $assignments ) > 0 ? implode( ', ', $assignments ) : null;
+	}
+
+	/**
+	 * Get DML column metadata keyed by lowercase column name.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<string, array> Column metadata lookup.
+	 */
+	private function get_mysql_dml_column_metadata_lookup( string $table_name ): array {
+		$lookup = array();
+		foreach ( $this->get_mysql_dml_column_metadata( $table_name ) as $column_metadata ) {
+			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+			if ( '' !== $column_name ) {
+				$lookup[ strtolower( $column_name ) ] = $column_metadata;
+			}
+		}
+
+		return $lookup;
+	}
+
+	/**
+	 * Get ordered MySQL column metadata for a DML target table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_mysql_dml_column_metadata( string $table_name ): array {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY ordinal_position',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get the default SQL expression for a non-strict NOT NULL DML column.
+	 *
+	 * @param array $column_metadata Column metadata row.
+	 * @return string|null Default SQL, or null when the column should not be coerced.
+	 */
+	private function get_non_strict_dml_default_sql_for_column( array $column_metadata ): ?string {
+		if ( 'NO' !== strtoupper( (string) ( $column_metadata['is_nullable'] ?? '' ) ) ) {
+			return null;
+		}
+
+		if ( $this->is_mysql_auto_increment_column_metadata( $column_metadata ) ) {
+			return null;
+		}
+
+		if ( null !== ( $column_metadata['column_default'] ?? null ) ) {
+			return $this->connection->quote( (string) $column_metadata['column_default'] );
+		}
+
+		return $this->get_mysql_implicit_dml_default_sql( (string) ( $column_metadata['column_type'] ?? '' ) );
+	}
+
+	/**
+	 * Check whether column metadata describes a MySQL AUTO_INCREMENT column.
+	 *
+	 * @param array $column_metadata Column metadata row.
+	 * @return bool Whether the column is AUTO_INCREMENT.
+	 */
+	private function is_mysql_auto_increment_column_metadata( array $column_metadata ): bool {
+		return 'auto_increment' === strtolower( (string) ( $column_metadata['extra'] ?? '' ) );
+	}
+
+	/**
+	 * Get a MySQL-compatible implicit default for a column type.
+	 *
+	 * @param string $column_type MySQL column type metadata.
+	 * @return string|null SQL default expression, or null for unsupported type metadata.
+	 */
+	private function get_mysql_implicit_dml_default_sql( string $column_type ): ?string {
+		$base_type = $this->get_base_mysql_dml_column_type( $column_type );
+
+		if (
+			in_array(
+				$base_type,
+				array(
+					'char',
+					'varchar',
+					'binary',
+					'varbinary',
+					'tinyblob',
+					'blob',
+					'mediumblob',
+					'longblob',
+					'tinytext',
+					'text',
+					'mediumtext',
+					'longtext',
+					'enum',
+					'set',
+				),
+				true
+			)
+		) {
+			return $this->connection->quote( '' );
+		}
+
+		if (
+			in_array(
+				$base_type,
+				array(
+					'bit',
+					'tinyint',
+					'smallint',
+					'mediumint',
+					'int',
+					'integer',
+					'bigint',
+					'decimal',
+					'numeric',
+					'float',
+					'double',
+					'real',
+				),
+				true
+			)
+		) {
+			return '0';
+		}
+
+		if ( 'date' === $base_type ) {
+			return $this->connection->quote( '0000-00-00' );
+		}
+
+		if ( 'datetime' === $base_type || 'timestamp' === $base_type ) {
+			return $this->connection->quote( '0000-00-00 00:00:00' );
+		}
+
+		if ( 'time' === $base_type ) {
+			return $this->connection->quote( '00:00:00' );
+		}
+
+		if ( 'year' === $base_type ) {
+			return $this->connection->quote( '0000' );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the base MySQL column type from metadata.
+	 *
+	 * @param string $column_type MySQL column type metadata.
+	 * @return string Base type.
+	 */
+	private function get_base_mysql_dml_column_type( string $column_type ): string {
+		$column_type = strtolower( trim( $column_type ) );
+		$type_end    = strlen( $column_type );
+
+		$length_position = strpos( $column_type, '(' );
+		if ( false !== $length_position ) {
+			$type_end = min( $type_end, $length_position );
+		}
+
+		$space_position = strpos( $column_type, ' ' );
+		if ( false !== $space_position ) {
+			$type_end = min( $type_end, $space_position );
+		}
+
+		return substr( $column_type, 0, $type_end );
+	}
+
+	/**
+	 * Check whether a token sequence is exactly the NULL literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether the token sequence is NULL.
+	 */
+	private function is_mysql_null_token_sequence( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
+	 * Check whether the emulated MySQL session is using a strict SQL mode.
+	 *
+	 * @return bool Whether strict DML behavior should be preserved.
+	 */
+	private function is_mysql_strict_sql_mode_active(): bool {
+		foreach ( explode( ',', $this->sql_mode ) as $mode ) {
+			$mode = strtoupper( trim( $mode ) );
+			if ( 'STRICT_TRANS_TABLES' === $mode || 'STRICT_ALL_TABLES' === $mode ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
