@@ -519,7 +519,19 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @param string $query Original MySQL CREATE TABLE query.
 	 */
 	private function store_postgresql_create_table_charset_metadata( string $query ): void {
-		if ( ! $this->has_usable_postgresql_connection() || ! class_exists( 'WP_PostgreSQL_Create_Table_Translator', false ) ) {
+		if ( ! $this->has_usable_postgresql_connection() ) {
+			return;
+		}
+
+		if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
+			$table_name = $this->get_postgresql_create_table_name( $query );
+			if ( null !== $table_name ) {
+				$this->clear_postgresql_table_charset_cache( array( $table_name ) );
+			}
+			return;
+		}
+
+		if ( ! class_exists( 'WP_PostgreSQL_Create_Table_Translator', false ) ) {
 			return;
 		}
 
@@ -601,6 +613,11 @@ class WP_PostgreSQL_DB extends wpdb {
 			return;
 		}
 
+		if ( $this->is_postgresql_drop_temporary_table_query( $query ) ) {
+			$this->clear_postgresql_table_charset_cache( $tables );
+			return;
+		}
+
 		try {
 			if ( ! $this->postgresql_charset_metadata_table_exists() ) {
 				return;
@@ -619,6 +636,18 @@ class WP_PostgreSQL_DB extends wpdb {
 			}
 		} catch ( Throwable $e ) {
 			return;
+		}
+	}
+
+	/**
+	 * Clear cached charset metadata for table names.
+	 *
+	 * @param string[] $tables Table names.
+	 */
+	private function clear_postgresql_table_charset_cache( array $tables ): void {
+		foreach ( $tables as $table ) {
+			$tablekey = $this->get_postgresql_metadata_key( (string) $table );
+			unset( $this->table_charset[ $tablekey ], $this->col_meta[ $tablekey ] );
 		}
 	}
 
@@ -655,6 +684,93 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
+	 * Check whether a CREATE TABLE query creates a temporary table.
+	 *
+	 * @param string $query CREATE TABLE query.
+	 * @return bool Whether the query is CREATE TEMPORARY TABLE.
+	 */
+	private function is_postgresql_create_temporary_table_query( string $query ): bool {
+		if ( ! class_exists( 'WP_MySQL_Lexer', false ) ) {
+			return false;
+		}
+
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		return isset( $tokens[0], $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id;
+	}
+
+	/**
+	 * Get the table name from a CREATE TABLE query.
+	 *
+	 * @param string $query CREATE TABLE query.
+	 * @return string|null Table name, or null when unavailable.
+	 */
+	private function get_postgresql_create_table_name( string $query ): ?string {
+		if ( ! class_exists( 'WP_MySQL_Lexer', false ) ) {
+			return null;
+		}
+
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$position += 3;
+		}
+
+		if (
+			! isset( $tokens[ $position ] )
+			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::IDENTIFIER, WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ), true )
+		) {
+			return null;
+		}
+
+		return $tokens[ $position ]->get_value();
+	}
+
+	/**
+	 * Check whether a DROP TABLE query targets temporary tables.
+	 *
+	 * @param string $query DROP TABLE query.
+	 * @return bool Whether the query is DROP TEMPORARY TABLE.
+	 */
+	private function is_postgresql_drop_temporary_table_query( string $query ): bool {
+		if ( ! class_exists( 'WP_MySQL_Lexer', false ) ) {
+			return false;
+		}
+
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		return isset( $tokens[0], $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::DROP_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id;
+	}
+
+	/**
 	 * Check whether the side table for MySQL charset metadata exists.
 	 *
 	 * @return bool Whether the metadata table exists in the current schema.
@@ -687,12 +803,48 @@ class WP_PostgreSQL_DB extends wpdb {
 			return false;
 		}
 
+		$temp_schema = $this->get_postgresql_temporary_table_schema( $table );
+		if ( false === $temp_schema ) {
+			return false;
+		}
+
+		if ( null !== $temp_schema ) {
+			return $this->get_native_postgresql_column_charset_metadata( $table, $temp_schema );
+		}
+
 		$columns = $this->get_stored_postgresql_column_charset_metadata( $table );
 		if ( false !== $columns && ! empty( $columns ) ) {
 			return $columns;
 		}
 
 		return $this->get_native_postgresql_column_charset_metadata( $table );
+	}
+
+	/**
+	 * Get the active temporary schema for a table name.
+	 *
+	 * @param string $table Table name.
+	 * @return string|null|false Temporary schema, null when not temporary, or false on failure.
+	 */
+	private function get_postgresql_temporary_table_schema( string $table ) {
+		try {
+			$stmt = $this->dbh->get_connection()->query(
+				'SELECT n.nspname
+				FROM pg_catalog.pg_class c
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = c.relnamespace
+				WHERE n.oid = pg_my_temp_schema()
+					AND lower(c.relname) = lower(?)
+					AND c.relkind IN (\'r\', \'p\')
+				LIMIT 1',
+				array( $this->normalize_postgresql_table_name( $table ) )
+			);
+			$schema = $stmt->fetchColumn();
+		} catch ( Throwable $e ) {
+			return false;
+		}
+
+		return false === $schema ? null : (string) $schema;
 	}
 
 	/**
@@ -729,30 +881,20 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @param string $table Table name.
 	 * @return array|false Column metadata, or false when unavailable.
 	 */
-	private function get_native_postgresql_column_charset_metadata( string $table ) {
+	private function get_native_postgresql_column_charset_metadata( string $table, ?string $table_schema = null ) {
 		try {
+			$table_schema_sql = null === $table_schema ? 'current_schema()' : '?';
+			$params           = null === $table_schema
+				? array( $this->normalize_postgresql_table_name( $table ) )
+				: array( $table_schema, $this->normalize_postgresql_table_name( $table ) );
+
 			$stmt = $this->dbh->get_connection()->query(
 				'SELECT column_name, data_type, character_maximum_length
 				FROM information_schema.columns
-				WHERE (
-						table_schema = (
-							SELECT nspname
-							FROM pg_catalog.pg_namespace
-							WHERE oid = pg_my_temp_schema()
-						)
-						OR table_schema = current_schema()
-					)
+				WHERE table_schema = ' . $table_schema_sql . '
 					AND lower(table_name) = lower(?)
-				ORDER BY CASE
-					WHEN table_schema = (
-						SELECT nspname
-						FROM pg_catalog.pg_namespace
-						WHERE oid = pg_my_temp_schema()
-					) THEN 0
-					ELSE 1
-				END,
-				ordinal_position',
-				array( $this->normalize_postgresql_table_name( $table ) )
+				ORDER BY ordinal_position',
+				$params
 			);
 			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		} catch ( Throwable $e ) {

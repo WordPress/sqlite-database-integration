@@ -164,6 +164,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests temporary DDL does not clobber permanent MySQL schema metadata.
+	 */
+	public function test_temporary_create_and_drop_do_not_clobber_permanent_mysql_schema_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_shadow_metadata (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				title varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+				body longtext CHARACTER SET koi8r COLLATE koi8r_general_ci NOT NULL,
+				PRIMARY KEY (id),
+				KEY title (title(20))
+			)"
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_shadow_metadata' );
+		$indexes_before = $this->get_mysql_index_metadata_rows( $driver, 'wptests_shadow_metadata' );
+
+		$this->assertSame( array( 'id', 'title', 'body' ), array_column( $columns_before, 'column_name' ) );
+		$this->assertSame( 'longtext', $columns_before[2]['column_type'] );
+		$this->assertSame( 'koi8r_general_ci', $columns_before[2]['collation_name'] );
+		$this->assertSame( array( 'PRIMARY', 'title' ), array_values( array_unique( array_column( $indexes_before, 'key_name' ) ) ) );
+		$this->assertSame( '20', $indexes_before[1]['sub_part'] );
+
+		$driver->query( 'CREATE TEMPORARY TABLE wptests_shadow_metadata (temp_value varchar(10) CHARACTER SET latin1)' );
+
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_shadow_metadata' ) );
+		$this->assertSame( $indexes_before, $this->get_mysql_index_metadata_rows( $driver, 'wptests_shadow_metadata' ) );
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_shadow_metadata' );
+
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_shadow_metadata' ) );
+		$this->assertSame( $indexes_before, $this->get_mysql_index_metadata_rows( $driver, 'wptests_shadow_metadata' ) );
+	}
+
+	/**
 	 * Tests plain CHAR columns do not route through the MySQL DDL translator.
 	 */
 	public function test_create_table_with_plain_char_and_check_preserves_constraint(): void {
@@ -1546,6 +1582,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver(): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Get stored MySQL column metadata rows for a table.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Table name.
+	 * @return array Stored metadata rows.
+	 */
+	private function get_mysql_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name ): array {
+		$stmt = $driver->get_connection()->query(
+			sprintf(
+				'SELECT column_name, column_type, character_set_name, collation_name, is_nullable, column_default, extra
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY ordinal_position',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( 'public', $table_name )
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get stored MySQL index metadata rows for a table.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Table name.
+	 * @return array Stored metadata rows.
+	 */
+	private function get_mysql_index_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name ): array {
+		$stmt = $driver->get_connection()->query(
+			sprintf(
+				'SELECT key_name, seq_in_index, column_name, non_unique, index_type, sub_part, nullable
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY index_ordinal, seq_in_index',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( 'public', $table_name )
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**

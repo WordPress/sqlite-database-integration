@@ -319,6 +319,156 @@ PHP
 	}
 
 	/**
+	 * Tests temp table charset lookups prefer the temp schema over stored permanent metadata.
+	 */
+	public function test_get_col_charset_prefers_temporary_table_schema_over_stored_permanent_metadata(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $charset       = 'utf8mb4';
+	public $is_mysql      = true;
+	public $table_charset = array();
+	public $col_meta      = array();
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Temp_Charset_Fake_Connection extends WP_PostgreSQL_Connection {
+	private $pdo;
+	private $queries = array();
+
+	public function __construct() {
+		$this->pdo = new PDO( 'sqlite::memory:' );
+	}
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+			$this->queries[] = 'temp_schema';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'nspname' => 'pg_temp_42',
+					),
+				)
+			);
+		}
+
+		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) && array( 'pg_temp_42', 'wptests_shadow_charset' ) === $params ) {
+			$this->queries[] = 'native_temp_columns';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'column_name'              => 'temp_value',
+						'data_type'                => 'text',
+						'character_maximum_length' => null,
+					),
+				)
+			);
+		}
+
+		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
+			$this->queries[] = 'metadata_exists';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'exists' => 1,
+					),
+				)
+			);
+		}
+
+		if ( false !== strpos( $sql, WP_PostgreSQL_DB::MYSQL_CHARSET_METADATA_TABLE ) ) {
+			$this->queries[] = 'stored_charset_metadata';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'column_name'    => 'permanent_value',
+						'column_type'    => 'text',
+						'collation_name' => 'latin1_swedish_ci',
+					),
+				)
+			);
+		}
+
+		$this->queries[] = 'unexpected';
+		return $this->statement_from_rows( array() );
+	}
+
+	public function get_pdo(): PDO {
+		return $this->pdo;
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+
+	private function statement_from_rows( array $rows ): PDOStatement {
+		if ( empty( $rows ) ) {
+			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		$columns = array_keys( $rows[0] );
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$fields = array();
+			foreach ( $columns as $column ) {
+				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
+				$params[] = $row[ $column ];
+			}
+			$selects[] = 'SELECT ' . implode( ', ', $fields );
+		}
+
+		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
+		$stmt->execute( $params );
+		return $stmt;
+	}
+}
+
+class WP_PostgreSQL_DB_Temp_Charset_Fake_Driver extends WP_PostgreSQL_Driver {
+	private $fake_connection;
+
+	public function __construct( WP_PostgreSQL_DB_Temp_Charset_Fake_Connection $connection ) {
+		$this->fake_connection = $connection;
+	}
+
+	public function get_connection(): WP_PostgreSQL_Connection {
+		return $this->fake_connection;
+	}
+}
+
+$connection = new WP_PostgreSQL_DB_Temp_Charset_Fake_Connection();
+$driver     = new WP_PostgreSQL_DB_Temp_Charset_Fake_Driver( $connection );
+$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+wp_postgresql_db_test_respond(
+	array(
+		'charset' => $db->get_col_charset( 'wptests_shadow_charset', 'temp_value' ),
+		'queries' => $connection->get_queries(),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'charset' => 'utf8mb4',
+				'queries' => array(
+					'temp_schema',
+					'native_temp_columns',
+				),
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests real wpdb identifier placeholders use PostgreSQL identifier quotes.
 	 */
 	public function test_real_wpdb_prepare_identifier_placeholders_use_postgresql_quotes(): void {

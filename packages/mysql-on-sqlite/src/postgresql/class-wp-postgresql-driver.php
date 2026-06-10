@@ -304,7 +304,9 @@ class WP_PostgreSQL_Driver {
 		if ( $this->is_create_table_query( $query ) ) {
 			$translator = new WP_PostgreSQL_Create_Table_Translator();
 			$result     = $this->execute_postgresql_statements( $translator->translate_schema( $query ) );
-			$this->store_mysql_schema_metadata( $query );
+			if ( ! $this->is_temporary_create_table_query( $query ) ) {
+				$this->store_mysql_schema_metadata( $query );
+			}
 			return $result;
 		}
 
@@ -318,7 +320,9 @@ class WP_PostgreSQL_Driver {
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
 			$result = $this->execute_postgresql_statements( $drop_query['statements'] );
-			$this->delete_mysql_schema_metadata_for_tables( $drop_query['tables'] );
+			if ( ! $drop_query['temporary'] ) {
+				$this->delete_mysql_schema_metadata_for_tables( $drop_query['tables'] );
+			}
 			return $result;
 		}
 
@@ -630,6 +634,10 @@ class WP_PostgreSQL_Driver {
 	 * @param string $query MySQL CREATE TABLE query.
 	 */
 	public function store_mysql_schema_metadata( string $query ): void {
+		if ( $this->is_temporary_create_table_query( $query ) ) {
+			return;
+		}
+
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query, true );
@@ -1205,10 +1213,10 @@ class WP_PostgreSQL_Driver {
 	 * Translate supported DROP TABLE statements and expose dropped table names.
 	 *
 	 * @param string $query MySQL DROP TABLE query.
-	 * @return array{statements: string[], tables: string[]}|null Translation, or null when unsupported.
+	 * @return array{statements: string[], tables: string[], temporary: bool}|null Translation, or null when unsupported.
 	 */
 	private function translate_mysql_drop_table_query( string $query ): ?array {
-		if ( ! preg_match( '/^\s*DROP\s+(?:TEMPORARY\s+)?TABLE\s+(IF\s+EXISTS\s+)?(?P<tables>.+?)\s*;?\s*$/is', $query, $matches ) ) {
+		if ( ! preg_match( '/^\s*DROP\s+(?P<temporary>TEMPORARY\s+)?TABLE\s+(?P<if_exists>IF\s+EXISTS\s+)?(?P<tables>.+?)\s*;?\s*$/is', $query, $matches ) ) {
 			return null;
 		}
 
@@ -1221,7 +1229,7 @@ class WP_PostgreSQL_Driver {
 			'statements' => array(
 				sprintf(
 					'DROP TABLE %s%s',
-					'' !== $matches[1] ? 'IF EXISTS ' : '',
+					! empty( $matches['if_exists'] ) ? 'IF EXISTS ' : '',
 					implode(
 						', ',
 						array_map(
@@ -1232,6 +1240,7 @@ class WP_PostgreSQL_Driver {
 				),
 			),
 			'tables'     => $table_names,
+			'temporary'  => ! empty( $matches['temporary'] ),
 		);
 	}
 
@@ -4516,6 +4525,22 @@ WHERE option_name IN (
 		return isset( $tokens[ $position ] )
 			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id
 			&& $this->has_mysql_create_table_marker( $tokens );
+	}
+
+	/**
+	 * Check whether a CREATE TABLE query creates a temporary table.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query is CREATE TEMPORARY TABLE.
+	 */
+	private function is_temporary_create_table_query( string $query ): bool {
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		return isset( $tokens[0], $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id;
 	}
 
 	/**
