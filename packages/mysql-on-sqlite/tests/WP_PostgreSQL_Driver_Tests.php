@@ -1851,6 +1851,165 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests scalar COUNT queries drop irrelevant ORDER BY clauses.
+	 */
+	public function test_aggregate_count_order_by_is_dropped_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY, comment_date_gmt TEXT NOT NULL, comment_approved TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", comment_date_gmt, comment_approved) VALUES (1, \'2024-01-03 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", comment_date_gmt, comment_approved) VALUES (2, \'2024-01-01 00:00:00\', \'0\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", comment_date_gmt, comment_approved) VALUES (3, \'2024-01-02 00:00:00\', \'spam\')' );
+
+		$rows = $driver->query(
+			"SELECT COUNT(*)
+			FROM wptests_comments
+			WHERE comment_approved IN ('0', '1')
+			ORDER BY wptests_comments.comment_date_gmt ASC
+			LIMIT 0,3"
+		);
+
+		$this->assertSame( '2', array_values( get_object_vars( $rows[0] ) )[0] );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT COUNT (*) FROM wptests_comments WHERE comment_approved IN (\'0\', \'1\') LIMIT 3 OFFSET 0',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests grouped date archive queries order by an aggregate post date.
+	 */
+	public function test_grouped_date_archive_order_by_uses_aggregate_sort_expression(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts
+			FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			GROUP BY YEAR(post_date), MONTH(post_date)
+			ORDER BY post_date DESC";
+		$sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_strict_aggregate_grouped_order_by_query',
+			$select
+		);
+
+		$year_sql  = $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' );
+		$month_sql = $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' );
+		$this->assertSame(
+			'SELECT ' . $year_sql . ' AS "year", ' . $month_sql . ' AS "month", count ("ID") as posts FROM wptests_posts WHERE post_type = \'post\' AND post_status = \'publish\' GROUP BY ' . $year_sql . ', ' . $month_sql . ' ORDER BY MAX(post_date) DESC',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'post_date DESC', str_replace( 'MAX(post_date) DESC', '', $sql ) );
+	}
+
+	/**
+	 * Tests grouped comment ID queries order by aggregate meta values.
+	 */
+	public function test_grouped_comment_meta_order_by_uses_aggregate_sort_expression(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY)' );
+		$driver->query( 'CREATE TABLE wptests_commentmeta (comment_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID") VALUES (1)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID") VALUES (2)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID") VALUES (3)' );
+		$driver->query( 'INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES (1, \'foo\', \'aaa\')' );
+		$driver->query( 'INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES (2, \'foo\', \'zzz\')' );
+		$driver->query( 'INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES (3, \'foo\', \'jjj\')' );
+
+		$rows = $driver->query(
+			"SELECT wptests_comments.comment_ID
+			FROM wptests_comments INNER JOIN wptests_commentmeta ON ( wptests_comments.comment_ID = wptests_commentmeta.comment_id )
+			WHERE wptests_commentmeta.meta_key = 'foo'
+			GROUP BY wptests_comments.comment_ID
+			ORDER BY CAST(wptests_commentmeta.meta_value AS CHAR) DESC, wptests_comments.comment_ID DESC"
+		);
+
+		$this->assertSame(
+			array( '2', '3', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->comment_ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame( array( 'comment_ID' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_comments."comment_ID" FROM wptests_comments INNER JOIN wptests_commentmeta ON (wptests_comments."comment_ID" = wptests_commentmeta.comment_id) WHERE wptests_commentmeta.meta_key = \'foo\' GROUP BY wptests_comments."comment_ID" ORDER BY MAX(CAST(wptests_commentmeta.meta_value AS text)) DESC, wptests_comments."comment_ID" DESC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests grouped comment ID queries aggregate comment date secondary ordering.
+	 */
+	public function test_grouped_comment_meta_secondary_order_by_uses_aggregate_sort_expression(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY, comment_date TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_commentmeta (comment_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", comment_date) VALUES (1, \'2015-01-28 03:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", comment_date) VALUES (2, \'2015-01-28 05:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", comment_date) VALUES (3, \'2015-01-28 03:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES (1, \'foo\', \'jjj\')' );
+		$driver->query( 'INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES (2, \'foo\', \'zzz\')' );
+		$driver->query( 'INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES (3, \'foo\', \'aaa\')' );
+
+		$rows = $driver->query(
+			"SELECT wptests_comments.comment_ID
+			FROM wptests_comments INNER JOIN wptests_commentmeta ON ( wptests_comments.comment_ID = wptests_commentmeta.comment_id )
+			WHERE wptests_commentmeta.meta_key = 'foo'
+			GROUP BY wptests_comments.comment_ID
+			ORDER BY wptests_comments.comment_date ASC, CAST(wptests_commentmeta.meta_value AS CHAR) ASC, wptests_comments.comment_ID ASC"
+		);
+
+		$this->assertSame(
+			array( '3', '1', '2' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->comment_ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_comments."comment_ID" FROM wptests_comments INNER JOIN wptests_commentmeta ON (wptests_comments."comment_ID" = wptests_commentmeta.comment_id) WHERE wptests_commentmeta.meta_key = \'foo\' GROUP BY wptests_comments."comment_ID" ORDER BY MIN(wptests_comments.comment_date) ASC, MIN(CAST(wptests_commentmeta.meta_value AS text)) ASC, wptests_comments."comment_ID" ASC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests normal non-aggregate SELECT ORDER BY shapes do not enter the strict rewrite.
+	 */
+	public function test_strict_order_by_rewrite_ignores_normal_select_order_by(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_strict_aggregate_grouped_order_by_query',
+			'SELECT comment_ID FROM wptests_comments ORDER BY comment_ID DESC'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
 	 * Tests MySQL date/time extraction functions are translated for PostgreSQL.
 	 */
 	public function test_mysql_date_time_extract_functions_are_translated_to_postgresql(): void {
