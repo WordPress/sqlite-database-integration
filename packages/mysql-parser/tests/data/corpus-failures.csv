@@ -1,0 +1,963 @@
+"COMMIT; INSERT INTO t2 VALUES (1); BEGIN; "
+"COMMIT; INSERT INTO t2 VALUES (1); BEGIN; INSERT INTO t1 VALUES (99); "
+"CREATE FUNCTION JAVASCRIPT(x INTEGER) RETURNS INTEGER DETERMINISTIC
+LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS	      $$
+const $x = 3;
+const $y$ = 4;
+return $x + $y$ + a;
+$$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$0$
+return ""$$"" + a + ""$$"";
+$0$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$100$
+return ""$$"" + a + ""$$"";
+$100$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$12345678901234$
+return ""$$"" + a + ""$$"";
+$12345678901234$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
+return ""$$"" + a + ""$$"";
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
+ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+return ""$$"" + a + ""$$"";
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
+ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$CODE$
+return ""$$"" + a + ""$$"";
+$CODE$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$NULL$
+return ""$$"" + a + ""$$"";
+$NULL$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$TAG$
+return ""$$"" + a + ""$$"";
+$TAG$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$_$
+return ""$$"" + a + ""$$"";
+$_$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$_a$
+return ""$$"" + a + ""$$"";
+$_a$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$abdc_1234$
+return ""$$"" + a + ""$$"";
+$abdc_1234$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$coDE$
+return ""$$"" + a + ""$$"";
+$coDE$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$code$
+const x$$ = 3;
+const $y$$z = 4;
+return x$$ + $y$$z + a;
+
+$code$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$code$
+return ""$$"" + a + ""$$"";
+$code$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$tag$
+return ""$$"" + a + ""$$"";
+$tag$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$Â¡$
+return ""$$"" + a + ""$$"";
+$Â¡$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+return ""â"" + a + ""$â$"";
+$$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$â
+return ""â"" + a + ""$â$"";
+$$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $code$
+return ""â"" + a + ""$â$$"";
+$code$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $code$
+return ""â"" + a + ""$â$$â"";
+$code$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $coâe$
+return ""â"" + a + ""$â$$"";
+$coâe$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $xð$
+return ""$xðð"" + a + ""$xðð$"";
+$xð$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $xðy$
+return ""$xððy$"" + a + ""$xðyð$"";
+$xðy$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $xðyð$
+return ""ðð$"" + a + ""ð$ð$"";
+$xðyð$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $â$
+return ""â"" + a + ""â$"";
+$â$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $ð$
+return ""ð$ð"" + a + ""ð$ð$"";
+$ð$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $ðx$
+return ""$ðxð$"" + a + ""$ððx$"";
+$ðx$
+"
+"CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $ðð$
+return ""ð$ð"" + a + ""ð$ð$"";
+$ðð$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+const $x = x,
+const $y = 1
+return $x + $y;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$ "
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
+LANGUAGE	  	 JAVASCRIPT  DETERMINISTIC
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
+LANGUAGE
+JAVASCRIPT
+
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
+LANGUAGE
+JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
+LANGUAGE SQL DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE $NOLANG
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE 123j
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVA1
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
+CONTAINS SQL
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE JAVASCRIPT
+MODIFIES SQL DATA
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE PYTHON
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE RUBY
+AS $$
+x-1
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE __
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE jAvaScRIpt
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE javascript
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC NO SQL
+LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER DETERMINISTIC READS SQL DATA
+LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER NOT DETERMINISTIC
+LANGUAGE JAVASCRIPT
+AS $$
+return x-1;
+$$
+"
+"CREATE FUNCTION foo(x INTEGER) RETURNS VARCHAR(20)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $code$ rtrn ""$$"" + x + ""$foo$""; $code$ "
+"CREATE PROCEDURE JAVASCRIPT(a INTEGER) DETERMINISTIC
+LANGUAGE JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS	      $$
+const $x = 3;
+const $y$ = 4;
+let b = $x + $y$ + a;
+$$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$0$
+let b = ""$$"" + a + ""$$"";
+$0$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$100$
+let b = ""$$"" + a + ""$$"";
+$100$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$12345678901234$
+let b = ""$$"" + a + ""$$"";
+$12345678901234$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
+let b = ""$$"" + a + ""$$"";
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
+ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+let b = ""$$"" + a + ""$$"";
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
+ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$CODE$
+let b = ""$$"" + a + ""$$"";
+$CODE$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$NULL$
+let b = ""$$"" + a + ""$$"";
+$NULL$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$TAG$
+let b = ""$$"" + a + ""$$"";
+$TAG$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$_$
+let b = ""$$"" + a + ""$$"";
+$_$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$_a$
+let b = ""$$"" + a + ""$$"";
+$_a$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$abdc_1234$
+let b = ""$$"" + a + ""$$"";
+$abdc_1234$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$coDE$
+let b = ""$$"" + a + ""$$"";
+$coDE$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$code$
+const x$$ = 3;
+const $y$$z = 4;
+let b = x$$ + $y$$z + a;
+
+$code$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$code$
+let b = ""$$"" + a + ""$$"";
+$code$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$tag$
+let b = ""$$"" + a + ""$$"";
+$tag$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS
+$Â¡$
+let b = ""$$"" + a + ""$$"";
+$Â¡$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+let b = ""â"" + a + ""$â$"";
+$$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+let b = a;
+$$ "
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$â
+let b = ""â"" + a + ""$â$"";
+$$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $code$
+let b = ""â"" + a + ""$â$$"";
+$code$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $code$
+let b = ""â"" + a + ""$â$$â"";
+$code$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $coâe$
+let b = ""â"" + a + ""$â$$"";
+$coâe$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $xð$
+let b = ""$xðð"" + a + ""$xðð$"";
+$xð$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $xðy$
+let b = ""$xððy$"" + a + ""$xðyð$"";
+$xðy$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $xðyð$
+let b = ""ðð$"" + a + ""ð$ð$"";
+$xðyð$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $â$
+let b = ""â"" + a + ""â$"";
+$â$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $ð$
+let b = ""ð$ð"" + a + ""ð$ð$"";
+$ð$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $ðx$
+let b = ""$ðxð$"" + a + ""$ððx$"";
+$ðx$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $ðð$
+let b = ""ð$ð"" + a + ""ð$ð$"";
+$ðð$
+"
+"CREATE PROCEDURE bar(a INTEGER)
+LANGUAGE	  	 JAVASCRIPT  DETERMINISTIC
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER)
+LANGUAGE
+JAVASCRIPT
+
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER)
+LANGUAGE
+JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER)
+LANGUAGE SQL DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE $NOLANG
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE 123j
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVA1
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVASCRIPT
+CONTAINS SQL
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE JAVASCRIPT
+MODIFIES SQL DATA
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE PYTHON
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE RUBY
+AS $$ b = a $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE __
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE jAvaScRIpt
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC LANGUAGE javascript
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC NO SQL
+LANGUAGE JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) DETERMINISTIC READS SQL DATA
+LANGUAGE JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(a INTEGER) NOT DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$ let b = a; $$ "
+"CREATE PROCEDURE bar(x INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $$
+const $x = x,
+const $y = 1
+let b = $x + $y;
+$$
+"
+"CREATE PROCEDURE bar(x INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+AS $code$ let b := ""$$"" + x + ""$foo$""; $code$ "
+"CREATE TABLE "" quoted name ÑÐµÑÑ"" (i INT)"
+"CREATE TABLE """"""a"" (i INT)"
+"CREATE TABLE ""custo`mers"" (
+""customer'_id"" INT AUTO_INCREMENT PRIMARY KEY,
+""fir`st_`na`me"" VARCHAR(50) NOT NULL,
+""last_'name"" VARCHAR(50) NOT NULL,
+""em`ail"" VARCHAR(100) UNIQUE NOT NULL,
+`pho""\ne` VARCHAR(15),
+""created'_'at"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+""updated'_'at"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)"
+"CREATE TABLE ""orders"" (
+""order_id"" INT AUTO_INCREMENT PRIMARY KEY,
+""customer_id"" INT NOT NULL,
+""order_date"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+""status"" ENUM('Pending', 'Completed', 'Cancelled') NOT NULL,
+""total\n"" DECIMAL(10, 2) NOT NULL CHECK (""total\n"" >= 0),
+FOREIGN KEY (customer_id) REFERENCES ""custo`mers""(""customer'_id"") ON DELETE CASCADE,
+INDEX (order_date)
+)"
+"CREATE TABLE ""prod'ucts"" (
+""product`_`id"" INT AUTO_INCREMENT PRIMARY KEY,
+""product'_`name"" VARCHAR(100) NOT NULL,
+""descri`p`t`i`o`n"" TEXT,
+""pr'i'ce"" DECIMAL(10, 2) NOT NULL CHECK (""pr'i'ce"" >= 0),
+`stock""_""qua\ntity` INT DEFAULT 0,
+`created'_'at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+`updated""_'at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+INDEX (""product'_`name"")
+)"
+"CREATE TABLE `'order'_'items'` (
+`order'_'item_id` INT AUTO_INCREMENT PRIMARY KEY,
+`'order'_'id'` INT NOT NULL,
+`product'_'id` INT NOT NULL,
+`qua\ntity` INT NOT NULL CHECK (`qua\ntity` > 0),
+`p'rice` DECIMAL(10,2) NOT NULL CHECK (`p'rice` >= 0),
+FOREIGN KEY (`'order'_'id'`) REFERENCES ""orders""(order_id) ON DELETE CASCADE,
+FOREIGN KEY (`product'_'id`) REFERENCES ""prod'ucts""(""product`_`id"") ON DELETE CASCADE,
+UNIQUE KEY (`'order'_'id'`, `product'_'id`)
+)"
+"CREATE TABLE t1(col1 INT, col2 DATE)
+ENGINE=INNODB
+PARTITION BY RANGE(YEAR(""col2""))
+SUBPARTITION BY HASH(TO_DAYS(""col2""))(
+PARTITION p0 VALUES LESS THAN (1990)(
+SUBPARTITION s0,
+SUBPARTITION s1 tablespace=`innodb_file_per_table`
+),
+PARTITION p1 VALUES LESS THAN MAXVALUE(
+SUBPARTITION s2,
+SUBPARTITION s3 tablespace=""innodb_file_per_table""
+)
+)"
+"CREATE TABLE table_25930_a ( ""blah"" INT )"
+"DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() BEGIN SELECT 1; END; CALL p26030()
+"
+"DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() SELECT 1; CALL p26030()
+"
+"DROP PROCEDURE bug6866;
+
+DROP VIEW tv"
+"DROP TABLE """"""a"""
+"FLUSH TABLES;
+UNLOCK TABLES"
+"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'"
+"SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'"
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'"
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'"
+"SELECT * from ""full"""
+"SELECT 1 /*!080100	+1*/ AS should_return_2"
+"SELECT 1 /*!080100
++1*/ AS should_return_2"
+"SELECT 1 /*!080100 +1*/ AS should_return_2"
+"SELECT 1 /*!99999 /* */ */"
+"SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
+create procedure test_resignal()
+begin
+DECLARE CONTINUE HANDLER for sqlwarning
+begin
+select ""handler called"";
+RESIGNAL SET
+MESSAGE_TEXT = ""RESIGNAL of a warning"",
+MYSQL_ERRNO = 55555 ;
+end;
+
+insert into t_warn set a= 9999999999999999;
+end "
+"SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
+create procedure test_resignal()
+begin
+DECLARE CONTINUE HANDLER for sqlwarning
+begin
+select ""handler called"";
+RESIGNAL SQLSTATE ""01111"" SET
+MESSAGE_TEXT = ""RESIGNAL to a warning"",
+MYSQL_ERRNO = 55555 ;
+end;
+
+insert into t_warn set a= 9999999999999999;
+end "
+"SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
+create procedure test_resignal()
+begin
+DECLARE CONTINUE HANDLER for sqlwarning
+begin
+select ""handler called"";
+RESIGNAL;
+end;
+
+insert into t_warn set a= 9999999999999999;
+end "
+"SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
+create procedure test_signal()
+begin
+DECLARE aaax VARCHAR(65);
+DECLARE bbbx VARCHAR(65);
+DECLARE cccx VARCHAR(65);
+DECLARE dddx VARCHAR(65);
+DECLARE eeex VARCHAR(65);
+DECLARE fffx VARCHAR(65);
+DECLARE gggx VARCHAR(65);
+DECLARE hhhx VARCHAR(65);
+DECLARE iiix VARCHAR(65);
+DECLARE jjjx VARCHAR(65);
+DECLARE kkkx VARCHAR(65);
+DECLARE lllx VARCHAR(129);
+
+DECLARE warn CONDITION FOR SQLSTATE ""01234"";
+
+set aaax= concat(repeat(""A"", 64), ""X"");
+set bbbx= concat(repeat(""B"", 64), ""X"");
+set cccx= concat(repeat(""C"", 64), ""X"");
+set dddx= concat(repeat(""D"", 64), ""X"");
+set eeex= concat(repeat(""E"", 64), ""X"");
+set fffx= concat(repeat(""F"", 64), ""X"");
+set gggx= concat(repeat(""G"", 64), ""X"");
+set hhhx= concat(repeat(""H"", 64), ""X"");
+set iiix= concat(repeat(""I"", 64), ""X"");
+set jjjx= concat(repeat(""J"", 64), ""X"");
+set kkkx= concat(repeat(""K"", 64), ""X"");
+set lllx= concat(repeat(""1"", 100),
+repeat(""2"", 20),
+repeat(""8"", 8),
+""X"");
+
+SIGNAL warn SET
+CLASS_ORIGIN = aaax,
+SUBCLASS_ORIGIN = bbbx,
+CONSTRAINT_CATALOG = cccx,
+CONSTRAINT_SCHEMA = dddx,
+CONSTRAINT_NAME = eeex,
+CATALOG_NAME = fffx,
+SCHEMA_NAME = gggx,
+TABLE_NAME = hhhx,
+COLUMN_NAME = iiix,
+CURSOR_NAME = jjjx,
+MESSAGE_TEXT = lllx,
+MYSQL_ERRNO = 10000;
+end "
+"SET sql_mode = default;
+
+create procedure test_resignal()
+begin
+DECLARE x integer;
+DECLARE c cursor for select * from t_cursor;
+DECLARE CONTINUE HANDLER for not found
+begin
+select ""handler called"";
+RESIGNAL SQLSTATE ""01111"" SET
+MESSAGE_TEXT = ""RESIGNAL to a warning"",
+MYSQL_ERRNO = 55555 ;
+end;
+
+open c;
+fetch c into x;
+end "
+"SET sql_mode = default;
+
+create procedure test_signal()
+begin
+DECLARE warn CONDITION FOR SQLSTATE ""01234"";
+DECLARE CONTINUE HANDLER for SQLSTATE ""01234""
+begin
+select ""Caught by SQLSTATE"";
+end;
+
+SIGNAL warn SET
+MESSAGE_TEXT = ""Raising a warning"",
+MYSQL_ERRNO = 1012;
+end "
+"SET sql_mode = default;
+create procedure test_resignal()
+begin
+DECLARE x integer;
+DECLARE c cursor for select * from t_cursor;
+DECLARE CONTINUE HANDLER for not found
+begin
+select ""before RESIGNAL"";
+RESIGNAL SET
+MESSAGE_TEXT = ""RESIGNAL of not found"",
+MYSQL_ERRNO = 55555 ;
+select ""after RESIGNAL"";
+end;
+
+open c;
+fetch c into x;
+close c;
+end "
+"SET sql_mode = default;
+create procedure test_resignal()
+begin
+DECLARE x integer;
+DECLARE c cursor for select * from t_cursor;
+DECLARE CONTINUE HANDLER for not found
+begin
+select ""before RESIGNAL"";
+RESIGNAL;
+select ""after RESIGNAL"";
+end;
+
+open c;
+fetch c into x;
+close c;
+end "
+"SHOW CREATE FUNCTION f;
+DROP FUNCTION f;
+
+
+CREATE FUNCTION f()
+RETURNS VARCHAR(64) ASCII BINARY
+BEGIN
+RETURN '';
+END"
+"SHOW CREATE FUNCTION f;
+DROP FUNCTION f;
+
+
+CREATE PROCEDURE p1(IN  f1 VARCHAR(64) CHARACTER SET ucs2 COLLATE ucs2_czech_ci,
+OUT f2 VARCHAR(64) CHARACTER SET ucs2 COLLATE ucs2_polish_ci)
+BEGIN
+SET f2= f1;
+SET f2= concat(collation(f1), ' ', collation(f2));
+END"
+"SHOW CREATE FUNCTION f;
+DROP FUNCTION f;
+
+CREATE FUNCTION f()
+RETURNS VARCHAR(64) BINARY ASCII
+BEGIN
+RETURN '';
+END"
+"SHOW CREATE FUNCTION f;
+DROP FUNCTION f;
+
+CREATE FUNCTION f()
+RETURNS VARCHAR(64) BINARY UNICODE
+BEGIN
+RETURN '';
+END"
+"SHOW CREATE TABLE """"""a"""
+"alter table t1 add b integer;
+call p1"
+"create function bug12812() returns char(2)
+begin
+return 'ok';
+end;
+create user user_bug12812@localhost IDENTIFIED BY 'ABC'"
+"create procedure bug2564_2()
+insert into ""t1"" values ('foo', 1)"
+"create procedure bug5307()
+begin
+end; set @x = 3"
+"create table t1 (""a*b"" int)"
+"create table t1 (""t1 column"" int)"
+"create table t1 (i int);
+insert into t1 values (1),(2),(3);
+select * from t1 where i = 2;
+drop table t1;"
+"create trigger t1_bi before insert on t1 for each row set new.""t1 column"" = 5"
+"create view v1 as select a from t3;
+create procedure bug10100pt(level int, lim int)
+begin
+if level < lim then
+update t3 set a=level;
+FLUSH TABLES;
+call bug10100pt(level+1, lim);
+else
+select * from t3;
+end if;
+end"
+"drop function if exists t_slow_sysdate;
+create function t_slow_sysdate() returns timestamp
+begin
+do sleep(2);
+return sysdate();
+end;
+"
+"drop procedure if exists bug8762; create procedure bug8762() begin end"
+"drop table if exists t1;
+drop view if exists v1;
+create table t1 (id int);
+create view v1 as select * from t1;
+drop table t1;
+show create view v1;
+drop view v1;
+"
+"drop table t1;
+
+create procedure p ()
+begin
+create table t1 (a int not null,b int not null,c int not null,primary key (a,b))
+partition by range (a)
+subpartition by hash (a+b)
+(partition x1 values less than (1)
+(subpartition x11,
+subpartition x12),
+partition x2 values less than (5)
+(subpartition x21,
+subpartition x22));
+end"
+"drop temporary table temp_t1;
+drop table t3, t4"
+"prepare stmt2 from ""select * from t3;"";
+create procedure bug10100pd(level int, lim int)
+begin
+if level < lim then
+select level;
+prepare stmt1 from ""update t3 set a=a+2"";
+execute stmt1;
+FLUSH TABLES;
+execute stmt1;
+FLUSH TABLES;
+execute stmt1;
+FLUSH TABLES;
+deallocate prepare stmt1;
+execute stmt2;
+select * from t3;
+call bug10100pd(level+1, lim);
+else
+execute stmt2;
+end if;
+end"
+"select ""$id2"", ""$$$"" from t where t.""$id"" = 0"
+"select ""stmt 1"";             select ""space, stmt 2"""
+"select ""stmt 1"";/* comment */select ""comment, stmt 2"""
+"select ""stmt 1"";select ""stmt 2 non terminated"""
+"select ""stmt 1"";select ""stmt 2 non terminated, comment"" /* comment */"
+"select ""stmt 1"";select ""stmt 2 non terminated, space""      "
+"select ""stmt 1"";select ""stmt 2 terminated"";"
+"select ""stmt 1"";select ""stmt 2 terminated, comment""; /* comment */"
+"select ""stmt 1"";select ""stmt 2 terminated, space"";      "
+"select 1ea10.1a20,1e+ 1e+10 from 1ea10"
+"select 2;
+select 3;
+select 4"
+"select @update_failed;
+select * from t1"
+"set @@sql_mode=@old_mode;
+
+drop procedure bug6129"
+"set @old_mode= @@sql_mode;
+set @@sql_mode= ""ERROR_FOR_DIVISION_BY_ZERO"";
+create procedure bug6129()
+select @@sql_mode"
+"set time_zone='+03:00';
+
+call bug3426(1000, @i)"
+"update t1 set data=42 where id = ""b"";
+select row_count()"
+"聠聡聢聣聤聬聭聮聯聰聲聽隆垄拢陇楼卤潞禄录陆戮 聶職聳聴
+0聲5
+1聲5
+2聲5
+3聲5
+4
+
+SET NAMES gb18030"
