@@ -156,14 +156,22 @@ class WP_Parser_Grammar {
 		// The compacted parse table stores action rows compactly to save space.
 		// Expand them back into full "STATE => [ TOKEN => ACTION ]" rows.
 
-		// 1. Merge each diffed row onto its base. The array is sorted, and a base
+		// 1. Restore the shifts stored as plain token lists.
+		$rows          = $table['action_rows'];
+		$shift_targets = $table['action_shift_targets'];
+		foreach ( $table['action_row_shift_tokens'] as $row_id => $tokens ) {
+			foreach ( $tokens as $token ) {
+				$rows[ $row_id ][ $token ] = $shift_targets[ $token ];
+			}
+		}
+
+		// 2. Merge each diffed row onto its base. The array is sorted, and a base
 		//    comes before its dependents, so it will be expanded before them.
-		$rows = $table['action_rows'];
 		foreach ( $table['action_row_bases'] as $row_id => $base_row_id ) {
 			$rows[ $row_id ] += $rows[ $base_row_id ];
 		}
 
-		// 2. Point each state at its action row. States often share one.
+		// 3. Point each state at its action row. States often share one.
 		$action_table = array();
 		foreach ( $table['action_table'] as $state => $row_id ) {
 			$action_table[ $state ] = $rows[ $row_id ];

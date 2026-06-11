@@ -8,7 +8,7 @@
  * shift/reduce conflict by precedence and reports zero reduce/reduce
  * conflicts), so each (state, token) cell holds a single action.
  *
- * The table is kept small with three structural devices, all in plain PHP:
+ * The table is kept small with four structural devices, all in plain PHP:
  *
  *   1. Per-state default reduce ('action_defaults'): most states reduce by the
  *      same production for nearly every lookahead; only differing cells are
@@ -19,6 +19,10 @@
  *      each but nearly identical to one another, so a row may be stored as a
  *      small patch over an earlier base row; the runtime applies patches with
  *      an array union at construction time.
+ *   4. Modal shift targets ('action_shift_targets' + 'action_row_shift_tokens'): most shifts
+ *      on a given terminal go to the same successor state, so such cells are
+ *      stored as bare token lists and restored from a per-terminal target
+ *      table at construction time.
  *
  *   GOTO targets cluster by nonterminal instead, so they are stored as a
  *   per-nonterminal default ('goto_defaults') plus the sparse non-default
@@ -260,6 +264,47 @@ foreach ( $rows as $row_id => $cells ) {
 }
 
 /*
+ * Modal shift targets: for each terminal, find the most common shift target
+ * among the stored cells. Cells that hit it are emitted as bare token lists
+ * ('action_row_shift_tokens') instead of token => target pairs; the runtime restores
+ * them from the per-terminal table ('action_shift_targets') at construction time.
+ */
+$shift_freq = array();
+foreach ( $emitted as $cells ) {
+	foreach ( $cells as $token => $code ) {
+		if ( $code > 0 && $code < $state_count ) {
+			$shift_freq[ $token ][ $code ] = ( $shift_freq[ $token ][ $code ] ?? 0 ) + 1;
+		}
+	}
+}
+ksort( $shift_freq );
+$shift_target = array();
+foreach ( $shift_freq as $token => $freq ) {
+	// Most frequent target wins; ties keep the first-encountered target so the
+	// output is deterministic on any PHP version.
+	$best_target = null;
+	$best_count  = 0;
+	foreach ( $freq as $target => $count ) {
+		if ( $count > $best_count ) {
+			$best_target = $target;
+			$best_count  = $count;
+		}
+	}
+	$shift_target[ $token ] = $best_target;
+}
+$row_shifts  = array();
+$modal_cells = 0;
+foreach ( $emitted as $row_id => $cells ) {
+	foreach ( $cells as $token => $code ) {
+		if ( $code > 0 && $code < $state_count && $shift_target[ $token ] === $code ) {
+			$row_shifts[ $row_id ][] = $token;
+			unset( $emitted[ $row_id ][ $token ] );
+			++$modal_cells;
+		}
+	}
+}
+
+/*
  * GOTO: targets cluster by nonterminal, so store the most frequent target per
  * nonterminal as the default and per-state exceptions as a sparse nested map.
  */
@@ -380,6 +425,8 @@ $groups = array(
 	),
 	'ACTION table' => array(
 		"'action_rows'=>" . $emit( $emitted ),
+		"'action_shift_targets'=>" . $emit( $shift_target ),
+		"'action_row_shift_tokens'=>" . $emit( $row_shifts ),
 		"'action_row_bases'=>" . $emit( $row_base ),
 		"'action_table'=>" . $emit( $state_row ),
 		"'action_defaults'=>" . $emit( $state_default ),
@@ -413,11 +460,12 @@ file_put_contents( $output_path, $php );
 fwrite(
 	STDERR,
 	sprintf(
-		"rows=%d (patched=%d), cells stored=%d of %d | goto: %d table groups, %d defaults | names=%d\n",
+		"rows=%d (patched=%d), cells stored=%d of %d (%d as modal shifts) | goto: %d table groups, %d defaults | names=%d\n",
 		count( $rows ),
 		count( $row_base ),
 		$stored_cells,
 		$total_cells,
+		$modal_cells,
 		count( $goto_table ),
 		count( $goto_default ),
 		count( $names )
