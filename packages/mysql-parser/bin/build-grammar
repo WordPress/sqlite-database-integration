@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# Build the MySQL parse table and token map from the official MySQL grammar.
+#
+# Runs the full pipeline end to end:
+#   1. Fetch sql_yacc.yy + lex.h from the pinned mysql-server tag.
+#   2. Run Bison 3.8.2 to produce the LALR automaton (automaton.xml).
+#   3. Generate src/mysql-parse-table.php from the automaton.
+#   4. Generate the lexer's token data block from lex.h and the automaton.
+#
+# Requirements: bash, curl, docker, php. Override the MySQL version with
+# MYSQL_TAG (default: mysql-8.4.10).
+#
+set -euo pipefail
+
+package_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tools_dir="$package_dir/tools"
+build_dir="$package_dir/build"
+src_dir="$package_dir/src"
+
+mkdir -p "$src_dir"
+
+bash "$tools_dir/fetch-mysql-grammar.sh"
+bash "$tools_dir/run-bison.sh"
+
+echo "Generating parse table ..."
+php "$tools_dir/generate-parse-table.php" "$build_dir/automaton.xml" "$src_dir/mysql-parse-table.php"
+
+echo "Generating grammar tokens ..."
+php "$tools_dir/generate-tokens.php" "$build_dir/automaton.xml" "$build_dir/lex.h" "$src_dir/class-wp-mysql-lexer.php"
+
+echo "Done."
