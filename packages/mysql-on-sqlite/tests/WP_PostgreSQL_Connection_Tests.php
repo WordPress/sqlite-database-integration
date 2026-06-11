@@ -245,6 +245,7 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 
 		$quoted = $connection->quote( "protected\0property" );
 		$this->assertStringNotContainsString( "\0", $quoted );
+		$this->assertStringContainsString( 'WP_MYSQL_TEXT_V1:', $quoted );
 		$this->assertNotSame( "'protected\0property'", $quoted );
 	}
 

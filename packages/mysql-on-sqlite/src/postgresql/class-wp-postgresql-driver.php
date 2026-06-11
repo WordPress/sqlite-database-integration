@@ -20,9 +20,14 @@ class WP_PostgreSQL_Driver {
 	const DEFAULT_MYSQL_COLLATION      = 'utf8mb4_unicode_ci';
 
 	/**
-	 * Sentinel prefix for MySQL text bytes PostgreSQL text cannot store directly.
+	 * Prefix for encoded MySQL text bytes PostgreSQL text cannot store directly.
 	 */
-	private const MYSQL_TEXT_SENTINEL = "\xEE\x80\x80";
+	private const MYSQL_TEXT_ENCODING_PREFIX = "\xEE\x80\x80WP_MYSQL_TEXT_V1:";
+
+	/**
+	 * Hash context for the MySQL text encoding envelope.
+	 */
+	private const MYSQL_TEXT_ENCODING_HASH_CONTEXT = 'wp-mysql-text-v1:';
 
 	/**
 	 * PostgreSQL server version string.
@@ -507,7 +512,7 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Decode PostgreSQL-safe text sentinels in fetched result data.
+	 * Decode PostgreSQL-safe text envelopes in fetched result data.
 	 *
 	 * @param mixed $value Fetched result value.
 	 * @return mixed MySQL-facing result value.
@@ -540,17 +545,65 @@ class WP_PostgreSQL_Driver {
 	 * @return string MySQL-facing text value.
 	 */
 	private static function decode_postgresql_text_for_mysql_value( string $value ): string {
-		if ( false === strpos( $value, self::MYSQL_TEXT_SENTINEL ) ) {
+		if ( 0 !== strpos( $value, self::MYSQL_TEXT_ENCODING_PREFIX ) ) {
 			return $value;
 		}
 
-		return strtr(
-			$value,
-			array(
-				self::MYSQL_TEXT_SENTINEL . self::MYSQL_TEXT_SENTINEL => self::MYSQL_TEXT_SENTINEL,
-				self::MYSQL_TEXT_SENTINEL . '0' => "\0",
-			)
-		);
+		$encoded          = substr( $value, strlen( self::MYSQL_TEXT_ENCODING_PREFIX ) );
+		$length_separator = strpos( $encoded, ':' );
+		if ( false === $length_separator ) {
+			return $value;
+		}
+
+		$length = substr( $encoded, 0, $length_separator );
+		if ( ! self::is_canonical_decimal_string( $length ) ) {
+			return $value;
+		}
+
+		$encoded        = substr( $encoded, $length_separator + 1 );
+		$hash_separator = strpos( $encoded, ':' );
+		if ( false === $hash_separator ) {
+			return $value;
+		}
+
+		$hash = substr( $encoded, 0, $hash_separator );
+		$hex  = substr( $encoded, $hash_separator + 1 );
+		if (
+			1 !== preg_match( '/\A[0-9a-f]{64}\z/', $hash )
+			|| 0 !== strlen( $hex ) % 2
+			|| ! ctype_xdigit( $hex )
+		) {
+			return $value;
+		}
+
+		$decoded = hex2bin( $hex );
+		if (
+			false === $decoded
+			|| (string) strlen( $decoded ) !== $length
+			|| ! hash_equals( $hash, hash( 'sha256', self::MYSQL_TEXT_ENCODING_HASH_CONTEXT . $decoded ) )
+		) {
+			return $value;
+		}
+
+		return $decoded;
+	}
+
+	/**
+	 * Check whether a string is a canonical decimal integer.
+	 *
+	 * @param string $value String value.
+	 * @return bool Whether the value is canonical decimal.
+	 */
+	private static function is_canonical_decimal_string( string $value ): bool {
+		if ( '' === $value ) {
+			return false;
+		}
+
+		if ( '0' === $value ) {
+			return true;
+		}
+
+		return '0' !== $value[0] && ctype_digit( $value );
 	}
 
 	/**

@@ -15,13 +15,18 @@
  */
 class WP_PostgreSQL_Connection {
 	/**
-	 * Sentinel prefix for MySQL text bytes PostgreSQL text cannot store directly.
+	 * Prefix for encoded MySQL text bytes PostgreSQL text cannot store directly.
 	 *
-	 * PostgreSQL text rejects NUL bytes. Use a reversible private-use marker so
+	 * PostgreSQL text rejects NUL bytes. Use a versioned whole-value envelope so
 	 * MySQL string literals that decode to NUL can still round-trip through text
-	 * columns.
+	 * columns without making short sentinel-like byte sequences ambiguous.
 	 */
-	private const MYSQL_TEXT_SENTINEL = "\xEE\x80\x80";
+	private const MYSQL_TEXT_ENCODING_PREFIX = "\xEE\x80\x80WP_MYSQL_TEXT_V1:";
+
+	/**
+	 * Hash context for the MySQL text encoding envelope.
+	 */
+	private const MYSQL_TEXT_ENCODING_HASH_CONTEXT = 'wp-mysql-text-v1:';
 
 	/**
 	 * The PDO connection for PostgreSQL.
@@ -240,20 +245,26 @@ class WP_PostgreSQL_Connection {
 	 * @return string PostgreSQL-safe text value.
 	 */
 	private static function encode_mysql_text_for_postgresql( string $value ): string {
-		if (
-			false === strpos( $value, "\0" )
-			&& false === strpos( $value, self::MYSQL_TEXT_SENTINEL )
-		) {
+		if ( false === strpos( $value, "\0" ) && ! self::starts_with_mysql_text_encoding_prefix( $value ) ) {
 			return $value;
 		}
 
-		return strtr(
-			$value,
-			array(
-				self::MYSQL_TEXT_SENTINEL => self::MYSQL_TEXT_SENTINEL . self::MYSQL_TEXT_SENTINEL,
-				"\0"                      => self::MYSQL_TEXT_SENTINEL . '0',
-			)
-		);
+		return self::MYSQL_TEXT_ENCODING_PREFIX
+			. strlen( $value )
+			. ':'
+			. hash( 'sha256', self::MYSQL_TEXT_ENCODING_HASH_CONTEXT . $value )
+			. ':'
+			. bin2hex( $value );
+	}
+
+	/**
+	 * Check whether a value starts with the MySQL text encoding prefix.
+	 *
+	 * @param string $value String value.
+	 * @return bool Whether the value starts with the encoding prefix.
+	 */
+	private static function starts_with_mysql_text_encoding_prefix( string $value ): bool {
+		return 0 === strpos( $value, self::MYSQL_TEXT_ENCODING_PREFIX );
 	}
 
 	/**

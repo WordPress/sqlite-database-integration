@@ -2,6 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection.php';
+require_once __DIR__ . '/WP_PostgreSQL_Driver_Show_Index_Fixture_Connection.php';
 require_once __DIR__ . '/WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection.php';
 
 /**
@@ -48,10 +50,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'CREATE TABLE t (value TEXT NOT NULL)' );
 		$connection->query( 'INSERT INTO t (value) VALUES (' . $connection->quote( "protected\0property" ) . ')' );
 
+		$stored_rows = $connection->query( 'SELECT value FROM t' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertCount( 1, $stored_rows );
+		$this->assertStringNotContainsString( "\0", $stored_rows[0]->value );
+		$this->assertStringContainsString( 'WP_MYSQL_TEXT_V1:', $stored_rows[0]->value );
+
 		$rows = $driver->query( 'SELECT value FROM t' );
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( "protected\0property", $rows[0]->value );
+	}
+
+	/**
+	 * Tests external sentinel-shaped PostgreSQL text is preserved on fetch.
+	 */
+	public function test_query_preserves_external_postgresql_text_sentinel_collision_shape(): void {
+		$driver     = $this->create_driver_with_postgresql_quote_translation();
+		$connection = $driver->get_connection();
+
+		$driver->query( 'CREATE TABLE t (value TEXT NOT NULL)' );
+
+		$external_value = 'pre' . "\xEE\x80\x80" . '0post';
+		$connection->query( 'INSERT INTO t (value) VALUES (?)', array( $external_value ) );
+
+		$rows = $driver->query( 'SELECT value FROM t' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( $external_value, $rows[0]->value );
 	}
 
 	/**
@@ -1123,10 +1148,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = $translation['sql'];
 
 		$this->assertStringNotContainsString( "\0", $sql );
-		$this->assertStringContainsString( 'E\'', $sql );
-		$this->assertStringContainsString( '\\nnext line', $sql );
-		$this->assertStringContainsString( '\\\\ marker', $sql );
-		$this->assertStringContainsString( "single '' double", $sql );
+		$this->assertStringContainsString( 'WP_MYSQL_TEXT_V1:', $sql );
+		$this->assertStringContainsString( bin2hex( $payload ), $sql );
 		$this->assertStringContainsString( '"option_value" = excluded."option_value"', $sql );
 		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $sql );
 	}
@@ -5263,238 +5286,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			VALUES
 				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'option_id'),
 				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'option_name')"
-		);
-	}
-}
-
-/**
- * Fixture connection that accepts PostgreSQL ALTER TABLE syntax in driver tests.
- */
-class WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection extends WP_PostgreSQL_Connection {
-	/**
-	 * Whether DML identity metadata rows are installed.
-	 *
-	 * @var bool
-	 */
-	private $has_identity_metadata_fixture = false;
-
-	/**
-	 * Number of sequence repair queries executed.
-	 *
-	 * @var int
-	 */
-	private $sequence_sync_query_count = 0;
-
-	/**
-	 * Constructor.
-	 *
-	 * @param array[] $identity_metadata_rows Optional fixture identity metadata rows.
-	 */
-	public function __construct( array $identity_metadata_rows = array() ) {
-		parent::__construct( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
-
-		if ( ! empty( $identity_metadata_rows ) ) {
-			$this->install_information_schema_marker();
-			$this->install_identity_metadata_fixture( $identity_metadata_rows );
-			$this->has_identity_metadata_fixture = true;
-		}
-	}
-
-	/**
-	 * Execute a query against PostgreSQL test fixtures when needed.
-	 *
-	 * @param string $sql    SQL query.
-	 * @param array  $params Query parameters.
-	 * @return PDOStatement Statement.
-	 */
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( $this->has_identity_metadata_fixture && false !== strpos( $sql, 'pg_catalog.pg_get_serial_sequence' ) ) {
-			return parent::query(
-				'SELECT
-					column_name,
-					data_type,
-					is_identity,
-					column_default,
-					mysql_column_type,
-					mysql_extra,
-					sequence_schema,
-					sequence_name
-				FROM dml_identity_metadata_fixture
-				WHERE table_schema = ?
-					AND table_name = ?
-				ORDER BY ordinal_position',
-				array( $params[0] ?? '', $params[1] ?? '' )
-			);
-		}
-
-		if ( $this->has_identity_metadata_fixture && false !== strpos( $sql, 'pg_catalog.setval' ) ) {
-			++$this->sequence_sync_query_count;
-			return parent::query( 'SELECT 1' );
-		}
-
-		if ( 0 === strpos( $sql, 'ALTER TABLE ' ) ) {
-			return parent::query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		return parent::query( $sql, $params );
-	}
-
-	/**
-	 * Get the number of sequence repair queries executed.
-	 *
-	 * @return int Sequence repair query count.
-	 */
-	public function get_sequence_sync_query_count(): int {
-		return $this->sequence_sync_query_count;
-	}
-
-	/**
-	 * Install the information_schema marker used by the SQLite test shim.
-	 */
-	private function install_information_schema_marker(): void {
-		$pdo = $this->get_pdo();
-		$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
-		$pdo->exec( 'CREATE TABLE information_schema.columns (table_schema TEXT)' );
-	}
-
-	/**
-	 * Install identity metadata rows.
-	 *
-	 * @param array[] $identity_metadata_rows Fixture identity metadata rows.
-	 */
-	private function install_identity_metadata_fixture( array $identity_metadata_rows ): void {
-		parent::query(
-			'CREATE TABLE dml_identity_metadata_fixture (
-				table_schema TEXT NOT NULL,
-				table_name TEXT NOT NULL,
-				column_name TEXT NOT NULL,
-				ordinal_position INTEGER NOT NULL,
-				data_type TEXT NOT NULL,
-				is_identity TEXT NOT NULL,
-				column_default TEXT,
-				mysql_column_type TEXT,
-				mysql_extra TEXT NOT NULL,
-				sequence_schema TEXT,
-				sequence_name TEXT
-			)'
-		);
-
-		foreach ( $identity_metadata_rows as $row ) {
-			parent::query(
-				'INSERT INTO dml_identity_metadata_fixture
-					(table_schema, table_name, column_name, ordinal_position, data_type, is_identity, column_default, mysql_column_type, mysql_extra, sequence_schema, sequence_name)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-				array(
-					$row['table_schema'] ?? 'public',
-					$row['table_name'],
-					$row['column_name'],
-					$row['ordinal_position'] ?? 1,
-					$row['data_type'] ?? 'bigint',
-					$row['is_identity'] ?? 'YES',
-					$row['column_default'] ?? null,
-					$row['mysql_column_type'] ?? 'bigint(20)',
-					$row['mysql_extra'] ?? 'auto_increment',
-					$row['sequence_schema'] ?? 'public',
-					$row['sequence_name'],
-				)
-			);
-		}
-	}
-}
-
-/**
- * Fixture connection for PostgreSQL SHOW INDEX catalog tests.
- */
-class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_Connection {
-	/**
-	 * Constructor.
-	 */
-	public function __construct() {
-		parent::__construct( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
-
-		$this->install_fixture();
-	}
-
-	/**
-	 * Execute a query against the fixture when the PostgreSQL catalog query is used.
-	 *
-	 * @param string $sql    SQL query.
-	 * @param array  $params Query parameters.
-	 * @return PDOStatement Statement.
-	 */
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false === strpos( $sql, 'pg_catalog.pg_index' ) ) {
-			return parent::query( $sql, $params );
-		}
-
-		$fixture_sql    = 'SELECT
-			table_name AS "Table",
-			non_unique AS "Non_unique",
-			key_name AS "Key_name",
-			seq_in_index AS "Seq_in_index",
-			column_name AS "Column_name",
-			collation AS "Collation",
-			cardinality AS "Cardinality",
-			sub_part AS "Sub_part",
-			packed AS "Packed",
-			nullable AS "Null",
-			index_type AS "Index_type",
-			comment AS "Comment",
-			index_comment AS "Index_comment",
-			visible AS "Visible",
-			expression AS "Expression"
-		FROM show_index_fixture
-		WHERE table_schema = ?
-			AND table_name = ?';
-		$fixture_params = array( $params[0] ?? '', $params[1] ?? '' );
-
-		if ( isset( $params[2] ) ) {
-			$fixture_sql     .= '
-			AND key_name = ?';
-			$fixture_params[] = $params[2];
-		}
-
-		$fixture_sql .= '
-		ORDER BY sort_position, CAST(seq_in_index AS INTEGER)';
-
-		return parent::query( $fixture_sql, $fixture_params );
-	}
-
-	/**
-	 * Install SHOW INDEX fixture rows into the injected PDO.
-	 */
-	private function install_fixture(): void {
-		$pdo = $this->get_pdo();
-
-		$pdo->exec(
-			'CREATE TABLE show_index_fixture (
-				table_schema TEXT NOT NULL,
-				table_name TEXT NOT NULL,
-				sort_position INTEGER NOT NULL,
-				non_unique TEXT NOT NULL,
-				key_name TEXT NOT NULL,
-				seq_in_index TEXT NOT NULL,
-				column_name TEXT,
-				collation TEXT,
-				cardinality TEXT,
-				sub_part TEXT,
-				packed TEXT,
-				nullable TEXT NOT NULL,
-				index_type TEXT NOT NULL,
-				comment TEXT NOT NULL,
-				index_comment TEXT NOT NULL,
-				visible TEXT NOT NULL,
-				expression TEXT
-			)'
-		);
-		$pdo->exec(
-			"INSERT INTO show_index_fixture
-				(table_schema, table_name, sort_position, non_unique, key_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, visible, expression)
-			VALUES
-				('public', 'wptests_options', 1, '0', 'PRIMARY', '1', 'option_id', 'A', '0', NULL, NULL, '', 'BTREE', '', '', 'YES', NULL),
-				('public', 'wptests_options', 2, '0', 'option_name', '1', 'option_name', 'A', '0', NULL, NULL, '', 'BTREE', '', '', 'YES', NULL),
-				('public', 'wptests_options', 3, '1', 'autoload', '1', 'autoload', 'A', '0', NULL, NULL, '', 'BTREE', '', '', 'YES', NULL),
-				('public', 'wptests_posts', 4, '0', 'PRIMARY', '1', 'ID', 'A', '0', NULL, NULL, '', 'BTREE', '', '', 'YES', NULL)"
 		);
 	}
 }
