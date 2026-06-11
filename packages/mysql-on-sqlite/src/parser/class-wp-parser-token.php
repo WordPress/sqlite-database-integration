@@ -33,6 +33,10 @@ class WP_Parser_Token {
 	/**
 	 * Input bytes from which the token was parsed.
 	 *
+	 * This property is protected rather than private, so that subclasses can
+	 * initialize all properties directly, avoiding an extra constructor call
+	 * on the hot tokenization path.
+	 *
 	 * @var string
 	 */
 	protected $input;

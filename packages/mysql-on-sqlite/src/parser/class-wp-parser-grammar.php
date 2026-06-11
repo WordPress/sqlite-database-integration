@@ -100,6 +100,12 @@ class WP_Parser_Grammar {
 			$this->rules[ $rule_id ] = $branches;
 		}
 
+		/*
+		 * Inline single-branch fragments before computing the lookup tables
+		 * below, so that the tables reflect the compressed grammar.
+		 */
+		$this->inline_single_branch_fragments();
+
 		/**
 		 * Compute a rule => [token => true] lookup table for each rule
 		 * that starts with a terminal OR with another rule that already
@@ -121,8 +127,7 @@ class WP_Parser_Grammar {
 		 */
 		// 5 iterations seem to give us all the speed gains we can get from this.
 		for ( $i = 0; $i < 5; $i++ ) {
-			foreach ( $grammar['grammar'] as $rule_index => $branches ) {
-				$rule_id = $rule_index + $grammar['rules_offset'];
+			foreach ( $this->rules as $rule_id => $branches ) {
 				if ( isset( $this->lookahead_is_match_possible[ $rule_id ] ) ) {
 					continue;
 				}
@@ -168,8 +173,7 @@ class WP_Parser_Grammar {
 		// Branches starting with the same terminal share a single FIRST set
 		// array to keep the memory footprint of the table low.
 		$terminal_first_sets = array();
-		foreach ( $grammar['grammar'] as $rule_index => $branches ) {
-			$rule_id = $rule_index + $grammar['rules_offset'];
+		foreach ( $this->rules as $rule_id => $branches ) {
 			foreach ( $branches as $branch_index => $branch ) {
 				$first_symbol = $branch[0];
 				if ( $first_symbol < $this->lowest_non_terminal_id ) {
@@ -187,5 +191,96 @@ class WP_Parser_Grammar {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Inline single-branch fragment rules into the branches that reference them.
+	 *
+	 * Fragment rules (names prefixed with "%") never appear in the final parse
+	 * tree — the parser splices their children directly into the parent node.
+	 * A reference to a fragment with a single branch is therefore pure call
+	 * overhead: the parser recurses into the fragment only to match its one
+	 * branch and splice the matched children back into the parent. Replacing
+	 * the reference with the fragment's symbol sequence ahead of time produces
+	 * a byte-identical parse tree while saving a recursive call per reference.
+	 *
+	 * Multi-branch fragments are left intact, as they encode alternation.
+	 * Fragment references that are part of a recursion cycle through
+	 * single-branch fragments are also left intact, which guarantees that
+	 * the expansion terminates.
+	 */
+	private function inline_single_branch_fragments() {
+		$inlinable = array();
+		foreach ( $this->fragment_ids as $rule_id => $unused ) {
+			if ( isset( $this->rules[ $rule_id ] ) && 1 === count( $this->rules[ $rule_id ] ) ) {
+				$inlinable[ $rule_id ] = true;
+			}
+		}
+		if ( ! $inlinable ) {
+			return;
+		}
+
+		/*
+		 * Fully expand every inlinable fragment first (fragments can reference
+		 * other fragments), so that the splicing pass below is a single pass
+		 * that doesn't depend on the order in which rules are processed.
+		 */
+		$expanded    = array();
+		$in_progress = array();
+		foreach ( $inlinable as $rule_id => $unused ) {
+			$this->expand_fragment( $rule_id, $inlinable, $expanded, $in_progress );
+		}
+
+		foreach ( $this->rules as $rule_id => $branches ) {
+			foreach ( $branches as $branch_index => $branch ) {
+				$new_branch  = array();
+				$has_changes = false;
+				foreach ( $branch as $symbol ) {
+					if ( isset( $expanded[ $symbol ] ) ) {
+						foreach ( $expanded[ $symbol ] as $expanded_symbol ) {
+							$new_branch[] = $expanded_symbol;
+						}
+						$has_changes = true;
+					} else {
+						$new_branch[] = $symbol;
+					}
+				}
+				if ( $has_changes ) {
+					$this->rules[ $rule_id ][ $branch_index ] = $new_branch;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Compute the fully inlined symbol sequence of a single-branch fragment.
+	 *
+	 * @param int   $rule_id     ID of the fragment rule to expand.
+	 * @param array $inlinable   Set of all single-branch fragment rule IDs.
+	 * @param array $expanded    Memoized expansions, keyed by fragment rule ID.
+	 * @param array $in_progress Fragments on the current expansion path.
+	 *                           A reference to one of these is part of a
+	 *                           recursion cycle and is kept as-is so that
+	 *                           the expansion is guaranteed to terminate.
+	 * @return array The expanded symbol sequence of the fragment's branch.
+	 */
+	private function expand_fragment( $rule_id, $inlinable, &$expanded, &$in_progress ) {
+		if ( isset( $expanded[ $rule_id ] ) ) {
+			return $expanded[ $rule_id ];
+		}
+		$in_progress[ $rule_id ] = true;
+		$result                  = array();
+		foreach ( $this->rules[ $rule_id ][0] as $symbol ) {
+			if ( isset( $inlinable[ $symbol ] ) && ! isset( $in_progress[ $symbol ] ) ) {
+				foreach ( $this->expand_fragment( $symbol, $inlinable, $expanded, $in_progress ) as $expanded_symbol ) {
+					$result[] = $expanded_symbol;
+				}
+			} else {
+				$result[] = $symbol;
+			}
+		}
+		unset( $in_progress[ $rule_id ] );
+		$expanded[ $rule_id ] = $result;
+		return $result;
 	}
 }

@@ -204,8 +204,7 @@ class WP_Parser_Node {
 	 * @return WP_Parser_Node|null    The first matching descendant node; null when no descendants are found.
 	 */
 	public function get_first_descendant_node( ?string $rule_name = null ): ?WP_Parser_Node {
-		for ( $i = 0; $i < count( $this->children ); $i++ ) {
-			$child = $this->children[ $i ];
+		foreach ( $this->children as $child ) {
 			if ( ! $child instanceof WP_Parser_Node ) {
 				continue;
 			}
@@ -230,8 +229,7 @@ class WP_Parser_Node {
 	 * @return WP_Parser_Token|null The first matching descendant token; null when no descendants are found.
 	 */
 	public function get_first_descendant_token( ?int $token_id = null ): ?WP_Parser_Token {
-		for ( $i = 0; $i < count( $this->children ); $i++ ) {
-			$child = $this->children[ $i ];
+		foreach ( $this->children as $child ) {
 			if ( $child instanceof WP_Parser_Token ) {
 				if ( null === $token_id || $child->id === $token_id ) {
 					return $child;
@@ -303,15 +301,22 @@ class WP_Parser_Node {
 	 */
 	public function get_descendants(): array {
 		$descendants = array();
+		$this->collect_descendants( $descendants );
+		return $descendants;
+	}
+
+	/**
+	 * Collect all descendants of this node into an accumulator array.
+	 *
+	 * @param array<WP_Parser_Node|WP_Parser_Token> $descendants The accumulator array to collect descendants into.
+	 */
+	private function collect_descendants( array &$descendants ): void {
 		foreach ( $this->children as $child ) {
+			$descendants[] = $child;
 			if ( $child instanceof WP_Parser_Node ) {
-				$descendants[] = $child;
-				$descendants   = array_merge( $descendants, $child->get_descendants() );
-			} else {
-				$descendants[] = $child;
+				$child->collect_descendants( $descendants );
 			}
 		}
-		return $descendants;
 	}
 
 	/**
@@ -326,6 +331,17 @@ class WP_Parser_Node {
 	 */
 	public function get_descendant_nodes( ?string $rule_name = null ): array {
 		$nodes = array();
+		$this->collect_descendant_nodes( $rule_name, $nodes );
+		return $nodes;
+	}
+
+	/**
+	 * Collect all matching descendant nodes into an accumulator array.
+	 *
+	 * @param string|null      $rule_name A node rule name to check for; null to match all nodes.
+	 * @param WP_Parser_Node[] $nodes     The accumulator array to collect nodes into.
+	 */
+	private function collect_descendant_nodes( ?string $rule_name, array &$nodes ): void {
 		foreach ( $this->children as $child ) {
 			if ( ! $child instanceof WP_Parser_Node ) {
 				continue;
@@ -333,9 +349,8 @@ class WP_Parser_Node {
 			if ( null === $rule_name || $child->rule_name === $rule_name ) {
 				$nodes[] = $child;
 			}
-			$nodes = array_merge( $nodes, $child->get_descendant_nodes( $rule_name ) );
+			$child->collect_descendant_nodes( $rule_name, $nodes );
 		}
-		return $nodes;
 	}
 
 	/**
@@ -350,16 +365,26 @@ class WP_Parser_Node {
 	 */
 	public function get_descendant_tokens( ?int $token_id = null ): array {
 		$tokens = array();
+		$this->collect_descendant_tokens( $token_id, $tokens );
+		return $tokens;
+	}
+
+	/**
+	 * Collect all matching descendant tokens into an accumulator array.
+	 *
+	 * @param int|null          $token_id A token ID to check for; null to match all tokens.
+	 * @param WP_Parser_Token[] $tokens   The accumulator array to collect tokens into.
+	 */
+	private function collect_descendant_tokens( ?int $token_id, array &$tokens ): void {
 		foreach ( $this->children as $child ) {
 			if ( $child instanceof WP_Parser_Token ) {
 				if ( null === $token_id || $child->id === $token_id ) {
 					$tokens[] = $child;
 				}
 			} else {
-				$tokens = array_merge( $tokens, $child->get_descendant_tokens( $token_id ) );
+				$child->collect_descendant_tokens( $token_id, $tokens );
 			}
 		}
-		return $tokens;
 	}
 
 	/**

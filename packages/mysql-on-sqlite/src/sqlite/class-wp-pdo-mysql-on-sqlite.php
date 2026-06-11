@@ -458,11 +458,45 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $information_schema_builder;
 
 	/**
+	 * A cache of table column metadata used for INSERT and UPDATE translation.
+	 *
+	 * The structure is: [ <database> => [ <table-name> => <column records> ] ].
+	 *
+	 * The cache must be cleared whenever the database schema may change.
+	 * See the "clear_table_metadata_cache()" method for more details.
+	 *
+	 * @var array<string, array<string, array>>
+	 */
+	private $table_metadata_cache = array();
+
+	/**
 	 * Last executed MySQL query.
 	 *
 	 * @var string
 	 */
 	private $last_mysql_query;
+
+	/**
+	 * The "selectItemList" AST node for which the last SELECT item
+	 * disambiguation map was created.
+	 *
+	 * A single SELECT statement can require the same disambiguation map for
+	 * its ORDER BY, GROUP BY, and HAVING clauses. This property, along with
+	 * "$last_select_item_map", serves as a single-entry cache to avoid
+	 * recreating the map multiple times for the same SELECT item list node.
+	 *
+	 * @var WP_Parser_Node|null
+	 */
+	private $last_select_item_map_node;
+
+	/**
+	 * The last created SELECT item disambiguation map.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$last_select_item_map_node
+	 *
+	 * @var array|null
+	 */
+	private $last_select_item_map;
 
 	/**
 	 * A list of SQLite queries executed for the last MySQL query.
@@ -526,6 +560,24 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @var bool
 	 */
 	private $is_readonly;
+
+	/**
+	 * A memoization cache for AST node translation results.
+	 *
+	 * When set, the "translate()" method caches and reuses translation results
+	 * per AST node object. Some statement handlers translate the same subtrees
+	 * multiple times — e.g., the SQL_CALC_FOUND_ROWS emulation translates the
+	 * query expression both for the data query and for the COUNT(*) query —
+	 * and the cache avoids re-walking identical subtrees.
+	 *
+	 * The cache is only valid within a single statement execution, while the
+	 * session state (SQL modes, user variables, etc.) and the database schema
+	 * are guaranteed not to change. It is created when a statement handler
+	 * starts and discarded when it ends.
+	 *
+	 * @var SplObjectStorage|null
+	 */
+	private $translation_memo;
 
 	/**
 	 * Type of wrapper transaction that is active for the MySQL query emulation.
@@ -1420,14 +1472,30 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->execute_transaction_or_locking_statement( $node );
 				break;
 			case 'selectStatement':
-				$this->execute_select_statement( $node );
+				$this->is_readonly      = true;
+				$this->translation_memo = new SplObjectStorage();
+				try {
+					$this->execute_select_statement( $node );
+				} finally {
+					$this->translation_memo = null;
+				}
 				break;
 			case 'insertStatement':
 			case 'replaceStatement':
-				$this->execute_insert_or_replace_statement( $node );
+				$this->translation_memo = new SplObjectStorage();
+				try {
+					$this->execute_insert_or_replace_statement( $node );
+				} finally {
+					$this->translation_memo = null;
+				}
 				break;
 			case 'updateStatement':
-				$this->execute_update_statement( $node );
+				$this->translation_memo = new SplObjectStorage();
+				try {
+					$this->execute_update_statement( $node );
+				} finally {
+					$this->translation_memo = null;
+				}
 				break;
 			case 'deleteStatement':
 				$this->execute_delete_statement( $node );
@@ -1486,6 +1554,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						$this->execute_drop_index_statement( $node );
 						break;
 					default:
+						$this->clear_table_metadata_cache();
 						$query                       = $this->translate( $node );
 						$this->last_result_statement = $this->execute_sqlite_query( $query );
 				}
@@ -1673,6 +1742,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 		$this->connection->query( 'ROLLBACK' );
 		$this->in_transaction = false;
+
+		// The rollback may have reverted some DDL statements.
+		$this->clear_table_metadata_cache();
 	}
 
 	/**
@@ -1709,6 +1781,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						$this->rollback_user_transaction();
 					} else {
 						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+
+						// The rollback may have reverted some DDL statements.
+						$this->clear_table_metadata_cache();
 					}
 					return;
 				}
@@ -2383,6 +2458,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_create_table_statement( WP_Parser_Node $node ): void {
+		$this->clear_table_metadata_cache();
+
 		$subnode = $node->get_first_child_node();
 
 		// Handle TEMPORARY keyword.
@@ -2454,6 +2531,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_alter_table_statement( WP_Parser_Node $node ): void {
+		$this->clear_table_metadata_cache();
+
 		$table_ref  = $node->get_first_descendant_node( 'tableRef' );
 		$database   = $this->get_database_name( $table_ref );
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
@@ -2542,6 +2621,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_drop_table_statement( WP_Parser_Node $node ): void {
+		$this->clear_table_metadata_cache();
+
 		// Record the changes in the information schema.
 		$this->information_schema_builder->record_drop_table( $node );
 
@@ -2594,6 +2675,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_truncate_table_statement( WP_Parser_Node $node ): void {
+		$this->clear_table_metadata_cache();
+
 		$table_ref  = $node->get_first_child_node( 'tableRef' );
 		$database   = $this->get_database_name( $table_ref );
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
@@ -2625,6 +2708,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_create_index_statement( WP_Parser_Node $node ): void {
+		$this->clear_table_metadata_cache();
+
 		$create_index = $node->get_first_child_node( 'createIndex' );
 		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
 		$table_ref    = $target->get_first_child_node( 'tableRef' );
@@ -2683,6 +2768,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_drop_index_statement( WP_Parser_Node $node ): void {
+		$this->clear_table_metadata_cache();
+
 		$drop_index = $node->get_first_child_node( 'dropIndex' );
 		$table_ref  = $drop_index->get_first_child_node( 'tableRef' );
 		$database   = $this->get_database_name( $table_ref );
@@ -3300,6 +3387,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		if ( $this->main_db_name === $database_name || 'information_schema' === $database_name ) {
 			$this->db_name = $database_name;
+			$this->clear_table_metadata_cache();
 		} else {
 			throw $this->new_not_supported_exception(
 				sprintf(
@@ -3547,6 +3635,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_administration_statement( WP_Parser_Node $node ): void {
+		// OPTIMIZE and REPAIR statements recreate the underlying SQLite tables.
+		$this->clear_table_metadata_cache();
+
 		$first_token    = $node->get_first_child_token();
 		$table_ref_list = $node->get_first_child_node( 'tableRefList' );
 		$results        = array();
@@ -3698,15 +3789,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception          When the translation fails.
 	 */
 	private function translate( $node ): ?string {
-		if ( null === $node ) {
-			return null;
-		}
-
-		if ( $node instanceof WP_MySQL_Token ) {
-			return $this->translate_token( $node );
-		}
-
+		// The most common case (a parser node) is checked first for performance.
 		if ( ! $node instanceof WP_Parser_Node ) {
+			if ( $node instanceof WP_MySQL_Token ) {
+				return $this->translate_token( $node );
+			}
+
+			if ( null === $node ) {
+				return null;
+			}
+
 			throw $this->new_driver_exception(
 				sprintf(
 					'Expected a WP_Parser_Node or WP_MySQL_Token instance, got: %s',
@@ -3715,6 +3807,31 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			);
 		}
 
+		$memo = $this->translation_memo;
+		if ( null === $memo ) {
+			return $this->translate_parser_node( $node );
+		}
+
+		if ( $memo->contains( $node ) ) {
+			return $memo[ $node ];
+		}
+
+		$result        = $this->translate_parser_node( $node );
+		$memo[ $node ] = $result;
+		return $result;
+	}
+
+	/**
+	 * Translate a MySQL AST parser node to an SQLite query fragment.
+	 *
+	 * This method must be used only via the "translate()" method, which adds
+	 * support for memoization of the translation results.
+	 *
+	 * @param  WP_Parser_Node $node       The AST node to translate.
+	 * @return string|null                The translated query fragment.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_parser_node( WP_Parser_Node $node ): ?string {
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
 			case 'queryExpression':
@@ -4017,22 +4134,28 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception                      When the translation fails.
 	 */
 	private function translate_sequence( array $nodes, string $separator = ' ' ): ?string {
-		$parts = array();
+		$result = null;
 		foreach ( $nodes as $node ) {
 			if ( null === $node ) {
 				continue;
 			}
 
-			$translated = $this->translate( $node );
+			// Dispatch tokens directly, avoiding the "translate()" call overhead.
+			if ( $node instanceof WP_MySQL_Token ) {
+				$translated = $this->translate_token( $node );
+			} else {
+				$translated = $this->translate( $node );
+			}
 			if ( null === $translated ) {
 				continue;
 			}
-			$parts[] = $translated;
+			if ( null === $result ) {
+				$result = $translated;
+			} else {
+				$result .= $separator . $translated;
+			}
 		}
-		if ( 0 === count( $parts ) ) {
-			return null;
-		}
-		return implode( $separator, $parts );
+		return $result;
 	}
 
 	/**
@@ -5170,6 +5293,62 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Get column metadata of a table for INSERT and UPDATE statement translation.
+	 *
+	 * The metadata are loaded from the information schema and cached per table,
+	 * so that repeated INSERT and UPDATE statements against the same table can
+	 * avoid re-querying the information schema.
+	 *
+	 * The cache must be cleared whenever the database schema may change.
+	 * See the "clear_table_metadata_cache()" method for more details.
+	 *
+	 * @param  string $database   The database name (a saved "table_schema" value).
+	 * @param  string $table_name The table name.
+	 * @return array              Column metadata records ordered by ordinal
+	 *                            position, or an empty array when the table
+	 *                            doesn't exist.
+	 */
+	private function get_table_column_metadata( string $database, string $table_name ): array {
+		$columns = $this->table_metadata_cache[ $database ][ $table_name ] ?? null;
+		if ( null !== $columns ) {
+			return $columns;
+		}
+
+		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+		$columns       = $this->execute_sqlite_query(
+			'
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, extra
+				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
+				WHERE table_schema = ?
+				AND table_name = ?
+				ORDER BY ordinal_position
+			',
+			array( $database, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		// Don't cache an empty result. It means that the table doesn't exist,
+		// and it's safer to re-check that than to risk a stale negative entry.
+		if ( count( $columns ) > 0 ) {
+			$this->table_metadata_cache[ $database ][ $table_name ] = $columns;
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Clear the cache of table column metadata.
+	 *
+	 * This must be called whenever the database schema may change. That is,
+	 * on DDL statements (CREATE, ALTER, DROP, TRUNCATE, OPTIMIZE, etc.), on
+	 * database change (USE), and on transaction rollbacks, which may revert
+	 * previously executed DDL statements.
+	 */
+	private function clear_table_metadata_cache(): void {
+		$this->table_metadata_cache = array();
+	}
+
+	/**
 	 * Translate INSERT or REPLACE statement body to SQLite, while emulating
 	 * MySQL column type casting and implicit default values when saving data.
 	 *
@@ -5238,18 +5417,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		// Get column metadata for the target table from the information schema.
-		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
-		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
-		$columns       = $this->execute_sqlite_query(
-			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, extra
-				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
-				WHERE table_schema = ?
-				AND table_name = ?
-				ORDER BY ordinal_position
-			',
-			array( $database, $table_name )
-		)->fetchAll( PDO::FETCH_ASSOC );
+		$columns = $this->get_table_column_metadata( $database, $table_name );
 
 		// Check if the table exists.
 		if ( 0 === count( $columns ) ) {
@@ -5553,17 +5721,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 
 		// Get column metadata from the information schema.
-		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
-		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
-		$columns       = $this->execute_sqlite_query(
-			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, column_default
-				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
-				WHERE table_schema = ?
-				AND table_name = ?
-			',
-			array( $database, $table_name )
-		)->fetchAll( PDO::FETCH_ASSOC );
+		$columns = $this->get_table_column_metadata( $database, $table_name );
 
 		// Check if the table exists.
 		if ( 0 === count( $columns ) ) {
@@ -5766,8 +5924,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// Look for SELECT items that match the column reference.
-		$column_name         = $this->translate( $column_ref );
-		$select_item_matches = $disambiguation_map[ $column_name ] ?? array();
+		$select_item_matches = $disambiguation_map[ $column_value ] ?? array();
 
 		// When we find exactly one matching SELECT list item, we can disambiguate
 		// the column reference. Otherwise, fall back to the original expression.
@@ -5787,6 +5944,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @return array                            The SELECT item disambiguation map (column name => array of select items).
 	 */
 	private function create_select_item_disambiguation_map( WP_Parser_Node $select_item_list ): array {
+		// The same map can be required multiple times for a single SELECT
+		// statement (ORDER BY, GROUP BY, HAVING). Use a single-entry cache.
+		if ( $select_item_list === $this->last_select_item_map_node ) {
+			return $this->last_select_item_map;
+		}
+
 		// Create a map of SELECT item column names to their qualified values.
 		$disambiguation_map = array();
 		foreach ( $select_item_list->get_child_nodes() as $select_item ) {
@@ -5837,6 +6000,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$disambiguation_map[ $key ]   = $disambiguation_map[ $key ] ?? array();
 			$disambiguation_map[ $key ][] = $column_value;
 		}
+
+		$this->last_select_item_map_node = $select_item_list;
+		$this->last_select_item_map      = $disambiguation_map;
 		return $disambiguation_map;
 	}
 

@@ -15,6 +15,17 @@ class WP_MySQL_Token extends WP_Parser_Token {
 	private $sql_mode_no_backslash_escapes_enabled;
 
 	/**
+	 * Memoized result of the "get_value()" method.
+	 *
+	 * Computing the token value requires unquoting and unescaping the token
+	 * bytes, which is expensive when done repeatedly. Since the token data
+	 * is immutable, the value is computed only once and then cached here.
+	 *
+	 * @var string|null
+	 */
+	private $value;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param int    $id                                    Token type.
@@ -30,11 +41,12 @@ class WP_MySQL_Token extends WP_Parser_Token {
 		string $input,
 		bool $sql_mode_no_backslash_escapes_enabled
 	) {
-		$this->id     = $id;
-		$this->start  = $start;
-		$this->length = $length;
-		$this->input  = $input;
-
+		// All properties are initialized directly, avoiding an extra parent
+		// constructor call on the hot tokenization path.
+		$this->id                                    = $id;
+		$this->start                                 = $start;
+		$this->length                                = $length;
+		$this->input                                 = $input;
 		$this->sql_mode_no_backslash_escapes_enabled = $sql_mode_no_backslash_escapes_enabled;
 	}
 
@@ -61,6 +73,9 @@ class WP_MySQL_Token extends WP_Parser_Token {
 	 * @return string The token value.
 	 */
 	public function get_value(): string {
+		if ( null !== $this->value ) {
+			return $this->value;
+		}
 		$value = $this->get_bytes();
 		if (
 			WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $this->id
@@ -77,7 +92,8 @@ class WP_MySQL_Token extends WP_Parser_Token {
 			 * their literal values.
 			 */
 			if ( $this->sql_mode_no_backslash_escapes_enabled ) {
-				return str_replace( $quote . $quote, $quote, $value );
+				$this->value = str_replace( $quote . $quote, $quote, $value );
+				return $this->value;
 			}
 
 			/**
@@ -169,6 +185,7 @@ class WP_MySQL_Token extends WP_Parser_Token {
 			$preg_quoted_backslash = preg_quote( $backslash );
 			$value                 = preg_replace( "/$preg_quoted_backslash(.)/u", '$1', $value );
 		}
+		$this->value = $value;
 		return $value;
 	}
 
