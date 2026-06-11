@@ -65,6 +65,22 @@ mysql-parser/
 
 The runtime requires **PHP 7.2+** and no PHP extensions.
 
+## Building the grammar
+
+The compiled artifacts under `src/grammar/` are committed, so the parser works
+out of the box. To regenerate them from the MySQL sources, run from this
+package's directory:
+
+```bash
+composer run build-grammar
+```
+
+This requires `bash`, `curl`, `docker`, and `php`. It fetches the grammar,
+runs Bison in Docker, and rewrites `src/grammar/parse-table.php` and
+`src/grammar/tokens.php`; re-running it reproduces the committed artifacts
+byte for byte. Both artifacts are plain PHP arrays. The fetched sources and the (large) automaton dump land in
+`build/`, which is gitignored.
+
 ## Pinned MySQL version
 
 The grammar is pinned to **`mysql-8.4.3`** (the version the committed artifacts
