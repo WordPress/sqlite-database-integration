@@ -279,6 +279,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests explicit identity upsert insert paths repair PostgreSQL sequences.
+	 */
+	public function test_explicit_identity_upsert_insert_repairs_sequence_after_success(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`) VALUES (7, 'identity')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") VALUES (7, \'identity\') ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
+	 * Tests explicit identity upsert conflict paths do not repair sequences.
+	 */
+	public function test_explicit_identity_upsert_conflict_update_does_not_repair_sequence(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_upsert (id, value) VALUES (7, 'existing')" );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`) VALUES (7, 'updated')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") VALUES (7, \'updated\') ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$queries[0]['sql']
+		);
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT value FROM wptests_identity_upsert WHERE id = 7' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'updated', $rows[0]->value );
+	}
+
+	/**
 	 * Tests simple WordPress REPLACE statements update through PostgreSQL upserts.
 	 */
 	public function test_simple_wordpress_replace_with_existing_id_is_translated_to_postgresql(): void {
@@ -1037,6 +1094,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '2', $rows[1]->term_order );
 		$this->assertSame( '711', $rows[2]->term_taxonomy_id );
 		$this->assertSame( '3', $rows[2]->term_order );
+	}
+
+	/**
+	 * Tests ambiguous duplicate-key arbiters fail closed.
+	 */
+	public function test_ambiguous_on_duplicate_key_update_returns_null(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'existing', 'old')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`) VALUES (2, 'existing', 'new')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$upsert
+			)
+		);
+
+		$this->expectException( PDOException::class );
+
+		$driver->query( $upsert );
 	}
 
 	/**
@@ -4156,6 +4238,51 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				)',
 				$table_name
 			)
+		);
+	}
+
+	/**
+	 * Install an upsert table with ambiguous MySQL duplicate-key metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_ambiguous_upsert_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE ambiguous_upsert (
+				id INTEGER PRIMARY KEY,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ambiguous_upsert (
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug (slug)
+			)'
+		);
+	}
+
+	/**
+	 * Install an identity table with MySQL auto_increment metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_identity_upsert_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_identity_upsert (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_upsert (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
 		);
 	}
 

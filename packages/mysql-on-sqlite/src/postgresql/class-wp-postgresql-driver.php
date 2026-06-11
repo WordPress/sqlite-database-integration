@@ -387,9 +387,10 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
-		$translated_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
+		$upsert_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
+		if ( null !== $upsert_query ) {
+			$query                     = $upsert_query['sql'];
+			$dml_identity_repair_query = $upsert_query;
 			$translated_for_postgresql = true;
 		}
 
@@ -3174,9 +3175,9 @@ WHERE option_name IN (
 	 * primary/unique key, and update assignments must use VALUES(column).
 	 *
 	 * @param string $query MySQL query.
-	 * @return string|null PostgreSQL query, or null when the query is unsupported.
+	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
 	 */
-	private function translate_mysql_on_duplicate_key_update_query( string $query ): ?string {
+	private function translate_mysql_on_duplicate_key_update_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -3209,8 +3210,8 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$values = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ) );
-		if ( null === $values ) {
+		$value_rows = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ) );
+		if ( null === $value_rows ) {
 			return null;
 		}
 
@@ -3232,13 +3233,37 @@ WHERE option_name IN (
 			return null;
 		}
 
-		return sprintf(
-			'INSERT INTO %s (%s) %s ON CONFLICT (%s) DO UPDATE SET %s',
-			$this->connection->quote_identifier( $table_name ),
-			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			'VALUES ' . implode( ', ', $values ),
-			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $conflict_columns ) ),
-			implode( ', ', $assignments )
+		$inserted_value_rows = $this->get_mysql_upsert_inserted_value_rows(
+			$table_name,
+			$columns,
+			$value_rows,
+			$conflict_columns
+		);
+		if ( null === $inserted_value_rows ) {
+			return null;
+		}
+
+		$sql_value_rows = array();
+		foreach ( $value_rows as $values ) {
+			$sql_value_rows[] = '(' . implode( ', ', $values ) . ')';
+		}
+
+		return array(
+			'action'           => 'upsert',
+			'sql'              => sprintf(
+				'INSERT INTO %s (%s) %s ON CONFLICT (%s) DO UPDATE SET %s',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
+				'VALUES ' . implode( ', ', $sql_value_rows ),
+				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $conflict_columns ) ),
+				implode( ', ', $assignments )
+			),
+			'table_name'       => $table_name,
+			'columns'          => $columns,
+			'values'           => $inserted_value_rows[0] ?? array(),
+			'value_rows'       => $inserted_value_rows,
+			'conflict_columns' => $conflict_columns,
+			'inserted_new_row' => count( $inserted_value_rows ) > 0,
 		);
 	}
 
@@ -3249,7 +3274,7 @@ WHERE option_name IN (
 	 * @param int             $position       Current token position, updated on success.
 	 * @param int             $end            Final token position, exclusive.
 	 * @param int             $expected_count Expected number of row values.
-	 * @return string[]|null PostgreSQL VALUES row SQL fragments, or null when unsupported.
+	 * @return array[]|null Translated PostgreSQL VALUES rows, or null when unsupported.
 	 */
 	private function parse_mysql_values_rows( array $tokens, int &$position, int $end, int $expected_count ): ?array {
 		$rows = array();
@@ -3260,7 +3285,7 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$rows[] = '(' . implode( ', ', $values ) . ')';
+			$rows[] = $values;
 
 			if ( $position === $end ) {
 				return $rows;
@@ -3331,6 +3356,7 @@ WHERE option_name IN (
 			}
 		}
 
+		$candidates = array();
 		foreach ( $indexes as $index ) {
 			if ( empty( $index['columns'] ) || $index['has_sub_part'] ) {
 				continue;
@@ -3342,10 +3368,103 @@ WHERE option_name IN (
 				}
 			}
 
-			return $index['columns'];
+			$candidates[] = $index['columns'];
 		}
 
-		return null;
+		return 1 === count( $candidates ) ? $candidates[0] : null;
+	}
+
+	/**
+	 * Get the VALUES rows that will insert rather than update on conflict.
+	 *
+	 * @param string   $table_name       Table name.
+	 * @param string[] $columns          Inserted column names.
+	 * @param array[]  $value_rows       Translated PostgreSQL VALUES rows.
+	 * @param string[] $conflict_columns Conflict target columns.
+	 * @return array[]|null Inserted VALUES rows, or null when unsupported.
+	 */
+	private function get_mysql_upsert_inserted_value_rows( string $table_name, array $columns, array $value_rows, array $conflict_columns ): ?array {
+		$column_indexes = array();
+		foreach ( $columns as $index => $column ) {
+			$column_indexes[ strtolower( $column ) ] = $index;
+		}
+
+		$conflict_indexes = array();
+		foreach ( $conflict_columns as $column ) {
+			$column_key = strtolower( $column );
+			if ( ! isset( $column_indexes[ $column_key ] ) ) {
+				return null;
+			}
+
+			$conflict_indexes[] = array(
+				'column' => $column,
+				'index'  => $column_indexes[ $column_key ],
+			);
+		}
+
+		$inserted_rows = array();
+		foreach ( $value_rows as $values ) {
+			$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
+			if ( null === $conflict_exists ) {
+				return null;
+			}
+
+			if ( $conflict_exists ) {
+				continue;
+			}
+
+			$inserted_rows[] = $values;
+		}
+
+		return $inserted_rows;
+	}
+
+	/**
+	 * Check whether a VALUES row conflicts with the selected upsert target.
+	 *
+	 * @param string $table_name       Table name.
+	 * @param array  $values           Translated PostgreSQL VALUES row.
+	 * @param array  $conflict_indexes Conflict target column/index tuples.
+	 * @return bool|null Whether the row currently conflicts, or null when unsupported.
+	 */
+	private function mysql_upsert_conflict_exists( string $table_name, array $values, array $conflict_indexes ): ?bool {
+		$where = array();
+		foreach ( $conflict_indexes as $conflict_index ) {
+			$value = (string) ( $values[ $conflict_index['index'] ] ?? '' );
+			if ( ! $this->is_mysql_upsert_conflict_probe_value_supported( $value ) ) {
+				return null;
+			}
+
+			if ( 'NULL' === strtoupper( trim( $value ) ) ) {
+				return false;
+			}
+
+			$where[] = sprintf(
+				'%s = %s',
+				$this->connection->quote_identifier( (string) $conflict_index['column'] ),
+				$value
+			);
+		}
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT 1 FROM %s WHERE %s LIMIT 1',
+				$this->connection->quote_identifier( $table_name ),
+				implode( ' AND ', $where )
+			)
+		);
+
+		return false !== $stmt->fetchColumn();
+	}
+
+	/**
+	 * Check whether a conflict probe can safely evaluate a translated value.
+	 *
+	 * @param string $value_sql Translated PostgreSQL value SQL.
+	 * @return bool Whether the value is supported.
+	 */
+	private function is_mysql_upsert_conflict_probe_value_supported( string $value_sql ): bool {
+		return '' !== trim( $value_sql ) && 'DEFAULT' !== strtoupper( trim( $value_sql ) );
 	}
 
 	/**
@@ -3603,17 +3722,26 @@ WHERE option_name IN (
 		}
 
 		if (
-			! isset( $dml_query['table_name'], $dml_query['columns'], $dml_query['values'] )
+			! isset( $dml_query['table_name'], $dml_query['columns'] )
 			|| ! is_array( $dml_query['columns'] )
-			|| ! is_array( $dml_query['values'] )
 		) {
 			return;
 		}
 
-		$explicit_identity_columns = $this->get_explicit_dml_identity_column_lookup(
-			$dml_query['columns'],
-			$dml_query['values']
-		);
+		if ( isset( $dml_query['value_rows'] ) && is_array( $dml_query['value_rows'] ) ) {
+			$explicit_identity_columns = $this->get_explicit_dml_identity_column_lookup_from_rows(
+				$dml_query['columns'],
+				$dml_query['value_rows']
+			);
+		} elseif ( isset( $dml_query['values'] ) && is_array( $dml_query['values'] ) ) {
+			$explicit_identity_columns = $this->get_explicit_dml_identity_column_lookup(
+				$dml_query['columns'],
+				$dml_query['values']
+			);
+		} else {
+			return;
+		}
+
 		if ( empty( $explicit_identity_columns ) || ! $this->is_postgresql_catalog_available_for_dml_identity_repair() ) {
 			return;
 		}
@@ -3664,6 +3792,29 @@ WHERE option_name IN (
 			}
 
 			$explicit_columns[ strtolower( (string) $column ) ] = true;
+		}
+
+		return $explicit_columns;
+	}
+
+	/**
+	 * Get explicitly supplied non-default DML identity columns from VALUES rows.
+	 *
+	 * @param string[] $columns    DML column names.
+	 * @param array[]  $value_rows Translated DML value rows.
+	 * @return array<string, bool> Lowercase column lookup.
+	 */
+	private function get_explicit_dml_identity_column_lookup_from_rows( array $columns, array $value_rows ): array {
+		$explicit_columns = array();
+
+		foreach ( $value_rows as $values ) {
+			if ( ! is_array( $values ) ) {
+				continue;
+			}
+
+			foreach ( $this->get_explicit_dml_identity_column_lookup( $columns, $values ) as $column => $explicit ) {
+				$explicit_columns[ $column ] = $explicit;
+			}
 		}
 
 		return $explicit_columns;
