@@ -232,6 +232,94 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals( '2003-05-27 10:08:48', $result2[0]->option_value );
 	}
 
+	public function testUpdateMultipleTables(): void {
+		$this->assertQuery( 'CREATE TABLE _update_left (id INT, value TEXT)' );
+		$this->assertQuery( 'CREATE TABLE _update_right (id INT, value TEXT)' );
+		$this->assertQuery( "INSERT INTO _update_left VALUES (1, 'left-old'), (2, 'left-keep')" );
+		$this->assertQuery( "INSERT INTO _update_right VALUES (1, 'right-old'), (3, 'right-keep')" );
+
+		$this->assertQuery(
+			'UPDATE _update_left AS l, _update_right AS r
+			SET l.value = r.value, r.value = l.value
+			WHERE l.id = r.id'
+		);
+
+		$this->assertQuery( 'SELECT * FROM _update_left ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'right-old',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'left-keep',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'SELECT * FROM _update_right ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'left-old',
+				),
+				(object) array(
+					'id'    => '3',
+					'value' => 'right-keep',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testUpdateMultipleTablesWithOrderByAndLimit(): void {
+		$this->assertQuery( 'CREATE TABLE _update_left (id INT, value TEXT)' );
+		$this->assertQuery( 'CREATE TABLE _update_right (id INT, value TEXT)' );
+		$this->assertQuery( "INSERT INTO _update_left VALUES (1, 'left-1'), (2, 'left-2')" );
+		$this->assertQuery( "INSERT INTO _update_right VALUES (1, 'right-1'), (2, 'right-2')" );
+
+		$this->assertQuery(
+			'UPDATE _update_left AS l, _update_right AS r
+			SET l.value = r.value, r.value = l.value
+			WHERE l.id = r.id
+			ORDER BY l.id DESC
+			LIMIT 1'
+		);
+
+		$this->assertQuery( 'SELECT * FROM _update_left ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'left-1',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'right-2',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'SELECT * FROM _update_right ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'right-1',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'left-2',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
 	public function testCastAsBinary() {
 		$this->assertQuery(
 			// Use a confusing alias to make sure it replaces only the correct token
@@ -759,6 +847,258 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	public function testShowTablesLikeTemporaryTable() {
+		$this->assertQuery(
+			"CREATE TEMPORARY TABLE _tmp_table (
+				ID INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				option_name TEXT NOT NULL default '',
+				option_value TEXT NOT NULL default ''
+			);"
+		);
+
+		$this->assertQuery(
+			"SHOW TABLES LIKE '_tmp_table';"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Tables_in_wp' => '_tmp_table',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery(
+			"SHOW FULL TABLES LIKE '_tmp_table';"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Tables_in_wp' => '_tmp_table',
+					'Table_type'   => 'BASE TABLE',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testCreateTableAsSelectUpdatesInformationSchema(): void {
+		$this->assertQuery( "INSERT INTO _options (option_name, option_value) VALUES ('ctas-name', 'ctas-value')" );
+
+		$this->assertQuery(
+			"CREATE TABLE _ctas_table AS
+			SELECT option_name, option_value
+			FROM _options
+			WHERE option_name = 'ctas-name'"
+		);
+
+		$this->assertQuery( "SHOW TABLES LIKE '_ctas_table'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Tables_in_wp' => '_ctas_table',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'DESCRIBE _ctas_table' );
+		$this->assertEquals(
+			array( 'option_name', 'option_value' ),
+			array_column( $this->engine->get_query_results(), 'Field' )
+		);
+
+		$this->assertQuery( 'SELECT * FROM _ctas_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'option_name'  => 'ctas-name',
+					'option_value' => 'ctas-value',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testCreateViewUpdatesInformationSchema(): void {
+		$this->assertQuery( 'CREATE VIEW _options_view AS SELECT option_name FROM _options' );
+
+		$this->assertQuery( "SHOW FULL TABLES LIKE '_options_view'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Tables_in_wp' => '_options_view',
+					'Table_type'   => 'VIEW',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'DESCRIBE _options_view' );
+		$this->assertEquals(
+			array( 'option_name' ),
+			array_column( $this->engine->get_query_results(), 'Field' )
+		);
+
+		$this->assertQuery( 'DROP VIEW _options_view' );
+		$this->assertQuery( "SHOW TABLES LIKE '_options_view'" );
+		$this->assertEquals( array(), $this->engine->get_query_results() );
+	}
+
+	public function testCreateTriggerWithSemicolonBody(): void {
+		$this->assertQuery( "INSERT INTO _dates (ID, option_name, option_value) VALUES (1, 'before-trigger', '2026-06-12 00:00:00')" );
+		$this->assertQuery(
+			'CREATE TRIGGER _options_after_update
+			AFTER UPDATE ON _options
+			FOR EACH ROW
+			BEGIN
+				UPDATE _dates SET option_name = NEW.option_name WHERE ID = 1;
+			END'
+		);
+
+		$this->assertQuery( "INSERT INTO _options (ID, option_name, option_value) VALUES (10, 'triggered', '')" );
+		$this->assertQuery( "UPDATE _options SET option_name = 'triggered-new' WHERE ID = 10" );
+		$this->assertQuery( 'SELECT option_name FROM _dates WHERE ID = 1' );
+		$this->assertEquals( 'triggered-new', $this->engine->get_query_results()[0]->option_name );
+	}
+
+	public function testCreateTriggerUpdatesInformationSchema(): void {
+		$this->assertQuery(
+			'CREATE TRIGGER _options_after_insert
+			AFTER INSERT ON _options
+			FOR EACH ROW
+			BEGIN
+				UPDATE _dates SET option_name = NEW.option_name WHERE ID = 1;
+			END'
+		);
+
+		$this->assertQuery(
+			"SELECT
+				trigger_name AS trigger_name,
+				event_manipulation AS event_manipulation,
+				event_object_table AS event_object_table,
+				action_timing AS action_timing
+			FROM information_schema.triggers
+			WHERE trigger_name = '_options_after_insert'"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'trigger_name'       => '_options_after_insert',
+					'event_manipulation' => 'INSERT',
+					'event_object_table' => '_options',
+					'action_timing'      => 'AFTER',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'DROP TRIGGER _options_after_insert' );
+		$this->assertQuery( "SELECT trigger_name FROM information_schema.triggers WHERE trigger_name = '_options_after_insert'" );
+		$this->assertEquals( array(), $this->engine->get_query_results() );
+	}
+
+	public function testCreateAndDropDatabaseMetadata(): void {
+		$this->assertQuery( 'CREATE DATABASE IF NOT EXISTS other CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci' );
+		$this->assertQuery(
+			"SELECT
+				schema_name AS schema_name,
+				default_character_set_name AS default_character_set_name,
+				default_collation_name AS default_collation_name
+			FROM information_schema.schemata
+			WHERE schema_name = 'other'"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'schema_name'                => 'other',
+					'default_character_set_name' => 'utf8mb4',
+					'default_collation_name'     => 'utf8mb4_unicode_ci',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'USE other' );
+		$this->assertQuery( 'USE wp' );
+		$this->assertQuery( 'DROP DATABASE other' );
+		$this->assertQuery( "SELECT schema_name AS schema_name FROM information_schema.schemata WHERE schema_name = 'other'" );
+		$this->assertEquals( array(), $this->engine->get_query_results() );
+	}
+
+	public function testRoutineAndEventMetadata(): void {
+		$this->assertQuery( 'CREATE PROCEDURE _test_procedure() BEGIN SELECT 1; END' );
+		$this->assertQuery( 'CREATE FUNCTION _test_function() RETURNS INT RETURN 1' );
+		$this->assertQuery( 'CREATE EVENT _test_event ON SCHEDULE EVERY 1 DAY DO SELECT 1' );
+
+		$this->assertQuery(
+			"SELECT
+				routine_name AS routine_name,
+				routine_type AS routine_type,
+				data_type AS data_type
+			FROM information_schema.routines
+			WHERE routine_name IN ('_test_procedure', '_test_function')
+			ORDER BY routine_name"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'routine_name' => '_test_function',
+					'routine_type' => 'FUNCTION',
+					'data_type'    => 'int',
+				),
+				(object) array(
+					'routine_name' => '_test_procedure',
+					'routine_type' => 'PROCEDURE',
+					'data_type'    => '',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery(
+			"SELECT
+				event_name AS event_name,
+				event_type AS event_type
+			FROM information_schema.events
+			WHERE event_name = '_test_event'"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'event_name' => '_test_event',
+					'event_type' => 'RECURRING',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'CALL _test_procedure()' );
+		$this->assertQuery( 'DROP FUNCTION _test_function' );
+		$this->assertQuery( 'DROP PROCEDURE _test_procedure' );
+		$this->assertQuery( 'DROP EVENT _test_event' );
+		$this->assertQuery( 'SELECT routine_name FROM information_schema.routines' );
+		$this->assertEquals( array(), $this->engine->get_query_results() );
+		$this->assertQuery( 'SELECT event_name FROM information_schema.events' );
+		$this->assertEquals( array(), $this->engine->get_query_results() );
+	}
+
+	public function testMultiQueryReturnsLastResult(): void {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('multi-1', 'first');
+			INSERT INTO _options (option_name, option_value) VALUES ('multi-2', 'second');
+			SELECT option_value FROM _options WHERE option_name LIKE 'multi-%' ORDER BY option_name"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array( 'option_value' => 'first' ),
+				(object) array( 'option_value' => 'second' ),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
 	public function testShowTableStatusFrom() {
 		// Created in setUp() function
 		$this->assertQuery( 'DROP TABLE _options' );
@@ -1209,6 +1549,58 @@ class WP_SQLite_Driver_Tests extends TestCase {
 			),
 			$results
 		);
+	}
+
+	public function testAlterTableAddParenthesizedColumns(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT)' );
+
+		$this->assertQuery( 'ALTER TABLE _tmp_table ADD COLUMN (a INT DEFAULT 1, b TEXT DEFAULT "bee")' );
+
+		$this->assertQuery( 'DESCRIBE _tmp_table' );
+		$this->assertEquals(
+			array(
+				'id' => null,
+				'a'  => '1',
+				'b'  => 'bee',
+			),
+			array_column( $this->engine->get_query_results(), 'Default', 'Field' )
+		);
+
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (10)' );
+		$this->assertQuery( 'SELECT * FROM _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => '10',
+					'a'  => '1',
+					'b'  => 'bee',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+	}
+
+	public function testAlterTableAlterColumnDefault(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT, a INT DEFAULT 1, b TEXT)' );
+		$this->assertQuery( 'ALTER TABLE _tmp_table ALTER COLUMN a SET DEFAULT (1 + 2)' );
+		$this->assertQuery( "ALTER TABLE _tmp_table ALTER COLUMN b SET DEFAULT 'bee'" );
+
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT * FROM _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => '1',
+					'a'  => '3',
+					'b'  => 'bee',
+				),
+			),
+			$this->engine->get_query_results()
+		);
+
+		$this->assertQuery( 'ALTER TABLE _tmp_table ALTER COLUMN a DROP DEFAULT' );
+		$this->assertQuery( 'DESCRIBE _tmp_table' );
+		$this->assertNull( array_column( $this->engine->get_query_results(), 'Default', 'Field' )['a'] );
 	}
 
 	public function testAlterTableAddNotNullVarcharColumn() {
@@ -5011,10 +5403,16 @@ QUERY
 		$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@session.SQL_mode'} );
 	}
 
-	public function testMultiQueryNotSupported(): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Multi-query is not supported.' );
-		$this->assertQuery( 'SELECT 1; SELECT 2' );
+	public function testMultiQuerySupported(): void {
+		$result = $this->assertQuery( 'SELECT 1 AS value; SELECT 2 AS value' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'value' => '2',
+				),
+			),
+			$result
+		);
 	}
 
 	public function testCreateTableDuplicateTableName(): void {
@@ -9951,9 +10349,34 @@ END;
 			$result
 		);
 
-		// TODO: UPDATE with JOIN on information schema is not supported yet.
+		// UPDATE with JOIN on information schema.
+		$this->assertQuery(
+			'UPDATE t
+			JOIN information_schema.tables it ON t.value = it.table_name
+			SET t.value = it.table_schema
+			WHERE t.id = 1'
+		);
+		$result = $this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'wp',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 't',
+				),
+				(object) array(
+					'id'    => '3',
+					'value' => 't',
+				),
+			),
+			$result
+		);
 
 		// DELETE with JOIN on information schema.
+		$this->assertQuery( 'UPDATE t SET value = "t" WHERE id = 1' );
 		$this->assertQuery( 'UPDATE t SET value = "other" WHERE id > 1' );
 		$this->assertQuery( 'DELETE t FROM t JOIN information_schema.tables it ON t.value = it.table_name' );
 		$result = $this->assertQuery( 'SELECT * FROM t' );
@@ -9969,6 +10392,54 @@ END;
 				),
 			),
 			$result
+		);
+	}
+
+	public function testDeleteWithJoinTargetAlias(): void {
+		$this->assertQuery(
+			'CREATE TABLE _order_items (
+				order_item_id INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				order_id INTEGER NOT NULL,
+				order_item_type TEXT NOT NULL
+			)'
+		);
+		$this->assertQuery(
+			'CREATE TABLE _order_itemmeta (
+				meta_id INTEGER PRIMARY KEY AUTO_INCREMENT NOT NULL,
+				order_item_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO _order_items (order_id, order_item_type) VALUES
+				(13, 'fee'),
+				(13, 'line_item'),
+				(14, 'fee')"
+		);
+		$this->assertQuery(
+			"INSERT INTO _order_itemmeta (order_item_id, meta_key) VALUES
+				(1, 'delete_1'),
+				(1, 'delete_2'),
+				(2, 'keep_line_item'),
+				(3, 'keep_other_order')"
+		);
+
+		$this->assertQuery(
+			"DELETE itemmeta
+			FROM _order_itemmeta AS itemmeta
+			INNER JOIN _order_items AS items
+			WHERE itemmeta.order_item_id = items.order_item_id
+			AND items.order_id = 13
+			AND items.order_item_type = 'fee'"
+		);
+
+		$this->assertQuery( 'SELECT meta_key FROM _order_itemmeta ORDER BY meta_id' );
+		$this->assertEquals(
+			array(
+				(object) array( 'meta_key' => 'keep_line_item' ),
+				(object) array( 'meta_key' => 'keep_other_order' ),
+			),
+			$this->engine->get_query_results()
 		);
 	}
 

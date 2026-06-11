@@ -177,6 +177,27 @@ class WP_PHP_Engine_Tests extends TestCase {
 		);
 	}
 
+	public function testInTableSyntax(): void {
+		$pdo = new WP_PHP_Engine_PDO( 'php-engine::memory:' );
+		$pdo->exec( 'CREATE TABLE t (id INTEGER PRIMARY KEY)' );
+		$pdo->exec( 'INSERT INTO t VALUES (1), (2)' );
+
+		$this->assertSame(
+			array( array( 1, 0 ) ),
+			$pdo->query( 'SELECT 1 IN t, 3 IN t' )->fetchAll( PDO::FETCH_NUM )
+		);
+	}
+
+	public function testInTableFunctionSyntax(): void {
+		$pdo = new WP_PHP_Engine_PDO( 'php-engine::memory:' );
+		$pdo->exec( 'CREATE TABLE t (id INTEGER PRIMARY KEY)' );
+
+		$this->assertSame(
+			array( array( 1, 0 ) ),
+			$pdo->query( "SELECT 0 IN pragma_table_info('t'), 10 IN pragma_table_info('t')" )->fetchAll( PDO::FETCH_NUM )
+		);
+	}
+
 	public function testFullDriverStackOnFileBackedEngine(): void {
 		// The complete MySQL driver stack works on a file-backed engine
 		// across connections.

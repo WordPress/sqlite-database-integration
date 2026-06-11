@@ -59,7 +59,8 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * and if it is not, it will reconstruct missing data and remove stale values.
 	 */
 	public function ensure_correct_information_schema(): void {
-		$sqlite_tables             = $this->get_sqlite_table_names();
+		$sqlite_schema_objects     = $this->get_sqlite_schema_objects();
+		$sqlite_tables             = array_keys( $sqlite_schema_objects );
 		$information_schema_tables = $this->get_information_schema_table_names();
 
 		// In WordPress, use "wp_get_db_schema()" to reconstruct WordPress tables.
@@ -73,7 +74,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 					$ast = $wp_tables[ $table ];
 				} else {
 					// Other table (a WordPress plugin or unrelated to WordPress).
-					$sql = $this->generate_create_table_statement( $table );
+					$sql = $this->generate_create_table_statement( $table, $sqlite_schema_objects[ $table ] );
 					$ast = $this->driver->create_parser( $sql )->parse();
 					if ( null === $ast ) {
 						throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
@@ -88,6 +89,9 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				$this->record_drop_table( $table );
 
 				$this->schema_builder->record_create_table( $ast );
+				if ( 'view' === $sqlite_schema_objects[ $table ] ) {
+					$this->record_view_type( $table );
+				}
 			}
 		}
 
@@ -123,12 +127,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 *
 	 * @return string[] The names of tables in the SQLite database.
 	 */
-	private function get_sqlite_table_names(): array {
-		return $this->driver->execute_sqlite_query(
+	private function get_sqlite_schema_objects(): array {
+		$rows = $this->driver->execute_sqlite_query(
 			"
-				SELECT name
+				SELECT name, type
 				FROM sqlite_master
-				WHERE type = 'table'
+				WHERE type IN ('table', 'view')
 				AND name != ?
 				AND name NOT LIKE ? ESCAPE '\'
 				AND name NOT LIKE ? ESCAPE '\'
@@ -139,7 +143,25 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				'sqlite\_%',
 				str_replace( '_', '\_', WP_PDO_MySQL_On_SQLite::RESERVED_PREFIX ) . '%',
 			)
-		)->fetchAll( PDO::FETCH_COLUMN );
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		return array_column( $rows, 'type', 'name' );
+	}
+
+	/**
+	 * Mark an information schema table record as a view.
+	 *
+	 * @param string $view_name The view name.
+	 */
+	private function record_view_type( string $view_name ): void {
+		$tables_table = $this->schema_builder->get_table_name( false, 'tables' );
+		$this->driver->execute_sqlite_query(
+			sprintf(
+				"UPDATE %s SET table_type = 'VIEW' WHERE table_schema = ? AND table_name = ?",
+				$this->connection->quote_identifier( $tables_table )
+			),
+			array( WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME, $view_name )
+		);
 	}
 
 	/**
@@ -255,7 +277,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @param  string $table_name The name of the table.
 	 * @return string             The CREATE TABLE statement.
 	 */
-	private function generate_create_table_statement( string $table_name ): string {
+	private function generate_create_table_statement( string $table_name, string $object_type = 'table' ): string {
 		// Columns.
 		$columns = $this->driver->execute_sqlite_query(
 			sprintf(
@@ -263,6 +285,25 @@ class WP_SQLite_Information_Schema_Reconstructor {
 				$this->connection->quote_identifier( $table_name )
 			)
 		)->fetchAll( PDO::FETCH_ASSOC );
+
+		if ( 'view' === $object_type && 0 === count( $columns ) ) {
+			$stmt = $this->driver->execute_sqlite_query(
+				sprintf(
+					'SELECT * FROM %s LIMIT 0',
+					$this->connection->quote_identifier( $table_name )
+				)
+			);
+			for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
+				$meta      = $stmt->getColumnMeta( $i );
+				$columns[] = array(
+					'name'       => $meta['name'],
+					'type'       => $meta['sqlite:decl_type'] ?? 'TEXT',
+					'notnull'    => 0,
+					'dflt_value' => null,
+					'pk'         => 0,
+				);
+			}
+		}
 
 		$definitions  = array();
 		$column_types = array();

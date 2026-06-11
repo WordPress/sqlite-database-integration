@@ -229,6 +229,23 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Convert a MySQL date/time function argument to a Unix timestamp.
+	 *
+	 * MySQL date/time extraction functions return NULL when the date/time
+	 * argument is NULL. Avoid passing NULL to strtotime(), which is deprecated
+	 * in PHP 8.1+ and is also not the MySQL behavior these functions emulate.
+	 *
+	 * @param mixed $field Date/time value.
+	 * @return int|false|null Unix timestamp, false for strtotime() failures, or null.
+	 */
+	private function strtotime_or_null( $field ) {
+		if ( null === $field ) {
+			return null;
+		}
+		return strtotime( $field );
+	}
+
+	/**
 	 * Method to extract the month value from the date.
 	 *
 	 * @param string $field Representing the date formatted as 0000-00-00.
@@ -236,13 +253,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return string Representing the number of the month between 1 and 12.
 	 */
 	public function month( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * n - Numeric representation of a month, without leading zeros.
 		 *     1 through 12
 		 */
-		return intval( gmdate( 'n', strtotime( $field ) ) );
+		return intval( gmdate( 'n', $time ) );
 	}
 
 	/**
@@ -253,12 +275,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return string Representing the number of the year.
 	 */
 	public function year( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * Y - A full numeric representation of a year, 4 digits.
 		 */
-		return intval( gmdate( 'Y', strtotime( $field ) ) );
+		return intval( gmdate( 'Y', $time ) );
 	}
 
 	/**
@@ -269,13 +296,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return string Representing the number of the day of the month from 1 and 31.
 	 */
 	public function day( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * j - Day of the month without leading zeros.
 		 *     1 to 31.
 		 */
-		return intval( gmdate( 'j', strtotime( $field ) ) );
+		return intval( gmdate( 'j', $time ) );
 	}
 
 	/**
@@ -288,12 +320,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return number Unsigned integer
 	 */
 	public function second( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * s - Seconds, with leading zeros (00 to 59)
 		 */
-		return intval( gmdate( 's', strtotime( $field ) ) );
+		return intval( gmdate( 's', $time ) );
 	}
 
 	/**
@@ -304,13 +341,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int
 	 */
 	public function minute( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * i - Minutes with leading zeros.
 		 *     00 to 59.
 		 */
-		return intval( gmdate( 'i', strtotime( $field ) ) );
+		return intval( gmdate( 'i', $time ) );
 	}
 
 	/**
@@ -324,13 +366,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int
 	 */
 	public function hour( $time ) {
+		$time = $this->strtotime_or_null( $time );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * H   24-hour format of an hour with leading zeros.
 		 *     00 through 23.
 		 */
-		return intval( gmdate( 'H', strtotime( $time ) ) );
+		return intval( gmdate( 'H', $time ) );
 	}
 
 	/**
@@ -364,6 +411,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param int    $mode  The mode argument.
 	 */
 	public function week( $field, $mode ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
@@ -372,7 +424,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 *
 		 * Week 1 is the first week with a Thursday in it.
 		 */
-		return intval( gmdate( 'W', strtotime( $field ) ) );
+		return intval( gmdate( 'W', $time ) );
 	}
 
 	/**
@@ -393,12 +445,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int
 	 */
 	public function weekday( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/*
 		 * date('N') returns 1 (for Monday) through 7 (for Sunday)
 		 * That's one more than MySQL.
 		 * Let's subtract one to make it compatible.
 		 */
-		return intval( gmdate( 'N', strtotime( $field ) ) ) - 1;
+		return intval( gmdate( 'N', $time ) ) - 1;
 	}
 
 	/**
@@ -411,7 +468,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int Returns the day of the month for date as a number in the range 1 to 31.
 	 */
 	public function dayofmonth( $field ) {
-		return intval( gmdate( 'j', strtotime( $field ) ) );
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+		return intval( gmdate( 'j', $time ) );
 	}
 
 	/**
@@ -425,13 +486,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int Returns the weekday index for date (1 = Sunday, 2 = Monday, …, 7 = Saturday).
 	 */
 	public function dayofweek( $field ) {
+		$time = $this->strtotime_or_null( $field );
+		if ( null === $time ) {
+			return null;
+		}
+
 		/**
 		 * From https://www.php.net/manual/en/datetime.format.php:
 		 *
 		 * `w` – Numeric representation of the day of the week
 		 *     0 (for Sunday) through 6 (for Saturday)
 		 */
-		return intval( gmdate( 'w', strtotime( $field ) ) ) + 1;
+		return intval( gmdate( 'w', $time ) ) + 1;
 	}
 
 	/**
@@ -444,7 +510,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return string formatted as '0000-00-00'.
 	 */
 	public function date( $date ) {
-		return gmdate( 'Y-m-d', strtotime( $date ) );
+		$time = $this->strtotime_or_null( $date );
+		if ( null === $time ) {
+			return null;
+		}
+		return gmdate( 'Y-m-d', $time );
 	}
 
 	/**
@@ -484,6 +554,16 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return integer 1 if matched, 0 if not matched.
 	 */
 	public function regexp( $pattern, $field ) {
+		if ( null === $pattern || null === $field ) {
+			return null;
+		}
+		if ( $pattern instanceof WP_PHP_Engine_Blob ) {
+			$pattern = $pattern->bytes;
+		}
+		if ( $field instanceof WP_PHP_Engine_Blob ) {
+			$field = $field->bytes;
+		}
+
 		/*
 		 * If the original query says REGEXP BINARY
 		 * the comparison is byte-by-byte and letter casing now

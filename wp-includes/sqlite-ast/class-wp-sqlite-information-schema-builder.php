@@ -34,10 +34,6 @@ class WP_SQLite_Information_Schema_Builder {
 	 *  - STATISTICS (indexes)
 	 *  - TABLE_CONSTRAINTS
 	 *  - CHECK_CONSTRAINTS
-	 *
-	 * TODO (not yet implemented):
-	 *  - VIEWS
-	 *  - TRIGGERS
 	 */
 	const INFORMATION_SCHEMA_TABLE_DEFINITIONS = array(
 		// INFORMATION_SCHEMA.SCHEMATA
@@ -187,6 +183,98 @@ class WP_SQLite_Information_Schema_Builder {
 			CONSTRAINT_NAME TEXT NOT NULL COLLATE NOCASE,                  -- constraint name
 			CHECK_CLAUSE TEXT NOT NULL COLLATE BINARY,                     -- check clause
 			PRIMARY KEY (CONSTRAINT_SCHEMA, CONSTRAINT_NAME)
+		",
+
+		// INFORMATION_SCHEMA.TRIGGERS
+		'triggers'                => "
+			TRIGGER_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE,      -- always 'def'
+			TRIGGER_SCHEMA TEXT NOT NULL COLLATE NOCASE,                     -- trigger database name
+			TRIGGER_NAME TEXT NOT NULL COLLATE NOCASE,                       -- trigger name
+			EVENT_MANIPULATION TEXT NOT NULL COLLATE NOCASE,                 -- INSERT, UPDATE, or DELETE
+			EVENT_OBJECT_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE, -- always 'def'
+			EVENT_OBJECT_SCHEMA TEXT NOT NULL COLLATE NOCASE,                -- target table database name
+			EVENT_OBJECT_TABLE TEXT NOT NULL COLLATE NOCASE,                 -- target table name
+			ACTION_ORDER INTEGER NOT NULL DEFAULT 1,                         -- execution order
+			ACTION_CONDITION TEXT COLLATE BINARY,                            -- not implemented
+			ACTION_STATEMENT TEXT NOT NULL COLLATE BINARY,                   -- trigger body
+			ACTION_ORIENTATION TEXT NOT NULL DEFAULT 'ROW' COLLATE NOCASE,   -- always ROW
+			ACTION_TIMING TEXT NOT NULL COLLATE NOCASE,                      -- BEFORE or AFTER
+			ACTION_REFERENCE_OLD_TABLE TEXT COLLATE NOCASE,                  -- not implemented
+			ACTION_REFERENCE_NEW_TABLE TEXT COLLATE NOCASE,                  -- not implemented
+			ACTION_REFERENCE_OLD_ROW TEXT NOT NULL DEFAULT 'OLD' COLLATE NOCASE,
+			ACTION_REFERENCE_NEW_ROW TEXT NOT NULL DEFAULT 'NEW' COLLATE NOCASE,
+			CREATED TEXT,                                                    -- creation timestamp
+			SQL_MODE TEXT NOT NULL DEFAULT '' COLLATE BINARY,                -- active SQL mode at creation time
+			DEFINER TEXT NOT NULL DEFAULT '' COLLATE BINARY,                 -- not implemented
+			CHARACTER_SET_CLIENT TEXT NOT NULL DEFAULT 'utf8mb4' COLLATE NOCASE,
+			COLLATION_CONNECTION TEXT NOT NULL DEFAULT 'utf8mb4_0900_ai_ci' COLLATE NOCASE,
+			DATABASE_COLLATION TEXT NOT NULL DEFAULT 'utf8mb4_0900_ai_ci' COLLATE NOCASE,
+			PRIMARY KEY (TRIGGER_SCHEMA, TRIGGER_NAME)
+		",
+
+		// INFORMATION_SCHEMA.ROUTINES
+		'routines'                => "
+			SPECIFIC_NAME TEXT NOT NULL COLLATE NOCASE,                       -- routine name
+			ROUTINE_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE,       -- always 'def'
+			ROUTINE_SCHEMA TEXT NOT NULL COLLATE NOCASE,                      -- routine database name
+			ROUTINE_NAME TEXT NOT NULL COLLATE NOCASE,                        -- routine name
+			ROUTINE_TYPE TEXT NOT NULL COLLATE NOCASE,                        -- PROCEDURE or FUNCTION
+			DATA_TYPE TEXT NOT NULL DEFAULT '' COLLATE BINARY,                -- function return type, empty for procedures
+			CHARACTER_MAXIMUM_LENGTH INTEGER,
+			CHARACTER_OCTET_LENGTH INTEGER,
+			NUMERIC_PRECISION INTEGER,
+			NUMERIC_SCALE INTEGER,
+			DATETIME_PRECISION INTEGER,
+			CHARACTER_SET_NAME TEXT COLLATE NOCASE,
+			COLLATION_NAME TEXT COLLATE NOCASE,
+			DTD_IDENTIFIER TEXT COLLATE BINARY,
+			ROUTINE_BODY TEXT NOT NULL DEFAULT 'SQL' COLLATE NOCASE,
+			ROUTINE_DEFINITION TEXT COLLATE BINARY,
+			EXTERNAL_NAME TEXT COLLATE BINARY,
+			EXTERNAL_LANGUAGE TEXT COLLATE NOCASE,
+			PARAMETER_STYLE TEXT NOT NULL DEFAULT 'SQL' COLLATE NOCASE,
+			IS_DETERMINISTIC TEXT NOT NULL DEFAULT 'NO' COLLATE NOCASE,
+			SQL_DATA_ACCESS TEXT NOT NULL DEFAULT 'CONTAINS SQL' COLLATE NOCASE,
+			SQL_PATH TEXT COLLATE NOCASE,
+			SECURITY_TYPE TEXT NOT NULL DEFAULT 'DEFINER' COLLATE NOCASE,
+			CREATED TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			LAST_ALTERED TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			SQL_MODE TEXT NOT NULL DEFAULT '' COLLATE BINARY,
+			ROUTINE_COMMENT TEXT NOT NULL DEFAULT '' COLLATE BINARY,
+			DEFINER TEXT NOT NULL DEFAULT '' COLLATE BINARY,
+			CHARACTER_SET_CLIENT TEXT NOT NULL DEFAULT 'utf8mb4' COLLATE NOCASE,
+			COLLATION_CONNECTION TEXT NOT NULL DEFAULT 'utf8mb4_0900_ai_ci' COLLATE NOCASE,
+			DATABASE_COLLATION TEXT NOT NULL DEFAULT 'utf8mb4_0900_ai_ci' COLLATE NOCASE,
+			PRIMARY KEY (ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE)
+		",
+
+		// INFORMATION_SCHEMA.EVENTS
+		'events'                  => "
+			EVENT_CATALOG TEXT NOT NULL DEFAULT 'def' COLLATE NOCASE,       -- always 'def'
+			EVENT_SCHEMA TEXT NOT NULL COLLATE NOCASE,                      -- event database name
+			EVENT_NAME TEXT NOT NULL COLLATE NOCASE,                        -- event name
+			DEFINER TEXT NOT NULL DEFAULT '' COLLATE BINARY,
+			TIME_ZONE TEXT NOT NULL DEFAULT 'SYSTEM' COLLATE NOCASE,
+			EVENT_BODY TEXT NOT NULL DEFAULT 'SQL' COLLATE NOCASE,
+			EVENT_DEFINITION TEXT COLLATE BINARY,
+			EVENT_TYPE TEXT NOT NULL COLLATE NOCASE,                        -- ONE TIME or RECURRING
+			EXECUTE_AT TEXT,
+			INTERVAL_VALUE TEXT COLLATE BINARY,
+			INTERVAL_FIELD TEXT COLLATE NOCASE,
+			SQL_MODE TEXT NOT NULL DEFAULT '' COLLATE BINARY,
+			STARTS TEXT,
+			ENDS TEXT,
+			STATUS TEXT NOT NULL DEFAULT 'ENABLED' COLLATE NOCASE,
+			ON_COMPLETION TEXT NOT NULL DEFAULT 'NOT PRESERVE' COLLATE NOCASE,
+			CREATED TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			LAST_ALTERED TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			LAST_EXECUTED TEXT,
+			EVENT_COMMENT TEXT NOT NULL DEFAULT '' COLLATE BINARY,
+			ORIGINATOR INTEGER NOT NULL DEFAULT 0,
+			CHARACTER_SET_CLIENT TEXT NOT NULL DEFAULT 'utf8mb4' COLLATE NOCASE,
+			COLLATION_CONNECTION TEXT NOT NULL DEFAULT 'utf8mb4_0900_ai_ci' COLLATE NOCASE,
+			DATABASE_COLLATION TEXT NOT NULL DEFAULT 'utf8mb4_0900_ai_ci' COLLATE NOCASE,
+			PRIMARY KEY (EVENT_SCHEMA, EVENT_NAME)
 		",
 	);
 
@@ -661,7 +749,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$column_definitions = $action->get_descendant_nodes( 'columnDefinition' );
 				if ( count( $column_definitions ) > 0 ) {
 					foreach ( $column_definitions as $column_definition ) {
-						$name = $this->get_value( $column_definition->get_first_child_node( 'identifier' ) );
+						$name = $this->get_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
 						$this->record_add_column( $table_is_temporary, $table_name, $name, $column_definition );
 					}
 					continue;
@@ -755,6 +843,30 @@ class WP_SQLite_Information_Schema_Builder {
 				if ( $action->has_child_node( 'keyOrIndex' ) ) {
 					$name = $this->get_value( $action->get_first_child_node( 'indexRef' ) );
 					$this->record_drop_index_data( $table_is_temporary, $table_name, $name );
+					continue;
+				}
+			}
+
+			// ALTER [COLUMN] ... SET/DROP DEFAULT
+			if ( WP_MySQL_Lexer::ALTER_SYMBOL === $first_token->id ) {
+				$column_ref  = $action->get_first_child_node( 'fieldIdentifier' );
+				$column_name = $this->get_value( $column_ref );
+
+				if ( $action->has_child_token( WP_MySQL_Lexer::DROP_SYMBOL ) ) {
+					$this->record_alter_column_default( $table_is_temporary, $table_name, $column_name, null, false );
+					continue;
+				}
+
+				if ( $action->has_child_token( WP_MySQL_Lexer::SET_SYMBOL ) ) {
+					$default_value = $this->get_default_value_from_node( $action );
+					$is_generated  = $this->is_default_value_generated( $action );
+					$this->record_alter_column_default(
+						$table_is_temporary,
+						$table_name,
+						$column_name,
+						$default_value,
+						$is_generated
+					);
 					continue;
 				}
 			}
@@ -984,6 +1096,53 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $node
 	): void {
 		$this->record_change_column( $table_is_temporary, $table_name, $column_name, $column_name, $node );
+	}
+
+	/**
+	 * Record ALTER COLUMN SET/DROP DEFAULT data in the information schema.
+	 *
+	 * @param bool        $table_is_temporary Whether the table is temporary.
+	 * @param string      $table_name         The table name.
+	 * @param string      $column_name        The column name.
+	 * @param string|null $default_value      The default value, or null for DROP DEFAULT.
+	 * @param bool        $is_generated       Whether the default is an expression.
+	 */
+	private function record_alter_column_default(
+		bool $table_is_temporary,
+		string $table_name,
+		string $column_name,
+		?string $default_value,
+		bool $is_generated
+	): void {
+		$columns_table_name = $this->get_table_name( $table_is_temporary, 'columns' );
+		$extra              = (string) $this->connection->query(
+			'SELECT extra FROM ' . $this->connection->quote_identifier( $columns_table_name ) . '
+				WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+			array( self::SAVED_DATABASE_NAME, $table_name, $column_name )
+		)->fetchColumn();
+
+		$extras = array_filter(
+			preg_split( '/\\s+/', $extra ),
+			function ( string $item ): bool {
+				return 'DEFAULT_GENERATED' !== $item;
+			}
+		);
+		if ( $is_generated ) {
+			$extras[] = 'DEFAULT_GENERATED';
+		}
+
+		$this->update_values(
+			$columns_table_name,
+			array(
+				'column_default' => $default_value,
+				'extra'          => implode( ' ', $extras ),
+			),
+			array(
+				'table_schema' => self::SAVED_DATABASE_NAME,
+				'table_name'   => $table_name,
+				'column_name'  => $column_name,
+			)
+		);
 	}
 
 	/**
@@ -2097,6 +2256,51 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		throw new Exception( 'DEFAULT value of this type is not supported.' );
+	}
+
+	/**
+	 * Extract a DEFAULT value from a node that directly contains a default value.
+	 *
+	 * @param  WP_Parser_Node $node The AST node containing a DEFAULT clause.
+	 * @return string|null          The default value as stored in information schema.
+	 */
+	private function get_default_value_from_node( WP_Parser_Node $node ): ?string {
+		if ( $node->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
+			return 'CURRENT_TIMESTAMP';
+		}
+
+		$signed_literal = $node->get_first_child_node( 'signedLiteral' );
+		if ( $signed_literal ) {
+			$literal = $signed_literal->get_first_child_node( 'literal' );
+			if ( $literal && $literal->has_child_node( 'nullLiteral' ) ) {
+				return null;
+			}
+
+			if ( $literal && $literal->has_child_node( 'boolLiteral' ) ) {
+				$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
+				return $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
+			}
+
+			return $this->get_value( $signed_literal );
+		}
+
+		$expr_with_parens = $node->get_first_child_node( 'exprWithParentheses' );
+		if ( $expr_with_parens ) {
+			return $this->serialize_mysql_expression( $expr_with_parens );
+		}
+
+		throw new Exception( 'DEFAULT value of this type is not supported.' );
+	}
+
+	/**
+	 * Check whether a DEFAULT value is generated from an expression.
+	 *
+	 * @param  WP_Parser_Node $node The AST node containing a DEFAULT clause.
+	 * @return bool                True when the default value is generated.
+	 */
+	private function is_default_value_generated( WP_Parser_Node $node ): bool {
+		return $node->has_child_node( 'exprWithParentheses' )
+			|| $node->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL );
 	}
 
 	/**

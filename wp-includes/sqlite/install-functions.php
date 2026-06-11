@@ -24,22 +24,21 @@ function sqlite_make_db_sqlite() {
 
 	$table_schemas = wp_get_db_schema();
 	$queries       = explode( ';', $table_schemas );
-	try {
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class; // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-		$pdo       = new $pdo_class( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
-	} catch ( PDOException $err ) {
-		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-		$message  = 'Database connection error!<br />';
-		$message .= sprintf( 'Error message is: %s', $err_data[2] );
-		wp_die( $message, 'Database Error!' );
-	}
-
 	if ( defined( 'WP_SQLITE_AST_DRIVER' ) && WP_SQLITE_AST_DRIVER ) {
 		$translator = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'pdo' => $pdo ) ),
+			new WP_SQLite_Connection( array( 'path' => FQDB ) ),
 			$wpdb->dbname
 		);
 	} else {
+		try {
+			$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class; // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+			$pdo       = new $pdo_class( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
+		} catch ( PDOException $err ) {
+			$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+			$message  = 'Database connection error!<br />';
+			$message .= sprintf( 'Error message is: %s', $err_data[2] );
+			wp_die( $message, 'Database Error!' );
+		}
 		$translator = new WP_SQLite_Translator( $pdo );
 	}
 	$query = null;

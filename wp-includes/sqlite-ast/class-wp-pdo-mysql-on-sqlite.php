@@ -866,37 +866,52 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
 			}
 
-			if ( $parser->next_query() ) {
-				throw $this->new_driver_exception( 'Multi-query is not supported.' );
+			$asts = array( $ast );
+			while ( $parser->next_query() ) {
+				$ast = $parser->get_query_ast();
+				if ( null === $ast ) {
+					throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+				}
+				$asts[] = $ast;
 			}
 
-			/*
-			 * Determine if we need to wrap the translated queries in a transaction.
-			 *
-			 * [GRAMMAR]
-			 * query:
-			 *   EOF
-			 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
-			 */
-			$child_node = $ast->get_first_child_node();
-			if (
-				null === $child_node
-				|| 'beginWork' === $child_node->rule_name
-				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
-			) {
-				$wrap_in_transaction = false;
-			} else {
-				$wrap_in_transaction = true;
-			}
+			foreach ( $asts as $i => $ast ) {
+				if ( $i > 0 ) {
+					$this->last_result_statement    = null;
+					$this->last_affected_rows       = null;
+					$this->last_column_meta         = array();
+					$this->is_readonly              = false;
+					$this->wrapper_transaction_type = null;
+				}
 
-			if ( $wrap_in_transaction ) {
-				$this->begin_wrapper_transaction();
-			}
+				/*
+				 * Determine if we need to wrap the translated queries in a transaction.
+				 *
+				 * [GRAMMAR]
+				 * query:
+				 *   EOF
+				 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
+				 */
+				$child_node = $ast->get_first_child_node();
+				if (
+					null === $child_node
+					|| 'beginWork' === $child_node->rule_name
+					|| $child_node->has_child_node( 'transactionOrLockingStatement' )
+				) {
+					$wrap_in_transaction = false;
+				} else {
+					$wrap_in_transaction = true;
+				}
 
-			$this->execute_mysql_query( $ast );
+				if ( $wrap_in_transaction ) {
+					$this->begin_wrapper_transaction();
+				}
 
-			if ( $wrap_in_transaction ) {
-				$this->commit_wrapper_transaction();
+				$this->execute_mysql_query( $ast );
+
+				if ( $wrap_in_transaction ) {
+					$this->commit_wrapper_transaction();
+				}
 			}
 
 			if ( null === $this->last_result_statement ) {
@@ -1323,6 +1338,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Ensure the emulated information schema matches the SQLite schema.
+	 */
+	private function ensure_correct_information_schema(): void {
+		$reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
+			$this,
+			$this->information_schema_builder
+		);
+		$reconstructor->ensure_correct_information_schema();
+	}
+
+	/**
 	 * Translate and execute a MySQL query in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "query" AST node with "simpleStatement" child.
@@ -1383,19 +1409,26 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$subtree = $node->get_first_child_node();
 				switch ( $subtree->rule_name ) {
 					case 'createDatabase':
-						/*
-						 * TODO:
-						 * We could support this by creating a new SQLite database
-						 * file (e.g., $slugified_db_name.sqlite).
-						 *
-						 * Alternatively, it could be a no-op, in combination with
-						 * DROP DATABASE deleting the data file and recreating it.
-						 */
+						$this->execute_create_database_statement( $node );
+						break;
 					case 'createTable':
 						$this->execute_create_table_statement( $node );
 						break;
 					case 'createIndex':
 						$this->execute_create_index_statement( $node );
+						break;
+					case 'createView':
+						$this->execute_create_view_statement( $node );
+						break;
+					case 'createTrigger':
+						$this->execute_create_trigger_statement( $node );
+						break;
+					case 'createProcedure':
+					case 'createFunction':
+						$this->execute_create_routine_statement( $node );
+						break;
+					case 'createEvent':
+						$this->execute_create_event_statement( $node );
 						break;
 					default:
 						throw $this->new_not_supported_exception(
@@ -1426,11 +1459,28 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			case 'dropStatement':
 				$subtree = $node->get_first_child_node();
 				switch ( $subtree->rule_name ) {
+					case 'dropDatabase':
+						$this->execute_drop_database_statement( $node );
+						break;
 					case 'dropTable':
 						$this->execute_drop_table_statement( $node );
 						break;
 					case 'dropIndex':
 						$this->execute_drop_index_statement( $node );
+						break;
+					case 'dropView':
+						$this->last_result_statement = $this->execute_sqlite_query( $this->translate( $node ) );
+						$this->ensure_correct_information_schema();
+						break;
+					case 'dropTrigger':
+						$this->execute_drop_trigger_statement( $node );
+						break;
+					case 'dropProcedure':
+					case 'dropFunction':
+						$this->execute_drop_routine_statement( $node );
+						break;
+					case 'dropEvent':
+						$this->execute_drop_event_statement( $node );
 						break;
 					default:
 						$query                       = $this->translate( $node );
@@ -1469,6 +1519,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				break;
 			case 'tableAdministrationStatement':
 				$this->execute_administration_statement( $node );
+				break;
+			case 'callStatement':
+				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
 				break;
 			default:
 				throw $this->new_not_supported_exception(
@@ -1950,9 +2003,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_update_statement( WP_Parser_Node $node ): void {
-		// @TODO: Add support for UPDATE with multiple tables and JOINs.
-		//        SQLite supports them in the FROM clause.
-
 		$has_order = $node->has_child_node( 'orderClause' );
 		$has_limit = $node->has_child_node( 'simpleLimitClause' );
 
@@ -1990,21 +2040,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$table_alias_map = $this->create_table_reference_map(
 			$node->get_first_child_node( 'tableReferenceList' )
 		);
-
-		/*
-		 * Deny UPDATE for information schema tables.
-		 *
-		 * This basic approach is rather restrictive, as it blocks the usage
-		 * of information schema tables anywhere in the UPDATE statement.
-		 *
-		 * TODO: Implement support for UPDATE statements like:
-		 *         UPDATE t, information_schema.columns c SET t.column = c.column ...
-		 */
-		foreach ( $table_alias_map as $alias => $data ) {
-			if ( 'information_schema' === strtolower( $data['database'] ?? '' ) ) {
-				throw $this->new_access_denied_to_information_schema_exception();
-			}
-		}
 
 		// Determine whether the UPDATE statement modifies multiple tables.
 		$update_list_node        = $node->get_first_child_node( 'updateList' );
@@ -2087,11 +2122,26 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$update_target = array_keys( $table_alias_map )[0];
 		}
 
-		// TODO: Support UPDATE that modifies multiple tables.
-		//       This is non-trivial and likely requires temporary tables.
-		//       E.g.: UPDATE t1, t2 SET t1.id = t2.id, t2.id = t1.id;
+		if ( null === $update_target ) {
+			foreach ( $table_alias_map as $data ) {
+				if ( 'information_schema' === strtolower( $data['database'] ?? '' ) ) {
+					throw $this->new_access_denied_to_information_schema_exception();
+				}
+			}
+
+			throw $this->new_not_supported_exception( 'UPDATE target could not be resolved' );
+		}
+
+		if (
+			isset( $table_alias_map[ $update_target ] )
+			&& 'information_schema' === strtolower( $table_alias_map[ $update_target ]['database'] ?? '' )
+		) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
 		if ( $updates_multiple_tables ) {
-			throw $this->new_not_supported_exception( 'UPDATE statement modifying multiple tables' );
+			$this->execute_multi_table_update_statement( $node, $table_alias_map );
+			return;
 		}
 
 		// Translate WITH clause.
@@ -2121,6 +2171,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			// Derived table.
 			if ( null === $table_name ) {
+				$from_item    = $data['table_expr'] . ' AS ' . $this->quote_sqlite_identifier( $alias );
+				$from_items[] = $from_item;
+				continue;
+			}
+
+			if ( 'information_schema' === strtolower( $data['database'] ?? '' ) ) {
 				$from_item    = $data['table_expr'] . ' AS ' . $this->quote_sqlite_identifier( $alias );
 				$from_items[] = $from_item;
 				continue;
@@ -2180,6 +2236,147 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Execute a MySQL UPDATE statement that modifies multiple tables.
+	 *
+	 * @param WP_Parser_Node $node            The "updateStatement" AST node.
+	 * @param array          $table_alias_map Table reference map from create_table_reference_map().
+	 */
+	private function execute_multi_table_update_statement( WP_Parser_Node $node, array $table_alias_map ): void {
+		$assignments_by_alias = array();
+		$update_list_node     = $node->get_first_child_node( 'updateList' );
+		foreach ( $update_list_node->get_child_nodes( 'updateElement' ) as $i => $update_element ) {
+			$column_ref       = $update_element->get_first_child_node( 'columnRef' );
+			$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
+			$table_or_alias   = count( $column_ref_parts ) > 1
+				? $this->unquote_sqlite_identifier( $this->translate( $column_ref_parts[0] ) )
+				: null;
+			$column_name      = $this->unquote_sqlite_identifier( $this->translate( end( $column_ref_parts ) ) );
+
+			if ( null === $table_or_alias ) {
+				$matching_aliases = array();
+				foreach ( $table_alias_map as $alias => $data ) {
+					if ( null !== $data['table_name'] && $this->table_has_column( $data['table_name'], $column_name ) ) {
+						$matching_aliases[] = $alias;
+					}
+				}
+				if ( 1 !== count( $matching_aliases ) ) {
+					throw $this->new_driver_exception(
+						sprintf(
+							"SQLSTATE[23000]: Integrity constraint violation: 1052 Column '%s' in field list is ambiguous",
+							$column_name
+						),
+						'23000'
+					);
+				}
+				$table_or_alias = $matching_aliases[0];
+			} elseif ( ! isset( $table_alias_map[ $table_or_alias ] ) ) {
+				foreach ( $table_alias_map as $alias => $data ) {
+					if ( $data['table_name'] === $table_or_alias ) {
+						$table_or_alias = $alias;
+						break;
+					}
+				}
+			}
+
+			if ( ! isset( $table_alias_map[ $table_or_alias ] ) || null === $table_alias_map[ $table_or_alias ]['table_name'] ) {
+				if (
+					isset( $table_alias_map[ $table_or_alias ] )
+					&& 'information_schema' === strtolower( $table_alias_map[ $table_or_alias ]['database'] ?? '' )
+				) {
+					throw $this->new_access_denied_to_information_schema_exception();
+				}
+
+				throw $this->new_not_supported_exception( 'multi-table UPDATE target is not a base table' );
+			}
+
+			$expr        = $update_element->get_first_child_node( 'expr' );
+			$value_alias = sprintf( '_wp_sqlite_update_value_%d', $i );
+			$value_sql   = null === $expr ? 'NULL' : $this->translate( $expr );
+
+			$assignments_by_alias[ $table_or_alias ][] = array(
+				'column'      => $column_name,
+				'value_sql'   => $value_sql,
+				'value_alias' => $value_alias,
+			);
+		}
+
+		$select_list = array();
+		foreach ( array_keys( $assignments_by_alias ) as $alias ) {
+			$select_list[] = sprintf(
+				'%s.rowid AS %s',
+				$this->quote_sqlite_identifier( $alias ),
+				$this->quote_sqlite_identifier( $alias . '_rowid' )
+			);
+		}
+		foreach ( $assignments_by_alias as $assignments ) {
+			foreach ( $assignments as $assignment ) {
+				$select_list[] = sprintf(
+					'%s AS %s',
+					$assignment['value_sql'],
+					$this->quote_sqlite_identifier( $assignment['value_alias'] )
+				);
+			}
+		}
+
+		$where_clause = $this->translate( $node->get_first_child_node( 'whereClause' ) );
+		$join_exprs   = array_filter( array_column( $table_alias_map, 'join_expr' ) );
+		if ( count( $join_exprs ) > 0 ) {
+			$where_clause .= $where_clause ? ' AND ' : ' WHERE ';
+			$where_clause .= implode( ' AND ', $join_exprs );
+		}
+
+		$rows = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT %s FROM %s %s %s %s',
+				implode( ', ', $select_list ),
+				$this->translate( $node->get_first_child_node( 'tableReferenceList' ) ),
+				$where_clause,
+				$this->translate( $node->get_first_child_node( 'orderClause' ) ),
+				$this->translate( $node->get_first_child_node( 'simpleLimitClause' ) )
+			)
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$updates_by_alias_and_rowid = array();
+		foreach ( $rows as $row ) {
+			foreach ( $assignments_by_alias as $alias => $assignments ) {
+				$rowid = $row[ $alias . '_rowid' ];
+				foreach ( $assignments as $assignment ) {
+					$updates_by_alias_and_rowid[ $alias ][ $rowid ][ $assignment['column'] ] = $row[ $assignment['value_alias'] ];
+				}
+			}
+		}
+
+		$affected_rows = 0;
+		foreach ( $updates_by_alias_and_rowid as $alias => $updates_by_rowid ) {
+			$table_name = $table_alias_map[ $alias ]['table_name'];
+			foreach ( $updates_by_rowid as $rowid => $updates ) {
+				$set = array();
+				foreach ( $updates as $column => $value ) {
+					$set[] = sprintf(
+						'%s = %s',
+						$this->quote_sqlite_identifier( $column ),
+						null === $value ? 'NULL' : $this->quote_sqlite_value( (string) $value )
+					);
+				}
+
+				$stmt           = $this->execute_sqlite_query(
+					sprintf(
+						'UPDATE %s AS %s SET %s WHERE rowid = %s',
+						$this->quote_sqlite_identifier( $table_name ),
+						$this->quote_sqlite_identifier( $alias ),
+						implode( ', ', $set ),
+						$this->quote_sqlite_value( (string) $rowid )
+					)
+				);
+				$affected_rows += $stmt->rowCount();
+			}
+		}
+
+		$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
+		$this->last_affected_rows    = $affected_rows;
+	}
+
+	/**
 	 * Translate and execute a MySQL DELETE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "deleteStatement" AST node.
@@ -2214,7 +2411,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$table_ref  = $single_table->get_first_child_node( 'tableRef' );
 				$alias_node = $single_table->get_first_child_node( 'tableAlias' );
 				if ( $alias_node ) {
-					$alias = $this->unquote_sqlite_identifier( $this->translate( $alias_node ) );
+					$alias = $this->unquote_sqlite_identifier(
+						$this->translate( $alias_node->get_first_child_node( 'identifier' ) )
+					);
 				} else {
 					$alias = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				}
@@ -2289,6 +2488,71 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Record a MySQL CREATE DATABASE statement in INFORMATION_SCHEMA.SCHEMATA.
+	 *
+	 * SQLite still uses a single backing database; this supports migration code
+	 * that creates, drops, and switches logical schemas before running queries.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with "createDatabase" child.
+	 */
+	private function execute_create_database_statement( WP_Parser_Node $node ): void {
+		$create_database = $node->get_first_child_node( 'createDatabase' );
+		$database_name   = strtolower( $this->get_object_name( $create_database->get_first_child_node( 'schemaName' ) ) );
+		$charset         = 'utf8mb4';
+		$collation       = WP_SQLite_Information_Schema_Builder::CHARSET_DEFAULT_COLLATION_MAP[ $charset ];
+
+		foreach ( $create_database->get_child_nodes( 'createDatabaseOption' ) as $option ) {
+			$charset_node = $option->get_first_descendant_node( 'charsetName' );
+			if ( $charset_node ) {
+				$charset   = strtolower( $this->get_object_name( $charset_node ) );
+				$collation = WP_SQLite_Information_Schema_Builder::CHARSET_DEFAULT_COLLATION_MAP[ $charset ] ?? $collation;
+			}
+
+			$collation_node = $option->get_first_descendant_node( 'collationName' );
+			if ( $collation_node ) {
+				$collation = strtolower( $this->get_object_name( $collation_node ) );
+			}
+		}
+
+		$schemata_table              = $this->information_schema_builder->get_table_name( false, 'schemata' );
+		$this->last_result_statement = $this->execute_sqlite_query(
+			sprintf(
+				'INSERT OR REPLACE INTO %s (
+					schema_name, default_character_set_name, default_collation_name
+				) VALUES ( ?, ?, ? )',
+				$this->quote_sqlite_identifier( $schemata_table )
+			),
+			array( $database_name, $charset, $collation )
+		);
+	}
+
+	/**
+	 * Record a MySQL DROP DATABASE statement in INFORMATION_SCHEMA.SCHEMATA.
+	 *
+	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropDatabase" child.
+	 */
+	private function execute_drop_database_statement( WP_Parser_Node $node ): void {
+		$drop_database = $node->get_first_child_node( 'dropDatabase' );
+		$database_name = strtolower( $this->get_object_name( $drop_database->get_first_child_node( 'schemaRef' ) ) );
+
+		if ( $this->main_db_name === $database_name || 'information_schema' === $database_name ) {
+			throw $this->new_not_supported_exception( "DROP DATABASE for built-in schema '$database_name'" );
+		}
+
+		$schemata_table              = $this->information_schema_builder->get_table_name( false, 'schemata' );
+		$this->last_result_statement = $this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE schema_name = ?',
+				$this->quote_sqlite_identifier( $schemata_table )
+			),
+			array( $database_name )
+		);
+		if ( $this->db_name === $database_name ) {
+			$this->db_name = $this->main_db_name;
+		}
+	}
+
+	/**
 	 * Translate and execute a MySQL CREATE TABLE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "createStatement" AST node with "createTable" child.
@@ -2303,16 +2567,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Handle CREATE TABLE ... [AS] SELECT.
 		$element_list = $subnode->get_first_child_node( 'tableElementList' );
 		if ( null === $element_list ) {
-			/*
-			 * While SQLite supports CREATE TABLE ... AS SELECT statements,
-			 * we need to somehow implement information schema support for
-			 * the tables created in this way.
-			 *
-			 * TODO: Implement information schema support for CREATE TABLE ... AS SELECT.
-			 */
-			throw $this->new_not_supported_exception(
-				'CREATE TABLE ... [AS] SELECT is currently not supported'
-			);
+			$this->last_result_statement = $this->execute_sqlite_query( $this->translate( $node ) );
+			$this->ensure_correct_information_schema();
+			return;
 		}
 
 		// Get table name.
@@ -2354,6 +2611,250 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		foreach ( $constraint_queries as $query ) {
 			$this->execute_sqlite_query( $query );
 		}
+	}
+
+	/**
+	 * Translate and execute a MySQL CREATE VIEW statement in SQLite.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with "createView" child.
+	 */
+	private function execute_create_view_statement( WP_Parser_Node $node ): void {
+		$view_ref = $node->get_first_descendant_node( 'viewRef' );
+		if ( $view_ref && 'information_schema' === strtolower( $this->get_database_name( $view_ref ) ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$this->last_result_statement = $this->execute_sqlite_query( $this->translate( $node ) );
+		$this->ensure_correct_information_schema();
+	}
+
+	/**
+	 * Translate and execute a MySQL CREATE TRIGGER statement in SQLite.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with "createTrigger" child.
+	 */
+	private function execute_create_trigger_statement( WP_Parser_Node $node ): void {
+		$create_trigger = $node->get_first_child_node( 'createTrigger' );
+		$trigger_name   = $this->get_object_name( $create_trigger->get_first_child_node( 'triggerName' ) );
+		$trigger_schema = $this->get_database_name( $create_trigger->get_first_child_node( 'triggerName' ) );
+		$table_ref      = $create_trigger->get_first_child_node( 'tableRef' );
+		$table_schema   = $this->get_database_name( $table_ref );
+		$table_name     = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+
+		if ( 'information_schema' === strtolower( $trigger_schema ) || 'information_schema' === strtolower( $table_schema ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$this->last_result_statement = $this->execute_sqlite_query( $this->translate( $node ) );
+
+		$trigger_table = $this->information_schema_builder->get_table_name( false, 'triggers' );
+		$this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE trigger_schema = ? AND trigger_name = ?',
+				$this->quote_sqlite_identifier( $trigger_table )
+			),
+			array( $this->get_saved_db_name( $trigger_schema ), $trigger_name )
+		);
+		$this->execute_sqlite_query(
+			sprintf(
+				'INSERT INTO %s (
+					trigger_schema, trigger_name, event_manipulation, event_object_schema,
+					event_object_table, action_statement, action_timing, created, sql_mode
+				) VALUES ( ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ? )',
+				$this->quote_sqlite_identifier( $trigger_table )
+			),
+			array(
+				$this->get_saved_db_name( $trigger_schema ),
+				$trigger_name,
+				$this->get_direct_child_token_value(
+					$create_trigger,
+					array( WP_MySQL_Lexer::INSERT_SYMBOL, WP_MySQL_Lexer::UPDATE_SYMBOL, WP_MySQL_Lexer::DELETE_SYMBOL )
+				),
+				$this->get_saved_db_name( $table_schema ),
+				$table_name,
+				$this->translate( $create_trigger->get_first_child_node( 'compoundStatement' ) ),
+				$this->get_direct_child_token_value(
+					$create_trigger,
+					array( WP_MySQL_Lexer::BEFORE_SYMBOL, WP_MySQL_Lexer::AFTER_SYMBOL )
+				),
+				implode( ',', $this->active_sql_modes ),
+			)
+		);
+	}
+
+	/**
+	 * Execute a MySQL DROP TRIGGER statement in SQLite.
+	 *
+	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropTrigger" child.
+	 */
+	private function execute_drop_trigger_statement( WP_Parser_Node $node ): void {
+		$drop_trigger = $node->get_first_child_node( 'dropTrigger' );
+		$trigger_ref  = $drop_trigger->get_first_child_node( 'triggerRef' );
+		$database     = $this->get_database_name( $trigger_ref );
+		$trigger_name = $this->get_object_name( $trigger_ref );
+
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$this->last_result_statement = $this->execute_sqlite_query( $this->translate( $node ) );
+		$trigger_table               = $this->information_schema_builder->get_table_name( false, 'triggers' );
+		$this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE trigger_schema = ? AND trigger_name = ?',
+				$this->quote_sqlite_identifier( $trigger_table )
+			),
+			array( $this->get_saved_db_name( $database ), $trigger_name )
+		);
+	}
+
+	/**
+	 * Record a stored procedure or function in INFORMATION_SCHEMA.ROUTINES.
+	 *
+	 * The pure SQLite backend does not execute stored routines. Recording them
+	 * lets migration and introspection queries create/drop routines without
+	 * failing while CALL is treated as an empty operation.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with routine child.
+	 */
+	private function execute_create_routine_statement( WP_Parser_Node $node ): void {
+		$routine      = $node->get_first_child_node();
+		$is_function  = 'createFunction' === $routine->rule_name;
+		$name_node    = $routine->get_first_child_node( $is_function ? 'functionName' : 'procedureName' );
+		$database     = $this->get_database_name( $name_node );
+		$routine_name = $this->get_object_name( $name_node );
+
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$routines_table = $this->information_schema_builder->get_table_name( false, 'routines' );
+		$routine_type   = $is_function ? 'FUNCTION' : 'PROCEDURE';
+		$data_type      = '';
+		$type_node      = $routine->get_first_descendant_node( 'dataType' );
+		if ( $type_node ) {
+			$data_type = strtolower( $type_node->get_first_child_token()->get_value() );
+		}
+
+		$this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE routine_schema = ? AND routine_name = ? AND routine_type = ?',
+				$this->quote_sqlite_identifier( $routines_table )
+			),
+			array( $this->get_saved_db_name( $database ), $routine_name, $routine_type )
+		);
+		$this->last_result_statement = $this->execute_sqlite_query(
+			sprintf(
+				'INSERT INTO %s (
+					specific_name, routine_schema, routine_name, routine_type, data_type,
+					dtd_identifier, routine_definition, sql_mode
+				) VALUES ( ?, ?, ?, ?, ?, ?, ?, ? )',
+				$this->quote_sqlite_identifier( $routines_table )
+			),
+			array(
+				$routine_name,
+				$this->get_saved_db_name( $database ),
+				$routine_name,
+				$routine_type,
+				$data_type,
+				$data_type,
+				$this->translate( $routine->get_first_child_node( 'compoundStatement' ) ),
+				implode( ',', $this->active_sql_modes ),
+			)
+		);
+	}
+
+	/**
+	 * Remove a stored procedure or function from INFORMATION_SCHEMA.ROUTINES.
+	 *
+	 * @param WP_Parser_Node $node The "dropStatement" AST node with routine child.
+	 */
+	private function execute_drop_routine_statement( WP_Parser_Node $node ): void {
+		$routine     = $node->get_first_child_node();
+		$is_function = 'dropFunction' === $routine->rule_name;
+		$ref_node    = $routine->get_first_child_node( $is_function ? 'functionRef' : 'procedureRef' );
+		$database    = $this->get_database_name( $ref_node );
+
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$routines_table              = $this->information_schema_builder->get_table_name( false, 'routines' );
+		$this->last_result_statement = $this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE routine_schema = ? AND routine_name = ? AND routine_type = ?',
+				$this->quote_sqlite_identifier( $routines_table )
+			),
+			array(
+				$this->get_saved_db_name( $database ),
+				$this->get_object_name( $ref_node ),
+				$is_function ? 'FUNCTION' : 'PROCEDURE',
+			)
+		);
+	}
+
+	/**
+	 * Record a MySQL event in INFORMATION_SCHEMA.EVENTS.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with "createEvent" child.
+	 */
+	private function execute_create_event_statement( WP_Parser_Node $node ): void {
+		$event      = $node->get_first_child_node( 'createEvent' );
+		$name_node  = $event->get_first_child_node( 'eventName' );
+		$database   = $this->get_database_name( $name_node );
+		$event_name = $this->get_object_name( $name_node );
+
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$events_table = $this->information_schema_builder->get_table_name( false, 'events' );
+		$this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE event_schema = ? AND event_name = ?',
+				$this->quote_sqlite_identifier( $events_table )
+			),
+			array( $this->get_saved_db_name( $database ), $event_name )
+		);
+		$this->last_result_statement = $this->execute_sqlite_query(
+			sprintf(
+				'INSERT INTO %s (
+					event_schema, event_name, event_definition, event_type, sql_mode
+				) VALUES ( ?, ?, ?, ?, ? )',
+				$this->quote_sqlite_identifier( $events_table )
+			),
+			array(
+				$this->get_saved_db_name( $database ),
+				$event_name,
+				$this->translate( $event->get_first_child_node( 'compoundStatement' ) ),
+				$event->get_first_descendant_node( 'interval' ) ? 'RECURRING' : 'ONE TIME',
+				implode( ',', $this->active_sql_modes ),
+			)
+		);
+	}
+
+	/**
+	 * Remove a MySQL event from INFORMATION_SCHEMA.EVENTS.
+	 *
+	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropEvent" child.
+	 */
+	private function execute_drop_event_statement( WP_Parser_Node $node ): void {
+		$drop_event = $node->get_first_child_node( 'dropEvent' );
+		$event_ref  = $drop_event->get_first_child_node( 'eventRef' );
+		$database   = $this->get_database_name( $event_ref );
+
+		if ( 'information_schema' === strtolower( $database ) ) {
+			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		$events_table                = $this->information_schema_builder->get_table_name( false, 'events' );
+		$this->last_result_statement = $this->execute_sqlite_query(
+			sprintf(
+				'DELETE FROM %s WHERE event_schema = ? AND event_name = ?',
+				$this->quote_sqlite_identifier( $events_table )
+			),
+			array( $this->get_saved_db_name( $database ), $this->get_object_name( $event_ref ) )
+		);
 	}
 
 	/**
@@ -3006,21 +3507,45 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
 
 		// Fetch table information.
-		$table_tables = $this->information_schema_builder->get_table_name(
-			false, // SHOW TABLES lists only non-temporary tables.
-			'tables'
-		);
-		$query        = sprintf(
-			'SELECT %s FROM %s WHERE table_schema = ? %s ORDER BY table_name',
-			$is_full
-				? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
-				: sprintf( 'table_name AS `Tables_in_%s`', $database ),
-			$this->quote_sqlite_identifier( $table_tables ),
-			$condition ?? ''
-		);
-		$params       = array(
-			$this->get_saved_db_name( $database ),
-		);
+		$fields = $is_full
+			? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
+			: sprintf( 'table_name AS `Tables_in_%s`', $database );
+
+		$table_tables            = $this->information_schema_builder->get_table_name( false, 'tables' );
+		$temporary_table_tables  = $this->information_schema_builder->get_table_name( true, 'tables' );
+		$temporary_schema_exists = $this->execute_sqlite_query(
+			'SELECT 1 FROM sqlite_temp_master WHERE type = \'table\' AND name = ?',
+			array( $temporary_table_tables )
+		)->fetchColumn();
+
+		if ( $temporary_schema_exists ) {
+			$query  = sprintf(
+				'SELECT %s FROM (
+					SELECT table_name, table_type FROM %s WHERE table_schema = ? %s
+					UNION
+					SELECT table_name, table_type FROM %s WHERE table_schema = ? %s
+				) ORDER BY table_name',
+				$fields,
+				$this->quote_sqlite_identifier( $temporary_table_tables ),
+				$condition ?? '',
+				$this->quote_sqlite_identifier( $table_tables ),
+				$condition ?? ''
+			);
+			$params = array(
+				$this->get_saved_db_name( $database ),
+				$this->get_saved_db_name( $database ),
+			);
+		} else {
+			$query  = sprintf(
+				'SELECT %s FROM %s WHERE table_schema = ? %s ORDER BY table_name',
+				$fields,
+				$this->quote_sqlite_identifier( $table_tables ),
+				$condition ?? ''
+			);
+			$params = array(
+				$this->get_saved_db_name( $database ),
+			);
+		}
 
 		$stmt = $this->execute_sqlite_query( $query, $params );
 		$this->store_last_column_meta_from_statement( $stmt );
@@ -3174,12 +3699,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 		$database_name = strtolower( $database_name );
 
-		if ( $this->main_db_name === $database_name || 'information_schema' === $database_name ) {
+		if (
+			$this->main_db_name === $database_name
+			|| 'information_schema' === $database_name
+			|| $this->database_exists( $database_name )
+		) {
 			$this->db_name = $database_name;
 		} else {
 			throw $this->new_not_supported_exception(
 				sprintf(
-					"can't use schema '%s', only '%s' and 'information_schema' are supported",
+					"can't use schema '%s', only '%s', 'information_schema', and schemas created with CREATE DATABASE are supported",
 					$database_name,
 					$this->db_name
 				)
@@ -4667,6 +5196,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				'UNIQUE_CONSTRAINT_SCHEMA' => true,
 				'REFERENCED_TABLE_SCHEMA'  => true,
 				'TRIGGER_SCHEMA'           => true,
+				'EVENT_OBJECT_SCHEMA'      => true,
+				'ROUTINE_SCHEMA'           => true,
+				'EVENT_SCHEMA'             => true,
 			);
 
 			$expanded_list = array();
@@ -4674,10 +5206,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$quoted_column = $this->quote_sqlite_identifier( $column );
 				if ( isset( $information_schema_db_column_map[ strtoupper( $column ) ] ) ) {
 					$expanded_list[] = sprintf(
-						"CASE WHEN %s = 'information_schema' THEN %s ELSE %s END AS %s",
+						'CASE WHEN %s = %s THEN %s ELSE %s END AS %s',
 						$quoted_column,
-						$quoted_column,
+						$this->quote_sqlite_value( WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME ),
 						$this->quote_sqlite_value( $this->main_db_name ),
+						$quoted_column,
 						strtoupper( $quoted_column )
 					);
 				} else {
@@ -5525,15 +6058,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			if ( 'singleTable' === $child->rule_name ) {
 				// Extract data from the "singleTable" node.
-				$table_ref  = $child->get_first_child_node( 'tableRef' );
-				$name       = $this->translate( $table_ref );
-				$alias_node = $child->get_first_child_node( 'tableAlias' );
-				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
+				$table_ref       = $child->get_first_child_node( 'tableRef' );
+				$name            = $this->translate( $table_ref );
+				$database        = $this->get_database_name( $table_ref );
+				$alias_node      = $child->get_first_child_node( 'tableAlias' );
+				$alias           = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
+				$is_info         = 'information_schema' === strtolower( $database );
+				$table_name      = $is_info ? null : $this->unquote_sqlite_identifier( $name );
+				$table_ref_parts = $table_ref->get_descendant_nodes( 'identifier' );
+				$alias_key       = $alias ?? ( $is_info ? $this->translate( end( $table_ref_parts ) ) : $name );
 
-				$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
-					'database'   => $this->get_database_name( $table_ref ),
-					'table_name' => $this->unquote_sqlite_identifier( $name ),
-					'table_expr' => null,
+				$table_map[ $this->unquote_sqlite_identifier( $alias_key ) ] = array(
+					'database'   => $database,
+					'table_name' => $table_name,
+					'table_expr' => $is_info ? $name : null,
 					'join_expr'  => $this->translate( $join_expr ),
 				);
 			} elseif ( 'derivedTable' === $child->rule_name ) {
@@ -5555,6 +6093,44 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 		}
 		return $table_map;
+	}
+
+	/**
+	 * Check whether a table has a column.
+	 *
+	 * @param  string $table_name  Table name.
+	 * @param  string $column_name Column name.
+	 * @return bool                True when the column exists.
+	 */
+	private function table_has_column( string $table_name, string $column_name ): bool {
+		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+
+		return false !== $this->execute_sqlite_query(
+			sprintf(
+				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
+			array( $this->get_saved_db_name(), $table_name, $column_name )
+		)->fetchColumn();
+	}
+
+	/**
+	 * Check whether a logical database exists in the emulated information schema.
+	 *
+	 * @param  string $database_name Database name.
+	 * @return bool                  True when the database exists.
+	 */
+	private function database_exists( string $database_name ): bool {
+		$schemata_table = $this->information_schema_builder->get_table_name( false, 'schemata' );
+
+		return false !== $this->execute_sqlite_query(
+			sprintf(
+				'SELECT 1 FROM %s WHERE schema_name = ?',
+				$this->quote_sqlite_identifier( $schemata_table )
+			),
+			array( $this->get_saved_db_name( $database_name ) )
+		)->fetchColumn();
 	}
 
 	/**
@@ -5704,7 +6280,19 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @return string               The database name.
 	 */
 	private function get_database_name( WP_Parser_Node $node ): string {
-		if ( 'tableName' === $node->rule_name || 'tableRef' === $node->rule_name ) {
+		if (
+			'tableName' === $node->rule_name
+			|| 'tableRef' === $node->rule_name
+			|| 'viewRef' === $node->rule_name
+			|| 'triggerName' === $node->rule_name
+			|| 'triggerRef' === $node->rule_name
+			|| 'procedureName' === $node->rule_name
+			|| 'procedureRef' === $node->rule_name
+			|| 'functionName' === $node->rule_name
+			|| 'functionRef' === $node->rule_name
+			|| 'eventName' === $node->rule_name
+			|| 'eventRef' === $node->rule_name
+		) {
 			$parts = $node->get_descendant_nodes( 'identifier' );
 			if ( count( $parts ) > 1 ) {
 				return $this->unquote_sqlite_identifier( $this->translate( $parts[0] ) );
@@ -5719,6 +6307,36 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		throw $this->new_driver_exception(
 			sprintf( 'Could not get database name from node: %s', $node->rule_name )
+		);
+	}
+
+	/**
+	 * Get an unqualified object name from a possibly qualified reference node.
+	 *
+	 * @param  WP_Parser_Node $node Object reference node.
+	 * @return string               Object name.
+	 */
+	private function get_object_name( WP_Parser_Node $node ): string {
+		$parts = $node->get_descendant_nodes( 'identifier' );
+		return $this->unquote_sqlite_identifier( $this->translate( end( $parts ) ) );
+	}
+
+	/**
+	 * Get the value of the first direct child token matching one of the IDs.
+	 *
+	 * @param  WP_Parser_Node $node      Node to scan.
+	 * @param  int[]          $token_ids Token IDs to match.
+	 * @return string                   Matched token value.
+	 */
+	private function get_direct_child_token_value( WP_Parser_Node $node, array $token_ids ): string {
+		foreach ( $node->get_children() as $child ) {
+			if ( $child instanceof WP_MySQL_Token && in_array( $child->id, $token_ids, true ) ) {
+				return strtoupper( $child->get_value() );
+			}
+		}
+
+		throw $this->new_driver_exception(
+			sprintf( 'Could not find expected token in node: %s', $node->rule_name )
 		);
 	}
 

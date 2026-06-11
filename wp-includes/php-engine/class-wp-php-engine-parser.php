@@ -1636,8 +1636,36 @@ class WP_PHP_Engine_Parser {
 				'list' => $list,
 			);
 		}
-		// IN table or IN table_function(...) — not supported.
-		throw new WP_PHP_Engine_SQL_Exception( 'IN requires a parenthesized list or subquery' );
+
+		return array(
+			't'   => 'in',
+			'not' => $not,
+			'e'   => $left,
+			'sub' => array(
+				't'      => 'select',
+				'with'   => array(),
+				'parts'  => array(
+					array(
+						't'        => 'core',
+						'distinct' => false,
+						'items'    => array(
+							array(
+								'star' => true,
+								'tbl'  => null,
+							),
+						),
+						'from'     => $this->parse_table_or_subquery(),
+						'where'    => null,
+						'group'    => null,
+						'having'   => null,
+					),
+				),
+				'ops'    => array(),
+				'order'  => null,
+				'limit'  => null,
+				'offset' => null,
+			),
+		);
 	}
 
 	/**
