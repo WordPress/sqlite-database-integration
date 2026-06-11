@@ -2344,13 +2344,20 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC LIMIT 1 OFFSET 0',
 					'params' => array(),
 				),
+				array(
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC) AS "__wp_pg_found_rows"',
+					'params' => array(),
+				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $found_rows[0]->{'FOUND_ROWS()'} );
 	}
 
 	/**
-	 * Tests FOUND_ROWS returns the last SQL_CALC_FOUND_ROWS result count.
+	 * Tests FOUND_ROWS returns the last SQL_CALC_FOUND_ROWS total count.
 	 */
 	public function test_found_rows_returns_last_sql_calc_found_rows_count(): void {
 		$driver = $this->create_driver();
@@ -2358,18 +2365,49 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL)' );
 		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (1, 'post', 'publish')" );
 		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (2, 'post', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (3, 'post', 'publish')" );
 
-		$driver->query(
+		$page_rows = $driver->query(
 			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
 			FROM wptests_posts
 			WHERE wptests_posts.post_type = 'post'
 			ORDER BY wptests_posts.ID ASC
-			LIMIT 0, 2"
+			LIMIT 1, 1"
 		);
-		$rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$rows      = $driver->query( 'SELECT FOUND_ROWS()' );
 
-		$this->assertSame( '2', $rows[0]->{'FOUND_ROWS()'} );
+		$this->assertCount( 1, $page_rows );
+		$this->assertSame( '2', $page_rows[0]->ID );
+		$this->assertSame( '3', $rows[0]->{'FOUND_ROWS()'} );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests non-SQL_CALC SELECT queries do not run FOUND_ROWS accounting.
+	 */
+	public function test_non_sql_calc_select_does_not_run_found_rows_accounting(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type) VALUES (1, 'post')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type) VALUES (2, 'post')" );
+
+		$rows = $driver->query( 'SELECT ID FROM wptests_posts ORDER BY ID ASC LIMIT 0, 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "ID" FROM wptests_posts ORDER BY "ID" ASC LIMIT 1 OFFSET 0',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $found_rows[0]->{'FOUND_ROWS()'} );
 	}
 
 	/**
@@ -2390,20 +2428,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			FROM wptests_users INNER JOIN wptests_usermeta ON ( wptests_users.ID = wptests_usermeta.user_id )
 			WHERE 1=1 AND wptests_usermeta.meta_key = 'foo'
 			ORDER BY user_login ASC
-			LIMIT 0, 10";
+			LIMIT 0, 1";
 		$rows   = $driver->query( $select );
 
-		$this->assertCount( 2, $rows );
+		$this->assertCount( 1, $rows );
 		$this->assertSame( '2', $rows[0]->ID );
-		$this->assertSame( '1', $rows[1]->ID );
 		$this->assertSame( array( 'ID' ), array_keys( get_object_vars( $rows[0] ) ) );
 
 		$queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 1, $queries );
+		$this->assertCount( 2, $queries );
 		$this->assertStringNotContainsString( 'SQL_CALC_FOUND_ROWS', $queries[0]['sql'] );
 		$this->assertSame(
-			'SELECT "__wp_pg_distinct"."ID" AS "ID" FROM (SELECT wptests_users."ID" AS "ID", MIN(user_login) AS "__wp_pg_order_0" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\' GROUP BY wptests_users."ID") AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 10 OFFSET 0',
+			'SELECT "__wp_pg_distinct"."ID" AS "ID" FROM (SELECT wptests_users."ID" AS "ID", MIN(user_login) AS "__wp_pg_order_0" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\' GROUP BY wptests_users."ID") AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 1 OFFSET 0',
 			$queries[0]['sql']
+		);
+		$this->assertSame(
+			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT "__wp_pg_distinct"."ID" AS "ID" FROM (SELECT wptests_users."ID" AS "ID", MIN(user_login) AS "__wp_pg_order_0" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\' GROUP BY wptests_users."ID") AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC) AS "__wp_pg_found_rows"',
+			$queries[1]['sql']
 		);
 
 		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );

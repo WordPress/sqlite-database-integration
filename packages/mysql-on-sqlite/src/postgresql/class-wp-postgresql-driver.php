@@ -69,7 +69,7 @@ class WP_PostgreSQL_Driver {
 	private $last_postgresql_queries = array();
 
 	/**
-	 * Approximate FOUND_ROWS() value for the last SQL_CALC_FOUND_ROWS query.
+	 * FOUND_ROWS() value for the last SQL_CALC_FOUND_ROWS query.
 	 *
 	 * @var int
 	 */
@@ -425,6 +425,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
+		$sql_calc_found_rows_query    = $is_sql_calc_found_rows_query ? $query : null;
 
 		$translated_query = $this->translate_information_schema_tables_site_health_query( $query );
 		if ( null !== $translated_query ) {
@@ -480,8 +481,8 @@ class WP_PostgreSQL_Driver {
 		if ( $stmt->columnCount() > 0 ) {
 			$this->last_column_meta = $this->normalize_column_meta( $stmt );
 			$this->last_result      = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-			if ( $is_sql_calc_found_rows_query ) {
-				$this->last_found_rows = count( $this->last_result );
+			if ( null !== $sql_calc_found_rows_query ) {
+				$this->last_found_rows = $this->execute_sql_calc_found_rows_count_query( $sql_calc_found_rows_query );
 			}
 		} else {
 			$this->last_column_meta = array();
@@ -496,6 +497,72 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Execute the unbounded count query for a SQL_CALC_FOUND_ROWS SELECT.
+	 *
+	 * @param string $query MySQL query.
+	 * @return int Total matching rows before LIMIT/OFFSET.
+	 */
+	private function execute_sql_calc_found_rows_count_query( string $query ): int {
+		$count_query = $this->get_sql_calc_found_rows_count_query( $query );
+		if ( null === $count_query ) {
+			throw new PDOException( 'Unsupported SQL_CALC_FOUND_ROWS query shape for PostgreSQL FOUND_ROWS accounting.' );
+		}
+
+		$stmt                            = $this->connection->query( $count_query );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $count_query,
+			'params' => array(),
+		);
+
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
+		if ( ! is_array( $row ) || ! array_key_exists( '__wp_pg_found_rows', $row ) ) {
+			throw new PDOException( 'Failed to read PostgreSQL FOUND_ROWS accounting result.' );
+		}
+
+		return (int) $row['__wp_pg_found_rows'];
+	}
+
+	/**
+	 * Build the PostgreSQL count query for a SQL_CALC_FOUND_ROWS SELECT.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL count query, or null when unsupported.
+	 */
+	private function get_sql_calc_found_rows_count_query( string $query ): ?string {
+		$select_query = $this->translate_sql_calc_found_rows_count_select_query( $query );
+		if ( null === $select_query ) {
+			return null;
+		}
+
+		$alias = $this->connection->quote_identifier( '__wp_pg_found_rows' );
+		return sprintf(
+			'SELECT COUNT(*) AS %1$s FROM (%2$s) AS %1$s',
+			$alias,
+			$select_query
+		);
+	}
+
+	/**
+	 * Translate the unbounded SELECT used for SQL_CALC_FOUND_ROWS accounting.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL SELECT query, or null when unsupported.
+	 */
+	private function translate_sql_calc_found_rows_count_select_query( string $query ): ?string {
+		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query, false );
+		if ( null !== $translated_query ) {
+			return $translated_query;
+		}
+
+		$translated_query = $this->translate_distinct_order_by_query( $query, false );
+		if ( null !== $translated_query ) {
+			return $translated_query;
+		}
+
+		return $this->translate_sql_calc_found_rows_select_query( $query, false );
 	}
 
 	/**
@@ -5084,10 +5151,11 @@ WHERE option_name IN (
 	 * by a hidden aggregate keeps the MySQL-visible result shape and avoids
 	 * changing DISTINCT cardinality.
 	 *
-	 * @param string $query MySQL query.
+	 * @param string $query         MySQL query.
+	 * @param bool   $include_limit Whether to preserve the LIMIT/OFFSET clause.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
 	 */
-	private function translate_distinct_order_by_query( string $query ): ?string {
+	private function translate_distinct_order_by_query( string $query, bool $include_limit = true ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -5133,9 +5201,16 @@ WHERE option_name IN (
 			$select_end
 		);
 		if ( null === $order_position ) {
-			return $has_sql_calc_found_rows
-				? 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $statement_end )
-				: null;
+			if ( ! $has_sql_calc_found_rows ) {
+				return null;
+			}
+
+			$sql = 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $select_end );
+			if ( $include_limit && null !== $limit_position ) {
+				$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+			}
+
+			return $sql;
 		}
 
 		$from_position = $this->find_top_level_mysql_token(
@@ -5228,9 +5303,16 @@ WHERE option_name IN (
 		}
 
 		if ( ! $has_hidden_order_expression ) {
-			return $has_sql_calc_found_rows
-				? 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $statement_end )
-				: null;
+			if ( ! $has_sql_calc_found_rows ) {
+				return null;
+			}
+
+			$sql = 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $select_end );
+			if ( $include_limit && null !== $limit_position ) {
+				$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+			}
+
+			return $sql;
 		}
 
 		return $this->build_distinct_order_by_grouped_query(
@@ -5240,7 +5322,8 @@ WHERE option_name IN (
 			$from_position,
 			$order_position,
 			$limit_position,
-			$statement_end
+			$statement_end,
+			$include_limit
 		);
 	}
 
@@ -5674,6 +5757,7 @@ WHERE option_name IN (
 	 * @param int             $order_position   ORDER token position.
 	 * @param int|null        $limit_position   LIMIT token position, or null.
 	 * @param int             $statement_end    Final statement token position, exclusive.
+	 * @param bool            $include_limit    Whether to preserve the LIMIT/OFFSET clause.
 	 * @return string PostgreSQL query.
 	 */
 	private function build_distinct_order_by_grouped_query(
@@ -5683,7 +5767,8 @@ WHERE option_name IN (
 		int $from_position,
 		int $order_position,
 		?int $limit_position,
-		int $statement_end
+		int $statement_end,
+		bool $include_limit = true
 	): string {
 		$derived_table_alias        = '__wp_pg_distinct';
 		$quoted_derived_table_alias = $this->connection->quote_identifier( $derived_table_alias );
@@ -5728,7 +5813,7 @@ WHERE option_name IN (
 			$this->get_distinct_order_by_outer_order_sql( $projection_items, $order_items, $quoted_derived_table_alias )
 		);
 
-		if ( null !== $limit_position ) {
+		if ( $include_limit && null !== $limit_position ) {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
 
@@ -5781,10 +5866,11 @@ WHERE option_name IN (
 	 * this rewrite limited to WordPress's scalar count and grouped archive/comment
 	 * ID query shapes so unsupported grouping semantics still fail visibly.
 	 *
-	 * @param string $query MySQL query.
+	 * @param string $query         MySQL query.
+	 * @param bool   $include_limit Whether to preserve the LIMIT/OFFSET clause.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
 	 */
-	private function translate_strict_aggregate_grouped_order_by_query( string $query ): ?string {
+	private function translate_strict_aggregate_grouped_order_by_query( string $query, bool $include_limit = true ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -5847,7 +5933,8 @@ WHERE option_name IN (
 				$projection_start,
 				$order_position,
 				$limit_position,
-				$statement_end
+				$statement_end,
+				$include_limit
 			);
 		}
 
@@ -5866,7 +5953,8 @@ WHERE option_name IN (
 			$order_position,
 			$limit_position,
 			$statement_end,
-			$has_distinct
+			$has_distinct,
+			$include_limit
 		);
 	}
 
@@ -5878,6 +5966,7 @@ WHERE option_name IN (
 	 * @param int             $order_position ORDER token position.
 	 * @param int|null        $limit_position LIMIT token position, or null.
 	 * @param int             $statement_end  Final statement token position, exclusive.
+	 * @param bool            $include_limit  Whether to preserve the LIMIT/OFFSET clause.
 	 * @return string|null PostgreSQL query, or null when unsupported.
 	 */
 	private function translate_strict_aggregate_only_order_by_query(
@@ -5885,7 +5974,8 @@ WHERE option_name IN (
 		int $projection_start,
 		int $order_position,
 		?int $limit_position,
-		int $statement_end
+		int $statement_end,
+		bool $include_limit = true
 	): ?string {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $order_position );
 		if ( null === $from_position || $projection_start === $from_position ) {
@@ -5897,7 +5987,7 @@ WHERE option_name IN (
 		}
 
 		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $order_position );
-		if ( null !== $limit_position ) {
+		if ( $include_limit && null !== $limit_position ) {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
 
@@ -5914,6 +6004,7 @@ WHERE option_name IN (
 	 * @param int|null        $limit_position LIMIT token position, or null.
 	 * @param int             $statement_end  Final statement token position, exclusive.
 	 * @param bool            $has_distinct   Whether the original SELECT used DISTINCT.
+	 * @param bool            $include_limit  Whether to preserve the LIMIT/OFFSET clause.
 	 * @return string|null PostgreSQL query, or null when unsupported.
 	 */
 	private function translate_strict_grouped_order_by_query(
@@ -5923,7 +6014,8 @@ WHERE option_name IN (
 		int $order_position,
 		?int $limit_position,
 		int $statement_end,
-		bool $has_distinct
+		bool $has_distinct,
+		bool $include_limit = true
 	): ?string {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $group_position );
 		if ( null === $from_position || $projection_start === $from_position ) {
@@ -6063,7 +6155,7 @@ WHERE option_name IN (
 			$replacements
 		)
 			. ' ORDER BY ' . implode( ', ', $order_sql );
-		if ( null !== $limit_position ) {
+		if ( $include_limit && null !== $limit_position ) {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
 
@@ -8037,9 +8129,10 @@ WHERE option_name IN (
 	 * executes the paginated query itself while preserving compatible clauses.
 	 *
 	 * @param string $query MySQL query.
+	 * @param bool   $include_limit Whether to preserve the LIMIT/OFFSET clause.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
 	 */
-	private function translate_sql_calc_found_rows_select_query( string $query ): ?string {
+	private function translate_sql_calc_found_rows_select_query( string $query, bool $include_limit = true ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
 			! isset( $tokens[0], $tokens[1] )
@@ -8066,15 +8159,19 @@ WHERE option_name IN (
 		$contextual_sql = $this->translate_mysql_select_statement_with_integer_string_coercion(
 			$tokens,
 			2,
-			$statement_end,
+			$select_end,
 			false
 		);
 		if ( null !== $contextual_sql ) {
+			if ( $include_limit && null !== $limit_position ) {
+				$contextual_sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+			}
+
 			return $contextual_sql;
 		}
 
 		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, 2, $select_end );
-		if ( null !== $limit_position ) {
+		if ( $include_limit && null !== $limit_position ) {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
 
