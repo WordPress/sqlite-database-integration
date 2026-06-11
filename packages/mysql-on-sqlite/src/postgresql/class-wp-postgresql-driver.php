@@ -5427,7 +5427,9 @@ WHERE option_name IN (
 		}
 
 		$projection_start = 1;
+		$has_distinct     = false;
 		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
+			$has_distinct = true;
 			++$projection_start;
 		}
 
@@ -5494,7 +5496,8 @@ WHERE option_name IN (
 			$group_position,
 			$order_position,
 			$limit_position,
-			$statement_end
+			$statement_end,
+			$has_distinct
 		);
 	}
 
@@ -5541,6 +5544,7 @@ WHERE option_name IN (
 	 * @param int             $order_position ORDER token position.
 	 * @param int|null        $limit_position LIMIT token position, or null.
 	 * @param int             $statement_end  Final statement token position, exclusive.
+	 * @param bool            $has_distinct   Whether the original SELECT used DISTINCT.
 	 * @return string|null PostgreSQL query, or null when unsupported.
 	 */
 	private function translate_strict_grouped_order_by_query(
@@ -5549,7 +5553,8 @@ WHERE option_name IN (
 		int $group_position,
 		int $order_position,
 		?int $limit_position,
-		int $statement_end
+		int $statement_end,
+		bool $has_distinct
 	): ?string {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $group_position );
 		if ( null === $from_position || $projection_start === $from_position ) {
@@ -5593,6 +5598,21 @@ WHERE option_name IN (
 		$is_comment_id_group     = $this->is_mysql_comment_id_grouped_select_shape( $tokens, $projection_items, $group_items );
 		$is_post_id_group        = $this->is_mysql_post_id_grouped_select_shape( $tokens, $projection_items, $group_items );
 		if ( null === $archive_date_expression && ! $is_comment_id_group && ! $is_post_id_group ) {
+			return null;
+		}
+
+		if (
+			$has_distinct
+			&& (
+				null === $archive_date_expression
+				|| ! $this->is_mysql_redundant_distinct_week_archive_select_shape(
+					$tokens,
+					$projection_items,
+					$group_items,
+					$archive_date_expression
+				)
+			)
+		) {
 			return null;
 		}
 
@@ -5734,6 +5754,160 @@ WHERE option_name IN (
 		}
 
 		return $replacements;
+	}
+
+	/**
+	 * Check whether DISTINCT is redundant for the supported weekly archive shape.
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param array           $projection_items        Parsed projection items.
+	 * @param array           $group_items             Parsed GROUP BY item ranges.
+	 * @param array           $archive_date_expression Shared date expression bounds.
+	 * @return bool Whether this is the supported weekly archive projection.
+	 */
+	private function is_mysql_redundant_distinct_week_archive_select_shape(
+		array $tokens,
+		array $projection_items,
+		array $group_items,
+		array $archive_date_expression
+	): bool {
+		if ( 4 !== count( $projection_items ) || 2 !== count( $group_items ) ) {
+			return false;
+		}
+
+		$expected_aliases = array( 'week', 'yr', 'yyyymmdd', 'posts' );
+		foreach ( $expected_aliases as $index => $alias ) {
+			if ( strtolower( $projection_items[ $index ]['alias'] ) !== $alias ) {
+				return false;
+			}
+		}
+
+		return $this->is_mysql_week_expression_for_archive_date(
+			$tokens,
+			$projection_items[0]['expression_start'],
+			$projection_items[0]['expression_end'],
+			$archive_date_expression
+		)
+			&& $this->is_mysql_year_expression_for_archive_date(
+				$tokens,
+				$projection_items[1]['expression_start'],
+				$projection_items[1]['expression_end'],
+				$archive_date_expression
+			)
+			&& $this->is_mysql_year_month_day_format_expression_for_archive_date(
+				$tokens,
+				$projection_items[2]['expression_start'],
+				$projection_items[2]['expression_end'],
+				$archive_date_expression
+			)
+			&& $this->is_mysql_count_aggregate_expression(
+				$tokens,
+				$projection_items[3]['expression_start'],
+				$projection_items[3]['expression_end']
+			)
+			&& $this->do_mysql_group_items_include_week_and_year_for_archive_date(
+				$tokens,
+				$group_items,
+				$archive_date_expression
+			);
+	}
+
+	/**
+	 * Check whether an expression is WEEK(archive_date, 1).
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param int             $start                   First expression token.
+	 * @param int             $end                     Final expression token, exclusive.
+	 * @param array           $archive_date_expression Shared date expression bounds.
+	 * @return bool Whether the expression matches the archive week.
+	 */
+	private function is_mysql_week_expression_for_archive_date( array $tokens, int $start, int $end, array $archive_date_expression ): bool {
+		$expression = $this->get_mysql_week_argument_expression_bounds( $tokens, $start, $end );
+
+		return null !== $expression
+			&& $this->are_mysql_token_ranges_equivalent(
+				$tokens,
+				$archive_date_expression['start'],
+				$archive_date_expression['end'],
+				$expression['start'],
+				$expression['end']
+			);
+	}
+
+	/**
+	 * Check whether an expression is YEAR(archive_date).
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param int             $start                   First expression token.
+	 * @param int             $end                     Final expression token, exclusive.
+	 * @param array           $archive_date_expression Shared date expression bounds.
+	 * @return bool Whether the expression matches the archive year.
+	 */
+	private function is_mysql_year_expression_for_archive_date( array $tokens, int $start, int $end, array $archive_date_expression ): bool {
+		$expression = $this->get_mysql_extract_argument_expression_bounds( $tokens, $start, $end, 'YEAR' );
+
+		return null !== $expression
+			&& $this->are_mysql_token_ranges_equivalent(
+				$tokens,
+				$archive_date_expression['start'],
+				$archive_date_expression['end'],
+				$expression['start'],
+				$expression['end']
+			);
+	}
+
+	/**
+	 * Check whether an expression is DATE_FORMAT(archive_date, '%Y-%m-%d').
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param int             $start                   First expression token.
+	 * @param int             $end                     Final expression token, exclusive.
+	 * @param array           $archive_date_expression Shared date expression bounds.
+	 * @return bool Whether the expression matches the archive date format.
+	 */
+	private function is_mysql_year_month_day_format_expression_for_archive_date( array $tokens, int $start, int $end, array $archive_date_expression ): bool {
+		$bounds = $this->get_mysql_date_format_bounds( $tokens, $start, $end );
+
+		return null !== $bounds
+			&& '%Y-%m-%d' === $bounds['format']
+			&& $bounds['close'] + 1 === $end
+			&& $this->are_mysql_token_ranges_equivalent(
+				$tokens,
+				$archive_date_expression['start'],
+				$archive_date_expression['end'],
+				$bounds['expression_start'],
+				$bounds['expression_end']
+			);
+	}
+
+	/**
+	 * Check whether GROUP BY contains WEEK(archive_date, 1) and YEAR(archive_date).
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param array           $group_items             Parsed GROUP BY item ranges.
+	 * @param array           $archive_date_expression Shared date expression bounds.
+	 * @return bool Whether both grouped date keys are present.
+	 */
+	private function do_mysql_group_items_include_week_and_year_for_archive_date( array $tokens, array $group_items, array $archive_date_expression ): bool {
+		$has_week = false;
+		$has_year = false;
+
+		foreach ( $group_items as $group_item ) {
+			$has_week = $has_week || $this->is_mysql_week_expression_for_archive_date(
+				$tokens,
+				$group_item['start'],
+				$group_item['end'],
+				$archive_date_expression
+			);
+			$has_year = $has_year || $this->is_mysql_year_expression_for_archive_date(
+				$tokens,
+				$group_item['start'],
+				$group_item['end'],
+				$archive_date_expression
+			);
+		}
+
+		return $has_week && $has_year;
 	}
 
 	/**

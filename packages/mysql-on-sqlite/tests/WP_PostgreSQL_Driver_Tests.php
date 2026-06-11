@@ -2627,6 +2627,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported DISTINCT grouped archive queries fail closed.
+	 */
+	public function test_distinct_count_grouped_year_archive_order_by_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DISTINCT count(ID) AS posts
+			FROM wptests_posts
+			WHERE post_type = 'post'
+			GROUP BY YEAR(post_date)
+			ORDER BY post_date DESC";
+		$sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_strict_aggregate_grouped_order_by_query',
+			$select
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
 	 * Tests weekly grouped DISTINCT archive queries order by an aggregate post date.
 	 */
 	public function test_grouped_week_archive_order_by_uses_aggregate_sort_expression(): void {
