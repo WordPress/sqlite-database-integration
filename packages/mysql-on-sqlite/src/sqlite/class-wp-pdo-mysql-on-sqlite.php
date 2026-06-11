@@ -52,6 +52,51 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
 	/**
+	 * The maximum number of entries in the translation template cache.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 */
+	const TRANSLATION_CACHE_CAPACITY = 512;
+
+	/**
+	 * The maximum number of literals in a query for the translation cache.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 */
+	const TRANSLATION_CACHE_MAX_LITERALS = 200;
+
+	/**
+	 * Tokens that prevent caching a query in the translation template cache.
+	 *
+	 * These are nondeterministic functions whose repeated evaluation may yield
+	 * different results (RAND, NOW, UUID, etc.), functions whose values depend
+	 * on the driver state that can change between two executions of the same
+	 * query (FOUND_ROWS), and functions whose translated output depends on the
+	 * values of their string literal arguments (DATE_FORMAT).
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 */
+	const TRANSLATION_CACHE_BLOCKED_TOKENS = array(
+		'RAND'              => true,
+		'NOW'               => true,
+		'SYSDATE'           => true,
+		'CURDATE'           => true,
+		'CURTIME'           => true,
+		'CURRENT_TIMESTAMP' => true,
+		'CURRENT_DATE'      => true,
+		'CURRENT_TIME'      => true,
+		'LOCALTIME'         => true,
+		'LOCALTIMESTAMP'    => true,
+		'UTC_DATE'          => true,
+		'UTC_TIME'          => true,
+		'UTC_TIMESTAMP'     => true,
+		'UUID'              => true,
+		'UUID_SHORT'        => true,
+		'FOUND_ROWS'        => true,
+		'DATE_FORMAT'       => true,
+	);
+
+	/**
 	 * A map of MySQL tokens to SQLite data types.
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
@@ -666,6 +711,64 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $user_variables = array();
 
 	/**
+	 * An LRU cache of literal-normalized translation templates.
+	 *
+	 * The cache maps query shapes to translation templates, so that repeated
+	 * SELECT, INSERT, REPLACE, UPDATE, and DELETE statements that differ only
+	 * in literal values can skip the parsing and translation steps entirely.
+	 *
+	 * A query shape is derived from the token stream of a MySQL query - it is
+	 * a concatenation of all token IDs together with the raw bytes of all
+	 * non-literal tokens. String and number literals are excluded, and their
+	 * positions are stored as slots in the translation templates.
+	 *
+	 * Each cached template is self-validating. The first two occurrences of
+	 * a query shape run the full translation pipeline, and the template is
+	 * trusted only after its rendered output byte-matches the full pipeline
+	 * translation on both occurrences. Any mismatch marks the query shape as
+	 * uncacheable forever. Only from the third occurrence on, the rendered
+	 * template is executed in place of the full pipeline.
+	 *
+	 * Cached templates must not depend on any state that can change between
+	 * the executions of the same query shape. Therefore:
+	 *
+	 *   1. Statements that use nondeterministic or driver-state-dependent
+	 *      functions, and statements referencing information schema tables
+	 *      are never cached. See "self::get_translation_cache_shape()".
+	 *   2. The whole cache is cleared on any statement other than a SELECT
+	 *      or a DML statement (INSERT, REPLACE, UPDATE, DELETE), as other
+	 *      statements may change table metadata or session state on which
+	 *      the translations depend. See "self::execute_mysql_query()".
+	 *
+	 * @var array<string, array{
+	 *   uncacheable: bool,
+	 *   trusted?: bool,
+	 *   is_select?: bool,
+	 *   has_count?: bool,
+	 *   templates?: array{ parts: string[], slots: int[] }[],
+	 *   db_name?: string,
+	 *   main_db_name?: string|null,
+	 * }>
+	 */
+	private $translation_cache = array();
+
+	/**
+	 * The translation produced for the currently executed MySQL statement.
+	 *
+	 * This is recorded by the SELECT, INSERT, REPLACE, UPDATE, and DELETE
+	 * statement handlers, and consumed by the translation template cache.
+	 * For other statement types, the value is null.
+	 *
+	 * @var array{
+	 *   is_select: bool,
+	 *   has_count: bool,
+	 *   queries: string[],
+	 *   cacheable: bool
+	 * }|null
+	 */
+	private $last_translated_statement;
+
+	/**
 	 * PDO API: Constructor.
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
@@ -924,8 +1027,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->last_mysql_query = $query;
 
 		try {
-			// Parse the MySQL query.
-			$parser = $this->create_parser( $query );
+			// Try to reuse a cached translation template for this query shape.
+			$shape = $this->get_translation_cache_shape( $query );
+			if ( null !== $shape ) {
+				$cached_stmt = $this->replay_cached_translation( $shape );
+				if ( null !== $cached_stmt ) {
+					$cached_stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
+					return $cached_stmt;
+				}
+			}
+
+			// Parse the MySQL query (reusing tokens from the shape computation).
+			$parser = null === $shape
+				? $this->create_parser( $query )
+				: new WP_MySQL_Parser( self::$mysql_grammar, $shape['tokens'] );
 			$parser->next_query();
 			$ast = $parser->get_query_ast();
 			if ( null === $ast ) {
@@ -985,6 +1100,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			if ( $wrap_in_transaction ) {
 				$this->commit_wrapper_transaction();
+			}
+
+			// Build or validate a translation template for this query shape.
+			if ( null !== $shape && null !== $child_node && 'simpleStatement' === $child_node->rule_name ) {
+				$this->update_translation_cache( $shape, $child_node );
 			}
 
 			if ( null === $this->last_result_statement ) {
@@ -1429,6 +1549,526 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Compute the shape of a MySQL query for the translation template cache.
+	 *
+	 * The query shape is a concatenation of all token IDs together with the
+	 * raw bytes of all non-literal tokens. String and number literals are
+	 * excluded from the shape and collected separately, so that queries that
+	 * differ only in literal values share the same shape.
+	 *
+	 * Returns null when the query must not be cached. That is the case for:
+	 *
+	 *   1. Queries referencing information schema tables, whose translation
+	 *      executes metadata lookup queries that must run on every execution.
+	 *   2. Queries using nondeterministic functions, driver-state-dependent
+	 *      functions, or functions whose translation depends on the values
+	 *      of their string literal arguments.
+	 *      See "self::TRANSLATION_CACHE_BLOCKED_TOKENS".
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 *
+	 * @param  string $query The MySQL query.
+	 * @return array{
+	 *   key: string,
+	 *   tokens: WP_MySQL_Token[],
+	 *   literals: array{0: 'string'|'number', 1: WP_MySQL_Token}[]
+	 * }|null The query shape, or null when the query must not be cached.
+	 */
+	private function get_translation_cache_shape( string $query ): ?array {
+		if (
+			'information_schema' === $this->db_name
+			|| false !== stripos( $query, 'information_schema' )
+		) {
+			return null;
+		}
+
+		$lexer  = new WP_MySQL_Lexer(
+			$query,
+			80038,
+			$this->active_sql_modes
+		);
+		$tokens = $lexer->remaining_tokens();
+		if ( 0 === count( $tokens ) ) {
+			return null;
+		}
+
+		/*
+		 * The shape key is the raw query text with only the literal spans
+		 * replaced by typed placeholders. Raw bytes (including whitespace
+		 * and comments, which are hidden at the token level) must be part
+		 * of the key: the translation derives implicit column aliases from
+		 * raw query bytes, so queries differing only in hidden bytes can
+		 * translate differently and must not share a template.
+		 */
+		$key      = '';
+		$position = 0;
+		$literals = array();
+		foreach ( $tokens as $token ) {
+			$id = $token->id;
+			if (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $id
+				|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $id
+			) {
+				$literals[] = array( 'string', $token );
+				$key       .= substr( $query, $position, $token->start - $position ) . '#' . $id . "\x1F";
+				$position   = $token->start + $token->length;
+				continue;
+			}
+			if (
+				WP_MySQL_Lexer::INT_NUMBER === $id
+				|| WP_MySQL_Lexer::LONG_NUMBER === $id
+				|| WP_MySQL_Lexer::ULONGLONG_NUMBER === $id
+				|| WP_MySQL_Lexer::DECIMAL_NUMBER === $id
+				|| WP_MySQL_Lexer::FLOAT_NUMBER === $id
+			) {
+				$literals[] = array( 'number', $token );
+				$key       .= substr( $query, $position, $token->start - $position ) . '#' . $id . "\x1F";
+				$position   = $token->start + $token->length;
+				continue;
+			}
+
+			$bytes = $token->get_bytes();
+			if ( isset( self::TRANSLATION_CACHE_BLOCKED_TOKENS[ strtoupper( $bytes ) ] ) ) {
+				return null;
+			}
+		}
+		$key .= substr( $query, $position );
+
+		if ( count( $literals ) > self::TRANSLATION_CACHE_MAX_LITERALS ) {
+			return null;
+		}
+
+		return array(
+			'key'      => $key,
+			'tokens'   => $tokens,
+			'literals' => $literals,
+		);
+	}
+
+	/**
+	 * Try to execute a MySQL query using a cached translation template.
+	 *
+	 * When a trusted translation template exists for the given query shape,
+	 * the translated SQLite queries are rendered from the template using the
+	 * literals of the current query, and executed directly, replicating the
+	 * normal execution path while skipping only the parsing and translation.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 *
+	 * @param  array $shape              The query shape.
+	 *                                   See "self::get_translation_cache_shape()".
+	 * @return WP_PDO_Proxy_Statement|null The result statement, or null when
+	 *                                     no trusted template is available.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function replay_cached_translation( array $shape ): ?WP_PDO_Proxy_Statement {
+		$entry = $this->translation_cache[ $shape['key'] ] ?? null;
+		if ( null === $entry ) {
+			return null;
+		}
+
+		if ( $entry['uncacheable'] ) {
+			return null;
+		}
+
+		// Refresh the position of the entry for the LRU eviction order.
+		unset( $this->translation_cache[ $shape['key'] ] );
+		$this->translation_cache[ $shape['key'] ] = $entry;
+
+		if (
+			! $entry['trusted']
+			|| $entry['db_name'] !== $this->db_name
+			|| $entry['main_db_name'] !== $this->main_db_name
+		) {
+			return null;
+		}
+
+		// Render the translated SQLite queries from the cached templates.
+		$queries = array();
+		foreach ( $entry['templates'] as $template ) {
+			$queries[] = $this->render_translation_template( $template, $shape['literals'] );
+		}
+
+		/*
+		 * Replicate the normal execution path below, skipping only the parsing
+		 * and translation steps. For SELECT statements, the "$this->is_readonly"
+		 * flag is set only after the wrapper transaction is begun.
+		 * See "self::query()" and "self::execute_mysql_query()".
+		 *
+		 * The wrapper transaction must follow the same skip decision the normal
+		 * path makes: SELECT statements are already read-only, while other
+		 * replayable statements still use the wrapper transaction.
+		 */
+		$wrap_in_transaction = ! $entry['is_select'];
+		if ( $wrap_in_transaction ) {
+			$this->begin_wrapper_transaction();
+		}
+		if ( $entry['is_select'] ) {
+			$this->is_readonly = true;
+			if ( $entry['has_count'] ) {
+				$this->execute_translated_select_statement( $queries[1], $queries[0] );
+			} else {
+				$this->execute_translated_select_statement( $queries[0], null );
+			}
+		} else {
+			$this->last_result_statement = $this->execute_sqlite_query( $queries[0] );
+		}
+		if ( $wrap_in_transaction ) {
+			$this->commit_wrapper_transaction();
+		}
+
+		return new WP_PDO_Proxy_Statement( $this->last_result_statement, $this->last_affected_rows );
+	}
+
+	/**
+	 * Build or validate a translation template for the given query shape.
+	 *
+	 * This must be called after a MySQL query was successfully executed using
+	 * the full translation pipeline. On the first occurrence of a query shape,
+	 * a translation template is built. On the second occurrence, the template
+	 * is validated against the full pipeline translation, and is trusted only
+	 * when the rendered queries are byte-identical (this catches translations
+	 * that branch on literal values). On any failure or mismatch, the query
+	 * shape is marked as uncacheable forever.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 *
+	 * @param array          $shape          The query shape.
+	 *                                       See "self::get_translation_cache_shape()".
+	 * @param WP_Parser_Node $statement_node The "simpleStatement" AST node of the
+	 *                                       executed query.
+	 */
+	private function update_translation_cache( array $shape, WP_Parser_Node $statement_node ): void {
+		$info = $this->last_translated_statement;
+		$key  = $shape['key'];
+
+		// Mark statements that can't be replayed from a translation template
+		// as uncacheable, so the template construction is never re-attempted.
+		if ( null === $info || ! $info['cacheable'] ) {
+			$this->save_translation_cache_entry( $key, array( 'uncacheable' => true ) );
+			return;
+		}
+
+		$entry = $this->translation_cache[ $key ] ?? null;
+		if ( null !== $entry && $entry['uncacheable'] ) {
+			return;
+		}
+
+		// Second occurrence: validate the template against the full pipeline.
+		if (
+			null !== $entry
+			&& $entry['db_name'] === $this->db_name
+			&& $entry['main_db_name'] === $this->main_db_name
+		) {
+			if ( $entry['trusted'] ) {
+				return;
+			}
+			if ( $this->translation_templates_match( $entry, $info, $shape['literals'] ) ) {
+				$entry['trusted'] = true;
+				$this->save_translation_cache_entry( $key, $entry );
+			} else {
+				$this->save_translation_cache_entry( $key, array( 'uncacheable' => true ) );
+			}
+			return;
+		}
+
+		// First occurrence: build templates by translating the statement again
+		// with all literals substituted by unique sentinel values.
+		$templates = $this->build_translation_templates( $shape, count( $info['queries'] ) );
+		if ( null === $templates ) {
+			$this->save_translation_cache_entry( $key, array( 'uncacheable' => true ) );
+			return;
+		}
+
+		$entry = array(
+			'uncacheable'  => false,
+			'trusted'      => false,
+			'is_select'    => $info['is_select'],
+			'has_count'    => $info['has_count'],
+			'templates'    => $templates,
+			'db_name'      => $this->db_name,
+			'main_db_name' => $this->main_db_name,
+		);
+
+		// Sanity check: the new templates rendered with the literals of the
+		// current query must reproduce the full pipeline translation.
+		if ( ! $this->translation_templates_match( $entry, $info, $shape['literals'] ) ) {
+			$this->save_translation_cache_entry( $key, array( 'uncacheable' => true ) );
+			return;
+		}
+
+		$this->save_translation_cache_entry( $key, $entry );
+	}
+
+	/**
+	 * Check whether rendered translation templates match a full translation.
+	 *
+	 * @param  array $entry    The translation cache entry.
+	 * @param  array $info     The full pipeline translation record.
+	 *                         See "self::$last_translated_statement".
+	 * @param  array $literals The literals of the current query.
+	 * @return bool            Whether the rendered templates are byte-identical
+	 *                         to the full pipeline translation.
+	 */
+	private function translation_templates_match( array $entry, array $info, array $literals ): bool {
+		if (
+			$entry['is_select'] !== $info['is_select']
+			|| $entry['has_count'] !== $info['has_count']
+			|| count( $entry['templates'] ) !== count( $info['queries'] )
+		) {
+			return false;
+		}
+		foreach ( $entry['templates'] as $i => $template ) {
+			if ( $this->render_translation_template( $template, $literals ) !== $info['queries'][ $i ] ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Save an entry to the translation template cache with LRU eviction.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 *
+	 * @param string $key   The query shape key.
+	 * @param array  $entry The translation cache entry.
+	 */
+	private function save_translation_cache_entry( string $key, array $entry ): void {
+		if ( isset( $this->translation_cache[ $key ] ) ) {
+			unset( $this->translation_cache[ $key ] );
+		} elseif ( count( $this->translation_cache ) >= self::TRANSLATION_CACHE_CAPACITY ) {
+			// Evict the least recently used entry (the first one in the array).
+			array_shift( $this->translation_cache );
+		}
+		$this->translation_cache[ $key ] = $entry;
+	}
+
+	/**
+	 * Build translation templates for the current MySQL query.
+	 *
+	 * The current MySQL query is translated a second time, with each literal
+	 * substituted by a unique sentinel value. The sentinels are then located
+	 * in the translated output to produce templates with literal slots.
+	 *
+	 * When any sentinel does not appear intact at most once in each translated
+	 * query, or the translation of the sentinel query fails, null is returned
+	 * and the query shape must be marked as uncacheable.
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::$translation_cache
+	 *
+	 * @param  array $shape          The query shape.
+	 *                               See "self::get_translation_cache_shape()".
+	 * @param  int   $expected_count The expected number of translated queries.
+	 * @return array{ parts: string[], slots: int[] }[]|null The templates,
+	 *                               or null when a template can't be built.
+	 */
+	private function build_translation_templates( array $shape, int $expected_count ): ?array {
+		$query    = $this->last_mysql_query;
+		$literals = $shape['literals'];
+
+		// Compose a sentinel query, replacing literals with sentinel values.
+		$sentinels      = array();
+		$sentinel_query = '';
+		$position       = 0;
+		foreach ( $literals as $index => $literal ) {
+			list( $type, $token ) = $literal;
+			if ( 'string' === $type ) {
+				$bare     = '~~WPLIT' . $index . '~~';
+				$sentinel = "'" . $bare . "'";
+			} else {
+				$bare     = (string) ( 8000000000000000 + $index );
+				$sentinel = $bare;
+			}
+			$sentinels[ $index ] = array( $type, $bare );
+			$sentinel_query     .= substr( $query, $position, $token->start - $position ) . $sentinel;
+			$position            = $token->start + $token->length;
+		}
+		$sentinel_query .= substr( $query, $position );
+
+		/*
+		 * Translate the sentinel query without executing it.
+		 *
+		 * Some translations execute SQLite metadata lookup queries. They are
+		 * read-only and harmless, but they must be removed from the query log
+		 * to keep "self::get_last_sqlite_queries()" unchanged. Additionally,
+		 * the original MySQL query reference must be temporarily replaced, as
+		 * the translation of SELECT item aliases reads the original query text
+		 * from "$this->last_mysql_query" using sentinel query AST offsets.
+		 */
+		$saved_sqlite_queries = $this->last_sqlite_queries;
+		$saved_mysql_query    = $this->last_mysql_query;
+		try {
+			$this->last_mysql_query = $sentinel_query;
+
+			$parser = $this->create_parser( $sentinel_query );
+			$parser->next_query();
+			$ast = $parser->get_query_ast();
+			if ( null === $ast || $parser->next_query() ) {
+				return null;
+			}
+
+			$child = $ast->get_first_child_node();
+			if ( null === $child || 'simpleStatement' !== $child->rule_name ) {
+				return null;
+			}
+
+			$queries = $this->translate_statement_for_template( $child->get_first_child_node() );
+		} catch ( Throwable $e ) {
+			return null;
+		} finally {
+			$this->last_mysql_query    = $saved_mysql_query;
+			$this->last_sqlite_queries = $saved_sqlite_queries;
+		}
+
+		if ( null === $queries || count( $queries ) !== $expected_count ) {
+			return null;
+		}
+
+		// Locate the sentinels in each translated query to build the templates.
+		$templates = array();
+		foreach ( $queries as $sql ) {
+			$template = $this->create_template_from_sentinels( $sql, $sentinels );
+			if ( null === $template ) {
+				return null;
+			}
+			$templates[] = $template;
+		}
+		return $templates;
+	}
+
+	/**
+	 * Translate a MySQL statement without executing the translated queries.
+	 *
+	 * This mirrors the translation parts of the SELECT, INSERT, REPLACE,
+	 * UPDATE, and DELETE statement handlers, and is used to translate the
+	 * sentinel queries for the translation template cache.
+	 *
+	 * @param  WP_Parser_Node $node The statement AST node (a "simpleStatement" child).
+	 * @return string[]|null        The translated queries in execution order,
+	 *                              or null when the statement type can't be
+	 *                              replayed from a translation template.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_statement_for_template( WP_Parser_Node $node ): ?array {
+		switch ( $node->rule_name ) {
+			case 'selectStatement':
+				list( $query, $count_query ) = $this->translate_select_statement( $node );
+				return null === $count_query ? array( $query ) : array( $count_query, $query );
+			case 'insertStatement':
+			case 'replaceStatement':
+				list( $query, $on_conflict_update_list ) = $this->translate_insert_or_replace_statement( $node );
+				// The ON CONFLICT fallback for SQLite < 3.35.0 is data-dependent.
+				return null === $on_conflict_update_list ? array( $query ) : null;
+			case 'updateStatement':
+				return array( $this->translate_update_statement( $node ) );
+			case 'deleteStatement':
+				// A multi-table DELETE executes data-dependent queries.
+				if ( null !== $node->get_first_child_node( 'tableAliasRefList' ) ) {
+					return null;
+				}
+				return array( $this->translate( $node ) );
+		}
+		return null;
+	}
+
+	/**
+	 * Create a translation template by locating sentinels in a translated query.
+	 *
+	 * Each sentinel must appear intact at most once in the translated query.
+	 * A string sentinel must appear as a complete single-quoted SQLite string
+	 * literal, and a number sentinel must appear as a standalone number. When
+	 * any sentinel violates these rules, the template can't be created.
+	 *
+	 * @param  string $sql       The translated SQLite query with sentinels.
+	 * @param  array  $sentinels The sentinels (literal index => type and bare value).
+	 * @return array{ parts: string[], slots: int[] }|null The template, or null
+	 *                           when the template can't be created.
+	 */
+	private function create_template_from_sentinels( string $sql, array $sentinels ): ?array {
+		$slot_positions = array();
+		foreach ( $sentinels as $index => $sentinel ) {
+			list( $type, $bare ) = $sentinel;
+
+			$count = substr_count( $sql, $bare );
+			if ( 0 === $count ) {
+				// This literal does not occur in this translated query.
+				continue;
+			}
+			if ( 1 !== $count ) {
+				return null;
+			}
+
+			if ( 'string' === $type ) {
+				// The sentinel must occur as a complete string literal ('...').
+				$span     = "'" . $bare . "'";
+				$position = strpos( $sql, $span );
+				if ( false === $position ) {
+					return null;
+				}
+			} else {
+				// The sentinel must occur as a standalone number.
+				$span     = $bare;
+				$position = strpos( $sql, $span );
+				$before   = $position > 0 ? $sql[ $position - 1 ] : '';
+				$after    = $sql[ $position + strlen( $span ) ] ?? '';
+				if (
+					1 === preg_match( '/[0-9A-Za-z_.$\'"`]/', $before )
+					|| 1 === preg_match( '/[0-9A-Za-z_.$\'"`]/', $after )
+				) {
+					return null;
+				}
+			}
+
+			$slot_positions[ $position ] = array( $index, strlen( $span ) );
+		}
+
+		ksort( $slot_positions );
+
+		$parts    = array();
+		$slots    = array();
+		$position = 0;
+		foreach ( $slot_positions as $start => $slot ) {
+			list( $index, $length ) = $slot;
+
+			$parts[]  = substr( $sql, $position, $start - $position );
+			$slots[]  = $index;
+			$position = $start + $length;
+		}
+		$parts[] = substr( $sql, $position );
+
+		return array(
+			'parts' => $parts,
+			'slots' => $slots,
+		);
+	}
+
+	/**
+	 * Render a translated SQLite query from a translation template.
+	 *
+	 * String literals are rendered exactly the way the translator renders them.
+	 * Number literals pass through with their raw bytes as written.
+	 *
+	 * @param  array $template The translation template.
+	 * @param  array $literals The literals of the current query.
+	 * @return string          The rendered SQLite query.
+	 */
+	private function render_translation_template( array $template, array $literals ): string {
+		$parts = $template['parts'];
+		$sql   = $parts[0];
+		foreach ( $template['slots'] as $i => $literal_index ) {
+			list( $type, $token ) = $literals[ $literal_index ];
+			if ( 'string' === $type ) {
+				$sql .= $this->render_translated_string_literal( $token->get_value() );
+			} else {
+				$sql .= $token->get_bytes();
+			}
+			$sql .= $parts[ $i + 1 ];
+		}
+		return $sql;
+	}
+
+	/**
 	 * Translate and execute a MySQL query in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "query" AST node with "simpleStatement" child.
@@ -1455,6 +2095,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		if ( 'beginWork' === $children[0]->rule_name ) {
+			$this->translation_cache = array();
 			$this->begin_user_transaction();
 			return;
 		}
@@ -1467,6 +2108,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// Process the "simpleStatement" AST node.
 		$node = $children[0]->get_first_child_node();
+
+		/*
+		 * Cached translation templates can depend on table metadata and session
+		 * state. Clear the cache on any statement that may change them - that
+		 * is, anything other than a SELECT or a DML statement. This includes
+		 * transaction statements, since a ROLLBACK can revert DDL changes.
+		 */
+		if ( ! in_array(
+			$node->rule_name,
+			array( 'selectStatement', 'insertStatement', 'replaceStatement', 'updateStatement', 'deleteStatement' ),
+			true
+		) ) {
+			$this->translation_cache = array();
+		}
+
 		switch ( $node->rule_name ) {
 			case 'transactionOrLockingStatement':
 				$this->execute_transaction_or_locking_statement( $node );
@@ -1745,6 +2401,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// The rollback may have reverted some DDL statements.
 		$this->clear_table_metadata_cache();
+		$this->translation_cache = array();
 	}
 
 	/**
@@ -1874,6 +2531,29 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_select_statement( WP_Parser_Node $node ): void {
+		list( $query, $count_query ) = $this->translate_select_statement( $node );
+
+		// Record the translation for the translation template cache.
+		$this->last_translated_statement = array(
+			'is_select' => true,
+			'has_count' => null !== $count_query,
+			'queries'   => null === $count_query ? array( $query ) : array( $count_query, $query ),
+			'cacheable' => true,
+		);
+
+		$this->execute_translated_select_statement( $query, $count_query );
+	}
+
+	/**
+	 * Translate a MySQL SELECT statement to SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "selectStatement" AST node.
+	 * @return array{0: string, 1: string|null} The translated query, and a query
+	 *                                          emulating SQL_CALC_FOUND_ROWS when
+	 *                                          it is used (null otherwise).
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_select_statement( WP_Parser_Node $node ): array {
 		/*
 		 * [GRAMMAR]
 		 * selectStatement:
@@ -1888,7 +2568,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL
 		);
 
-		// Handle SQL_CALC_FOUND_ROWS.
+		// Translate a count query to emulate SQL_CALC_FOUND_ROWS.
+		$count_query = null;
 		if ( true === $has_sql_calc_found_rows ) {
 			// Recursively find a query expression with the first LIMIT or SELECT.
 			$query_expr = $node->get_first_descendant_node( 'queryExpression' );
@@ -1928,10 +2609,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 			}
 
+			$count_query = 'SELECT COUNT(*) AS cnt FROM (' . $this->translate( $count_expr ) . ')';
+		}
+
+		return array( $query, $count_query );
+	}
+
+	/**
+	 * Execute a translated MySQL SELECT statement in SQLite.
+	 *
+	 * @param  string      $query       The translated SQLite query.
+	 * @param  string|null $count_query A translated SQLite query emulating
+	 *                                  SQL_CALC_FOUND_ROWS, when it is used.
+	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 */
+	private function execute_translated_select_statement( string $query, ?string $count_query ): void {
+		// Handle SQL_CALC_FOUND_ROWS.
+		if ( null !== $count_query ) {
 			// Get count of all the rows.
-			$result = $this->execute_sqlite_query(
-				'SELECT COUNT(*) AS cnt FROM (' . $this->translate( $count_expr ) . ')'
-			);
+			$result = $this->execute_sqlite_query( $count_query );
 
 			$this->found_rows = (int) $result->fetchColumn();
 		} else {
@@ -1954,66 +2650,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
-		$parts                   = array();
-		$on_conflict_update_list = null;
-		foreach ( $node->get_children() as $child ) {
-			$is_token = $child instanceof WP_MySQL_Token;
-			$is_node  = $child instanceof WP_Parser_Node;
+		list( $query, $on_conflict_update_list, $table_name ) = $this->translate_insert_or_replace_statement( $node );
 
-			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
-				// MySQL supports INSERT without the INTO keyword; SQLite requires it.
-				if ( ! $node->has_child_token( WP_MySQL_Lexer::INTO_SYMBOL ) ) {
-					$parts[] = 'INTO';
-				}
-
-				$database = $this->get_database_name( $child );
-				if ( 'information_schema' === strtolower( $database ) ) {
-					throw $this->new_access_denied_to_information_schema_exception();
-				}
-			}
-
-			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
-			if ( $is_token && WP_MySQL_Lexer::SET_SYMBOL === $child->id ) {
-				continue;
-			}
-
-			if ( $is_token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
-				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-				$parts[] = 'OR IGNORE';
-			} elseif (
-				$is_node
-				&& (
-					'insertFromConstructor' === $child->rule_name
-					|| 'insertQueryExpression' === $child->rule_name
-					|| 'updateList' === $child->rule_name
-				)
-			) {
-				$table_ref  = $node->get_first_child_node( 'tableRef' );
-				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
-			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
-				/*
-				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
-				 *
-				 * For SQLite versions older than 3.35.0, we need to handle the
-				 * ON CONFLICT clause differently, and at this stage, we only
-				 * save the translated update list to a variable.
-				 *
-				 * See bellow at "Handle ON CONFLICT clause for SQLite < 3.35.0".
-				 */
-				$sqlite_version = $this->get_sqlite_version();
-				if ( version_compare( $sqlite_version, '3.35.0', '<' ) ) {
-					$on_conflict_update_list = $this->translate_update_list( $table_name, $child );
-				} else {
-					$parts[] = 'ON CONFLICT DO UPDATE SET ';
-					$parts[] = $this->translate_update_list( $table_name, $child );
-				}
-			} else {
-				$parts[] = $this->translate( $child );
-			}
-		}
-
-		$query = implode( ' ', $parts );
+		/*
+		 * Record the translation for the translation template cache.
+		 *
+		 * The fallback path for SQLite < 3.35.0 below is data-dependent (it may
+		 * re-execute the query with an ON CONFLICT clause derived from a
+		 * constraint violation error), so it can't be replayed from a template.
+		 */
+		$this->last_translated_statement = array(
+			'is_select' => false,
+			'has_count' => false,
+			'queries'   => array( $query ),
+			'cacheable' => null === $on_conflict_update_list,
+		);
 
 		/*
 		 * Handle ON CONFLICT clause for SQLite < 3.35.0.
@@ -2075,12 +2726,108 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Translate a MySQL INSERT or REPLACE statement to SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "insertStatement" or "replaceStatement" AST node.
+	 * @return array{0: string, 1: string|null, 2: string|null} The translated query, the translated
+	 *                                                          ON CONFLICT update list for SQLite < 3.35.0
+	 *                                                          (null otherwise), and the target table name.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_insert_or_replace_statement( WP_Parser_Node $node ): array {
+		$parts                   = array();
+		$on_conflict_update_list = null;
+		$table_name              = null;
+		foreach ( $node->get_children() as $child ) {
+			$is_token = $child instanceof WP_MySQL_Token;
+			$is_node  = $child instanceof WP_Parser_Node;
+
+			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
+				// MySQL supports INSERT without the INTO keyword; SQLite requires it.
+				if ( ! $node->has_child_token( WP_MySQL_Lexer::INTO_SYMBOL ) ) {
+					$parts[] = 'INTO';
+				}
+
+				$database = $this->get_database_name( $child );
+				if ( 'information_schema' === strtolower( $database ) ) {
+					throw $this->new_access_denied_to_information_schema_exception();
+				}
+			}
+
+			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
+			if ( $is_token && WP_MySQL_Lexer::SET_SYMBOL === $child->id ) {
+				continue;
+			}
+
+			if ( $is_token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
+				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
+				$parts[] = 'OR IGNORE';
+			} elseif (
+				$is_node
+				&& (
+					'insertFromConstructor' === $child->rule_name
+					|| 'insertQueryExpression' === $child->rule_name
+					|| 'updateList' === $child->rule_name
+				)
+			) {
+				$table_ref  = $node->get_first_child_node( 'tableRef' );
+				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
+			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
+				/*
+				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
+				 *
+				 * For SQLite versions older than 3.35.0, we need to handle the
+				 * ON CONFLICT clause differently, and at this stage, we only
+				 * save the translated update list to a variable.
+				 *
+				 * See bellow at "Handle ON CONFLICT clause for SQLite < 3.35.0".
+				 */
+				$sqlite_version = $this->get_sqlite_version();
+				if ( version_compare( $sqlite_version, '3.35.0', '<' ) ) {
+					$on_conflict_update_list = $this->translate_update_list( $table_name, $child );
+				} else {
+					$parts[] = 'ON CONFLICT DO UPDATE SET ';
+					$parts[] = $this->translate_update_list( $table_name, $child );
+				}
+			} else {
+				$parts[] = $this->translate( $child );
+			}
+		}
+
+		$query = implode( ' ', $parts );
+
+		return array( $query, $on_conflict_update_list, $table_name );
+	}
+
+	/**
 	 * Translate and execute a MySQL UPDATE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "updateStatement" AST node.
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_update_statement( WP_Parser_Node $node ): void {
+		$query = $this->translate_update_statement( $node );
+
+		// Record the translation for the translation template cache.
+		$this->last_translated_statement = array(
+			'is_select' => false,
+			'has_count' => false,
+			'queries'   => array( $query ),
+			'cacheable' => true,
+		);
+
+		$this->last_result_statement = $this->execute_sqlite_query( $query );
+	}
+
+	/**
+	 * Translate a MySQL UPDATE statement to SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "updateStatement" AST node.
+	 * @return string                     The translated query.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_update_statement( WP_Parser_Node $node ): string {
 		// @TODO: Add support for UPDATE with multiple tables and JOINs.
 		//        SQLite supports them in the FROM clause.
 
@@ -2305,9 +3052,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$order_clause,
 			$limit_clause,
 		);
-		$query = implode( ' ', array_filter( $parts ) );
-
-		$this->last_result_statement = $this->execute_sqlite_query( $query );
+		return implode( ' ', array_filter( $parts ) );
 	}
 
 	/**
@@ -2443,11 +3188,28 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$where_subquery
 			);
 
+			// Record the translation for the translation template cache.
+			$this->last_translated_statement = array(
+				'is_select' => false,
+				'has_count' => false,
+				'queries'   => array( $query ),
+				'cacheable' => true,
+			);
+
 			$this->last_result_statement = $this->execute_sqlite_query( $query );
 			return;
 		}
 
-		$query                       = $this->translate( $node );
+		$query = $this->translate( $node );
+
+		// Record the translation for the translation template cache.
+		$this->last_translated_statement = array(
+			'is_select' => false,
+			'has_count' => false,
+			'queries'   => array( $query ),
+			'cacheable' => true,
+		);
+
 		$this->last_result_statement = $this->execute_sqlite_query( $query );
 	}
 
@@ -4166,8 +4928,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_string_literal( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
-		$value = $token->get_value();
+		return $this->render_translated_string_literal( $token->get_value() );
+	}
 
+	/**
+	 * Render an unquoted MySQL string literal value as an SQLite literal.
+	 *
+	 * @param  string $value The unquoted MySQL string literal value.
+	 * @return string        The rendered SQLite value.
+	 */
+	private function render_translated_string_literal( string $value ): string {
 		/*
 		 * Translate datetime literals.
 		 *
@@ -7104,13 +7874,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * Clear the state of the driver.
 	 */
 	private function flush(): void {
-		$this->last_mysql_query         = '';
-		$this->last_sqlite_queries      = array();
-		$this->last_result_statement    = null;
-		$this->last_affected_rows       = null;
-		$this->last_column_meta         = array();
-		$this->is_readonly              = false;
-		$this->wrapper_transaction_type = null;
+		$this->last_mysql_query          = '';
+		$this->last_sqlite_queries       = array();
+		$this->last_result_statement     = null;
+		$this->last_affected_rows        = null;
+		$this->last_column_meta          = array();
+		$this->last_translated_statement = null;
+		$this->is_readonly               = false;
+		$this->wrapper_transaction_type  = null;
 		$this->user_defined_functions->flush();
 	}
 

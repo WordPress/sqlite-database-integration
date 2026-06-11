@@ -2085,10 +2085,17 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		$executed_queries = array_column( $this->driver->get_last_sqlite_queries(), 'sql' );
 
-		// Remove BEGIN and COMMIT/ROLLBACK queries.
-		if ( count( $executed_queries ) > 2 ) {
-			$executed_queries = array_values( array_slice( $executed_queries, 1, -1, true ) );
-		}
+		// Remove BEGIN and COMMIT/ROLLBACK queries, including wrapper savepoints.
+		// The wrapper transaction may be skipped for some statement types.
+		$executed_queries = array_values(
+			array_filter(
+				$executed_queries,
+				function ( $query ) {
+					return ! in_array( $query, array( 'BEGIN', 'BEGIN IMMEDIATE', 'COMMIT', 'ROLLBACK' ), true )
+						&& ! preg_match( '/^(?:SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT) _wp_sqlite_savepoint_/', $query );
+				}
+			)
+		);
 
 		// Remove temporary table existence checks.
 		$executed_queries = array_values(
