@@ -2231,6 +2231,265 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SQL_CALC_FOUND_ROWS grouped postmeta queries aggregate sort expressions.
+	 */
+	public function test_sql_calc_grouped_postmeta_order_by_uses_aggregate_sort_expressions(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_status` varchar(20) NOT NULL DEFAULT "",
+				`post_date` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (1, 'post', 'publish', '2024-01-01 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (2, 'post', 'publish', '2024-01-02 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (3, 'post', 'publish', '2024-01-03 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'foo', 'b')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'foo', 'a')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, 'foo', 'a')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'bar', '5')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'bar', '2')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, 'bar', '9')" );
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+				INNER JOIN wptests_postmeta AS mt1 ON ( wptests_posts.ID = mt1.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'foo'
+				AND mt1.meta_key = 'bar'
+			GROUP BY wptests_posts.ID
+			ORDER BY CAST(wptests_postmeta.meta_value AS CHAR) ASC, CAST(mt1.meta_value AS UNSIGNED) DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertSame(
+			array( '3', '2', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringNotContainsString( 'SQL_CALC_FOUND_ROWS', $sql );
+		$this->assertStringContainsString( 'ORDER BY MIN(CAST(wptests_postmeta.meta_value AS text)) ASC', $sql );
+		$this->assertStringContainsString( 'MAX(' . $this->get_expected_mysql_integer_cast_sql( 'mt1.meta_value' ) . ') DESC', $sql );
+
+		$numeric_rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'bar'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_postmeta.meta_value+0 ASC
+			LIMIT 0, 10"
+		);
+
+		$this->assertSame(
+			array( '2', '1', '3' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$numeric_rows
+			)
+		);
+		$this->assertStringContainsString(
+			'ORDER BY MIN(' . $this->get_expected_mysql_numeric_cast_sql( 'wptests_postmeta.meta_value' ) . ') ASC',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$decimal_rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'bar'
+			GROUP BY wptests_posts.ID
+			ORDER BY CAST(wptests_postmeta.meta_value AS DECIMAL(10, 2)) DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertSame(
+			array( '3', '1', '2' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$decimal_rows
+			)
+		);
+		$this->assertStringContainsString(
+			'ORDER BY MAX(CAST (wptests_postmeta.meta_value AS DECIMAL (10, 2))) DESC',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '3', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests numeric literals in predicate context use MySQL truthiness.
+	 */
+	public function test_numeric_literal_predicates_use_mysql_truthiness_without_changing_values_or_limits(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_date TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (1, \'2024-01-01 00:00:00\')' );
+
+		$rows = $driver->query(
+			'SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1=1 AND 0
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10'
+		);
+
+		$this->assertSame( array(), $rows );
+		$this->assertStringContainsString( 'WHERE 1 = 1 AND (0 <> 0)', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$selected_zero = $driver->query( 'SELECT 0' );
+		$this->assertSame( '0', $selected_zero[0]->{'0'} );
+		$this->assertSame( 'SELECT 0', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$limit_zero = $driver->query( 'SELECT ID FROM wptests_posts ORDER BY ID LIMIT 0' );
+		$this->assertSame( array(), $limit_zero );
+		$this->assertSame( 'SELECT "ID" FROM wptests_posts ORDER BY "ID" LIMIT 0', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests correlated subquery identifiers resolve through table metadata casing.
+	 */
+	public function test_correlated_subquery_post_id_identifier_uses_metadata_casing(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_status` varchar(20) NOT NULL DEFAULT "",
+				`post_date` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (1, 'post', 'publish', '2024-01-01 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (2, 'post', 'publish', '2024-01-02 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'target', 'abc')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'target', 'abc')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'blocked', '1')" );
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND (
+					NOT EXISTS (
+						SELECT 1 FROM wptests_postmeta mt1
+						WHERE mt1.post_ID = wptests_postmeta.post_ID
+							AND mt1.meta_key = 'blocked'
+						LIMIT 1
+					)
+					AND wptests_postmeta.meta_value = 'abc'
+				)
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString( 'mt1.post_id = wptests_postmeta.post_id', $sql );
+		$this->assertStringNotContainsString( 'post_ID', $sql );
+		$this->assertStringContainsString( 'wptests_posts."ID"', $sql );
+	}
+
+	/**
+	 * Tests DECIMAL casts use text only for LIKE predicates.
+	 */
+	public function test_decimal_cast_like_uses_text_without_changing_numeric_comparisons(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_status` varchar(20) NOT NULL DEFAULT "",
+				`post_date` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (1, 'post', 'publish', '2024-01-01 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (2, 'post', 'publish', '2024-01-02 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'decimal_value', '10.30')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'decimal_value', '10.40')" );
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'decimal_value'
+				AND CAST(wptests_postmeta.meta_value AS DECIMAL(10,2)) LIKE '%.3%'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+		$this->assertStringContainsString( 'AS text) LIKE', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$numeric_rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'decimal_value'
+				AND CAST(wptests_postmeta.meta_value AS DECIMAL(10,2)) > 10.35
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertCount( 1, $numeric_rows );
+		$this->assertSame( '2', $numeric_rows[0]->ID );
+		$this->assertStringNotContainsString( 'AS text) >', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
 	 * Tests grouped DISTINCT ORDER BY shapes fail closed for later SELECT passes.
 	 */
 	public function test_distinct_order_by_grouped_shape_fails_closed(): void {
@@ -2305,6 +2564,58 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$month_sql = $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' );
 		$this->assertSame(
 			'SELECT ' . $year_sql . ' AS "year", ' . $month_sql . ' AS "month", count ("ID") as posts FROM wptests_posts WHERE post_type = \'post\' AND post_status = \'publish\' GROUP BY ' . $year_sql . ', ' . $month_sql . ' ORDER BY MAX(post_date) DESC',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'post_date DESC', str_replace( 'MAX(post_date) DESC', '', $sql ) );
+	}
+
+	/**
+	 * Tests yearly grouped archive queries order by an aggregate post date.
+	 */
+	public function test_grouped_year_archive_order_by_uses_aggregate_sort_expression(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT YEAR(post_date) AS `year`, count(ID) as posts
+			FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			GROUP BY YEAR(post_date)
+			ORDER BY post_date DESC";
+		$sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_strict_aggregate_grouped_order_by_query',
+			$select
+		);
+
+		$year_sql = $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' );
+		$this->assertSame(
+			'SELECT ' . $year_sql . ' AS "year", count ("ID") as posts FROM wptests_posts WHERE post_type = \'post\' AND post_status = \'publish\' GROUP BY ' . $year_sql . ' ORDER BY MAX(post_date) DESC',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'post_date DESC', str_replace( 'MAX(post_date) DESC', '', $sql ) );
+	}
+
+	/**
+	 * Tests daily grouped archive queries order by an aggregate post date.
+	 */
+	public function test_grouped_day_archive_order_by_uses_aggregate_sort_expression(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, DAYOFMONTH(post_date) AS `dayofmonth`, count(ID) as posts
+			FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			GROUP BY YEAR(post_date), MONTH(post_date), DAYOFMONTH(post_date)
+			ORDER BY post_date DESC";
+		$sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_strict_aggregate_grouped_order_by_query',
+			$select
+		);
+
+		$year_sql  = $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' );
+		$month_sql = $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' );
+		$day_sql   = $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' );
+		$this->assertSame(
+			'SELECT ' . $year_sql . ' AS "year", ' . $month_sql . ' AS "month", ' . $day_sql . ' AS "dayofmonth", count ("ID") as posts FROM wptests_posts WHERE post_type = \'post\' AND post_status = \'publish\' GROUP BY ' . $year_sql . ', ' . $month_sql . ', ' . $day_sql . ' ORDER BY MAX(post_date) DESC',
 			$sql
 		);
 		$this->assertStringNotContainsString( 'post_date DESC', str_replace( 'MAX(post_date) DESC', '', $sql ) );
