@@ -238,6 +238,17 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL string values with NUL bytes are encoded before quoting.
+	 */
+	public function test_quote_encodes_mysql_text_nul_bytes_for_postgresql(): void {
+		$connection = $this->create_connection_with_pdo_fixture( new WP_PostgreSQL_Connection_Pgsql_Quote_Fake_PDO() );
+
+		$quoted = $connection->quote( "protected\0property" );
+		$this->assertStringNotContainsString( "\0", $quoted );
+		$this->assertNotSame( "'protected\0property'", $quoted );
+	}
+
+	/**
 	 * Creates a PostgreSQL connection backed by a lightweight PDO fixture.
 	 *
 	 * @param object $pdo_fixture PDO-like fixture.

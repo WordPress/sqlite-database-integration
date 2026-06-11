@@ -16,6 +16,10 @@ class WP_PostgreSQL_Connection_Pgsql_Quote_Fake_PDO {
 			return 'pgsql';
 		}
 
+		if ( 'quote' === $method_name ) {
+			return "'" . str_replace( "'", "''", (string) ( $arguments[0] ?? '' ) ) . "'";
+		}
+
 		return null;
 	}
 }

@@ -20,6 +20,11 @@ class WP_PostgreSQL_Driver {
 	const DEFAULT_MYSQL_COLLATION      = 'utf8mb4_unicode_ci';
 
 	/**
+	 * Sentinel prefix for MySQL text bytes PostgreSQL text cannot store directly.
+	 */
+	private const MYSQL_TEXT_SENTINEL = "\xEE\x80\x80";
+
+	/**
 	 * PostgreSQL server version string.
 	 *
 	 * @var string
@@ -480,7 +485,9 @@ class WP_PostgreSQL_Driver {
 
 		if ( $stmt->columnCount() > 0 ) {
 			$this->last_column_meta = $this->normalize_column_meta( $stmt );
-			$this->last_result      = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+			$this->last_result      = $this->decode_postgresql_text_for_mysql_in_result(
+				$stmt->fetchAll( $fetch_mode, ...$fetch_mode_args )
+			);
 			if ( null !== $sql_calc_found_rows_query ) {
 				$this->last_found_rows = $this->execute_sql_calc_found_rows_count_query( $sql_calc_found_rows_query );
 			}
@@ -497,6 +504,53 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Decode PostgreSQL-safe text sentinels in fetched result data.
+	 *
+	 * @param mixed $value Fetched result value.
+	 * @return mixed MySQL-facing result value.
+	 */
+	private function decode_postgresql_text_for_mysql_in_result( $value ) {
+		if ( is_string( $value ) ) {
+			return self::decode_postgresql_text_for_mysql_value( $value );
+		}
+
+		if ( is_array( $value ) ) {
+			foreach ( $value as $key => $item ) {
+				$value[ $key ] = $this->decode_postgresql_text_for_mysql_in_result( $item );
+			}
+			return $value;
+		}
+
+		if ( is_object( $value ) ) {
+			foreach ( get_object_vars( $value ) as $key => $item ) {
+				$value->$key = $this->decode_postgresql_text_for_mysql_in_result( $item );
+			}
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Decode MySQL text bytes previously encoded for PostgreSQL storage.
+	 *
+	 * @param string $value PostgreSQL text value.
+	 * @return string MySQL-facing text value.
+	 */
+	private static function decode_postgresql_text_for_mysql_value( string $value ): string {
+		if ( false === strpos( $value, self::MYSQL_TEXT_SENTINEL ) ) {
+			return $value;
+		}
+
+		return strtr(
+			$value,
+			array(
+				self::MYSQL_TEXT_SENTINEL . self::MYSQL_TEXT_SENTINEL => self::MYSQL_TEXT_SENTINEL,
+				self::MYSQL_TEXT_SENTINEL . '0' => "\0",
+			)
+		);
 	}
 
 	/**

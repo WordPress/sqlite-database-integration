@@ -15,6 +15,15 @@
  */
 class WP_PostgreSQL_Connection {
 	/**
+	 * Sentinel prefix for MySQL text bytes PostgreSQL text cannot store directly.
+	 *
+	 * PostgreSQL text rejects NUL bytes. Use a reversible private-use marker so
+	 * MySQL string literals that decode to NUL can still round-trip through text
+	 * columns.
+	 */
+	private const MYSQL_TEXT_SENTINEL = "\xEE\x80\x80";
+
+	/**
 	 * The PDO connection for PostgreSQL.
 	 *
 	 * @var PDO
@@ -157,13 +166,24 @@ class WP_PostgreSQL_Connection {
 		if (
 			PDO::PARAM_STR === $type
 			&& is_string( $value )
-			&& false !== strpos( $value, '\\' )
-			&& 'pgsql' === $this->pdo->getAttribute( PDO::ATTR_DRIVER_NAME )
+			&& 'pgsql' === $this->get_driver_name()
 		) {
-			return self::quote_escaped_string_value( $value );
+			$value = self::encode_mysql_text_for_postgresql( $value );
+			if ( self::requires_postgresql_escape_string_syntax( $value ) ) {
+				return self::quote_escaped_string_value( $value );
+			}
 		}
 
 		return $this->pdo->quote( $value, $type );
+	}
+
+	/**
+	 * Get the backing PDO driver name.
+	 *
+	 * @return string PDO driver name.
+	 */
+	protected function get_driver_name(): string {
+		return (string) $this->pdo->getAttribute( PDO::ATTR_DRIVER_NAME );
 	}
 
 	/**
@@ -214,6 +234,39 @@ class WP_PostgreSQL_Connection {
 	}
 
 	/**
+	 * Encode MySQL text bytes that PostgreSQL text cannot store directly.
+	 *
+	 * @param string $value MySQL text value.
+	 * @return string PostgreSQL-safe text value.
+	 */
+	private static function encode_mysql_text_for_postgresql( string $value ): string {
+		if (
+			false === strpos( $value, "\0" )
+			&& false === strpos( $value, self::MYSQL_TEXT_SENTINEL )
+		) {
+			return $value;
+		}
+
+		return strtr(
+			$value,
+			array(
+				self::MYSQL_TEXT_SENTINEL => self::MYSQL_TEXT_SENTINEL . self::MYSQL_TEXT_SENTINEL,
+				"\0"                      => self::MYSQL_TEXT_SENTINEL . '0',
+			)
+		);
+	}
+
+	/**
+	 * Check whether a PostgreSQL string value needs E'' syntax.
+	 *
+	 * @param string $value String value.
+	 * @return bool Whether the value contains escape-string bytes.
+	 */
+	private static function requires_postgresql_escape_string_syntax( string $value ): bool {
+		return 1 === preg_match( '/[\x01-\x1F\\\\]/', $value );
+	}
+
+	/**
 	 * Quote a string value using PostgreSQL escape string syntax.
 	 *
 	 * pdo_pgsql scans SQL text for placeholders before sending it to the server.
@@ -224,6 +277,27 @@ class WP_PostgreSQL_Connection {
 	 * @return string PostgreSQL escaped string literal.
 	 */
 	private static function quote_escaped_string_value( string $value ): string {
-		return "E'" . str_replace( array( '\\', "'" ), array( '\\\\', "''" ), $value ) . "'";
+		$escaped = '';
+		$length  = strlen( $value );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$byte = $value[ $i ];
+			if ( '\\' === $byte ) {
+				$escaped .= '\\\\';
+			} elseif ( "'" === $byte ) {
+				$escaped .= "''";
+			} elseif ( "\n" === $byte ) {
+				$escaped .= '\\n';
+			} elseif ( "\r" === $byte ) {
+				$escaped .= '\\r';
+			} elseif ( "\t" === $byte ) {
+				$escaped .= '\\t';
+			} elseif ( ord( $byte ) < 32 ) {
+				$escaped .= sprintf( '\\%03o', ord( $byte ) );
+			} else {
+				$escaped .= $byte;
+			}
+		}
+
+		return "E'" . $escaped . "'";
 	}
 }

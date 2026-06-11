@@ -2,6 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection.php';
+
 /**
  * Unit tests for the PostgreSQL driver scaffold.
  */
@@ -34,6 +36,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'wptests', $column_meta[0]['mysqli:db'] );
 		$this->assertArrayHasKey( 'mysqli:type', $column_meta[0] );
 		$this->assertArrayHasKey( 'mysqli:charsetnr', $column_meta[0] );
+	}
+
+	/**
+	 * Tests fetched PostgreSQL-safe text decodes to MySQL NUL bytes.
+	 */
+	public function test_query_decodes_postgresql_text_sentinel_to_mysql_nul_byte(): void {
+		$driver     = $this->create_driver_with_postgresql_quote_translation();
+		$connection = $driver->get_connection();
+
+		$driver->query( 'CREATE TABLE t (value TEXT NOT NULL)' );
+		$connection->query( 'INSERT INTO t (value) VALUES (' . $connection->quote( "protected\0property" ) . ')' );
+
+		$rows = $driver->query( 'SELECT value FROM t' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( "protected\0property", $rows[0]->value );
 	}
 
 	/**
@@ -1071,6 +1089,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'http://example.net', $rows[0]->option_value );
 		$this->assertSame( 'no', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests serialized feed option upserts quote PostgreSQL-safe text.
+	 */
+	public function test_options_upsert_quotes_serialized_feed_payload_for_postgresql(): void {
+		$driver = $this->create_driver_with_postgresql_quote_translation();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$payload = serialize(
+			array(
+				"\0*\0data" => "single ' double \" backslash \\ marker E'\nnext line",
+			)
+		);
+		$insert  = sprintf(
+			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+				VALUES ('_transient_feed_quote_test', %s, 'off')
+				ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
+				                        `option_value` = VALUES(`option_value`),
+				                        `autoload` = VALUES(`autoload`);",
+			$this->quote_mysql_string_literal_for_test( $payload )
+		);
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$insert
+		);
+
+		$this->assertIsArray( $translation );
+		$sql = $translation['sql'];
+
+		$this->assertStringNotContainsString( "\0", $sql );
+		$this->assertStringContainsString( 'E\'', $sql );
+		$this->assertStringContainsString( '\\nnext line', $sql );
+		$this->assertStringContainsString( '\\\\ marker', $sql );
+		$this->assertStringContainsString( "single '' double", $sql );
+		$this->assertStringContainsString( '"option_value" = excluded."option_value"', $sql );
+		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $sql );
 	}
 
 	/**
@@ -4604,6 +4662,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Creates a SQLite-backed driver that uses PostgreSQL quote translation.
+	 *
+	 * @return WP_PostgreSQL_Driver Driver under test.
+	 */
+	private function create_driver_with_postgresql_quote_translation(): WP_PostgreSQL_Driver {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
+		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Quote a MySQL string literal for parser-facing tests.
+	 *
+	 * @param string $value Literal value.
+	 * @return string MySQL string literal.
+	 */
+	private function quote_mysql_string_literal_for_test( string $value ): string {
+		$backslash = chr( 92 );
+
+		return "'" . strtr(
+			$value,
+			array(
+				$backslash => $backslash . $backslash,
+				"'"        => $backslash . "'",
+				'"'        => $backslash . '"',
+				"\0"       => $backslash . '0',
+			)
+		) . "'";
+	}
+
+	/**
 	 * Get a DML identity metadata fixture row.
 	 *
 	 * @param string $table_name    Table name.
@@ -4690,6 +4778,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function translate_driver_query_with_private_method( WP_PostgreSQL_Driver $driver, string $method_name, string $query ): ?string {
 		$translator = Closure::bind(
 			function ( string $bound_method_name, string $bound_query ): ?string {
+				return $this->$bound_method_name( $bound_query );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		return $translator( $method_name, $query );
+	}
+
+	/**
+	 * Translate a query to structured query data by calling a private method.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver      Driver under test.
+	 * @param string               $method_name Private driver method name.
+	 * @param string               $query       MySQL query.
+	 * @return array|null PostgreSQL query data, or null when unsupported.
+	 */
+	private function translate_driver_query_data_with_private_method( WP_PostgreSQL_Driver $driver, string $method_name, string $query ): ?array {
+		$translator = Closure::bind(
+			function ( string $bound_method_name, string $bound_query ): ?array {
 				return $this->$bound_method_name( $bound_query );
 			},
 			$driver,
