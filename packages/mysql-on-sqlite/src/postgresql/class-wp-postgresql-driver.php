@@ -5427,6 +5427,10 @@ WHERE option_name IN (
 		}
 
 		$projection_start = 1;
+		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
+			++$projection_start;
+		}
+
 		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL === $tokens[ $projection_start ]->id ) {
 			++$projection_start;
 		}
@@ -5453,7 +5457,6 @@ WHERE option_name IN (
 				$projection_start,
 				$select_end,
 				array(
-					WP_MySQL_Lexer::DISTINCT_SYMBOL,
 					WP_MySQL_Lexer::FOR_SYMBOL,
 					WP_MySQL_Lexer::HAVING_SYMBOL,
 					WP_MySQL_Lexer::INTO_SYMBOL,
@@ -5637,6 +5640,17 @@ WHERE option_name IN (
 
 		$replacements   = array();
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $projection_start, $group_position );
+		if ( null !== $archive_date_expression ) {
+			$replacements = array_merge(
+				$replacements,
+				$this->get_mysql_archive_grouped_projection_replacements(
+					$tokens,
+					$projection_items,
+					$archive_date_expression
+				)
+			);
+		}
+
 		if ( null !== $where_position ) {
 			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
@@ -5665,6 +5679,61 @@ WHERE option_name IN (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Get projection replacements needed by grouped archive queries.
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param array           $projection_items        Parsed projection items.
+	 * @param array           $archive_date_expression Shared date expression bounds.
+	 * @return array<int, array{start: int, end: int, sql: string}> Replacement ranges.
+	 */
+	private function get_mysql_archive_grouped_projection_replacements( array $tokens, array $projection_items, array $archive_date_expression ): array {
+		$replacements = array();
+
+		foreach ( $projection_items as $projection_item ) {
+			$bounds = $this->get_mysql_date_format_bounds(
+				$tokens,
+				$projection_item['expression_start'],
+				$projection_item['expression_end']
+			);
+			if (
+				null === $bounds
+				|| '%Y-%m-%d' !== $bounds['format']
+				|| $bounds['close'] + 1 !== $projection_item['expression_end']
+				|| ! $this->are_mysql_token_ranges_equivalent(
+					$tokens,
+					$archive_date_expression['start'],
+					$archive_date_expression['end'],
+					$bounds['expression_start'],
+					$bounds['expression_end']
+				)
+			) {
+				continue;
+			}
+
+			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$bounds['expression_start'],
+				$bounds['expression_end']
+			);
+			$sql            = $this->get_postgresql_mysql_date_format_sql(
+				$bounds['format'],
+				sprintf( 'MAX(%s)', $expression_sql )
+			);
+			if ( null === $sql ) {
+				continue;
+			}
+
+			$replacements[] = array(
+				'start' => $projection_item['expression_start'],
+				'end'   => $projection_item['expression_end'],
+				'sql'   => $sql,
+			);
+		}
+
+		return $replacements;
 	}
 
 	/**
@@ -5772,6 +5841,7 @@ WHERE option_name IN (
 		}
 
 		$year_expression       = null;
+		$week_expression       = null;
 		$month_expression      = null;
 		$dayofmonth_expression = null;
 		$supported_expressions = 0;
@@ -5784,6 +5854,17 @@ WHERE option_name IN (
 			);
 			if ( null !== $expression ) {
 				$year_expression = $expression;
+				++$supported_expressions;
+				continue;
+			}
+
+			$expression = $this->get_mysql_week_argument_expression_bounds(
+				$tokens,
+				$group_item['start'],
+				$group_item['end']
+			);
+			if ( null !== $expression ) {
+				$week_expression = $expression;
 				++$supported_expressions;
 				continue;
 			}
@@ -5815,7 +5896,27 @@ WHERE option_name IN (
 		if (
 			$group_count !== $supported_expressions
 			|| null === $year_expression
-			|| (
+		) {
+			return null;
+		}
+
+		if ( null !== $week_expression ) {
+			if (
+				2 !== $group_count
+				|| null !== $month_expression
+				|| null !== $dayofmonth_expression
+				|| ! $this->are_mysql_token_ranges_equivalent(
+					$tokens,
+					$year_expression['start'],
+					$year_expression['end'],
+					$week_expression['start'],
+					$week_expression['end']
+				)
+			) {
+				return null;
+			}
+		} elseif (
+			(
 				2 <= $group_count
 				&& null === $month_expression
 			)
@@ -5843,7 +5944,12 @@ WHERE option_name IN (
 					$dayofmonth_expression['end']
 				)
 			)
-			|| ! $this->is_mysql_column_reference_expression(
+		) {
+			return null;
+		}
+
+		if (
+			! $this->is_mysql_column_reference_expression(
 				$tokens,
 				$year_expression['start'],
 				$year_expression['end'],
@@ -5877,6 +5983,34 @@ WHERE option_name IN (
 		if (
 			null === $bounds
 			|| $bounds['unit'] !== $unit
+			|| $bounds['close'] + 1 !== $expression_bounds['end']
+		) {
+			return null;
+		}
+
+		return array(
+			'start' => $bounds['expression_start'],
+			'end'   => $bounds['expression_end'],
+		);
+	}
+
+	/**
+	 * Get the argument expression for a supported WEEK() function.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token.
+	 * @param int             $end    Final expression token, exclusive.
+	 * @return array{start: int, end: int}|null Argument bounds, or null.
+	 */
+	private function get_mysql_week_argument_expression_bounds( array $tokens, int $start, int $end ): ?array {
+		$expression_bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$bounds            = $this->get_mysql_week_function_bounds(
+			$tokens,
+			$expression_bounds['start'],
+			$expression_bounds['end']
+		);
+		if (
+			null === $bounds
 			|| $bounds['close'] + 1 !== $expression_bounds['end']
 		) {
 			return null;
@@ -8881,6 +9015,15 @@ WHERE option_name IN (
 				$translated_fragment = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_week_function_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_weekday_index_function_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_date_format_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_time_extract_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -9616,6 +9759,317 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate MySQL WEEK(expr, 1) calls to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_week_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_week_function_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => $this->get_postgresql_mysql_week_mode_one_sql( $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CASE_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for supported MySQL WEEK(expr, mode) calls.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_week_function_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
+		if (
+			null === $arguments
+			|| 2 !== count( $arguments )
+			|| ! $this->is_mysql_week_mode_one_argument( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $arguments[0]['start'],
+			'expression_end'   => $arguments[0]['end'],
+			'close'            => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Check whether a WEEK() mode argument is the supported MySQL mode 1.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First mode token.
+	 * @param int             $end    Final mode token, exclusive.
+	 * @return bool Whether the mode is supported.
+	 */
+	private function is_mysql_week_mode_one_argument( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::INT_NUMBER === $tokens[ $start ]->id
+			&& '1' === $tokens[ $start ]->get_value();
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 1).
+	 *
+	 * MySQL mode 1 is Monday-first and returns week numbers in the given year,
+	 * using 0 for dates before that year's first ISO-like week.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_week_mode_one_sql( string $expression_sql ): string {
+		$timestamp_sql        = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = sprintf(
+			"(CASE WHEN EXTRACT(ISODOW FROM %1\$s) <= 4 THEN DATE_TRUNC('week', %1\$s) ELSE DATE_TRUNC('week', %1\$s) + INTERVAL '1 week' END)",
+			$year_start_sql
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Translate MySQL DAYOFWEEK(expr) and WEEKDAY(expr) calls to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_weekday_index_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_weekday_index_function_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => $this->get_postgresql_mysql_weekday_index_sql( $bounds['function'], $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for supported MySQL weekday index functions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{function: string, expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_weekday_index_function_bounds( array $tokens, int $position, int $end ): ?array {
+		$function_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $function_name ) {
+			return null;
+		}
+
+		$function_name = strtolower( $function_name );
+		if ( 'dayofweek' !== $function_name && 'weekday' !== $function_name ) {
+			return null;
+		}
+
+		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, $function_name );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return null;
+		}
+
+		return array(
+			'function'         => $function_name,
+			'expression_start' => $arguments[0]['start'],
+			'expression_end'   => $arguments[0]['end'],
+			'close'            => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL weekday index function.
+	 *
+	 * @param string $function_name  Lowercase MySQL function name.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_weekday_index_sql( string $function_name, string $expression_sql ): string {
+		$timestamp_sql = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+
+		if ( 'dayofweek' === $function_name ) {
+			return sprintf( 'CAST(EXTRACT(DOW FROM %s) AS integer) + 1', $timestamp_sql );
+		}
+
+		return sprintf( 'CAST(EXTRACT(ISODOW FROM %s) AS integer) - 1', $timestamp_sql );
+	}
+
+	/**
+	 * Translate supported MySQL DATE_FORMAT(expr, format) calls to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_date_format_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_date_format_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+		$sql            = $this->get_postgresql_mysql_date_format_sql( $bounds['format'], $expression_sql );
+		if ( null === $sql ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => $sql,
+			'token_id' => WP_MySQL_Lexer::CASE_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for supported MySQL DATE_FORMAT(expr, format) calls.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{format: string, expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_date_format_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, 'date_format' );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if (
+			null === $arguments
+			|| 2 !== count( $arguments )
+			|| ! $this->is_mysql_string_literal_range( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
+		) {
+			return null;
+		}
+
+		return array(
+			'format'           => $tokens[ $arguments[1]['start'] ]->get_value(),
+			'expression_start' => $arguments[0]['start'],
+			'expression_end'   => $arguments[0]['end'],
+			'close'            => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a supported MySQL DATE_FORMAT() format.
+	 *
+	 * @param string $format         MySQL DATE_FORMAT format.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string|null PostgreSQL expression SQL, or null when unsupported.
+	 */
+	private function get_postgresql_mysql_date_format_sql( string $format, string $expression_sql ): ?string {
+		switch ( $format ) {
+			case '%H.%i':
+				return $this->get_postgresql_mysql_date_format_hour_minute_sql( $expression_sql );
+
+			case '%Y-%m-%d':
+				return $this->get_postgresql_mysql_date_format_year_month_day_sql( $expression_sql );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%H.%i').
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_date_format_hour_minute_sql( string $expression_sql ): string {
+		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
+		$date_time_pattern    = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
+		$zero_date_format_sql = sprintf(
+			'CASE WHEN %1$s ~ %2$s THEN CAST(SUBSTRING(%1$s FROM 12 FOR 2) || \'.\' || SUBSTRING(%1$s FROM 15 FOR 2) AS double precision) ELSE 0 END',
+			$expression_text_sql,
+			$date_time_pattern
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(TO_CHAR(%3$s, %4$s) AS double precision) END',
+			$zero_date_condition,
+			$zero_date_format_sql,
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+			$this->connection->quote( 'HH24.MI' )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%Y-%m-%d').
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_date_format_year_month_day_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s THEN SUBSTRING(%2$s FROM 1 FOR 10) ELSE TO_CHAR(%3$s, %4$s) END',
+			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
+			$expression_text_sql,
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+			$this->connection->quote( 'YYYY-MM-DD' )
+		);
+	}
+
+	/**
 	 * Translate supported MySQL date/time extract functions to PostgreSQL.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -10174,6 +10628,18 @@ WHERE option_name IN (
 			}
 
 			if ( null !== $this->get_mysql_date_arithmetic_function_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_week_function_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_weekday_index_function_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_date_format_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 

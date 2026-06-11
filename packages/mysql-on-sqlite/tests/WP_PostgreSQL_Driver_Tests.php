@@ -2627,6 +2627,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests weekly grouped DISTINCT archive queries order by an aggregate post date.
+	 */
+	public function test_grouped_week_archive_order_by_uses_aggregate_sort_expression(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DISTINCT WEEK( `post_date`, 1 ) AS `week`, YEAR( `post_date` ) AS `yr`, DATE_FORMAT( `post_date`, '%Y-%m-%d' ) AS `yyyymmdd`, count( `ID` ) AS `posts`
+			FROM `wptests_posts`
+			WHERE post_type = 'post' AND post_status = 'publish'
+			GROUP BY WEEK( `post_date`, 1 ), YEAR( `post_date` )
+			ORDER BY `post_date` DESC";
+		$sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_strict_aggregate_grouped_order_by_query',
+			$select
+		);
+
+		$week_sql = $this->get_expected_mysql_week_mode_one_sql( '"post_date"' );
+		$year_sql = $this->get_expected_zero_date_safe_extract_sql( 'YEAR', '"post_date"' );
+		$date_sql = $this->get_expected_mysql_date_format_sql( '%Y-%m-%d', 'MAX("post_date")' );
+		$this->assertSame(
+			'SELECT ' . $week_sql . ' AS "week", ' . $year_sql . ' AS "yr", ' . $date_sql . ' AS "yyyymmdd", count ("ID") AS "posts" FROM "wptests_posts" WHERE post_type = \'post\' AND post_status = \'publish\' GROUP BY ' . $week_sql . ', ' . $year_sql . ' ORDER BY MAX("post_date") DESC',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'SELECT DISTINCT', $sql );
+		$this->assertStringNotContainsString( 'WEEK', $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
+
+	/**
 	 * Tests daily grouped archive queries order by an aggregate post date.
 	 */
 	public function test_grouped_day_archive_order_by_uses_aggregate_sort_expression(): void {
@@ -2880,6 +2909,112 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame(
 			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', "'2020-01-00 00:00:00'" ) . ' AS extracted_value',
+			$sql
+		);
+	}
+
+	/**
+	 * Tests MySQL WEEK and weekday index functions are translated for PostgreSQL.
+	 */
+	public function test_mysql_week_and_weekday_index_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = 'SELECT WEEK(post_date, 1) AS week_num, DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday_value FROM wptests_posts WHERE WEEK(post_date, 1) = 24 AND DAYOFWEEK(post_date) = 1 AND WEEKDAY(post_date) = 6';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' AS week_num, ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' AS day_of_week, ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' AS weekday_value FROM wptests_posts WHERE ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' = 24 AND ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' = 1 AND ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' = 6',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'WEEK(', $sql );
+		$this->assertStringNotContainsString( 'DAYOFWEEK', $sql );
+		$this->assertStringNotContainsString( 'WEEKDAY', $sql );
+	}
+
+	/**
+	 * Tests lowercase MySQL date compatibility functions trigger translation.
+	 */
+	public function test_lowercase_mysql_date_compatibility_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT week(post_date, 1) AS week_num, dayofweek(post_date) AS day_of_week, weekday(post_date) AS weekday_value, date_format(post_date, '%Y-%m-%d') AS formatted_date FROM wptests_posts";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' AS week_num, ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' AS day_of_week, ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' AS weekday_value, ' . $this->get_expected_mysql_date_format_sql( '%Y-%m-%d', 'post_date' ) . ' AS formatted_date FROM wptests_posts',
+			$sql
+		);
+	}
+
+	/**
+	 * Tests supported MySQL DATE_FORMAT calls are translated for PostgreSQL.
+	 */
+	public function test_mysql_date_format_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DATE_FORMAT(post_date, '%H.%i') AS hour_minute, DATE_FORMAT(post_date, '%Y-%m-%d') AS formatted_date FROM wptests_posts WHERE DATE_FORMAT(post_date, '%H.%i') >= 0.42";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_mysql_date_format_sql( '%H.%i', 'post_date' ) . ' AS hour_minute, ' . $this->get_expected_mysql_date_format_sql( '%Y-%m-%d', 'post_date' ) . ' AS formatted_date FROM wptests_posts WHERE ' . $this->get_expected_mysql_date_format_sql( '%H.%i', 'post_date' ) . ' >= 0.42',
+			$sql
+		);
+		$this->assertStringContainsString( 'CAST(TO_CHAR(' . $this->get_expected_zero_date_safe_timestamp_sql( 'post_date' ) . ", 'HH24.MI') AS double precision)", $sql );
+		$this->assertStringContainsString( 'TO_CHAR(' . $this->get_expected_zero_date_safe_timestamp_sql( 'post_date' ) . ", 'YYYY-MM-DD')", $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
+
+	/**
+	 * Tests date compatibility function names inside string literals are not translated.
+	 */
+	public function test_mysql_date_compatibility_function_names_inside_literals_are_not_translated(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT 'WEEK(post_date, 1)' AS literal_week, 'DAYOFWEEK(post_date)' AS literal_day, 'DATE_FORMAT(post_date, %H.%i)' AS literal_format";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			"SELECT 'WEEK(post_date, 1)' AS literal_week, 'DAYOFWEEK(post_date)' AS literal_day, 'DATE_FORMAT(post_date, %H.%i)' AS literal_format",
+			$sql
+		);
+		$this->assertStringNotContainsString( 'DATE_TRUNC', $sql );
+		$this->assertStringNotContainsString( 'EXTRACT(DOW', $sql );
+		$this->assertStringNotContainsString( 'TO_CHAR', $sql );
+	}
+
+	/**
+	 * Tests generated WEEK, weekday, and DATE_FORMAT SQL guards zero-date timestamp casts.
+	 */
+	public function test_mysql_date_compatibility_functions_guard_zero_date_timestamp_casts_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT WEEK('0000-00-00 00:00:00', 1) AS week_num, DAYOFWEEK('2020-00-15 13:05:00') AS day_of_week, WEEKDAY('2020-01-00 13:05:00') AS weekday_value, DATE_FORMAT('0000-00-00 13:05:00', '%H.%i') AS hour_minute, DATE_FORMAT('2020-00-15 13:05:00', '%Y-%m-%d') AS formatted_date";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('2020-00-15 13:05:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('2020-01-00 13:05:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "THEN CAST(SUBSTRING(CAST('0000-00-00 13:05:00' AS text) FROM 12 FOR 2) || '.' || SUBSTRING(CAST('0000-00-00 13:05:00' AS text) FROM 15 FOR 2) AS double precision) ELSE 0 END", $sql );
+		$this->assertStringContainsString( "THEN SUBSTRING(CAST('2020-00-15 13:05:00' AS text) FROM 1 FOR 10)", $sql );
+		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
+		$this->assertStringNotContainsString( "CAST('2020-00-15 13:05:00' AS timestamp)", $sql );
+		$this->assertStringNotContainsString( "CAST('2020-01-00 13:05:00' AS timestamp)", $sql );
+	}
+
+	/**
+	 * Tests unsupported DATE_FORMAT specifiers remain unhandled.
+	 */
+	public function test_mysql_date_format_with_unsupported_specifier_remains_unhandled(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT DATE_FORMAT(post_date, '%W') AS formatted_date"
+		);
+
+		$this->assertSame(
+			"SELECT DATE_FORMAT (post_date, '%W') AS formatted_date",
 			$sql
 		);
 	}
@@ -3992,6 +4127,103 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	private function get_expected_mysql_interval_value_sql( string $value_sql ): string {
 		return sprintf( 'CAST(%s AS double precision)', $this->get_expected_mysql_integer_cast_sql( $value_sql ) );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 1).
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_week_mode_one_sql( string $expression_sql ): string {
+		$timestamp_sql        = $this->get_expected_zero_date_safe_timestamp_sql( $expression_sql );
+		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = sprintf(
+			"(CASE WHEN EXTRACT(ISODOW FROM %1\$s) <= 4 THEN DATE_TRUNC('week', %1\$s) ELSE DATE_TRUNC('week', %1\$s) + INTERVAL '1 week' END)",
+			$year_start_sql
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for a MySQL weekday index function.
+	 *
+	 * @param string $function_name  Lowercase MySQL function name.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_weekday_index_sql( string $function_name, string $expression_sql ): string {
+		$timestamp_sql = $this->get_expected_zero_date_safe_timestamp_sql( $expression_sql );
+
+		if ( 'dayofweek' === $function_name ) {
+			return sprintf( 'CAST(EXTRACT(DOW FROM %s) AS integer) + 1', $timestamp_sql );
+		}
+
+		return sprintf( 'CAST(EXTRACT(ISODOW FROM %s) AS integer) - 1', $timestamp_sql );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for a supported MySQL DATE_FORMAT() format.
+	 *
+	 * @param string $format         MySQL DATE_FORMAT format.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_date_format_sql( string $format, string $expression_sql ): string {
+		if ( '%H.%i' === $format ) {
+			return $this->get_expected_mysql_date_format_hour_minute_sql( $expression_sql );
+		}
+
+		if ( '%Y-%m-%d' === $format ) {
+			return $this->get_expected_mysql_date_format_year_month_day_sql( $expression_sql );
+		}
+
+		throw new InvalidArgumentException( 'Unsupported test date format.' );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%H.%i').
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_date_format_hour_minute_sql( string $expression_sql ): string {
+		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_format_sql = sprintf(
+			'CASE WHEN %1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}\' THEN CAST(SUBSTRING(%1$s FROM 12 FOR 2) || \'.\' || SUBSTRING(%1$s FROM 15 FOR 2) AS double precision) ELSE 0 END',
+			$expression_text_sql
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(TO_CHAR(%3$s, \'HH24.MI\') AS double precision) END',
+			$this->get_expected_zero_date_condition_sql( $expression_text_sql ),
+			$zero_date_format_sql,
+			$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql )
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%Y-%m-%d').
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_date_format_year_month_day_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s THEN SUBSTRING(%2$s FROM 1 FOR 10) ELSE TO_CHAR(%3$s, \'YYYY-MM-DD\') END',
+			$this->get_expected_zero_date_condition_sql( $expression_text_sql ),
+			$expression_text_sql,
+			$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql )
+		);
 	}
 
 	/**
