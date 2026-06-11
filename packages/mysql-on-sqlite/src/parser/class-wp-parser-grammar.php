@@ -28,8 +28,21 @@ class WP_Parser_Grammar {
 	 */
 	public $rules;
 	public $rule_names;
+	public $rule_ids;
 	public $fragment_ids;
 	public $lookahead_is_match_possible = array();
+
+	/**
+	 * Per-branch FIRST sets: rule_id => branch_index => array<token_id, true>.
+	 *
+	 * An entry exists only when the branch's FIRST set is fully computable and
+	 * does not contain the empty "ε" rule. A missing entry means the branch
+	 * must always be attempted.
+	 *
+	 * @var array
+	 */
+	public $branch_first = array();
+
 	public $lowest_non_terminal_id;
 	public $highest_terminal_id;
 	public $native_grammar;
@@ -43,7 +56,7 @@ class WP_Parser_Grammar {
 	}
 
 	public function get_rule_id( $rule_name ) {
-		return array_search( $rule_name, $this->rule_names, true );
+		return $this->rule_ids[ $rule_name ] ?? false;
 	}
 
 	/**
@@ -79,6 +92,7 @@ class WP_Parser_Grammar {
 				$this->fragment_ids[ $rule_index + $grammar['rules_offset'] ] = true;
 			}
 		}
+		$this->rule_ids = array_flip( $this->rule_names );
 
 		$this->rules = array();
 		foreach ( $grammar['grammar'] as $rule_index => $branches ) {
@@ -133,6 +147,43 @@ class WP_Parser_Grammar {
 				}
 				if ( $first_symbol_can_be_expanded_to_all_terminals ) {
 					$this->lookahead_is_match_possible[ $rule_id ] = $rule_lookup;
+				}
+			}
+		}
+
+		/**
+		 * Compute per-branch FIRST sets.
+		 *
+		 * For each branch, compute the set of tokens its first symbol can start
+		 * with. A branch with a known, epsilon-free FIRST set can be skipped
+		 * when the current token is not in the set. Branches whose first symbol
+		 * can derive the empty "ε" rule, or whose FIRST set is not computable,
+		 * get no entry and are always attempted.
+		 *
+		 * While the rule-level lookahead table above answers "can this rule
+		 * match the current token at all?", this table answers the finer
+		 * question "which branches of this rule are worth trying?", letting
+		 * the parser skip non-viable branches without recursing into them.
+		 */
+		// Branches starting with the same terminal share a single FIRST set
+		// array to keep the memory footprint of the table low.
+		$terminal_first_sets = array();
+		foreach ( $grammar['grammar'] as $rule_index => $branches ) {
+			$rule_id = $rule_index + $grammar['rules_offset'];
+			foreach ( $branches as $branch_index => $branch ) {
+				$first_symbol = $branch[0];
+				if ( $first_symbol < $this->lowest_non_terminal_id ) {
+					if ( self::EMPTY_RULE_ID !== $first_symbol ) {
+						if ( ! isset( $terminal_first_sets[ $first_symbol ] ) ) {
+							$terminal_first_sets[ $first_symbol ] = array( $first_symbol => true );
+						}
+						$this->branch_first[ $rule_id ][ $branch_index ] = $terminal_first_sets[ $first_symbol ];
+					}
+				} elseif (
+					isset( $this->lookahead_is_match_possible[ $first_symbol ] ) &&
+					! isset( $this->lookahead_is_match_possible[ $first_symbol ][ self::EMPTY_RULE_ID ] )
+				) {
+					$this->branch_first[ $rule_id ][ $branch_index ] = $this->lookahead_is_match_possible[ $first_symbol ];
 				}
 			}
 		}
