@@ -6,6 +6,11 @@
 	"require": {
 		"php": ">=7.2"
 	},
+	"autoload": {
+		"classmap": [
+			"src/"
+		]
+	},
 	"scripts": {
 		"build-grammar": [
 			"./bin/build-grammar"
