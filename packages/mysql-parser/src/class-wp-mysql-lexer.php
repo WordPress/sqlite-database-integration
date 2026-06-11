@@ -3,21 +3,103 @@
 /**
  * MySQL lexer.
  *
- * An exhaustive lexer for the MySQL SQL dialect with multi-version support.
- * It scans the provided SQL input payload and generates MySQL token objects.
- * The lexer is intended to cover 100% of the MySQL SQL syntax for all MySQL
- * versions starting from 5.7. It's likely to support older versions as well.
+ * An exhaustive lexer for the MySQL SQL dialect. It scans the provided SQL
+ * input payload and generates MySQL token objects in the vocabulary of the
+ * official MySQL grammar: token ids are the grammar's own token numbers, and
+ * the keyword table is generated from MySQL's keyword list (sql/lex.h) — see
+ * the generated token data at the top of this class.
  *
  * The lexer is implemented with zero dependencies, it doesn't require any PHP
  * extensions, and it doesn't use PCRE or any other regular expression engines.
  *
- * This lexer is based on the MySQL Workbench lexer grammar.
- * See:
+ * The token stream matches the one MySQL's own server lexer feeds to its Bison
+ * grammar: the "@" sign is a standalone terminal followed by its name, "WITH
+ * ROLLUP" is contracted into the internal WITH_ROLLUP_SYM terminal, and the
+ * input is terminated with END_OF_INPUT and Bison's end marker. These are
+ * produced directly during scanning, as MySQL's lexer does (sql/sql_lex.cc),
+ * not by a post-processing pass.
+ *
+ * The byte-level scanning structure (identifiers, numbers, quoted text,
+ * operators) follows the MySQL Workbench lexer. See:
  *   https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLLexer.g4
- *   https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/predefined.tokens
  *   https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/mysql/MySQLBaseLexer.cpp
  */
 class WP_MySQL_Lexer {
+	/**
+	 * Auto-generated MySQL grammar tokens, keywords, and functions.
+	 *
+	 * The auto-generated block below defines MySQL grammar symbols extracted
+	 * from the official MySQL grammar by the "composer run build-grammar" command.
+	 * It is important that these symbols are included in the lexer class itself,
+	 * so that PHP can inline the token constants for optimal performance.
+	 */
+
+	// BEGIN: AUTO-GENERATED MYSQL GRAMMAR SYMBOLS
+	// This block is auto-generated from MySQL mysql-8.4.10. DO NOT EDIT!
+	// phpcs:disable
+	const OPEN_PAR_SYMBOL                = 40;
+	const CLOSE_PAR_SYMBOL               = 41;
+	const OPEN_CURLY_SYMBOL              = 123;
+	const CLOSE_CURLY_SYMBOL             = 125;
+	const AT_SIGN_SYMBOL                 = 64;
+	const COLON_SYMBOL                   = 58;
+	const COMMA_SYMBOL                   = 44;
+	const DOT_SYMBOL                     = 46;
+	const SEMICOLON_SYMBOL               = 59;
+	const BITWISE_AND_OPERATOR           = 38;
+	const BITWISE_NOT_OPERATOR           = 126;
+	const BITWISE_OR_OPERATOR            = 124;
+	const BITWISE_XOR_OPERATOR           = 94;
+	const DIV_OPERATOR                   = 47;
+	const MINUS_OPERATOR                 = 45;
+	const MOD_OPERATOR                   = 37;
+	const MULT_OPERATOR                  = 42;
+	const PLUS_OPERATOR                  = 43;
+	const LOGICAL_NOT_OPERATOR           = 33;
+	const EQUAL_OPERATOR                 = 415;
+	const NULL_SAFE_EQUAL_OPERATOR       = 416;
+	const GREATER_OR_EQUAL_OPERATOR      = 456;
+	const GREATER_THAN_OPERATOR          = 469;
+	const LESS_OR_EQUAL_OPERATOR         = 522;
+	const LESS_THAN_OPERATOR             = 549;
+	const NOT_EQUAL_OPERATOR             = 614;
+	const ASSIGN_OPERATOR                = 757;
+	const LOGICAL_AND_OPERATOR           = 273;
+	const LOGICAL_OR_OPERATOR            = 642;
+	const CONCAT_PIPES_SYMBOL            = 644;
+	const SHIFT_LEFT_OPERATOR            = 759;
+	const SHIFT_RIGHT_OPERATOR           = 760;
+	const JSON_SEPARATOR_SYMBOL          = 514;
+	const JSON_UNQUOTED_SEPARATOR_SYMBOL = 907;
+	const PARAM_MARKER                   = 652;
+	const IDENTIFIER                     = 482;
+	const BACK_TICK_QUOTED_ID            = 484;
+	const SINGLE_QUOTED_TEXT             = 827;
+	const DOUBLE_QUOTED_TEXT             = 827;
+	const NCHAR_TEXT                     = 611;
+	const UNDERSCORE_CHARSET             = 852;
+	const BIN_NUMBER                     = 292;
+	const HEX_NUMBER                     = 474;
+	const INT_NUMBER                     = 628;
+	const LONG_NUMBER                    = 545;
+	const ULONGLONG_NUMBER               = 849;
+	const DECIMAL_NUMBER                 = 377;
+	const FLOAT_NUMBER                   = 443;
+	const NULL2_SYMBOL                   = 627;
+	const NOT_SYMBOL                     = 622;
+	const NOT2_SYMBOL                    = 621;
+	const WITH_SYMBOL                    = 892;
+	const ROLLUP_SYMBOL                  = 734;
+	const WITH_ROLLUP_SYMBOL             = 894;
+	const END_OF_INPUT                   = 411;
+	const END_MARKER                     = 0;
+
+	const KEYWORDS = array( '!=' => 614, '&&' => 273, '<' => 549, '<<' => 759, '<=' => 522, '<=>' => 416, '<>' => 614, '=' => 415, '>' => 469, '>=' => 456, '>>' => 760, 'ACCESSIBLE' => 259, 'ACCOUNT' => 260, 'ACTION' => 261, 'ACTIVE' => 973, 'ADD' => 262, 'ADDDATE' => 263, 'ADMIN' => 910, 'AFTER' => 264, 'AGAINST' => 265, 'AGGREGATE' => 266, 'ALGORITHM' => 267, 'ALL' => 268, 'ALTER' => 269, 'ALWAYS' => 270, 'ANALYZE' => 272, 'AND' => 274, 'ANY' => 275, 'ARRAY' => 976, 'AS' => 276, 'ASC' => 277, 'ASCII' => 278, 'ASENSITIVE' => 279, 'ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS' => 1161, 'AT' => 280, 'ATTRIBUTE' => 1153, 'AUTHENTICATION' => 1191, 'AUTO' => 1211, 'AUTOEXTEND_SIZE' => 281, 'AUTO_INCREMENT' => 282, 'AVG' => 284, 'AVG_ROW_LENGTH' => 283, 'BACKUP' => 285, 'BEFORE' => 286, 'BEGIN' => 287, 'BERNOULLI' => 1213, 'BETWEEN' => 288, 'BIGINT' => 289, 'BINARY' => 290, 'BINLOG' => 291, 'BIT' => 295, 'BIT_AND' => 293, 'BIT_OR' => 294, 'BIT_XOR' => 296, 'BLOB' => 297, 'BLOCK' => 298, 'BOOL' => 300, 'BOOLEAN' => 299, 'BOTH' => 301, 'BTREE' => 302, 'BUCKETS' => 929, 'BULK' => 1201, 'BY' => 303, 'BYTE' => 304, 'CACHE' => 305, 'CALL' => 306, 'CASCADE' => 307, 'CASCADED' => 308, 'CASE' => 309, 'CAST' => 310, 'CATALOG_NAME' => 311, 'CHAIN' => 312, 'CHALLENGE_RESPONSE' => 1198, 'CHANGE' => 313, 'CHANGED' => 314, 'CHANNEL' => 315, 'CHAR' => 317, 'CHARACTER' => 317, 'CHARSET' => 316, 'CHECK' => 319, 'CHECKSUM' => 318, 'CIPHER' => 320, 'CLASS_ORIGIN' => 321, 'CLIENT' => 322, 'CLONE' => 931, 'CLOSE' => 323, 'COALESCE' => 324, 'CODE' => 325, 'COLLATE' => 326, 'COLLATION' => 327, 'COLUMN' => 329, 'COLUMNS' => 328, 'COLUMN_FORMAT' => 330, 'COLUMN_NAME' => 331, 'COMMENT' => 332, 'COMMIT' => 334, 'COMMITTED' => 333, 'COMPACT' => 335, 'COMPLETION' => 336, 'COMPONENT' => 914, 'COMPRESSED' => 337, 'COMPRESSION' => 338, 'CONCURRENT' => 340, 'CONDITION' => 341, 'CONNECTION' => 342, 'CONSISTENT' => 343, 'CONSTRAINT' => 344, 'CONSTRAINT_CATALOG' => 345, 'CONSTRAINT_NAME' => 346, 'CONSTRAINT_SCHEMA' => 347, 'CONTAINS' => 348, 'CONTEXT' => 349, 'CONTINUE' => 350, 'CONVERT' => 351, 'COUNT' => 352, 'CPU' => 353, 'CREATE' => 354, 'CROSS' => 355, 'CUBE' => 356, 'CUME_DIST' => 932, 'CURDATE' => 357, 'CURRENT' => 358, 'CURRENT_DATE' => 357, 'CURRENT_TIME' => 362, 'CURRENT_TIMESTAMP' => 623, 'CURRENT_USER' => 359, 'CURSOR' => 360, 'CURSOR_NAME' => 361, 'CURTIME' => 362, 'DATA' => 366, 'DATABASE' => 363, 'DATABASES' => 364, 'DATAFILE' => 365, 'DATE' => 370, 'DATETIME' => 367, 'DATE_ADD' => 368, 'DATE_SUB' => 369, 'DAY' => 375, 'DAY_HOUR' => 371, 'DAY_MICROSECOND' => 372, 'DAY_MINUTE' => 373, 'DAY_SECOND' => 374, 'DEALLOCATE' => 376, 'DEC' => 378, 'DECIMAL' => 378, 'DECLARE' => 379, 'DEFAULT' => 380, 'DEFAULT_AUTH' => 381, 'DEFINER' => 382, 'DEFINITION' => 969, 'DELAYED' => 383, 'DELAY_KEY_WRITE' => 384, 'DELETE' => 385, 'DENSE_RANK' => 933, 'DESC' => 386, 'DESCRIBE' => 387, 'DESCRIPTION' => 970, 'DETERMINISTIC' => 389, 'DIAGNOSTICS' => 390, 'DIRECTORY' => 391, 'DISABLE' => 392, 'DISCARD' => 393, 'DISK' => 394, 'DISTINCT' => 395, 'DISTINCTROW' => 395, 'DIV' => 396, 'DO' => 398, 'DOUBLE' => 397, 'DROP' => 399, 'DUAL' => 400, 'DUMPFILE' => 401, 'DUPLICATE' => 402, 'DYNAMIC' => 403, 'EACH' => 404, 'ELSE' => 405, 'ELSEIF' => 406, 'EMPTY' => 954, 'ENABLE' => 407, 'ENCLOSED' => 408, 'ENCRYPTION' => 339, 'END' => 409, 'ENDS' => 410, 'ENFORCED' => 985, 'ENGINE' => 413, 'ENGINES' => 412, 'ENGINE_ATTRIBUTE' => 1154, 'ENUM' => 414, 'ERROR' => 417, 'ERRORS' => 418, 'ESCAPE' => 420, 'ESCAPED' => 419, 'EVENT' => 422, 'EVENTS' => 421, 'EVERY' => 423, 'EXCEPT' => 913, 'EXCHANGE' => 424, 'EXCLUDE' => 934, 'EXECUTE' => 425, 'EXISTS' => 426, 'EXIT' => 427, 'EXPANSION' => 428, 'EXPIRE' => 429, 'EXPLAIN' => 387, 'EXPORT' => 430, 'EXTENDED' => 431, 'EXTENT_SIZE' => 432, 'EXTRACT' => 433, 'FACTOR' => 1192, 'FAILED_LOGIN_ATTEMPTS' => 995, 'FALSE' => 434, 'FAST' => 435, 'FAULTS' => 436, 'FETCH' => 437, 'FIELDS' => 328, 'FILE' => 438, 'FILE_BLOCK_SIZE' => 439, 'FILTER' => 440, 'FINISH' => 1193, 'FIRST' => 441, 'FIRST_VALUE' => 935, 'FIXED' => 442, 'FLOAT' => 444, 'FLOAT4' => 444, 'FLOAT8' => 397, 'FLUSH' => 445, 'FOLLOWING' => 936, 'FOLLOWS' => 446, 'FOR' => 449, 'FORCE' => 447, 'FOREIGN' => 448, 'FORMAT' => 450, 'FOUND' => 451, 'FROM' => 452, 'FULL' => 453, 'FULLTEXT' => 454, 'FUNCTION' => 455, 'GENERAL' => 457, 'GENERATE' => 1203, 'GENERATED' => 458, 'GEOMCOLLECTION' => 460, 'GEOMETRY' => 461, 'GEOMETRYCOLLECTION' => 460, 'GET' => 463, 'GET_FORMAT' => 462, 'GET_SOURCE_PUBLIC_KEY' => 1162, 'GLOBAL' => 464, 'GRANT' => 465, 'GRANTS' => 466, 'GROUP' => 467, 'GROUPING' => 926, 'GROUPS' => 937, 'GROUP_CONCAT' => 468, 'GROUP_REPLICATION' => 459, 'GTIDS' => 1207, 'GTID_ONLY' => 1199, 'HANDLER' => 470, 'HASH' => 471, 'HAVING' => 472, 'HELP' => 473, 'HIGH_PRIORITY' => 475, 'HISTOGRAM' => 928, 'HISTORY' => 959, 'HOST' => 476, 'HOSTS' => 477, 'HOUR' => 481, 'HOUR_MICROSECOND' => 478, 'HOUR_MINUTE' => 479, 'HOUR_SECOND' => 480, 'IDENTIFIED' => 483, 'IF' => 485, 'IGNORE' => 486, 'IGNORE_SERVER_IDS' => 487, 'IMPORT' => 488, 'IN' => 504, 'INACTIVE' => 974, 'INDEX' => 490, 'INDEXES' => 489, 'INFILE' => 491, 'INITIAL' => 1197, 'INITIAL_SIZE' => 492, 'INITIATE' => 1194, 'INNER' => 493, 'INOUT' => 494, 'INSENSITIVE' => 495, 'INSERT' => 496, 'INSERT_METHOD' => 497, 'INSTALL' => 499, 'INSTANCE' => 498, 'INT' => 502, 'INT1' => 836, 'INT2' => 768, 'INT3' => 584, 'INT4' => 502, 'INT8' => 289, 'INTEGER' => 502, 'INTERSECT' => 1200, 'INTERVAL' => 500, 'INTO' => 501, 'INVISIBLE' => 911, 'INVOKER' => 503, 'IO' => 507, 'IO_AFTER_GTIDS' => 505, 'IO_BEFORE_GTIDS' => 506, 'IO_THREAD' => 702, 'IPC' => 508, 'IS' => 509, 'ISOLATION' => 510, 'ISSUER' => 511, 'ITERATE' => 512, 'JOIN' => 513, 'JSON' => 515, 'JSON_ARRAYAGG' => 921, 'JSON_OBJECTAGG' => 920, 'JSON_TABLE' => 955, 'JSON_VALUE' => 1151, 'KEY' => 518, 'KEYRING' => 1190, 'KEYS' => 516, 'KEY_BLOCK_SIZE' => 517, 'KILL' => 519, 'LAG' => 938, 'LANGUAGE' => 520, 'LAST' => 521, 'LAST_VALUE' => 939, 'LATERAL' => 975, 'LEAD' => 940, 'LEADING' => 523, 'LEAVE' => 525, 'LEAVES' => 524, 'LEFT' => 526, 'LESS' => 527, 'LEVEL' => 528, 'LIKE' => 530, 'LIMIT' => 531, 'LINEAR' => 532, 'LINES' => 533, 'LINESTRING' => 534, 'LIST' => 535, 'LOAD' => 536, 'LOCAL' => 537, 'LOCALTIME' => 623, 'LOCALTIMESTAMP' => 623, 'LOCK' => 540, 'LOCKED' => 924, 'LOCKS' => 539, 'LOG' => 1206, 'LOGFILE' => 541, 'LOGS' => 542, 'LONG' => 546, 'LONGBLOB' => 543, 'LONGTEXT' => 544, 'LOOP' => 547, 'LOW_PRIORITY' => 548, 'MANUAL' => 1212, 'MASTER' => 571, 'MATCH' => 574, 'MAX' => 579, 'MAXVALUE' => 582, 'MAX_CONNECTIONS_PER_HOUR' => 575, 'MAX_QUERIES_PER_HOUR' => 576, 'MAX_ROWS' => 577, 'MAX_SIZE' => 578, 'MAX_UPDATES_PER_HOUR' => 580, 'MAX_USER_CONNECTIONS' => 581, 'MEDIUM' => 586, 'MEDIUMBLOB' => 583, 'MEDIUMINT' => 584, 'MEDIUMTEXT' => 585, 'MEMBER' => 977, 'MEMORY' => 587, 'MERGE' => 588, 'MESSAGE_TEXT' => 589, 'MICROSECOND' => 590, 'MID' => 811, 'MIDDLEINT' => 584, 'MIGRATE' => 591, 'MIN' => 596, 'MINUTE' => 594, 'MINUTE_MICROSECOND' => 592, 'MINUTE_SECOND' => 593, 'MIN_ROWS' => 595, 'MOD' => 600, 'MODE' => 597, 'MODIFIES' => 598, 'MODIFY' => 599, 'MONTH' => 601, 'MULTILINESTRING' => 602, 'MULTIPOINT' => 603, 'MULTIPOLYGON' => 604, 'MUTEX' => 605, 'MYSQL_ERRNO' => 606, 'NAME' => 608, 'NAMES' => 607, 'NATIONAL' => 609, 'NATURAL' => 610, 'NCHAR' => 612, 'NDB' => 613, 'NDBCLUSTER' => 613, 'NESTED' => 956, 'NETWORK_NAMESPACE' => 987, 'NEVER' => 616, 'NEW' => 617, 'NEXT' => 618, 'NO' => 624, 'NODEGROUP' => 619, 'NONE' => 620, 'NOT' => 622, 'NOW' => 623, 'NOWAIT' => 925, 'NO_WAIT' => 625, 'NO_WRITE_TO_BINLOG' => 626, 'NTH_VALUE' => 941, 'NTILE' => 942, 'NULL' => 627, 'NULLS' => 943, 'NUMBER' => 629, 'NUMERIC' => 630, 'NVARCHAR' => 631, 'OF' => 922, 'OFF' => 998, 'OFFSET' => 632, 'OJ' => 986, 'OLD' => 984, 'ON' => 633, 'ONE' => 634, 'ONLY' => 635, 'OPEN' => 636, 'OPTIMIZE' => 637, 'OPTIMIZER_COSTS' => 638, 'OPTION' => 640, 'OPTIONAL' => 978, 'OPTIONALLY' => 641, 'OPTIONS' => 639, 'OR' => 645, 'ORDER' => 643, 'ORDINALITY' => 957, 'ORGANIZATION' => 971, 'OTHERS' => 944, 'OUT' => 648, 'OUTER' => 646, 'OUTFILE' => 647, 'OVER' => 945, 'OWNER' => 649, 'PACK_KEYS' => 650, 'PAGE' => 651, 'PARALLEL' => 1208, 'PARSER' => 653, 'PARSE_TREE' => 1205, 'PARTIAL' => 655, 'PARTITION' => 656, 'PARTITIONING' => 658, 'PARTITIONS' => 657, 'PASSWORD' => 659, 'PASSWORD_LOCK_TIME' => 994, 'PATH' => 958, 'PERCENT_RANK' => 946, 'PERSIST' => 908, 'PERSIST_ONLY' => 927, 'PHASE' => 660, 'PLUGIN' => 662, 'PLUGINS' => 663, 'PLUGIN_DIR' => 661, 'POINT' => 664, 'POLYGON' => 665, 'PORT' => 666, 'POSITION' => 667, 'PRECEDES' => 668, 'PRECEDING' => 947, 'PRECISION' => 669, 'PREPARE' => 670, 'PRESERVE' => 671, 'PREV' => 672, 'PRIMARY' => 673, 'PRIVILEGES' => 674, 'PRIVILEGE_CHECKS_USER' => 991, 'PROCEDURE' => 675, 'PROCESS' => 676, 'PROCESSLIST' => 677, 'PROFILE' => 678, 'PROFILES' => 679, 'PROXY' => 680, 'PURGE' => 681, 'QUALIFY' => 1210, 'QUARTER' => 682, 'QUERY' => 683, 'QUICK' => 684, 'RANDOM' => 988, 'RANGE' => 685, 'RANK' => 948, 'READ' => 688, 'READS' => 686, 'READ_ONLY' => 687, 'READ_WRITE' => 689, 'REAL' => 690, 'REBUILD' => 691, 'RECOVER' => 692, 'RECURSIVE' => 915, 'REDO_BUFFER_SIZE' => 694, 'REDUNDANT' => 695, 'REFERENCE' => 972, 'REFERENCES' => 696, 'REGEXP' => 697, 'REGISTRATION' => 1195, 'RELAY' => 698, 'RELAYLOG' => 699, 'RELAY_LOG_FILE' => 700, 'RELAY_LOG_POS' => 701, 'RELAY_THREAD' => 702, 'RELEASE' => 703, 'RELOAD' => 704, 'REMOVE' => 705, 'RENAME' => 706, 'REORGANIZE' => 707, 'REPAIR' => 708, 'REPEAT' => 710, 'REPEATABLE' => 709, 'REPLACE' => 711, 'REPLICA' => 1159, 'REPLICAS' => 1160, 'REPLICATE_DO_DB' => 713, 'REPLICATE_DO_TABLE' => 715, 'REPLICATE_IGNORE_DB' => 714, 'REPLICATE_IGNORE_TABLE' => 716, 'REPLICATE_REWRITE_DB' => 719, 'REPLICATE_WILD_DO_TABLE' => 717, 'REPLICATE_WILD_IGNORE_TABLE' => 718, 'REPLICATION' => 712, 'REQUIRE' => 720, 'REQUIRE_ROW_FORMAT' => 993, 'REQUIRE_TABLE_PRIMARY_KEY_CHECK' => 996, 'RESET' => 721, 'RESIGNAL' => 722, 'RESOURCE' => 963, 'RESPECT' => 949, 'RESTART' => 968, 'RESTORE' => 724, 'RESTRICT' => 725, 'RESUME' => 726, 'RETAIN' => 983, 'RETURN' => 729, 'RETURNED_SQLSTATE' => 727, 'RETURNING' => 999, 'RETURNS' => 728, 'REUSE' => 960, 'REVERSE' => 730, 'REVOKE' => 731, 'RIGHT' => 732, 'RLIKE' => 697, 'ROLE' => 909, 'ROLLBACK' => 733, 'ROLLUP' => 734, 'ROTATE' => 735, 'ROUTINE' => 736, 'ROW' => 739, 'ROWS' => 737, 'ROW_COUNT' => 740, 'ROW_FORMAT' => 738, 'ROW_NUMBER' => 950, 'RTREE' => 741, 'S3' => 1209, 'SAVEPOINT' => 742, 'SCHEDULE' => 743, 'SCHEMA' => 363, 'SCHEMAS' => 364, 'SCHEMA_NAME' => 744, 'SECOND' => 746, 'SECONDARY' => 979, 'SECONDARY_ENGINE' => 980, 'SECONDARY_ENGINE_ATTRIBUTE' => 1155, 'SECONDARY_LOAD' => 981, 'SECONDARY_UNLOAD' => 982, 'SECOND_MICROSECOND' => 745, 'SECURITY' => 747, 'SELECT' => 748, 'SENSITIVE' => 749, 'SEPARATOR' => 750, 'SERIAL' => 752, 'SERIALIZABLE' => 751, 'SERVER' => 754, 'SESSION' => 753, 'SESSION_USER' => 867, 'SET' => 756, 'SHARE' => 758, 'SHOW' => 761, 'SHUTDOWN' => 762, 'SIGNAL' => 763, 'SIGNED' => 764, 'SIMPLE' => 765, 'SKIP' => 923, 'SLAVE' => 766, 'SLOW' => 767, 'SMALLINT' => 768, 'SNAPSHOT' => 769, 'SOCKET' => 770, 'SOME' => 275, 'SONAME' => 771, 'SOUNDS' => 772, 'SOURCE' => 773, 'SOURCE_AUTO_POSITION' => 1163, 'SOURCE_BIND' => 1164, 'SOURCE_COMPRESSION_ALGORITHMS' => 1165, 'SOURCE_CONNECTION_AUTO_FAILOVER' => 1156, 'SOURCE_CONNECT_RETRY' => 1166, 'SOURCE_DELAY' => 1167, 'SOURCE_HEARTBEAT_PERIOD' => 1168, 'SOURCE_HOST' => 1169, 'SOURCE_LOG_FILE' => 1170, 'SOURCE_LOG_POS' => 1171, 'SOURCE_PASSWORD' => 1172, 'SOURCE_PORT' => 1173, 'SOURCE_PUBLIC_KEY_PATH' => 1174, 'SOURCE_RETRY_COUNT' => 1175, 'SOURCE_SSL' => 1176, 'SOURCE_SSL_CA' => 1177, 'SOURCE_SSL_CAPATH' => 1178, 'SOURCE_SSL_CERT' => 1179, 'SOURCE_SSL_CIPHER' => 1180, 'SOURCE_SSL_CRL' => 1181, 'SOURCE_SSL_CRLPATH' => 1182, 'SOURCE_SSL_KEY' => 1183, 'SOURCE_SSL_VERIFY_SERVER_CERT' => 1184, 'SOURCE_TLS_CIPHERSUITES' => 1185, 'SOURCE_TLS_VERSION' => 1186, 'SOURCE_USER' => 1187, 'SOURCE_ZSTD_COMPRESSION_LEVEL' => 1188, 'SPATIAL' => 774, 'SPECIFIC' => 775, 'SQL' => 788, 'SQLEXCEPTION' => 776, 'SQLSTATE' => 777, 'SQLWARNING' => 778, 'SQL_AFTER_GTIDS' => 779, 'SQL_AFTER_MTS_GAPS' => 780, 'SQL_BEFORE_GTIDS' => 781, 'SQL_BIG_RESULT' => 782, 'SQL_BUFFER_RESULT' => 783, 'SQL_CALC_FOUND_ROWS' => 785, 'SQL_NO_CACHE' => 786, 'SQL_SMALL_RESULT' => 787, 'SQL_THREAD' => 789, 'SQL_TSI_DAY' => 375, 'SQL_TSI_HOUR' => 481, 'SQL_TSI_MINUTE' => 594, 'SQL_TSI_MONTH' => 601, 'SQL_TSI_QUARTER' => 682, 'SQL_TSI_SECOND' => 746, 'SQL_TSI_WEEK' => 887, 'SQL_TSI_YEAR' => 905, 'SRID' => 961, 'SSL' => 790, 'STACKED' => 791, 'START' => 794, 'STARTING' => 792, 'STARTS' => 793, 'STATS_AUTO_RECALC' => 795, 'STATS_PERSISTENT' => 796, 'STATS_SAMPLE_PAGES' => 797, 'STATUS' => 798, 'STD' => 800, 'STDDEV' => 800, 'STDDEV_POP' => 800, 'STDDEV_SAMP' => 799, 'STOP' => 801, 'STORAGE' => 802, 'STORED' => 803, 'STRAIGHT_JOIN' => 804, 'STREAM' => 997, 'STRING' => 805, 'ST_COLLECT' => 1189, 'SUBCLASS_ORIGIN' => 806, 'SUBDATE' => 807, 'SUBJECT' => 808, 'SUBPARTITION' => 810, 'SUBPARTITIONS' => 809, 'SUBSTR' => 811, 'SUBSTRING' => 811, 'SUM' => 812, 'SUPER' => 813, 'SUSPEND' => 814, 'SWAPS' => 815, 'SWITCHES' => 816, 'SYSDATE' => 817, 'SYSTEM' => 964, 'SYSTEM_USER' => 867, 'TABLE' => 821, 'TABLES' => 818, 'TABLESAMPLE' => 1214, 'TABLESPACE' => 819, 'TABLE_CHECKSUM' => 822, 'TABLE_NAME' => 823, 'TEMPORARY' => 824, 'TEMPTABLE' => 825, 'TERMINATED' => 826, 'TEXT' => 828, 'THAN' => 829, 'THEN' => 830, 'THREAD_PRIORITY' => 962, 'TIES' => 951, 'TIME' => 834, 'TIMESTAMP' => 831, 'TIMESTAMPADD' => 832, 'TIMESTAMPDIFF' => 833, 'TINYBLOB' => 835, 'TINYINT' => 836, 'TINYTEXT' => 837, 'TLS' => 1152, 'TO' => 838, 'TRAILING' => 839, 'TRANSACTION' => 840, 'TRIGGER' => 842, 'TRIGGERS' => 841, 'TRIM' => 843, 'TRUE' => 844, 'TRUNCATE' => 845, 'TYPE' => 847, 'TYPES' => 846, 'UNBOUNDED' => 952, 'UNCOMMITTED' => 850, 'UNDEFINED' => 851, 'UNDO' => 855, 'UNDOFILE' => 853, 'UNDO_BUFFER_SIZE' => 854, 'UNICODE' => 856, 'UNINSTALL' => 857, 'UNION' => 858, 'UNIQUE' => 859, 'UNKNOWN' => 860, 'UNLOCK' => 861, 'UNREGISTER' => 1196, 'UNSIGNED' => 862, 'UNTIL' => 863, 'UPDATE' => 864, 'UPGRADE' => 865, 'URL' => 1202, 'USAGE' => 866, 'USE' => 869, 'USER' => 867, 'USER_RESOURCES' => 723, 'USE_FRM' => 868, 'USING' => 870, 'UTC_DATE' => 871, 'UTC_TIME' => 873, 'UTC_TIMESTAMP' => 872, 'VALIDATION' => 874, 'VALUE' => 876, 'VALUES' => 875, 'VARBINARY' => 877, 'VARCHAR' => 878, 'VARCHARACTER' => 878, 'VARIABLES' => 879, 'VARIANCE' => 880, 'VARYING' => 881, 'VAR_POP' => 880, 'VAR_SAMP' => 882, 'VCPU' => 965, 'VIEW' => 883, 'VIRTUAL' => 884, 'VISIBLE' => 912, 'WAIT' => 885, 'WARNINGS' => 886, 'WEEK' => 887, 'WEIGHT_STRING' => 888, 'WHEN' => 889, 'WHERE' => 890, 'WHILE' => 891, 'WINDOW' => 953, 'WITH' => 892, 'WITHOUT' => 895, 'WORK' => 896, 'WRAPPER' => 897, 'WRITE' => 898, 'X509' => 899, 'XA' => 900, 'XID' => 901, 'XML' => 902, 'XOR' => 903, 'YEAR' => 905, 'YEAR_MONTH' => 904, 'ZEROFILL' => 906, 'ZONE' => 1157, '||' => 644 );
+
+	const FUNCTIONS = array( 'ADDDATE' => true, 'BIT_AND' => true, 'BIT_OR' => true, 'BIT_XOR' => true, 'CAST' => true, 'COUNT' => true, 'CURDATE' => true, 'CURTIME' => true, 'DATE_ADD' => true, 'DATE_SUB' => true, 'EXTRACT' => true, 'GROUP_CONCAT' => true, 'JSON_ARRAYAGG' => true, 'JSON_OBJECTAGG' => true, 'MAX' => true, 'MID' => true, 'MIN' => true, 'NOW' => true, 'POSITION' => true, 'SESSION_USER' => true, 'STD' => true, 'STDDEV' => true, 'STDDEV_POP' => true, 'STDDEV_SAMP' => true, 'ST_COLLECT' => true, 'SUBDATE' => true, 'SUBSTR' => true, 'SUBSTRING' => true, 'SUM' => true, 'SYSDATE' => true, 'SYSTEM_USER' => true, 'TRIM' => true, 'VARIANCE' => true, 'VAR_POP' => true, 'VAR_SAMP' => true );
+	// phpcs:enable
+	// END: AUTO-GENERATED MYSQL GRAMMAR SYMBOLS
+
 	/**
 	 * The SQL modes that affect the lexer behavior.
 	 *
@@ -39,2014 +121,25 @@ class WP_MySQL_Lexer {
 	 * These are intended to be used with "strspn()" and "strcspn()" functions
 	 * for fast character class matching in the SQL payload.
 	 */
-	const WHITESPACE_MASK = " \t\n\r\f";
-	const DIGIT_MASK      = '0123456789';
-	const HEX_DIGIT_MASK  = '0123456789abcdefABCDEF';
+	private const WHITESPACE_MASK = " \t\n\r\f";
+	private const DIGIT_MASK      = '0123456789';
+	private const HEX_DIGIT_MASK  = '0123456789abcdefABCDEF';
 
 	/**
-	 * Tokens from the MySQL Workbench "predefined.tokens" list.
+	 * Internal scanner sentinels.
 	 *
-	 * This list preserves the token names and IDs from the MySQL Workbench
-	 * "predefined.tokens" list, adding some tokens missing from the list.
-	 *
-	 * See:
-	 *   https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/predefined.tokens
+	 * These values are produced and consumed inside the scanner only; they
+	 * never appear in the emitted token stream, which uses the grammar token
+	 * numbers from the generated token data above. They are negative so they
+	 * can never collide with a grammar token number.
 	 */
-	const ACCESSIBLE_SYMBOL                      = 1;
-	const ACCOUNT_SYMBOL                         = 2;
-	const ACTION_SYMBOL                          = 3;
-	const ADD_SYMBOL                             = 4;
-	const ADDDATE_SYMBOL                         = 5;
-	const AFTER_SYMBOL                           = 6;
-	const AGAINST_SYMBOL                         = 7;
-	const AGGREGATE_SYMBOL                       = 8;
-	const ALGORITHM_SYMBOL                       = 9;
-	const ALL_SYMBOL                             = 10;
-	const ALTER_SYMBOL                           = 11;
-	const ALWAYS_SYMBOL                          = 12;
-	const ANALYSE_SYMBOL                         = 13;
-	const ANALYZE_SYMBOL                         = 14;
-	const AND_SYMBOL                             = 15;
-	const ANY_SYMBOL                             = 16;
-	const AS_SYMBOL                              = 17;
-	const ASC_SYMBOL                             = 18;
-	const ASCII_SYMBOL                           = 19;
-	const ASENSITIVE_SYMBOL                      = 20;
-	const AT_SYMBOL                              = 21;
-	const AUTHORS_SYMBOL                         = 22;
-	const AUTOEXTEND_SIZE_SYMBOL                 = 23;
-	const AUTO_INCREMENT_SYMBOL                  = 24;
-	const AVG_ROW_LENGTH_SYMBOL                  = 25;
-	const AVG_SYMBOL                             = 26;
-	const BACKUP_SYMBOL                          = 27;
-	const BEFORE_SYMBOL                          = 28;
-	const BEGIN_SYMBOL                           = 29;
-	const BETWEEN_SYMBOL                         = 30;
-	const BIGINT_SYMBOL                          = 31;
-	const BINARY_SYMBOL                          = 32;
-	const BINLOG_SYMBOL                          = 33;
-	const BIN_NUM_SYMBOL                         = 34;
-	const BIT_AND_SYMBOL                         = 35;
-	const BIT_OR_SYMBOL                          = 36;
-	const BIT_SYMBOL                             = 37;
-	const BIT_XOR_SYMBOL                         = 38;
-	const BLOB_SYMBOL                            = 39;
-	const BLOCK_SYMBOL                           = 40;
-	const BOOLEAN_SYMBOL                         = 41;
-	const BOOL_SYMBOL                            = 42;
-	const BOTH_SYMBOL                            = 43;
-	const BTREE_SYMBOL                           = 44;
-	const BY_SYMBOL                              = 45;
-	const BYTE_SYMBOL                            = 46;
-	const CACHE_SYMBOL                           = 47;
-	const CALL_SYMBOL                            = 48;
-	const CASCADE_SYMBOL                         = 49;
-	const CASCADED_SYMBOL                        = 50;
-	const CASE_SYMBOL                            = 51;
-	const CAST_SYMBOL                            = 52;
-	const CATALOG_NAME_SYMBOL                    = 53;
-	const CHAIN_SYMBOL                           = 54;
-	const CHANGE_SYMBOL                          = 55;
-	const CHANGED_SYMBOL                         = 56;
-	const CHANNEL_SYMBOL                         = 57;
-	const CHARSET_SYMBOL                         = 58;
-	const CHARACTER_SYMBOL                       = 59;
-	const CHAR_SYMBOL                            = 60;
-	const CHECKSUM_SYMBOL                        = 61;
-	const CHECK_SYMBOL                           = 62;
-	const CIPHER_SYMBOL                          = 63;
-	const CLASS_ORIGIN_SYMBOL                    = 64;
-	const CLIENT_SYMBOL                          = 65;
-	const CLOSE_SYMBOL                           = 66;
-	const COALESCE_SYMBOL                        = 67;
-	const CODE_SYMBOL                            = 68;
-	const COLLATE_SYMBOL                         = 69;
-	const COLLATION_SYMBOL                       = 70;
-	const COLUMNS_SYMBOL                         = 71;
-	const COLUMN_SYMBOL                          = 72;
-	const COLUMN_NAME_SYMBOL                     = 73;
-	const COLUMN_FORMAT_SYMBOL                   = 74;
-	const COMMENT_SYMBOL                         = 75;
-	const COMMITTED_SYMBOL                       = 76;
-	const COMMIT_SYMBOL                          = 77;
-	const COMPACT_SYMBOL                         = 78;
-	const COMPLETION_SYMBOL                      = 79;
-	const COMPRESSED_SYMBOL                      = 80;
-	const COMPRESSION_SYMBOL                     = 81;
-	const CONCURRENT_SYMBOL                      = 82;
-	const CONDITION_SYMBOL                       = 83;
-	const CONNECTION_SYMBOL                      = 84;
-	const CONSISTENT_SYMBOL                      = 85;
-	const CONSTRAINT_SYMBOL                      = 86;
-	const CONSTRAINT_CATALOG_SYMBOL              = 87;
-	const CONSTRAINT_NAME_SYMBOL                 = 88;
-	const CONSTRAINT_SCHEMA_SYMBOL               = 89;
-	const CONTAINS_SYMBOL                        = 90;
-	const CONTEXT_SYMBOL                         = 91;
-	const CONTINUE_SYMBOL                        = 92;
-	const CONTRIBUTORS_SYMBOL                    = 93;
-	const CONVERT_SYMBOL                         = 94;
-	const COUNT_SYMBOL                           = 95;
-	const CPU_SYMBOL                             = 96;
-	const CREATE_SYMBOL                          = 97;
-	const CROSS_SYMBOL                           = 98;
-	const CUBE_SYMBOL                            = 99;
-	const CURDATE_SYMBOL                         = 100;
-	const CURRENT_SYMBOL                         = 101;
-	const CURRENT_DATE_SYMBOL                    = 102;
-	const CURRENT_TIME_SYMBOL                    = 103;
-	const CURRENT_TIMESTAMP_SYMBOL               = 104;
-	const CURRENT_USER_SYMBOL                    = 105;
-	const CURSOR_SYMBOL                          = 106;
-	const CURSOR_NAME_SYMBOL                     = 107;
-	const CURTIME_SYMBOL                         = 108;
-	const DATABASE_SYMBOL                        = 109;
-	const DATABASES_SYMBOL                       = 110;
-	const DATAFILE_SYMBOL                        = 111;
-	const DATA_SYMBOL                            = 112;
-	const DATETIME_SYMBOL                        = 113;
-	const DATE_ADD_SYMBOL                        = 114;
-	const DATE_SUB_SYMBOL                        = 115;
-	const DATE_SYMBOL                            = 116;
-	const DAYOFMONTH_SYMBOL                      = 117;
-	const DAY_HOUR_SYMBOL                        = 118;
-	const DAY_MICROSECOND_SYMBOL                 = 119;
-	const DAY_MINUTE_SYMBOL                      = 120;
-	const DAY_SECOND_SYMBOL                      = 121;
-	const DAY_SYMBOL                             = 122;
-	const DEALLOCATE_SYMBOL                      = 123;
-	const DEC_SYMBOL                             = 124;
-	const DECIMAL_NUM_SYMBOL                     = 125;
-	const DECIMAL_SYMBOL                         = 126;
-	const DECLARE_SYMBOL                         = 127;
-	const DEFAULT_SYMBOL                         = 128;
-	const DEFAULT_AUTH_SYMBOL                    = 129;
-	const DEFINER_SYMBOL                         = 130;
-	const DELAYED_SYMBOL                         = 131;
-	const DELAY_KEY_WRITE_SYMBOL                 = 132;
-	const DELETE_SYMBOL                          = 133;
-	const DESC_SYMBOL                            = 134;
-	const DESCRIBE_SYMBOL                        = 135;
-	const DES_KEY_FILE_SYMBOL                    = 136;
-	const DETERMINISTIC_SYMBOL                   = 137;
-	const DIAGNOSTICS_SYMBOL                     = 138;
-	const DIRECTORY_SYMBOL                       = 139;
-	const DISABLE_SYMBOL                         = 140;
-	const DISCARD_SYMBOL                         = 141;
-	const DISK_SYMBOL                            = 142;
-	const DISTINCT_SYMBOL                        = 143;
-	const DISTINCTROW_SYMBOL                     = 144;
-	const DIV_SYMBOL                             = 145;
-	const DOUBLE_SYMBOL                          = 146;
-	const DO_SYMBOL                              = 147;
-	const DROP_SYMBOL                            = 148;
-	const DUAL_SYMBOL                            = 149;
-	const DUMPFILE_SYMBOL                        = 150;
-	const DUPLICATE_SYMBOL                       = 151;
-	const DYNAMIC_SYMBOL                         = 152;
-	const EACH_SYMBOL                            = 153;
-	const ELSE_SYMBOL                            = 154;
-	const ELSEIF_SYMBOL                          = 155;
-	const ENABLE_SYMBOL                          = 156;
-	const ENCLOSED_SYMBOL                        = 157;
-	const ENCRYPTION_SYMBOL                      = 158;
-	const END_SYMBOL                             = 159;
-	const ENDS_SYMBOL                            = 160;
-	const END_OF_INPUT_SYMBOL                    = 161; // defined in "predefined.tokens", but not used
-	const ENGINES_SYMBOL                         = 162;
-	const ENGINE_SYMBOL                          = 163;
-	const ENUM_SYMBOL                            = 164;
-	const ERROR_SYMBOL                           = 165;
-	const ERRORS_SYMBOL                          = 166;
-	const ESCAPED_SYMBOL                         = 167;
-	const ESCAPE_SYMBOL                          = 168;
-	const EVENTS_SYMBOL                          = 169;
-	const EVENT_SYMBOL                           = 170;
-	const EVERY_SYMBOL                           = 171;
-	const EXCHANGE_SYMBOL                        = 172;
-	const EXECUTE_SYMBOL                         = 173;
-	const EXISTS_SYMBOL                          = 174;
-	const EXIT_SYMBOL                            = 175;
-	const EXPANSION_SYMBOL                       = 176;
-	const EXPIRE_SYMBOL                          = 177;
-	const EXPLAIN_SYMBOL                         = 178;
-	const EXPORT_SYMBOL                          = 179;
-	const EXTENDED_SYMBOL                        = 180;
-	const EXTENT_SIZE_SYMBOL                     = 181;
-	const EXTRACT_SYMBOL                         = 182;
-	const FALSE_SYMBOL                           = 183;
-	const FAST_SYMBOL                            = 184;
-	const FAULTS_SYMBOL                          = 185;
-	const FETCH_SYMBOL                           = 186;
-	const FIELDS_SYMBOL                          = 187;
-	const FILE_SYMBOL                            = 188;
-	const FILE_BLOCK_SIZE_SYMBOL                 = 189;
-	const FILTER_SYMBOL                          = 190;
-	const FIRST_SYMBOL                           = 191;
-	const FIXED_SYMBOL                           = 192;
-	const FLOAT4_SYMBOL                          = 193;
-	const FLOAT8_SYMBOL                          = 194;
-	const FLOAT_SYMBOL                           = 195;
-	const FLUSH_SYMBOL                           = 196;
-	const FOLLOWS_SYMBOL                         = 197;
-	const FORCE_SYMBOL                           = 198;
-	const FOREIGN_SYMBOL                         = 199;
-	const FOR_SYMBOL                             = 200;
-	const FORMAT_SYMBOL                          = 201;
-	const FOUND_SYMBOL                           = 202;
-	const FROM_SYMBOL                            = 203;
-	const FULL_SYMBOL                            = 204;
-	const FULLTEXT_SYMBOL                        = 205;
-	const FUNCTION_SYMBOL                        = 206;
-	const GET_SYMBOL                             = 207;
-	const GENERAL_SYMBOL                         = 208;
-	const GENERATED_SYMBOL                       = 209;
-	const GROUP_REPLICATION_SYMBOL               = 210;
-	const GEOMETRYCOLLECTION_SYMBOL              = 211;
-	const GEOMETRY_SYMBOL                        = 212;
-	const GET_FORMAT_SYMBOL                      = 213;
-	const GLOBAL_SYMBOL                          = 214;
-	const GRANT_SYMBOL                           = 215;
-	const GRANTS_SYMBOL                          = 216;
-	const GROUP_SYMBOL                           = 217;
-	const GROUP_CONCAT_SYMBOL                    = 218;
-	const HANDLER_SYMBOL                         = 219;
-	const HASH_SYMBOL                            = 220;
-	const HAVING_SYMBOL                          = 221;
-	const HELP_SYMBOL                            = 222;
-	const HIGH_PRIORITY_SYMBOL                   = 223;
-	const HOST_SYMBOL                            = 224;
-	const HOSTS_SYMBOL                           = 225;
-	const HOUR_MICROSECOND_SYMBOL                = 226;
-	const HOUR_MINUTE_SYMBOL                     = 227;
-	const HOUR_SECOND_SYMBOL                     = 228;
-	const HOUR_SYMBOL                            = 229;
-	const IDENTIFIED_SYMBOL                      = 230;
-	const IF_SYMBOL                              = 231;
-	const IGNORE_SYMBOL                          = 232;
-	const IGNORE_SERVER_IDS_SYMBOL               = 233;
-	const IMPORT_SYMBOL                          = 234;
-	const INDEXES_SYMBOL                         = 235;
-	const INDEX_SYMBOL                           = 236;
-	const INFILE_SYMBOL                          = 237;
-	const INITIAL_SIZE_SYMBOL                    = 238;
-	const INNER_SYMBOL                           = 239;
-	const INOUT_SYMBOL                           = 240;
-	const INSENSITIVE_SYMBOL                     = 241;
-	const INSERT_SYMBOL                          = 242;
-	const INSERT_METHOD_SYMBOL                   = 243;
-	const INSTANCE_SYMBOL                        = 244;
-	const INSTALL_SYMBOL                         = 245;
-	const INTEGER_SYMBOL                         = 246;
-	const INTERVAL_SYMBOL                        = 247;
-	const INTO_SYMBOL                            = 248;
-	const INT_SYMBOL                             = 249;
-	const INVOKER_SYMBOL                         = 250;
-	const IN_SYMBOL                              = 251;
-	const IO_AFTER_GTIDS_SYMBOL                  = 252;
-	const IO_BEFORE_GTIDS_SYMBOL                 = 253;
-	const IO_THREAD_SYMBOL                       = 254;
-	const IO_SYMBOL                              = 255;
-	const IPC_SYMBOL                             = 256;
-	const IS_SYMBOL                              = 257;
-	const ISOLATION_SYMBOL                       = 258;
-	const ISSUER_SYMBOL                          = 259;
-	const ITERATE_SYMBOL                         = 260;
-	const JOIN_SYMBOL                            = 261;
-	const JSON_SYMBOL                            = 262;
-	const KEYS_SYMBOL                            = 263;
-	const KEY_BLOCK_SIZE_SYMBOL                  = 264;
-	const KEY_SYMBOL                             = 265;
-	const KILL_SYMBOL                            = 266;
-	const LANGUAGE_SYMBOL                        = 267;
-	const LAST_SYMBOL                            = 268;
-	const LEADING_SYMBOL                         = 269;
-	const LEAVES_SYMBOL                          = 270;
-	const LEAVE_SYMBOL                           = 271;
-	const LEFT_SYMBOL                            = 272;
-	const LESS_SYMBOL                            = 273;
-	const LEVEL_SYMBOL                           = 274;
-	const LIKE_SYMBOL                            = 275;
-	const LIMIT_SYMBOL                           = 276;
-	const LINEAR_SYMBOL                          = 277;
-	const LINES_SYMBOL                           = 278;
-	const LINESTRING_SYMBOL                      = 279;
-	const LIST_SYMBOL                            = 280;
-	const LOAD_SYMBOL                            = 281;
-	const LOCALTIME_SYMBOL                       = 282;
-	const LOCALTIMESTAMP_SYMBOL                  = 283;
-	const LOCAL_SYMBOL                           = 284;
-	const LOCATOR_SYMBOL                         = 285;
-	const LOCKS_SYMBOL                           = 286;
-	const LOCK_SYMBOL                            = 287;
-	const LOGFILE_SYMBOL                         = 288;
-	const LOGS_SYMBOL                            = 289;
-	const LONGBLOB_SYMBOL                        = 290;
-	const LONGTEXT_SYMBOL                        = 291;
-	const LONG_NUM_SYMBOL                        = 292;
-	const LONG_SYMBOL                            = 293;
-	const LOOP_SYMBOL                            = 294;
-	const LOW_PRIORITY_SYMBOL                    = 295;
-	const MASTER_AUTO_POSITION_SYMBOL            = 296;
-	const MASTER_BIND_SYMBOL                     = 297;
-	const MASTER_CONNECT_RETRY_SYMBOL            = 298;
-	const MASTER_DELAY_SYMBOL                    = 299;
-	const MASTER_HOST_SYMBOL                     = 300;
-	const MASTER_LOG_FILE_SYMBOL                 = 301;
-	const MASTER_LOG_POS_SYMBOL                  = 302;
-	const MASTER_PASSWORD_SYMBOL                 = 303;
-	const MASTER_PORT_SYMBOL                     = 304;
-	const MASTER_RETRY_COUNT_SYMBOL              = 305;
-	const MASTER_SERVER_ID_SYMBOL                = 306;
-	const MASTER_SSL_CAPATH_SYMBOL               = 307;
-	const MASTER_SSL_CA_SYMBOL                   = 308;
-	const MASTER_SSL_CERT_SYMBOL                 = 309;
-	const MASTER_SSL_CIPHER_SYMBOL               = 310;
-	const MASTER_SSL_CRL_SYMBOL                  = 311;
-	const MASTER_SSL_CRLPATH_SYMBOL              = 312;
-	const MASTER_SSL_KEY_SYMBOL                  = 313;
-	const MASTER_SSL_SYMBOL                      = 314;
-	const MASTER_SSL_VERIFY_SERVER_CERT_SYMBOL   = 315;
-	const MASTER_SYMBOL                          = 316;
-	const MASTER_TLS_VERSION_SYMBOL              = 317;
-	const MASTER_USER_SYMBOL                     = 318;
-	const MASTER_HEARTBEAT_PERIOD_SYMBOL         = 319;
-	const MATCH_SYMBOL                           = 320;
-	const MAX_CONNECTIONS_PER_HOUR_SYMBOL        = 321;
-	const MAX_QUERIES_PER_HOUR_SYMBOL            = 322;
-	const MAX_ROWS_SYMBOL                        = 323;
-	const MAX_SIZE_SYMBOL                        = 324;
-	const MAX_STATEMENT_TIME_SYMBOL              = 325;
-	const MAX_SYMBOL                             = 326;
-	const MAX_UPDATES_PER_HOUR_SYMBOL            = 327;
-	const MAX_USER_CONNECTIONS_SYMBOL            = 328;
-	const MAXVALUE_SYMBOL                        = 329;
-	const MEDIUMBLOB_SYMBOL                      = 330;
-	const MEDIUMINT_SYMBOL                       = 331;
-	const MEDIUMTEXT_SYMBOL                      = 332;
-	const MEDIUM_SYMBOL                          = 333;
-	const MEMORY_SYMBOL                          = 334;
-	const MERGE_SYMBOL                           = 335;
-	const MESSAGE_TEXT_SYMBOL                    = 336;
-	const MICROSECOND_SYMBOL                     = 337;
-	const MID_SYMBOL                             = 338;
-	const MIDDLEINT_SYMBOL                       = 339;
-	const MIGRATE_SYMBOL                         = 340;
-	const MINUTE_MICROSECOND_SYMBOL              = 341;
-	const MINUTE_SECOND_SYMBOL                   = 342;
-	const MINUTE_SYMBOL                          = 343;
-	const MIN_ROWS_SYMBOL                        = 344;
-	const MIN_SYMBOL                             = 345;
-	const MODE_SYMBOL                            = 346;
-	const MODIFIES_SYMBOL                        = 347;
-	const MODIFY_SYMBOL                          = 348;
-	const MOD_SYMBOL                             = 349;
-	const MONTH_SYMBOL                           = 350;
-	const MULTILINESTRING_SYMBOL                 = 351;
-	const MULTIPOINT_SYMBOL                      = 352;
-	const MULTIPOLYGON_SYMBOL                    = 353;
-	const MUTEX_SYMBOL                           = 354;
-	const MYSQL_ERRNO_SYMBOL                     = 355;
-	const NAMES_SYMBOL                           = 356;
-	const NAME_SYMBOL                            = 357;
-	const NATIONAL_SYMBOL                        = 358;
-	const NATURAL_SYMBOL                         = 359;
-	const NCHAR_STRING_SYMBOL                    = 360;
-	const NCHAR_SYMBOL                           = 361;
-	const NDB_SYMBOL                             = 362;
-	const NDBCLUSTER_SYMBOL                      = 363;
-	const NEG_SYMBOL                             = 364;
-	const NEVER_SYMBOL                           = 365;
-	const NEW_SYMBOL                             = 366;
-	const NEXT_SYMBOL                            = 367;
-	const NODEGROUP_SYMBOL                       = 368;
-	const NONE_SYMBOL                            = 369;
-	const NONBLOCKING_SYMBOL                     = 370;
-	const NOT_SYMBOL                             = 371;
-	const NOW_SYMBOL                             = 372;
-	const NO_SYMBOL                              = 373;
-	const NO_WAIT_SYMBOL                         = 374;
-	const NO_WRITE_TO_BINLOG_SYMBOL              = 375;
-	const NULL_SYMBOL                            = 376;
-	const NUMBER_SYMBOL                          = 377;
-	const NUMERIC_SYMBOL                         = 378;
-	const NVARCHAR_SYMBOL                        = 379;
-	const OFFLINE_SYMBOL                         = 380;
-	const OFFSET_SYMBOL                          = 381;
-	const OLD_PASSWORD_SYMBOL                    = 382;
-	const ON_SYMBOL                              = 383;
-	const ONE_SYMBOL                             = 384;
-	const ONLINE_SYMBOL                          = 385;
-	const ONLY_SYMBOL                            = 386;
-	const OPEN_SYMBOL                            = 387;
-	const OPTIMIZE_SYMBOL                        = 388;
-	const OPTIMIZER_COSTS_SYMBOL                 = 389;
-	const OPTIONS_SYMBOL                         = 390;
-	const OPTION_SYMBOL                          = 391;
-	const OPTIONALLY_SYMBOL                      = 392;
-	const ORDER_SYMBOL                           = 393;
-	const OR_SYMBOL                              = 394;
-	const OUTER_SYMBOL                           = 395;
-	const OUTFILE_SYMBOL                         = 396;
-	const OUT_SYMBOL                             = 397;
-	const OWNER_SYMBOL                           = 398;
-	const PACK_KEYS_SYMBOL                       = 399;
-	const PAGE_SYMBOL                            = 400;
-	const PARSER_SYMBOL                          = 401;
-	const PARTIAL_SYMBOL                         = 402;
-	const PARTITIONING_SYMBOL                    = 403;
-	const PARTITIONS_SYMBOL                      = 404;
-	const PARTITION_SYMBOL                       = 405;
-	const PASSWORD_SYMBOL                        = 406;
-	const PHASE_SYMBOL                           = 407;
-	const PLUGINS_SYMBOL                         = 408;
-	const PLUGIN_DIR_SYMBOL                      = 409;
-	const PLUGIN_SYMBOL                          = 410;
-	const POINT_SYMBOL                           = 411;
-	const POLYGON_SYMBOL                         = 412;
-	const PORT_SYMBOL                            = 413;
-	const POSITION_SYMBOL                        = 414;
-	const PRECEDES_SYMBOL                        = 415;
-	const PRECISION_SYMBOL                       = 416;
-	const PREPARE_SYMBOL                         = 417;
-	const PRESERVE_SYMBOL                        = 418;
-	const PREV_SYMBOL                            = 419;
-	const PRIMARY_SYMBOL                         = 420;
-	const PRIVILEGES_SYMBOL                      = 421;
-	const PROCEDURE_SYMBOL                       = 422;
-	const PROCESS_SYMBOL                         = 423;
-	const PROCESSLIST_SYMBOL                     = 424;
-	const PROFILE_SYMBOL                         = 425;
-	const PROFILES_SYMBOL                        = 426;
-	const PROXY_SYMBOL                           = 427;
-	const PURGE_SYMBOL                           = 428;
-	const QUARTER_SYMBOL                         = 429;
-	const QUERY_SYMBOL                           = 430;
-	const QUICK_SYMBOL                           = 431;
-	const RANGE_SYMBOL                           = 432;
-	const READS_SYMBOL                           = 433;
-	const READ_ONLY_SYMBOL                       = 434;
-	const READ_SYMBOL                            = 435;
-	const READ_WRITE_SYMBOL                      = 436;
-	const REAL_SYMBOL                            = 437;
-	const REBUILD_SYMBOL                         = 438;
-	const RECOVER_SYMBOL                         = 439;
-	const REDOFILE_SYMBOL                        = 440;
-	const REDO_BUFFER_SIZE_SYMBOL                = 441;
-	const REDUNDANT_SYMBOL                       = 442;
-	const REFERENCES_SYMBOL                      = 443;
-	const REGEXP_SYMBOL                          = 444;
-	const RELAY_SYMBOL                           = 445;
-	const RELAYLOG_SYMBOL                        = 446;
-	const RELAY_LOG_FILE_SYMBOL                  = 447;
-	const RELAY_LOG_POS_SYMBOL                   = 448;
-	const RELAY_THREAD_SYMBOL                    = 449;
-	const RELEASE_SYMBOL                         = 450;
-	const RELOAD_SYMBOL                          = 451;
-	const REMOVE_SYMBOL                          = 452;
-	const RENAME_SYMBOL                          = 453;
-	const REORGANIZE_SYMBOL                      = 454;
-	const REPAIR_SYMBOL                          = 455;
-	const REPEATABLE_SYMBOL                      = 456;
-	const REPEAT_SYMBOL                          = 457;
-	const REPLACE_SYMBOL                         = 458;
-	const REPLICATION_SYMBOL                     = 459;
-	const REPLICATE_DO_DB_SYMBOL                 = 460;
-	const REPLICATE_IGNORE_DB_SYMBOL             = 461;
-	const REPLICATE_DO_TABLE_SYMBOL              = 462;
-	const REPLICATE_IGNORE_TABLE_SYMBOL          = 463;
-	const REPLICATE_WILD_DO_TABLE_SYMBOL         = 464;
-	const REPLICATE_WILD_IGNORE_TABLE_SYMBOL     = 465;
-	const REPLICATE_REWRITE_DB_SYMBOL            = 466;
-	const REQUIRE_SYMBOL                         = 467;
-	const RESET_SYMBOL                           = 468;
-	const RESIGNAL_SYMBOL                        = 469;
-	const RESTORE_SYMBOL                         = 470;
-	const RESTRICT_SYMBOL                        = 471;
-	const RESUME_SYMBOL                          = 472;
-	const RETURNED_SQLSTATE_SYMBOL               = 473;
-	const RETURNS_SYMBOL                         = 474;
-	const RETURN_SYMBOL                          = 475;
-	const REVERSE_SYMBOL                         = 476;
-	const REVOKE_SYMBOL                          = 477;
-	const RIGHT_SYMBOL                           = 478;
-	const RLIKE_SYMBOL                           = 479;
-	const ROLLBACK_SYMBOL                        = 480;
-	const ROLLUP_SYMBOL                          = 481;
-	const ROTATE_SYMBOL                          = 482;
-	const ROUTINE_SYMBOL                         = 483;
-	const ROWS_SYMBOL                            = 484;
-	const ROW_COUNT_SYMBOL                       = 485;
-	const ROW_FORMAT_SYMBOL                      = 486;
-	const ROW_SYMBOL                             = 487;
-	const RTREE_SYMBOL                           = 488;
-	const SAVEPOINT_SYMBOL                       = 489;
-	const SCHEDULE_SYMBOL                        = 490;
-	const SCHEMA_SYMBOL                          = 491;
-	const SCHEMA_NAME_SYMBOL                     = 492;
-	const SCHEMAS_SYMBOL                         = 493;
-	const SECOND_MICROSECOND_SYMBOL              = 494;
-	const SECOND_SYMBOL                          = 495;
-	const SECURITY_SYMBOL                        = 496;
-	const SELECT_SYMBOL                          = 497;
-	const SENSITIVE_SYMBOL                       = 498;
-	const SEPARATOR_SYMBOL                       = 499;
-	const SERIALIZABLE_SYMBOL                    = 500;
-	const SERIAL_SYMBOL                          = 501;
-	const SESSION_SYMBOL                         = 502;
-	const SERVER_SYMBOL                          = 503;
-	const SERVER_OPTIONS_SYMBOL                  = 504;
-	const SESSION_USER_SYMBOL                    = 505;
-	const SET_SYMBOL                             = 506;
-	const SET_VAR_SYMBOL                         = 507;
-	const SHARE_SYMBOL                           = 508;
-	const SHOW_SYMBOL                            = 509;
-	const SHUTDOWN_SYMBOL                        = 510;
-	const SIGNAL_SYMBOL                          = 511;
-	const SIGNED_SYMBOL                          = 512;
-	const SIMPLE_SYMBOL                          = 513;
-	const SLAVE_SYMBOL                           = 514;
-	const SLOW_SYMBOL                            = 515;
-	const SMALLINT_SYMBOL                        = 516;
-	const SNAPSHOT_SYMBOL                        = 517;
-	const SOME_SYMBOL                            = 518;
-	const SOCKET_SYMBOL                          = 519;
-	const SONAME_SYMBOL                          = 520;
-	const SOUNDS_SYMBOL                          = 521;
-	const SOURCE_SYMBOL                          = 522;
-	const SPATIAL_SYMBOL                         = 523;
-	const SPECIFIC_SYMBOL                        = 524;
-	const SQLEXCEPTION_SYMBOL                    = 525;
-	const SQLSTATE_SYMBOL                        = 526;
-	const SQLWARNING_SYMBOL                      = 527;
-	const SQL_AFTER_GTIDS_SYMBOL                 = 528;
-	const SQL_AFTER_MTS_GAPS_SYMBOL              = 529;
-	const SQL_BEFORE_GTIDS_SYMBOL                = 530;
-	const SQL_BIG_RESULT_SYMBOL                  = 531;
-	const SQL_BUFFER_RESULT_SYMBOL               = 532;
-	const SQL_CACHE_SYMBOL                       = 533;
-	const SQL_CALC_FOUND_ROWS_SYMBOL             = 534;
-	const SQL_NO_CACHE_SYMBOL                    = 535;
-	const SQL_SMALL_RESULT_SYMBOL                = 536;
-	const SQL_SYMBOL                             = 537;
-	const SQL_THREAD_SYMBOL                      = 538;
-	const SSL_SYMBOL                             = 539;
-	const STACKED_SYMBOL                         = 540;
-	const STARTING_SYMBOL                        = 541;
-	const STARTS_SYMBOL                          = 542;
-	const START_SYMBOL                           = 543;
-	const STATS_AUTO_RECALC_SYMBOL               = 544;
-	const STATS_PERSISTENT_SYMBOL                = 545;
-	const STATS_SAMPLE_PAGES_SYMBOL              = 546;
-	const STATUS_SYMBOL                          = 547;
-	const STDDEV_SAMP_SYMBOL                     = 548;
-	const STDDEV_SYMBOL                          = 549;
-	const STDDEV_POP_SYMBOL                      = 550;
-	const STD_SYMBOL                             = 551;
-	const STOP_SYMBOL                            = 552;
-	const STORAGE_SYMBOL                         = 553;
-	const STORED_SYMBOL                          = 554;
-	const STRAIGHT_JOIN_SYMBOL                   = 555;
-	const STRING_SYMBOL                          = 556;
-	const SUBCLASS_ORIGIN_SYMBOL                 = 557;
-	const SUBDATE_SYMBOL                         = 558;
-	const SUBJECT_SYMBOL                         = 559;
-	const SUBPARTITIONS_SYMBOL                   = 560;
-	const SUBPARTITION_SYMBOL                    = 561;
-	const SUBSTR_SYMBOL                          = 562;
-	const SUBSTRING_SYMBOL                       = 563;
-	const SUM_SYMBOL                             = 564;
-	const SUPER_SYMBOL                           = 565;
-	const SUSPEND_SYMBOL                         = 566;
-	const SWAPS_SYMBOL                           = 567;
-	const SWITCHES_SYMBOL                        = 568;
-	const SYSDATE_SYMBOL                         = 569;
-	const SYSTEM_USER_SYMBOL                     = 570;
-	const TABLES_SYMBOL                          = 571;
-	const TABLESPACE_SYMBOL                      = 572;
-	const TABLE_REF_PRIORITY_SYMBOL              = 573;
-	const TABLE_SYMBOL                           = 574;
-	const TABLE_CHECKSUM_SYMBOL                  = 575;
-	const TABLE_NAME_SYMBOL                      = 576;
-	const TEMPORARY_SYMBOL                       = 577;
-	const TEMPTABLE_SYMBOL                       = 578;
-	const TERMINATED_SYMBOL                      = 579;
-	const TEXT_SYMBOL                            = 580;
-	const THAN_SYMBOL                            = 581;
-	const THEN_SYMBOL                            = 582;
-	const TIMESTAMP_SYMBOL                       = 583;
-	const TIMESTAMP_ADD_SYMBOL                   = 584;
-	const TIMESTAMP_DIFF_SYMBOL                  = 585;
-	const TIME_SYMBOL                            = 586;
-	const TINYBLOB_SYMBOL                        = 587;
-	const TINYINT_SYMBOL                         = 588;
-	const TINYTEXT_SYMBOL                        = 589;
-	const TO_SYMBOL                              = 590;
-	const TRAILING_SYMBOL                        = 591;
-	const TRANSACTION_SYMBOL                     = 592;
-	const TRIGGERS_SYMBOL                        = 593;
-	const TRIGGER_SYMBOL                         = 594;
-	const TRIM_SYMBOL                            = 595;
-	const TRUE_SYMBOL                            = 596;
-	const TRUNCATE_SYMBOL                        = 597;
-	const TYPES_SYMBOL                           = 598;
-	const TYPE_SYMBOL                            = 599;
-	const UDF_RETURNS_SYMBOL                     = 600;
-	const UNCOMMITTED_SYMBOL                     = 601;
-	const UNDEFINED_SYMBOL                       = 602;
-	const UNDOFILE_SYMBOL                        = 603;
-	const UNDO_BUFFER_SIZE_SYMBOL                = 604;
-	const UNDO_SYMBOL                            = 605;
-	const UNICODE_SYMBOL                         = 606;
-	const UNINSTALL_SYMBOL                       = 607;
-	const UNION_SYMBOL                           = 608;
-	const UNIQUE_SYMBOL                          = 609;
-	const UNKNOWN_SYMBOL                         = 610;
-	const UNLOCK_SYMBOL                          = 611;
-	const UNSIGNED_SYMBOL                        = 612;
-	const UNTIL_SYMBOL                           = 613;
-	const UPDATE_SYMBOL                          = 614;
-	const UPGRADE_SYMBOL                         = 615;
-	const USAGE_SYMBOL                           = 616;
-	const USER_RESOURCES_SYMBOL                  = 617;
-	const USER_SYMBOL                            = 618;
-	const USE_FRM_SYMBOL                         = 619;
-	const USE_SYMBOL                             = 620;
-	const USING_SYMBOL                           = 621;
-	const UTC_DATE_SYMBOL                        = 622;
-	const UTC_TIMESTAMP_SYMBOL                   = 623;
-	const UTC_TIME_SYMBOL                        = 624;
-	const VALIDATION_SYMBOL                      = 625;
-	const VALUES_SYMBOL                          = 626;
-	const VALUE_SYMBOL                           = 627;
-	const VARBINARY_SYMBOL                       = 628;
-	const VARCHAR_SYMBOL                         = 629;
-	const VARCHARACTER_SYMBOL                    = 630;
-	const VARIABLES_SYMBOL                       = 631;
-	const VARIANCE_SYMBOL                        = 632;
-	const VARYING_SYMBOL                         = 633;
-	const VAR_POP_SYMBOL                         = 634;
-	const VAR_SAMP_SYMBOL                        = 635;
-	const VIEW_SYMBOL                            = 636;
-	const VIRTUAL_SYMBOL                         = 637;
-	const WAIT_SYMBOL                            = 638;
-	const WARNINGS_SYMBOL                        = 639;
-	const WEEK_SYMBOL                            = 640;
-	const WEIGHT_STRING_SYMBOL                   = 641;
-	const WHEN_SYMBOL                            = 642;
-	const WHERE_SYMBOL                           = 643;
-	const WHILE_SYMBOL                           = 644;
-	const WITH_SYMBOL                            = 645;
-	const WITHOUT_SYMBOL                         = 646;
-	const WORK_SYMBOL                            = 647;
-	const WRAPPER_SYMBOL                         = 648;
-	const WRITE_SYMBOL                           = 649;
-	const X509_SYMBOL                            = 650;
-	const XA_SYMBOL                              = 651;
-	const XID_SYMBOL                             = 652;
-	const XML_SYMBOL                             = 653;
-	const XOR_SYMBOL                             = 654;
-	const YEAR_MONTH_SYMBOL                      = 655;
-	const YEAR_SYMBOL                            = 656;
-	const ZEROFILL_SYMBOL                        = 657;
-	const PERSIST_SYMBOL                         = 658;
-	const ROLE_SYMBOL                            = 659;
-	const ADMIN_SYMBOL                           = 660;
-	const INVISIBLE_SYMBOL                       = 661;
-	const VISIBLE_SYMBOL                         = 662;
-	const EXCEPT_SYMBOL                          = 663;
-	const COMPONENT_SYMBOL                       = 664;
-	const RECURSIVE_SYMBOL                       = 665;
-	const JSON_OBJECTAGG_SYMBOL                  = 666;
-	const JSON_ARRAYAGG_SYMBOL                   = 667;
-	const OF_SYMBOL                              = 668;
-	const SKIP_SYMBOL                            = 669;
-	const LOCKED_SYMBOL                          = 670;
-	const NOWAIT_SYMBOL                          = 671;
-	const GROUPING_SYMBOL                        = 672;
-	const PERSIST_ONLY_SYMBOL                    = 673;
-	const HISTOGRAM_SYMBOL                       = 674;
-	const BUCKETS_SYMBOL                         = 675;
-	const REMOTE_SYMBOL                          = 676;
-	const CLONE_SYMBOL                           = 677;
-	const CUME_DIST_SYMBOL                       = 678;
-	const DENSE_RANK_SYMBOL                      = 679;
-	const EXCLUDE_SYMBOL                         = 680;
-	const FIRST_VALUE_SYMBOL                     = 681;
-	const FOLLOWING_SYMBOL                       = 682;
-	const GROUPS_SYMBOL                          = 683;
-	const LAG_SYMBOL                             = 684;
-	const LAST_VALUE_SYMBOL                      = 685;
-	const LEAD_SYMBOL                            = 686;
-	const NTH_VALUE_SYMBOL                       = 687;
-	const NTILE_SYMBOL                           = 688;
-	const NULLS_SYMBOL                           = 689;
-	const OTHERS_SYMBOL                          = 690;
-	const OVER_SYMBOL                            = 691;
-	const PERCENT_RANK_SYMBOL                    = 692;
-	const PRECEDING_SYMBOL                       = 693;
-	const RANK_SYMBOL                            = 694;
-	const RESPECT_SYMBOL                         = 695;
-	const ROW_NUMBER_SYMBOL                      = 696;
-	const TIES_SYMBOL                            = 697;
-	const UNBOUNDED_SYMBOL                       = 698;
-	const WINDOW_SYMBOL                          = 699;
-	const EMPTY_SYMBOL                           = 700;
-	const JSON_TABLE_SYMBOL                      = 701;
-	const NESTED_SYMBOL                          = 702;
-	const ORDINALITY_SYMBOL                      = 703;
-	const PATH_SYMBOL                            = 704;
-	const HISTORY_SYMBOL                         = 705;
-	const REUSE_SYMBOL                           = 706;
-	const SRID_SYMBOL                            = 707;
-	const THREAD_PRIORITY_SYMBOL                 = 708;
-	const RESOURCE_SYMBOL                        = 709;
-	const SYSTEM_SYMBOL                          = 710;
-	const VCPU_SYMBOL                            = 711;
-	const MASTER_PUBLIC_KEY_PATH_SYMBOL          = 712;
-	const GET_MASTER_PUBLIC_KEY_SYMBOL           = 713;
-	const RESTART_SYMBOL                         = 714;
-	const DEFINITION_SYMBOL                      = 715;
-	const DESCRIPTION_SYMBOL                     = 716;
-	const ORGANIZATION_SYMBOL                    = 717;
-	const REFERENCE_SYMBOL                       = 718;
-	const OPTIONAL_SYMBOL                        = 719;
-	const SECONDARY_SYMBOL                       = 720;
-	const SECONDARY_ENGINE_SYMBOL                = 721;
-	const SECONDARY_LOAD_SYMBOL                  = 722;
-	const SECONDARY_UNLOAD_SYMBOL                = 723;
-	const ACTIVE_SYMBOL                          = 724;
-	const INACTIVE_SYMBOL                        = 725;
-	const LATERAL_SYMBOL                         = 726;
-	const RETAIN_SYMBOL                          = 727;
-	const OLD_SYMBOL                             = 728;
-	const NETWORK_NAMESPACE_SYMBOL               = 729;
-	const ENFORCED_SYMBOL                        = 730;
-	const ARRAY_SYMBOL                           = 731;
-	const OJ_SYMBOL                              = 732;
-	const MEMBER_SYMBOL                          = 733;
-	const RANDOM_SYMBOL                          = 734;
-	const MASTER_COMPRESSION_ALGORITHM_SYMBOL    = 735;
-	const MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL   = 736;
-	const PRIVILEGE_CHECKS_USER_SYMBOL           = 737;
-	const MASTER_TLS_CIPHERSUITES_SYMBOL         = 738;
-	const REQUIRE_ROW_FORMAT_SYMBOL              = 739;
-	const PASSWORD_LOCK_TIME_SYMBOL              = 740;
-	const FAILED_LOGIN_ATTEMPTS_SYMBOL           = 741;
-	const REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL = 742;
-	const STREAM_SYMBOL                          = 743;
-	const OFF_SYMBOL                             = 744;
+	private const EOF        = -1;
+	private const WHITESPACE = -2;
 
-	/**
-	 * Additional tokens, mostly mirroring the MySQL Workbench lexer grammar.
-	 *
-	 * These tokens are defined in the MySQL Workbench "MySQLLexer.g4" grammar.
-	 *
-	 * See:
-	 *   https://github.com/mysql/mysql-workbench/blob/8.0.38/library/parsers/grammars/MySQLLexer.g4
-	 */
-
-	// Punctuators
-	const AT_AT_SIGN_SYMBOL  = 745;
-	const AT_SIGN_SYMBOL     = 746;
-	const CLOSE_CURLY_SYMBOL = 747;
-	const CLOSE_PAR_SYMBOL   = 748;
-	const COLON_SYMBOL       = 749;
-	const COMMA_SYMBOL       = 750;
-	const DOT_SYMBOL         = 751;
-	const OPEN_CURLY_SYMBOL  = 752;
-	const OPEN_PAR_SYMBOL    = 753;
-	const PARAM_MARKER       = 754;
-	const SEMICOLON_SYMBOL   = 755;
-
-	// Operators
-	const ASSIGN_OPERATOR                = 756;
-	const BITWISE_AND_OPERATOR           = 757;
-	const BITWISE_NOT_OPERATOR           = 758;
-	const BITWISE_OR_OPERATOR            = 759;
-	const BITWISE_XOR_OPERATOR           = 760;
-	const CONCAT_PIPES_SYMBOL            = 761;
-	const DIV_OPERATOR                   = 762;
-	const EQUAL_OPERATOR                 = 763;
-	const GREATER_OR_EQUAL_OPERATOR      = 764;
-	const GREATER_THAN_OPERATOR          = 765;
-	const JSON_SEPARATOR_SYMBOL          = 766;
-	const JSON_UNQUOTED_SEPARATOR_SYMBOL = 767;
-	const LESS_OR_EQUAL_OPERATOR         = 768;
-	const LESS_THAN_OPERATOR             = 769;
-	const LOGICAL_AND_OPERATOR           = 770;
-	const LOGICAL_NOT_OPERATOR           = 771;
-	const LOGICAL_OR_OPERATOR            = 772;
-	const MINUS_OPERATOR                 = 773;
-	const MOD_OPERATOR                   = 774;
-	const MULT_OPERATOR                  = 775;
-	const NOT_EQUAL_OPERATOR             = 776;
-	const NULL_SAFE_EQUAL_OPERATOR       = 777;
-	const PLUS_OPERATOR                  = 778;
-	const SHIFT_LEFT_OPERATOR            = 779;
-	const SHIFT_RIGHT_OPERATOR           = 780;
-
-	// Literals
-	const BACK_TICK_QUOTED_ID = 781;
-	const BIN_NUMBER          = 782;
-	const DECIMAL_NUMBER      = 783;
-	const DOUBLE_QUOTED_TEXT  = 784;
-	const FLOAT_NUMBER        = 785;
-	const HEX_NUMBER          = 786;
-	const INT_NUMBER          = 787;
-	const LONG_NUMBER         = 788;
-	const NCHAR_TEXT          = 789;
-	const SINGLE_QUOTED_TEXT  = 790;
-	const ULONGLONG_NUMBER    = 791;
-
-	// Identifier-like tokens
-	const AT_TEXT_SUFFIX     = 792;
-	const IDENTIFIER         = 793;
-	const UNDERSCORE_CHARSET = 794;
-
-	// Other tokens
-	const INT1_SYMBOL                = 795;
-	const INT2_SYMBOL                = 796;
-	const INT3_SYMBOL                = 797;
-	const INT4_SYMBOL                = 798;
-	const INT8_SYMBOL                = 799;
-	const NOT2_SYMBOL                = 800;
-	const NULL2_SYMBOL               = 801;
-	const SQL_TSI_DAY_SYMBOL         = 802;
-	const SQL_TSI_HOUR_SYMBOL        = 803;
-	const SQL_TSI_MICROSECOND_SYMBOL = 804;
-	const SQL_TSI_MINUTE_SYMBOL      = 805;
-	const SQL_TSI_MONTH_SYMBOL       = 806;
-	const SQL_TSI_QUARTER_SYMBOL     = 807;
-	const SQL_TSI_SECOND_SYMBOL      = 808;
-	const SQL_TSI_WEEK_SYMBOL        = 809;
-	const SQL_TSI_YEAR_SYMBOL        = 810;
-
-	/**
-	 * Other tokens, missing in the MySQL Workbench "MySQLLexer.g4" grammar.
-	 *
-	 * These tokens are missing in the "MySQLLexer.g4" grammar, because the MySQL
-	 * Workbench lexer and parser don't cover 100% of the MySQL syntax.
-	 */
-	const INTERSECT_SYMBOL                              = 811;
-	const ATTRIBUTE_SYMBOL                              = 812;
-	const SOURCE_AUTO_POSITION_SYMBOL                   = 813;
-	const SOURCE_BIND_SYMBOL                            = 814;
-	const SOURCE_COMPRESSION_ALGORITHM_SYMBOL           = 815;
-	const SOURCE_CONNECT_RETRY_SYMBOL                   = 816;
-	const SOURCE_CONNECTION_AUTO_FAILOVER_SYMBOL        = 817;
-	const SOURCE_DELAY_SYMBOL                           = 818;
-	const SOURCE_HEARTBEAT_PERIOD_SYMBOL                = 819;
-	const SOURCE_HOST_SYMBOL                            = 820;
-	const SOURCE_LOG_FILE_SYMBOL                        = 821;
-	const SOURCE_LOG_POS_SYMBOL                         = 822;
-	const SOURCE_PASSWORD_SYMBOL                        = 823;
-	const SOURCE_PORT_SYMBOL                            = 824;
-	const SOURCE_PUBLIC_KEY_PATH_SYMBOL                 = 825;
-	const SOURCE_RETRY_COUNT_SYMBOL                     = 826;
-	const SOURCE_SSL_SYMBOL                             = 827;
-	const SOURCE_SSL_CA_SYMBOL                          = 828;
-	const SOURCE_SSL_CAPATH_SYMBOL                      = 829;
-	const SOURCE_SSL_CERT_SYMBOL                        = 830;
-	const SOURCE_SSL_CIPHER_SYMBOL                      = 831;
-	const SOURCE_SSL_CRL_SYMBOL                         = 832;
-	const SOURCE_SSL_CRLPATH_SYMBOL                     = 833;
-	const SOURCE_SSL_KEY_SYMBOL                         = 834;
-	const SOURCE_SSL_VERIFY_SERVER_CERT_SYMBOL          = 835;
-	const SOURCE_TLS_CIPHERSUITES_SYMBOL                = 836;
-	const SOURCE_TLS_VERSION_SYMBOL                     = 837;
-	const SOURCE_USER_SYMBOL                            = 838;
-	const SOURCE_ZSTD_COMPRESSION_LEVEL_SYMBOL          = 839;
-	const GET_SOURCE_PUBLIC_KEY_SYMBOL                  = 840;
-	const GTID_ONLY_SYMBOL                              = 841;
-	const ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS_SYMBOL = 842;
-	const ZONE_SYMBOL                                   = 843;
-	const INNODB_SYMBOL                                 = 844; // From 5.7.11 defined as is_identifier(..., "INNODB") in "sql_yacc.yy".
-	const TLS_SYMBOL                                    = 845; // Added in 8.0.21. From 8.0.16 defined as is_identifier(..., "TLS") in "sql_yacc.yy".
-	const REDO_LOG_SYMBOL                               = 846; // From 8.0.21 defined as is_identifier(..., "REDO_LOG") in "sql_yacc.yy".
-	const KEYRING_SYMBOL                                = 847;
-	const ENGINE_ATTRIBUTE_SYMBOL                       = 848;
-	const SECONDARY_ENGINE_ATTRIBUTE_SYMBOL             = 849;
-	const JSON_VALUE_SYMBOL                             = 850;
-	const RETURNING_SYMBOL                              = 851;
-	const GEOMCOLLECTION_SYMBOL                         = 852;
-
-	// Comments
-	const COMMENT             = 900;
-	const MYSQL_COMMENT_START = 901;
-	const MYSQL_COMMENT_END   = 902;
-
-	// Special tokens
-	const WHITESPACE = 0;
-	const EOF        = -1;
-
-	/**
-	 * A map of SQL keyword string values to their corresponding token types.
-	 *
-	 * This is used for a fast lookup of MySQL keywords during tokenization.
-	 */
-	const TOKENS = array(
-		// Tokens from MySQL 5.7:
-		'ACCESSIBLE'                             => self::ACCESSIBLE_SYMBOL,
-		'ACCOUNT'                                => self::ACCOUNT_SYMBOL,
-		'ACTION'                                 => self::ACTION_SYMBOL,
-		'ADD'                                    => self::ADD_SYMBOL,
-		'ADDDATE'                                => self::ADDDATE_SYMBOL,
-		'AFTER'                                  => self::AFTER_SYMBOL,
-		'AGAINST'                                => self::AGAINST_SYMBOL,
-		'AGGREGATE'                              => self::AGGREGATE_SYMBOL,
-		'ALGORITHM'                              => self::ALGORITHM_SYMBOL,
-		'ALL'                                    => self::ALL_SYMBOL,
-		'ALTER'                                  => self::ALTER_SYMBOL,
-		'ALWAYS'                                 => self::ALWAYS_SYMBOL,
-		'ANALYSE'                                => self::ANALYSE_SYMBOL,
-		'ANALYZE'                                => self::ANALYZE_SYMBOL,
-		'AND'                                    => self::AND_SYMBOL,
-		'ANY'                                    => self::ANY_SYMBOL,
-		'AS'                                     => self::AS_SYMBOL,
-		'ASC'                                    => self::ASC_SYMBOL,
-		'ASCII'                                  => self::ASCII_SYMBOL,
-		'ASENSITIVE'                             => self::ASENSITIVE_SYMBOL,
-		'AT'                                     => self::AT_SYMBOL,
-		'ATTRIBUTE'                              => self::ATTRIBUTE_SYMBOL,
-		'AUTHORS'                                => self::AUTHORS_SYMBOL,
-		'AUTO_INCREMENT'                         => self::AUTO_INCREMENT_SYMBOL,
-		'AUTOEXTEND_SIZE'                        => self::AUTOEXTEND_SIZE_SYMBOL,
-		'AVG'                                    => self::AVG_SYMBOL,
-		'AVG_ROW_LENGTH'                         => self::AVG_ROW_LENGTH_SYMBOL,
-		'BACKUP'                                 => self::BACKUP_SYMBOL,
-		'BEFORE'                                 => self::BEFORE_SYMBOL,
-		'BEGIN'                                  => self::BEGIN_SYMBOL,
-		'BETWEEN'                                => self::BETWEEN_SYMBOL,
-		'BIGINT'                                 => self::BIGINT_SYMBOL,
-		'BIN_NUM'                                => self::BIN_NUM_SYMBOL,
-		'BINARY'                                 => self::BINARY_SYMBOL,
-		'BINLOG'                                 => self::BINLOG_SYMBOL,
-		'BIT'                                    => self::BIT_SYMBOL,
-		'BIT_AND'                                => self::BIT_AND_SYMBOL,
-		'BIT_OR'                                 => self::BIT_OR_SYMBOL,
-		'BIT_XOR'                                => self::BIT_XOR_SYMBOL,
-		'BLOB'                                   => self::BLOB_SYMBOL,
-		'BLOCK'                                  => self::BLOCK_SYMBOL,
-		'BOOL'                                   => self::BOOL_SYMBOL,
-		'BOOLEAN'                                => self::BOOLEAN_SYMBOL,
-		'BOTH'                                   => self::BOTH_SYMBOL,
-		'BTREE'                                  => self::BTREE_SYMBOL,
-		'BY'                                     => self::BY_SYMBOL,
-		'BYTE'                                   => self::BYTE_SYMBOL,
-		'CACHE'                                  => self::CACHE_SYMBOL,
-		'CALL'                                   => self::CALL_SYMBOL,
-		'CASCADE'                                => self::CASCADE_SYMBOL,
-		'CASCADED'                               => self::CASCADED_SYMBOL,
-		'CASE'                                   => self::CASE_SYMBOL,
-		'CAST'                                   => self::CAST_SYMBOL,
-		'CATALOG_NAME'                           => self::CATALOG_NAME_SYMBOL,
-		'CHAIN'                                  => self::CHAIN_SYMBOL,
-		'CHANGE'                                 => self::CHANGE_SYMBOL,
-		'CHANGED'                                => self::CHANGED_SYMBOL,
-		'CHANNEL'                                => self::CHANNEL_SYMBOL,
-		'CHAR'                                   => self::CHAR_SYMBOL,
-		'CHARACTER'                              => self::CHARACTER_SYMBOL,
-		'CHARSET'                                => self::CHARSET_SYMBOL,
-		'CHECK'                                  => self::CHECK_SYMBOL,
-		'CHECKSUM'                               => self::CHECKSUM_SYMBOL,
-		'CIPHER'                                 => self::CIPHER_SYMBOL,
-		'CLASS_ORIGIN'                           => self::CLASS_ORIGIN_SYMBOL,
-		'CLIENT'                                 => self::CLIENT_SYMBOL,
-		'CLOSE'                                  => self::CLOSE_SYMBOL,
-		'COALESCE'                               => self::COALESCE_SYMBOL,
-		'CODE'                                   => self::CODE_SYMBOL,
-		'COLLATE'                                => self::COLLATE_SYMBOL,
-		'COLLATION'                              => self::COLLATION_SYMBOL,
-		'COLUMN'                                 => self::COLUMN_SYMBOL,
-		'COLUMN_FORMAT'                          => self::COLUMN_FORMAT_SYMBOL,
-		'COLUMN_NAME'                            => self::COLUMN_NAME_SYMBOL,
-		'COLUMNS'                                => self::COLUMNS_SYMBOL,
-		'COMMENT'                                => self::COMMENT_SYMBOL,
-		'COMMIT'                                 => self::COMMIT_SYMBOL,
-		'COMMITTED'                              => self::COMMITTED_SYMBOL,
-		'COMPACT'                                => self::COMPACT_SYMBOL,
-		'COMPLETION'                             => self::COMPLETION_SYMBOL,
-		'COMPRESSED'                             => self::COMPRESSED_SYMBOL,
-		'COMPRESSION'                            => self::COMPRESSION_SYMBOL,
-		'CONCURRENT'                             => self::CONCURRENT_SYMBOL,
-		'CONDITION'                              => self::CONDITION_SYMBOL,
-		'CONNECTION'                             => self::CONNECTION_SYMBOL,
-		'CONSISTENT'                             => self::CONSISTENT_SYMBOL,
-		'CONSTRAINT'                             => self::CONSTRAINT_SYMBOL,
-		'CONSTRAINT_CATALOG'                     => self::CONSTRAINT_CATALOG_SYMBOL,
-		'CONSTRAINT_NAME'                        => self::CONSTRAINT_NAME_SYMBOL,
-		'CONSTRAINT_SCHEMA'                      => self::CONSTRAINT_SCHEMA_SYMBOL,
-		'CONTAINS'                               => self::CONTAINS_SYMBOL,
-		'CONTEXT'                                => self::CONTEXT_SYMBOL,
-		'CONTINUE'                               => self::CONTINUE_SYMBOL,
-		'CONTRIBUTORS'                           => self::CONTRIBUTORS_SYMBOL,
-		'CONVERT'                                => self::CONVERT_SYMBOL,
-		'COUNT'                                  => self::COUNT_SYMBOL,
-		'CPU'                                    => self::CPU_SYMBOL,
-		'CREATE'                                 => self::CREATE_SYMBOL,
-		'CROSS'                                  => self::CROSS_SYMBOL,
-		'CUBE'                                   => self::CUBE_SYMBOL,
-		'CURDATE'                                => self::CURDATE_SYMBOL,
-		'CURRENT'                                => self::CURRENT_SYMBOL,
-		'CURRENT_DATE'                           => self::CURRENT_DATE_SYMBOL,
-		'CURRENT_TIME'                           => self::CURRENT_TIME_SYMBOL,
-		'CURRENT_TIMESTAMP'                      => self::CURRENT_TIMESTAMP_SYMBOL,
-		'CURRENT_USER'                           => self::CURRENT_USER_SYMBOL,
-		'CURSOR'                                 => self::CURSOR_SYMBOL,
-		'CURSOR_NAME'                            => self::CURSOR_NAME_SYMBOL,
-		'CURTIME'                                => self::CURTIME_SYMBOL,
-		'DATA'                                   => self::DATA_SYMBOL,
-		'DATABASE'                               => self::DATABASE_SYMBOL,
-		'DATABASES'                              => self::DATABASES_SYMBOL,
-		'DATAFILE'                               => self::DATAFILE_SYMBOL,
-		'DATE'                                   => self::DATE_SYMBOL,
-		'DATE_ADD'                               => self::DATE_ADD_SYMBOL,
-		'DATE_SUB'                               => self::DATE_SUB_SYMBOL,
-		'DATETIME'                               => self::DATETIME_SYMBOL,
-		'DAY'                                    => self::DAY_SYMBOL,
-		'DAY_HOUR'                               => self::DAY_HOUR_SYMBOL,
-		'DAY_MICROSECOND'                        => self::DAY_MICROSECOND_SYMBOL,
-		'DAY_MINUTE'                             => self::DAY_MINUTE_SYMBOL,
-		'DAY_SECOND'                             => self::DAY_SECOND_SYMBOL,
-		'DAYOFMONTH'                             => self::DAYOFMONTH_SYMBOL,
-		'DEALLOCATE'                             => self::DEALLOCATE_SYMBOL,
-		'DEC'                                    => self::DEC_SYMBOL,
-		'DECIMAL'                                => self::DECIMAL_SYMBOL,
-		'DECIMAL_NUM'                            => self::DECIMAL_NUM_SYMBOL,
-		'DECLARE'                                => self::DECLARE_SYMBOL,
-		'DEFAULT'                                => self::DEFAULT_SYMBOL,
-		'DEFAULT_AUTH'                           => self::DEFAULT_AUTH_SYMBOL,
-		'DEFINER'                                => self::DEFINER_SYMBOL,
-		'DELAY_KEY_WRITE'                        => self::DELAY_KEY_WRITE_SYMBOL,
-		'DELAYED'                                => self::DELAYED_SYMBOL,
-		'DELETE'                                 => self::DELETE_SYMBOL,
-		'DES_KEY_FILE'                           => self::DES_KEY_FILE_SYMBOL,
-		'DESC'                                   => self::DESC_SYMBOL,
-		'DESCRIBE'                               => self::DESCRIBE_SYMBOL,
-		'DETERMINISTIC'                          => self::DETERMINISTIC_SYMBOL,
-		'DIAGNOSTICS'                            => self::DIAGNOSTICS_SYMBOL,
-		'DIRECTORY'                              => self::DIRECTORY_SYMBOL,
-		'DISABLE'                                => self::DISABLE_SYMBOL,
-		'DISCARD'                                => self::DISCARD_SYMBOL,
-		'DISK'                                   => self::DISK_SYMBOL,
-		'DISTINCT'                               => self::DISTINCT_SYMBOL,
-		'DISTINCTROW'                            => self::DISTINCTROW_SYMBOL,
-		'DIV'                                    => self::DIV_SYMBOL,
-		'DO'                                     => self::DO_SYMBOL,
-		'DOUBLE'                                 => self::DOUBLE_SYMBOL,
-		'DROP'                                   => self::DROP_SYMBOL,
-		'DUAL'                                   => self::DUAL_SYMBOL,
-		'DUMPFILE'                               => self::DUMPFILE_SYMBOL,
-		'DUPLICATE'                              => self::DUPLICATE_SYMBOL,
-		'DYNAMIC'                                => self::DYNAMIC_SYMBOL,
-		'EACH'                                   => self::EACH_SYMBOL,
-		'ELSE'                                   => self::ELSE_SYMBOL,
-		'ELSEIF'                                 => self::ELSEIF_SYMBOL,
-		'ENABLE'                                 => self::ENABLE_SYMBOL,
-		'ENCLOSED'                               => self::ENCLOSED_SYMBOL,
-		'ENCRYPTION'                             => self::ENCRYPTION_SYMBOL,
-		'END'                                    => self::END_SYMBOL,
-		'END_OF_INPUT'                           => self::EOF,
-		'ENDS'                                   => self::ENDS_SYMBOL,
-		'ENGINE'                                 => self::ENGINE_SYMBOL,
-		'ENGINES'                                => self::ENGINES_SYMBOL,
-		'ENUM'                                   => self::ENUM_SYMBOL,
-		'ERROR'                                  => self::ERROR_SYMBOL,
-		'ERRORS'                                 => self::ERRORS_SYMBOL,
-		'ESCAPE'                                 => self::ESCAPE_SYMBOL,
-		'ESCAPED'                                => self::ESCAPED_SYMBOL,
-		'EVENT'                                  => self::EVENT_SYMBOL,
-		'EVENTS'                                 => self::EVENTS_SYMBOL,
-		'EVERY'                                  => self::EVERY_SYMBOL,
-		'EXCHANGE'                               => self::EXCHANGE_SYMBOL,
-		'EXECUTE'                                => self::EXECUTE_SYMBOL,
-		'EXISTS'                                 => self::EXISTS_SYMBOL,
-		'EXIT'                                   => self::EXIT_SYMBOL,
-		'EXPANSION'                              => self::EXPANSION_SYMBOL,
-		'EXPIRE'                                 => self::EXPIRE_SYMBOL,
-		'EXPLAIN'                                => self::EXPLAIN_SYMBOL,
-		'EXPORT'                                 => self::EXPORT_SYMBOL,
-		'EXTENDED'                               => self::EXTENDED_SYMBOL,
-		'EXTENT_SIZE'                            => self::EXTENT_SIZE_SYMBOL,
-		'EXTRACT'                                => self::EXTRACT_SYMBOL,
-		'FALSE'                                  => self::FALSE_SYMBOL,
-		'FAST'                                   => self::FAST_SYMBOL,
-		'FAULTS'                                 => self::FAULTS_SYMBOL,
-		'FETCH'                                  => self::FETCH_SYMBOL,
-		'FIELDS'                                 => self::FIELDS_SYMBOL,
-		'FILE'                                   => self::FILE_SYMBOL,
-		'FILE_BLOCK_SIZE'                        => self::FILE_BLOCK_SIZE_SYMBOL,
-		'FILTER'                                 => self::FILTER_SYMBOL,
-		'FIRST'                                  => self::FIRST_SYMBOL,
-		'FIXED'                                  => self::FIXED_SYMBOL,
-		'FLOAT'                                  => self::FLOAT_SYMBOL,
-		'FLOAT4'                                 => self::FLOAT4_SYMBOL,
-		'FLOAT8'                                 => self::FLOAT8_SYMBOL,
-		'FLUSH'                                  => self::FLUSH_SYMBOL,
-		'FOLLOWS'                                => self::FOLLOWS_SYMBOL,
-		'FOR'                                    => self::FOR_SYMBOL,
-		'FORCE'                                  => self::FORCE_SYMBOL,
-		'FOREIGN'                                => self::FOREIGN_SYMBOL,
-		'FORMAT'                                 => self::FORMAT_SYMBOL,
-		'FOUND'                                  => self::FOUND_SYMBOL,
-		'FROM'                                   => self::FROM_SYMBOL,
-		'FULL'                                   => self::FULL_SYMBOL,
-		'FULLTEXT'                               => self::FULLTEXT_SYMBOL,
-		'FUNCTION'                               => self::FUNCTION_SYMBOL,
-		'GENERAL'                                => self::GENERAL_SYMBOL,
-		'GENERATED'                              => self::GENERATED_SYMBOL,
-		'GEOMCOLLECTION'                         => self::GEOMCOLLECTION_SYMBOL,
-		'GEOMETRY'                               => self::GEOMETRY_SYMBOL,
-		'GEOMETRYCOLLECTION'                     => self::GEOMETRYCOLLECTION_SYMBOL,
-		'GET'                                    => self::GET_SYMBOL,
-		'GET_FORMAT'                             => self::GET_FORMAT_SYMBOL,
-		'GLOBAL'                                 => self::GLOBAL_SYMBOL,
-		'GRANT'                                  => self::GRANT_SYMBOL,
-		'GRANTS'                                 => self::GRANTS_SYMBOL,
-		'GROUP'                                  => self::GROUP_SYMBOL,
-		'GROUP_CONCAT'                           => self::GROUP_CONCAT_SYMBOL,
-		'GROUP_REPLICATION'                      => self::GROUP_REPLICATION_SYMBOL,
-		'HANDLER'                                => self::HANDLER_SYMBOL,
-		'HASH'                                   => self::HASH_SYMBOL,
-		'HAVING'                                 => self::HAVING_SYMBOL,
-		'HELP'                                   => self::HELP_SYMBOL,
-		'HIGH_PRIORITY'                          => self::HIGH_PRIORITY_SYMBOL,
-		'HOST'                                   => self::HOST_SYMBOL,
-		'HOSTS'                                  => self::HOSTS_SYMBOL,
-		'HOUR'                                   => self::HOUR_SYMBOL,
-		'HOUR_MICROSECOND'                       => self::HOUR_MICROSECOND_SYMBOL,
-		'HOUR_MINUTE'                            => self::HOUR_MINUTE_SYMBOL,
-		'HOUR_SECOND'                            => self::HOUR_SECOND_SYMBOL,
-		'IDENTIFIED'                             => self::IDENTIFIED_SYMBOL,
-		'IF'                                     => self::IF_SYMBOL,
-		'IGNORE'                                 => self::IGNORE_SYMBOL,
-		'IGNORE_SERVER_IDS'                      => self::IGNORE_SERVER_IDS_SYMBOL,
-		'IMPORT'                                 => self::IMPORT_SYMBOL,
-		'IN'                                     => self::IN_SYMBOL,
-		'INDEX'                                  => self::INDEX_SYMBOL,
-		'INDEXES'                                => self::INDEXES_SYMBOL,
-		'INFILE'                                 => self::INFILE_SYMBOL,
-		'INITIAL_SIZE'                           => self::INITIAL_SIZE_SYMBOL,
-		'INNER'                                  => self::INNER_SYMBOL,
-		'INNODB'                                 => self::INNODB_SYMBOL,
-		'INOUT'                                  => self::INOUT_SYMBOL,
-		'INSENSITIVE'                            => self::INSENSITIVE_SYMBOL,
-		'INSERT'                                 => self::INSERT_SYMBOL,
-		'INSERT_METHOD'                          => self::INSERT_METHOD_SYMBOL,
-		'INSTALL'                                => self::INSTALL_SYMBOL,
-		'INSTANCE'                               => self::INSTANCE_SYMBOL,
-		'INT'                                    => self::INT_SYMBOL,
-		'INT1'                                   => self::INT1_SYMBOL,
-		'INT2'                                   => self::INT2_SYMBOL,
-		'INT3'                                   => self::INT3_SYMBOL,
-		'INT4'                                   => self::INT4_SYMBOL,
-		'INT8'                                   => self::INT8_SYMBOL,
-		'INTEGER'                                => self::INTEGER_SYMBOL,
-		'INTERVAL'                               => self::INTERVAL_SYMBOL,
-		'INTO'                                   => self::INTO_SYMBOL,
-		'INVOKER'                                => self::INVOKER_SYMBOL,
-		'IO'                                     => self::IO_SYMBOL,
-		'IO_AFTER_GTIDS'                         => self::IO_AFTER_GTIDS_SYMBOL,
-		'IO_BEFORE_GTIDS'                        => self::IO_BEFORE_GTIDS_SYMBOL,
-		'IO_THREAD'                              => self::IO_THREAD_SYMBOL,
-		'IPC'                                    => self::IPC_SYMBOL,
-		'IS'                                     => self::IS_SYMBOL,
-		'ISOLATION'                              => self::ISOLATION_SYMBOL,
-		'ISSUER'                                 => self::ISSUER_SYMBOL,
-		'ITERATE'                                => self::ITERATE_SYMBOL,
-		'JOIN'                                   => self::JOIN_SYMBOL,
-		'JSON'                                   => self::JSON_SYMBOL,
-		'KEY'                                    => self::KEY_SYMBOL,
-		'KEY_BLOCK_SIZE'                         => self::KEY_BLOCK_SIZE_SYMBOL,
-		'KEYS'                                   => self::KEYS_SYMBOL,
-		'KILL'                                   => self::KILL_SYMBOL,
-		'LANGUAGE'                               => self::LANGUAGE_SYMBOL,
-		'LAST'                                   => self::LAST_SYMBOL,
-		'LEADING'                                => self::LEADING_SYMBOL,
-		'LEAVE'                                  => self::LEAVE_SYMBOL,
-		'LEAVES'                                 => self::LEAVES_SYMBOL,
-		'LEFT'                                   => self::LEFT_SYMBOL,
-		'LESS'                                   => self::LESS_SYMBOL,
-		'LEVEL'                                  => self::LEVEL_SYMBOL,
-		'LIKE'                                   => self::LIKE_SYMBOL,
-		'LIMIT'                                  => self::LIMIT_SYMBOL,
-		'LINEAR'                                 => self::LINEAR_SYMBOL,
-		'LINES'                                  => self::LINES_SYMBOL,
-		'LINESTRING'                             => self::LINESTRING_SYMBOL,
-		'LIST'                                   => self::LIST_SYMBOL,
-		'LOAD'                                   => self::LOAD_SYMBOL,
-		'LOCAL'                                  => self::LOCAL_SYMBOL,
-		'LOCALTIME'                              => self::LOCALTIME_SYMBOL,
-		'LOCALTIMESTAMP'                         => self::LOCALTIMESTAMP_SYMBOL,
-		'LOCATOR'                                => self::LOCATOR_SYMBOL,
-		'LOCK'                                   => self::LOCK_SYMBOL,
-		'LOCKS'                                  => self::LOCKS_SYMBOL,
-		'LOGFILE'                                => self::LOGFILE_SYMBOL,
-		'LOGS'                                   => self::LOGS_SYMBOL,
-		'LONG'                                   => self::LONG_SYMBOL,
-		'LONG_NUM'                               => self::LONG_NUM_SYMBOL,
-		'LONGBLOB'                               => self::LONGBLOB_SYMBOL,
-		'LONGTEXT'                               => self::LONGTEXT_SYMBOL,
-		'LOOP'                                   => self::LOOP_SYMBOL,
-		'LOW_PRIORITY'                           => self::LOW_PRIORITY_SYMBOL,
-		'MASTER'                                 => self::MASTER_SYMBOL,
-		'MASTER_AUTO_POSITION'                   => self::MASTER_AUTO_POSITION_SYMBOL,
-		'MASTER_BIND'                            => self::MASTER_BIND_SYMBOL,
-		'MASTER_CONNECT_RETRY'                   => self::MASTER_CONNECT_RETRY_SYMBOL,
-		'MASTER_DELAY'                           => self::MASTER_DELAY_SYMBOL,
-		'MASTER_HEARTBEAT_PERIOD'                => self::MASTER_HEARTBEAT_PERIOD_SYMBOL,
-		'MASTER_HOST'                            => self::MASTER_HOST_SYMBOL,
-		'MASTER_LOG_FILE'                        => self::MASTER_LOG_FILE_SYMBOL,
-		'MASTER_LOG_POS'                         => self::MASTER_LOG_POS_SYMBOL,
-		'MASTER_PASSWORD'                        => self::MASTER_PASSWORD_SYMBOL,
-		'MASTER_PORT'                            => self::MASTER_PORT_SYMBOL,
-		'MASTER_RETRY_COUNT'                     => self::MASTER_RETRY_COUNT_SYMBOL,
-		'MASTER_SERVER_ID'                       => self::MASTER_SERVER_ID_SYMBOL,
-		'MASTER_SSL'                             => self::MASTER_SSL_SYMBOL,
-		'MASTER_SSL_CA'                          => self::MASTER_SSL_CA_SYMBOL,
-		'MASTER_SSL_CAPATH'                      => self::MASTER_SSL_CAPATH_SYMBOL,
-		'MASTER_SSL_CERT'                        => self::MASTER_SSL_CERT_SYMBOL,
-		'MASTER_SSL_CIPHER'                      => self::MASTER_SSL_CIPHER_SYMBOL,
-		'MASTER_SSL_CRL'                         => self::MASTER_SSL_CRL_SYMBOL,
-		'MASTER_SSL_CRLPATH'                     => self::MASTER_SSL_CRLPATH_SYMBOL,
-		'MASTER_SSL_KEY'                         => self::MASTER_SSL_KEY_SYMBOL,
-		'MASTER_SSL_VERIFY_SERVER_CERT'          => self::MASTER_SSL_VERIFY_SERVER_CERT_SYMBOL,
-		'MASTER_TLS_VERSION'                     => self::MASTER_TLS_VERSION_SYMBOL,
-		'MASTER_USER'                            => self::MASTER_USER_SYMBOL,
-		'MATCH'                                  => self::MATCH_SYMBOL,
-		'MAX'                                    => self::MAX_SYMBOL,
-		'MAX_CONNECTIONS_PER_HOUR'               => self::MAX_CONNECTIONS_PER_HOUR_SYMBOL,
-		'MAX_QUERIES_PER_HOUR'                   => self::MAX_QUERIES_PER_HOUR_SYMBOL,
-		'MAX_ROWS'                               => self::MAX_ROWS_SYMBOL,
-		'MAX_SIZE'                               => self::MAX_SIZE_SYMBOL,
-		'MAX_STATEMENT_TIME'                     => self::MAX_STATEMENT_TIME_SYMBOL,
-		'MAX_UPDATES_PER_HOUR'                   => self::MAX_UPDATES_PER_HOUR_SYMBOL,
-		'MAX_USER_CONNECTIONS'                   => self::MAX_USER_CONNECTIONS_SYMBOL,
-		'MAXVALUE'                               => self::MAXVALUE_SYMBOL,
-		'MEDIUM'                                 => self::MEDIUM_SYMBOL,
-		'MEDIUMBLOB'                             => self::MEDIUMBLOB_SYMBOL,
-		'MEDIUMINT'                              => self::MEDIUMINT_SYMBOL,
-		'MEDIUMTEXT'                             => self::MEDIUMTEXT_SYMBOL,
-		'MEMORY'                                 => self::MEMORY_SYMBOL,
-		'MERGE'                                  => self::MERGE_SYMBOL,
-		'MESSAGE_TEXT'                           => self::MESSAGE_TEXT_SYMBOL,
-		'MICROSECOND'                            => self::MICROSECOND_SYMBOL,
-		'MID'                                    => self::MID_SYMBOL,
-		'MIDDLEINT'                              => self::MIDDLEINT_SYMBOL,
-		'MIGRATE'                                => self::MIGRATE_SYMBOL,
-		'MIN'                                    => self::MIN_SYMBOL,
-		'MIN_ROWS'                               => self::MIN_ROWS_SYMBOL,
-		'MINUTE'                                 => self::MINUTE_SYMBOL,
-		'MINUTE_MICROSECOND'                     => self::MINUTE_MICROSECOND_SYMBOL,
-		'MINUTE_SECOND'                          => self::MINUTE_SECOND_SYMBOL,
-		'MOD'                                    => self::MOD_SYMBOL,
-		'MODE'                                   => self::MODE_SYMBOL,
-		'MODIFIES'                               => self::MODIFIES_SYMBOL,
-		'MODIFY'                                 => self::MODIFY_SYMBOL,
-		'MONTH'                                  => self::MONTH_SYMBOL,
-		'MULTILINESTRING'                        => self::MULTILINESTRING_SYMBOL,
-		'MULTIPOINT'                             => self::MULTIPOINT_SYMBOL,
-		'MULTIPOLYGON'                           => self::MULTIPOLYGON_SYMBOL,
-		'MUTEX'                                  => self::MUTEX_SYMBOL,
-		'MYSQL_ERRNO'                            => self::MYSQL_ERRNO_SYMBOL,
-		'NAME'                                   => self::NAME_SYMBOL,
-		'NAMES'                                  => self::NAMES_SYMBOL,
-		'NATIONAL'                               => self::NATIONAL_SYMBOL,
-		'NATURAL'                                => self::NATURAL_SYMBOL,
-		'NCHAR'                                  => self::NCHAR_SYMBOL,
-		'NCHAR_STRING'                           => self::NCHAR_STRING_SYMBOL,
-		'NDB'                                    => self::NDB_SYMBOL,
-		'NDBCLUSTER'                             => self::NDBCLUSTER_SYMBOL,
-		'NEG'                                    => self::NEG_SYMBOL,
-		'NEVER'                                  => self::NEVER_SYMBOL,
-		'NEW'                                    => self::NEW_SYMBOL,
-		'NEXT'                                   => self::NEXT_SYMBOL,
-		'NO'                                     => self::NO_SYMBOL,
-		'NO_WAIT'                                => self::NO_WAIT_SYMBOL,
-		'NO_WRITE_TO_BINLOG'                     => self::NO_WRITE_TO_BINLOG_SYMBOL,
-		'NODEGROUP'                              => self::NODEGROUP_SYMBOL,
-		'NONBLOCKING'                            => self::NONBLOCKING_SYMBOL,
-		'NONE'                                   => self::NONE_SYMBOL,
-		'NOT'                                    => self::NOT_SYMBOL,
-		'NOW'                                    => self::NOW_SYMBOL,
-		'NULL'                                   => self::NULL_SYMBOL,
-		'NUMBER'                                 => self::NUMBER_SYMBOL,
-		'NUMERIC'                                => self::NUMERIC_SYMBOL,
-		'NVARCHAR'                               => self::NVARCHAR_SYMBOL,
-		'OFFLINE'                                => self::OFFLINE_SYMBOL,
-		'OFFSET'                                 => self::OFFSET_SYMBOL,
-		'OLD_PASSWORD'                           => self::OLD_PASSWORD_SYMBOL,
-		'ON'                                     => self::ON_SYMBOL,
-		'ONE'                                    => self::ONE_SYMBOL,
-		'ONLINE'                                 => self::ONLINE_SYMBOL,
-		'ONLY'                                   => self::ONLY_SYMBOL,
-		'OPEN'                                   => self::OPEN_SYMBOL,
-		'OPTIMIZE'                               => self::OPTIMIZE_SYMBOL,
-		'OPTIMIZER_COSTS'                        => self::OPTIMIZER_COSTS_SYMBOL,
-		'OPTION'                                 => self::OPTION_SYMBOL,
-		'OPTIONALLY'                             => self::OPTIONALLY_SYMBOL,
-		'OPTIONS'                                => self::OPTIONS_SYMBOL,
-		'OR'                                     => self::OR_SYMBOL,
-		'ORDER'                                  => self::ORDER_SYMBOL,
-		'OUT'                                    => self::OUT_SYMBOL,
-		'OUTER'                                  => self::OUTER_SYMBOL,
-		'OUTFILE'                                => self::OUTFILE_SYMBOL,
-		'OWNER'                                  => self::OWNER_SYMBOL,
-		'PACK_KEYS'                              => self::PACK_KEYS_SYMBOL,
-		'PAGE'                                   => self::PAGE_SYMBOL,
-		'PARSER'                                 => self::PARSER_SYMBOL,
-		'PARTIAL'                                => self::PARTIAL_SYMBOL,
-		'PARTITION'                              => self::PARTITION_SYMBOL,
-		'PARTITIONING'                           => self::PARTITIONING_SYMBOL,
-		'PARTITIONS'                             => self::PARTITIONS_SYMBOL,
-		'PASSWORD'                               => self::PASSWORD_SYMBOL,
-		'PHASE'                                  => self::PHASE_SYMBOL,
-		'PLUGIN'                                 => self::PLUGIN_SYMBOL,
-		'PLUGIN_DIR'                             => self::PLUGIN_DIR_SYMBOL,
-		'PLUGINS'                                => self::PLUGINS_SYMBOL,
-		'POINT'                                  => self::POINT_SYMBOL,
-		'POLYGON'                                => self::POLYGON_SYMBOL,
-		'PORT'                                   => self::PORT_SYMBOL,
-		'POSITION'                               => self::POSITION_SYMBOL,
-		'PRECEDES'                               => self::PRECEDES_SYMBOL,
-		'PRECISION'                              => self::PRECISION_SYMBOL,
-		'PREPARE'                                => self::PREPARE_SYMBOL,
-		'PRESERVE'                               => self::PRESERVE_SYMBOL,
-		'PREV'                                   => self::PREV_SYMBOL,
-		'PRIMARY'                                => self::PRIMARY_SYMBOL,
-		'PRIVILEGES'                             => self::PRIVILEGES_SYMBOL,
-		'PROCEDURE'                              => self::PROCEDURE_SYMBOL,
-		'PROCESS'                                => self::PROCESS_SYMBOL,
-		'PROCESSLIST'                            => self::PROCESSLIST_SYMBOL,
-		'PROFILE'                                => self::PROFILE_SYMBOL,
-		'PROFILES'                               => self::PROFILES_SYMBOL,
-		'PROXY'                                  => self::PROXY_SYMBOL,
-		'PURGE'                                  => self::PURGE_SYMBOL,
-		'QUARTER'                                => self::QUARTER_SYMBOL,
-		'QUERY'                                  => self::QUERY_SYMBOL,
-		'QUICK'                                  => self::QUICK_SYMBOL,
-		'RANGE'                                  => self::RANGE_SYMBOL,
-		'READ'                                   => self::READ_SYMBOL,
-		'READ_ONLY'                              => self::READ_ONLY_SYMBOL,
-		'READ_WRITE'                             => self::READ_WRITE_SYMBOL,
-		'READS'                                  => self::READS_SYMBOL,
-		'REAL'                                   => self::REAL_SYMBOL,
-		'REBUILD'                                => self::REBUILD_SYMBOL,
-		'RECOVER'                                => self::RECOVER_SYMBOL,
-		'REDO_BUFFER_SIZE'                       => self::REDO_BUFFER_SIZE_SYMBOL,
-		'REDOFILE'                               => self::REDOFILE_SYMBOL,
-		'REDUNDANT'                              => self::REDUNDANT_SYMBOL,
-		'REFERENCES'                             => self::REFERENCES_SYMBOL,
-		'REGEXP'                                 => self::REGEXP_SYMBOL,
-		'RELAY'                                  => self::RELAY_SYMBOL,
-		'RELAY_LOG_FILE'                         => self::RELAY_LOG_FILE_SYMBOL,
-		'RELAY_LOG_POS'                          => self::RELAY_LOG_POS_SYMBOL,
-		'RELAY_THREAD'                           => self::RELAY_THREAD_SYMBOL,
-		'RELAYLOG'                               => self::RELAYLOG_SYMBOL,
-		'RELEASE'                                => self::RELEASE_SYMBOL,
-		'RELOAD'                                 => self::RELOAD_SYMBOL,
-		'REMOVE'                                 => self::REMOVE_SYMBOL,
-		'RENAME'                                 => self::RENAME_SYMBOL,
-		'REORGANIZE'                             => self::REORGANIZE_SYMBOL,
-		'REPAIR'                                 => self::REPAIR_SYMBOL,
-		'REPEAT'                                 => self::REPEAT_SYMBOL,
-		'REPEATABLE'                             => self::REPEATABLE_SYMBOL,
-		'REPLACE'                                => self::REPLACE_SYMBOL,
-		'REPLICATE_DO_DB'                        => self::REPLICATE_DO_DB_SYMBOL,
-		'REPLICATE_DO_TABLE'                     => self::REPLICATE_DO_TABLE_SYMBOL,
-		'REPLICATE_IGNORE_DB'                    => self::REPLICATE_IGNORE_DB_SYMBOL,
-		'REPLICATE_IGNORE_TABLE'                 => self::REPLICATE_IGNORE_TABLE_SYMBOL,
-		'REPLICATE_REWRITE_DB'                   => self::REPLICATE_REWRITE_DB_SYMBOL,
-		'REPLICATE_WILD_DO_TABLE'                => self::REPLICATE_WILD_DO_TABLE_SYMBOL,
-		'REPLICATE_WILD_IGNORE_TABLE'            => self::REPLICATE_WILD_IGNORE_TABLE_SYMBOL,
-		'REPLICATION'                            => self::REPLICATION_SYMBOL,
-		'REQUIRE'                                => self::REQUIRE_SYMBOL,
-		'RESET'                                  => self::RESET_SYMBOL,
-		'RESIGNAL'                               => self::RESIGNAL_SYMBOL,
-		'RESTORE'                                => self::RESTORE_SYMBOL,
-		'RESTRICT'                               => self::RESTRICT_SYMBOL,
-		'RESUME'                                 => self::RESUME_SYMBOL,
-		'RETURN'                                 => self::RETURN_SYMBOL,
-		'RETURNED_SQLSTATE'                      => self::RETURNED_SQLSTATE_SYMBOL,
-		'RETURNS'                                => self::RETURNS_SYMBOL,
-		'REVERSE'                                => self::REVERSE_SYMBOL,
-		'REVOKE'                                 => self::REVOKE_SYMBOL,
-		'RIGHT'                                  => self::RIGHT_SYMBOL,
-		'RLIKE'                                  => self::RLIKE_SYMBOL,
-		'ROLLBACK'                               => self::ROLLBACK_SYMBOL,
-		'ROLLUP'                                 => self::ROLLUP_SYMBOL,
-		'ROTATE'                                 => self::ROTATE_SYMBOL,
-		'ROUTINE'                                => self::ROUTINE_SYMBOL,
-		'ROW'                                    => self::ROW_SYMBOL,
-		'ROW_COUNT'                              => self::ROW_COUNT_SYMBOL,
-		'ROW_FORMAT'                             => self::ROW_FORMAT_SYMBOL,
-		'ROWS'                                   => self::ROWS_SYMBOL,
-		'RTREE'                                  => self::RTREE_SYMBOL,
-		'SAVEPOINT'                              => self::SAVEPOINT_SYMBOL,
-		'SCHEDULE'                               => self::SCHEDULE_SYMBOL,
-		'SCHEMA'                                 => self::SCHEMA_SYMBOL,
-		'SCHEMA_NAME'                            => self::SCHEMA_NAME_SYMBOL,
-		'SCHEMAS'                                => self::SCHEMAS_SYMBOL,
-		'SECOND'                                 => self::SECOND_SYMBOL,
-		'SECOND_MICROSECOND'                     => self::SECOND_MICROSECOND_SYMBOL,
-		'SECURITY'                               => self::SECURITY_SYMBOL,
-		'SELECT'                                 => self::SELECT_SYMBOL,
-		'SENSITIVE'                              => self::SENSITIVE_SYMBOL,
-		'SEPARATOR'                              => self::SEPARATOR_SYMBOL,
-		'SERIAL'                                 => self::SERIAL_SYMBOL,
-		'SERIALIZABLE'                           => self::SERIALIZABLE_SYMBOL,
-		'SERVER'                                 => self::SERVER_SYMBOL,
-		'SERVER_OPTIONS'                         => self::SERVER_OPTIONS_SYMBOL,
-		'SESSION'                                => self::SESSION_SYMBOL,
-		'SESSION_USER'                           => self::SESSION_USER_SYMBOL,
-		'SET'                                    => self::SET_SYMBOL,
-		'SET_VAR'                                => self::SET_VAR_SYMBOL,
-		'SHARE'                                  => self::SHARE_SYMBOL,
-		'SHOW'                                   => self::SHOW_SYMBOL,
-		'SHUTDOWN'                               => self::SHUTDOWN_SYMBOL,
-		'SIGNAL'                                 => self::SIGNAL_SYMBOL,
-		'SIGNED'                                 => self::SIGNED_SYMBOL,
-		'SIMPLE'                                 => self::SIMPLE_SYMBOL,
-		'SLAVE'                                  => self::SLAVE_SYMBOL,
-		'SLOW'                                   => self::SLOW_SYMBOL,
-		'SMALLINT'                               => self::SMALLINT_SYMBOL,
-		'SNAPSHOT'                               => self::SNAPSHOT_SYMBOL,
-		'SOCKET'                                 => self::SOCKET_SYMBOL,
-		'SOME'                                   => self::SOME_SYMBOL,
-		'SONAME'                                 => self::SONAME_SYMBOL,
-		'SOUNDS'                                 => self::SOUNDS_SYMBOL,
-		'SOURCE'                                 => self::SOURCE_SYMBOL,
-		'SPATIAL'                                => self::SPATIAL_SYMBOL,
-		'SPECIFIC'                               => self::SPECIFIC_SYMBOL,
-		'SQL'                                    => self::SQL_SYMBOL,
-		'SQL_AFTER_GTIDS'                        => self::SQL_AFTER_GTIDS_SYMBOL,
-		'SQL_AFTER_MTS_GAPS'                     => self::SQL_AFTER_MTS_GAPS_SYMBOL,
-		'SQL_BEFORE_GTIDS'                       => self::SQL_BEFORE_GTIDS_SYMBOL,
-		'SQL_BIG_RESULT'                         => self::SQL_BIG_RESULT_SYMBOL,
-		'SQL_BUFFER_RESULT'                      => self::SQL_BUFFER_RESULT_SYMBOL,
-		'SQL_CACHE'                              => self::SQL_CACHE_SYMBOL,
-		'SQL_CALC_FOUND_ROWS'                    => self::SQL_CALC_FOUND_ROWS_SYMBOL,
-		'SQL_NO_CACHE'                           => self::SQL_NO_CACHE_SYMBOL,
-		'SQL_SMALL_RESULT'                       => self::SQL_SMALL_RESULT_SYMBOL,
-		'SQL_THREAD'                             => self::SQL_THREAD_SYMBOL,
-		'SQL_TSI_DAY'                            => self::SQL_TSI_DAY_SYMBOL,
-		'SQL_TSI_HOUR'                           => self::SQL_TSI_HOUR_SYMBOL,
-		'SQL_TSI_MICROSECOND'                    => self::SQL_TSI_MICROSECOND_SYMBOL,
-		'SQL_TSI_MINUTE'                         => self::SQL_TSI_MINUTE_SYMBOL,
-		'SQL_TSI_MONTH'                          => self::SQL_TSI_MONTH_SYMBOL,
-		'SQL_TSI_QUARTER'                        => self::SQL_TSI_QUARTER_SYMBOL,
-		'SQL_TSI_SECOND'                         => self::SQL_TSI_SECOND_SYMBOL,
-		'SQL_TSI_WEEK'                           => self::SQL_TSI_WEEK_SYMBOL,
-		'SQL_TSI_YEAR'                           => self::SQL_TSI_YEAR_SYMBOL,
-		'SQLEXCEPTION'                           => self::SQLEXCEPTION_SYMBOL,
-		'SQLSTATE'                               => self::SQLSTATE_SYMBOL,
-		'SQLWARNING'                             => self::SQLWARNING_SYMBOL,
-		'SSL'                                    => self::SSL_SYMBOL,
-		'STACKED'                                => self::STACKED_SYMBOL,
-		'START'                                  => self::START_SYMBOL,
-		'STARTING'                               => self::STARTING_SYMBOL,
-		'STARTS'                                 => self::STARTS_SYMBOL,
-		'STATS_AUTO_RECALC'                      => self::STATS_AUTO_RECALC_SYMBOL,
-		'STATS_PERSISTENT'                       => self::STATS_PERSISTENT_SYMBOL,
-		'STATS_SAMPLE_PAGES'                     => self::STATS_SAMPLE_PAGES_SYMBOL,
-		'STATUS'                                 => self::STATUS_SYMBOL,
-		'STD'                                    => self::STD_SYMBOL,
-		'STDDEV'                                 => self::STDDEV_SYMBOL,
-		'STDDEV_POP'                             => self::STDDEV_POP_SYMBOL,
-		'STDDEV_SAMP'                            => self::STDDEV_SAMP_SYMBOL,
-		'STOP'                                   => self::STOP_SYMBOL,
-		'STORAGE'                                => self::STORAGE_SYMBOL,
-		'STORED'                                 => self::STORED_SYMBOL,
-		'STRAIGHT_JOIN'                          => self::STRAIGHT_JOIN_SYMBOL,
-		'STRING'                                 => self::STRING_SYMBOL,
-		'SUBCLASS_ORIGIN'                        => self::SUBCLASS_ORIGIN_SYMBOL,
-		'SUBDATE'                                => self::SUBDATE_SYMBOL,
-		'SUBJECT'                                => self::SUBJECT_SYMBOL,
-		'SUBPARTITION'                           => self::SUBPARTITION_SYMBOL,
-		'SUBPARTITIONS'                          => self::SUBPARTITIONS_SYMBOL,
-		'SUBSTR'                                 => self::SUBSTR_SYMBOL,
-		'SUBSTRING'                              => self::SUBSTRING_SYMBOL,
-		'SUM'                                    => self::SUM_SYMBOL,
-		'SUPER'                                  => self::SUPER_SYMBOL,
-		'SUSPEND'                                => self::SUSPEND_SYMBOL,
-		'SWAPS'                                  => self::SWAPS_SYMBOL,
-		'SWITCHES'                               => self::SWITCHES_SYMBOL,
-		'SYSDATE'                                => self::SYSDATE_SYMBOL,
-		'SYSTEM_USER'                            => self::SYSTEM_USER_SYMBOL,
-		'TABLE'                                  => self::TABLE_SYMBOL,
-		'TABLE_CHECKSUM'                         => self::TABLE_CHECKSUM_SYMBOL,
-		'TABLE_NAME'                             => self::TABLE_NAME_SYMBOL,
-		'TABLE_REF_PRIORITY'                     => self::TABLE_REF_PRIORITY_SYMBOL,
-		'TABLES'                                 => self::TABLES_SYMBOL,
-		'TABLESPACE'                             => self::TABLESPACE_SYMBOL,
-		'TEMPORARY'                              => self::TEMPORARY_SYMBOL,
-		'TEMPTABLE'                              => self::TEMPTABLE_SYMBOL,
-		'TERMINATED'                             => self::TERMINATED_SYMBOL,
-		'TEXT'                                   => self::TEXT_SYMBOL,
-		'THAN'                                   => self::THAN_SYMBOL,
-		'THEN'                                   => self::THEN_SYMBOL,
-		'TIME'                                   => self::TIME_SYMBOL,
-		'TIMESTAMP'                              => self::TIMESTAMP_SYMBOL,
-		'TIMESTAMP_ADD'                          => self::TIMESTAMP_ADD_SYMBOL,
-		'TIMESTAMP_DIFF'                         => self::TIMESTAMP_DIFF_SYMBOL,
-		'TINYBLOB'                               => self::TINYBLOB_SYMBOL,
-		'TINYINT'                                => self::TINYINT_SYMBOL,
-		'TINYTEXT'                               => self::TINYTEXT_SYMBOL,
-		'TO'                                     => self::TO_SYMBOL,
-		'TRAILING'                               => self::TRAILING_SYMBOL,
-		'TRANSACTION'                            => self::TRANSACTION_SYMBOL,
-		'TRIGGER'                                => self::TRIGGER_SYMBOL,
-		'TRIGGERS'                               => self::TRIGGERS_SYMBOL,
-		'TRIM'                                   => self::TRIM_SYMBOL,
-		'TRUE'                                   => self::TRUE_SYMBOL,
-		'TRUNCATE'                               => self::TRUNCATE_SYMBOL,
-		'TYPE'                                   => self::TYPE_SYMBOL,
-		'TYPES'                                  => self::TYPES_SYMBOL,
-		'UDF_RETURNS'                            => self::UDF_RETURNS_SYMBOL,
-		'UNCOMMITTED'                            => self::UNCOMMITTED_SYMBOL,
-		'UNDEFINED'                              => self::UNDEFINED_SYMBOL,
-		'UNDO'                                   => self::UNDO_SYMBOL,
-		'UNDO_BUFFER_SIZE'                       => self::UNDO_BUFFER_SIZE_SYMBOL,
-		'UNDOFILE'                               => self::UNDOFILE_SYMBOL,
-		'UNICODE'                                => self::UNICODE_SYMBOL,
-		'UNINSTALL'                              => self::UNINSTALL_SYMBOL,
-		'UNION'                                  => self::UNION_SYMBOL,
-		'UNIQUE'                                 => self::UNIQUE_SYMBOL,
-		'UNKNOWN'                                => self::UNKNOWN_SYMBOL,
-		'UNLOCK'                                 => self::UNLOCK_SYMBOL,
-		'UNSIGNED'                               => self::UNSIGNED_SYMBOL,
-		'UNTIL'                                  => self::UNTIL_SYMBOL,
-		'UPDATE'                                 => self::UPDATE_SYMBOL,
-		'UPGRADE'                                => self::UPGRADE_SYMBOL,
-		'USAGE'                                  => self::USAGE_SYMBOL,
-		'USE'                                    => self::USE_SYMBOL,
-		'USE_FRM'                                => self::USE_FRM_SYMBOL,
-		'USER'                                   => self::USER_SYMBOL,
-		'USER_RESOURCES'                         => self::USER_RESOURCES_SYMBOL,
-		'USING'                                  => self::USING_SYMBOL,
-		'UTC_DATE'                               => self::UTC_DATE_SYMBOL,
-		'UTC_TIME'                               => self::UTC_TIME_SYMBOL,
-		'UTC_TIMESTAMP'                          => self::UTC_TIMESTAMP_SYMBOL,
-		'VALIDATION'                             => self::VALIDATION_SYMBOL,
-		'VALUE'                                  => self::VALUE_SYMBOL,
-		'VALUES'                                 => self::VALUES_SYMBOL,
-		'VAR_POP'                                => self::VAR_POP_SYMBOL,
-		'VAR_SAMP'                               => self::VAR_SAMP_SYMBOL,
-		'VARBINARY'                              => self::VARBINARY_SYMBOL,
-		'VARCHAR'                                => self::VARCHAR_SYMBOL,
-		'VARCHARACTER'                           => self::VARCHARACTER_SYMBOL,
-		'VARIABLES'                              => self::VARIABLES_SYMBOL,
-		'VARIANCE'                               => self::VARIANCE_SYMBOL,
-		'VARYING'                                => self::VARYING_SYMBOL,
-		'VIEW'                                   => self::VIEW_SYMBOL,
-		'VIRTUAL'                                => self::VIRTUAL_SYMBOL,
-		'WAIT'                                   => self::WAIT_SYMBOL,
-		'WARNINGS'                               => self::WARNINGS_SYMBOL,
-		'WEEK'                                   => self::WEEK_SYMBOL,
-		'WEIGHT_STRING'                          => self::WEIGHT_STRING_SYMBOL,
-		'WHEN'                                   => self::WHEN_SYMBOL,
-		'WHERE'                                  => self::WHERE_SYMBOL,
-		'WHILE'                                  => self::WHILE_SYMBOL,
-		'WITH'                                   => self::WITH_SYMBOL,
-		'WITHOUT'                                => self::WITHOUT_SYMBOL,
-		'WORK'                                   => self::WORK_SYMBOL,
-		'WRAPPER'                                => self::WRAPPER_SYMBOL,
-		'WRITE'                                  => self::WRITE_SYMBOL,
-		'X509'                                   => self::X509_SYMBOL,
-		'XA'                                     => self::XA_SYMBOL,
-		'XID'                                    => self::XID_SYMBOL,
-		'XML'                                    => self::XML_SYMBOL,
-		'XOR'                                    => self::XOR_SYMBOL,
-		'YEAR'                                   => self::YEAR_SYMBOL,
-		'YEAR_MONTH'                             => self::YEAR_MONTH_SYMBOL,
-		'ZEROFILL'                               => self::ZEROFILL_SYMBOL,
-
-		// Tokens from MySQL 8.0:
-		'ACTIVE'                                 => self::ACTIVE_SYMBOL,
-		'ADMIN'                                  => self::ADMIN_SYMBOL,
-		'ARRAY'                                  => self::ARRAY_SYMBOL,
-		'ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS' => self::ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS_SYMBOL,
-		'BUCKETS'                                => self::BUCKETS_SYMBOL,
-		'CLONE'                                  => self::CLONE_SYMBOL,
-		'COMPONENT'                              => self::COMPONENT_SYMBOL,
-		'CUME_DIST'                              => self::CUME_DIST_SYMBOL,
-		'DEFINITION'                             => self::DEFINITION_SYMBOL,
-		'DENSE_RANK'                             => self::DENSE_RANK_SYMBOL,
-		'DESCRIPTION'                            => self::DESCRIPTION_SYMBOL,
-		'EMPTY'                                  => self::EMPTY_SYMBOL,
-		'ENFORCED'                               => self::ENFORCED_SYMBOL,
-		'ENGINE_ATTRIBUTE'                       => self::ENGINE_ATTRIBUTE_SYMBOL,
-		'EXCEPT'                                 => self::EXCEPT_SYMBOL,
-		'EXCLUDE'                                => self::EXCLUDE_SYMBOL,
-		'FAILED_LOGIN_ATTEMPTS'                  => self::FAILED_LOGIN_ATTEMPTS_SYMBOL,
-		'FIRST_VALUE'                            => self::FIRST_VALUE_SYMBOL,
-		'FOLLOWING'                              => self::FOLLOWING_SYMBOL,
-		'GET_MASTER_PUBLIC_KEY_SYM'              => self::GET_MASTER_PUBLIC_KEY_SYMBOL,
-		'GET_SOURCE_PUBLIC_KEY'                  => self::GET_SOURCE_PUBLIC_KEY_SYMBOL,
-		'GROUPING'                               => self::GROUPING_SYMBOL,
-		'GROUPS'                                 => self::GROUPS_SYMBOL,
-		'GTID_ONLY'                              => self::GTID_ONLY_SYMBOL,
-		'HISTOGRAM'                              => self::HISTOGRAM_SYMBOL,
-		'HISTORY'                                => self::HISTORY_SYMBOL,
-		'INACTIVE'                               => self::INACTIVE_SYMBOL,
-		'INTERSECT'                              => self::INTERSECT_SYMBOL,
-		'INVISIBLE'                              => self::INVISIBLE_SYMBOL,
-		'JSON_ARRAYAGG'                          => self::JSON_ARRAYAGG_SYMBOL,
-		'JSON_OBJECTAGG'                         => self::JSON_OBJECTAGG_SYMBOL,
-		'JSON_TABLE'                             => self::JSON_TABLE_SYMBOL,
-		'JSON_VALUE'                             => self::JSON_VALUE_SYMBOL,
-		'KEYRING'                                => self::KEYRING_SYMBOL,
-		'LAG'                                    => self::LAG_SYMBOL,
-		'LAST_VALUE'                             => self::LAST_VALUE_SYMBOL,
-		'LATERAL'                                => self::LATERAL_SYMBOL,
-		'LEAD'                                   => self::LEAD_SYMBOL,
-		'LOCKED'                                 => self::LOCKED_SYMBOL,
-		'MASTER_COMPRESSION_ALGORITHM'           => self::MASTER_COMPRESSION_ALGORITHM_SYMBOL,
-		'MASTER_PUBLIC_KEY_PATH'                 => self::MASTER_PUBLIC_KEY_PATH_SYMBOL,
-		'MASTER_TLS_CIPHERSUITES'                => self::MASTER_TLS_CIPHERSUITES_SYMBOL,
-		'MASTER_ZSTD_COMPRESSION_LEVEL'          => self::MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL,
-		'MEMBER'                                 => self::MEMBER_SYMBOL,
-		'NESTED'                                 => self::NESTED_SYMBOL,
-		'NETWORK_NAMESPACE'                      => self::NETWORK_NAMESPACE_SYMBOL,
-		'NOWAIT'                                 => self::NOWAIT_SYMBOL,
-		'NTH_VALUE'                              => self::NTH_VALUE_SYMBOL,
-		'NTILE'                                  => self::NTILE_SYMBOL,
-		'NULLS'                                  => self::NULLS_SYMBOL,
-		'OF'                                     => self::OF_SYMBOL,
-		'OFF'                                    => self::OFF_SYMBOL,
-		'OJ'                                     => self::OJ_SYMBOL,
-		'OLD'                                    => self::OLD_SYMBOL,
-		'OPTIONAL'                               => self::OPTIONAL_SYMBOL,
-		'ORDINALITY'                             => self::ORDINALITY_SYMBOL,
-		'ORGANIZATION'                           => self::ORGANIZATION_SYMBOL,
-		'OTHERS'                                 => self::OTHERS_SYMBOL,
-		'OVER'                                   => self::OVER_SYMBOL,
-		'PASSWORD_LOCK_TIME'                     => self::PASSWORD_LOCK_TIME_SYMBOL,
-		'PATH'                                   => self::PATH_SYMBOL,
-		'PERCENT_RANK'                           => self::PERCENT_RANK_SYMBOL,
-		'PERSIST'                                => self::PERSIST_SYMBOL,
-		'PERSIST_ONLY'                           => self::PERSIST_ONLY_SYMBOL,
-		'PRECEDING'                              => self::PRECEDING_SYMBOL,
-		'PRIVILEGE_CHECKS_USER'                  => self::PRIVILEGE_CHECKS_USER_SYMBOL,
-		'RANDOM'                                 => self::RANDOM_SYMBOL,
-		'RANK'                                   => self::RANK_SYMBOL,
-		'RECURSIVE'                              => self::RECURSIVE_SYMBOL,
-		'REDO_LOG'                               => self::REDO_LOG_SYMBOL,
-		'REFERENCE'                              => self::REFERENCE_SYMBOL,
-		'REMOTE'                                 => self::REMOTE_SYMBOL,
-		'REQUIRE_ROW_FORMAT'                     => self::REQUIRE_ROW_FORMAT_SYMBOL,
-		'REQUIRE_TABLE_PRIMARY_KEY_CHECK'        => self::REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL,
-		'RESOURCE'                               => self::RESOURCE_SYMBOL,
-		'RESPECT'                                => self::RESPECT_SYMBOL,
-		'RESTART'                                => self::RESTART_SYMBOL,
-		'RETAIN'                                 => self::RETAIN_SYMBOL,
-		'RETURNING'                              => self::RETURNING_SYMBOL,
-		'REUSE'                                  => self::REUSE_SYMBOL,
-		'ROLE'                                   => self::ROLE_SYMBOL,
-		'ROW_NUMBER'                             => self::ROW_NUMBER_SYMBOL,
-		'SECONDARY'                              => self::SECONDARY_SYMBOL,
-		'SECONDARY_ENGINE'                       => self::SECONDARY_ENGINE_SYMBOL,
-		'SECONDARY_ENGINE_ATTRIBUTE'             => self::SECONDARY_ENGINE_ATTRIBUTE_SYMBOL,
-		'SECONDARY_LOAD'                         => self::SECONDARY_LOAD_SYMBOL,
-		'SECONDARY_UNLOAD'                       => self::SECONDARY_UNLOAD_SYMBOL,
-		'SKIP'                                   => self::SKIP_SYMBOL,
-		'SOURCE_AUTO_POSITION'                   => self::SOURCE_AUTO_POSITION_SYMBOL,
-		'SOURCE_BIND'                            => self::SOURCE_BIND_SYMBOL,
-		'SOURCE_COMPRESSION_ALGORITHM'           => self::SOURCE_COMPRESSION_ALGORITHM_SYMBOL,
-		'SOURCE_CONNECT_RETRY'                   => self::SOURCE_CONNECT_RETRY_SYMBOL,
-		'SOURCE_CONNECTION_AUTO_FAILOVER'        => self::SOURCE_CONNECTION_AUTO_FAILOVER_SYMBOL,
-		'SOURCE_DELAY'                           => self::SOURCE_DELAY_SYMBOL,
-		'SOURCE_HEARTBEAT_PERIOD'                => self::SOURCE_HEARTBEAT_PERIOD_SYMBOL,
-		'SOURCE_HOST'                            => self::SOURCE_HOST_SYMBOL,
-		'SOURCE_LOG_FILE'                        => self::SOURCE_LOG_FILE_SYMBOL,
-		'SOURCE_LOG_POS'                         => self::SOURCE_LOG_POS_SYMBOL,
-		'SOURCE_PASSWORD'                        => self::SOURCE_PASSWORD_SYMBOL,
-		'SOURCE_PORT'                            => self::SOURCE_PORT_SYMBOL,
-		'SOURCE_PUBLIC_KEY_PATH'                 => self::SOURCE_PUBLIC_KEY_PATH_SYMBOL,
-		'SOURCE_RETRY_COUNT'                     => self::SOURCE_RETRY_COUNT_SYMBOL,
-		'SOURCE_SSL'                             => self::SOURCE_SSL_SYMBOL,
-		'SOURCE_SSL_CA'                          => self::SOURCE_SSL_CA_SYMBOL,
-		'SOURCE_SSL_CAPATH'                      => self::SOURCE_SSL_CAPATH_SYMBOL,
-		'SOURCE_SSL_CERT'                        => self::SOURCE_SSL_CERT_SYMBOL,
-		'SOURCE_SSL_CIPHER'                      => self::SOURCE_SSL_CIPHER_SYMBOL,
-		'SOURCE_SSL_CRL'                         => self::SOURCE_SSL_CRL_SYMBOL,
-		'SOURCE_SSL_CRLPATH'                     => self::SOURCE_SSL_CRLPATH_SYMBOL,
-		'SOURCE_SSL_KEY'                         => self::SOURCE_SSL_KEY_SYMBOL,
-		'SOURCE_SSL_VERIFY_SERVER_CERT'          => self::SOURCE_SSL_VERIFY_SERVER_CERT_SYMBOL,
-		'SOURCE_TLS_CIPHERSUITES'                => self::SOURCE_TLS_CIPHERSUITES_SYMBOL,
-		'SOURCE_TLS_VERSION'                     => self::SOURCE_TLS_VERSION_SYMBOL,
-		'SOURCE_USER'                            => self::SOURCE_USER_SYMBOL,
-		'SOURCE_ZSTD_COMPRESSION_LEVEL'          => self::SOURCE_ZSTD_COMPRESSION_LEVEL_SYMBOL,
-		'SRID'                                   => self::SRID_SYMBOL,
-		'STREAM'                                 => self::STREAM_SYMBOL,
-		'SYSTEM'                                 => self::SYSTEM_SYMBOL,
-		'THREAD_PRIORITY'                        => self::THREAD_PRIORITY_SYMBOL,
-		'TIES'                                   => self::TIES_SYMBOL,
-		'TLS'                                    => self::TLS_SYMBOL,
-		'UNBOUNDED'                              => self::UNBOUNDED_SYMBOL,
-		'VCPU'                                   => self::VCPU_SYMBOL,
-		'VISIBLE'                                => self::VISIBLE_SYMBOL,
-		'WINDOW'                                 => self::WINDOW_SYMBOL,
-		'ZONE'                                   => self::ZONE_SYMBOL,
-	);
-
-	/**
-	 * Tokens that represent function calls when followed by a parenthesis.
-	 */
-	const FUNCTIONS = array(
-		self::ADDDATE_SYMBOL      => true,
-		self::BIT_AND_SYMBOL      => true,
-		self::BIT_OR_SYMBOL       => true,
-		self::BIT_XOR_SYMBOL      => true,
-		self::CAST_SYMBOL         => true,
-		self::COUNT_SYMBOL        => true,
-		self::CURDATE_SYMBOL      => true,
-		self::CURRENT_DATE_SYMBOL => true,
-		self::CURRENT_TIME_SYMBOL => true,
-		self::CURTIME_SYMBOL      => true,
-		self::DATE_ADD_SYMBOL     => true,
-		self::DATE_SUB_SYMBOL     => true,
-		self::EXTRACT_SYMBOL      => true,
-		self::GROUP_CONCAT_SYMBOL => true,
-		self::MAX_SYMBOL          => true,
-		self::MID_SYMBOL          => true,
-		self::MIN_SYMBOL          => true,
-		self::NOW_SYMBOL          => true,
-		self::POSITION_SYMBOL     => true,
-		self::SESSION_USER_SYMBOL => true,
-		self::STD_SYMBOL          => true,
-		self::STDDEV_POP_SYMBOL   => true,
-		self::STDDEV_SAMP_SYMBOL  => true,
-		self::STDDEV_SYMBOL       => true,
-		self::SUBDATE_SYMBOL      => true,
-		self::SUBSTR_SYMBOL       => true,
-		self::SUBSTRING_SYMBOL    => true,
-		self::SUM_SYMBOL          => true,
-		self::SYSDATE_SYMBOL      => true,
-		self::SYSTEM_USER_SYMBOL  => true,
-		self::TRIM_SYMBOL         => true,
-		self::VAR_POP_SYMBOL      => true,
-		self::VAR_SAMP_SYMBOL     => true,
-		self::VARIANCE_SYMBOL     => true,
-	);
-
-	/**
-	 * Tokens that are functionally equivalent and can be used interchangeably.
-	 *
-	 * Some of the synonyms may have a different keyword or function status and
-	 * version constraints, hence the synonym conversion needs to be applied
-	 * at the end of the tokenization process, after all other transformations.
-	 *
-	 * E.g.: NOW is a non-reserved keyword that needs to be used with "()" while
-	 *       CURRENT_TIMESTAMP is a reserved keyword that can be used without "()".
-	 */
-	const SYNONYMS = array(
-		self::CHARACTER_SYMBOL           => self::CHAR_SYMBOL,
-		self::CURRENT_DATE_SYMBOL        => self::CURDATE_SYMBOL,
-		self::CURRENT_TIME_SYMBOL        => self::CURTIME_SYMBOL,
-		self::CURRENT_TIMESTAMP_SYMBOL   => self::NOW_SYMBOL,
-		self::DAYOFMONTH_SYMBOL          => self::DAY_SYMBOL,
-		self::DEC_SYMBOL                 => self::DECIMAL_SYMBOL,
-		self::DISTINCTROW_SYMBOL         => self::DISTINCT_SYMBOL,
-		self::FIELDS_SYMBOL              => self::COLUMNS_SYMBOL,
-		self::FLOAT4_SYMBOL              => self::FLOAT_SYMBOL,
-		self::FLOAT8_SYMBOL              => self::DOUBLE_SYMBOL,
-		self::GEOMCOLLECTION_SYMBOL      => self::GEOMETRYCOLLECTION_SYMBOL,
-		self::INT1_SYMBOL                => self::TINYINT_SYMBOL,
-		self::INT2_SYMBOL                => self::SMALLINT_SYMBOL,
-		self::INT3_SYMBOL                => self::MEDIUMINT_SYMBOL,
-		self::INT4_SYMBOL                => self::INT_SYMBOL,
-		self::INT8_SYMBOL                => self::BIGINT_SYMBOL,
-		self::INTEGER_SYMBOL             => self::INT_SYMBOL,
-		self::IO_THREAD_SYMBOL           => self::RELAY_THREAD_SYMBOL,
-		self::LOCALTIME_SYMBOL           => self::NOW_SYMBOL,
-		self::LOCALTIMESTAMP_SYMBOL      => self::NOW_SYMBOL,
-		self::MID_SYMBOL                 => self::SUBSTRING_SYMBOL,
-		self::MIDDLEINT_SYMBOL           => self::MEDIUMINT_SYMBOL,
-		self::NDB_SYMBOL                 => self::NDBCLUSTER_SYMBOL,
-		self::RLIKE_SYMBOL               => self::REGEXP_SYMBOL,
-		self::SCHEMA_SYMBOL              => self::DATABASE_SYMBOL,
-		self::SCHEMAS_SYMBOL             => self::DATABASES_SYMBOL,
-		self::SESSION_USER_SYMBOL        => self::USER_SYMBOL,
-		self::SOME_SYMBOL                => self::ANY_SYMBOL,
-		self::SQL_TSI_DAY_SYMBOL         => self::DAY_SYMBOL,
-		self::SQL_TSI_HOUR_SYMBOL        => self::HOUR_SYMBOL,
-		self::SQL_TSI_MICROSECOND_SYMBOL => self::MICROSECOND_SYMBOL,
-		self::SQL_TSI_MINUTE_SYMBOL      => self::MINUTE_SYMBOL,
-		self::SQL_TSI_MONTH_SYMBOL       => self::MONTH_SYMBOL,
-		self::SQL_TSI_QUARTER_SYMBOL     => self::QUARTER_SYMBOL,
-		self::SQL_TSI_SECOND_SYMBOL      => self::SECOND_SYMBOL,
-		self::SQL_TSI_WEEK_SYMBOL        => self::WEEK_SYMBOL,
-		self::SQL_TSI_YEAR_SYMBOL        => self::YEAR_SYMBOL,
-		self::STDDEV_POP_SYMBOL          => self::STD_SYMBOL,
-		self::STDDEV_SYMBOL              => self::STD_SYMBOL,
-		self::SUBSTR_SYMBOL              => self::SUBSTRING_SYMBOL,
-		self::SYSTEM_USER_SYMBOL         => self::USER_SYMBOL,
-		self::VAR_POP_SYMBOL             => self::VARIANCE_SYMBOL,
-		self::VARCHARACTER_SYMBOL        => self::VARCHAR_SYMBOL,
-	);
-
-	/**
-	 * Version constraints for version-specific tokens.
-	 *
-	 * This is a map of tokens to the MySQL server versions in which they were
-	 * introduced (positive number) or removed (negative number). Tokens that
-	 * were both introduced and later removed are not included in this list
-	 * and are handled by manual version checks in the tokenization process.
-	 *
-	 * See:
-	 *   https://dev.mysql.com/doc/mysqld-version-reference/en/keywords.html
-	 *
-	 * @TODO Verify the version specifiers and ranges against the list above.
-	 *
-	 * Positive number: >= <version> (introduced in <version>)
-	 * Negative number: <  <version> (removed in <version>)
-	 */
-	const VERSIONS = array(
-		// MySQL 5
-		self::ACCOUNT_SYMBOL                         => 50707,
-		self::ALWAYS_SYMBOL                          => 50707,
-		self::ANALYSE_SYMBOL                         => -80000,
-		self::AUTHORS_SYMBOL                         => -50700,
-		self::CHANNEL_SYMBOL                         => 50706,
-		self::COMPRESSION_SYMBOL                     => 50707,
-		self::CONTRIBUTORS_SYMBOL                    => -50700,
-		self::CURRENT_SYMBOL                         => 50604,
-		self::DEFAULT_AUTH_SYMBOL                    => 50604,
-		self::DES_KEY_FILE_SYMBOL                    => -80003,
-		self::ENCRYPTION_SYMBOL                      => 50711,
-		self::EXPIRE_SYMBOL                          => 50606,
-		self::EXPORT_SYMBOL                          => 50606,
-		self::FILE_BLOCK_SIZE_SYMBOL                 => 50707,
-		self::FILTER_SYMBOL                          => 50700,
-		self::FOLLOWS_SYMBOL                         => 50700,
-		self::GENERATED_SYMBOL                       => 50707,
-		self::GET_SYMBOL                             => 50604,
-		self::GROUP_REPLICATION_SYMBOL               => 50707,
-		self::INNODB_SYMBOL                          => 50711,
-		self::INSTANCE_SYMBOL                        => 50713,
-		self::JSON_SYMBOL                            => 50708,
-		self::MASTER_AUTO_POSITION_SYMBOL            => 50605,
-		self::MASTER_BIND_SYMBOL                     => 50602,
-		self::MASTER_RETRY_COUNT_SYMBOL              => 50601,
-		self::MASTER_SSL_CRL_SYMBOL                  => 50603,
-		self::MASTER_SSL_CRLPATH_SYMBOL              => 50603,
-		self::MASTER_TLS_VERSION_SYMBOL              => 50713,
-		self::NEVER_SYMBOL                           => 50704,
-		self::NUMBER_SYMBOL                          => 50606,
-		self::OLD_PASSWORD_SYMBOL                    => -50706,
-		self::ONLY_SYMBOL                            => 50605,
-		self::OPTIMIZER_COSTS_SYMBOL                 => 50706,
-		self::PLUGIN_DIR_SYMBOL                      => 50604,
-		self::PRECEDES_SYMBOL                        => 50700,
-		self::REDOFILE_SYMBOL                        => -80000,
-		self::REPLICATE_DO_DB_SYMBOL                 => 50700,
-		self::REPLICATE_DO_TABLE_SYMBOL              => 50700,
-		self::REPLICATE_IGNORE_DB_SYMBOL             => 50700,
-		self::REPLICATE_IGNORE_TABLE_SYMBOL          => 50700,
-		self::REPLICATE_REWRITE_DB_SYMBOL            => 50700,
-		self::REPLICATE_WILD_DO_TABLE_SYMBOL         => 50700,
-		self::REPLICATE_WILD_IGNORE_TABLE_SYMBOL     => 50700,
-		self::ROTATE_SYMBOL                          => 50713,
-		self::SQL_AFTER_MTS_GAPS_SYMBOL              => 50606,
-		self::SQL_CACHE_SYMBOL                       => -80000,
-		self::STACKED_SYMBOL                         => 50700,
-		self::STORED_SYMBOL                          => 50707,
-		self::TABLE_REF_PRIORITY_SYMBOL              => -80000,
-		self::VALIDATION_SYMBOL                      => 50706,
-		self::VIRTUAL_SYMBOL                         => 50707,
-		self::XID_SYMBOL                             => 50704,
-
-		// MySQL 8
-		self::ACTIVE_SYMBOL                          => 80014,
-		self::ADMIN_SYMBOL                           => 80000,
-		self::ARRAY_SYMBOL                           => 80017,
-		self::ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS_SYMBOL => 80000,
-		self::ATTRIBUTE_SYMBOL                       => 80021,
-		self::BUCKETS_SYMBOL                         => 80000,
-		self::CLONE_SYMBOL                           => 80000,
-		self::COMPONENT_SYMBOL                       => 80000,
-		self::CUME_DIST_SYMBOL                       => 80000,
-		self::DEFINITION_SYMBOL                      => 80011,
-		self::DENSE_RANK_SYMBOL                      => 80000,
-		self::DESCRIPTION_SYMBOL                     => 80011,
-		self::EMPTY_SYMBOL                           => 80000,
-		self::ENFORCED_SYMBOL                        => 80017,
-		self::ENGINE_ATTRIBUTE_SYMBOL                => 80021,
-		self::EXCEPT_SYMBOL                          => 80000,
-		self::EXCLUDE_SYMBOL                         => 80000,
-		self::FAILED_LOGIN_ATTEMPTS_SYMBOL           => 80019,
-		self::FIRST_VALUE_SYMBOL                     => 80000,
-		self::FOLLOWING_SYMBOL                       => 80000,
-		self::GEOMCOLLECTION_SYMBOL                  => 80000,
-		self::GET_MASTER_PUBLIC_KEY_SYMBOL           => 80000,
-		self::GET_SOURCE_PUBLIC_KEY_SYMBOL           => 80000,
-		self::GROUPING_SYMBOL                        => 80000,
-		self::GROUPS_SYMBOL                          => 80000,
-		self::GTID_ONLY_SYMBOL                       => 80000,
-		self::HISTOGRAM_SYMBOL                       => 80000,
-		self::HISTORY_SYMBOL                         => 80000,
-		self::INACTIVE_SYMBOL                        => 80014,
-		self::INTERSECT_SYMBOL                       => 80031,
-		self::INVISIBLE_SYMBOL                       => 80000,
-		self::JSON_ARRAYAGG_SYMBOL                   => 80000,
-		self::JSON_OBJECTAGG_SYMBOL                  => 80000,
-		self::JSON_TABLE_SYMBOL                      => 80000,
-		self::JSON_VALUE_SYMBOL                      => 80021,
-		self::KEYRING_SYMBOL                         => 80024,
-		self::LAG_SYMBOL                             => 80000,
-		self::LAST_VALUE_SYMBOL                      => 80000,
-		self::LATERAL_SYMBOL                         => 80014,
-		self::LEAD_SYMBOL                            => 80000,
-		self::LOCKED_SYMBOL                          => 80000,
-		self::MASTER_COMPRESSION_ALGORITHM_SYMBOL    => 80018,
-		self::MASTER_PUBLIC_KEY_PATH_SYMBOL          => 80000,
-		self::MASTER_TLS_CIPHERSUITES_SYMBOL         => 80018,
-		self::MASTER_ZSTD_COMPRESSION_LEVEL_SYMBOL   => 80018,
-		self::MEMBER_SYMBOL                          => 80017,
-		self::NESTED_SYMBOL                          => 80000,
-		self::NETWORK_NAMESPACE_SYMBOL               => 80017,
-		self::NOWAIT_SYMBOL                          => 80000,
-		self::NTH_VALUE_SYMBOL                       => 80000,
-		self::NTILE_SYMBOL                           => 80000,
-		self::NULLS_SYMBOL                           => 80000,
-		self::OF_SYMBOL                              => 80000,
-		self::OFF_SYMBOL                             => 80019,
-		self::OJ_SYMBOL                              => 80017,
-		self::OLD_SYMBOL                             => 80014,
-		self::OPTIONAL_SYMBOL                        => 80013,
-		self::ORDINALITY_SYMBOL                      => 80000,
-		self::ORGANIZATION_SYMBOL                    => 80011,
-		self::OTHERS_SYMBOL                          => 80000,
-		self::OVER_SYMBOL                            => 80000,
-		self::PASSWORD_LOCK_TIME_SYMBOL              => 80019,
-		self::PATH_SYMBOL                            => 80000,
-		self::PERCENT_RANK_SYMBOL                    => 80000,
-		self::PERSIST_ONLY_SYMBOL                    => 80000,
-		self::PERSIST_SYMBOL                         => 80000,
-		self::PRECEDING_SYMBOL                       => 80000,
-		self::PRIVILEGE_CHECKS_USER_SYMBOL           => 80018,
-		self::RANDOM_SYMBOL                          => 80018,
-		self::RANK_SYMBOL                            => 80000,
-		self::RECURSIVE_SYMBOL                       => 80000,
-		self::REDO_LOG_SYMBOL                        => 80021,
-		self::REFERENCE_SYMBOL                       => 80011,
-		self::REQUIRE_ROW_FORMAT_SYMBOL              => 80019,
-		self::REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYMBOL => 80019,
-		self::RESOURCE_SYMBOL                        => 80000,
-		self::RESPECT_SYMBOL                         => 80000,
-		self::RESTART_SYMBOL                         => 80011,
-		self::RETAIN_SYMBOL                          => 80014,
-		self::REUSE_SYMBOL                           => 80000,
-		self::RETURNING_SYMBOL                       => 80021,
-		self::ROLE_SYMBOL                            => 80000,
-		self::ROW_NUMBER_SYMBOL                      => 80000,
-		self::SECONDARY_ENGINE_ATTRIBUTE_SYMBOL      => 80021,
-		self::SECONDARY_ENGINE_SYMBOL                => 80013,
-		self::SECONDARY_LOAD_SYMBOL                  => 80013,
-		self::SECONDARY_SYMBOL                       => 80013,
-		self::SECONDARY_UNLOAD_SYMBOL                => 80013,
-		self::SKIP_SYMBOL                            => 80000,
-		self::SOURCE_AUTO_POSITION_SYMBOL            => 80000,
-		self::SOURCE_BIND_SYMBOL                     => 80000,
-		self::SOURCE_COMPRESSION_ALGORITHM_SYMBOL    => 80000,
-		self::SOURCE_CONNECT_RETRY_SYMBOL            => 80000,
-		self::SOURCE_CONNECTION_AUTO_FAILOVER_SYMBOL => 80000,
-		self::SOURCE_DELAY_SYMBOL                    => 80000,
-		self::SOURCE_HEARTBEAT_PERIOD_SYMBOL         => 80000,
-		self::SOURCE_HOST_SYMBOL                     => 80000,
-		self::SOURCE_LOG_FILE_SYMBOL                 => 80000,
-		self::SOURCE_LOG_POS_SYMBOL                  => 80000,
-		self::SOURCE_PASSWORD_SYMBOL                 => 80000,
-		self::SOURCE_PORT_SYMBOL                     => 80000,
-		self::SOURCE_PUBLIC_KEY_PATH_SYMBOL          => 80000,
-		self::SOURCE_RETRY_COUNT_SYMBOL              => 80000,
-		self::SOURCE_SSL_CA_SYMBOL                   => 80000,
-		self::SOURCE_SSL_CAPATH_SYMBOL               => 80000,
-		self::SOURCE_SSL_CERT_SYMBOL                 => 80000,
-		self::SOURCE_SSL_CIPHER_SYMBOL               => 80000,
-		self::SOURCE_SSL_CRL_SYMBOL                  => 80000,
-		self::SOURCE_SSL_CRLPATH_SYMBOL              => 80000,
-		self::SOURCE_SSL_KEY_SYMBOL                  => 80000,
-		self::SOURCE_SSL_SYMBOL                      => 80000,
-		self::SOURCE_SSL_VERIFY_SERVER_CERT_SYMBOL   => 80000,
-		self::SOURCE_TLS_CIPHERSUITES_SYMBOL         => 80000,
-		self::SOURCE_TLS_VERSION_SYMBOL              => 80000,
-		self::SOURCE_USER_SYMBOL                     => 80000,
-		self::SOURCE_ZSTD_COMPRESSION_LEVEL_SYMBOL   => 80000,
-		self::SRID_SYMBOL                            => 80000,
-		self::STREAM_SYMBOL                          => 80019,
-		self::SYSTEM_SYMBOL                          => 80000,
-		self::THREAD_PRIORITY_SYMBOL                 => 80000,
-		self::TIES_SYMBOL                            => 80000,
-		self::TLS_SYMBOL                             => 80016,
-		self::UNBOUNDED_SYMBOL                       => 80000,
-		self::VCPU_SYMBOL                            => 80000,
-		self::VISIBLE_SYMBOL                         => 80000,
-		self::WINDOW_SYMBOL                          => 80000,
-		self::ZONE_SYMBOL                            => 80022,
-	);
+	// Comments.
+	private const COMMENT             = -3;
+	private const MYSQL_COMMENT_START = -4;
+	private const MYSQL_COMMENT_END   = -5;
 
 	/**
 	 * Identifier-like strings that may represent underscore-prefixed charset names.
@@ -2059,7 +152,7 @@ class WP_MySQL_Lexer {
 	 *        exists only on MySQL 5, and maybe some others are version-dependant too.
 	 *        We can check this using SHOW CHARACTER SET on different MySQL versions.
 	 */
-	const UNDERSCORE_CHARSETS = array(
+	private const UNDERSCORE_CHARSETS = array(
 		'_armscii8' => true,
 		'_ascii'    => true,
 		'_big5'     => true,
@@ -2186,6 +279,56 @@ class WP_MySQL_Lexer {
 	private $in_mysql_comment = false;
 
 	/**
+	 * Whether the NO_BACKSLASH_ESCAPES SQL mode is active, cached for the tokens.
+	 *
+	 * @var bool
+	 */
+	private $no_backslash_escapes = false;
+
+	/**
+	 * Grammar tokens produced ahead of the cursor, waiting to be emitted.
+	 *
+	 * A single scan step can yield more than one grammar token (e.g. "@" plus
+	 * its name, or the two end terminals), so produced tokens are buffered here
+	 * and handed out one at a time by next_token().
+	 *
+	 * @var WP_MySQL_Token[]
+	 */
+	private $token_queue = array();
+
+	/**
+	 * Index of the next token to emit from "$this->token_queue".
+	 *
+	 * @var int
+	 */
+	private $queue_index = 0;
+
+	/**
+	 * A scanned-ahead grammar token held back to be processed on the next step.
+	 *
+	 * Contracting "WITH ROLLUP" needs a one-token lookahead (as in MySQL's
+	 * lexer). When the token after "WITH" is not "ROLLUP", it is stashed here
+	 * as [ type, start, length ] so the next scan step reprocesses it.
+	 *
+	 * @var array{0:int,1:int,2:int}|null
+	 */
+	private $lookahead = null;
+
+	/**
+	 * Whether the token stream has ended (end markers emitted, or invalid input).
+	 *
+	 * @var bool
+	 */
+	private $stream_ended = false;
+
+	/**
+	 * The token at the cursor, returned by get_token().
+	 *
+	 * @var WP_MySQL_Token|null
+	 */
+	private $current_token = null;
+
+	/**
 	 * @param string $sql The SQL payload to tokenize.
 	 * @param int $mysql_version The version of the MySQL server that the SQL payload is intended for.
 	 * @param string[] $sql_modes The SQL modes that should be considered active during tokenization.
@@ -2211,135 +354,64 @@ class WP_MySQL_Lexer {
 				$this->sql_modes |= self::SQL_MODE_NO_BACKSLASH_ESCAPES;
 			}
 		}
+
+		$this->no_backslash_escapes = $this->is_sql_mode_active( self::SQL_MODE_NO_BACKSLASH_ESCAPES );
 	}
 
 	/**
-	 * Read the next token from the SQL payload and return it as a token object.
+	 * Advance to the next token in the MySQL grammar token stream.
 	 *
-	 * This method reads bytes from the SQL payload until a token is recognized.
-	 * It starts from "$this->sql[ $this->bytes_already_read ]", advances the
-	 * number of bytes read, and returns a boolean indicating whether a token
-	 * was successfully recognized and read. When the end of the SQL payload
-	 * or an invalid token is reached, the method returns false.
+	 * The lexer is a pull iterator over the grammar's token stream: each call
+	 * advances the cursor by one token, which get_token() then returns. The
+	 * stream ends with END_OF_INPUT and Bison's end marker; on invalid input it
+	 * ends early, right after the last valid token, with no terminators.
 	 *
-	 * @return bool Whether a token was successfully recognized and read.
+	 * @return bool Whether a token is available at the new cursor position.
 	 */
 	public function next_token(): bool {
-		// We already reached the end of the SQL payload or an invalid token.
-		// Don't attempt to read any more bytes, and bail out immediately.
-		if (
-			self::EOF === $this->token_type
-			|| ( null === $this->token_type && $this->bytes_already_read > 0 )
-		) {
-			$this->token_type = null;
-			return false;
+		if ( $this->queue_index < count( $this->token_queue ) ) {
+			$this->current_token = $this->token_queue[ $this->queue_index++ ];
+			return true;
 		}
 
-		// Skip leading whitespace inline for optimal performance.
-		$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
-
-		do {
-			$this->token_starts_at = $this->bytes_already_read;
-			$this->token_type      = $this->read_next_token();
-		} while (
-			self::WHITESPACE === $this->token_type
-			|| self::COMMENT === $this->token_type
-			|| self::MYSQL_COMMENT_START === $this->token_type
-			|| self::MYSQL_COMMENT_END === $this->token_type
-		);
-
-		// Invalid input.
-		if ( null === $this->token_type ) {
-			return false;
+		// The buffer is drained; produce the next token (or tokens) into it.
+		$this->token_queue = array();
+		$this->queue_index = 0;
+		if ( ! $this->stream_ended ) {
+			$this->produce();
 		}
-		return true;
+
+		if ( $this->queue_index < count( $this->token_queue ) ) {
+			$this->current_token = $this->token_queue[ $this->queue_index++ ];
+			return true;
+		}
+		$this->current_token = null;
+		return false;
 	}
 
 	/**
-	 * Return the current token represented as a WP_MySQL_Token object.
+	 * Return the token at the current cursor position.
 	 *
-	 * When no token was read yet, or the end of the SQL payload or an invalid
-	 * token is reached, the method returns null.
+	 * Returns the same object until the cursor advances, and null before the
+	 * first next_token() call or once the stream is exhausted.
 	 *
-	 * @TODO: Consider referential stability ($lexer->get_token() === $lexer->get_token()),
-	 *        or separate getters for the token type and token bytes (no token objects).
-	 *
-	 * @return WP_MySQL_Token|null An object representing the next recognized token or null.
+	 * @return WP_MySQL_Token|null The current token, or null when there is none.
 	 */
 	public function get_token(): ?WP_MySQL_Token {
-		if ( null === $this->token_type ) {
-			return null;
-		}
-		return new WP_MySQL_Token(
-			$this->token_type,
-			$this->token_starts_at,
-			$this->bytes_already_read - $this->token_starts_at,
-			$this->sql,
-			$this->is_sql_mode_active( self::SQL_MODE_NO_BACKSLASH_ESCAPES )
-		);
+		return $this->current_token;
 	}
 
 	/**
-	 * Read all remaining tokens from the SQL payload and return them as an array.
+	 * Read all remaining tokens as an array, draining the stream.
 	 *
-	 * This method starts from the current position in the SQL payload, as marked
-	 * by "$this->sql[ $this->bytes_already_read ]", and reads all tokens until
-	 * the end of the SQL payload is reached, returning an array of token objects.
-	 *
-	 * When an invalid token is reached, the method stops and returns the partial
-	 * sequence of valid tokens. In this case, the EOF token will not be included.
-	 *
-	 * This method can be used to tokenize the whole SQL payload at once, at the
-	 * expense of storing all token objects in memory at the same time.
-	 *
-	 * @return WP_MySQL_Token[] An array of token objects representing the remaining tokens.
+	 * @return WP_MySQL_Token[] The remaining tokens — terminated by END_OF_INPUT
+	 *                          and the end marker, or a partial list with no
+	 *                          terminators on invalid input.
 	 */
 	public function remaining_tokens(): array {
-		$tokens                            = array();
-		$no_backslash_escapes_sql_mode_set = $this->is_sql_mode_active(
-			self::SQL_MODE_NO_BACKSLASH_ESCAPES
-		);
-
-		while ( true ) {
-			// Bail on EOF, or on a null token type once at least one byte has
-			// been consumed (read_next_token() hit invalid input mid-stream).
-			if (
-				self::EOF === $this->token_type
-				|| ( null === $this->token_type && $this->bytes_already_read > 0 )
-			) {
-				$this->token_type = null;
-				break;
-			}
-
-			// Skip leading whitespace inline for optimal performance.
-			$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
-
-			do {
-				$this->token_starts_at = $this->bytes_already_read;
-				$this->token_type      = $this->read_next_token();
-			} while (
-				self::WHITESPACE === $this->token_type
-				|| self::COMMENT === $this->token_type
-				|| self::MYSQL_COMMENT_START === $this->token_type
-				|| self::MYSQL_COMMENT_END === $this->token_type
-			);
-
-			if ( null === $this->token_type ) {
-				break;
-			}
-
-			$tokens[] = new WP_MySQL_Token(
-				$this->token_type,
-				$this->token_starts_at,
-				$this->bytes_already_read - $this->token_starts_at,
-				$this->sql,
-				$no_backslash_escapes_sql_mode_set
-			);
-
-			if ( self::EOF === $this->token_type ) {
-				$this->token_type = null;
-				break;
-			}
+		$tokens = array();
+		while ( $this->next_token() ) {
+			$tokens[] = $this->current_token;
 		}
 		return $tokens;
 	}
@@ -2374,15 +446,25 @@ class WP_MySQL_Lexer {
 	 * @return int|null The token ID for the given token name; null when not found.
 	 */
 	public static function get_token_id( string $token_name ): ?int {
+		// Token constants share the class with the lexer's own constants, so
+		// resolve only the grammar tokens: non-negative ints, never an SQL mode.
 		$constant_name = self::class . '::' . $token_name;
-		if ( ! defined( $constant_name ) ) {
+		if ( 0 === strpos( $token_name, 'SQL_MODE_' ) || ! defined( $constant_name ) ) {
 			return null;
 		}
-		return constant( $constant_name );
+		$value = constant( $constant_name );
+		return is_int( $value ) && $value >= 0 ? $value : null;
 	}
 
 	/**
 	 * Get the name of a token for a given token ID.
+	 *
+	 * Names are derived from the grammar data rather than stored: a keyword
+	 * token resolves to its keyword string via self::KEYWORDS, any other token
+	 * to its token constant name via reflection. When several names share a
+	 * token number (keyword synonyms, equal-valued constants), plain keywords
+	 * win over paren-gated function keywords (USER over SESSION_USER), then the
+	 * first name in table order wins.
 	 *
 	 * This method is intended to be used only for testing and debugging purposes,
 	 * when tokens need to be presented by their names in a human-readable form.
@@ -2392,14 +474,190 @@ class WP_MySQL_Lexer {
 	 * @return string The token name for the given token ID; null when not found.
 	 */
 	public static function get_token_name( int $token_id ): ?string {
-		$reflection = new ReflectionClass( self::class );
-		// Reverse the array, as some constant values in the class can conflict,
-		// and tokens are defined at the end of the class constant definitions.
-		// @TODO: Consider are more robust way to determine the token name.
-		//        E.g., prefix all token constant names with a common prefix.
-		$constants  = array_reverse( $reflection->getConstants() );
-		$token_name = array_search( $token_id, $constants, true );
-		return $token_name ? $token_name : null;
+		static $names = null;
+		if ( null === $names ) {
+			$names = array();
+			foreach ( self::KEYWORDS as $keyword => $id ) {
+				if ( ! isset( $names[ $id ] ) && ! isset( self::FUNCTIONS[ $keyword ] ) ) {
+					$names[ $id ] = $keyword;
+				}
+			}
+			foreach ( self::KEYWORDS as $keyword => $id ) {
+				if ( ! isset( $names[ $id ] ) ) {
+					$names[ $id ] = $keyword;
+				}
+			}
+			// Token constants share the class with the lexer's own constants;
+			// grammar tokens are the non-negative ints that are not SQL modes
+			// (the scanner sentinels are negative, the SQL modes are bit flags).
+			foreach ( ( new ReflectionClass( self::class ) )->getConstants() as $name => $value ) {
+				if ( is_int( $value ) && $value >= 0 && 0 !== strpos( $name, 'SQL_MODE_' ) && ! isset( $names[ $value ] ) ) {
+					$names[ $value ] = $name;
+				}
+			}
+		}
+		return $names[ $token_id ] ?? null;
+	}
+
+	/**
+	 * Produce the next grammar token (or tokens) into the buffer.
+	 *
+	 * Most lexemes map to a single grammar token. The exceptions mirror MySQL's
+	 * own lexer: "@" expands to the sign plus its name, "WITH ROLLUP" contracts
+	 * into one terminal, and the end of input yields the two end terminals.
+	 */
+	private function produce(): void {
+		// Take the lexeme held back by a "WITH" lookahead, or scan a new one.
+		if ( null !== $this->lookahead ) {
+			list( $type, $start, $length ) = $this->lookahead;
+			$this->lookahead               = null;
+		} elseif ( $this->scan_lexeme() ) {
+			$type   = $this->token_type;
+			$start  = $this->token_starts_at;
+			$length = $this->bytes_already_read - $start;
+		} else {
+			// Invalid input: end the stream after the last valid token.
+			$this->stream_ended = true;
+			return;
+		}
+
+		if ( self::EOF === $type ) {
+			$this->emit_end_markers();
+		} elseif ( self::WITH_SYMBOL === $type ) {
+			$this->produce_with_or_rollup( $start, $length );
+		} elseif ( self::AT_SIGN_SYMBOL === $type ) {
+			$this->produce_at_variable( $start );
+		} else {
+			$this->enqueue_token( $type, $start, $length );
+		}
+	}
+
+	/**
+	 * Emit "WITH", or contract "WITH ROLLUP" into a single terminal.
+	 *
+	 * MySQL's lexer needs a one-token lookahead here. When the scanned-ahead
+	 * lexeme is not "ROLLUP", it is held back to be processed on the next step.
+	 *
+	 * @param int $with_start  Byte offset of the "WITH" token.
+	 * @param int $with_length Byte length of the "WITH" token.
+	 */
+	private function produce_with_or_rollup( int $with_start, int $with_length ): void {
+		if ( ! $this->scan_lexeme() ) {
+			// "WITH" was the last valid token; the trailing input is invalid.
+			$this->enqueue_token( self::WITH_SYMBOL, $with_start, $with_length );
+			$this->stream_ended = true;
+			return;
+		}
+
+		if ( self::ROLLUP_SYMBOL === $this->token_type ) {
+			$this->enqueue_token(
+				self::WITH_ROLLUP_SYMBOL,
+				$with_start,
+				$this->bytes_already_read - $with_start
+			);
+			return;
+		}
+
+		$this->enqueue_token( self::WITH_SYMBOL, $with_start, $with_length );
+		if ( self::EOF === $this->token_type ) {
+			$this->emit_end_markers();
+			return;
+		}
+		$this->lookahead = array(
+			$this->token_type,
+			$this->token_starts_at,
+			$this->bytes_already_read - $this->token_starts_at,
+		);
+	}
+
+	/**
+	 * Emit a "@" or "@@" variable prefix as standalone terminals.
+	 *
+	 * MySQL treats "@" as its own terminal. A single "@" is followed by the
+	 * unquoted user-variable name (always an identifier, never a keyword; it may
+	 * contain "." and "$"), by an empty name (MySQL's empty LEX_HOSTNAME, which
+	 * makes "SELECT @" and "user1@" valid), or by a quoted name supplied by the
+	 * following token. A "@@" prefix is two "@" terminals, with the system
+	 * variable name scanned normally afterwards.
+	 *
+	 * @param int $at_start Byte offset of the "@" token.
+	 */
+	private function produce_at_variable( int $at_start ): void {
+		$this->enqueue_token( self::AT_SIGN_SYMBOL, $at_start, 1 );
+
+		$position = $this->bytes_already_read;   // Right after the "@".
+		$next     = $this->sql[ $position ] ?? '';
+
+		if ( '@' === $next ) {
+			$this->enqueue_token( self::AT_SIGN_SYMBOL, $position, 1 );
+			$this->bytes_already_read = $position + 1;
+			return;
+		}
+
+		$name_length = strspn(
+			$this->sql,
+			'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.$',
+			$position
+		);
+		if ( $name_length > 0 ) {
+			$this->enqueue_token( self::IDENTIFIER, $position, $name_length );
+			$this->bytes_already_read = $position + $name_length;
+		} elseif ( "'" !== $next && '"' !== $next && '`' !== $next ) {
+			$this->enqueue_token( self::IDENTIFIER, $position, 0 );
+		}
+	}
+
+	/**
+	 * Emit the two terminals that close a valid stream: END_OF_INPUT and Bison's
+	 * end marker ($end), both at the end-of-input position.
+	 */
+	private function emit_end_markers(): void {
+		$end = $this->bytes_already_read;
+		$this->enqueue_token( self::END_OF_INPUT, $end, 0 );
+		$this->enqueue_token( self::END_MARKER, $end, 0 );
+		$this->stream_ended = true;
+	}
+
+	/**
+	 * Scan one lexeme from the input, skipping whitespace and comments.
+	 *
+	 * Sets the raw token type and byte range. Returns false only on invalid
+	 * input; at the end of input it sets the EOF sentinel and returns true.
+	 *
+	 * @return bool Whether a lexeme (possibly the EOF sentinel) was scanned.
+	 */
+	private function scan_lexeme(): bool {
+		// Skip leading whitespace inline for optimal performance.
+		$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
+
+		do {
+			$this->token_starts_at = $this->bytes_already_read;
+			$this->token_type      = $this->read_next_token();
+		} while (
+			self::WHITESPACE === $this->token_type
+			|| self::COMMENT === $this->token_type
+			|| self::MYSQL_COMMENT_START === $this->token_type
+			|| self::MYSQL_COMMENT_END === $this->token_type
+		);
+
+		return null !== $this->token_type;
+	}
+
+	/**
+	 * Append a grammar token to the output buffer.
+	 *
+	 * @param int $type   The grammar token number.
+	 * @param int $start  Byte offset where the token begins.
+	 * @param int $length Byte length of the token.
+	 */
+	private function enqueue_token( int $type, int $start, int $length ): void {
+		$this->token_queue[] = new WP_MySQL_Token(
+			$type,
+			$start,
+			$length,
+			$this->sql,
+			$this->no_backslash_escapes
+		);
 	}
 
 	private function read_next_token(): ?int {
@@ -2446,11 +704,12 @@ class WP_MySQL_Lexer {
 				// Inline the keyword lookup on the hot identifier path: most
 				// identifiers are not keywords, so this avoids two method calls
 				// (token-bytes extraction + keyword determination) per token.
-				$keyword = self::TOKENS[ strtoupper(
+				$word    = strtoupper(
 					substr( $this->sql, $started_at, $this->bytes_already_read - $started_at )
-				) ] ?? self::IDENTIFIER;
+				);
+				$keyword = self::KEYWORDS[ $word ] ?? self::IDENTIFIER;
 				if ( self::IDENTIFIER !== $keyword ) {
-					$type = $this->resolve_keyword_type( $keyword );
+					$type = $this->resolve_keyword_type( $keyword, $word );
 				}
 			}
 		} elseif ( null !== $byte && isset( $single_byte_ops[ $byte ] ) ) {
@@ -2582,28 +841,10 @@ class WP_MySQL_Lexer {
 				$type = self::BITWISE_OR_OPERATOR;
 			}
 		} elseif ( '@' === $byte ) {
+			// MySQL treats "@" as a standalone terminal; the variable name that
+			// follows is emitted as its own token (see produce_at_variable()).
 			$this->bytes_already_read += 1; // Consume the '@'.
-
-			if ( '@' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the second '@'.
-				$type                      = self::AT_AT_SIGN_SYMBOL;
-			} else {
-				/**
-				 * Check whether the '@' marks an unquoted user-defined variable:
-				 *   https://dev.mysql.com/doc/refman/8.4/en/user-variables.html
-				 *
-				 * Rules:
-				 *   1. Starts with a '@'.
-				 *   2. Allowed following characters are ASCII a-z, A-Z, 0-9, _, ., $.
-				 */
-				$length = strspn( $this->sql, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.$', $this->bytes_already_read );
-				if ( $length > 0 ) {
-					$this->bytes_already_read += $length;
-					$type                      = self::AT_TEXT_SUFFIX;
-				} else {
-					$type = self::AT_SIGN_SYMBOL;
-				}
-			}
+			$type                      = self::AT_SIGN_SYMBOL;
 		} elseif ( '\\' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the '\'.
 			if ( 'N' === $next_byte ) {
@@ -3003,53 +1244,25 @@ class WP_MySQL_Lexer {
 	}
 
 	private function determine_identifier_or_keyword_type( string $value ): int {
-		$type = self::TOKENS[ strtoupper( $value ) ] ?? self::IDENTIFIER;
+		$word = strtoupper( $value );
+		$type = self::KEYWORDS[ $word ] ?? self::IDENTIFIER;
 		if ( self::IDENTIFIER === $type ) {
 			return self::IDENTIFIER;
 		}
-		return $this->resolve_keyword_type( $type );
+		return $this->resolve_keyword_type( $type, $word );
 	}
 
 	/**
-	 * Resolve a keyword token id matched in self::TOKENS, applying version gating,
-	 * function-call lookahead, the SQL_MODE_HIGH_NOT_PRECEDENCE rule, and synonyms.
+	 * Resolve a keyword token matched in self::KEYWORDS, applying the
+	 * function-call lookahead and the SQL_MODE_HIGH_NOT_PRECEDENCE rule.
 	 *
-	 * @param int $type A token id already matched in self::TOKENS (never IDENTIFIER).
+	 * @param int    $type The grammar token number matched in self::KEYWORDS.
+	 * @param string $word The upper-cased keyword string that was matched.
 	 */
-	private function resolve_keyword_type( int $type ): int {
-
-		// Apply MySQL version specifics (positive number: >= <version>, negative number: < <version>).
-		if ( isset( self::VERSIONS[ $type ] ) ) {
-			$version = self::VERSIONS[ $type ];
-			if ( $this->mysql_version < $version || -$version >= $this->mysql_version ) {
-				return self::IDENTIFIER;
-			}
-		}
-
-		// Apply MySQL version ranges manually.
-		if (
-			self::MAX_STATEMENT_TIME_SYMBOL === $type
-			&& ! ( $this->mysql_version >= 50704 && $this->mysql_version < 50708 )
-		) {
-			return self::IDENTIFIER;
-		}
-
-		if (
-			self::NONBLOCKING_SYMBOL === $type
-			&& ! ( $this->mysql_version >= 50700 && $this->mysql_version < 50706 )
-		) {
-			return self::IDENTIFIER;
-		}
-
-		if (
-			self::REMOTE_SYMBOL === $type
-			&& ( $this->mysql_version >= 80003 && $this->mysql_version < 80014 )
-		) {
-			return self::IDENTIFIER;
-		}
-
-		// Determine function calls.
-		if ( isset( self::FUNCTIONS[ $type ] ) ) {
+	private function resolve_keyword_type( int $type, string $word ): int {
+		// Function keywords (declared with SYM_FN in MySQL's lex.h) are keywords
+		// only when directly followed by an opening parenthesis.
+		if ( isset( self::FUNCTIONS[ $word ] ) ) {
 			// Skip any whitespace character if the SQL mode says they should be ignored.
 			if ( $this->is_sql_mode_active( self::SQL_MODE_IGNORE_SPACE ) ) {
 				$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
@@ -3061,10 +1274,9 @@ class WP_MySQL_Lexer {
 
 		// With "SQL_MODE_HIGH_NOT_PRECEDENCE" enabled, "NOT" needs to be emitted as a higher priority NOT2 symbol.
 		if ( self::NOT_SYMBOL === $type && $this->is_sql_mode_active( self::SQL_MODE_HIGH_NOT_PRECEDENCE ) ) {
-			$type = self::NOT2_SYMBOL;
+			return self::NOT2_SYMBOL;
 		}
 
-		// Apply synonyms.
-		return self::SYNONYMS[ $type ] ?? $type;
+		return $type;
 	}
 }
