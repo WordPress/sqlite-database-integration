@@ -2545,6 +2545,68 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests grouped HAVING predicates can reference aggregate projection aliases.
+	 */
+	public function test_grouped_having_aggregate_alias_is_translated_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_taxonomy (term_taxonomy_id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL, taxonomy TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (1, 'Parent')" );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (2, 'Single')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (10, 1, 'category')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (11, 1, 'post_tag')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (12, 2, 'category')" );
+
+		$rows = $driver->query(
+			'SELECT tt.term_id, t.*, count(*) as term_tt_count FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 1'
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', (string) $rows[0]->term_id );
+		$this->assertSame( '2', (string) $rows[0]->term_tt_count );
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString( 'GROUP BY t.term_id, tt.term_id', $sql );
+		$this->assertStringContainsString( 'HAVING (count (*)) > 1', $sql );
+		$this->assertStringNotContainsString( 'HAVING term_tt_count', $sql );
+	}
+
+	/**
+	 * Tests grouped HAVING identifiers that are not aliases fail closed.
+	 */
+	public function test_grouped_having_non_alias_identifier_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_grouped_having_alias_query',
+			'SELECT term_id, COUNT(*) AS term_tt_count FROM wptests_term_taxonomy GROUP BY term_id HAVING missing_alias > 1'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
+	 * Tests non-grouped non-aggregate projection aliases are not rewritten in HAVING.
+	 */
+	public function test_grouped_having_unsupported_projection_alias_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_grouped_having_alias_query',
+			"SELECT term_id, name AS term_name FROM wptests_terms GROUP BY term_id HAVING term_name = 'Parent'"
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
 	 * Tests scalar COUNT queries drop irrelevant ORDER BY clauses.
 	 */
 	public function test_aggregate_count_order_by_is_dropped_for_postgresql(): void {

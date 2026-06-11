@@ -437,6 +437,12 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
+		$translated_query = $this->translate_grouped_having_alias_query( $query );
+		if ( null !== $translated_query ) {
+			$query                     = $translated_query;
+			$translated_for_postgresql = true;
+		}
+
 		$translated_query = $this->translate_simple_mysql_select_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
@@ -5699,6 +5705,641 @@ WHERE option_name IN (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Translate grouped SELECT queries that reference projection aliases in HAVING.
+	 *
+	 * MySQL resolves SELECT aliases in HAVING, but PostgreSQL does not. Keep this
+	 * rewrite limited to aliases whose projected expression is valid in a grouped
+	 * HAVING clause so unsupported grouping shapes still fail visibly.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_grouped_having_alias_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		if (
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				1,
+				$statement_end,
+				array(
+					WP_MySQL_Lexer::DISTINCT_SYMBOL,
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
+		$select_end     = $limit_position ?? $statement_end;
+		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			return null;
+		}
+
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 1, $select_end );
+		if (
+			null !== $order_position
+			&& (
+				! isset( $tokens[ $order_position + 1 ] )
+				|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
+				|| $order_position + 2 >= $select_end
+			)
+		) {
+			return null;
+		}
+
+		$having_end      = $order_position ?? $select_end;
+		$having_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::HAVING_SYMBOL, 1, $having_end );
+		if ( null === $having_position || $having_position + 1 >= $having_end ) {
+			return null;
+		}
+
+		$group_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, 1, $having_position );
+		if (
+			null === $group_position
+			|| ! isset( $tokens[ $group_position + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_position + 1 ]->id
+			|| $group_position + 2 >= $having_position
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $group_position );
+		if ( null === $from_position || 1 === $from_position ) {
+			return null;
+		}
+
+		$group_items = $this->split_top_level_mysql_arguments( $tokens, $group_position + 2, $having_position );
+		if ( null === $group_items || count( $group_items ) < 1 ) {
+			return null;
+		}
+
+		$alias_expressions = $this->get_mysql_grouped_having_projection_alias_expressions(
+			$tokens,
+			1,
+			$from_position,
+			$group_items
+		);
+		if ( null === $alias_expressions || empty( $alias_expressions ) ) {
+			return null;
+		}
+
+		$having_sql = $this->translate_mysql_having_alias_predicate_to_postgresql(
+			$tokens,
+			$having_position + 1,
+			$having_end,
+			$alias_expressions
+		);
+		if ( null === $having_sql ) {
+			return null;
+		}
+
+		$replacements   = array();
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $group_position );
+		if ( null !== $where_position ) {
+			$scope_end = $where_position;
+		} else {
+			$scope_end = $group_position;
+		}
+
+		$scope = $this->get_mysql_select_scope( $tokens, $from_position + 1, $scope_end );
+		if ( null === $scope ) {
+			return null;
+		}
+
+		if ( null !== $where_position ) {
+			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$group_position,
+				$scope
+			);
+			if ( $where_sql['changed'] ) {
+				$replacements[] = array(
+					'start' => $where_position + 1,
+					'end'   => $group_position,
+					'sql'   => $where_sql['sql'],
+				);
+			}
+		}
+
+		$group_by_extensions = $this->get_mysql_grouped_having_group_by_projection_extensions(
+			$tokens,
+			1,
+			$from_position,
+			$group_position,
+			$having_position,
+			$group_items
+		);
+		if ( ! empty( $group_by_extensions ) ) {
+			$replacements[] = array(
+				'start' => $group_position + 2,
+				'end'   => $having_position,
+				'sql'   => $this->translate_mysql_token_sequence_to_postgresql( $tokens, $group_position + 2, $having_position )
+					. ', ' . implode( ', ', $group_by_extensions ),
+			);
+		}
+
+		$replacements[] = array(
+			'start' => $having_position + 1,
+			'end'   => $having_end,
+			'sql'   => $having_sql,
+		);
+
+		return 'SELECT ' . $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			1,
+			$statement_end,
+			$replacements
+		);
+	}
+
+	/**
+	 * Get projection aliases that can be substituted safely in grouped HAVING.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int             $start       First projection token position.
+	 * @param int             $end         Final projection token position, exclusive.
+	 * @param array           $group_items Parsed GROUP BY items.
+	 * @return array<string, array{sql: string}>|null Alias expressions keyed by lowercase alias.
+	 */
+	private function get_mysql_grouped_having_projection_alias_expressions( array $tokens, int $start, int $end, array $group_items ): ?array {
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $ranges || count( $ranges ) < 1 ) {
+			return null;
+		}
+
+		$aliases = array();
+		foreach ( $ranges as $range ) {
+			$item = $this->parse_mysql_aliased_projection_expression( $tokens, $range['start'], $range['end'] );
+			if ( null === $item ) {
+				continue;
+			}
+
+			$alias_key = strtolower( $item['alias'] );
+			if ( isset( $aliases[ $alias_key ] ) ) {
+				return null;
+			}
+
+			if (
+				! $this->contains_mysql_aggregate_call( $tokens, $item['expression_start'], $item['expression_end'] )
+				&& ! $this->is_mysql_grouped_projection_expression( $tokens, $item, $group_items )
+			) {
+				continue;
+			}
+
+			$aliases[ $alias_key ] = array(
+				'sql' => $this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$item['expression_start'],
+					$item['expression_end']
+				),
+			);
+		}
+
+		return $aliases;
+	}
+
+	/**
+	 * Get GROUP BY extensions for selected columns equivalent to grouped columns.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param int             $projection_start First projection token position.
+	 * @param int             $from_position  FROM token position.
+	 * @param int             $group_position GROUP token position.
+	 * @param int             $having_position HAVING token position.
+	 * @param array           $group_items    Parsed GROUP BY items.
+	 * @return string[] PostgreSQL GROUP BY expressions to append.
+	 */
+	private function get_mysql_grouped_having_group_by_projection_extensions(
+		array $tokens,
+		int $projection_start,
+		int $from_position,
+		int $group_position,
+		int $having_position,
+		array $group_items
+	): array {
+		$projection_items = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $from_position );
+		if ( null === $projection_items ) {
+			return array();
+		}
+
+		$grouped_columns = array();
+		foreach ( $group_items as $group_item ) {
+			$grouped_column = $this->get_mysql_simple_qualified_column_expression(
+				$tokens,
+				$group_item['start'],
+				$group_item['end']
+			);
+			if ( null !== $grouped_column ) {
+				$grouped_columns[] = $grouped_column;
+			}
+		}
+
+		if ( empty( $grouped_columns ) ) {
+			return array();
+		}
+
+		$equivalent_columns = $this->get_mysql_simple_column_equality_pairs( $tokens, $from_position + 1, $group_position );
+		if ( empty( $equivalent_columns ) ) {
+			return array();
+		}
+
+		$extensions     = array();
+		$extension_keys = array();
+		foreach ( $projection_items as $projection_item ) {
+			$bounds = $this->get_mysql_projection_expression_bounds( $tokens, $projection_item['start'], $projection_item['end'] );
+			if ( null === $bounds ) {
+				continue;
+			}
+
+			$projection_column = $this->get_mysql_simple_qualified_column_expression( $tokens, $bounds['start'], $bounds['end'] );
+			if ( null === $projection_column ) {
+				continue;
+			}
+
+			if ( $this->is_mysql_projection_column_grouped( $projection_column, $grouped_columns ) ) {
+				continue;
+			}
+
+			foreach ( $grouped_columns as $grouped_column ) {
+				if ( ! $this->are_mysql_simple_columns_equivalent( $projection_column, $grouped_column, $equivalent_columns ) ) {
+					continue;
+				}
+
+				$extension_key = $projection_column['key'];
+				if ( isset( $extension_keys[ $extension_key ] ) ) {
+					continue 2;
+				}
+
+				$extensions[]                     = $projection_column['sql'];
+				$extension_keys[ $extension_key ] = true;
+				continue 2;
+			}
+		}
+
+		return $extensions;
+	}
+
+	/**
+	 * Get expression bounds for a SELECT projection item.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection item token position.
+	 * @param int             $end    Final projection item token position, exclusive.
+	 * @return array{start: int, end: int}|null Expression bounds, or null when malformed.
+	 */
+	private function get_mysql_projection_expression_bounds( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$expression_end = $end;
+		$as_position    = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $start, $end );
+		if ( null !== $as_position ) {
+			if ( $as_position <= $start || $as_position + 2 !== $end ) {
+				return null;
+			}
+
+			$expression_end = $as_position;
+		} elseif ( null !== $this->get_mysql_implicit_projection_alias( $tokens, $start, $end ) ) {
+			$expression_end = $end - 1;
+		}
+
+		return $start >= $expression_end
+			? null
+			: array(
+				'start' => $start,
+				'end'   => $expression_end,
+			);
+	}
+
+	/**
+	 * Parse a simple qualified column expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token position.
+	 * @param int             $end    Final expression token position, exclusive.
+	 * @return array{qualifier: string, column: string, key: string, sql: string}|null Column data, or null when unsupported.
+	 */
+	private function get_mysql_simple_qualified_column_expression( array $tokens, int $start, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		if (
+			$start + 3 !== $end
+			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return null;
+		}
+
+		$qualifier = $this->get_mysql_identifier_token_value( $tokens[ $start ] );
+		$column    = $this->get_mysql_identifier_token_value( $tokens[ $start + 2 ] );
+		if ( null === $qualifier || null === $column ) {
+			return null;
+		}
+
+		$key = strtolower( $qualifier ) . '.' . strtolower( $column );
+		return array(
+			'qualifier' => strtolower( $qualifier ),
+			'column'    => strtolower( $column ),
+			'key'       => $key,
+			'sql'       => $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end ),
+		);
+	}
+
+	/**
+	 * Get simple qualified column equality pairs from JOIN/WHERE predicates.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First token position.
+	 * @param int             $end    Final token position, exclusive.
+	 * @return array<string, array<string, true>> Column equality adjacency map.
+	 */
+	private function get_mysql_simple_column_equality_pairs( array $tokens, int $start, int $end ): array {
+		$pairs = array();
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			if ( $position - 3 < $start || $position + 4 > $end ) {
+				continue;
+			}
+
+			$left_column  = $this->get_mysql_simple_qualified_column_expression( $tokens, $position - 3, $position );
+			$right_column = $this->get_mysql_simple_qualified_column_expression( $tokens, $position + 1, $position + 4 );
+			if ( null === $left_column || null === $right_column ) {
+				continue;
+			}
+
+			$pairs[ $left_column['key'] ][ $right_column['key'] ] = true;
+			$pairs[ $right_column['key'] ][ $left_column['key'] ] = true;
+		}
+
+		return $pairs;
+	}
+
+	/**
+	 * Check whether a selected column is already grouped.
+	 *
+	 * @param array $projection_column Selected column data.
+	 * @param array $grouped_columns   Grouped column data.
+	 * @return bool Whether the selected column is grouped.
+	 */
+	private function is_mysql_projection_column_grouped( array $projection_column, array $grouped_columns ): bool {
+		foreach ( $grouped_columns as $grouped_column ) {
+			if ( $projection_column['key'] === $grouped_column['key'] ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether two simple columns are connected by a parsed equality.
+	 *
+	 * @param array $left_column        Left column data.
+	 * @param array $right_column       Right column data.
+	 * @param array $equivalent_columns Column equality adjacency map.
+	 * @return bool Whether the columns are equivalent.
+	 */
+	private function are_mysql_simple_columns_equivalent( array $left_column, array $right_column, array $equivalent_columns ): bool {
+		return $left_column['key'] === $right_column['key']
+			|| isset( $equivalent_columns[ $left_column['key'] ][ $right_column['key'] ] );
+	}
+
+	/**
+	 * Parse a projection item that has an explicit or implicit alias.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection item token position.
+	 * @param int             $end    Final projection item token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, alias: string}|null Parsed alias expression, or null when absent.
+	 */
+	private function parse_mysql_aliased_projection_expression( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$expression_end = $end;
+		$alias          = null;
+		$as_position    = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $start, $end );
+
+		if ( null !== $as_position ) {
+			if ( $as_position <= $start || $as_position + 2 !== $end ) {
+				return null;
+			}
+
+			$alias = $this->get_mysql_projection_alias_token_value( $tokens[ $as_position + 1 ] ?? null );
+			if ( null === $alias ) {
+				return null;
+			}
+
+			$expression_end = $as_position;
+		} else {
+			$alias = $this->get_mysql_implicit_projection_alias( $tokens, $start, $end );
+			if ( null === $alias ) {
+				return null;
+			}
+
+			$expression_end = $end - 1;
+		}
+
+		if ( $start >= $expression_end ) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $start,
+			'expression_end'   => $expression_end,
+			'alias'            => $alias,
+		);
+	}
+
+	/**
+	 * Check whether a projection expression is already present in GROUP BY.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param array           $item        Parsed projection item.
+	 * @param array           $group_items Parsed GROUP BY items.
+	 * @return bool Whether the projection expression is grouped.
+	 */
+	private function is_mysql_grouped_projection_expression( array $tokens, array $item, array $group_items ): bool {
+		foreach ( $group_items as $group_item ) {
+			if (
+				$this->are_mysql_token_ranges_equivalent(
+					$tokens,
+					$item['expression_start'],
+					$item['expression_end'],
+					$group_item['start'],
+					$group_item['end']
+				)
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token range contains a MySQL aggregate function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token position.
+	 * @param int             $end    Final expression token position, exclusive.
+	 * @return bool Whether an aggregate call is present.
+	 */
+	private function contains_mysql_aggregate_call( array $tokens, int $start, int $end ): bool {
+		$aggregate_token_ids = array(
+			WP_MySQL_Lexer::AVG_SYMBOL,
+			WP_MySQL_Lexer::BIT_AND_SYMBOL,
+			WP_MySQL_Lexer::BIT_OR_SYMBOL,
+			WP_MySQL_Lexer::BIT_XOR_SYMBOL,
+			WP_MySQL_Lexer::COUNT_SYMBOL,
+			WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL,
+			WP_MySQL_Lexer::MAX_SYMBOL,
+			WP_MySQL_Lexer::MIN_SYMBOL,
+			WP_MySQL_Lexer::STD_SYMBOL,
+			WP_MySQL_Lexer::STDDEV_POP_SYMBOL,
+			WP_MySQL_Lexer::STDDEV_SAMP_SYMBOL,
+			WP_MySQL_Lexer::STDDEV_SYMBOL,
+			WP_MySQL_Lexer::SUM_SYMBOL,
+			WP_MySQL_Lexer::VAR_POP_SYMBOL,
+			WP_MySQL_Lexer::VAR_SAMP_SYMBOL,
+			WP_MySQL_Lexer::VARIANCE_SYMBOL,
+		);
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$after_subquery = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+				if ( null !== $after_subquery ) {
+					$position = $after_subquery - 1;
+					continue;
+				}
+			}
+
+			if (
+				isset( $tokens[ $position + 1 ] )
+				&& in_array( $tokens[ $position ]->id, $aggregate_token_ids, true )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Translate HAVING predicate aliases to their projection expressions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens            MySQL lexer token stream.
+	 * @param int             $start             First HAVING predicate token.
+	 * @param int             $end               Final HAVING predicate token, exclusive.
+	 * @param array           $alias_expressions Projection alias SQL keyed by lowercase alias.
+	 * @return string|null Translated HAVING SQL, or null when no alias was changed.
+	 */
+	private function translate_mysql_having_alias_predicate_to_postgresql( array $tokens, int $start, int $end, array $alias_expressions ): ?string {
+		$chunks        = array();
+		$segment_start = $start;
+		$changed       = false;
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$after_subquery = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+				if ( null !== $after_subquery ) {
+					$position = $after_subquery - 1;
+					continue;
+				}
+			}
+
+			$alias = $this->get_mysql_order_by_alias_token_value( $tokens[ $position ] ?? null );
+			if (
+				null === $alias
+				|| ! $this->is_unqualified_mysql_having_alias_reference( $tokens, $position, $end )
+				|| ! isset( $alias_expressions[ strtolower( $alias ) ] )
+			) {
+				continue;
+			}
+
+			if ( $segment_start < $position ) {
+				$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $position );
+			}
+
+			$chunks[]      = '(' . $alias_expressions[ strtolower( $alias ) ]['sql'] . ')';
+			$segment_start = $position + 1;
+			$changed       = true;
+		}
+
+		if ( ! $changed ) {
+			return null;
+		}
+
+		if ( $segment_start < $end ) {
+			$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $end );
+		}
+
+		return implode( ' ', array_filter( $chunks, 'strlen' ) );
+	}
+
+	/**
+	 * Check whether a HAVING token is an unqualified alias reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate alias token position.
+	 * @param int             $end      Final HAVING predicate token, exclusive.
+	 * @return bool Whether the token can be replaced as an alias.
+	 */
+	private function is_unqualified_mysql_having_alias_reference( array $tokens, int $position, int $end ): bool {
+		if ( isset( $tokens[ $position - 1 ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position - 1 ]->id ) {
+			return false;
+		}
+
+		if (
+			isset( $tokens[ $position + 1 ] )
+			&& (
+				WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position + 1 ]->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+			)
+		) {
+			return false;
+		}
+
+		return $position < $end;
 	}
 
 	/**
