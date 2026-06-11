@@ -19,8 +19,10 @@
  * The constructor applies the patches and points each state at its shared row,
  * so the parse loop is two plain array lookups per step.
  *
- * AST contract: each node carries the grammar rule name it was reduced by. By
- * default every rule materialises a node, including the grammar's deep
+ * AST contract: each node carries the grammar rule name it was reduced by.
+ * Reductions with no children produce no node, so empty optionals (opt_*) and
+ * Bison's mid-rule action rules ($@N) never appear in the tree. By default
+ * every other rule materialises a node, including the grammar's deep
  * single-child wrapper chains (expr -> bool_pri -> predicate -> bit_expr ->
  * ...). Passing $inline_unit_productions = true to the constructor inlines
  * unit productions whose only child is itself a node — over half of all
@@ -178,21 +180,26 @@ class WP_MySQL_Parser {
 
 			// Reduce by production -code: the handle is the top $len symbols at
 			// nstack[$base .. $sp-1]. Build the node in place by moving the stack
-			// pointer instead of splicing. In inlining mode, a unit production
-			// over a node passes the child through unchanged instead of wrapping
-			// it (see the AST contract in the class docblock).
+			// pointer instead of splicing. A reduction with no children produces
+			// no node (null): empty optionals and Bison's mid-rule action rules
+			// ($@N) carry no information, so the AST contains no empty nodes.
+			// In inlining mode, a unit production over a node passes the child
+			// through unchanged instead of wrapping it (see the AST contract in
+			// the class docblock).
 			$p    = -$code;
 			$lhs  = $plhs[ $p ];
 			$base = $sp - $plen[ $p ];
 			if ( ! $inline || $base + 1 !== $sp || ! $nstack[ $base ] instanceof WP_Parser_Node ) {
 				$kids = array();
 				for ( $j = $base; $j < $sp; $j++ ) {
-					$kids[] = $nstack[ $j ];
+					if ( null !== $nstack[ $j ] ) {
+						$kids[] = $nstack[ $j ];
+					}
 					if ( $j > $base ) {
 						$nstack[ $j ] = null;
 					}
 				}
-				$nstack[ $base ] = new WP_Parser_Node( $lhs, $p_name[ $p ], $kids );
+				$nstack[ $base ] = $kids ? new WP_Parser_Node( $lhs, $p_name[ $p ], $kids ) : null;
 			}
 
 			// GOTO on $lhs from the state now exposed under the handle.
