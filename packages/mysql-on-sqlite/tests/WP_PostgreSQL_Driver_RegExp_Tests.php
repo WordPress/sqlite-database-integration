@@ -72,6 +72,14 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 				"SELECT * FROM wptests_postmeta WHERE meta_key RLIKE '^foo'"
 			)
 		);
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE meta_key !~* '^foo'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT * FROM wptests_postmeta WHERE meta_key NOT RLIKE '^foo'"
+			)
+		);
 	}
 
 	/**
@@ -139,19 +147,88 @@ class WP_PostgreSQL_Driver_RegExp_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported REGEXP BINARY predicates fall through visibly.
+	 * Tests REGEXP BINARY and RLIKE BINARY predicates use case-sensitive PostgreSQL regex operators.
 	 */
-	public function test_regexp_binary_predicate_is_not_silently_remapped(): void {
+	public function test_binary_regexp_predicates_are_translated_to_postgresql_case_sensitive_regex_operators(): void {
 		$driver = $this->create_driver();
 
 		$this->assertSame(
-			"SELECT * FROM wptests_postmeta WHERE meta_key REGEXP BINARY '^foo'",
+			"SELECT * FROM wptests_postmeta WHERE meta_key ~ '^foo'",
 			$this->translate_driver_query_with_private_method(
 				$driver,
 				'translate_mysql_compatible_query',
 				"SELECT * FROM wptests_postmeta WHERE meta_key REGEXP BINARY '^foo'"
 			)
 		);
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE meta_key ~ '^foo'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT * FROM wptests_postmeta WHERE meta_key RLIKE BINARY '^foo'"
+			)
+		);
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE meta_key !~ '^foo'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT * FROM wptests_postmeta WHERE meta_key NOT REGEXP BINARY '^foo'"
+			)
+		);
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE meta_key !~ '^foo'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT * FROM wptests_postmeta WHERE meta_key NOT RLIKE BINARY '^foo'"
+			)
+		);
+	}
+
+	/**
+	 * Tests CAST(... AS BINARY) regex predicates render as text for PostgreSQL regex execution.
+	 */
+	public function test_binary_cast_regexp_predicates_are_rendered_as_text_regex_predicates(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE CAST(meta_key AS text) ~ '^foo'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT * FROM wptests_postmeta WHERE CAST(meta_key AS BINARY) REGEXP BINARY '^foo'"
+			)
+		);
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE CAST(wptests_postmeta.meta_key AS text) ~ '^foo'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT * FROM wptests_postmeta WHERE CAST(wptests_postmeta.meta_key AS BINARY) RLIKE BINARY '^foo'"
+			)
+		);
+	}
+
+	/**
+	 * Tests nested binary REGEXP predicates do not leak raw MySQL regex syntax.
+	 */
+	public function test_nested_binary_regexp_predicate_is_fully_translated(): void {
+		$driver = $this->create_driver();
+		$query  = "SELECT * FROM wptests_postmeta WHERE NOT EXISTS (SELECT 1 FROM wptests_postmeta mt1 WHERE mt1.post_ID = wptests_postmeta.post_ID AND CAST(mt1.meta_key AS BINARY) REGEXP BINARY '^foo' LIMIT 1)";
+
+		$translated_query = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			$query
+		);
+
+		$this->assertSame(
+			"SELECT * FROM wptests_postmeta WHERE NOT EXISTS (SELECT 1 FROM wptests_postmeta mt1 WHERE mt1.\"post_ID\" = wptests_postmeta.\"post_ID\" AND CAST(mt1.meta_key AS text) ~ '^foo' LIMIT 1)",
+			$translated_query
+		);
+		$this->assertStringNotContainsString( 'REGEXP BINARY', $translated_query );
+		$this->assertStringNotContainsString( 'CAST(mt1.meta_key AS BINARY)', $translated_query );
 	}
 
 	/**

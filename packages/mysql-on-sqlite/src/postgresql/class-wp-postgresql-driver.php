@@ -10635,6 +10635,9 @@ WHERE option_name IN (
 				$translated_fragment = $this->translate_mysql_character_cast_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_binary_cast_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_regexp_operator_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -11056,6 +11059,99 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate MySQL CAST(expr AS BINARY) to PostgreSQL text.
+	 *
+	 * PostgreSQL regex operators work on text, so keep supported binary regex
+	 * predicates executable without broadening this lane to bytea emulation.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CAST token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_binary_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_binary_cast_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL binary CAST expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CAST token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_binary_cast_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
+		if ( $bounds['start'] !== $position ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$as_position    = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::AS_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $as_position
+			|| $as_position <= $position + 2
+			|| ! $this->is_mysql_binary_cast_type( $tokens, $as_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $as_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
+	 * Check whether a CAST type is MySQL BINARY.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First cast type token.
+	 * @param int             $end    Final cast type token, exclusive.
+	 * @return bool Whether the type is supported.
+	 */
+	private function is_mysql_binary_cast_type( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
 	 * Translate MySQL REGEXP/RLIKE operators to PostgreSQL regex operators.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -11070,12 +11166,13 @@ WHERE option_name IN (
 
 		if (
 			WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position ]->id
-			&& ! $this->is_mysql_regexp_binary_predicate( $tokens, $position + 1, $end )
 		) {
+			$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $position + 1, $end );
+
 			return array(
-				'sql'      => '~*',
+				'sql'      => $is_binary ? '~' : '~*',
 				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
-				'position' => $position,
+				'position' => $is_binary ? $position + 1 : $position,
 			);
 		}
 
@@ -11083,12 +11180,13 @@ WHERE option_name IN (
 			isset( $tokens[ $position + 1 ] )
 			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position ]->id
 			&& WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position + 1 ]->id
-			&& ! $this->is_mysql_regexp_binary_predicate( $tokens, $position + 2, $end )
 		) {
+			$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $position + 2, $end );
+
 			return array(
-				'sql'      => '!~*',
+				'sql'      => $is_binary ? '!~' : '!~*',
 				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
-				'position' => $position + 1,
+				'position' => $is_binary ? $position + 2 : $position + 1,
 			);
 		}
 
@@ -11096,7 +11194,7 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether a REGEXP predicate starts with the unsupported BINARY modifier.
+	 * Check whether a REGEXP predicate starts with the BINARY modifier.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position First right-hand predicate token.
@@ -12245,6 +12343,10 @@ WHERE option_name IN (
 			}
 
 			if ( null !== $this->get_mysql_integer_cast_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_binary_cast_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 
