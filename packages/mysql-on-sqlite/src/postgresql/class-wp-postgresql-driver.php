@@ -5851,6 +5851,10 @@ WHERE option_name IN (
 			$having_position,
 			$group_items
 		);
+		if ( null === $group_by_extensions ) {
+			return null;
+		}
+
 		if ( ! empty( $group_by_extensions ) ) {
 			$replacements[] = array(
 				'start' => $group_position + 2,
@@ -5929,7 +5933,7 @@ WHERE option_name IN (
 	 * @param int             $group_position GROUP token position.
 	 * @param int             $having_position HAVING token position.
 	 * @param array           $group_items    Parsed GROUP BY items.
-	 * @return string[] PostgreSQL GROUP BY expressions to append.
+	 * @return string[]|null PostgreSQL GROUP BY expressions to append, or null when unsupported.
 	 */
 	private function get_mysql_grouped_having_group_by_projection_extensions(
 		array $tokens,
@@ -5938,10 +5942,10 @@ WHERE option_name IN (
 		int $group_position,
 		int $having_position,
 		array $group_items
-	): array {
+	): ?array {
 		$projection_items = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $from_position );
 		if ( null === $projection_items ) {
-			return array();
+			return null;
 		}
 
 		$grouped_columns = array();
@@ -5960,13 +5964,9 @@ WHERE option_name IN (
 			return array();
 		}
 
-		$equivalent_columns = $this->get_mysql_simple_column_equality_pairs( $tokens, $from_position + 1, $group_position );
-		if ( empty( $equivalent_columns ) ) {
-			return array();
-		}
-
-		$extensions     = array();
-		$extension_keys = array();
+		$extensions         = array();
+		$extension_keys     = array();
+		$equivalent_columns = null;
 		foreach ( $projection_items as $projection_item ) {
 			$bounds = $this->get_mysql_projection_expression_bounds( $tokens, $projection_item['start'], $projection_item['end'] );
 			if ( null === $bounds ) {
@@ -5982,6 +5982,18 @@ WHERE option_name IN (
 				continue;
 			}
 
+			if ( null === $equivalent_columns ) {
+				$equivalent_columns = $this->get_mysql_safe_grouped_having_column_equality_pairs(
+					$tokens,
+					$from_position,
+					$group_position
+				);
+				if ( null === $equivalent_columns || empty( $equivalent_columns ) ) {
+					return null;
+				}
+			}
+
+			$extended = false;
 			foreach ( $grouped_columns as $grouped_column ) {
 				if ( ! $this->are_mysql_simple_columns_equivalent( $projection_column, $grouped_column, $equivalent_columns ) ) {
 					continue;
@@ -5989,12 +6001,18 @@ WHERE option_name IN (
 
 				$extension_key = $projection_column['key'];
 				if ( isset( $extension_keys[ $extension_key ] ) ) {
-					continue 2;
+					$extended = true;
+					break;
 				}
 
 				$extensions[]                     = $projection_column['sql'];
 				$extension_keys[ $extension_key ] = true;
-				continue 2;
+				$extended                         = true;
+				break;
+			}
+
+			if ( ! $extended ) {
+				return null;
 			}
 		}
 
@@ -6044,9 +6062,18 @@ WHERE option_name IN (
 	 */
 	private function get_mysql_simple_qualified_column_expression( array $tokens, int $start, int $end ): ?array {
 		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$start  = $bounds['start'];
-		$end    = $bounds['end'];
+		return $this->get_mysql_unwrapped_simple_qualified_column_expression( $tokens, $bounds['start'], $bounds['end'] );
+	}
 
+	/**
+	 * Parse a simple qualified column expression without removing wrapper parentheses.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token position.
+	 * @param int             $end    Final expression token position, exclusive.
+	 * @return array{qualifier: string, column: string, key: string, sql: string}|null Column data, or null when unsupported.
+	 */
+	private function get_mysql_unwrapped_simple_qualified_column_expression( array $tokens, int $start, int $end ): ?array {
 		if (
 			$start + 3 !== $end
 			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
@@ -6071,36 +6098,360 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get simple qualified column equality pairs from JOIN/WHERE predicates.
+	 * Get safe qualified column equality pairs for grouped HAVING rewrites.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First token position.
-	 * @param int             $end    Final token position, exclusive.
-	 * @return array<string, array<string, true>> Column equality adjacency map.
+	 * @param int             $from_position  FROM token position.
+	 * @param int             $group_position GROUP token position.
+	 * @return array<string, array<string, true>>|null Column equality adjacency map, or null when unsupported.
 	 */
-	private function get_mysql_simple_column_equality_pairs( array $tokens, int $start, int $end ): array {
+	private function get_mysql_safe_grouped_having_column_equality_pairs( array $tokens, int $from_position, int $group_position ): ?array {
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $group_position );
+		$from_end       = $where_position ?? $group_position;
+
+		$pairs = $this->get_mysql_inner_join_column_equality_pairs( $tokens, $from_position + 1, $from_end );
+		if ( null === $pairs ) {
+			return null === $where_position
+				? $this->get_mysql_wordpress_term_split_left_join_column_equality_pairs( $tokens, $from_position + 1, $from_end )
+				: null;
+		}
+
+		if ( null === $where_position ) {
+			return $pairs;
+		}
+
+		$where_pairs = $this->get_mysql_top_level_conjunct_column_equality_pairs( $tokens, $where_position + 1, $group_position );
+		if ( null === $where_pairs ) {
+			return null;
+		}
+
+		$this->merge_mysql_column_equality_pairs( $pairs, $where_pairs );
+		return $pairs;
+	}
+
+	/**
+	 * Get qualified column equality pairs from supported inner JOIN predicates.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First FROM-clause token position.
+	 * @param int             $end    Final FROM-clause token position, exclusive.
+	 * @return array<string, array<string, true>>|null Column equality adjacency map, or null when unsupported.
+	 */
+	private function get_mysql_inner_join_column_equality_pairs( array $tokens, int $start, int $end ): ?array {
 		$pairs = array();
 
 		for ( $position = $start; $position < $end; $position++ ) {
-			if ( WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
+			$token_id = $tokens[ $position ]->id;
+			if (
+				WP_MySQL_Lexer::LEFT_SYMBOL === $token_id
+				|| WP_MySQL_Lexer::NATURAL_SYMBOL === $token_id
+				|| WP_MySQL_Lexer::OUTER_SYMBOL === $token_id
+				|| WP_MySQL_Lexer::RIGHT_SYMBOL === $token_id
+				|| WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $token_id
+				|| WP_MySQL_Lexer::USING_SYMBOL === $token_id
+			) {
+				return null;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
+				return null;
+			}
+
+			if ( WP_MySQL_Lexer::ON_SYMBOL !== $token_id ) {
 				continue;
 			}
 
-			if ( $position - 3 < $start || $position + 4 > $end ) {
-				continue;
+			$predicate_end = $this->find_mysql_join_predicate_end( $tokens, $position + 1, $end );
+			$join_pairs    = $this->get_mysql_top_level_conjunct_column_equality_pairs( $tokens, $position + 1, $predicate_end );
+			if ( null === $join_pairs ) {
+				return null;
 			}
 
-			$left_column  = $this->get_mysql_simple_qualified_column_expression( $tokens, $position - 3, $position );
-			$right_column = $this->get_mysql_simple_qualified_column_expression( $tokens, $position + 1, $position + 4 );
-			if ( null === $left_column || null === $right_column ) {
-				continue;
-			}
-
-			$pairs[ $left_column['key'] ][ $right_column['key'] ] = true;
-			$pairs[ $right_column['key'] ][ $left_column['key'] ] = true;
+			$this->merge_mysql_column_equality_pairs( $pairs, $join_pairs );
+			$position = $predicate_end - 1;
 		}
 
 		return $pairs;
+	}
+
+	/**
+	 * Get equality pairs for WordPress core's legacy shared-term split query.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First FROM-clause token position.
+	 * @param int             $end    Final FROM-clause token position, exclusive.
+	 * @return array<string, array<string, true>>|null Column equality adjacency map, or null when unsupported.
+	 */
+	private function get_mysql_wordpress_term_split_left_join_column_equality_pairs( array $tokens, int $start, int $end ): ?array {
+		$term_taxonomy_reference = $this->parse_mysql_table_reference( $tokens, $start, $end );
+		if (
+			null === $term_taxonomy_reference
+			|| ! $this->is_mysql_wordpress_table_reference( $term_taxonomy_reference, 'term_taxonomy', 'tt' )
+		) {
+			return null;
+		}
+
+		$position = $term_taxonomy_reference['position'];
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::LEFT_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OUTER_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$terms_reference = $this->parse_mysql_table_reference( $tokens, $position + 1, $end );
+		if (
+			null === $terms_reference
+			|| ! $this->is_mysql_wordpress_table_reference( $terms_reference, 'terms', 't' )
+		) {
+			return null;
+		}
+
+		$position = $terms_reference['position'];
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$predicate_end = $this->find_mysql_join_predicate_end( $tokens, $position + 1, $end );
+		if ( $predicate_end !== $end ) {
+			return null;
+		}
+
+		$pair = $this->get_mysql_top_level_simple_column_equality_pair( $tokens, $position + 1, $predicate_end );
+		if ( null === $pair || ! $this->is_mysql_wordpress_term_split_column_equality_pair( $pair ) ) {
+			return null;
+		}
+
+		return array(
+			't.term_id'  => array(
+				'tt.term_id' => true,
+			),
+			'tt.term_id' => array(
+				't.term_id' => true,
+			),
+		);
+	}
+
+	/**
+	 * Check whether a table reference matches a WordPress core table and alias.
+	 *
+	 * @param array  $reference Parsed table reference.
+	 * @param string $table_base Expected unprefixed table name.
+	 * @param string $alias      Expected alias.
+	 * @return bool Whether the reference matches.
+	 */
+	private function is_mysql_wordpress_table_reference( array $reference, string $table_base, string $alias ): bool {
+		$reference_alias = strtolower( null === $reference['alias'] ? $reference['table'] : $reference['alias'] );
+		if ( $alias !== $reference_alias ) {
+			return false;
+		}
+
+		$table_name = strtolower( $reference['table'] );
+		return $table_base === $table_name
+			|| substr( $table_name, -strlen( '_' . $table_base ) ) === '_' . $table_base;
+	}
+
+	/**
+	 * Check whether an equality pair is t.term_id = tt.term_id.
+	 *
+	 * @param array $pair Parsed equality pair.
+	 * @return bool Whether this is the WordPress shared-term split equality.
+	 */
+	private function is_mysql_wordpress_term_split_column_equality_pair( array $pair ): bool {
+		return (
+			't.term_id' === $pair['left']['key']
+			&& 'tt.term_id' === $pair['right']['key']
+		) || (
+			'tt.term_id' === $pair['left']['key']
+			&& 't.term_id' === $pair['right']['key']
+		);
+	}
+
+	/**
+	 * Find the end of a JOIN ON predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First ON predicate token position.
+	 * @param int             $end    Final FROM-clause token position, exclusive.
+	 * @return int Final ON predicate token position, exclusive.
+	 */
+	private function find_mysql_join_predicate_end( array $tokens, int $start, int $end ): int {
+		$depth = 0;
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				--$depth;
+				continue;
+			}
+
+			if (
+				0 === $depth
+				&& (
+					WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::LEFT_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::NATURAL_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::RIGHT_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $tokens[ $position ]->id
+				)
+			) {
+				return $position;
+			}
+		}
+
+		return $end;
+	}
+
+	/**
+	 * Get column equality pairs from a top-level AND predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First predicate token position.
+	 * @param int             $end    Final predicate token position, exclusive.
+	 * @return array<string, array<string, true>>|null Column equality adjacency map, or null when unsupported.
+	 */
+	private function get_mysql_top_level_conjunct_column_equality_pairs( array $tokens, int $start, int $end ): ?array {
+		$conjuncts = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $start, $end );
+		if ( null === $conjuncts ) {
+			return null;
+		}
+
+		$pairs = array();
+		foreach ( $conjuncts as $conjunct ) {
+			$pair = $this->get_mysql_top_level_simple_column_equality_pair(
+				$tokens,
+				$conjunct['start'],
+				$conjunct['end']
+			);
+			if ( null === $pair ) {
+				continue;
+			}
+
+			$pairs[ $pair['left']['key'] ][ $pair['right']['key'] ] = true;
+			$pairs[ $pair['right']['key'] ][ $pair['left']['key'] ] = true;
+		}
+
+		return $pairs;
+	}
+
+	/**
+	 * Split a boolean predicate into top-level AND conjuncts.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First predicate token position.
+	 * @param int             $end    Final predicate token position, exclusive.
+	 * @return array<int, array{start: int, end: int}>|null Conjunct bounds, or null when unsupported.
+	 */
+	private function split_mysql_top_level_boolean_conjuncts( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$conjuncts      = array();
+		$conjunct_start = $start;
+		$depth          = 0;
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 !== $depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::OR_SYMBOL === $tokens[ $position ]->id || WP_MySQL_Lexer::XOR_SYMBOL === $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			if ( WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			if ( $conjunct_start === $position ) {
+				return null;
+			}
+
+			$conjuncts[]    = array(
+				'start' => $conjunct_start,
+				'end'   => $position,
+			);
+			$conjunct_start = $position + 1;
+		}
+
+		if ( 0 !== $depth || $conjunct_start >= $end ) {
+			return null;
+		}
+
+		$conjuncts[] = array(
+			'start' => $conjunct_start,
+			'end'   => $end,
+		);
+
+		return $conjuncts;
+	}
+
+	/**
+	 * Parse a top-level simple qualified-column equality predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First predicate token position.
+	 * @param int             $end    Final predicate token position, exclusive.
+	 * @return array{left: array, right: array}|null Equality pair, or null when unsupported.
+	 */
+	private function get_mysql_top_level_simple_column_equality_pair( array $tokens, int $start, int $end ): ?array {
+		$equal_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $start, $end );
+		if (
+			null === $equal_position
+			|| null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $equal_position + 1, $end )
+		) {
+			return null;
+		}
+
+		$left_column  = $this->get_mysql_unwrapped_simple_qualified_column_expression( $tokens, $start, $equal_position );
+		$right_column = $this->get_mysql_unwrapped_simple_qualified_column_expression( $tokens, $equal_position + 1, $end );
+		if ( null === $left_column || null === $right_column ) {
+			return null;
+		}
+
+		return array(
+			'left'  => $left_column,
+			'right' => $right_column,
+		);
+	}
+
+	/**
+	 * Merge column equality adjacency maps.
+	 *
+	 * @param array $target Target adjacency map.
+	 * @param array $source Source adjacency map.
+	 */
+	private function merge_mysql_column_equality_pairs( array &$target, array $source ): void {
+		foreach ( $source as $left_key => $right_columns ) {
+			foreach ( $right_columns as $right_key => $_ ) {
+				$target[ $left_key ][ $right_key ] = true;
+			}
+		}
 	}
 
 	/**

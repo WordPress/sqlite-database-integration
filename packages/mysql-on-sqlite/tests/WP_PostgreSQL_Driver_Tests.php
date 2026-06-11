@@ -2577,6 +2577,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests grouped HAVING aliases can extend GROUP BY using safe inner-join equalities.
+	 */
+	public function test_grouped_having_inner_join_projection_extension_is_translated_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_grouped_having_alias_query',
+			'SELECT tt.term_id, count(*) AS term_tt_count FROM wptests_term_taxonomy tt INNER JOIN wptests_terms t ON t.term_id = tt.term_id GROUP BY t.term_id HAVING term_tt_count > 1'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'GROUP BY t.term_id, tt.term_id', $sql );
+		$this->assertStringContainsString( 'HAVING (count (*)) > 1', $sql );
+	}
+
+	/**
 	 * Tests grouped HAVING identifiers that are not aliases fail closed.
 	 */
 	public function test_grouped_having_non_alias_identifier_fails_closed(): void {
@@ -2586,6 +2603,51 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver,
 			'translate_grouped_having_alias_query',
 			'SELECT term_id, COUNT(*) AS term_tt_count FROM wptests_term_taxonomy GROUP BY term_id HAVING missing_alias > 1'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
+	 * Tests OR-scoped join equalities are not used for GROUP BY extensions.
+	 */
+	public function test_grouped_having_or_join_equality_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_grouped_having_alias_query',
+			'SELECT a.id, b.id AS bid, COUNT(*) AS c FROM a LEFT JOIN b ON a.id = b.id OR b.flag = 1 GROUP BY a.id HAVING c > 0'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
+	 * Tests nullable-side GROUP BY semantics from outer joins fail closed.
+	 */
+	public function test_grouped_having_outer_join_nullable_grouping_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_grouped_having_alias_query',
+			'SELECT tt.term_id, COUNT(*) AS c FROM tt LEFT JOIN t ON t.term_id = tt.term_id GROUP BY t.term_id HAVING c > 1'
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
+	 * Tests nested predicate equalities are not used for GROUP BY extensions.
+	 */
+	public function test_grouped_having_nested_equality_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_grouped_having_alias_query',
+			'SELECT a.id, b.id AS bid, COUNT(*) AS c FROM a, b WHERE (a.id = b.id) GROUP BY a.id HAVING c > 0'
 		);
 
 		$this->assertNull( $sql );
