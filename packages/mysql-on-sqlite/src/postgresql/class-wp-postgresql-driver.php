@@ -387,7 +387,7 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
-		$translated_query = $this->translate_wordpress_options_upsert_query( $query );
+		$translated_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
@@ -3166,17 +3166,17 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Translate WordPress options INSERT ... ON DUPLICATE KEY UPDATE queries.
+	 * Translate supported INSERT ... ON DUPLICATE KEY UPDATE queries.
 	 *
-	 * WordPress installation upserts rows into the options table through MySQL's
-	 * ON DUPLICATE KEY syntax. Keep this intentionally narrow: prefixed options
-	 * tables conflict on option_name, and update assignments must be
-	 * "column = VALUES(column)" so unsupported INSERT shapes still reach PDO.
+	 * WordPress emits MySQL upserts for a small set of VALUES inserts. Keep this
+	 * path structured and metadata-backed: only explicit column-list VALUES
+	 * inserts are supported, the conflict target must resolve to a known
+	 * primary/unique key, and update assignments must use VALUES(column).
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
 	 */
-	private function translate_wordpress_options_upsert_query( string $query ): ?string {
+	private function translate_mysql_on_duplicate_key_update_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -3189,7 +3189,7 @@ WHERE option_name IN (
 
 		++$position;
 		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-		if ( null === $table_name || ! $this->is_wordpress_options_table_name( $table_name ) ) {
+		if ( null === $table_name ) {
 			return null;
 		}
 
@@ -3199,29 +3199,35 @@ WHERE option_name IN (
 			return null;
 		}
 
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$on_duplicate = $this->find_on_duplicate_key_update_clause( $tokens, $position );
+		if ( null === $on_duplicate ) {
+			return null;
+		}
+
+		$values = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ) );
+		if ( null === $values ) {
+			return null;
+		}
+
+		$conflict_columns = $this->get_mysql_upsert_conflict_target_columns( $table_name, $columns );
+		if ( null === $conflict_columns ) {
+			return null;
+		}
+
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
 			$column_lookup[ strtolower( $column ) ] = true;
 		}
 
-		if ( ! isset( $column_lookup['option_name'] ) ) {
-			return null;
-		}
+		$table_column_lookup = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$position            = $on_duplicate + 4;
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		$values_start = $position;
-		$on_duplicate = $this->find_on_duplicate_key_update_clause( $tokens, $position + 1 );
-		if ( null === $on_duplicate ) {
-			return null;
-		}
-
-		$values_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $values_start, $on_duplicate );
-		$position   = $on_duplicate + 4;
-
-		$assignments = $this->parse_upsert_update_assignments( $tokens, $position, $column_lookup );
+		$assignments = $this->parse_upsert_update_assignments( $tokens, $position, $column_lookup, $table_column_lookup );
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
@@ -3230,10 +3236,116 @@ WHERE option_name IN (
 			'INSERT INTO %s (%s) %s ON CONFLICT (%s) DO UPDATE SET %s',
 			$this->connection->quote_identifier( $table_name ),
 			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			$values_sql,
-			$this->connection->quote_identifier( 'option_name' ),
+			'VALUES ' . implode( ', ', $values ),
+			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $conflict_columns ) ),
 			implode( ', ', $assignments )
 		);
+	}
+
+	/**
+	 * Parse a bounded sequence of one or more MySQL VALUES rows.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position       Current token position, updated on success.
+	 * @param int             $end            Final token position, exclusive.
+	 * @param int             $expected_count Expected number of row values.
+	 * @return string[]|null PostgreSQL VALUES row SQL fragments, or null when unsupported.
+	 */
+	private function parse_mysql_values_rows( array $tokens, int &$position, int $end, int $expected_count ): ?array {
+		$rows = array();
+
+		while ( $position < $end ) {
+			$values = $this->parse_mysql_value_list( $tokens, $position );
+			if ( null === $values || count( $values ) !== $expected_count ) {
+				return null;
+			}
+
+			$rows[] = '(' . implode( ', ', $values ) . ')';
+
+			if ( $position === $end ) {
+				return $rows;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			++$position;
+		}
+
+		return count( $rows ) > 0 ? $rows : null;
+	}
+
+	/**
+	 * Resolve the PostgreSQL upsert conflict target from MySQL index metadata.
+	 *
+	 * @param string   $table_name Table name.
+	 * @param string[] $columns    Inserted column names.
+	 * @return string[]|null Conflict target columns, or null when unsupported.
+	 */
+	private function get_mysql_upsert_conflict_target_columns( string $table_name, array $columns ): ?array {
+		$insert_column_lookup = array();
+		foreach ( $columns as $column ) {
+			$insert_column_lookup[ strtolower( $column ) ] = true;
+		}
+
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT key_name, column_name, sub_part
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? AND non_unique = \'0\'
+				ORDER BY
+					CASE WHEN UPPER(key_name) = \'PRIMARY\' THEN 0 ELSE 1 END,
+					index_ordinal,
+					seq_in_index',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		$indexes = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$key_name = (string) ( $row['key_name'] ?? '' );
+			if ( '' === $key_name ) {
+				continue;
+			}
+
+			if ( ! isset( $indexes[ $key_name ] ) ) {
+				$indexes[ $key_name ] = array(
+					'columns'      => array(),
+					'has_sub_part' => false,
+				);
+			}
+
+			$column_name = (string) ( $row['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				continue;
+			}
+
+			$indexes[ $key_name ]['columns'][] = $column_name;
+			if ( null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ) {
+				$indexes[ $key_name ]['has_sub_part'] = true;
+			}
+		}
+
+		foreach ( $indexes as $index ) {
+			if ( empty( $index['columns'] ) || $index['has_sub_part'] ) {
+				continue;
+			}
+
+			foreach ( $index['columns'] as $column ) {
+				if ( ! isset( $insert_column_lookup[ strtolower( $column ) ] ) ) {
+					continue 2;
+				}
+			}
+
+			return $index['columns'];
+		}
+
+		return null;
 	}
 
 	/**
@@ -7932,17 +8044,21 @@ WHERE option_name IN (
 	/**
 	 * Parse ON DUPLICATE KEY UPDATE assignments for the supported upsert shape.
 	 *
-	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
-	 * @param int             $position      Current token position, updated on success.
-	 * @param array           $column_lookup Insert-column lookup by lowercase name.
+	 * @param WP_MySQL_Token[] $tokens              MySQL lexer token stream.
+	 * @param int             $position            Current token position, updated on success.
+	 * @param array           $column_lookup       Insert-column lookup by lowercase name.
+	 * @param array           $table_column_lookup Table-column metadata lookup by lowercase name.
 	 * @return string[]|null PostgreSQL SET assignments, or null when unsupported.
 	 */
-	private function parse_upsert_update_assignments( array $tokens, int &$position, array $column_lookup ): ?array {
+	private function parse_upsert_update_assignments( array $tokens, int &$position, array $column_lookup, array $table_column_lookup ): ?array {
 		$assignments = array();
 
 		while ( isset( $tokens[ $position ] ) ) {
 			$target_column = $this->get_mysql_identifier_token_value( $tokens[ $position ] );
-			if ( null === $target_column ) {
+			if (
+				null === $target_column
+				|| ! isset( $table_column_lookup[ strtolower( $target_column ) ] )
+			) {
 				return null;
 			}
 
@@ -7964,7 +8080,6 @@ WHERE option_name IN (
 			$source_column = $this->get_mysql_identifier_token_value( $tokens[ $position + 2 ] );
 			if (
 				null === $source_column
-				|| strtolower( $source_column ) !== strtolower( $target_column )
 				|| ! isset( $column_lookup[ strtolower( $source_column ) ] )
 			) {
 				return null;

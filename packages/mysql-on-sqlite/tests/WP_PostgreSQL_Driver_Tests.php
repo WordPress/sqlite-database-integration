@@ -941,16 +941,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_wordpress_options_upsert_is_translated_to_postgresql_on_conflict(): void {
 		$driver = $this->create_driver();
 
-		$driver->query(
-			'CREATE TABLE wp_options (
-				option_id INTEGER PRIMARY KEY AUTOINCREMENT,
-				option_name TEXT NOT NULL UNIQUE,
-				option_value TEXT NOT NULL,
-				autoload TEXT NOT NULL
-			)'
-		);
+		$this->install_options_table_with_mysql_metadata( $driver );
 
-		$insert = "INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+		$insert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('siteurl', 'http://example.org', 'yes')
 			ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
 			                        `option_value` = VALUES(`option_value`),
@@ -961,14 +954,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wp_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
 					'params' => array(),
 				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
 
-		$update = "INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
+		$update = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('siteurl', 'http://example.net', 'no')
 			ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
 			                        `option_value` = VALUES(`option_value`),
@@ -978,18 +971,72 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wp_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
 					'params' => array(),
 				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
 
-		$rows = $driver->query( "SELECT option_value, autoload FROM wp_options WHERE option_name = 'siteurl'" );
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'http://example.net', $rows[0]->option_value );
 		$this->assertSame( 'no', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests metadata-backed multi-row ON DUPLICATE KEY UPDATE statements.
+	 */
+	public function test_multi_row_on_duplicate_key_update_uses_metadata_conflict_target(): void {
+		$driver = $this->create_driver();
+
+		$this->install_term_relationships_table_with_mysql_metadata( $driver, 'custom_term_relationships' );
+
+		$insert = 'INSERT INTO `custom_term_relationships` (`object_id`, `term_taxonomy_id`, `term_order`)
+			VALUES (227, 709, 1), (227, 710, 2)
+			ON DUPLICATE KEY UPDATE `term_order` = VALUES(`term_order`)';
+
+		$this->assertSame( 2, $driver->query( $insert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "custom_term_relationships" ("object_id", "term_taxonomy_id", "term_order") VALUES (227, 709, 1), (227, 710, 2) ON CONFLICT ("object_id", "term_taxonomy_id") DO UPDATE SET "term_order" = excluded."term_order"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$upsert = 'INSERT INTO `custom_term_relationships` (`object_id`, `term_taxonomy_id`, `term_order`)
+			VALUES (227, 709, 7), (227, 711, 3)
+			ON DUPLICATE KEY UPDATE `term_order` = VALUES(`term_order`)';
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "custom_term_relationships" ("object_id", "term_taxonomy_id", "term_order") VALUES (227, 709, 7), (227, 711, 3) ON CONFLICT ("object_id", "term_taxonomy_id") DO UPDATE SET "term_order" = excluded."term_order"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query(
+			'SELECT object_id, term_taxonomy_id, term_order
+			FROM custom_term_relationships
+			ORDER BY term_taxonomy_id'
+		);
+
+		$this->assertCount( 3, $rows );
+		$this->assertSame( '227', $rows[0]->object_id );
+		$this->assertSame( '709', $rows[0]->term_taxonomy_id );
+		$this->assertSame( '7', $rows[0]->term_order );
+		$this->assertSame( '710', $rows[1]->term_taxonomy_id );
+		$this->assertSame( '2', $rows[1]->term_order );
+		$this->assertSame( '711', $rows[2]->term_taxonomy_id );
+		$this->assertSame( '3', $rows[2]->term_order );
 	}
 
 	/**
@@ -3299,21 +3346,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_options_upsert_still_reaches_backend(): void {
 		$driver = $this->create_driver();
 
-		$driver->query(
-			'CREATE TABLE wp_options (
-				option_name TEXT NOT NULL UNIQUE,
-				option_value TEXT NOT NULL,
-				autoload TEXT NOT NULL
-			)'
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$unsupported_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.org', 'yes')
+			ON DUPLICATE KEY UPDATE `option_value` = 'http://example.net'";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$unsupported_upsert
+			)
 		);
 
 		$this->expectException( PDOException::class );
 
-		$driver->query(
-			"INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`)
-			VALUES ('siteurl', 'http://example.org', 'yes')
-			ON DUPLICATE KEY UPDATE `option_value` = 'http://example.net'"
-		);
+		$driver->query( $unsupported_upsert );
 	}
 
 	/**
@@ -4087,6 +4136,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				PRIMARY KEY (option_id),
 				UNIQUE KEY option_name (option_name)
 			)"
+		);
+	}
+
+	/**
+	 * Install a term relationships table with MySQL composite key metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Table name.
+	 */
+	private function install_term_relationships_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver, string $table_name ): void {
+		$driver->query(
+			sprintf(
+				'CREATE TABLE `%s` (
+					`object_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+					`term_taxonomy_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+					`term_order` int(11) NOT NULL DEFAULT 0,
+					PRIMARY KEY (`object_id`, `term_taxonomy_id`)
+				)',
+				$table_name
+			)
 		);
 	}
 
