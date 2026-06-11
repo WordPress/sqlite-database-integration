@@ -430,6 +430,13 @@ class WP_MySQL_Lexer implements WP_MySQL_Tokens {
 	/**
 	 * Get the name of a token for a given token ID.
 	 *
+	 * Names are derived from the grammar data rather than stored: a keyword
+	 * token resolves to its keyword string via self::KEYWORDS, any other token
+	 * to its WP_MySQL_Tokens constant name via reflection. When several names
+	 * share a token number (keyword synonyms, equal-valued constants), plain
+	 * keywords win over paren-gated function keywords (USER over SESSION_USER),
+	 * then the first name in table order wins.
+	 *
 	 * This method is intended to be used only for testing and debugging purposes,
 	 * when tokens need to be presented by their names in a human-readable form.
 	 * It should not be used in production code, as it's not performance-optimized.
@@ -438,7 +445,26 @@ class WP_MySQL_Lexer implements WP_MySQL_Tokens {
 	 * @return string The token name for the given token ID; null when not found.
 	 */
 	public static function get_token_name( int $token_id ): ?string {
-		return self::TOKEN_NAMES[ $token_id ] ?? null;
+		static $names = null;
+		if ( null === $names ) {
+			$names = array();
+			foreach ( self::KEYWORDS as $keyword => $id ) {
+				if ( ! isset( $names[ $id ] ) && ! isset( self::FUNCTIONS[ $keyword ] ) ) {
+					$names[ $id ] = $keyword;
+				}
+			}
+			foreach ( self::KEYWORDS as $keyword => $id ) {
+				if ( ! isset( $names[ $id ] ) ) {
+					$names[ $id ] = $keyword;
+				}
+			}
+			foreach ( ( new ReflectionClass( WP_MySQL_Tokens::class ) )->getConstants() as $name => $value ) {
+				if ( is_int( $value ) && ! isset( $names[ $value ] ) ) {
+					$names[ $value ] = $name;
+				}
+			}
+		}
+		return $names[ $token_id ] ?? null;
 	}
 
 	private function read_next_token(): ?int {

@@ -24,27 +24,27 @@ class WP_MySQL_Token_Tests extends TestCase {
 	}
 
 	public function test_get_value_unquotes_string_literals(): void {
-		$this->assertSame( "a'b", self::first_token( "SELECT 'a''b'", 'TEXT_STRING' )->get_value() );
-		$this->assertSame( 'a"b', self::first_token( 'SELECT "a""b"', 'TEXT_STRING' )->get_value() );
-		$this->assertSame( "new\nline", self::first_token( "SELECT 'new\\nline'", 'TEXT_STRING' )->get_value() );
+		$this->assertSame( "a'b", self::first_token( "SELECT 'a''b'", 'SINGLE_QUOTED_TEXT' )->get_value() );
+		$this->assertSame( 'a"b', self::first_token( 'SELECT "a""b"', 'SINGLE_QUOTED_TEXT' )->get_value() );
+		$this->assertSame( "new\nline", self::first_token( "SELECT 'new\\nline'", 'SINGLE_QUOTED_TEXT' )->get_value() );
 	}
 
 	public function test_get_value_honors_no_backslash_escapes_mode(): void {
-		$token = self::first_token( "SELECT 'a\\nb'", 'TEXT_STRING', array( 'NO_BACKSLASH_ESCAPES' ) );
+		$token = self::first_token( "SELECT 'a\\nb'", 'SINGLE_QUOTED_TEXT', array( 'NO_BACKSLASH_ESCAPES' ) );
 		$this->assertSame( 'a\\nb', $token->get_value() );
 	}
 
 	public function test_get_value_unquotes_backtick_identifiers(): void {
-		$this->assertSame( 'col name', self::first_token( 'SELECT `col name` FROM t', 'IDENT_QUOTED' )->get_value() );
+		$this->assertSame( 'col name', self::first_token( 'SELECT `col name` FROM t', 'BACK_TICK_QUOTED_ID' )->get_value() );
 	}
 
 	public function test_get_value_does_not_unquote_unquoted_tokens(): void {
 		// The SSL keyword's Bison number collides with one of the lexer's
 		// internal quoted-text constants; value extraction must not be fooled
 		// by token ids and must return keyword bytes as-is.
-		$this->assertSame( 'SSL', self::first_token( 'CREATE USER u REQUIRE SSL', 'SSL_SYM' )->get_value() );
-		$this->assertSame( 'SELECT', self::first_token( 'SELECT 1', 'SELECT_SYM' )->get_value() );
-		$this->assertSame( '42', self::first_token( 'SELECT 42', 'NUM' )->get_value() );
+		$this->assertSame( 'SSL', self::first_token( 'CREATE USER u REQUIRE SSL', 'SSL' )->get_value() );
+		$this->assertSame( 'SELECT', self::first_token( 'SELECT 1', 'SELECT' )->get_value() );
+		$this->assertSame( '42', self::first_token( 'SELECT 42', 'INT_NUMBER' )->get_value() );
 	}
 
 	public function test_get_name_resolves_bison_terminal_names(): void {
@@ -54,7 +54,7 @@ class WP_MySQL_Token_Tests extends TestCase {
 			$names[] = $token->get_name();
 		}
 		$this->assertSame(
-			array( 'SELECT_SYM', 'TEXT_STRING', "','", "'('", 'NUM', "')'", 'END_OF_INPUT', '$end' ),
+			array( 'SELECT', 'SINGLE_QUOTED_TEXT', 'COMMA_SYMBOL', 'OPEN_PAR_SYMBOL', 'INT_NUMBER', 'CLOSE_PAR_SYMBOL', 'END_OF_INPUT', 'END_MARKER' ),
 			$names
 		);
 	}

@@ -15,7 +15,10 @@
  *     matching MySQL, which recognises them only inside optimizer hints.
  *   - FUNCTIONS — keyword strings declared with SYM_FN, which MySQL treats as
  *     keywords only when directly followed by a parenthesis.
- *   - TOKEN_NAMES — token number => terminal name, for diagnostics.
+ *
+ * No number-to-name table is shipped: diagnostic token names are derived at
+ * runtime by inverting KEYWORDS and reflecting the named constants (see
+ * WP_MySQL_Lexer::get_token_name()).
  *
  * Usage: php generate-tokens.php <automaton.xml> <lex.h> <output.php>
  */
@@ -150,10 +153,6 @@ foreach ( $matches as $match ) {
 ksort( $keywords );
 ksort( $functions );
 
-// Diagnostics: every terminal's number => name.
-$names = array_flip( $terminals );
-ksort( $names );
-
 // Render the interface.
 $lines   = array();
 $lines[] = '<?php';
@@ -175,19 +174,16 @@ $lines[] = '';
 $lines[] = "\tconst KEYWORDS = " . str_replace( "\n", "\n\t", var_export( $keywords, true ) ) . ';';
 $lines[] = '';
 $lines[] = "\tconst FUNCTIONS = " . str_replace( "\n", "\n\t", var_export( $functions, true ) ) . ';';
-$lines[] = '';
-$lines[] = "\tconst TOKEN_NAMES = " . str_replace( "\n", "\n\t", var_export( $names, true ) ) . ';';
 $lines[] = '}';
 file_put_contents( $output_path, implode( "\n", $lines ) . "\n" );
 
 fwrite(
 	STDERR,
 	sprintf(
-		"constants=%d keywords=%d functions=%d names=%d\n",
+		"constants=%d keywords=%d functions=%d\n",
 		count( $constant_values ),
 		count( $keywords ),
-		count( $functions ),
-		count( $names )
+		count( $functions )
 	)
 );
 echo round( filesize( $output_path ) / 1024 ) . " KB written to $output_path\n";
