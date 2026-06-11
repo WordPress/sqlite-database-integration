@@ -1,0 +1,4 @@
+# Build workspace: fetched MySQL sources and the Bison automaton dump.
+# These are large, regenerable intermediates. Only the small generated PHP
+# artifacts under src/grammar/ are committed.
+/build/

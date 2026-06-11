@@ -1,0 +1,14 @@
+{
+	"name": "wordpress/mysql-parser",
+	"type": "library",
+	"description": "A fast, table-driven MySQL parser generated from the official MySQL 8.4 LTS grammar.",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=7.2"
+	},
+	"scripts": {
+		"build-grammar": [
+			"./bin/build-grammar"
+		]
+	}
+}
