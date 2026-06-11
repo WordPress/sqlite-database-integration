@@ -2220,6 +2220,94 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests grouped SELECT DISTINCT term ID queries hide ORDER BY expressions.
+	 */
+	public function test_grouped_distinct_term_id_order_by_name_preserves_visible_projection(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_taxonomy (term_taxonomy_id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL, taxonomy TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_relationships (object_id INTEGER NOT NULL, term_taxonomy_id INTEGER NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (1, 'Beta')" );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (2, 'Alpha')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (10, 1, 'category')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (20, 2, 'category')" );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (1, 10)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (1, 10)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (1, 20)' );
+
+		$select = "SELECT DISTINCT t.term_id
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy IN ('category') AND tr.object_id IN (1)
+			GROUP BY t.term_id
+			ORDER BY t.name ASC
+			LIMIT 10";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( '2', $rows[0]->term_id );
+		$this->assertSame( '1', $rows[1]->term_id );
+		$this->assertSame( array( 'term_id' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "__wp_pg_distinct"."term_id" AS "term_id" FROM (SELECT DISTINCT t.term_id AS "term_id", MIN(t.name) AS "__wp_pg_order_0" FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id WHERE tt.taxonomy IN (\'category\') AND tr.object_id IN (1) GROUP BY t.term_id) AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC LIMIT 10',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests grouped SELECT DISTINCT term query rows hide ORDER BY expressions.
+	 */
+	public function test_grouped_distinct_term_query_order_by_name_preserves_visible_projection(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_taxonomy (term_taxonomy_id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL, taxonomy TEXT NOT NULL, description TEXT NOT NULL, parent INTEGER NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_relationships (object_id INTEGER NOT NULL, term_taxonomy_id INTEGER NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (1, 'Beta')" );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (2, 'Alpha')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent) VALUES (10, 1, 'wptests_tax', 'Beta description', 0)" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent) VALUES (20, 2, 'wptests_tax', 'Alpha description', 0)" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent) VALUES (30, 1, 'other_tax', 'Other description', 0)" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (100, 'post', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (101, 'post', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (102, 'post', 'draft')" );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (100, 10)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (101, 10)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (102, 10)' );
+		$driver->query( 'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES (100, 20)' );
+
+		$select = "SELECT DISTINCT t.term_id, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, COUNT(p.post_type) AS count
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id LEFT JOIN wptests_term_relationships AS r ON r.term_taxonomy_id = tt.term_taxonomy_id LEFT JOIN wptests_posts AS p ON p.ID = r.object_id
+			WHERE tt.taxonomy IN ('wptests_tax') AND (p.post_type = 'post' OR p.post_type IS NULL) AND (p.post_status = 'publish')
+			GROUP BY t.term_id ORDER BY t.name ASC";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( array( 'term_id', 'term_taxonomy_id', 'taxonomy', 'description', 'parent', 'count' ), array_keys( get_object_vars( $rows[0] ) ) );
+		$this->assertSame( '2', $rows[0]->term_id );
+		$this->assertSame( '20', $rows[0]->term_taxonomy_id );
+		$this->assertSame( '1', $rows[0]->count );
+		$this->assertSame( '1', $rows[1]->term_id );
+		$this->assertSame( '10', $rows[1]->term_taxonomy_id );
+		$this->assertSame( '2', $rows[1]->count );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT "__wp_pg_distinct"."term_id" AS "term_id", "__wp_pg_distinct"."term_taxonomy_id" AS "term_taxonomy_id", "__wp_pg_distinct"."taxonomy" AS "taxonomy", "__wp_pg_distinct"."description" AS "description", "__wp_pg_distinct"."parent" AS "parent", "__wp_pg_distinct"."count" AS "count" FROM (SELECT DISTINCT t.term_id AS "term_id", tt.term_taxonomy_id AS "term_taxonomy_id", tt.taxonomy AS "taxonomy", tt.description AS "description", tt.parent AS "parent", COUNT (p.post_type) AS "count", MIN(t.name) AS "__wp_pg_order_0" FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id LEFT JOIN wptests_term_relationships AS r ON r.term_taxonomy_id = tt.term_taxonomy_id LEFT JOIN wptests_posts AS p ON p."ID" = r.object_id WHERE tt.taxonomy IN (\'wptests_tax\') AND (p.post_type = \'post\' OR p.post_type IS NULL) AND (p.post_status = \'publish\') GROUP BY t.term_id, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent) AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests SELECT DISTINCT term ID queries hide relationship order columns.
 	 */
 	public function test_distinct_term_id_order_by_term_order_preserves_visible_projection(): void {
@@ -2815,18 +2903,49 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests grouped DISTINCT ORDER BY shapes fail closed for later SELECT passes.
+	 * Tests unsupported grouped DISTINCT ORDER BY shapes fail closed.
 	 */
-	public function test_distinct_order_by_grouped_shape_fails_closed(): void {
+	public function test_distinct_grouped_order_by_unsupported_shapes_fail_closed(): void {
 		$driver = $this->create_driver();
 
-		$sql = $this->translate_driver_query_with_private_method(
-			$driver,
-			'translate_distinct_order_by_query',
-			'SELECT DISTINCT t.term_id, COUNT(*) AS term_tt_count FROM wptests_terms AS t GROUP BY t.term_id ORDER BY t.name ASC'
+		$term_query          = 'SELECT DISTINCT t.term_id, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, COUNT(p.post_type) AS count
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id LEFT JOIN wptests_term_relationships AS r ON r.term_taxonomy_id = tt.term_taxonomy_id LEFT JOIN wptests_posts AS p ON p.ID = r.object_id
+			WHERE %s
+			GROUP BY t.term_id ORDER BY %s';
+		$unsupported_queries = array(
+			'SELECT DISTINCT t.term_id, COUNT(*) AS term_tt_count FROM wptests_terms AS t GROUP BY t.term_id ORDER BY t.name ASC',
+			'SELECT DISTINCT t.term_id FROM wptests_terms AS t GROUP BY t.term_id, t.slug ORDER BY t.name ASC',
+			'SELECT DISTINCT t.term_id FROM wptests_terms AS t GROUP BY t.term_id ORDER BY COUNT(*) DESC',
+			sprintf(
+				$term_query,
+				"tt.taxonomy IN ('wptests_tax', 'category') AND (p.post_status = 'publish')",
+				't.name ASC'
+			),
+			sprintf(
+				$term_query,
+				"(p.post_status = 'publish')",
+				't.name ASC'
+			),
+			"SELECT DISTINCT t.term_id, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, tt.count, COUNT(p.post_type) AS count
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id LEFT JOIN wptests_term_relationships AS r ON r.term_taxonomy_id = tt.term_taxonomy_id LEFT JOIN wptests_posts AS p ON p.ID = r.object_id
+			WHERE tt.taxonomy IN ('wptests_tax') AND (p.post_status = 'publish')
+			GROUP BY t.term_id ORDER BY t.name ASC",
+			sprintf(
+				$term_query,
+				"tt.taxonomy IN ('wptests_tax') AND (p.post_status = 'publish')",
+				'p.post_date DESC'
+			),
 		);
 
-		$this->assertNull( $sql );
+		foreach ( $unsupported_queries as $query ) {
+			$sql = $this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_strict_aggregate_grouped_order_by_query',
+				$query
+			);
+
+			$this->assertNull( $sql );
+		}
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,

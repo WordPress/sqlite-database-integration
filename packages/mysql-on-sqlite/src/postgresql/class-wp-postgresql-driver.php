@@ -6058,9 +6058,6 @@ WHERE option_name IN (
 		$archive_date_expression = $this->get_mysql_archive_grouped_date_expression_bounds( $tokens, $group_items );
 		$is_comment_id_group     = $this->is_mysql_comment_id_grouped_select_shape( $tokens, $projection_items, $group_items );
 		$is_post_id_group        = $this->is_mysql_post_id_grouped_select_shape( $tokens, $projection_items, $group_items );
-		if ( null === $archive_date_expression && ! $is_comment_id_group && ! $is_post_id_group ) {
-			return null;
-		}
 
 		if (
 			$has_distinct
@@ -6074,6 +6071,22 @@ WHERE option_name IN (
 				)
 			)
 		) {
+			return $this->translate_distinct_strict_grouped_order_by_query(
+				$tokens,
+				$projection_start,
+				$projection_items,
+				$group_items,
+				$order_items,
+				$from_position,
+				$group_position,
+				$order_position,
+				$limit_position,
+				$statement_end,
+				$include_limit
+			);
+		}
+
+		if ( null === $archive_date_expression && ! $is_comment_id_group && ! $is_post_id_group ) {
 			return null;
 		}
 
@@ -6155,6 +6168,556 @@ WHERE option_name IN (
 			$replacements
 		)
 			. ' ORDER BY ' . implode( ', ', $order_sql );
+		if ( $include_limit && null !== $limit_position ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Translate DISTINCT grouped queries that need hidden ORDER BY projections.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int             $projection_start First projection token position.
+	 * @param array           $projection_items Parsed projection items.
+	 * @param array           $group_items      Parsed GROUP BY item ranges.
+	 * @param array           $order_items      Parsed ORDER BY items.
+	 * @param int             $from_position    FROM token position.
+	 * @param int             $group_position   GROUP token position.
+	 * @param int             $order_position   ORDER token position.
+	 * @param int|null        $limit_position   LIMIT token position, or null.
+	 * @param int             $statement_end    Final statement token position, exclusive.
+	 * @param bool            $include_limit    Whether to preserve the LIMIT/OFFSET clause.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_distinct_strict_grouped_order_by_query(
+		array $tokens,
+		int $projection_start,
+		array $projection_items,
+		array $group_items,
+		array $order_items,
+		int $from_position,
+		int $group_position,
+		int $order_position,
+		?int $limit_position,
+		int $statement_end,
+		bool $include_limit = true
+	): ?string {
+		$select_end = $limit_position ?? $statement_end;
+		if (
+			$this->contains_mysql_token(
+				$tokens,
+				$projection_start,
+				$select_end,
+				array(
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$has_hidden_order_expression = false;
+		foreach ( $order_items as $order_item ) {
+			if ( null === $order_item['projection_index'] ) {
+				$has_hidden_order_expression = true;
+				break;
+			}
+		}
+
+		if ( ! $has_hidden_order_expression ) {
+			return null;
+		}
+
+		if (
+			! $this->contains_mysql_aggregate_call( $tokens, $projection_start, $select_end )
+			&& $this->is_mysql_distinct_grouped_projection_shape( $tokens, $projection_items, $group_items )
+		) {
+			return $this->build_distinct_strict_grouped_order_by_query(
+				$tokens,
+				$projection_items,
+				$this->get_mysql_group_by_item_sql( $tokens, $group_items ),
+				$order_items,
+				$from_position,
+				$group_position,
+				$order_position,
+				$limit_position,
+				$statement_end,
+				$include_limit
+			);
+		}
+
+		$group_by_sql = $this->get_mysql_distinct_term_taxonomy_group_by_sql(
+			$tokens,
+			$projection_items,
+			$group_items,
+			$order_items,
+			$from_position,
+			$group_position
+		);
+		if ( null === $group_by_sql ) {
+			return null;
+		}
+
+		return $this->build_distinct_strict_grouped_order_by_query(
+			$tokens,
+			$projection_items,
+			$group_by_sql,
+			$order_items,
+			$from_position,
+			$group_position,
+			$order_position,
+			$limit_position,
+			$statement_end,
+			$include_limit
+		);
+	}
+
+	/**
+	 * Translate parsed GROUP BY items to PostgreSQL SQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param array           $group_items Parsed GROUP BY item ranges.
+	 * @return string[] PostgreSQL GROUP BY expressions.
+	 */
+	private function get_mysql_group_by_item_sql( array $tokens, array $group_items ): array {
+		$group_by_sql = array();
+		foreach ( $group_items as $group_item ) {
+			$group_by_sql[] = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$group_item['start'],
+				$group_item['end']
+			);
+		}
+
+		return $group_by_sql;
+	}
+
+	/**
+	 * Check whether DISTINCT projection expressions exactly match GROUP BY.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $projection_items Parsed projection items.
+	 * @param array           $group_items      Parsed GROUP BY item ranges.
+	 * @return bool Whether grouping already preserves DISTINCT cardinality.
+	 */
+	private function is_mysql_distinct_grouped_projection_shape( array $tokens, array $projection_items, array $group_items ): bool {
+		if ( count( $projection_items ) !== count( $group_items ) ) {
+			return false;
+		}
+
+		$matched_group_items = array();
+		foreach ( $projection_items as $projection_item ) {
+			$matched = false;
+			foreach ( $group_items as $group_index => $group_item ) {
+				if ( isset( $matched_group_items[ $group_index ] ) ) {
+					continue;
+				}
+
+				if (
+					$this->are_mysql_token_ranges_equivalent(
+						$tokens,
+						$projection_item['expression_start'],
+						$projection_item['expression_end'],
+						$group_item['start'],
+						$group_item['end']
+					)
+				) {
+					$matched_group_items[ $group_index ] = true;
+					$matched                             = true;
+					break;
+				}
+			}
+
+			if ( ! $matched ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Get GROUP BY expressions for the supported single-taxonomy term query.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $projection_items Parsed projection items.
+	 * @param array           $group_items      Parsed GROUP BY item ranges.
+	 * @param array           $order_items      Parsed ORDER BY items.
+	 * @param int             $from_position    FROM token position.
+	 * @param int             $group_position   GROUP token position.
+	 * @return string[]|null PostgreSQL GROUP BY expressions, or null when unsupported.
+	 */
+	private function get_mysql_distinct_term_taxonomy_group_by_sql(
+		array $tokens,
+		array $projection_items,
+		array $group_items,
+		array $order_items,
+		int $from_position,
+		int $group_position
+	): ?array {
+		if (
+			! $this->is_mysql_distinct_term_taxonomy_projection_shape( $tokens, $projection_items )
+			|| ! $this->is_mysql_distinct_term_taxonomy_group_shape( $tokens, $group_items )
+			|| ! $this->is_mysql_distinct_term_taxonomy_order_shape( $tokens, $order_items )
+		) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $group_position );
+		if (
+			null === $where_position
+			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $where_position )
+			|| ! $this->has_mysql_single_term_taxonomy_predicate( $tokens, $where_position + 1, $group_position )
+		) {
+			return null;
+		}
+
+		return array(
+			't.term_id',
+			'tt.term_taxonomy_id',
+			'tt.taxonomy',
+			'tt.description',
+			'tt.parent',
+		);
+	}
+
+	/**
+	 * Check whether the projection is WordPress's term query result shape.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $projection_items Parsed projection items.
+	 * @return bool Whether the projection shape is supported.
+	 */
+	private function is_mysql_distinct_term_taxonomy_projection_shape( array $tokens, array $projection_items ): bool {
+		if ( 6 !== count( $projection_items ) ) {
+			return false;
+		}
+
+		$expected_columns = array(
+			array( 't', 'term_id', 'term_id' ),
+			array( 'tt', 'term_taxonomy_id', 'term_taxonomy_id' ),
+			array( 'tt', 'taxonomy', 'taxonomy' ),
+			array( 'tt', 'description', 'description' ),
+			array( 'tt', 'parent', 'parent' ),
+		);
+		foreach ( $expected_columns as $index => $expected_column ) {
+			if (
+				! $this->is_mysql_projection_item_qualified_column(
+					$tokens,
+					$projection_items[ $index ],
+					$expected_column[0],
+					$expected_column[1],
+					$expected_column[2]
+				)
+			) {
+				return false;
+			}
+		}
+
+		return $this->is_mysql_count_post_type_projection_item( $tokens, $projection_items[5] );
+	}
+
+	/**
+	 * Check whether a projection item is a specific qualified column.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param array           $item   Parsed projection item.
+	 * @param string          $alias  Expected table alias.
+	 * @param string          $column Expected column name.
+	 * @param string          $name   Expected output name.
+	 * @return bool Whether the projection item matches.
+	 */
+	private function is_mysql_projection_item_qualified_column( array $tokens, array $item, string $alias, string $column, string $name ): bool {
+		return strtolower( $item['alias'] ) === $name
+			&& $this->is_mysql_exact_qualified_column_expression(
+				$tokens,
+				$item['expression_start'],
+				$item['expression_end'],
+				$alias,
+				$column
+			);
+	}
+
+	/**
+	 * Check whether a projection item is COUNT(p.post_type) AS count.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param array           $item   Parsed projection item.
+	 * @return bool Whether the projection item matches.
+	 */
+	private function is_mysql_count_post_type_projection_item( array $tokens, array $item ): bool {
+		if ( 'count' !== strtolower( $item['alias'] ) ) {
+			return false;
+		}
+
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $item['expression_start'], $item['expression_end'] );
+		if (
+			! isset( $tokens[ $bounds['start'] ], $tokens[ $bounds['start'] + 1 ] )
+			|| ! $this->is_mysql_token_value( $tokens[ $bounds['start'] ], 'count' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $bounds['start'] + 1 ]->id
+			|| $this->get_mysql_parenthesized_sequence_end( $tokens, $bounds['start'] + 1, $bounds['end'] ) !== $bounds['end']
+		) {
+			return false;
+		}
+
+		return $this->is_mysql_exact_qualified_column_expression(
+			$tokens,
+			$bounds['start'] + 2,
+			$bounds['end'] - 1,
+			'p',
+			'post_type'
+		);
+	}
+
+	/**
+	 * Check whether GROUP BY is exactly t.term_id.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param array           $group_items Parsed GROUP BY item ranges.
+	 * @return bool Whether the group shape is supported.
+	 */
+	private function is_mysql_distinct_term_taxonomy_group_shape( array $tokens, array $group_items ): bool {
+		return 1 === count( $group_items )
+			&& $this->is_mysql_exact_qualified_column_expression(
+				$tokens,
+				$group_items[0]['start'],
+				$group_items[0]['end'],
+				't',
+				'term_id'
+			);
+	}
+
+	/**
+	 * Check whether ORDER BY can be hidden for the supported term query.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param array           $order_items Parsed ORDER BY items.
+	 * @return bool Whether the order shape is supported.
+	 */
+	private function is_mysql_distinct_term_taxonomy_order_shape( array $tokens, array $order_items ): bool {
+		if ( 1 !== count( $order_items ) || null !== $order_items[0]['projection_index'] ) {
+			return false;
+		}
+
+		return $this->is_mysql_exact_qualified_column_expression(
+			$tokens,
+			$order_items[0]['expression_start'],
+			$order_items[0]['expression_end'],
+			't',
+			'name'
+		);
+	}
+
+	/**
+	 * Check whether FROM begins with terms t joined to term_taxonomy tt.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int             $from_position FROM token position.
+	 * @param int             $from_end      Final FROM-clause token, exclusive.
+	 * @return bool Whether the FROM shape is supported.
+	 */
+	private function is_mysql_distinct_term_taxonomy_from_shape( array $tokens, int $from_position, int $from_end ): bool {
+		$terms_reference = $this->parse_mysql_table_reference( $tokens, $from_position + 1, $from_end );
+		if (
+			null === $terms_reference
+			|| ! $this->is_mysql_wordpress_table_reference( $terms_reference, 'terms', 't' )
+		) {
+			return false;
+		}
+
+		$position = $terms_reference['position'];
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		$term_taxonomy_reference = $this->parse_mysql_table_reference( $tokens, $position + 1, $from_end );
+		if (
+			null === $term_taxonomy_reference
+			|| ! $this->is_mysql_wordpress_table_reference( $term_taxonomy_reference, 'term_taxonomy', 'tt' )
+		) {
+			return false;
+		}
+
+		$position = $term_taxonomy_reference['position'];
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		$predicate_end = $this->find_mysql_join_predicate_end( $tokens, $position + 1, $from_end );
+		$pair          = $this->get_mysql_top_level_simple_column_equality_pair( $tokens, $position + 1, $predicate_end );
+		return null !== $pair && $this->is_mysql_wordpress_term_split_column_equality_pair( $pair );
+	}
+
+	/**
+	 * Check whether WHERE constrains tt.taxonomy to one string literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First WHERE predicate token.
+	 * @param int             $end    Final WHERE predicate token, exclusive.
+	 * @return bool Whether a single taxonomy predicate is present.
+	 */
+	private function has_mysql_single_term_taxonomy_predicate( array $tokens, int $start, int $end ): bool {
+		$conjuncts = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $start, $end );
+		if ( null === $conjuncts ) {
+			return false;
+		}
+
+		$matched = false;
+		foreach ( $conjuncts as $conjunct ) {
+			if ( ! $this->is_mysql_single_term_taxonomy_predicate( $tokens, $conjunct['start'], $conjunct['end'] ) ) {
+				continue;
+			}
+
+			if ( $matched ) {
+				return false;
+			}
+
+			$matched = true;
+		}
+
+		return $matched;
+	}
+
+	/**
+	 * Check whether a predicate is tt.taxonomy = literal or IN (single literal).
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First predicate token.
+	 * @param int             $end    Final predicate token, exclusive.
+	 * @return bool Whether the predicate constrains one taxonomy value.
+	 */
+	private function is_mysql_single_term_taxonomy_predicate( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
+		if (
+			null === $reference
+			|| $reference['end'] >= $end
+			|| 'tt' !== strtolower( (string) $reference['qualifier'] )
+			|| 'taxonomy' !== strtolower( $reference['column'] )
+		) {
+			return false;
+		}
+
+		if (
+			WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $reference['end'] ]->id
+			&& $this->is_mysql_string_literal_range( $tokens, $reference['end'] + 1, $end )
+		) {
+			return true;
+		}
+
+		if (
+			WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $reference['end'] ]->id
+			|| ! isset( $tokens[ $reference['end'] + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $reference['end'] + 1 ]->id
+		) {
+			return false;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $reference['end'] + 1, $end );
+		if ( $after_close !== $end ) {
+			return false;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $reference['end'] + 2, $end - 1 );
+		return null !== $items
+			&& 1 === count( $items )
+			&& $this->is_mysql_string_literal_range( $tokens, $items[0]['start'], $items[0]['end'] );
+	}
+
+	/**
+	 * Check whether an expression is exactly a qualified column reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First expression token.
+	 * @param int             $end    Final expression token, exclusive.
+	 * @param string          $alias  Expected table alias.
+	 * @param string          $column Expected column name.
+	 * @return bool Whether the expression matches.
+	 */
+	private function is_mysql_exact_qualified_column_expression( array $tokens, int $start, int $end, string $alias, string $column ): bool {
+		$column_expression = $this->get_mysql_simple_qualified_column_expression( $tokens, $start, $end );
+		return null !== $column_expression
+			&& strtolower( $alias ) === $column_expression['qualifier']
+			&& strtolower( $column ) === $column_expression['column'];
+	}
+
+	/**
+	 * Build a derived-table rewrite for DISTINCT grouped ORDER BY queries.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $projection_items Parsed projection items.
+	 * @param string[]        $group_by_sql     PostgreSQL GROUP BY expressions.
+	 * @param array           $order_items      Parsed ORDER BY items.
+	 * @param int             $from_position    FROM token position.
+	 * @param int             $group_position   GROUP token position.
+	 * @param int             $order_position   ORDER token position.
+	 * @param int|null        $limit_position   LIMIT token position, or null.
+	 * @param int             $statement_end    Final statement token position, exclusive.
+	 * @param bool            $include_limit    Whether to preserve the LIMIT/OFFSET clause.
+	 * @return string PostgreSQL query.
+	 */
+	private function build_distinct_strict_grouped_order_by_query(
+		array $tokens,
+		array $projection_items,
+		array $group_by_sql,
+		array $order_items,
+		int $from_position,
+		int $group_position,
+		int $order_position,
+		?int $limit_position,
+		int $statement_end,
+		bool $include_limit = true
+	): string {
+		$derived_table_alias        = '__wp_pg_distinct';
+		$quoted_derived_table_alias = $this->connection->quote_identifier( $derived_table_alias );
+		$inner_projection_sql       = array();
+		$outer_projection_sql       = array();
+
+		foreach ( $projection_items as $projection_item ) {
+			$quoted_alias           = $this->connection->quote_identifier( $projection_item['alias'] );
+			$inner_projection_sql[] = $projection_item['sql'] . ' AS ' . $quoted_alias;
+			$outer_projection_sql[] = sprintf(
+				'%s.%s AS %s',
+				$quoted_derived_table_alias,
+				$quoted_alias,
+				$quoted_alias
+			);
+		}
+
+		foreach ( $order_items as $index => $order_item ) {
+			if ( null !== $order_item['projection_index'] ) {
+				continue;
+			}
+
+			$aggregate_function     = 'DESC' === $order_item['direction'] ? 'MAX' : 'MIN';
+			$quoted_order_alias     = $this->connection->quote_identifier( $this->get_distinct_order_by_hidden_alias( $index ) );
+			$inner_projection_sql[] = sprintf(
+				'%s(%s) AS %s',
+				$aggregate_function,
+				$order_item['sql'],
+				$quoted_order_alias
+			);
+		}
+
+		$sql = sprintf(
+			'SELECT %s FROM (SELECT DISTINCT %s %s GROUP BY %s) AS %s ORDER BY %s',
+			implode( ', ', $outer_projection_sql ),
+			implode( ', ', $inner_projection_sql ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $group_position ),
+			implode( ', ', $group_by_sql ),
+			$quoted_derived_table_alias,
+			$this->get_distinct_order_by_outer_order_sql( $projection_items, $order_items, $quoted_derived_table_alias )
+		);
+
 		if ( $include_limit && null !== $limit_position ) {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
