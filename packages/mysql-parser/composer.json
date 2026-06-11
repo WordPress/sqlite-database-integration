@@ -9,6 +9,10 @@
 	"scripts": {
 		"build-grammar": [
 			"./bin/build-grammar"
+		],
+		"benchmark": [
+			"@php tests/benchmark.php",
+			"@php -d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing tests/benchmark.php"
 		]
 	}
 }
