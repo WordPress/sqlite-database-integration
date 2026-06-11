@@ -8,7 +8,7 @@
  * shift/reduce conflict by precedence and reports zero reduce/reduce
  * conflicts), so each (state, token) cell holds a single action.
  *
- * The table is kept small with three structural devices, all in plain PHP:
+ * The table is kept small with four structural devices, all in plain PHP:
  *
  *   1. Per-state default reduce ('state_default'): most states reduce by the
  *      same production for nearly every lookahead; only differing cells are
@@ -16,14 +16,19 @@
  *   2. Row sharing ('state_row'): states with identical cell sets point at a
  *      single shared row.
  *   3. Patch rows ('row_base'): the keyword-heavy rows are hundreds of cells
- *      each but nearly identical to one another (a keyword reduces by the same
- *      keyword-as-identifier production in every such state), so a row may be
- *      stored as a small patch over an earlier base row; the runtime applies
- *      patches with an array union at construction time.
+ *      each but nearly identical to one another, so a row may be stored as a
+ *      small patch over an earlier base row; the runtime applies patches with
+ *      an array union at construction time.
+ *   4. Modal shift targets ('shift_target' + 'row_shifts'): most shifts on a
+ *      given terminal go to the same successor state, so such cells are
+ *      stored as bare token lists and restored from a per-terminal target
+ *      table at construction time.
  *
  *   GOTO targets cluster by nonterminal instead, so they are stored as a
- *   per-nonterminal default ('goto_default') plus sparse per-state exceptions
- *   ('goto_exceptions').
+ *   per-nonterminal default ('goto_default') plus sparse exceptions keyed by
+ *   nonterminal ('goto_exceptions'). Rule names need no per-production index:
+ *   the names list is ordered by the (contiguous) nonterminal ids, so a
+ *   rule's name is names[lhs - lhs_base].
  *
  * Action codes (int): 0 = syntax error; 1..ns-1 = shift to that state;
  * ns = accept; < 0 = reduce by production -code.
@@ -230,6 +235,47 @@ foreach ( $rows as $rid => $cells ) {
 }
 
 /*
+ * Modal shift targets: for each terminal, find the most common shift target
+ * among the stored cells. Cells that hit it are emitted as bare token lists
+ * ('row_shifts') instead of token => target pairs; the runtime restores them
+ * from the per-terminal table ('shift_target') at construction time.
+ */
+$shift_freq = array();
+foreach ( $emitted as $cells ) {
+	foreach ( $cells as $token => $code ) {
+		if ( $code > 0 && $code < $ns ) {
+			$shift_freq[ $token ][ $code ] = ( $shift_freq[ $token ][ $code ] ?? 0 ) + 1;
+		}
+	}
+}
+ksort( $shift_freq );
+$shift_target = array();
+foreach ( $shift_freq as $token => $freq ) {
+	// Most frequent target wins; ties keep the first-encountered target so the
+	// output is deterministic on any PHP version.
+	$best_target = null;
+	$best_count  = 0;
+	foreach ( $freq as $target => $count ) {
+		if ( $count > $best_count ) {
+			$best_target = $target;
+			$best_count  = $count;
+		}
+	}
+	$shift_target[ $token ] = $best_target;
+}
+$row_shifts  = array();
+$modal_cells = 0;
+foreach ( $emitted as $rid => $cells ) {
+	foreach ( $cells as $token => $code ) {
+		if ( $code > 0 && $code < $ns && $shift_target[ $token ] === $code ) {
+			$row_shifts[ $rid ][] = $token;
+			unset( $emitted[ $rid ][ $token ] );
+			++$modal_cells;
+		}
+	}
+}
+
+/*
  * GOTO: targets cluster by nonterminal, so store the most frequent target per
  * nonterminal as the default and per-state exceptions as a sparse nested map.
  */
@@ -254,39 +300,46 @@ foreach ( $freq_by_nt as $nt => $freq ) {
 	}
 	$goto_default[ $nt ] = $best_target;
 }
+// Keyed by nonterminal (434 wrappers) rather than by state (1,491): the same
+// cells in far fewer enclosing arrays.
 $goto_exceptions = array();
 for ( $st = 0; $st < $ns; $st++ ) {
 	foreach ( $goto[ $st ] ?? array() as $nt => $target ) {
 		if ( $target !== $goto_default[ $nt ] ) {
-			$goto_exceptions[ $st ][ $nt ] = $target;
+			$goto_exceptions[ $nt ][ $st ] = $target;
 		}
 	}
-	if ( isset( $goto_exceptions[ $st ] ) ) {
-		ksort( $goto_exceptions[ $st ] );
-	}
 }
+ksort( $goto_exceptions );
 
-// Per-production metadata: lhs symbol, rhs length, and a name (deduplicated).
-$name_index = array();
-$names      = array();
-$rule_name  = array();
+/*
+ * Per-production metadata: lhs symbol and rhs length. Rule names need no
+ * per-production index: Bison numbers the nonterminals contiguously, so the
+ * names list is ordered by lhs id and a rule's name is names[lhs - lhs_base].
+ */
 $rule_lhs_n = array();
 $rule_len_n = array();
+$lhs_name   = array();   // Nonterminal id => name.
 foreach ( $rule_len as $rule => $len ) {
-	$nm = $rule_lhs[ $rule ] ?? '?';
-	if ( ! isset( $name_index[ $nm ] ) ) {
-		$name_index[ $nm ] = count( $names );
-		$names[]           = $nm;
-	}
-	$rule_name[ $rule ]  = $name_index[ $nm ];
-	$rule_lhs_n[ $rule ] = $nt_id[ $nm ] ?? 0;
-	$rule_len_n[ $rule ] = $len;
+	$nm                        = $rule_lhs[ $rule ] ?? '?';
+	$rule_lhs_n[ $rule ]       = $nt_id[ $nm ] ?? 0;
+	$rule_len_n[ $rule ]       = $len;
+	$lhs_name[ $nt_id[ $nm ] ] = $nm;
 }
+ksort( $lhs_name );
+$lhs_base = (int) array_keys( $lhs_name )[0];
+$last_lhs = (int) array_keys( $lhs_name )[ count( $lhs_name ) - 1 ];
+if ( count( $lhs_name ) !== $last_lhs - $lhs_base + 1 ) {
+	fwrite( STDERR, "error: nonterminal lhs ids are not contiguous ($lhs_base..$last_lhs vs " . count( $lhs_name ) . " names); the names list cannot be indexed by lhs.\n" );
+	exit( 1 );
+}
+$names = array_values( $lhs_name );
 
 /*
  * Emit minified plain PHP literals: sequential integer-keyed arrays drop their
- * keys, everything else is "key=>value", with no whitespace. This keeps the
- * artifact a plain, opcache-internable PHP array while staying compact.
+ * keys, everything else is "key=>value", with no whitespace, using the short
+ * array syntax. This keeps the artifact a plain, opcache-internable PHP array
+ * while staying compact.
  */
 $emit       = function ( $value ) use ( &$emit ) {
 	if ( ! is_array( $value ) ) {
@@ -297,29 +350,31 @@ $emit       = function ( $value ) use ( &$emit ) {
 	foreach ( $value as $k => $v ) {
 		$parts[] = ( $sequential ? '' : $k . '=>' ) . $emit( $v );
 	}
-	return 'array(' . implode( ',', $parts ) . ')';
+	return '[' . implode( ',', $parts ) . ']';
 };
 $emit_names = function ( array $names ) {
 	$parts = array();
 	foreach ( $names as $name ) {
 		$parts[] = "'" . str_replace( array( '\\', "'" ), array( '\\\\', "\\'" ), $name ) . "'";
 	}
-	return 'array(' . implode( ',', $parts ) . ')';
+	return '[' . implode( ',', $parts ) . ']';
 };
 
 $sections = array(
 	"'ns'=>" . $ns,
 	"'start'=>0",
 	"'dollar'=>" . ( $term_id['$end'] ?? 0 ),
+	"'lhs_base'=>" . $lhs_base,
 	"'rows'=>" . $emit( $emitted ),
+	"'row_shifts'=>" . $emit( $row_shifts ),
 	"'row_base'=>" . $emit( $row_base ),
+	"'shift_target'=>" . $emit( $shift_target ),
 	"'state_row'=>" . $emit( $state_row ),
 	"'state_default'=>" . $emit( $state_default ),
 	"'goto_default'=>" . $emit( $goto_default ),
 	"'goto_exceptions'=>" . $emit( $goto_exceptions ),
 	"'rule_lhs'=>" . $emit( $rule_lhs_n ),
 	"'rule_len'=>" . $emit( $rule_len_n ),
-	"'rule_name'=>" . $emit( $rule_name ),
 	"'names'=>" . $emit_names( $names ),
 );
 
@@ -327,17 +382,18 @@ $php = "<?php\n"
 	. "// THIS FILE IS GENERATED by tools/generate-parse-table.php. DO NOT EDIT.\n"
 	. "// Source: MySQL Bison grammar (sql/sql_yacc.yy) at $mysql_tag.\n"
 	. "// phpcs:disable\n"
-	. 'return array(' . "\n" . implode( ",\n", $sections ) . "\n);\n";
+	. 'return [' . "\n" . implode( ",\n", $sections ) . "\n];\n";
 file_put_contents( $output_path, $php );
 
 fwrite(
 	STDERR,
 	sprintf(
-		"rows=%d (patched=%d), cells stored=%d of %d | goto: %d defaults, %d exceptions | names=%d\n",
+		"rows=%d (patched=%d), cells stored=%d of %d (%d as modal shifts) | goto: %d defaults, %d exception groups | names=%d\n",
 		count( $rows ),
 		count( $row_base ),
 		$stored_cells,
 		$total_cells,
+		$modal_cells,
 		count( $goto_default ),
 		count( $goto_exceptions ),
 		count( $names )

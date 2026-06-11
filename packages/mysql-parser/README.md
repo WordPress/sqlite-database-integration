@@ -31,8 +31,9 @@ MySQL query ──▶ WP_MySQL_Lexer ──▶ grammar tokens ──▶ WP_MySQL
   Docker, version-asserted), and compacts Bison's `--xml` automaton into plain
   PHP ACTION/GOTO tables: per-state default reductions with sparse exception
   rows, identical rows shared between states, near-identical keyword rows
-  patch-encoded against a base row, and per-nonterminal GOTO defaults — about
-  7% of the cells of the dense table. A second generator
+  patch-encoded against a base row, modal per-terminal shift targets, and
+  per-nonterminal GOTO defaults — about 7% of the cells of the dense table.
+  A second generator
   derives the token-level data — the keyword table, the paren-gated function
   keywords, and the token constants the scanner refers to — from `lex.h` and
   the automaton, resolving every terminal by name.

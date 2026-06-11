@@ -37,8 +37,8 @@ class WP_MySQL_Parser {
 	private $action;            // State => row (shared between states).
 	private $action_default;    // State => default reduce code.
 
-	// GOTO: per-nonterminal default target + sparse per-state exceptions.
-	private $goto_exceptions;   // State => ( nonterminal id => target state ).
+	// GOTO: per-nonterminal default target + sparse exceptions.
+	private $goto_exceptions;   // Nonterminal id => ( state => target state ).
 	private $goto_default;      // Nonterminal id => default target state.
 
 	// Productions.
@@ -60,10 +60,18 @@ class WP_MySQL_Parser {
 		$this->start  = $table['start'];
 		$this->dollar = $table['dollar'];
 
-		// Materialise the patch-encoded rows: a patch holds only the cells that
-		// differ from its base row, so the union "patch + base" reconstructs the
-		// full row (bases always precede their patches).
-		$rows = $table['rows'];
+		// Materialise the rows: first restore the shift cells stored as bare
+		// token lists from the per-terminal modal target table, then apply the
+		// patch encoding — a patch holds only the cells that differ from its
+		// base row, so the union "patch + base" reconstructs the full row
+		// (bases always precede their patches).
+		$rows         = $table['rows'];
+		$shift_target = $table['shift_target'];
+		foreach ( $table['row_shifts'] as $rid => $tokens ) {
+			foreach ( $tokens as $token ) {
+				$rows[ $rid ][ $token ] = $shift_target[ $token ];
+			}
+		}
 		foreach ( $table['row_base'] as $rid => $base ) {
 			$rows[ $rid ] += $rows[ $base ];
 		}
@@ -82,10 +90,12 @@ class WP_MySQL_Parser {
 		$this->rule_len = $table['rule_len'];
 
 		// Resolve each production's rule name once, off the reduce hot path.
+		// The names list is ordered by the grammar's contiguous nonterminal ids.
 		$names           = $table['names'];
+		$lhs_base        = $table['lhs_base'];
 		$this->rule_name = array();
-		foreach ( $table['rule_name'] as $production => $name_index ) {
-			$this->rule_name[ $production ] = $names[ $name_index ];
+		foreach ( $table['rule_lhs'] as $production => $lhs ) {
+			$this->rule_name[ $production ] = $names[ $lhs - $lhs_base ];
 		}
 	}
 
@@ -177,7 +187,7 @@ class WP_MySQL_Parser {
 			}
 
 			// GOTO on $lhs from the state now exposed under the handle.
-			$sstack[ $base + 1 ] = $gx[ $sstack[ $base ] ][ $lhs ] ?? $g_def[ $lhs ];
+			$sstack[ $base + 1 ] = $gx[ $lhs ][ $sstack[ $base ] ] ?? $g_def[ $lhs ];
 			$sp                  = $base + 1;
 		}
 	}
