@@ -1,0 +1,14 @@
+{
+	"name": "wordpress/mysql-parser",
+	"type": "library",
+	"description": "A fast and complete MySQL parser with zero dependencies.",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=7.2"
+	},
+	"scripts": {
+		"build-grammar": [
+			"./bin/build-grammar"
+		]
+	}
+}
