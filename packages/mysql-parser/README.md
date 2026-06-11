@@ -51,6 +51,14 @@ grammar rule name it was reduced by. By default every rule materialises a node,
 including MySQL's deep single-child wrapper chains
 (`expr → bool_pri → predicate → bit_expr → ...`).
 
+Passing `true` as the parser's second constructor argument enables
+**unit-production inlining**: unit productions whose only child is itself a
+node are collapsed (the child replaces the would-be wrapper). Those chains
+account for over half of all reductions, so inlining roughly halves node
+allocations for a further 20-30% of throughput — at the cost of wrapper
+rule names being absent from the tree, so consumers must match only the rule
+names of meaningful (multi-child or token-bearing) nodes.
+
 ## Package layout
 
 ```
@@ -77,6 +85,7 @@ The runtime requires **PHP 7.2+** and no PHP extensions.
 ```php
 require_once __DIR__ . '/src/load.php';
 
+// Pass true as the second argument to enable unit-production inlining (see "The AST").
 $parser = new WP_MySQL_Parser( require __DIR__ . '/src/grammar/parse-table.php' );
 $tokens = ( new WP_MySQL_Lexer( 'SELECT 1 + 2' ) )->remaining_tokens();
 $ast    = $parser->parse( $tokens );   // WP_Parser_Node, or null on a syntax error.

@@ -19,8 +19,15 @@
  * The constructor applies the patches and points each state at its shared row,
  * so the parse loop is two plain array lookups per step.
  *
- * The parser builds a node for every reduced rule, so each node carries the
- * grammar rule name it was reduced by, and tokens become the leaves.
+ * AST contract: each node carries the grammar rule name it was reduced by. By
+ * default every rule materialises a node, including the grammar's deep
+ * single-child wrapper chains (expr -> bool_pri -> predicate -> bit_expr ->
+ * ...). Passing $inline_unit_productions = true to the constructor inlines
+ * unit productions whose only child is itself a node — over half of all
+ * reductions — which roughly halves node allocations for a further 20-30%
+ * of throughput, at the cost of the wrapper rule names being absent from the
+ * tree; consumers must then match only the rule names of meaningful
+ * (multi-child or token-bearing) nodes.
  *
  * Action codes (int): 0 = syntax error; 1..ns-1 = shift to that state;
  * ns = accept; < 0 = reduce by production -code.
@@ -43,7 +50,12 @@ class WP_MySQL_Parser {
 	private $start;             // Start state.
 	private $dollar;            // End-of-input token number ($end).
 
-	public function __construct( array $table ) {
+	/** Whether unit productions over a node are inlined instead of wrapped. */
+	private $inline_unit_productions;
+
+	public function __construct( array $table, bool $inline_unit_productions = false ) {
+		$this->inline_unit_productions = $inline_unit_productions;
+
 		$this->ns     = $table['ns'];
 		$this->start  = $table['start'];
 		$this->dollar = $table['dollar'];
@@ -96,6 +108,7 @@ class WP_MySQL_Parser {
 		$p_name = $this->rule_name;
 		$ns     = $this->ns;
 		$dollar = $this->dollar;
+		$inline = $this->inline_unit_productions;
 
 		// Hoist token ids into a flat int array: the loop reads the lookahead far
 		// more often than it shifts, and an array read beats an object property
@@ -146,18 +159,22 @@ class WP_MySQL_Parser {
 
 			// Reduce by production -code: the handle is the top $len symbols at
 			// nstack[$base .. $sp-1]. Build the node in place by moving the stack
-			// pointer instead of splicing.
+			// pointer instead of splicing. In inlining mode, a unit production
+			// over a node passes the child through unchanged instead of wrapping
+			// it (see the AST contract in the class docblock).
 			$p    = -$code;
 			$lhs  = $plhs[ $p ];
 			$base = $sp - $plen[ $p ];
-			$kids = array();
-			for ( $j = $base; $j < $sp; $j++ ) {
-				$kids[] = $nstack[ $j ];
-				if ( $j > $base ) {
-					$nstack[ $j ] = null;
+			if ( ! $inline || $base + 1 !== $sp || ! $nstack[ $base ] instanceof WP_Parser_Node ) {
+				$kids = array();
+				for ( $j = $base; $j < $sp; $j++ ) {
+					$kids[] = $nstack[ $j ];
+					if ( $j > $base ) {
+						$nstack[ $j ] = null;
+					}
 				}
+				$nstack[ $base ] = new WP_Parser_Node( $lhs, $p_name[ $p ], $kids );
 			}
-			$nstack[ $base ] = new WP_Parser_Node( $lhs, $p_name[ $p ], $kids );
 
 			// GOTO on $lhs from the state now exposed under the handle.
 			$sstack[ $base + 1 ] = $gx[ $sstack[ $base ] ][ $lhs ] ?? $g_def[ $lhs ];
