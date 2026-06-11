@@ -336,6 +336,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests probe-unsafe identity upsert expressions fail closed.
+	 */
+	public function test_probe_unsafe_identity_upsert_expression_returns_null(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_upsert (id, value) VALUES (2, 'existing')" );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`) VALUES (next_identity_value(), 'updated')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$upsert
+			)
+		);
+
+		try {
+			$driver->query( $upsert );
+			$this->fail( 'Probe-unsafe upsert expression should fail closed before sequence repair.' );
+		} catch ( PDOException $e ) {
+			$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+		}
+	}
+
+	/**
 	 * Tests simple WordPress REPLACE statements update through PostgreSQL upserts.
 	 */
 	public function test_simple_wordpress_replace_with_existing_id_is_translated_to_postgresql(): void {
@@ -1119,6 +1150,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->expectException( PDOException::class );
 
 		$driver->query( $upsert );
+	}
+
+	/**
+	 * Tests prefix unique duplicate-key arbiters fail closed.
+	 */
+	public function test_prefix_unique_on_duplicate_key_update_returns_null(): void {
+		$driver = $this->create_driver();
+
+		$this->install_prefix_ambiguous_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `prefix_ambiguous` (`id`, `slug`, `value`) VALUES (2, 'existing-slug', 'new')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$upsert
+			)
+		);
 	}
 
 	/**
@@ -4261,6 +4312,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				value longtext NOT NULL,
 				PRIMARY KEY (id),
 				UNIQUE KEY slug (slug)
+			)'
+		);
+	}
+
+	/**
+	 * Install an upsert table with a MySQL prefix unique key.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_prefix_ambiguous_upsert_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE prefix_ambiguous (
+				id INTEGER PRIMARY KEY,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE prefix_ambiguous (
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(255) NOT NULL,
+				value longtext NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug (slug(10))
 			)'
 		);
 	}

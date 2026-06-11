@@ -3210,7 +3210,8 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$value_rows = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ) );
+		$probe_safe_rows = array();
+		$value_rows      = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ), $probe_safe_rows );
 		if ( null === $value_rows ) {
 			return null;
 		}
@@ -3237,6 +3238,7 @@ WHERE option_name IN (
 			$table_name,
 			$columns,
 			$value_rows,
+			$probe_safe_rows,
 			$conflict_columns
 		);
 		if ( null === $inserted_value_rows ) {
@@ -3274,18 +3276,22 @@ WHERE option_name IN (
 	 * @param int             $position       Current token position, updated on success.
 	 * @param int             $end            Final token position, exclusive.
 	 * @param int             $expected_count Expected number of row values.
+	 * @param array           $probe_safe_rows Updated with conflict-probe safety flags.
 	 * @return array[]|null Translated PostgreSQL VALUES rows, or null when unsupported.
 	 */
-	private function parse_mysql_values_rows( array $tokens, int &$position, int $end, int $expected_count ): ?array {
-		$rows = array();
+	private function parse_mysql_values_rows( array $tokens, int &$position, int $end, int $expected_count, array &$probe_safe_rows ): ?array {
+		$rows            = array();
+		$probe_safe_rows = array();
 
 		while ( $position < $end ) {
-			$values = $this->parse_mysql_value_list( $tokens, $position );
+			$probe_safe_values = array();
+			$values            = $this->parse_mysql_value_list_with_probe_safety( $tokens, $position, $probe_safe_values );
 			if ( null === $values || count( $values ) !== $expected_count ) {
 				return null;
 			}
 
-			$rows[] = $values;
+			$rows[]            = $values;
+			$probe_safe_rows[] = $probe_safe_values;
 
 			if ( $position === $end ) {
 				return $rows;
@@ -3299,6 +3305,98 @@ WHERE option_name IN (
 		}
 
 		return count( $rows ) > 0 ? $rows : null;
+	}
+
+	/**
+	 * Parse a parenthesized single-row MySQL VALUES list with probe safety.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int             $position     Current token position, updated on success.
+	 * @param bool[]          $probe_safety Updated with per-value conflict-probe safety.
+	 * @return string[]|null Translated SQL values, or null when unsupported.
+	 */
+	private function parse_mysql_value_list_with_probe_safety( array $tokens, int &$position, array &$probe_safety ): ?array {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$values       = array();
+		$probe_safety = array();
+		$value_start  = $position;
+		$depth        = 0;
+
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+				++$position;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				if ( 0 === $depth ) {
+					if ( $value_start === $position ) {
+						return null;
+					}
+
+					$values[]       = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
+					$probe_safety[] = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $value_start, $position );
+					++$position;
+					return $values;
+				}
+
+				--$depth;
+				++$position;
+				continue;
+			}
+
+			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				if ( $value_start === $position ) {
+					return null;
+				}
+
+				$values[]       = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
+				$probe_safety[] = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $value_start, $position );
+				$value_start    = $position + 1;
+			}
+
+			++$position;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a VALUES item is safe for a conflict preflight probe.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First value token position, inclusive.
+	 * @param int             $end    Final value token position, exclusive.
+	 * @return bool Whether the value is a deterministic literal.
+	 */
+	private function is_supported_mysql_upsert_conflict_probe_token_sequence( array $tokens, int $start, int $end ): bool {
+		if ( $start + 1 !== $end || ! isset( $tokens[ $start ] ) ) {
+			return false;
+		}
+
+		return in_array(
+			$tokens[ $start ]->id,
+			array(
+				WP_MySQL_Lexer::BIN_NUMBER,
+				WP_MySQL_Lexer::DECIMAL_NUMBER,
+				WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT,
+				WP_MySQL_Lexer::FALSE_SYMBOL,
+				WP_MySQL_Lexer::FLOAT_NUMBER,
+				WP_MySQL_Lexer::HEX_NUMBER,
+				WP_MySQL_Lexer::INT_NUMBER,
+				WP_MySQL_Lexer::LONG_NUMBER,
+				WP_MySQL_Lexer::NULL_SYMBOL,
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT,
+				WP_MySQL_Lexer::TRUE_SYMBOL,
+				WP_MySQL_Lexer::ULONGLONG_NUMBER,
+			),
+			true
+		);
 	}
 
 	/**
@@ -3358,7 +3456,7 @@ WHERE option_name IN (
 
 		$candidates = array();
 		foreach ( $indexes as $index ) {
-			if ( empty( $index['columns'] ) || $index['has_sub_part'] ) {
+			if ( empty( $index['columns'] ) ) {
 				continue;
 			}
 
@@ -3366,6 +3464,10 @@ WHERE option_name IN (
 				if ( ! isset( $insert_column_lookup[ strtolower( $column ) ] ) ) {
 					continue 2;
 				}
+			}
+
+			if ( $index['has_sub_part'] ) {
+				return null;
 			}
 
 			$candidates[] = $index['columns'];
@@ -3380,10 +3482,11 @@ WHERE option_name IN (
 	 * @param string   $table_name       Table name.
 	 * @param string[] $columns          Inserted column names.
 	 * @param array[]  $value_rows       Translated PostgreSQL VALUES rows.
+	 * @param array[]  $probe_safe_rows  Per-value conflict-probe safety flags.
 	 * @param string[] $conflict_columns Conflict target columns.
 	 * @return array[]|null Inserted VALUES rows, or null when unsupported.
 	 */
-	private function get_mysql_upsert_inserted_value_rows( string $table_name, array $columns, array $value_rows, array $conflict_columns ): ?array {
+	private function get_mysql_upsert_inserted_value_rows( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_columns ): ?array {
 		$column_indexes = array();
 		foreach ( $columns as $index => $column ) {
 			$column_indexes[ strtolower( $column ) ] = $index;
@@ -3403,7 +3506,14 @@ WHERE option_name IN (
 		}
 
 		$inserted_rows = array();
-		foreach ( $value_rows as $values ) {
+		foreach ( $value_rows as $row_index => $values ) {
+			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
+					return null;
+				}
+			}
+
 			$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
 			if ( null === $conflict_exists ) {
 				return null;
@@ -3430,11 +3540,11 @@ WHERE option_name IN (
 	private function mysql_upsert_conflict_exists( string $table_name, array $values, array $conflict_indexes ): ?bool {
 		$where = array();
 		foreach ( $conflict_indexes as $conflict_index ) {
-			$value = (string) ( $values[ $conflict_index['index'] ] ?? '' );
-			if ( ! $this->is_mysql_upsert_conflict_probe_value_supported( $value ) ) {
+			if ( ! array_key_exists( $conflict_index['index'], $values ) ) {
 				return null;
 			}
 
+			$value = (string) $values[ $conflict_index['index'] ];
 			if ( 'NULL' === strtoupper( trim( $value ) ) ) {
 				return false;
 			}
@@ -3455,16 +3565,6 @@ WHERE option_name IN (
 		);
 
 		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether a conflict probe can safely evaluate a translated value.
-	 *
-	 * @param string $value_sql Translated PostgreSQL value SQL.
-	 * @return bool Whether the value is supported.
-	 */
-	private function is_mysql_upsert_conflict_probe_value_supported( string $value_sql ): bool {
-		return '' !== trim( $value_sql ) && 'DEFAULT' !== strtoupper( trim( $value_sql ) );
 	}
 
 	/**
