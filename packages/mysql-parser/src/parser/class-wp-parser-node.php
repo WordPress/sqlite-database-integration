@@ -17,9 +17,10 @@ class WP_Parser_Node {
 	public $rule_name;
 	protected $children = array();
 
-	public function __construct( $rule_id, $rule_name ) {
+	public function __construct( $rule_id, $rule_name, array $children = array() ) {
 		$this->rule_id   = $rule_id;
 		$this->rule_name = $rule_name;
+		$this->children  = $children;
 	}
 
 	public function append_child( $node ) {

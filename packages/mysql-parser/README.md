@@ -44,6 +44,13 @@ The MySQL 8.4 grammar is unambiguous for an LALR(1) parser (Bison resolves its
 conflicts), so the runtime is a plain deterministic shift-reduce loop — no GLR,
 backtracking, or conflict tables.
 
+### The AST
+
+`parse()` returns a `WP_Parser_Node` tree in which each node carries the
+grammar rule name it was reduced by. By default every rule materialises a node,
+including MySQL's deep single-child wrapper chains
+(`expr → bool_pri → predicate → bit_expr → ...`).
+
 ## Package layout
 
 ```
@@ -64,6 +71,16 @@ mysql-parser/
 ```
 
 The runtime requires **PHP 7.2+** and no PHP extensions.
+
+## Using the parser
+
+```php
+require_once __DIR__ . '/src/load.php';
+
+$parser = new WP_MySQL_Parser( require __DIR__ . '/src/grammar/parse-table.php' );
+$tokens = ( new WP_MySQL_Lexer( 'SELECT 1 + 2' ) )->remaining_tokens();
+$ast    = $parser->parse( $tokens );   // WP_Parser_Node, or null on a syntax error.
+```
 
 ## Building the grammar
 
