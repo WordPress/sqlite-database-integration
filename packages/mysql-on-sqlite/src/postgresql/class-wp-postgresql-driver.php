@@ -7433,6 +7433,10 @@ WHERE option_name IN (
 	 * @return bool Whether the literal is in predicate truthiness context.
 	 */
 	private function is_mysql_boolean_predicate_literal_context( array $tokens, int $start, int $end, int $limit ): bool {
+		if ( $this->is_mysql_between_bound_literal_context( $tokens, $start ) ) {
+			return false;
+		}
+
 		$previous_token_id = $tokens[ $start - 1 ]->id ?? null;
 		$next_token_id     = $tokens[ $end ]->id ?? null;
 
@@ -7456,6 +7460,88 @@ WHERE option_name IN (
 			),
 			true
 		);
+	}
+
+	/**
+	 * Check whether a numeric literal belongs to a BETWEEN range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First literal token.
+	 * @return bool Whether the literal is a BETWEEN bound.
+	 */
+	private function is_mysql_between_bound_literal_context( array $tokens, int $start ): bool {
+		$previous_token_id = $tokens[ $start - 1 ]->id ?? null;
+
+		if ( WP_MySQL_Lexer::BETWEEN_SYMBOL === $previous_token_id ) {
+			return true;
+		}
+
+		if (
+			WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous_token_id
+			&& WP_MySQL_Lexer::BETWEEN_SYMBOL === ( $tokens[ $start - 2 ]->id ?? null )
+		) {
+			return true;
+		}
+
+		$and_position = null;
+		if ( WP_MySQL_Lexer::AND_SYMBOL === $previous_token_id ) {
+			$and_position = $start - 1;
+		} elseif (
+			WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous_token_id
+			&& WP_MySQL_Lexer::AND_SYMBOL === ( $tokens[ $start - 2 ]->id ?? null )
+		) {
+			$and_position = $start - 2;
+		}
+
+		return null !== $and_position && $this->is_mysql_between_upper_bound_separator( $tokens, $and_position );
+	}
+
+	/**
+	 * Check whether an AND token separates the lower and upper BETWEEN bounds.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int             $and_position Candidate AND token position.
+	 * @return bool Whether the AND token belongs to BETWEEN.
+	 */
+	private function is_mysql_between_upper_bound_separator( array $tokens, int $and_position ): bool {
+		if ( ! isset( $tokens[ $and_position ] ) || WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_position ]->id ) {
+			return false;
+		}
+
+		$depth = 0;
+		for ( $i = $and_position - 1; $i >= 0; $i-- ) {
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return false;
+				}
+				continue;
+			}
+
+			if ( 0 !== $depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::BETWEEN_SYMBOL === $tokens[ $i ]->id ) {
+				return true;
+			}
+
+			if (
+				$this->is_mysql_boolean_predicate_left_boundary_token_id( $tokens[ $i ]->id )
+				|| WP_MySQL_Lexer::HAVING_SYMBOL === $tokens[ $i ]->id
+				|| WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $i ]->id
+				|| WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $i ]->id
+			) {
+				return false;
+			}
+		}
+
+		return false;
 	}
 
 	/**

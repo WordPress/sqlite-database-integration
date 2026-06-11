@@ -2352,6 +2352,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_date TEXT NOT NULL)' );
 		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (1, \'2024-01-01 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (7, \'2024-01-07 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (9, \'2024-01-09 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (10, \'2024-01-10 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (11, \'2024-01-11 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_date) VALUES (12, \'2024-01-12 00:00:00\')' );
 
 		$rows = $driver->query(
 			'SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
@@ -2363,6 +2368,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( array(), $rows );
 		$this->assertStringContainsString( 'WHERE 1 = 1 AND (0 <> 0)', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$between_rows = $driver->query( 'SELECT ID FROM wptests_posts WHERE ID BETWEEN 9 AND 11 ORDER BY ID ASC' );
+		$this->assertSame(
+			array( '9', '10', '11' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$between_rows
+			)
+		);
+		$this->assertStringContainsString( 'WHERE "ID" BETWEEN 9 AND 11', $driver->get_last_postgresql_queries()[0]['sql'] );
+		$this->assertStringNotContainsString( '(11 <> 0)', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$date_between_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT ID FROM wptests_posts WHERE DAYOFMONTH(post_date) BETWEEN 9 AND 11'
+		);
+		$this->assertStringContainsString( ' BETWEEN 9 AND 11', $date_between_sql );
+		$this->assertStringNotContainsString( '(11 <> 0)', $date_between_sql );
+
+		$in_rows = $driver->query( 'SELECT ID FROM wptests_posts WHERE ID IN (7) ORDER BY ID ASC' );
+		$this->assertCount( 1, $in_rows );
+		$this->assertSame( '7', $in_rows[0]->ID );
+		$this->assertStringContainsString( 'WHERE "ID" IN (7)', $driver->get_last_postgresql_queries()[0]['sql'] );
+		$this->assertStringNotContainsString( '(7 <> 0)', $driver->get_last_postgresql_queries()[0]['sql'] );
 
 		$selected_zero = $driver->query( 'SELECT 0' );
 		$this->assertSame( '0', $selected_zero[0]->{'0'} );
