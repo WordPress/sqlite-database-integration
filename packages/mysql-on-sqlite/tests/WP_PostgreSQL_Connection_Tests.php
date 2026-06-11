@@ -2,6 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/WP_PostgreSQL_Connection_Pgsql_Quote_Fake_PDO.php';
+
 /**
  * Unit tests for the PostgreSQL connection scaffold.
  */
@@ -221,5 +223,36 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) );
 
 		$this->assertSame( $pdo->quote( "O'Reilly" ), $connection->quote( "O'Reilly" ) );
+	}
+
+	/**
+	 * Tests PostgreSQL string values with backslashes use escape string syntax.
+	 */
+	public function test_quote_uses_postgresql_escape_string_syntax_for_backslashes(): void {
+		$connection = $this->create_connection_with_pdo_fixture( new WP_PostgreSQL_Connection_Pgsql_Quote_Fake_PDO() );
+
+		$this->assertSame(
+			"E'O''Reilly \\\\ path'",
+			$connection->quote( "O'Reilly \\ path" )
+		);
+	}
+
+	/**
+	 * Creates a PostgreSQL connection backed by a lightweight PDO fixture.
+	 *
+	 * @param object $pdo_fixture PDO-like fixture.
+	 * @return WP_PostgreSQL_Connection Connection under test.
+	 */
+	private function create_connection_with_pdo_fixture( $pdo_fixture ): WP_PostgreSQL_Connection {
+		$reflection = new ReflectionClass( WP_PostgreSQL_Connection::class );
+		$connection = $reflection->newInstanceWithoutConstructor();
+
+		$property = $reflection->getProperty( 'pdo' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$property->setAccessible( true );
+		}
+		$property->setValue( $connection, $pdo_fixture );
+
+		return $connection;
 	}
 }

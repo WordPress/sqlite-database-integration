@@ -1207,6 +1207,78 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple UPDATE preserves a MySQL literal ending in an escaped backslash.
+	 */
+	public function test_simple_update_preserves_trailing_escaped_backslash_literal(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_commentmeta (
+				comment_id TEXT NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES ('8', 'slash_test_2', 'foo')" );
+
+		$expected_value      = 'String with 3 slashes ' . '\\';
+		$mysql_literal_value = 'String with 3 slashes ' . '\\\\';
+		$update              = "UPDATE `wptests_commentmeta` SET `meta_value` = '{$mysql_literal_value}' WHERE `comment_id` = '8' AND `meta_key` = 'slash_test_2'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_commentmeta" SET "meta_value" = ' . $driver->get_connection()->quote( $expected_value ) . ' WHERE "comment_id" = \'8\' AND "meta_key" = \'slash_test_2\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT meta_value FROM wptests_commentmeta WHERE comment_id = '8' AND meta_key = 'slash_test_2'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( $expected_value, $rows[0]->meta_value );
+	}
+
+	/**
+	 * Tests placeholder-like bytes in literal-only UPDATE statements remain data.
+	 */
+	public function test_simple_update_literal_placeholder_bytes_are_not_bound_parameters(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_commentmeta (
+				comment_id TEXT NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES ('8', 'slash_test_2', 'foo')" );
+
+		$expected_value      = 'literal ? :name ::text ' . '\\';
+		$mysql_literal_value = 'literal ? :name ::text ' . '\\\\';
+		$update              = "UPDATE `wptests_commentmeta` SET `meta_value` = '{$mysql_literal_value}' WHERE `comment_id` = '8' AND `meta_key` = 'slash_test_2'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_commentmeta" SET "meta_value" = ' . $driver->get_connection()->quote( $expected_value ) . ' WHERE "comment_id" = \'8\' AND "meta_key" = \'slash_test_2\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT meta_value FROM wptests_commentmeta WHERE comment_id = '8' AND meta_key = 'slash_test_2'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( $expected_value, $rows[0]->meta_value );
+	}
+
+	/**
 	 * Tests non-strict UPDATE coerces exact NULL assignments for NOT NULL columns.
 	 */
 	public function test_non_strict_update_null_coerces_not_null_columns_to_metadata_defaults(): void {

@@ -154,6 +154,15 @@ class WP_PostgreSQL_Connection {
 	 * @return string The quoted value.
 	 */
 	public function quote( $value, int $type = PDO::PARAM_STR ): string {
+		if (
+			PDO::PARAM_STR === $type
+			&& is_string( $value )
+			&& false !== strpos( $value, '\\' )
+			&& 'pgsql' === $this->pdo->getAttribute( PDO::ATTR_DRIVER_NAME )
+		) {
+			return self::quote_escaped_string_value( $value );
+		}
+
 		return $this->pdo->quote( $value, $type );
 	}
 
@@ -202,5 +211,19 @@ class WP_PostgreSQL_Connection {
 		}
 
 		return $value;
+	}
+
+	/**
+	 * Quote a string value using PostgreSQL escape string syntax.
+	 *
+	 * pdo_pgsql scans SQL text for placeholders before sending it to the server.
+	 * Rendering backslash-bearing values as E'' strings keeps the client-side
+	 * parser from treating a trailing backslash as escaping the closing quote.
+	 *
+	 * @param string $value String value.
+	 * @return string PostgreSQL escaped string literal.
+	 */
+	private static function quote_escaped_string_value( string $value ): string {
+		return "E'" . str_replace( array( '\\', "'" ), array( '\\\\', "''" ), $value ) . "'";
 	}
 }
