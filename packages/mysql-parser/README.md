@@ -107,13 +107,14 @@ runs Bison in Docker, and rewrites `src/grammar/parse-table.php` and
 byte for byte. Both artifacts are plain PHP arrays. The fetched sources and the (large) automaton dump land in
 `build/`, which is gitignored.
 
-## Benchmark
+## Tests and benchmark
 
 ```bash
+composer run test        # PHPUnit suite (includes a corpus regression test)
 composer run benchmark   # corpus throughput, without and with the tracing JIT
 ```
 
-The benchmark runs a ~69.5k-query corpus of MySQL server test queries from
+The corpus tests run a ~69.5k-query corpus of MySQL server test queries from
 the monorepo's shared test data. The parser accepts **99.88%** of it; the 0.12%
 it rejects is syntax removed in MySQL 8.4 (e.g. `RESET MASTER`),
 multi-statement input, statements needing non-default session SQL modes, and a
