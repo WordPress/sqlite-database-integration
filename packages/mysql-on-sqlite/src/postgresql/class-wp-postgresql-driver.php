@@ -455,6 +455,12 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
+		$translated_query = $this->translate_wordpress_available_post_mime_types_query( $query );
+		if ( null !== $translated_query ) {
+			$query                     = $translated_query;
+			$translated_for_postgresql = true;
+		}
+
 		$translated_query = $this->translate_simple_mysql_select_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
@@ -5798,6 +5804,78 @@ WHERE option_name IN (
 			$limit_position,
 			$statement_end,
 			$include_limit
+		);
+	}
+
+	/**
+	 * Translate WordPress's available post MIME type lookup with MySQL order.
+	 *
+	 * WordPress issues this query without ORDER BY, but MySQL returns MIME types
+	 * in first matching posts.ID order for the posts table shape. Keep this
+	 * constrained to the exact get_available_post_mime_types() query so generic
+	 * unordered DISTINCT queries remain unchanged.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_wordpress_available_post_mime_types_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1], $tokens[12] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::DISTINCT_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		if ( 13 !== $statement_end ) {
+			return null;
+		}
+
+		if (
+			! $this->is_mysql_identifier_like_token_value( $tokens[2], 'post_mime_type' )
+			|| WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[3]->id
+			|| WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[5]->id
+			|| ! $this->is_mysql_identifier_like_token_value( $tokens[6], 'post_type' )
+			|| WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[7]->id
+			|| ! $this->is_mysql_string_literal_token( $tokens[8] )
+			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[9]->id
+			|| ! $this->is_mysql_identifier_like_token_value( $tokens[10], 'post_mime_type' )
+			|| WP_MySQL_Lexer::NOT_EQUAL_OPERATOR !== $tokens[11]->id
+			|| ! $this->is_mysql_string_literal_token( $tokens[12] )
+			|| '' !== $tokens[12]->get_value()
+		) {
+			return null;
+		}
+
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[4] );
+		if ( null === $table_name || ! $this->is_mysql_wordpress_table_name( $table_name, 'posts' ) ) {
+			return null;
+		}
+
+		$scope = $this->get_mysql_single_table_scope( $table_name );
+		$table = $scope['tables'][0];
+		foreach ( array( 'ID', 'post_mime_type', 'post_type' ) as $column_name ) {
+			if ( null === $this->get_mysql_table_column_type( $table['schema'], $table['table'], $column_name ) ) {
+				return null;
+			}
+		}
+
+		$projection_sql = $this->translate_mysql_token_to_postgresql( $tokens[2] );
+		$where_sql      = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			6,
+			$statement_end,
+			$scope
+		);
+
+		return sprintf(
+			'SELECT %1$s %2$s WHERE %3$s GROUP BY %1$s ORDER BY MIN(%4$s) ASC',
+			$projection_sql,
+			'FROM ' . $this->translate_mysql_token_to_postgresql( $tokens[4] ),
+			$where_sql['sql'],
+			$this->connection->quote_identifier( 'ID' )
 		);
 	}
 

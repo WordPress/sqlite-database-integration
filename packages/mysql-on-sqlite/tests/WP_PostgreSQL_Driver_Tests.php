@@ -1976,6 +1976,75 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests available post MIME type lookups use MySQL-compatible first posts.ID ordering.
+	 */
+	public function test_wordpress_available_post_mime_types_distinct_orders_by_first_post_id(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_mime_type` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_mime_type`) VALUES (1, 'attachment', 'image/jpeg')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_mime_type`) VALUES (2, 'attachment', 'application/pdf')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_mime_type`) VALUES (3, 'attachment', 'image/jpeg')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_mime_type`) VALUES (4, 'post', 'text/plain')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_mime_type`) VALUES (5, 'attachment', '')" );
+
+		$rows = $driver->query(
+			"SELECT DISTINCT post_mime_type
+			FROM wptests_posts
+			WHERE post_type = 'attachment' AND post_mime_type != ''"
+		);
+
+		$this->assertSame(
+			array( 'image/jpeg', 'application/pdf' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->post_mime_type;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT post_mime_type FROM wptests_posts WHERE post_type = \'attachment\' AND post_mime_type != \'\' GROUP BY post_mime_type ORDER BY MIN("ID") ASC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests broader posts DISTINCT MIME type queries keep the generic path.
+	 */
+	public function test_wordpress_available_post_mime_types_distinct_rewrite_requires_exact_where_shape(): void {
+		$driver = $this->create_driver();
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_mime_type` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_wordpress_available_post_mime_types_query',
+			"SELECT DISTINCT post_mime_type FROM wptests_posts WHERE post_type = 'attachment'"
+		);
+
+		$this->assertNull( $sql );
+	}
+
+	/**
 	 * Tests integer-column IN predicates coerce string literals using stored MySQL metadata.
 	 */
 	public function test_integer_column_in_string_literals_use_mysql_numeric_coercion_from_metadata(): void {
