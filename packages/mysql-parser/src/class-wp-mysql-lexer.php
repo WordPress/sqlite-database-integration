@@ -32,6 +32,7 @@ class WP_MySQL_Lexer implements WP_MySQL_Tokens {
 	const SQL_MODE_PIPES_AS_CONCAT      = 2;
 	const SQL_MODE_IGNORE_SPACE         = 4;
 	const SQL_MODE_NO_BACKSLASH_ESCAPES = 8;
+	const SQL_MODE_ANSI_QUOTES          = 16;
 
 	/**
 	 * Character masks for frequently used character classes.
@@ -224,6 +225,8 @@ class WP_MySQL_Lexer implements WP_MySQL_Tokens {
 				$this->sql_modes |= self::SQL_MODE_IGNORE_SPACE;
 			} elseif ( 'NO_BACKSLASH_ESCAPES' === $sql_mode ) {
 				$this->sql_modes |= self::SQL_MODE_NO_BACKSLASH_ESCAPES;
+			} elseif ( 'ANSI_QUOTES' === $sql_mode ) {
+				$this->sql_modes |= self::SQL_MODE_ANSI_QUOTES;
 			}
 		}
 	}
@@ -1017,6 +1020,10 @@ class WP_MySQL_Lexer implements WP_MySQL_Tokens {
 		if ( '`' === $quote ) {
 			return self::BACK_TICK_QUOTED_ID;
 		} elseif ( '"' === $quote ) {
+			// With the ANSI_QUOTES SQL mode, '"' quotes an identifier, not a string.
+			if ( $this->is_sql_mode_active( self::SQL_MODE_ANSI_QUOTES ) ) {
+				return self::BACK_TICK_QUOTED_ID;
+			}
 			return self::DOUBLE_QUOTED_TEXT;
 		} else {
 			return self::SINGLE_QUOTED_TEXT;
