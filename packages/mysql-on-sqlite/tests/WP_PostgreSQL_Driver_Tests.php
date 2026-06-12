@@ -1101,6 +1101,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests upsert conflict updates expose explicit AUTO_INCREMENT values as the insert ID.
+	 */
+	public function test_get_insert_id_returns_explicit_auto_increment_value_for_upsert_conflict_update(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
+
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_upsert (id, value) VALUES (7, 'existing')" );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`) VALUES (7, 'updated')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT value FROM wptests_identity_upsert WHERE id = 7' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'updated', $rows[0]->value );
+	}
+
+	/**
 	 * Tests inserts into tables without AUTO_INCREMENT do not expose stale IDs.
 	 */
 	public function test_get_insert_id_is_zero_for_non_auto_increment_insert(): void {

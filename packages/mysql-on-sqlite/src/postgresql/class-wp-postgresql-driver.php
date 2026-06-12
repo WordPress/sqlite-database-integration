@@ -3463,8 +3463,8 @@ WHERE option_name IN (
 		}
 
 		return array(
-			'action'           => 'upsert',
-			'sql'              => sprintf(
+			'action'               => 'upsert',
+			'sql'                  => sprintf(
 				'INSERT INTO %s (%s) %s ON CONFLICT (%s) DO UPDATE SET %s',
 				$this->connection->quote_identifier( $table_name ),
 				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
@@ -3472,12 +3472,13 @@ WHERE option_name IN (
 				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $conflict_columns ) ),
 				implode( ', ', $assignments )
 			),
-			'table_name'       => $table_name,
-			'columns'          => $columns,
-			'values'           => $inserted_value_rows[0] ?? array(),
-			'value_rows'       => $inserted_value_rows,
-			'conflict_columns' => $conflict_columns,
-			'inserted_new_row' => count( $inserted_value_rows ) > 0,
+			'table_name'           => $table_name,
+			'columns'              => $columns,
+			'values'               => $inserted_value_rows[0] ?? array(),
+			'value_rows'           => $inserted_value_rows,
+			'insert_id_value_rows' => $value_rows,
+			'conflict_columns'     => $conflict_columns,
+			'inserted_new_row'     => count( $inserted_value_rows ) > 0,
 		);
 	}
 
@@ -4056,22 +4057,19 @@ WHERE option_name IN (
 			return;
 		}
 
-		if ( isset( $dml_query['inserted_new_row'] ) && ! $dml_query['inserted_new_row'] ) {
-			$this->last_insert_id = 0;
-			return;
-		}
+		$inserted_new_row = ! isset( $dml_query['inserted_new_row'] ) || $dml_query['inserted_new_row'];
 
 		if (
 			! isset( $dml_query['table_name'], $dml_query['columns'] )
 			|| ! is_array( $dml_query['columns'] )
 		) {
-			$this->last_insert_id = $this->get_connection_last_insert_id();
+			$this->last_insert_id = $inserted_new_row ? $this->get_connection_last_insert_id() : 0;
 			return;
 		}
 
 		$metadata_lookup = $this->get_mysql_dml_column_metadata_lookup( (string) $dml_query['table_name'] );
 		if ( empty( $metadata_lookup ) ) {
-			$this->last_insert_id = $this->get_connection_last_insert_id();
+			$this->last_insert_id = $inserted_new_row ? $this->get_connection_last_insert_id() : 0;
 			return;
 		}
 
@@ -4084,10 +4082,15 @@ WHERE option_name IN (
 		$explicit_insert_id = $this->get_explicit_mysql_auto_increment_insert_id(
 			$auto_increment_column,
 			$dml_query['columns'],
-			$this->get_dml_insert_value_rows( $dml_query )
+			$this->get_dml_insert_id_value_rows( $dml_query )
 		);
 		if ( null !== $explicit_insert_id ) {
 			$this->last_insert_id = $explicit_insert_id;
+			return;
+		}
+
+		if ( ! $inserted_new_row ) {
+			$this->last_insert_id = 0;
 			return;
 		}
 
@@ -4146,6 +4149,20 @@ WHERE option_name IN (
 		}
 
 		return array();
+	}
+
+	/**
+	 * Get DML value rows used for MySQL insert ID detection.
+	 *
+	 * @param array $dml_query Translated DML query metadata.
+	 * @return array[] DML value rows.
+	 */
+	private function get_dml_insert_id_value_rows( array $dml_query ): array {
+		if ( isset( $dml_query['insert_id_value_rows'] ) && is_array( $dml_query['insert_id_value_rows'] ) ) {
+			return $dml_query['insert_id_value_rows'];
+		}
+
+		return $this->get_dml_insert_value_rows( $dml_query );
 	}
 
 	/**
