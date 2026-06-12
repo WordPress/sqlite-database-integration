@@ -6,11 +6,17 @@ on:
       - main
   pull_request:
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   test:
     name: MySQL Proxy Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
 
     steps:
       - name: Checkout repository
@@ -20,14 +26,15 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '7.4'
+          coverage: none
 
       - name: Install Composer dependencies
         uses: ramsey/composer-install@v3
         with:
           ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
-          working-directory: packages/wp-mysql-proxy
+          working-directory: packages/mysql-proxy
 
       - name: Run MySQL Proxy tests
         run: composer run test
-        working-directory: packages/wp-mysql-proxy
+        working-directory: packages/mysql-proxy

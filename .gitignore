@@ -5,4 +5,8 @@ composer.lock
 ._.DS_Store
 .DS_Store
 ._*
+/build
 /wordpress
+/.claude/settings.local.json
+/.adversarial-loop/
+/packages/php-ext-wp-mysql-parser/target/

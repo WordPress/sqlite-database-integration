@@ -1,0 +1,291 @@
+name: Publish WASM extension artifact
+
+on:
+  push:
+    branches:
+      - trunk
+    paths:
+      - 'packages/php-ext-wp-mysql-parser/**'
+      - '.github/workflows/publish-wasm-extension-artifact.yml'
+  workflow_dispatch:
+    inputs:
+      playground-ref:
+        description: 'wordpress-playground branch/tag/SHA to build against'
+        required: false
+        default: 'trunk'
+      retention-days:
+        description: 'Actions artifact retention in days'
+        required: false
+        default: '30'
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  base-image:
+    name: Build shared Playground base image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the wordpress-playground repo.
+
+    steps:
+      - name: Check out wordpress-playground
+        uses: actions/checkout@v4
+        with:
+          repository: WordPress/wordpress-playground
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
+          path: wordpress-playground
+          sparse-checkout: |
+            packages/php-wasm/compile/base-image
+
+      - name: Build Playground base image
+        run: |
+          docker build \
+            -f wordpress-playground/packages/php-wasm/compile/base-image/Dockerfile \
+            --tag playground-php-wasm:base \
+            wordpress-playground/packages/php-wasm/compile/base-image
+
+      - name: Save Playground base image
+        run: docker save --output "${RUNNER_TEMP}/playground-php-wasm-base.tar" playground-php-wasm:base
+
+      - name: Upload Playground base image
+        uses: actions/upload-artifact@v4
+        with:
+          name: playground-php-wasm-base-image
+          path: ${{ runner.temp }}/playground-php-wasm-base.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build wp_mysql_parser.so (PHP ${{ matrix.php }})
+    needs: base-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # Required to clone the repo.
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        # The Rust WASM path uses ext-php-rs 0.15, which depends on PHP 8
+        # Zend APIs. PHP 7.4 cannot be added here by extending the matrix.
+        php: ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0']
+
+    steps:
+      - name: Check out sqlite-database-integration
+        uses: actions/checkout@v4
+        with:
+          path: sqlite-database-integration
+
+      - name: Check out wordpress-playground
+        uses: actions/checkout@v4
+        with:
+          repository: WordPress/wordpress-playground
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
+          path: wordpress-playground
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /package.json
+            /package-lock.json
+            /nx.json
+            /tsconfig.base.json
+            /packages/meta/
+            /packages/nx-extensions/
+            /packages/php-wasm/cli-util/
+            /packages/php-wasm/compile-extension/
+            /packages/php-wasm/compile/
+            /packages/php-wasm/fs-journal/
+            /packages/php-wasm/logger/
+            /packages/php-wasm/node/
+            /packages/php-wasm/node-builds/8-0/
+            /packages/php-wasm/node-builds/8-1/
+            /packages/php-wasm/node-builds/8-2/
+            /packages/php-wasm/node-builds/8-3/
+            /packages/php-wasm/node-builds/8-4/
+            /packages/php-wasm/node-builds/8-5/
+            /packages/php-wasm/web-builds/8-0/
+            /packages/php-wasm/web-builds/8-1/
+            /packages/php-wasm/web-builds/8-2/
+            /packages/php-wasm/web-builds/8-3/
+            /packages/php-wasm/web-builds/8-4/
+            /packages/php-wasm/web-builds/8-5/
+            /packages/php-wasm/progress/
+            /packages/php-wasm/scopes/
+            /packages/php-wasm/stream-compression/
+            /packages/php-wasm/universal/
+            /packages/php-wasm/util/
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: wordpress-playground/package-lock.json
+
+      - name: Download Playground base image
+        uses: actions/download-artifact@v4
+        with:
+          name: playground-php-wasm-base-image
+          path: ${{ runner.temp }}/playground-base-image
+
+      - name: Load Playground base image
+        run: docker load --input "${RUNNER_TEMP}/playground-base-image/playground-php-wasm-base.tar"
+
+      - name: Install Playground deps
+        working-directory: wordpress-playground
+        run: npm ci --ignore-scripts
+
+      - name: Build wp_mysql_parser side module
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: jspi
+          COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.27'
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          SKIP_BASE_IMAGE_BUILD: '1'
+        run: bash build-in-docker-rust.sh
+
+      - name: Verify side module exists
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        run: |
+          test -f dist/wp_mysql_parser-php${{ matrix.php }}-jspi.so
+          ls -lh dist/wp_mysql_parser-php${{ matrix.php }}-jspi.so
+
+      - name: Check Playground browser runtime compatibility
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: jspi
+        run: node check-playground-web-compat.mjs
+
+      - name: Upload side module
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp_mysql_parser-php${{ matrix.php }}-jspi-so
+          path: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/dist/wp_mysql_parser-php${{ matrix.php }}-jspi.so
+          if-no-files-found: error
+          retention-days: ${{ github.event.inputs.retention-days || '30' }}
+
+  package:
+    name: Package extension manifest
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+    permissions:
+      contents: write # Required to push the built extension to the gh-pages branch.
+
+    steps:
+      - name: Check out sqlite-database-integration
+        uses: actions/checkout@v4
+
+      - name: Download side modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wp_mysql_parser-php*-jspi-so
+          path: build/wp_mysql_parser-wasm-extension
+          merge-multiple: true
+
+      - name: Write Playground extension manifest
+        env:
+          ASYNC_MODE: jspi
+          EXTENSION_VERSION: ${{ github.sha }}
+        run: |
+          node packages/php-ext-wp-mysql-parser/wasm-spike/write-extension-manifest.mjs \
+            build/wp_mysql_parser-wasm-extension \
+            8.5 8.4 8.3 8.2 8.1 8.0
+
+      - name: Verify published manifest shape
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const root = 'build/wp_mysql_parser-wasm-extension';
+          const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+          if (manifest.name !== 'wp_mysql_parser') {
+            throw new Error(`Unexpected extension name: ${manifest.name}`);
+          }
+          if (manifest.mode !== 'php-extension') {
+            throw new Error(`Unexpected manifest mode: ${manifest.mode}`);
+          }
+          if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length !== 6) {
+            throw new Error('Expected six PHP 8.x artifacts.');
+          }
+          for (const artifact of manifest.artifacts) {
+            if (!artifact.phpVersion || !artifact.sourcePath) {
+              throw new Error(`Invalid artifact entry: ${JSON.stringify(artifact)}`);
+            }
+            if ('file' in artifact || 'sha256' in artifact) {
+              throw new Error(`Manifest uses the retired pre-PR-3580 fields: ${JSON.stringify(artifact)}`);
+            }
+            const artifactPath = path.join(root, artifact.sourcePath);
+            if (!fs.existsSync(artifactPath)) {
+              throw new Error(`Manifest references missing artifact: ${artifactPath}`);
+            }
+          }
+          NODE
+
+      - name: Write checksums
+        working-directory: build/wp_mysql_parser-wasm-extension
+        run: sha256sum *.so > SHA256SUMS
+
+      - name: Upload packaged extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp_mysql_parser-wasm-extension
+          path: build/wp_mysql_parser-wasm-extension/
+          if-no-files-found: error
+          retention-days: ${{ github.event.inputs.retention-days || '30' }}
+
+      - name: Publish static extension bundle to gh-pages
+        env:
+          BUNDLE_DIR: build/wp_mysql_parser-wasm-extension
+          EXTENSION_PATH: wp_mysql_parser-wasm-extension
+          GITHUB_TOKEN: ${{ github.token }}
+          SITE_BRANCH: gh-pages
+          VERSION_PATH: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          pages_dir="$(mktemp -d)"
+          git init "$pages_dir"
+          git -C "$pages_dir" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth_header="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w 0)"
+          git -C "$pages_dir" config http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth_header}"
+          git -C "$pages_dir" config user.name "github-actions[bot]"
+          git -C "$pages_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git -C "$pages_dir" ls-remote --exit-code --heads origin "$SITE_BRANCH" >/dev/null 2>&1; then
+            git -C "$pages_dir" fetch --depth=1 origin "$SITE_BRANCH"
+            git -C "$pages_dir" checkout -B "$SITE_BRANCH" FETCH_HEAD
+          else
+            git -C "$pages_dir" checkout --orphan "$SITE_BRANCH"
+          fi
+
+          mkdir -p "$pages_dir/$EXTENSION_PATH"
+          rm -rf "$pages_dir/$EXTENSION_PATH/$VERSION_PATH" "$pages_dir/$EXTENSION_PATH/latest"
+          mkdir -p "$pages_dir/$EXTENSION_PATH/$VERSION_PATH" "$pages_dir/$EXTENSION_PATH/latest"
+          cp -R "$BUNDLE_DIR"/. "$pages_dir/$EXTENSION_PATH/$VERSION_PATH/"
+          cp -R "$BUNDLE_DIR"/. "$pages_dir/$EXTENSION_PATH/latest/"
+          touch "$pages_dir/.nojekyll"
+
+          git -C "$pages_dir" add .nojekyll "$EXTENSION_PATH"
+          if git -C "$pages_dir" diff --cached --quiet; then
+            echo "No gh-pages changes to publish."
+            exit 0
+          fi
+
+          git -C "$pages_dir" commit -m "Publish wp_mysql_parser WASM extension ${VERSION_PATH}"
+          git -C "$pages_dir" push origin "HEAD:$SITE_BRANCH"
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          echo "Published latest manifest: https://${owner}.github.io/${repo}/${EXTENSION_PATH}/latest/manifest.json"
+          echo "Published immutable manifest: https://${owner}.github.io/${repo}/${EXTENSION_PATH}/${VERSION_PATH}/manifest.json"

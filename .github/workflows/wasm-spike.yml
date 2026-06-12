@@ -1,0 +1,192 @@
+name: WASM extension build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/php-ext-wp-mysql-parser/**'
+      - '.github/workflows/wasm-spike.yml'
+  pull_request:
+    paths:
+      - 'packages/php-ext-wp-mysql-parser/**'
+      - '.github/workflows/wasm-spike.yml'
+  workflow_dispatch:
+    inputs:
+      playground-ref:
+        description: 'wordpress-playground branch/tag/SHA to build against'
+        required: false
+        default: 'trunk'
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
+jobs:
+  base-image:
+    name: Build shared Playground base image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the wordpress-playground repo.
+
+    steps:
+      - name: Check out wordpress-playground
+        uses: actions/checkout@v4
+        with:
+          repository: WordPress/wordpress-playground
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
+          path: wordpress-playground
+          sparse-checkout: |
+            packages/php-wasm/compile/base-image
+
+      - name: Build Playground base image
+        run: |
+          docker build \
+            -f wordpress-playground/packages/php-wasm/compile/base-image/Dockerfile \
+            --tag playground-php-wasm:base \
+            wordpress-playground/packages/php-wasm/compile/base-image
+
+      - name: Save Playground base image
+        run: docker save --output "${RUNNER_TEMP}/playground-php-wasm-base.tar" playground-php-wasm:base
+
+      - name: Upload Playground base image
+        uses: actions/upload-artifact@v4
+        with:
+          name: playground-php-wasm-base-image
+          path: ${{ runner.temp }}/playground-php-wasm-base.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  build-and-load:
+    name: Build wp_mysql_parser.so and load it in Playground (PHP ${{ matrix.php }})
+    needs: base-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # Required to clone the repo.
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        # The Rust WASM path uses ext-php-rs 0.15, which depends on PHP 8
+        # Zend APIs. PHP 7.4 cannot be added here by extending the matrix.
+        php: ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0']
+        async-mode: ['jspi']
+
+    steps:
+      - name: Check out sqlite-database-integration
+        uses: actions/checkout@v4
+        with:
+          path: sqlite-database-integration
+
+      - name: Check out wordpress-playground
+        uses: actions/checkout@v4
+        with:
+          repository: WordPress/wordpress-playground
+          ref: ${{ github.event.inputs.playground-ref || 'trunk' }}
+          path: wordpress-playground
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /package.json
+            /package-lock.json
+            /nx.json
+            /tsconfig.base.json
+            /packages/meta/
+            /packages/nx-extensions/
+            /packages/php-wasm/cli-util/
+            /packages/php-wasm/compile-extension/
+            /packages/php-wasm/compile/
+            /packages/php-wasm/fs-journal/
+            /packages/php-wasm/logger/
+            /packages/php-wasm/node/
+            /packages/php-wasm/node-builds/8-0/
+            /packages/php-wasm/node-builds/8-1/
+            /packages/php-wasm/node-builds/8-2/
+            /packages/php-wasm/node-builds/8-3/
+            /packages/php-wasm/node-builds/8-4/
+            /packages/php-wasm/node-builds/8-5/
+            /packages/php-wasm/web-builds/8-0/
+            /packages/php-wasm/web-builds/8-1/
+            /packages/php-wasm/web-builds/8-2/
+            /packages/php-wasm/web-builds/8-3/
+            /packages/php-wasm/web-builds/8-4/
+            /packages/php-wasm/web-builds/8-5/
+            /packages/php-wasm/progress/
+            /packages/php-wasm/scopes/
+            /packages/php-wasm/stream-compression/
+            /packages/php-wasm/universal/
+            /packages/php-wasm/util/
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: wordpress-playground/package-lock.json
+
+      - name: Download Playground base image
+        uses: actions/download-artifact@v4
+        with:
+          name: playground-php-wasm-base-image
+          path: ${{ runner.temp }}/playground-base-image
+
+      - name: Load Playground base image
+        run: docker load --input "${RUNNER_TEMP}/playground-base-image/playground-php-wasm-base.tar"
+
+      - name: Install Playground deps
+        working-directory: wordpress-playground
+        run: npm ci --ignore-scripts
+
+      - name: Build wp_mysql_parser side module
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: ${{ matrix.async-mode }}
+          COMPILE_EXTENSION_PACKAGE: '@php-wasm/compile-extension@3.1.27'
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          SKIP_BASE_IMAGE_BUILD: '1'
+        run: bash build-in-docker-rust.sh
+
+      - name: Verify build artifacts exist
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        run: |
+          test -f dist/wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so
+          test -f dist/manifest.json
+          test -f dist/libwp_mysql_parser.a
+          ls -lh dist/
+
+      - name: Verify manifest references the built side module
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        run: |
+          SOURCE_PATH=$(node -e "console.log(require('./dist/manifest.json').artifacts[0].sourcePath)")
+          EXPECTED="wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}.so"
+          echo "manifest sourcePath: $SOURCE_PATH"
+          echo "expected artifact:   $EXPECTED"
+          test "$SOURCE_PATH" = "$EXPECTED"
+          test -f "dist/$SOURCE_PATH"
+          node -e "const artifact = require('./dist/manifest.json').artifacts[0]; if ('file' in artifact || 'sha256' in artifact) { throw new Error('manifest uses retired artifact fields'); }"
+
+      - name: Check Playground browser runtime compatibility
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: ${{ matrix.async-mode }}
+        run: node check-playground-web-compat.mjs
+
+      - name: Load the extension in Playground and parse a query
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PLAYGROUND_REPO: ${{ github.workspace }}/wordpress-playground
+          PHP_VERSION: ${{ matrix.php }}
+        run: node run-spike.mjs
+
+      - name: Upload artifacts on success
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp_mysql_parser-php${{ matrix.php }}-${{ matrix.async-mode }}
+          path: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike/dist/
+          if-no-files-found: error
+          retention-days: 14

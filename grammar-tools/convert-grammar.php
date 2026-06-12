@@ -10,10 +10,10 @@
  * @TODO Migrate the current regex-based solution to a proper grammar parser.
  */
 
-require_once __DIR__ . '/../wp-includes/parser/class-wp-parser-grammar.php';
-require_once __DIR__ . '/../wp-includes/mysql/class-wp-mysql-lexer.php';
+require_once __DIR__ . '/../packages/mysql-on-sqlite/src/parser/class-wp-parser-grammar.php';
+require_once __DIR__ . '/../packages/mysql-on-sqlite/src/mysql/class-wp-mysql-lexer.php';
 
-const GRAMMAR_FILE = __DIR__ . '/../wp-includes/mysql/mysql-grammar.php';
+const GRAMMAR_FILE = __DIR__ . '/../packages/mysql-on-sqlite/src/mysql/mysql-grammar.php';
 
 // Convert the original MySQLParser.g4 grammar to a JSON format.
 // The grammar is also flattened and expanded to an ebnf-to-json-like format.

@@ -1,0 +1,116 @@
+name: Lexer benchmark
+
+on:
+  pull_request:
+    paths:
+      - 'packages/mysql-on-sqlite/src/mysql/class-wp-mysql-lexer.php'
+      - 'packages/mysql-on-sqlite/src/mysql/class-wp-mysql-token.php'
+      - 'packages/mysql-on-sqlite/src/parser/class-wp-parser-token.php'
+      - 'packages/mysql-on-sqlite/tests/tools/run-lexer-benchmark.php'
+      - '.github/workflows/lexer-benchmark.yml'
+
+# A new push supersedes the previous run; the result comment is updated in place.
+concurrency:
+  group: lexer-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+# Disable permissions for all available scopes by default.
+permissions: {}
+
+jobs:
+  benchmark:
+    name: Lexer throughput (base vs PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # Required to clone the repo.
+      pull-requests: write # Required to post/update the result comment.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need the base commit to benchmark the "before" state.
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Benchmark base vs PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BENCH=packages/mysql-on-sqlite/tests/tools/run-lexer-benchmark.php
+
+          # Best-pass QPS for a given PHP flag set.
+          best() {
+            php -d memory_limit=512M "$@" "$BENCH" --json \
+              | php -r '$j = json_decode( stream_get_contents( STDIN ), true ); echo (int) $j["qps_best"];'
+          }
+          jit_flags="-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing"
+
+          # PR (head) is the current checkout.
+          head_nojit=$( best )
+          head_jit=$( best $jit_flags )
+
+          # Swap only the source tree to the base commit and re-measure with the
+          # same (PR) benchmark tool, so both sides are timed identically. The
+          # benchmark tool itself (tests/tools/) is left at the PR version.
+          git checkout "$BASE_SHA" -- packages/mysql-on-sqlite/src
+          base_nojit=$( best )
+          base_jit=$( best $jit_flags )
+          git checkout HEAD -- packages/mysql-on-sqlite/src
+
+          fmt() { php -r 'echo number_format( (int) $argv[1] );' "$1"; }
+          ratio() { php -r 'printf( "%.2f", $argv[1] / max( 1, (int) $argv[2] ) );' "$1" "$2"; }
+
+          {
+            echo "<!-- lexer-benchmark -->"
+            echo "### 🤖 Lexer benchmark"
+            echo "Changes to lexer-related files were detected and triggered a benchmark:"
+            echo
+            echo "| Config | Base (QPS) | This PR (QPS) | Speedup |"
+            echo "| --- | ---: | ---: | ---: |"
+            echo "| **no JIT** | $( fmt "$base_nojit" ) | $( fmt "$head_nojit" ) | **$( ratio "$head_nojit" "$base_nojit" )×** |"
+            echo "| **tracing JIT** | $( fmt "$base_jit" ) | $( fmt "$head_jit" ) | **$( ratio "$head_jit" "$base_jit" )×** |"
+            echo
+            echo "**Note:** Hosted runners are noisy, and absolute numbers vary. Treat the results with caution and verify them locally."
+            echo
+            echo "To reproduce locally:"
+            echo '```'
+            echo "cd packages/mysql-on-sqlite && composer run bench-lexer"
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          echo "COMMENT_FILE=$RUNNER_TEMP/comment.md" >> "$GITHUB_ENV"
+
+      - name: Post or update the PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require( 'fs' );
+            const body = fs.readFileSync( process.env.COMMENT_FILE, 'utf8' );
+            const marker = '<!-- lexer-benchmark -->';
+            const { data: comments } = await github.rest.issues.listComments( {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            } );
+            const existing = comments.find( ( c ) => c.body && c.body.includes( marker ) );
+            if ( existing ) {
+              await github.rest.issues.updateComment( {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              } );
+            } else {
+              await github.rest.issues.createComment( {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              } );
+            }

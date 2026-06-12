@@ -2,13 +2,14 @@
  * Wrap the "composer run wp-tests-php" command to process tests
  * that are expected to error and fail at the moment.
  *
- * This makes sure that the CI job passes, while explicitly tracking
- * the issues that need to be addressed. Ideally, over time this script
- * will become obsolete when all errors and failures are resolved.
+ * Unexpected errors/failures still fail the workflow. Expected failures that
+ * stop happening are reported so this allowlist can be reduced over time.
  */
 const { execSync } = require( 'child_process' );
 const fs = require( 'fs' );
 const path = require( 'path' );
+
+const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 
 const expectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -58,9 +59,6 @@ const expectedFailures = [
 	'Tests_DB_Charset::test_strip_invalid_text with data set #32',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #33',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #34',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #35',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #36',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #37',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #39',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #40',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #41',
@@ -93,10 +91,31 @@ const expectedFailures = [
 ];
 
 console.log( 'Running WordPress PHPUnit tests with expected failures tracking...' );
+if ( requiresNativeParserExtension ) {
+	console.log( 'Native parser extension is required for this PHPUnit run.' );
+}
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
 
+function verifyNativeParserExtension() {
+	const verifier = path.join( __dirname, '..', '..', 'wordpress', 'native-verify-extension.php' );
+	if ( ! fs.existsSync( verifier ) ) {
+		console.error( `Error: Native parser verifier not found at ${ verifier }.` );
+		process.exit( 1 );
+	}
+
+	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
+	execSync(
+		'cd wordpress && node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php',
+		{ stdio: 'inherit' }
+	);
+}
+
 try {
+	if ( requiresNativeParserExtension ) {
+		verifyNativeParserExtension();
+	}
+
 	try {
 		execSync(
 			`composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose`,

@@ -6,11 +6,17 @@ on:
       - main
   pull_request:
 
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
 jobs:
   test:
     name: WordPress PHPUnit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
 
     steps:
       - name: Checkout repository
@@ -25,6 +31,40 @@ jobs:
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
       - name: Run WordPress PHPUnit tests
+        run: node .github/workflows/wp-tests-phpunit-run.js
+
+      - name: Stop Docker containers
+        if: always()
+        run: composer run wp-test-clean
+
+  native-parser-test:
+    name: WordPress PHPUnit Tests / Rust extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read # Required to clone the repo.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set UID and GID for PHP in WordPress images
+        run: |
+          echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
+          echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Set up WordPress test environment
+        run: composer run wp-setup
+
+      - name: Build and load parser extension in WordPress PHP containers
+        run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
+
+      - name: Run WordPress PHPUnit tests with parser extension
+        env:
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
         run: node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Stop Docker containers
