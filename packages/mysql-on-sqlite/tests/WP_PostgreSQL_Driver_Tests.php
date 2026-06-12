@@ -3159,6 +3159,64 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests grouped postmeta value-only queries preserve MySQL case-insensitive LIKE behavior.
+	 */
+	public function test_grouped_postmeta_value_like_without_key_uses_case_insensitive_mysql_collation_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_status` varchar(20) NOT NULL DEFAULT "",
+				`post_date` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (1, 'post', 'publish', '2024-01-01 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (2, 'post', 'publish', '2024-01-02 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_status`, `post_date`) VALUES (3, 'post', 'publish', '2024-01-03 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'city', 'Lorem')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, 'address', '123 Lorem St.')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, 'city', 'Lorem')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, 'city', 'Loren')" );
+
+		$rows = $driver->query(
+			"SELECT wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND ( ( wptests_postmeta.meta_value LIKE '%lorem%' ) )
+				AND wptests_posts.post_type = 'post'
+				AND ( ( wptests_posts.post_status = 'publish' ) )
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 5"
+		);
+
+		$this->assertSame(
+			array( '2', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+		$this->assertStringContainsString(
+			"LOWER(wptests_postmeta.meta_value) LIKE LOWER('%lorem%')",
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+	}
+
+	/**
 	 * Tests numeric literals in predicate context use MySQL truthiness.
 	 */
 	public function test_numeric_literal_predicates_use_mysql_truthiness_without_changing_values_or_limits(): void {

@@ -10672,6 +10672,13 @@ WHERE option_name IN (
 			return false;
 		}
 
+		if (
+			$this->is_mysql_wordpress_table_name( $table['table'], 'postmeta' )
+			&& null === $reference['qualifier']
+		) {
+			return false;
+		}
+
 		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope );
 		if ( null === $column_type || ! $this->is_mysql_text_family_column_type( $column_type ) ) {
 			return false;
@@ -10761,6 +10768,10 @@ WHERE option_name IN (
 
 		if ( $this->is_mysql_wordpress_table_name( $table_name, 'term_taxonomy' ) ) {
 			return in_array( $column_name, array( 'description', 'taxonomy' ), true );
+		}
+
+		if ( $this->is_mysql_wordpress_table_name( $table_name, 'postmeta' ) ) {
+			return 'meta_value' === $column_name;
 		}
 
 		return false;
