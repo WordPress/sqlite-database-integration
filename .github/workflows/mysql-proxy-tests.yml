@@ -35,6 +35,15 @@ jobs:
           composer-options: "--optimize-autoloader"
           working-directory: packages/mysql-proxy
 
+      # The proxy tests run the SQLite driver, which loads its own Composer
+      # dependencies (wordpress/mysql-parser).
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+          working-directory: packages/mysql-on-sqlite
+
       - name: Run MySQL Proxy tests
         run: composer run test
         working-directory: packages/mysql-proxy
