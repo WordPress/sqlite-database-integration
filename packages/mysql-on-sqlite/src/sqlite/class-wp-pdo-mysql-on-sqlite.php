@@ -669,11 +669,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$db_name = $args['dbname'] ?? 'sqlite_database';
 
 		// Create a new SQLite connection.
+		$connection_options = array(
+			'journal_mode' => $options['journal_mode'] ?? null,
+			'synchronous'  => $options['synchronous'] ?? null,
+		);
 		if ( isset( $options['pdo'] ) ) {
-			$this->connection = new WP_SQLite_Connection( array( 'pdo' => $options['pdo'] ) );
+			$connection_options['pdo'] = $options['pdo'];
 		} else {
-			$this->connection = new WP_SQLite_Connection( array( 'path' => $path ) );
+			$connection_options['path'] = $path;
 		}
+		$this->connection = new WP_SQLite_Connection( $connection_options );
 
 		$this->mysql_version = $options['mysql_version'] ?? 80038;
 		$this->main_db_name  = $db_name;
