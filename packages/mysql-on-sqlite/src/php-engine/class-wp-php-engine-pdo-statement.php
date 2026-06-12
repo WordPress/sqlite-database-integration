@@ -534,16 +534,18 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 
 			case PDO::FETCH_BOTH:
 			default:
-				// PDO sets the column name key first, then adds the numeric
-				// index only when no such key exists yet (numeric column
-				// names can collide with the indexes of other columns).
 				$result = array();
 				foreach ( $row as $index => $value ) {
 					$value = $this->stringify( $value );
 					if ( isset( $this->cols[ $index ] ) ) {
 						$result[ $this->cols[ $index ] ] = $value;
 					}
-					if ( ! isset( $result[ $index ] ) && ! array_key_exists( $index, $result ) ) {
+					if ( PHP_VERSION_ID < 80000 ) {
+						$result[] = $value;
+					} elseif ( ! isset( $result[ $index ] ) && ! array_key_exists( $index, $result ) ) {
+						// PHP 8+ PDO adds the numeric index only when no column-name
+						// key exists yet. Numeric column names can collide with the
+						// indexes of other columns.
 						$result[ $index ] = $value;
 					}
 				}
@@ -580,11 +582,30 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 		if ( $value instanceof WP_PHP_Engine_Blob ) {
 			return $value->bytes;
 		}
-		if ( ( is_int( $value ) || is_float( $value ) ) && $this->pdo->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) ) {
+		if ( PHP_VERSION_ID < 80100 && ( is_int( $value ) || is_float( $value ) || is_bool( $value ) ) ) {
+			return $this->stringify_scalar_value( $value );
+		}
+		if ( ( is_int( $value ) || is_float( $value ) || is_bool( $value ) ) && $this->pdo->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) ) {
 			// PDO stringifies fetches using PHP value-to-string semantics
 			// (e.g. 0.0 becomes "0", not "0.0") on PHP 8.1+.
-			return (string) $value;
+			return $this->stringify_scalar_value( $value );
 		}
 		return $value;
+	}
+
+	/**
+	 * Convert a scalar fetch value to the string returned by PDO SQLite.
+	 *
+	 * @param  int|float|bool $value The scalar value.
+	 * @return string               The stringified value.
+	 */
+	private function stringify_scalar_value( $value ) {
+		if ( is_bool( $value ) ) {
+			return $value ? '1' : '0';
+		}
+		if ( PHP_VERSION_ID < 80100 && is_float( $value ) && is_finite( $value ) && (float) (int) $value === $value ) {
+			return sprintf( '%.1F', $value );
+		}
+		return (string) $value;
 	}
 }
