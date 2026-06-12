@@ -88,6 +88,15 @@ const expectedFailures = [
 	'WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query',
 ];
 
+// DEBUG: inspect the driver mounts inside the cli container.
+try {
+	execSync( 'cd wordpress && docker compose -f docker-compose.yml -f docker-compose.override.yml config cli', { stdio: 'inherit' } );
+	execSync( 'cd wordpress && docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm --entrypoint bash cli -c "set -x; ls -la /var/www/src/wp-content/plugins/ ; ls -la /var/www/src/wp-content/plugins/mysql-on-sqlite/ ; ls /var/www/src/wp-content/plugins/mysql-on-sqlite/vendor/ ; readlink -f /var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database ; mount | grep -i plugins"', { stdio: 'inherit' } );
+	execSync( 'ls -la wordpress/driver-vendor', { stdio: 'inherit' } );
+} catch ( e ) {
+	console.log( 'DEBUG inspection failed:', e.message );
+}
+
 console.log( 'Running WordPress PHPUnit tests with expected failures tracking...' );
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
