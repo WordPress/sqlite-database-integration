@@ -33,6 +33,15 @@
  * ns = accept; < 0 = reduce by production -code.
  */
 class WP_MySQL_Parser {
+	/**
+	 * The path to the generated parse table file.
+	 *
+	 * The table is data, not a class, so it is not covered by autoloading.
+	 * Consumers can use this path to load it without depending on the
+	 * package file layout: new WP_MySQL_Parser( require WP_MySQL_Parser::PARSE_TABLE_PATH ).
+	 */
+	const PARSE_TABLE_PATH = __DIR__ . '/grammar/parse-table.php';
+
 	// ACTION: per-state sparse row (token id => action code) + default code.
 	private $action;            // State => row (shared between states).
 	private $action_default;    // State => default reduce code.
