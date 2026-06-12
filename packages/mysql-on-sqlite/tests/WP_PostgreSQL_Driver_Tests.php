@@ -5,6 +5,7 @@ use PHPUnit\Framework\TestCase;
 require_once __DIR__ . '/WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection.php';
 require_once __DIR__ . '/WP_PostgreSQL_Driver_Show_Index_Fixture_Connection.php';
 require_once __DIR__ . '/WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection.php';
+require_once __DIR__ . '/WP_PostgreSQL_Connection_Stale_Insert_ID_SQLite_Connection.php';
 
 /**
  * Unit tests for the PostgreSQL driver scaffold.
@@ -1059,9 +1060,72 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$driver->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
-		$driver->query( "INSERT INTO t (value) VALUES ('first')" );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE t (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO t (`value`) VALUES ('first')" );
 
 		$this->assertSame( 1, $driver->get_insert_id() );
+	}
+
+	/**
+	 * Tests explicit MySQL AUTO_INCREMENT values are exposed as the insert ID.
+	 */
+	public function test_get_insert_id_uses_explicit_mysql_auto_increment_value(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				"ID" INTEGER PRIMARY KEY AUTOINCREMENT,
+				post_title TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_title varchar(255) NOT NULL DEFAULT "",
+				PRIMARY KEY (ID)
+			)'
+		);
+
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_title`) VALUES (587, 'explicit')" );
+
+		$this->assertSame( 587, $driver->get_insert_id() );
+		$rows = $driver->query( 'SELECT ID, post_title FROM wptests_posts WHERE ID = 587' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'explicit', $rows[0]->post_title );
+	}
+
+	/**
+	 * Tests inserts into tables without AUTO_INCREMENT do not expose stale IDs.
+	 */
+	public function test_get_insert_id_is_zero_for_non_auto_increment_insert(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
+
+		$driver->query(
+			'CREATE TABLE wptests_term_relationships (
+				object_id INTEGER NOT NULL DEFAULT 0,
+				term_taxonomy_id INTEGER NOT NULL DEFAULT 0,
+				term_order INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (object_id, term_taxonomy_id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_term_relationships (
+				object_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				term_taxonomy_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				term_order int(11) NOT NULL DEFAULT 0,
+				PRIMARY KEY (object_id, term_taxonomy_id)
+			)'
+		);
+
+		$driver->query( 'INSERT INTO wptests_term_relationships (`object_id`, `term_taxonomy_id`, `term_order`) VALUES (587, 1, 0)' );
+
+		$this->assertSame( 0, $driver->get_insert_id() );
 	}
 
 	/**
@@ -5312,6 +5376,16 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver( string $db_name = 'wptests' ): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, $db_name );
+	}
+
+	/**
+	 * Creates a SQLite-backed driver whose connection reports a stale insert ID.
+	 *
+	 * @return WP_PostgreSQL_Driver Driver under test.
+	 */
+	private function create_driver_with_stale_connection_insert_id(): WP_PostgreSQL_Driver {
+		$connection = new WP_PostgreSQL_Connection_Stale_Insert_ID_SQLite_Connection();
+		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
 	}
 
 	/**

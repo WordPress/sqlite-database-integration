@@ -86,6 +86,13 @@ class WP_PostgreSQL_Driver {
 	private $last_found_rows = 0;
 
 	/**
+	 * MySQL-compatible insert ID for the last successful insert-like query.
+	 *
+	 * @var int|string
+	 */
+	private $last_insert_id = 0;
+
+	/**
 	 * MySQL-compatible session SQL mode state.
 	 *
 	 * @var string
@@ -174,13 +181,7 @@ class WP_PostgreSQL_Driver {
 	 * @return int|string
 	 */
 	public function get_insert_id() {
-		try {
-			$insert_id = $this->connection->get_last_insert_id();
-		} catch ( Throwable $e ) {
-			return 0;
-		}
-
-		return is_numeric( $insert_id ) ? (int) $insert_id : $insert_id;
+		return is_numeric( $this->last_insert_id ) ? (int) $this->last_insert_id : $this->last_insert_id;
 	}
 
 	/**
@@ -511,6 +512,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( null !== $dml_identity_repair_query ) {
+			$this->set_last_insert_id_after_dml_success( $dml_identity_repair_query, $affected_rows );
 			$this->repair_dml_identity_sequences_after_success( $dml_identity_repair_query, $affected_rows );
 		}
 
@@ -4036,6 +4038,187 @@ WHERE option_name IN (
 			'ignore'           => $ignore,
 			'inserted_new_row' => true,
 		);
+	}
+
+	/**
+	 * Store a MySQL-compatible insert ID after a successful insert-like query.
+	 *
+	 * PostgreSQL PDO exposes the sequence value, which can be stale when the
+	 * caller explicitly supplies an AUTO_INCREMENT value. MySQL reports that
+	 * explicit value through mysqli_insert_id(), and WordPress relies on it.
+	 *
+	 * @param array $dml_query     Translated DML query metadata.
+	 * @param int   $affected_rows Backend affected row count.
+	 */
+	private function set_last_insert_id_after_dml_success( array $dml_query, int $affected_rows ): void {
+		if ( $affected_rows <= 0 ) {
+			$this->last_insert_id = 0;
+			return;
+		}
+
+		if ( isset( $dml_query['inserted_new_row'] ) && ! $dml_query['inserted_new_row'] ) {
+			$this->last_insert_id = 0;
+			return;
+		}
+
+		if (
+			! isset( $dml_query['table_name'], $dml_query['columns'] )
+			|| ! is_array( $dml_query['columns'] )
+		) {
+			$this->last_insert_id = $this->get_connection_last_insert_id();
+			return;
+		}
+
+		$metadata_lookup = $this->get_mysql_dml_column_metadata_lookup( (string) $dml_query['table_name'] );
+		if ( empty( $metadata_lookup ) ) {
+			$this->last_insert_id = $this->get_connection_last_insert_id();
+			return;
+		}
+
+		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $metadata_lookup );
+		if ( null === $auto_increment_column ) {
+			$this->last_insert_id = 0;
+			return;
+		}
+
+		$explicit_insert_id = $this->get_explicit_mysql_auto_increment_insert_id(
+			$auto_increment_column,
+			$dml_query['columns'],
+			$this->get_dml_insert_value_rows( $dml_query )
+		);
+		if ( null !== $explicit_insert_id ) {
+			$this->last_insert_id = $explicit_insert_id;
+			return;
+		}
+
+		$this->last_insert_id = $this->get_connection_last_insert_id();
+	}
+
+	/**
+	 * Read the backend connection's last insert ID.
+	 *
+	 * @return int|string Last insert ID, or 0 when unavailable.
+	 */
+	private function get_connection_last_insert_id() {
+		try {
+			$insert_id = $this->connection->get_last_insert_id();
+		} catch ( Throwable $e ) {
+			return 0;
+		}
+
+		return is_numeric( $insert_id ) ? (int) $insert_id : $insert_id;
+	}
+
+	/**
+	 * Get the MySQL AUTO_INCREMENT column from DML metadata.
+	 *
+	 * @param array<string, array> $metadata_lookup Column metadata lookup.
+	 * @return string|null AUTO_INCREMENT column name, or null when absent.
+	 */
+	private function get_mysql_auto_increment_column_from_metadata( array $metadata_lookup ): ?string {
+		foreach ( $metadata_lookup as $column_metadata ) {
+			if ( ! $this->is_mysql_auto_increment_column_metadata( $column_metadata ) ) {
+				continue;
+			}
+
+			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+			if ( '' !== $column_name ) {
+				return $column_name;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get DML value rows from translated insert metadata.
+	 *
+	 * @param array $dml_query Translated DML query metadata.
+	 * @return array[] DML value rows.
+	 */
+	private function get_dml_insert_value_rows( array $dml_query ): array {
+		if ( isset( $dml_query['value_rows'] ) && is_array( $dml_query['value_rows'] ) ) {
+			return $dml_query['value_rows'];
+		}
+
+		if ( isset( $dml_query['values'] ) && is_array( $dml_query['values'] ) ) {
+			return array( $dml_query['values'] );
+		}
+
+		return array();
+	}
+
+	/**
+	 * Get an explicitly supplied AUTO_INCREMENT insert ID from DML values.
+	 *
+	 * @param string   $auto_increment_column AUTO_INCREMENT column name.
+	 * @param string[] $columns               DML column names.
+	 * @param array[]  $value_rows            DML value rows.
+	 * @return int|string|null Explicit insert ID, or null when not supplied.
+	 */
+	private function get_explicit_mysql_auto_increment_insert_id( string $auto_increment_column, array $columns, array $value_rows ) {
+		$auto_increment_index = null;
+		foreach ( $columns as $index => $column ) {
+			if ( strtolower( (string) $column ) === strtolower( $auto_increment_column ) ) {
+				$auto_increment_index = $index;
+				break;
+			}
+		}
+
+		if ( null === $auto_increment_index ) {
+			return null;
+		}
+
+		foreach ( $value_rows as $values ) {
+			if ( ! is_array( $values ) || ! isset( $values[ $auto_increment_index ] ) ) {
+				continue;
+			}
+
+			$insert_id = $this->get_mysql_insert_id_from_value_sql( (string) $values[ $auto_increment_index ] );
+			if ( null !== $insert_id ) {
+				return $insert_id;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse a simple integer SQL value as a MySQL insert ID.
+	 *
+	 * @param string $value_sql Translated SQL value.
+	 * @return int|string|null Insert ID, or null for DEFAULT/NULL/unsupported values.
+	 */
+	private function get_mysql_insert_id_from_value_sql( string $value_sql ) {
+		$value_sql = trim( $value_sql );
+		if ( '' === $value_sql || in_array( strtoupper( $value_sql ), array( 'DEFAULT', 'NULL' ), true ) ) {
+			return null;
+		}
+
+		if (
+			strlen( $value_sql ) >= 2
+			&& (
+				( "'" === $value_sql[0] && "'" === $value_sql[ strlen( $value_sql ) - 1 ] )
+				|| ( '"' === $value_sql[0] && '"' === $value_sql[ strlen( $value_sql ) - 1 ] )
+			)
+		) {
+			$value_sql = substr( $value_sql, 1, -1 );
+		}
+
+		if ( isset( $value_sql[0] ) && '+' === $value_sql[0] ) {
+			$value_sql = substr( $value_sql, 1 );
+		}
+
+		if ( '' === $value_sql || ! ctype_digit( $value_sql ) ) {
+			return null;
+		}
+
+		$value_sql = ltrim( $value_sql, '0' );
+		if ( '' === $value_sql ) {
+			$value_sql = '0';
+		}
+
+		return is_numeric( $value_sql ) ? (int) $value_sql : $value_sql;
 	}
 
 	/**
