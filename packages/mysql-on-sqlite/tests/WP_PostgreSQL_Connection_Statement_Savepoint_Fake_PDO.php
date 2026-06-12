@@ -12,6 +12,13 @@ class WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO {
 	public $exec_sql = array();
 
 	/**
+	 * Recorded prepare() SQL.
+	 *
+	 * @var string[]
+	 */
+	public $prepared_sql = array();
+
+	/**
 	 * SQLite PDO used for real statement execution.
 	 *
 	 * @var PDO
@@ -61,6 +68,7 @@ class WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO {
 	 * @return PDOStatement Statement object.
 	 */
 	public function prepare( string $sql ): PDOStatement {
+		$this->prepared_sql[] = $sql;
 		return $this->pdo->prepare( $sql );
 	}
 

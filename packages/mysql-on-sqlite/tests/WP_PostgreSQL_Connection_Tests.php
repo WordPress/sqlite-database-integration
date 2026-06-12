@@ -231,7 +231,7 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 		$pdo->beginTransaction();
 		$connection->query( 'ROLLBACK;' );
 
-		$this->assertFalse( $pdo->inTransaction() );
+		$this->assertSame( array( 'ROLLBACK;' ), $pdo->prepared_sql );
 		$this->assertSame( array(), $pdo->exec_sql );
 	}
 
