@@ -367,6 +367,7 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 	 */
 	#[\ReturnTypeWillChange]
 	public function fetchColumn( $column = 0 ) {
+		$this->validate_column_index( $column );
 		if ( ! isset( $this->rows[ $this->cursor ] ) ) {
 			return false;
 		}
@@ -374,6 +375,34 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 		$this->cursor += 1;
 		$value         = isset( $row[ $column ] ) || array_key_exists( $column, $row ) ? $row[ $column ] : null;
 		return $this->stringify( $value );
+	}
+
+	/**
+	 * Validate a 0-based result-column index.
+	 *
+	 * @param int $column The column index.
+	 */
+	private function validate_column_index( $column ) {
+		if ( $column < 0 ) {
+			$this->throw_invalid_column_index(
+				PHP_VERSION_ID < 80000 ? 'Invalid column index' : 'Column index must be greater than or equal to 0'
+			);
+		}
+		if ( $column >= count( $this->cols ) ) {
+			$this->throw_invalid_column_index( 'Invalid column index' );
+		}
+	}
+
+	/**
+	 * Throw the PDO-compatible exception for invalid result-column access.
+	 *
+	 * @param string $message The exception message.
+	 */
+	private function throw_invalid_column_index( $message ) {
+		if ( PHP_VERSION_ID < 80000 ) {
+			throw new PDOException( $message );
+		}
+		throw new ValueError( $message );
 	}
 
 	/**

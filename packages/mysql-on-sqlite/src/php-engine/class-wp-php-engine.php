@@ -699,6 +699,10 @@ class WP_PHP_Engine {
 	 * @return array                              The result.
 	 */
 	public function do_insert( $statement, $evaluator ) {
+		if ( 'sqlite_sequence' === strtolower( $statement['tbl'] ) && $this->sequence_table_exists( isset( $statement['db'] ) ? $statement['db'] : null ) ) {
+			return $this->insert_sqlite_sequence( $statement, $evaluator );
+		}
+
 		$lower = $this->resolve_table_key( strtolower( $statement['tbl'] ) );
 		if ( null === $lower ) {
 			throw new WP_PHP_Engine_SQL_Exception( 'no such table: ' . $statement['tbl'] );
@@ -845,8 +849,9 @@ class WP_PHP_Engine {
 				$max = max( array_keys( $table['rows'] ) );
 			}
 			if ( $table['autoincrement'] ) {
-				$sequence = isset( $this->db['sequences'][ $table['name'] ] ) ? $this->db['sequences'][ $table['name'] ] : 0;
-				$rowid    = max( $max, $sequence ) + 1;
+				$sequence_key = $this->sequence_key_for_table( $table );
+				$sequence     = isset( $this->db['sequences'][ $sequence_key ] ) ? $this->db['sequences'][ $sequence_key ] : 0;
+				$rowid        = max( $max, $sequence ) + 1;
 			} else {
 				$rowid = $max + 1;
 			}
@@ -928,9 +933,10 @@ class WP_PHP_Engine {
 
 		// Update the AUTOINCREMENT sequence.
 		if ( $table['autoincrement'] ) {
-			$sequence = isset( $this->db['sequences'][ $table['name'] ] ) ? $this->db['sequences'][ $table['name'] ] : 0;
+			$sequence_key = $this->sequence_key_for_table( $table );
+			$sequence     = isset( $this->db['sequences'][ $sequence_key ] ) ? $this->db['sequences'][ $sequence_key ] : 0;
 			if ( $rowid > $sequence ) {
-				$this->db['sequences'][ $table['name'] ] = $rowid;
+				$this->db['sequences'][ $sequence_key ] = $rowid;
 			}
 		}
 
@@ -1011,6 +1017,10 @@ class WP_PHP_Engine {
 	 * @return array                              The result.
 	 */
 	public function do_update( $statement, $evaluator ) {
+		if ( 'sqlite_sequence' === strtolower( $statement['tbl'] ) && $this->sequence_table_exists( isset( $statement['db'] ) ? $statement['db'] : null ) ) {
+			return $this->update_sqlite_sequence( $statement, $evaluator );
+		}
+
 		$lower = $this->resolve_table_key( strtolower( $statement['tbl'] ) );
 		if ( null === $lower ) {
 			throw new WP_PHP_Engine_SQL_Exception( 'no such table: ' . $statement['tbl'] );
@@ -1208,6 +1218,138 @@ class WP_PHP_Engine {
 		$this->fire_triggers( $lower, 'UPDATE', $old_row, $new_row, $new_rowid, $set_columns );
 	}
 
+	/**
+	 * Insert rows into the sqlite_sequence virtual table.
+	 *
+	 * @param  array                   $statement The insert statement AST node.
+	 * @param  WP_PHP_Engine_Evaluator $evaluator The evaluator.
+	 * @return array                              The result.
+	 */
+	private function insert_sqlite_sequence( $statement, $evaluator ) {
+		$src = $statement['src'];
+		if ( 'default_values' === $src['t'] ) {
+			$source_rows = array( array( null, null ) );
+		} else {
+			if ( ! empty( $statement['with'] ) ) {
+				$src['with'] = array_merge( $statement['with'], isset( $src['with'] ) ? $src['with'] : array() );
+			}
+			$result      = $evaluator->select( $src );
+			$source_rows = $result['rows'];
+		}
+
+		$targets = null !== $statement['cols'] ? array_map( 'strtolower', $statement['cols'] ) : array( 'name', 'seq' );
+		foreach ( $targets as $target ) {
+			if ( ! in_array( $target, array( 'name', 'seq' ), true ) ) {
+				throw new WP_PHP_Engine_SQL_Exception( 'table sqlite_sequence has no column named ' . $target );
+			}
+		}
+
+		$changes = 0;
+		foreach ( $source_rows as $source_row ) {
+			if ( count( $source_row ) !== count( $targets ) ) {
+				throw new WP_PHP_Engine_SQL_Exception(
+					sprintf( 'table sqlite_sequence has %d columns but %d values were supplied', count( $targets ), count( $source_row ) )
+				);
+			}
+			$row = array(
+				'name' => null,
+				'seq'  => null,
+			);
+			foreach ( $targets as $position => $target ) {
+				$row[ $target ] = $source_row[ $position ];
+			}
+			if ( null !== $row['name'] ) {
+				$this->db['sequences'][ $this->sequence_key( (string) $row['name'], isset( $statement['db'] ) ? $statement['db'] : null ) ] = (int) $row['seq'];
+				$changes += 1;
+			}
+		}
+
+		$this->changes        = $changes;
+		$this->total_changes += $changes;
+		$result               = $this->empty_result();
+		$result['changes']    = $changes;
+		return $result;
+	}
+
+	/**
+	 * Update rows in the sqlite_sequence virtual table.
+	 *
+	 * @param  array                   $statement The update statement AST node.
+	 * @param  WP_PHP_Engine_Evaluator $evaluator The evaluator.
+	 * @return array                              The result.
+	 */
+	private function update_sqlite_sequence( $statement, $evaluator ) {
+		$virtual = $this->virtual_table_result( 'sqlite_sequence', isset( $statement['db'] ) ? $statement['db'] : null );
+		$changes = 0;
+
+		foreach ( $virtual['rows'] as $row ) {
+			$current = array(
+				'name' => $row[0],
+				'seq'  => $row[1],
+			);
+			$frame   = array( $this->make_sqlite_sequence_slot( $current ) );
+			if ( null !== $statement['where'] && ! WP_PHP_Engine_Values::is_truthy( $evaluator->eval( $statement['where'], $frame ) ) ) {
+				continue;
+			}
+
+			$new_row = $current;
+			foreach ( $statement['set'] as $assignment ) {
+				if ( isset( $assignment['cols'] ) ) {
+					$values = $evaluator->eval_row_subquery( $assignment['e'], $frame );
+					foreach ( $assignment['cols'] as $position => $col ) {
+						$col_lower = strtolower( $col );
+						if ( ! array_key_exists( $col_lower, $new_row ) ) {
+							throw new WP_PHP_Engine_SQL_Exception( 'no such column: ' . $col );
+						}
+						$new_row[ $col_lower ] = null !== $values && array_key_exists( $position, $values ) ? $values[ $position ] : null;
+					}
+					continue;
+				}
+				$col_lower = strtolower( $assignment['col'] );
+				if ( ! array_key_exists( $col_lower, $new_row ) ) {
+					throw new WP_PHP_Engine_SQL_Exception( 'no such column: ' . $assignment['col'] );
+				}
+				$new_row[ $col_lower ] = $evaluator->eval( $assignment['e'], $frame );
+			}
+
+			unset( $this->db['sequences'][ $this->sequence_key( (string) $current['name'], isset( $statement['db'] ) ? $statement['db'] : null ) ] );
+			if ( null !== $new_row['name'] ) {
+				$this->db['sequences'][ $this->sequence_key( (string) $new_row['name'], isset( $statement['db'] ) ? $statement['db'] : null ) ] = (int) $new_row['seq'];
+			}
+			$changes += 1;
+		}
+
+		$this->changes        = $changes;
+		$this->total_changes += $changes;
+		$result               = $this->empty_result();
+		$result['changes']    = $changes;
+		return $result;
+	}
+
+	/**
+	 * Build an evaluator slot for a sqlite_sequence row.
+	 *
+	 * @param  array $row The sqlite_sequence row keyed by column name.
+	 * @return array      The evaluator slot.
+	 */
+	private function make_sqlite_sequence_slot( $row ) {
+		return array(
+			'alias' => 'sqlite_sequence',
+			'cols'  => array(
+				'name' => $row['name'],
+				'seq'  => $row['seq'],
+			),
+			'names' => array(
+				'name' => 'name',
+				'seq'  => 'seq',
+			),
+			'aff'   => array(),
+			'coll'  => array(),
+			'decl'  => array(),
+			'rowid' => null,
+		);
+	}
+
 	/*
 	 * ----------------------------------------------------------------------
 	 * DELETE.
@@ -1241,8 +1383,8 @@ class WP_PHP_Engine {
 		$lower = strtolower( $statement['tbl'] );
 
 		// DELETE FROM sqlite_sequence resets AUTOINCREMENT counters.
-		if ( 'sqlite_sequence' === $lower && ! empty( $this->db['has_sequence_table'] ) ) {
-			$virtual = $this->virtual_table_result( 'sqlite_sequence' );
+		if ( 'sqlite_sequence' === $lower && $this->sequence_table_exists( isset( $statement['db'] ) ? $statement['db'] : null ) ) {
+			$virtual = $this->virtual_table_result( 'sqlite_sequence', isset( $statement['db'] ) ? $statement['db'] : null );
 			$changes = 0;
 			foreach ( $virtual['rows'] as $row ) {
 				$frame = array(
@@ -1263,7 +1405,7 @@ class WP_PHP_Engine {
 					),
 				);
 				if ( null === $statement['where'] || WP_PHP_Engine_Values::is_truthy( $evaluator->eval( $statement['where'], $frame ) ) ) {
-					$this->delete_sequences( $row[0] );
+					$this->delete_sequences( $row[0], isset( $statement['db'] ) ? $statement['db'] : null );
 					$changes += 1;
 				}
 			}
@@ -1913,8 +2055,12 @@ class WP_PHP_Engine {
 
 		$this->db['tables'][ $key ] = $table;
 		$lower                      = $key;
-		if ( $table['autoincrement'] && ! $table['temp'] ) {
-			$this->db['has_sequence_table'] = true;
+		if ( $table['autoincrement'] ) {
+			if ( $table['temp'] ) {
+				$this->db['has_temp_sequence_table'] = true;
+			} else {
+				$this->db['has_sequence_table'] = true;
+			}
 		}
 
 		// Create implicit indexes for PRIMARY KEY and UNIQUE constraints,
@@ -2306,9 +2452,9 @@ class WP_PHP_Engine {
 					}
 					throw new WP_PHP_Engine_SQL_Exception( 'no such table: ' . $statement['name'] );
 				}
-				$name = $this->db['tables'][ $key ]['name'];
+				$table = $this->db['tables'][ $key ];
 				unset( $this->db['tables'][ $key ] );
-				unset( $this->db['sequences'][ $name ] );
+				unset( $this->db['sequences'][ $this->sequence_key_for_table( $table ) ] );
 				foreach ( $this->db['indexes'] as $index_lower => $index ) {
 					if ( $index['tbl'] === $key ) {
 						unset( $this->db['indexes'][ $index_lower ] );
@@ -2397,9 +2543,11 @@ class WP_PHP_Engine {
 				$this->db['triggers'][ $trigger_lower ]['tbl'] = $statement['new'];
 			}
 		}
-		if ( isset( $this->db['sequences'][ $old_name ] ) ) {
-			$this->db['sequences'][ $statement['new'] ] = $this->db['sequences'][ $old_name ];
-			unset( $this->db['sequences'][ $old_name ] );
+		$old_sequence_key = $this->sequence_key_for_table( array_merge( $table, array( 'name' => $old_name ) ) );
+		$new_sequence_key = $this->sequence_key_for_table( $table );
+		if ( isset( $this->db['sequences'][ $old_sequence_key ] ) ) {
+			$this->db['sequences'][ $new_sequence_key ] = $this->db['sequences'][ $old_sequence_key ];
+			unset( $this->db['sequences'][ $old_sequence_key ] );
 		}
 		foreach ( $this->db['tables'] as $other_lower => $other ) {
 			foreach ( $other['fks'] as $fk_index => $fk ) {
@@ -2784,12 +2932,77 @@ class WP_PHP_Engine {
 	}
 
 	/**
+	 * Build the sqlite_sequence storage key for a table.
+	 *
+	 * @param  array  $table The table metadata.
+	 * @return string        The sequence storage key.
+	 */
+	private function sequence_key_for_table( $table ) {
+		return $this->sequence_key( $table['name'], ! empty( $table['temp'] ) ? 'temp' : 'main' );
+	}
+
+	/**
+	 * Build a sqlite_sequence storage key for a table name and database.
+	 *
+	 * @param  string      $name The table name.
+	 * @param  string|null $db   The database name (main or temp).
+	 * @return string            The sequence storage key.
+	 */
+	private function sequence_key( $name, $db = null ) {
+		return 'temp' === strtolower( (string) $db ) ? 'temp.' . $name : $name;
+	}
+
+	/**
+	 * Strip the internal temp marker from a sequence key.
+	 *
+	 * @param  string $key The sequence storage key.
+	 * @return string      The table name exposed by sqlite_sequence.
+	 */
+	private function sequence_name_from_key( $key ) {
+		return 0 === strpos( $key, 'temp.' ) ? substr( $key, 5 ) : $key;
+	}
+
+	/**
+	 * Check whether a sequence key belongs to a selected database.
+	 *
+	 * @param  string      $key The sequence storage key.
+	 * @param  string|null $db  The selected database.
+	 * @return bool             Whether the key belongs to the database.
+	 */
+	private function sequence_key_matches_db( $key, $db = null ) {
+		if ( 'temp' === strtolower( (string) $db ) ) {
+			return 0 === strpos( $key, 'temp.' );
+		}
+		if ( 'main' === strtolower( (string) $db ) ) {
+			return 0 !== strpos( $key, 'temp.' );
+		}
+		return true;
+	}
+
+	/**
+	 * Check whether sqlite_sequence exists in a selected database.
+	 *
+	 * @param  string|null $db The selected database.
+	 * @return bool           Whether sqlite_sequence exists.
+	 */
+	private function sequence_table_exists( $db = null ) {
+		if ( 'temp' === strtolower( (string) $db ) ) {
+			return ! empty( $this->db['has_temp_sequence_table'] );
+		}
+		if ( 'main' === strtolower( (string) $db ) ) {
+			return ! empty( $this->db['has_sequence_table'] );
+		}
+		return ! empty( $this->db['has_sequence_table'] ) || ! empty( $this->db['has_temp_sequence_table'] );
+	}
+
+	/**
 	 * Get a virtual table result by name (sqlite_master and friends).
 	 *
-	 * @param  string $lower The lowercase table name.
-	 * @return array|null    The result set, or null if not a virtual table.
+	 * @param  string      $lower The lowercase table name.
+	 * @param  string|null $db    The optional database name (main or temp).
+	 * @return array|null         The result set, or null if not a virtual table.
 	 */
-	public function virtual_table_result( $lower ) {
+	public function virtual_table_result( $lower, $db = null ) {
 		if ( 'sqlite_master' === $lower || 'sqlite_schema' === $lower || 'sqlite_temp_master' === $lower || 'sqlite_temp_schema' === $lower ) {
 			$want_temp = 'sqlite_temp_master' === $lower || 'sqlite_temp_schema' === $lower;
 			$rows      = array();
@@ -2800,13 +3013,13 @@ class WP_PHP_Engine {
 				if ( ( 0 === strpos( $table_key, 'temp.' ) ) !== $want_temp ) {
 					continue;
 				}
-				if ( $table['autoincrement'] && ! $table['temp'] ) {
+				if ( $table['autoincrement'] ) {
 					$has_autoincrement = true;
 				}
 				$rows[]    = array( 'table', $table['name'], $table['name'], $rootpage, $table['sql'] );
 				$rootpage += 1;
 			}
-			if ( $has_autoincrement && ! $want_temp ) {
+			if ( $has_autoincrement ) {
 				$rows[]    = array( 'table', 'sqlite_sequence', 'sqlite_sequence', $rootpage, 'CREATE TABLE sqlite_sequence(name,seq)' );
 				$rootpage += 1;
 			}
@@ -2840,13 +3053,16 @@ class WP_PHP_Engine {
 
 		if ( 'sqlite_sequence' === $lower ) {
 			// The sqlite_sequence table only exists once an AUTOINCREMENT
-			// table has been created in the database.
-			if ( empty( $this->db['has_sequence_table'] ) ) {
+			// table has been created in the selected database.
+			if ( ! $this->sequence_table_exists( $db ) ) {
 				return null;
 			}
 			$rows = array();
-			foreach ( $this->db['sequences'] as $name => $seq ) {
-				$rows[] = array( $name, $seq );
+			foreach ( $this->db['sequences'] as $key => $seq ) {
+				if ( ! $this->sequence_key_matches_db( $key, $db ) ) {
+					continue;
+				}
+				$rows[] = array( $this->sequence_name_from_key( $key ), $seq );
 			}
 			return array(
 				'cols' => array( 'name', 'seq' ),
@@ -2865,12 +3081,16 @@ class WP_PHP_Engine {
 	 *
 	 * @param string|null $name The sequence (table) name, or null for all.
 	 */
-	public function delete_sequences( $name ) {
+	public function delete_sequences( $name, $db = null ) {
 		if ( null === $name ) {
-			$this->db['sequences'] = array();
+			foreach ( array_keys( $this->db['sequences'] ) as $key ) {
+				if ( $this->sequence_key_matches_db( $key, $db ) ) {
+					unset( $this->db['sequences'][ $key ] );
+				}
+			}
 			return;
 		}
-		unset( $this->db['sequences'][ $name ] );
+		unset( $this->db['sequences'][ $this->sequence_key( $name, $db ) ] );
 	}
 
 	/**

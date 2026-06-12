@@ -583,8 +583,10 @@ class WP_PHP_Engine_Parser {
 			}
 		}
 		$this->consume_keyword( 'INTO' );
+		$db   = null;
 		$name = $this->consume_identifier();
 		if ( $this->try_consume_operator( '.' ) ) {
+			$db   = strtolower( $name );
 			$name = $this->consume_identifier();
 		}
 		$alias = null;
@@ -654,6 +656,7 @@ class WP_PHP_Engine_Parser {
 			't'      => 'insert',
 			'or'     => $or,
 			'tbl'    => $name,
+			'db'     => $db,
 			'alias'  => $alias,
 			'cols'   => $cols,
 			'src'    => $src,
@@ -709,8 +712,10 @@ class WP_PHP_Engine_Parser {
 		if ( $this->try_consume_keyword( 'OR' ) ) {
 			$this->next();
 		}
+		$db   = null;
 		$name = $this->consume_identifier();
 		if ( $this->try_consume_operator( '.' ) ) {
+			$db   = strtolower( $name );
 			$name = $this->consume_identifier();
 		}
 		$alias = $this->parse_table_alias();
@@ -729,6 +734,7 @@ class WP_PHP_Engine_Parser {
 			't'     => 'update',
 			'with'  => $with,
 			'tbl'   => $name,
+			'db'    => $db,
 			'alias' => $alias,
 			'set'   => $set,
 			'from'  => $from,
@@ -745,8 +751,10 @@ class WP_PHP_Engine_Parser {
 	private function parse_delete( $with ) {
 		$this->consume_keyword( 'DELETE' );
 		$this->consume_keyword( 'FROM' );
+		$db   = null;
 		$name = $this->consume_identifier();
 		if ( $this->try_consume_operator( '.' ) ) {
+			$db   = strtolower( $name );
 			$name = $this->consume_identifier();
 		}
 		$alias = $this->parse_table_alias();
@@ -758,6 +766,7 @@ class WP_PHP_Engine_Parser {
 			't'     => 'delete',
 			'with'  => $with,
 			'tbl'   => $name,
+			'db'    => $db,
 			'alias' => $alias,
 			'where' => $where,
 		);

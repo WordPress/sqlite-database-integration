@@ -1051,7 +1051,7 @@ class WP_PHP_Engine_Evaluator {
 			}
 
 			// Virtual tables provided by the engine (sqlite_master, etc.).
-			$virtual = $this->engine->virtual_table_result( $lower );
+			$virtual = $this->engine->virtual_table_result( $lower, isset( $ref['db'] ) ? $ref['db'] : null );
 			if ( null !== $virtual ) {
 				return $this->result_to_slots( $virtual, $alias );
 			}
