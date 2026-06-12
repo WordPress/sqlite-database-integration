@@ -1163,19 +1163,55 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Parse a MySQL query string into a list of per-statement ASTs.
 	 *
-	 * The MySQL grammar parses a single SQL statement, so the token stream is
-	 * split on the top-level ';' separators and each statement is parsed on
-	 * its own, mirroring how MySQL clients split multi-statement input.
-	 *
 	 * @param  string $query The MySQL query string (possibly multi-statement).
 	 * @return WP_Parser_Node[]|null One "sql_statement" AST per statement, or
 	 *                               null when a statement fails to parse.
 	 */
 	public function parse_mysql_query( string $query ): ?array {
+		$asts = $this->parse_mysql_query_with_sql_modes( $query, $this->active_sql_modes );
+		if ( null !== $asts ) {
+			return $asts;
+		}
+
+		/*
+		 * Retry with the ANSI_QUOTES SQL mode.
+		 *
+		 * Without ANSI_QUOTES, a double-quoted string is a string literal, so
+		 * it is invalid in identifier positions (e.g., ADD INDEX "name" (...)).
+		 * MySQL rejects such statements, but WordPress relies on them (dbDelta
+		 * can produce double-quoted index names). Retrying with ANSI_QUOTES
+		 * accepts these statements, while preserving the MySQL string-literal
+		 * semantics for every query that parses without it.
+		 */
+		if (
+			! in_array( 'ANSI_QUOTES', $this->active_sql_modes, true )
+			&& str_contains( $query, '"' )
+		) {
+			return $this->parse_mysql_query_with_sql_modes(
+				$query,
+				array_merge( $this->active_sql_modes, array( 'ANSI_QUOTES' ) )
+			);
+		}
+		return null;
+	}
+
+	/**
+	 * Parse a MySQL query string using a specific set of SQL modes.
+	 *
+	 * The MySQL grammar parses a single SQL statement, so the token stream is
+	 * split on the top-level ';' separators and each statement is parsed on
+	 * its own, mirroring how MySQL clients split multi-statement input.
+	 *
+	 * @param  string   $query     The MySQL query string (possibly multi-statement).
+	 * @param  string[] $sql_modes The SQL modes to use for tokenization.
+	 * @return WP_Parser_Node[]|null One "sql_statement" AST per statement, or
+	 *                               null when a statement fails to parse.
+	 */
+	private function parse_mysql_query_with_sql_modes( string $query, array $sql_modes ): ?array {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
 			80038,
-			$this->active_sql_modes
+			$sql_modes
 		);
 		$tokens = $lexer->remaining_tokens();
 
@@ -1429,7 +1465,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * sql_statement: END_OF_INPUT | simple_statement_or_begin (';' opt_end_of_input | END_OF_INPUT)
 		 * simple_statement_or_begin: simple_statement | begin_stmt
 		 */
-		$children = $node->get_child_nodes();
+		$children = $node->get_child_nodes( 'simple_statement_or_begin' );
 		if ( count( $children ) !== 1 ) {
 			throw $this->new_driver_exception(
 				sprintf( 'Expected 1 child node, got: %d', count( $children ) )
@@ -1689,64 +1725,47 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Execute a MySQL transaction or locking statement in SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "transactionOrLockingStatement" AST node.
+	 * @param  WP_Parser_Node $node       The transaction or locking statement AST node
+	 *                                    ("start", "commit", "rollback", "savepoint",
+	 *                                    "release", "lock", "unlock", or "xa").
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_transaction_or_locking_statement( WP_Parser_Node $node ): void {
-		$subnode = $node->get_first_child_node();
-		$token   = $node->get_first_descendant_token();
-
-		switch ( $subnode->rule_name ) {
-			case 'transactionStatement':
+		switch ( $node->rule_name ) {
+			case 'start':
 				// START TRANSACTION.
-				if ( WP_MySQL_Tokens::KEYWORDS['START'] === $token->id ) {
-					$this->begin_user_transaction();
-					return;
-				}
-
+				$this->begin_user_transaction();
+				return;
+			case 'commit':
 				// COMMIT.
-				if ( WP_MySQL_Tokens::KEYWORDS['COMMIT'] === $token->id ) {
-					$this->commit_user_transaction();
-					return;
-				}
-
-				break;
-			case 'savepointStatement':
-				$savepoint_name = $this->translate( $subnode->get_first_child_node( 'identifier' ) );
-
+				$this->commit_user_transaction();
+				return;
+			case 'rollback':
 				// ROLLBACK/ROLLBACK TO SAVEPOINT <identifier>.
-				if ( WP_MySQL_Tokens::KEYWORDS['ROLLBACK'] === $token->id ) {
-					if ( null === $savepoint_name ) {
-						$this->rollback_user_transaction();
-					} else {
-						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
-					}
-					return;
+				$savepoint_name = $this->translate( $node->get_first_child_node( 'ident' ) );
+				if ( null === $savepoint_name ) {
+					$this->rollback_user_transaction();
+				} else {
+					$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 				}
-
-				// SAVEPOINT.
-				if ( WP_MySQL_Tokens::KEYWORDS['SAVEPOINT'] === $token->id ) {
-					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
-					return;
-				}
-
-				// RELEASE SAVEPOINT.
-				if ( WP_MySQL_Tokens::KEYWORDS['RELEASE'] === $token->id ) {
-					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
-					return;
-				}
-
-				break;
-			case 'lockStatement':
+				return;
+			case 'savepoint':
+				// SAVEPOINT <identifier>.
+				$savepoint_name = $this->translate( $node->get_first_child_node( 'ident' ) );
+				$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
+				return;
+			case 'release':
+				// RELEASE SAVEPOINT <identifier>.
+				$savepoint_name = $this->translate( $node->get_first_child_node( 'ident' ) );
+				$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
+				return;
+			case 'lock':
 				// LOCK TABLE/LOCK TABLES.
-				if (
-					WP_MySQL_Tokens::KEYWORDS['LOCK'] === $token->id
-					&& $subnode->has_child_node( 'lockItem' )
-				) {
+				$lock_list = $node->get_first_child_node( 'table_lock_list' );
+				if ( null !== $lock_list ) {
 					// Check if the table(s) exists.
-					$lock_items = $subnode->get_child_nodes( 'lockItem' );
-					foreach ( $lock_items as $lock_item ) {
-						$table_ref  = $lock_item->get_first_child_node( 'tableRef' );
+					foreach ( $lock_list->get_flattened_child_nodes( 'table_lock' ) as $lock_item ) {
+						$table_ref  = $lock_item->get_first_child_node( 'table_ident' );
 						$database   = $this->get_database_name( $table_ref );
 						$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 						if ( 'information_schema' === strtolower( $database ) ) {
@@ -1775,14 +1794,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return;
 				}
 
+				break;
+			case 'unlock':
 				// UNLOCK TABLES/UNLOCK TABLE.
-				if (
-					WP_MySQL_Tokens::KEYWORDS['UNLOCK'] === $token->id
-					&& (
-						$subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TABLE'] )
-						|| $subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TABLES'] )
-					)
-				) {
+				if ( $node->has_child_node( 'table_or_tables' ) ) {
 					// Commit the transaction when created by the LOCK statement.
 					if ( $this->table_lock_active && $this->inTransaction() ) {
 						$this->commit_user_transaction();
@@ -1795,11 +1810,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		throw $this->new_not_supported_exception(
-			sprintf(
-				'statement type: "%s" > "%s"',
-				$node->rule_name,
-				$subnode->rule_name
-			)
+			sprintf( 'statement type: "%s"', $node->rule_name )
 		);
 	}
 
@@ -1812,9 +1823,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function execute_select_statement( WP_Parser_Node $node ): void {
 		/*
 		 * [GRAMMAR]
-		 * selectStatement:
-		 *   queryExpression lockingClauseList?
-		 *   | selectStatementWithInto
+		 * select_stmt:
+		 *   query_expression
+		 *   | query_expression locking_clause_list
+		 *   | query_expression_parens
+		 *   | select_stmt_with_into
 		 */
 
 		// First, translate the query, before we modify last found rows count.
@@ -1827,29 +1840,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Handle SQL_CALC_FOUND_ROWS.
 		if ( true === $has_sql_calc_found_rows ) {
 			// Recursively find a query expression with the first LIMIT or SELECT.
-			$query_expr = $node->get_first_descendant_node( 'queryExpression' );
+			$query_expr = $node->get_first_descendant_node( 'query_expression' );
 			while ( true ) {
-				if ( $query_expr->has_child_node( 'limitClause' ) ) {
+				if ( $query_expr->has_child_node( 'opt_limit_clause' ) ) {
 					break;
 				}
 
-				$query_expr_parens = $query_expr->get_first_child_node( 'queryExpressionParens' );
-				if ( null !== $query_expr_parens ) {
-					$query_expr = $query_expr_parens->get_first_child_node( 'queryExpression' );
-					continue;
-				}
-
-				$query_expr_body = $query_expr->get_first_child_node( 'queryExpressionBody' );
+				$query_expr_body = $query_expr->get_first_child_node( 'query_expression_body' );
 				if ( count( $query_expr_body->get_children() ) > 1 ) {
 					break;
 				}
 
-				$query_term = $query_expr_body->get_first_child_node( 'queryTerm' );
-				if (
-					count( $query_term->get_children() ) === 1
-					&& $query_term->has_child_node( 'queryExpressionParens' )
-				) {
-					$query_expr = $query_term->get_first_child_node( 'queryExpressionParens' )->get_first_child_node( 'queryExpression' );
+				// Descend into a parenthesized query expression, if any.
+				$query_expr_parens = $query_expr_body->get_first_child_node( 'query_expression_parens' );
+				if ( null !== $query_expr_parens ) {
+					$query_expr = $query_expr_parens->get_first_descendant_node( 'query_expression' );
 					continue;
 				}
 
@@ -1859,7 +1864,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// Exclude the limit clause from the expression.
 			$count_expr = new WP_Parser_Node( $query_expr->rule_id, $query_expr->rule_name );
 			foreach ( $query_expr->get_children() as $child ) {
-				if ( ! ( $child instanceof WP_Parser_Node && 'limitClause' === $child->rule_name ) ) {
+				if ( ! ( $child instanceof WP_Parser_Node && 'opt_limit_clause' === $child->rule_name ) ) {
 					$count_expr->append_child( $child );
 				}
 			}
@@ -1896,9 +1901,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$is_token = $child instanceof WP_MySQL_Token;
 			$is_node  = $child instanceof WP_Parser_Node;
 
-			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
+			if ( $child instanceof WP_Parser_Node && 'table_ident' === $child->rule_name ) {
 				// MySQL supports INSERT without the INTO keyword; SQLite requires it.
-				if ( ! $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['INTO'] ) ) {
+				if ( ! $node->has_child_node( 'opt_INTO' ) ) {
 					$parts[] = 'INTO';
 				}
 
@@ -1913,21 +1918,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				continue;
 			}
 
-			if ( $is_token && WP_MySQL_Tokens::KEYWORDS['IGNORE'] === $child->id ) {
-				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
+			if ( $is_node && 'opt_ignore' === $child->rule_name ) {
+				// Translate "INSERT IGNORE" to "INSERT OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
 				$is_node
 				&& (
-					'insertFromConstructor' === $child->rule_name
-					|| 'insertQueryExpression' === $child->rule_name
-					|| 'updateList' === $child->rule_name
+					'insert_from_constructor' === $child->rule_name
+					|| 'insert_query_expression' === $child->rule_name
+					|| 'update_list' === $child->rule_name
 				)
 			) {
-				$table_ref  = $node->get_first_child_node( 'tableRef' );
+				$table_ref  = $node->get_first_child_node( 'table_ident' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
-			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
+			} elseif ( $is_node && 'opt_insert_update_list' === $child->rule_name ) {
 				/*
 				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
 				 *
@@ -2020,8 +2025,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// @TODO: Add support for UPDATE with multiple tables and JOINs.
 		//        SQLite supports them in the FROM clause.
 
-		$has_order = $node->has_child_node( 'orderClause' );
-		$has_limit = $node->has_child_node( 'simpleLimitClause' );
+		$has_order = $node->has_child_node( 'opt_order_clause' );
+		$has_limit = $node->has_child_node( 'opt_simple_limit' );
 
 		/*
 		 * SQLite doesn't support UPDATE with ORDER BY/LIMIT.
@@ -2036,10 +2041,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( $has_order || $has_limit ) {
 			$where_subquery = 'SELECT rowid FROM ' . $this->translate_sequence(
 				array(
-					$node->get_first_child_node( 'tableReferenceList' ),
-					$node->get_first_child_node( 'whereClause' ),
-					$node->get_first_child_node( 'orderClause' ),
-					$node->get_first_child_node( 'simpleLimitClause' ),
+					$node->get_first_child_node( 'table_reference_list' ),
+					$node->get_first_child_node( 'opt_where_clause' ),
+					$node->get_first_child_node( 'opt_order_clause' ),
+					$node->get_first_child_node( 'opt_simple_limit' ),
 				)
 			);
 		}
@@ -2048,14 +2053,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * Translate the UPDATE statement parts.
 		 *
 		 * [GRAMMAR]
-		 * updateStatement:
-		 *   withClause? UPDATE_SYMBOL LOW_PRIORITY_SYMBOL? IGNORE_SYMBOL? tableReferenceList
-		 *     SET_SYMBOL updateList whereClause? orderClause? simpleLimitClause?
+		 * update_stmt:
+		 *   opt_with_clause UPDATE_SYM opt_low_priority opt_ignore table_reference_list
+		 *     SET_SYM update_list opt_where_clause opt_order_clause opt_simple_limit
 		 */
 
 		// Collect all tables used in the UPDATE clause (e.g, UPDATE t1, t2 JOIN t3).
 		$table_alias_map = $this->create_table_reference_map(
-			$node->get_first_child_node( 'tableReferenceList' )
+			$node->get_first_child_node( 'table_reference_list' )
 		);
 
 		/*
@@ -2074,13 +2079,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// Determine whether the UPDATE statement modifies multiple tables.
-		$update_list_node        = $node->get_first_child_node( 'updateList' );
+		$update_list_node        = $node->get_first_child_node( 'update_list' );
 		$update_target           = null;
 		$updates_multiple_tables = false;
 		if ( count( $table_alias_map ) > 1 ) {
-			foreach ( $update_list_node->get_child_nodes( 'updateElement' ) as $update_element ) {
-				$column_ref       = $update_element->get_first_child_node( 'columnRef' );
-				$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
+			foreach ( $update_list_node->get_flattened_child_nodes( 'update_elem' ) as $update_element ) {
+				$column_ref       = $update_element->get_first_child_node( 'simple_ident_nospvar' );
+				$column_ref_parts = $column_ref->get_descendant_nodes( 'ident' );
 				$table_or_alias   = count( $column_ref_parts ) > 1
 					? $this->unquote_sqlite_identifier( $this->translate( $column_ref_parts[0] ) )
 					: null;
@@ -2162,10 +2167,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// Translate WITH clause.
-		$with = $this->translate( $node->get_first_child_node( 'withClause' ) );
+		$with = $this->translate( $node->get_first_child_node( 'opt_with_clause' ) );
 
 		// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-		$or_ignore = $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['IGNORE'] )
+		$or_ignore = $node->has_child_node( 'opt_ignore' )
 			? 'OR IGNORE'
 			: null;
 
@@ -2216,9 +2221,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$order_clause = null;
 			$limit_clause = null;
 		} else {
-			$where_clause = $this->translate( $node->get_first_child_node( 'whereClause' ) );
-			$order_clause = $this->translate( $node->get_first_child_node( 'orderClause' ) );
-			$limit_clause = $this->translate( $node->get_first_child_node( 'simpleLimitClause' ) );
+			$where_clause = $this->translate( $node->get_first_child_node( 'opt_where_clause' ) );
+			$order_clause = $this->translate( $node->get_first_child_node( 'opt_order_clause' ) );
+			$limit_clause = $this->translate( $node->get_first_child_node( 'opt_simple_limit' ) );
 		}
 
 		// With JOINs, we need to use the JOIN expressions in the WHERE clause.
@@ -2264,11 +2269,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * We will rewrite such statements into a SELECT to fetch the ROWIDs of
 		 * the rows to delete and then execute a DELETE statement for each table.
 		 */
-		$alias_ref_list = $node->get_first_child_node( 'tableAliasRefList' );
+		$alias_ref_list = $node->get_first_child_node( 'table_alias_ref_list' );
 		if ( null !== $alias_ref_list ) {
 			// 1. Get table aliases targeted by the DELETE statement.
 			$table_aliases = array();
-			foreach ( $alias_ref_list->get_child_nodes() as $alias_ref ) {
+			foreach ( $alias_ref_list->get_flattened_child_nodes( 'table_ident_opt_wild' ) as $alias_ref ) {
 				$table_aliases[] = $this->unquote_sqlite_identifier(
 					$this->translate( $alias_ref )
 				);
@@ -2276,10 +2281,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			// 2. Create an alias to table name map.
 			$alias_map      = array();
-			$table_ref_list = $node->get_first_child_node( 'tableReferenceList' );
-			foreach ( $table_ref_list->get_descendant_nodes( 'singleTable' ) as $single_table ) {
-				$table_ref  = $single_table->get_first_child_node( 'tableRef' );
-				$alias_node = $single_table->get_first_child_node( 'tableAlias' );
+			$table_ref_list = $node->get_first_child_node( 'table_reference_list' );
+			foreach ( $table_ref_list->get_descendant_nodes( 'single_table' ) as $single_table ) {
+				$table_ref  = $single_table->get_first_child_node( 'table_ident' );
+				$alias_node = $single_table->get_first_child_node( 'opt_table_alias' );
 				if ( $alias_node ) {
 					$alias = $this->unquote_sqlite_identifier( $this->translate( $alias_node ) );
 				} else {
@@ -2299,9 +2304,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			// 3. Compose the SELECT query to fetch ROWIDs to delete.
-			$where_clause = $node->get_first_child_node( 'whereClause' );
+			$where_clause = $node->get_first_child_node( 'opt_where_clause' );
 			if ( null !== $where_clause ) {
-				$where = $this->translate( $where_clause->get_first_child_node( 'expr' ) );
+				$where = $this->translate( $where_clause->get_first_descendant_node( 'expr' ) );
 			}
 
 			$select_list = array();
@@ -2345,7 +2350,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// @TODO: Translate DELETE with JOIN to use a subquery.
 
-		$table_ref = $node->get_first_child_node( 'tableRef' );
+		$table_ref = $node->get_first_child_node( 'table_ident' );
 		$database  = $this->get_database_name( $table_ref );
 		if ( 'information_schema' === strtolower( $database ) ) {
 			throw $this->new_access_denied_to_information_schema_exception();
@@ -2360,16 +2365,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * Will be rewritten to:
 		 *   DELETE FROM t WHERE rowid IN ( SELECT rowid FROM t WHERE c = 2 LIMIT 1 );
 		 */
-		$has_order = $node->has_child_node( 'orderClause' );
-		$has_limit = $node->has_child_node( 'simpleLimitClause' );
+		$has_order = $node->has_child_node( 'opt_order_clause' );
+		$has_limit = $node->has_child_node( 'opt_simple_limit' );
 		if ( $has_order || $has_limit ) {
 			$where_subquery = 'SELECT rowid FROM ' . $this->translate_sequence(
 				array(
 					$table_ref,
-					$node->get_first_child_node( 'tableAlias' ),
-					$node->get_first_child_node( 'whereClause' ),
-					$node->get_first_child_node( 'orderClause' ),
-					$node->get_first_child_node( 'simpleLimitClause' ),
+					$node->get_first_child_node( 'opt_table_alias' ),
+					$node->get_first_child_node( 'opt_where_clause' ),
+					$node->get_first_child_node( 'opt_order_clause' ),
+					$node->get_first_child_node( 'opt_simple_limit' ),
 				)
 			);
 
@@ -2394,13 +2399,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_create_table_statement( WP_Parser_Node $node ): void {
-		$subnode = $node->get_first_child_node();
-
 		// Handle TEMPORARY keyword.
-		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] );
+		$table_is_temporary = $node->has_child_node( 'opt_temporary' );
 
 		// Handle CREATE TABLE ... [AS] SELECT.
-		$element_list = $subnode->get_first_child_node( 'tableElementList' );
+		$element_list = $node->get_first_child_node( 'table_element_list' );
 		if ( null === $element_list ) {
 			/*
 			 * While SQLite supports CREATE TABLE ... AS SELECT statements,
@@ -2415,7 +2418,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// Get table name.
-		$table_name_node = $subnode->get_first_child_node( 'tableName' );
+		$table_name_node = $node->get_first_child_node( 'table_ident' );
 		$database        = $this->get_database_name( $table_name_node );
 		$table_name      = $this->unquote_sqlite_identifier( $this->translate( $table_name_node ) );
 
@@ -2424,7 +2427,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// Handle IF NOT EXISTS.
-		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
+		if ( $node->has_child_node( 'opt_if_not_exists' ) ) {
 			$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
 			$table_exists = $this->execute_sqlite_query(
 				sprintf(
@@ -2465,7 +2468,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_alter_table_statement( WP_Parser_Node $node ): void {
-		$table_ref  = $node->get_first_descendant_node( 'tableRef' );
+		$table_ref  = $node->get_first_descendant_node( 'table_ident' );
 		$database   = $this->get_database_name( $table_ref );
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		if ( 'information_schema' === strtolower( $database ) ) {
@@ -2492,35 +2495,47 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			array_column( $column_names, 'COLUMN_NAME_LOWERCASE' ),
 			array_column( $column_names, 'COLUMN_NAME' )
 		);
-		foreach ( $node->get_descendant_nodes( 'alterListItem' ) as $action ) {
+		foreach ( $node->get_descendant_nodes( 'alter_list_item' ) as $action ) {
 			$first_token = $action->get_first_child_token();
 
 			switch ( $first_token->id ) {
 				case WP_MySQL_Tokens::KEYWORDS['DROP']:
-					$name = $this->translate( $action->get_first_child_node( 'fieldIdentifier' ) );
+					// Skip DROP actions that don't target a column (e.g. keys
+					// and constraints; they also carry an "ident" child node).
+					$is_column_drop = (
+						! $action->has_child_node( 'key_or_index' )
+						&& ! $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['PRIMARY'] )
+						&& ! $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['FOREIGN'] )
+						&& ! $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['CHECK'] )
+						&& ! $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['CONSTRAINT'] )
+					);
+					$name           = $is_column_drop
+						? $this->translate( $action->get_first_child_node( 'ident' ) )
+						: null;
 					if ( null !== $name ) {
 						$name = $this->unquote_sqlite_identifier( $name );
 						unset( $column_map[ strtolower( $name ) ] );
 					}
 					break;
 				case WP_MySQL_Tokens::KEYWORDS['CHANGE']:
+					$idents   = $action->get_child_nodes( 'ident' );
 					$old_name = $this->unquote_sqlite_identifier(
-						$this->translate( $action->get_first_child_node( 'fieldIdentifier' ) )
+						$this->translate( $idents[0] )
 					);
 					$new_name = $this->unquote_sqlite_identifier(
-						$this->translate( $action->get_first_child_node( 'identifier' ) )
+						$this->translate( $idents[1] )
 					);
 
 					$column_map[ strtolower( $old_name ) ] = $new_name;
 					break;
 				case WP_MySQL_Tokens::KEYWORDS['RENAME']:
-					$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
-					if ( null !== $column_ref ) {
+					if ( $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['COLUMN'] ) ) {
+						$idents   = $action->get_child_nodes( 'ident' );
 						$old_name = $this->unquote_sqlite_identifier(
-							$this->translate( $column_ref )
+							$this->translate( $idents[0] )
 						);
 						$new_name = $this->unquote_sqlite_identifier(
-							$this->translate( $action->get_first_child_node( 'identifier' ) )
+							$this->translate( $idents[1] )
 						);
 
 						$column_map[ strtolower( $old_name ) ] = $new_name;
@@ -2534,7 +2549,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * table options (e.g. ALTER TABLE t AUTO_INCREMENT = N). These don't
 		 * change the schema, so the recreate would be a pointless full copy.
 		 */
-		if ( count( $node->get_descendant_nodes( 'alterListItem' ) ) > 0 ) {
+		if ( count( $node->get_descendant_nodes( 'alter_list_item' ) ) > 0 ) {
 			$this->information_schema_builder->record_alter_table( $node );
 			$this->recreate_table_from_information_schema( $table_is_temporary, $table_name, $column_map );
 		}
@@ -2558,9 +2573,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// MySQL supports removing multiple tables in a single query DROP query.
 		// In SQLite, we need to execute each DROP TABLE statement separately.
-		$child_node         = $node->get_first_child_node();
-		$table_refs         = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
-		$table_is_temporary = $child_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] );
+		$table_refs         = $node->get_first_child_node( 'table_list' )->get_flattened_child_nodes( 'table_ident' );
+		$table_is_temporary = $node->has_child_node( 'opt_temporary' );
 		$queries            = array();
 		foreach ( $table_refs as $table_ref ) {
 			$database = $this->get_database_name( $table_ref );
@@ -2569,16 +2583,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			$parts = array();
-			foreach ( $child_node->get_children() as $child ) {
+			foreach ( $node->get_children() as $child ) {
 				$is_token = $child instanceof WP_MySQL_Token;
 
 				// Skip the TEMPORARY keyword.
-				if ( $is_token && WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] === $child->id ) {
+				if ( ! $is_token && 'opt_temporary' === $child->rule_name ) {
 					continue;
 				}
 
 				// Replace table list with the current table reference.
-				if ( ! $is_token && 'tableRefList' === $child->rule_name ) {
+				if ( ! $is_token && 'table_list' === $child->rule_name ) {
 					// Add a "temp." schema prefix for temporary tables.
 					$prefix = $table_is_temporary ? '`temp`.' : '';
 					$part   = $prefix . $this->translate( $table_ref );
@@ -2590,7 +2604,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$parts[] = $part;
 				}
 			}
-			$queries[] = 'DROP ' . implode( ' ', $parts );
+			$queries[] = implode( ' ', $parts );
 		}
 
 		foreach ( $queries as $query ) {
@@ -2605,7 +2619,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_truncate_table_statement( WP_Parser_Node $node ): void {
-		$table_ref  = $node->get_first_child_node( 'tableRef' );
+		$table_ref  = $node->get_first_child_node( 'table_ident' );
 		$database   = $this->get_database_name( $table_ref );
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		if ( 'information_schema' === strtolower( $database ) ) {
@@ -2636,11 +2650,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_create_index_statement( WP_Parser_Node $node ): void {
-		$create_index = $node->get_first_child_node( 'createIndex' );
-		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
-		$table_ref    = $target->get_first_child_node( 'tableRef' );
-		$database     = $this->get_database_name( $table_ref );
-		$table_name   = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
+		$table_ref  = $node->get_first_child_node( 'table_ident' );
+		$database   = $this->get_database_name( $table_ref );
+		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
 		if ( 'information_schema' === strtolower( $database ) ) {
 			throw $this->new_access_denied_to_information_schema_exception();
@@ -2649,23 +2661,19 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$this->information_schema_builder->record_create_index( $node );
 
 		$index_name = $this->unquote_sqlite_identifier(
-			$this->translate( $create_index->get_first_child_node( 'indexName' ) )
+			$this->translate( $node->get_first_child_node( 'ident' ) )
 		);
-		$is_unique  = $create_index->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] );
+		$is_unique  = $node->has_child_node( 'opt_unique' );
 
 		// Get the key parts.
-		$key_list_variants = $target->get_first_child_node( 'keyListVariants' );
-		$key_list_nodes    = $key_list_variants->get_first_child_node()->get_child_nodes();
-		foreach ( $key_list_nodes as $key_list_node ) {
-			if ( 'keyPartOrExpression' === $key_list_node->rule_name ) {
-				$key_part_node = $key_list_node->get_first_child();
-			} else {
-				$key_part_node = $key_list_node;
-			}
+		$key_list  = $node->get_first_child_node( 'key_list_with_expression' );
+		$key_parts = array();
+		foreach ( $key_list->get_flattened_child_nodes( 'key_part_with_expression' ) as $key_list_node ) {
+			$key_part_node = $key_list_node->get_first_child_node();
 
-			if ( 'keyPart' === $key_part_node->rule_name ) {
-				$key_part  = $this->translate( $key_part_node->get_first_child_node( 'identifier' ) );
-				$direction = $key_part_node->get_first_child_node( 'direction' );
+			if ( 'key_part' === $key_part_node->rule_name ) {
+				$key_part  = $this->translate( $key_part_node->get_first_child_node( 'ident' ) );
+				$direction = $key_part_node->get_first_child_node( 'opt_ordering_direction' );
 				if ( null !== $direction ) {
 					$key_part .= ' ' . $this->translate( $direction );
 				}
@@ -2681,7 +2689,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				'CREATE %sINDEX %s ON %s (%s)',
 				$is_unique ? 'UNIQUE ' : '',
 				$this->quote_sqlite_identifier( $sqlite_index_name ),
-				$this->translate( $target->get_first_child_node( 'tableRef' ) ),
+				$this->translate( $table_ref ),
 				implode( ', ', $key_parts )
 			)
 		);
@@ -2694,9 +2702,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_drop_index_statement( WP_Parser_Node $node ): void {
-		$drop_index = $node->get_first_child_node( 'dropIndex' );
-		$table_ref  = $drop_index->get_first_child_node( 'tableRef' );
-		$database   = $this->get_database_name( $table_ref );
+		$table_ref = $node->get_first_child_node( 'table_ident' );
+		$database  = $this->get_database_name( $table_ref );
 		if ( 'information_schema' === strtolower( $database ) ) {
 			throw $this->new_access_denied_to_information_schema_exception();
 		}
@@ -2705,7 +2712,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		$index_name = $this->unquote_sqlite_identifier(
-			$this->translate( $drop_index->get_first_child_node( 'indexRef' ) )
+			$this->translate( $node->get_first_child_node( 'ident' ) )
 		);
 
 		/*
@@ -2731,39 +2738,33 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate and execute a MySQL SHOW statement in SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "showStatement" AST node.
+	 * @param  WP_Parser_Node $node       The "show_*_stmt" AST node.
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_show_statement( WP_Parser_Node $node ): void {
-		$tokens   = $node->get_child_tokens();
-		$keyword1 = $tokens[1];
-		$keyword2 = $tokens[2] ?? null;
-
-		switch ( $keyword1->id ) {
-			case WP_MySQL_Tokens::KEYWORDS['COLLATION']:
+		switch ( $node->rule_name ) {
+			case 'show_collation_stmt':
 				$this->execute_show_collation_statement( $node );
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['DATABASES']:
+			case 'show_databases_stmt':
 				$this->execute_show_databases_statement( $node );
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['COLUMNS']:
-			case WP_MySQL_Tokens::KEYWORDS['FIELDS']:
+			case 'show_columns_stmt':
 				$this->execute_show_columns_statement( $node );
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['CREATE']:
-				if ( WP_MySQL_Tokens::KEYWORDS['TABLE'] === $keyword2->id ) {
-					$table_ref  = $node->get_first_child_node( 'tableRef' );
+			case 'show_create_table_stmt':
+					$table_ref  = $node->get_first_child_node( 'table_ident' );
 					$database   = $this->get_database_name( $table_ref );
 					$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
 					// Refuse SHOW CREATE TABLE for information schema tables,
 					// as we don't have the table definitions at the moment.
-					if ( 'information_schema' === strtolower( $database ) ) {
-						throw $this->new_driver_exception(
-							sprintf( "SHOW command denied to user 'sqlite'@'%%' for table '%s'", $table_name ),
-							'42000'
-						);
-					}
+				if ( 'information_schema' === strtolower( $database ) ) {
+					throw $this->new_driver_exception(
+						sprintf( "SHOW command denied to user 'sqlite'@'%%' for table '%s'", $table_name ),
+						'42000'
+					);
+				}
 
 					$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 
@@ -2795,15 +2796,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						null === $sql ? array() : array( array( $table_name, $sql ) )
 					);
 					$this->found_rows            = null === $sql ? 0 : 1;
-					return;
-				}
-				break;
-			case WP_MySQL_Tokens::KEYWORDS['INDEX']:
-			case WP_MySQL_Tokens::KEYWORDS['INDEXES']:
-			case WP_MySQL_Tokens::KEYWORDS['KEYS']:
+				return;
+			case 'show_keys_stmt':
 				$this->execute_show_index_statement( $node );
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['GRANTS']:
+			case 'show_grants_stmt':
 				$this->last_result_statement = $this->create_result_statement_from_data(
 					array( 'Grants for root@%' ),
 					array( array( 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION' ) )
@@ -2821,13 +2818,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 				$this->found_rows            = 1;
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['TABLE']:
+			case 'show_table_status_stmt':
 				$this->execute_show_table_status_statement( $node );
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['TABLES']:
+			case 'show_tables_stmt':
 				$this->execute_show_tables_statement( $node );
 				return;
-			case WP_MySQL_Tokens::KEYWORDS['VARIABLES']:
+			case 'show_variables_stmt':
 				$this->last_column_meta      = array(
 					array(
 						'native_type' => 'STRING',
@@ -2857,25 +2854,21 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		throw $this->new_not_supported_exception(
-			sprintf(
-				'statement type: "%s" > "%s"',
-				$node->rule_name,
-				$keyword1->get_value()
-			)
+			sprintf( 'statement type: "%s"', $node->rule_name )
 		);
 	}
 
 	/**
 	 * Translate and execute a MySQL SHOW COLLATION statement in SQLite.
 	 *
-	 * @param  WP_Parser_Node $node The "showStatement" AST node.
+	 * @param  WP_Parser_Node $node The "show_collation_stmt" AST node.
 	 */
 	private function execute_show_collation_statement( WP_Parser_Node $node ): void {
 		$definition = $this->information_schema_builder
 			->get_computed_information_schema_table_definition( 'collations' );
 
 		// LIKE and WHERE clauses.
-		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		$like_or_where = $node->get_first_child_node( 'opt_wild_or_where' );
 		if ( $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'collation_name' );
 		}
@@ -2909,7 +2902,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$schemata_table = $this->information_schema_builder->get_table_name( false, 'schemata' );
 
 		// LIKE and WHERE clauses.
-		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		$like_or_where = $node->get_first_child_node( 'opt_wild_or_where' );
 		if ( $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'schema_name' );
 		}
@@ -2941,8 +2934,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function execute_show_index_statement( WP_Parser_Node $node ): void {
 		// Get database and table name.
-		$table_ref = $node->get_first_child_node( 'tableRef' );
-		$in_db     = $node->get_first_child_node( 'inDb' );
+		$table_ref = $node->get_first_child_node( 'table_ident' );
+		$in_db     = $node->get_first_child_node( 'opt_db' );
 		if ( $in_db ) {
 			// FROM/IN database.
 			$database = $this->get_database_name( $in_db );
@@ -2952,7 +2945,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
 		// WHERE clause.
-		$where = $node->get_first_child_node( 'whereClause' );
+		$where_clause = $node->get_first_child_node( 'opt_where_clause' );
+		$where        = $where_clause ? $where_clause->get_first_child_node( 'where_clause' ) : null;
 		if ( null !== $where ) {
 			$value     = $this->translate( $where->get_first_child_node( 'expr' ) );
 			$condition = sprintf( 'AND %s', $value );
@@ -3034,17 +3028,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function execute_show_table_status_statement( WP_Parser_Node $node ): void {
 		// FROM/IN database.
-		$in_db = $node->get_first_child_node( 'inDb' );
+		$in_db = $node->get_first_child_node( 'opt_db' );
 		if ( null === $in_db ) {
 			$database = $this->db_name;
 		} else {
 			$database = $this->unquote_sqlite_identifier(
-				$this->translate( $in_db->get_first_child_node( 'identifier' ) )
+				$this->translate( $in_db->get_first_child_node( 'ident' ) )
 			);
 		}
 
 		// LIKE and WHERE clauses.
-		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		$like_or_where = $node->get_first_child_node( 'opt_wild_or_where' );
 		if ( null !== $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'Name' );
 		}
@@ -3121,23 +3115,23 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function execute_show_tables_statement( WP_Parser_Node $node ): void {
 		// FROM/IN database.
-		$in_db = $node->get_first_child_node( 'inDb' );
+		$in_db = $node->get_first_child_node( 'opt_db' );
 		if ( null === $in_db ) {
 			$database = $this->db_name;
 		} else {
 			$database = $this->unquote_sqlite_identifier(
-				$this->translate( $in_db->get_first_child_node( 'identifier' ) )
+				$this->translate( $in_db->get_first_child_node( 'ident' ) )
 			);
 		}
 
 		// LIKE and WHERE clauses.
-		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		$like_or_where = $node->get_first_child_node( 'opt_wild_or_where' );
 		if ( null !== $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'table_name' );
 		}
 
 		// Handle the FULL keyword.
-		$command_type = $node->get_first_child_node( 'showCommandType' );
+		$command_type = $node->get_first_child_node( 'opt_show_cmd_type' );
 		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Tokens::KEYWORDS['FULL'] );
 
 		// Fetch table information.
@@ -3174,8 +3168,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// TODO: EXTENDED, FULL
 
 		// Get database and table name.
-		$table_ref = $node->get_first_child_node( 'tableRef' );
-		$in_db     = $node->get_first_child_node( 'inDb' );
+		$table_ref = $node->get_first_child_node( 'table_ident' );
+		$in_db     = $node->get_first_child_node( 'opt_db' );
 		if ( $in_db ) {
 			// FROM/IN database.
 			$database = $this->get_database_name( $in_db );
@@ -3203,13 +3197,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// LIKE and WHERE clauses.
-		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		$like_or_where = $node->get_first_child_node( 'opt_wild_or_where' );
 		if ( null !== $like_or_where ) {
 			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'column_name' );
 		}
 
 		// Handle the FULL keyword.
-		$command_type = $node->get_first_child_node( 'showCommandType' );
+		$command_type = $node->get_first_child_node( 'opt_show_cmd_type' );
 		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Tokens::KEYWORDS['FULL'] );
 
 		// Fetch column information.
@@ -3265,7 +3259,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_describe_statement( WP_Parser_Node $node ): void {
-		$table_ref  = $node->get_first_child_node( 'tableRef' );
+		$table_ref  = $node->get_first_child_node( 'table_ident' );
 		$database   = $this->get_database_name( $table_ref );
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 
@@ -3305,7 +3299,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function execute_use_statement( WP_Parser_Node $node ): void {
 		$database_name = $this->unquote_sqlite_identifier(
-			$this->translate( $node->get_first_child_node( 'identifier' ) )
+			$this->translate( $node->get_first_child_node( 'ident' ) )
 		);
 		$database_name = strtolower( $database_name );
 
@@ -3325,7 +3319,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate and execute a MySQL SET statement in SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "setStatement" AST node.
+	 * @param  WP_Parser_Node $node       The "set" AST node.
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
 	private function execute_set_statement( WP_Parser_Node $node ): void {
@@ -3337,23 +3331,23 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *
 		 * This will be flattened into a single array of grammar node lists:
 		 *   [
-		 *     [ <userVariable>, <equal>, <expr> ],
-		 *     [ <optionType>, <internalVariableName>, <equal>, <setExprOrDefault> ],
-		 *     [ <setSystemVariable>, <equal>, <setExprOrDefault> ],
-		 *     [ <setSystemVariable>, <equal>, <setExprOrDefault> ],
+		 *     [ <@>, <ident_or_text>, <equal>, <expr> ],
+		 *     [ <option_type>, <lvalue_variable>, <equal>, <set_expr_or_default> ],
+		 *     [ <@>, <@>, <opt_set_var_ident_type>, <lvalue_variable>, <equal>, <set_expr_or_default> ],
+		 *     [ <@>, <@>, <lvalue_variable>, <equal>, <set_expr_or_default> ],
 		 *   ]
 		 */
 		$subnode = $node->get_first_child_node();
-		if ( $subnode->has_child_node( 'optionValueNoOptionType' ) ) {
-			$start_node  = $subnode->get_first_child_node( 'optionValueNoOptionType' );
+		if ( $subnode->has_child_node( 'option_value_no_option_type' ) ) {
+			$start_node  = $subnode->get_first_child_node( 'option_value_no_option_type' );
 			$definitions = array( $start_node->get_children() );
-		} elseif ( $subnode->has_child_node( 'startOptionValueListFollowingOptionType' ) ) {
+		} elseif ( $subnode->has_child_node( 'start_option_value_list_following_option_type' ) ) {
 			$start_node  = $subnode
-				->get_first_child_node( 'startOptionValueListFollowingOptionType' )
-				->get_first_child_node( 'optionValueFollowingOptionType' ) ?? $node;
+				->get_first_child_node( 'start_option_value_list_following_option_type' )
+				->get_first_child_node( 'option_value_following_option_type' ) ?? $node;
 			$definitions = array(
 				array_merge(
-					array( $subnode->get_first_child_node( 'optionType' ) ),
+					array( $subnode->get_first_child_node( 'option_type' ) ),
 					$start_node->get_children()
 				),
 			);
@@ -3361,30 +3355,41 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$definitions = array( $subnode->get_children() );
 		}
 
-		$continue_node = $subnode->get_first_child_node( 'optionValueListContinued' );
+		// The continued list follows either the first option value or the
+		// "start_option_value_list_following_option_type" node.
+		$continue_node = $subnode->get_first_descendant_node( 'option_value_list_continued' );
 		if ( $continue_node ) {
-			foreach ( $continue_node->get_child_nodes( 'optionValue' ) as $child ) {
-				$node          = $child->get_first_child_node( 'optionValueNoOptionType' ) ?? $child;
-				$definitions[] = $node->get_child_nodes();
+			$option_value_list = $continue_node->get_first_child_node( 'option_value_list' );
+			foreach ( $option_value_list->get_flattened_child_nodes( 'option_value' ) as $child ) {
+				$inner = $child->get_first_child_node( 'option_value_no_option_type' );
+				if ( null !== $inner ) {
+					$definitions[] = $inner->get_children();
+				} else {
+					$following     = $child->get_first_child_node( 'option_value_following_option_type' );
+					$definitions[] = array_merge(
+						array( $child->get_first_child_node( 'option_type' ) ),
+						$following->get_children()
+					);
+				}
 			}
 		}
 
 		/*
 		 * 2. Iterate and process the SET definitions.
 		 *
-		 * When an "optionType" node is encountered (such as "SESSION var = ..."),
+		 * When an "option_type" node is encountered (such as "SESSION var = ..."),
 		 * it's value is used for all following system variable assignments that
-		 * have no type keyword specified, until the next "optionType" is found.
+		 * have no type keyword specified, until the next "option_type" is found.
 		 *
 		 * This doesn't apply to "@@" type prefixes (such as "@@SESSION.var_name"),
 		 * which always impact only the immediately following system variable.
 		 */
 		$default_type = WP_MySQL_Tokens::KEYWORDS['SESSION'];
 		foreach ( $definitions as $definition ) {
-			// Check if the definition starts with an "optionType" node with
+			// Check if the definition starts with an "option_type" node with
 			// one of the SESSION, GLOBAL, PERSIST, or PERSIST_ONLY tokens.
 			$part = array_shift( $definition );
-			if ( $part instanceof WP_Parser_Node && 'optionType' === $part->rule_name ) {
+			if ( $part instanceof WP_Parser_Node && 'option_type' === $part->rule_name ) {
 				$default_type = $part->get_first_child_token()->id;
 				$part         = array_shift( $definition );
 			}
@@ -3398,30 +3403,41 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				//       See: https://github.com/WordPress/sqlite-database-integration/issues/192
 			} elseif (
 				$part instanceof WP_Parser_Node
-				&& 'charsetClause' === $part->rule_name
+				&& 'character_set' === $part->rule_name
 			) {
 				// "SET CHARACTER SET ..." is a no-op for now.
 				// TODO: Validate charset compatibility with UTF-8.
 				//       See: https://github.com/WordPress/sqlite-database-integration/issues/192
 			} elseif (
 				$part instanceof WP_Parser_Node
-				&& (
-					'internalVariableName' === $part->rule_name
-					|| 'setSystemVariable' === $part->rule_name
-				)
+				&& 'lvalue_variable' === $part->rule_name
 			) {
-				// Set a system variable.
+				// Set a system variable without a type prefix.
 				array_shift( $definition ); // Remove the '='.
 				$value = array_shift( $definition );
 				$this->execute_set_system_variable_statement( $part, $value, $default_type );
 			} elseif (
-				$part instanceof WP_Parser_Node
-				&& 'userVariable' === $part->rule_name
+				$part instanceof WP_MySQL_Token
+				&& WP_MySQL_Lexer::AT_SIGN_SYMBOL === $part->id
 			) {
-				// Set a user variable.
-				array_shift( $definition ); // Remove the '='.
-				$value = array_shift( $definition );
-				$this->execute_set_user_variable_statement( $part, $value );
+				$next = array_shift( $definition );
+				if ( $next instanceof WP_MySQL_Token && WP_MySQL_Lexer::AT_SIGN_SYMBOL === $next->id ) {
+					// Set a system variable with a "@@[type.]" prefix.
+					$type = $default_type;
+					$next = array_shift( $definition );
+					if ( $next instanceof WP_Parser_Node && 'opt_set_var_ident_type' === $next->rule_name ) {
+						$type = $next->get_first_child_token()->id;
+						$next = array_shift( $definition );
+					}
+					array_shift( $definition ); // Remove the '='.
+					$value = array_shift( $definition );
+					$this->execute_set_system_variable_statement( $next, $value, $type );
+				} else {
+					// Set a user variable ("@var").
+					array_shift( $definition ); // Remove the '='.
+					$value = array_shift( $definition );
+					$this->execute_set_user_variable_statement( $next, $value );
+				}
 			} else {
 				throw $this->new_not_supported_exception(
 					sprintf( 'SET statement: %s', $node->rule_name )
@@ -3435,34 +3451,23 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate and execute a MySQL SET statement for system variables.
 	 *
-	 * @param  WP_Parser_Node $set_var_node  The "internalVariableName" or "setSystemVariable" AST node.
-	 * @param  WP_Parser_Node $value_node    The "setExprOrDefault" AST node.
-	 * @param  int            $default_type  The currently active default variable type.
+	 * @param  WP_Parser_Node $set_var_node  The "lvalue_variable" AST node.
+	 * @param  WP_Parser_Node $value_node    The "set_expr_or_default" AST node.
+	 * @param  int            $type          The variable type.
 	 *                                       One of the SESSION, GLOBAL, PERSIST, PERSIST_ONLY tokens.
 	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
 	 */
 	private function execute_set_system_variable_statement(
 		WP_Parser_Node $set_var_node,
 		WP_Parser_Node $value_node,
-		int $default_type
+		int $type
 	): void {
 		// Get the variable name.
-		$internal_variable_name = 'setSystemVariable' === $set_var_node->rule_name
-			? $set_var_node->get_first_child_node( 'internalVariableName' )
-			: $set_var_node;
-
 		$name = strtolower(
 			$this->unquote_sqlite_identifier(
-				$this->translate( $internal_variable_name )
+				$this->translate( $set_var_node )
 			)
 		);
-
-		// Get the type attribute (one of SESSION, GLOBAL, PERSIST, PERSIST_ONLY).
-		$type = $default_type;
-		if ( $set_var_node->has_child_node( 'setVarIdentType' ) ) {
-			$var_ident_type = $set_var_node->get_first_child_node( 'setVarIdentType' );
-			$type           = $var_ident_type->get_first_child_token()->id;
-		}
 
 		/*
 		 * Some MySQL system variables values can be set using an unquoted pure
@@ -3479,9 +3484,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *
 		 * In this cases, we need to use the value directly without attempting
 		 * to evaluate the expression, as that would result in a query error.
-		 * In the grammar, unquoted identifiers are captured by "columnRef".
+		 * In the grammar, unquoted identifiers are captured by "simple_ident".
 		 */
-		$identifier = $this->translate( $value_node->get_first_descendant_node( 'columnRef' ) );
+		$identifier = $this->translate( $value_node->get_first_descendant_node( 'simple_ident' ) );
 		if ( $identifier && $identifier === $this->translate( $value_node ) ) {
 			$value = $this->unquote_sqlite_identifier( $identifier );
 		} elseif ( ! $value_node->has_child_node( 'expr' ) ) {
@@ -3528,7 +3533,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate and execute a MySQL SET statement for user variables.
 	 *
-	 * @param  WP_Parser_Node $user_variable The "userVariable" AST node.
+	 * @param  WP_Parser_Node $user_variable The "ident_or_text" AST node with the user variable name.
 	 * @param  WP_Parser_Node $expr          The "expr" AST node.
 	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
 	 */
@@ -3536,10 +3541,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		WP_Parser_Node $user_variable,
 		WP_Parser_Node $expr
 	): void {
-		$name  = $this->unquote_sqlite_identifier(
-			$this->translate( $user_variable->get_first_child() )
+		$name  = strtolower(
+			$this->unquote_sqlite_identifier( $this->translate( $user_variable ) )
 		);
-		$name  = strtolower( substr( $name, 1 ) ); // Remove '@', normalize case.
 		$value = $this->evaluate_expression( $expr );
 
 		$this->user_variables[ $name ] = $value;
@@ -3559,9 +3563,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function execute_administration_statement( WP_Parser_Node $node ): void {
 		$first_token    = $node->get_first_child_token();
-		$table_ref_list = $node->get_first_child_node( 'tableRefList' );
+		$table_ref_list = $node->get_first_child_node( 'table_list' );
 		$results        = array();
-		foreach ( $table_ref_list->get_child_nodes( 'tableRef' ) as $table_ref ) {
+		foreach ( $table_ref_list->get_flattened_child_nodes( 'table_ident' ) as $table_ref ) {
 			$database = $this->get_database_name( $table_ref );
 			if ( 'information_schema' === strtolower( $database ) ) {
 				throw $this->new_access_denied_to_information_schema_exception();
@@ -3728,39 +3732,37 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
-			case 'queryExpression':
+			case 'query_expression':
 				return $this->translate_query_expression( $node );
-			case 'querySpecification':
+			case 'query_specification':
 				return $this->translate_query_specification( $node );
-			case 'tableRef':
+			case 'table_ident':
 				return $this->translate_table_ref( $node );
-			case 'qualifiedIdentifier':
-			case 'tableRefWithWildcard':
-				$parts = $node->get_descendant_nodes( 'identifier' );
+			case 'table_wild':
+				$parts = $node->get_descendant_nodes( 'ident' );
+				if ( count( $parts ) === 2 ) {
+					return $this->translate_qualified_identifier( $parts[0], $parts[1] ) . '.*';
+				}
+				return $this->translate_qualified_identifier( null, $parts[0] ) . '.*';
+			case 'table_ident_opt_wild':
+				// A multi-table DELETE target; the optional ".*" suffix is dropped.
+				$parts = $node->get_descendant_nodes( 'ident' );
 				if ( count( $parts ) === 2 ) {
 					return $this->translate_qualified_identifier( $parts[0], $parts[1] );
 				}
 				return $this->translate_qualified_identifier( null, $parts[0] );
-			case 'fieldIdentifier':
-			case 'simpleIdentifier':
-				$parts = $node->get_descendant_nodes( 'identifier' );
+			case 'simple_ident':
+			case 'simple_ident_nospvar':
+				$parts = $node->get_descendant_nodes( 'ident' );
 				if ( count( $parts ) === 3 ) {
 					return $this->translate_qualified_identifier( $parts[0], $parts[1], $parts[2] );
 				} elseif ( count( $parts ) === 2 ) {
 					return $this->translate_qualified_identifier( null, $parts[0], $parts[1] );
 				}
 				return $this->translate_qualified_identifier( null, null, $parts[0] );
-			case 'tableWild':
-				$parts = $node->get_descendant_nodes( 'identifier' );
-				if ( count( $parts ) === 2 ) {
-					return $this->translate_qualified_identifier( $parts[0], $parts[1] ) . '.*';
-				}
-				return $this->translate_qualified_identifier( null, $parts[0] ) . '.*';
-			case 'dotIdentifier':
-				return $this->translate_sequence( $node->get_children(), '' );
-			case 'identifierKeyword':
+			case 'ident_keyword':
 				return '`' . $this->translate( $node->get_first_child() ) . '`';
-			case 'pureIdentifier':
+			case 'IDENT_sys':
 				$value = $this->translate_pure_identifier( $node );
 
 				/*
@@ -3776,9 +3778,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					}
 				}
 				return $value;
-			case 'textStringLiteral':
+			case 'text_literal':
 				return $this->translate_string_literal( $node );
-			case 'dataType':
+			case 'type':
 			case 'nchar':
 				$child = $node->get_first_child();
 				if ( $child instanceof WP_Parser_Node ) {
@@ -3812,50 +3814,49 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				throw $this->new_not_supported_exception(
 					sprintf( 'data type: %s', $child->get_value() )
 				);
-			case 'selectItem':
+			case 'select_item':
 				return $this->translate_select_item( $node );
-			case 'fromClause':
+			case 'from_clause':
 				// FROM DUAL is MySQL-specific syntax that means "FROM no tables"
 				// and it is equivalent to omitting the FROM clause entirely.
-				if ( $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['DUAL'] ) ) {
+				$from_tables = $node->get_first_child_node( 'from_tables' );
+				if ( $from_tables && $from_tables->has_child_token( WP_MySQL_Tokens::KEYWORDS['DUAL'] ) ) {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'simpleExprBody':
+			case 'simple_expr':
 				return $this->translate_simple_expr_body( $node );
-			case 'predicateOperations':
-				$token = $node->get_first_child_token();
-				if ( WP_MySQL_Tokens::KEYWORDS['LIKE'] === $token->id ) {
+			case 'predicate':
+				if ( $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['LIKE'] ) ) {
 					return $this->translate_like( $node );
-				} elseif ( WP_MySQL_Tokens::KEYWORDS['REGEXP'] === $token->id ) {
+				}
+				if ( $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['REGEXP'] ) ) {
 					return $this->translate_regexp_functions( $node );
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'runtimeFunctionCall':
+			case 'function_call_keyword':
+			case 'function_call_nonkeyword':
+			case 'function_call_conflict':
 				return $this->translate_runtime_function_call( $node );
-			case 'functionCall':
+			case 'now':
+				/*
+				 * 1) SQLite doesn't support CURRENT_TIMESTAMP() with parentheses.
+				 * 2) In MySQL, CURRENT_TIMESTAMP and CURRENT_TIMESTAMP() are an
+				 *    alias of NOW(). In SQLite, there is no NOW() function.
+				 */
+				return 'CURRENT_TIMESTAMP';
+			case 'function_call_generic':
 				return $this->translate_function_call( $node );
-			case 'substringFunction':
-				$nodes = $node->get_child_nodes();
-				if ( count( $nodes ) === 2 ) {
-					return sprintf(
-						'SUBSTR(%s, %s)',
-						$this->translate( $nodes[0] ),
-						$this->translate( $nodes[1] )
-					);
-				} else {
-					return sprintf(
-						'SUBSTR(%s, %s, %s)',
-						$this->translate( $nodes[0] ),
-						$this->translate( $nodes[1] ),
-						$this->translate( $nodes[2] )
-					);
+			case 'rvalue_system_or_user_variable':
+				// A user variable ("@var") or a system variable ("@@var") read.
+				if ( count( $node->get_child_tokens( WP_MySQL_Lexer::AT_SIGN_SYMBOL ) ) < 2 ) {
+					return $this->translate_user_variable( $node );
 				}
-			case 'systemVariable':
-				$var_ident_type = $node->get_first_child_node( 'varIdentType' );
-				$type_token     = $var_ident_type ? $var_ident_type->get_first_child_token() : null;
-				$original_name  = $this->unquote_sqlite_identifier(
-					$this->translate( $node->get_first_child_node( 'textOrIdentifier' ) )
+
+				$type_node     = $node->get_first_child_node( 'opt_rvalue_system_variable_type' );
+				$type_token    = $type_node ? $type_node->get_first_child_token() : null;
+				$original_name = $this->unquote_sqlite_identifier(
+					$this->translate( $node->get_first_child_node( 'rvalue_system_variable' ) )
 				);
 
 				$name = strtolower( $original_name );
@@ -3889,18 +3890,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return $this->quote_sqlite_value( $value );
 				}
 				return (string) $value;
-			case 'userVariable':
-				$name  = $this->unquote_sqlite_identifier( $this->translate( $node->get_first_child() ) );
-				$name  = strtolower( substr( $name, 1 ) ); // Remove '@', normalize case.
-				$value = $this->user_variables[ $name ] ?? null;
-				if ( null === $value ) {
-					return 'NULL';
-				}
-				if ( is_string( $value ) ) {
-					return $this->quote_sqlite_value( $value );
-				}
-				return (string) $value;
-			case 'castType':
+			case 'cast_type':
 				$first_child = $node->get_first_child();
 				if ( $first_child instanceof WP_Parser_Node ) {
 					$first_token = $first_child->get_first_child_token();
@@ -3933,24 +3923,44 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 							sprintf( 'cast type: %s', $first_child->get_value() )
 						);
 				}
-			case 'defaultCollation':
+			case 'default_collation':
 				// @TODO: Check and save in information schema.
 				return null;
-			case 'duplicateAsQueryExpression':
+			case 'duplicate_as_qe':
 				// @TODO: How to handle IGNORE/REPLACE?
 
 				// The "AS" keyword is optional in MySQL, but required in SQLite.
 				return 'AS ' . $this->translate( $node->get_first_child_node() );
-			case 'indexHint':
-			case 'indexHintList':
+			case 'opt_key_definition':
+				// Index hints (USE/FORCE/IGNORE INDEX) are not supported in SQLite.
 				return null;
-			case 'lockingClause':
+			case 'locking_clause':
 				// SQLite doesn't support locking clauses (SELECT ... FOR UPDATE).
 				// They are not needed in SQLite due to the database file locking.
 				return null;
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate a MySQL user variable read ("@var") to SQLite.
+	 *
+	 * @param  WP_Parser_Node $node The AST node holding the "@" sign and the
+	 *                              user variable name.
+	 * @return string               The translated value.
+	 */
+	private function translate_user_variable( WP_Parser_Node $node ): string {
+		$name  = $this->unquote_sqlite_identifier( $this->translate( $node->get_first_child_node() ) );
+		$name  = strtolower( $name );
+		$value = $this->user_variables[ $name ] ?? null;
+		if ( null === $value ) {
+			return 'NULL';
+		}
+		if ( is_string( $value ) ) {
+			return $this->quote_sqlite_value( $value );
+		}
+		return (string) $value;
 	}
 
 	/**
@@ -4049,12 +4059,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a MySQL string literal to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node The "textStringLiteral" AST node.
+	 * @param  WP_Parser_Node $node The "text_literal" AST node.
 	 * @return string               The translated value.
 	 */
 	private function translate_string_literal( WP_Parser_Node $node ): string {
-		$token = $node->get_first_child_token();
-		$value = $token->get_value();
+		/*
+		 * A text literal is a sequence of one or more string tokens, possibly
+		 * with a character set prefix ("_utf8mb4'abc'"). MySQL concatenates
+		 * adjacent string literals ("'a' 'b'" is equivalent to "'ab'").
+		 */
+		$value = $this->collect_text_literal_value( $node );
 
 		/*
 		 * Translate datetime literals.
@@ -4099,9 +4113,30 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Collect the string value of a text literal node.
+	 *
+	 * The value of adjacent string tokens is concatenated, and the character
+	 * set prefix ("_utf8mb4'abc'"), if any, is omitted.
+	 *
+	 * @param  WP_Parser_Node $node The "text_literal" AST node.
+	 * @return string               The string value of the literal.
+	 */
+	private function collect_text_literal_value( WP_Parser_Node $node ): string {
+		$value = '';
+		foreach ( $node->get_children() as $child ) {
+			if ( $child instanceof WP_Parser_Node ) {
+				$value .= $this->collect_text_literal_value( $child );
+			} elseif ( WP_MySQL_Lexer::UNDERSCORE_CHARSET !== $child->id ) {
+				$value .= $child->get_value();
+			}
+		}
+		return $value;
+	}
+
+	/**
 	 * Translate a MySQL pure identifier to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node The "pureIdentifier" AST node.
+	 * @param  WP_Parser_Node $node The "IDENT_sys" AST node.
 	 * @return string               The translated value.
 	 */
 	private function translate_pure_identifier( WP_Parser_Node $node ): string {
@@ -4182,16 +4217,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
 	private function translate_query_expression( WP_Parser_Node $node ): string {
-		// Get the query expression subnode under which we need to look for the
-		// SELECT item list node. This prevents searching under "withClause".
-		$query_expr_main = (
-			$node->get_first_child_node( 'queryExpressionBody' )
-			?? $node->get_first_child_node( 'queryExpressionParens' )
+		/*
+		 * Get the query expression subnode under which we need to look for the
+		 * SELECT item list node. This prevents searching under "with_clause".
+		 *
+		 * Set operations nest through the left-recursive "query_expression_body"
+		 * rule, so any top-level UNION/EXCEPT/INTERSECT operator appears as a
+		 * direct child token of the outermost "query_expression_body" node.
+		 */
+		$query_expr_main   = $node->get_first_child_node( 'query_expression_body' );
+		$has_set_operation = (
+			$query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNION'] )
+			|| $query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['EXCEPT'] )
+			|| $query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['INTERSECT'] )
 		);
-		$query_term      = $query_expr_main->get_first_descendant_node( 'queryTerm' );
-		$has_union       = $query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNION'] );
-		$has_except      = $query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['EXCEPT'] );
-		$has_intersect   = $query_term->has_child_token( WP_MySQL_Tokens::KEYWORDS['INTERSECT'] );
 
 		/*
 		 * When the ORDER BY clause is present, we need to disambiguate the item
@@ -4200,30 +4239,28 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * @see WP_SQLite_Driver::disambiguate_item()
 		 */
 		$disambiguated_order_list = array();
-		$order_clause             = $node->get_first_child_node( 'orderClause' );
-		if ( $order_clause && ! $has_union && ! $has_except && ! $has_intersect ) {
+		$order_clause             = $node->get_first_child_node( 'opt_order_clause' );
+		if ( $order_clause && ! $has_set_operation ) {
 			/*
 			 * [GRAMMAR]
-			 * queryExpression: (withClause)? (
-			 *   queryExpressionBody orderClause? limitClause?
-			 *   | queryExpressionParens orderClause? limitClause?
-			 * ) (procedureAnalyseClause)?
+			 * query_expression: opt_with_clause query_expression_body
+			 *                   opt_order_clause opt_limit_clause
 			 */
 
 			// Create the SELECT item disambiguation map.
-			$select_item_list   = $query_expr_main->get_first_descendant_node( 'selectItemList' );
+			$select_item_list   = $query_expr_main->get_first_descendant_node( 'select_item_list' );
 			$disambiguation_map = $this->create_select_item_disambiguation_map( $select_item_list );
 
-			// For each "orderList" item, search for a matching SELECT item.
+			// For each "order_list" item, search for a matching SELECT item.
 			$disambiguated_order_list = array();
-			$order_list               = $order_clause->get_first_child_node( 'orderList' );
-			foreach ( $order_list->get_child_nodes() as $order_item ) {
+			$order_list               = $order_clause->get_first_descendant_node( 'order_list' );
+			foreach ( $order_list->get_flattened_child_nodes( 'order_expr' ) as $order_item ) {
 				/*
 				 * [GRAMMAR]
-				 * orderExpression: expr direction?
+				 * order_expr: expr opt_ordering_direction
 				 */
 				$order_expr         = $order_item->get_first_child_node( 'expr' );
-				$order_direction    = $order_item->get_first_child_node( 'direction' );
+				$order_direction    = $order_item->get_first_child_node( 'opt_ordering_direction' );
 				$disambiguated_item = $this->disambiguate_item( $disambiguation_map, $order_expr );
 
 				$disambiguated_order_list[] = sprintf(
@@ -4237,7 +4274,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// the one that was constructed using the disambiguation algorithm.
 			$parts = array();
 			foreach ( $node->get_children() as $child ) {
-				if ( $child instanceof WP_Parser_Node && 'orderClause' === $child->rule_name ) {
+				if ( $child instanceof WP_Parser_Node && 'opt_order_clause' === $child->rule_name ) {
 					$parts[] = 'ORDER BY ' . implode( ', ', $disambiguated_order_list );
 				} else {
 					$parts[] = $this->translate( $child );
@@ -4258,8 +4295,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @return string|null
 	 */
 	private function translate_query_specification( WP_Parser_Node $node ): string {
-		$group_by = $node->get_first_child_node( 'groupByClause' );
-		$having   = $node->get_first_child_node( 'havingClause' );
+		$group_by = $node->get_first_child_node( 'opt_group_clause' );
+		$having   = $node->get_first_child_node( 'opt_having_clause' );
 
 		/*
 		 * When the GROUP BY or HAVING clause is present, we need to disambiguate
@@ -4271,7 +4308,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$having_clause   = null;
 		if ( $group_by || $having ) {
 			// Build a SELECT list disambiguation map for both GROUP BY and HAVING.
-			$select_item_list   = $node->get_first_child_node( 'selectItemList' );
+			$select_item_list   = $node->get_first_child_node( 'select_item_list' );
 			$disambiguation_map = $this->create_select_item_disambiguation_map( $select_item_list );
 
 			// Disambiguate the GROUP BY clause column references.
@@ -4279,10 +4316,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if ( $group_by ) {
 				/*
 				 * [GRAMMAR]
-				 * groupByClause: GROUP_SYMBOL BY_SYMBOL orderList olapOption?
+				 * opt_group_clause: GROUP_SYM BY group_list olap_opt
+				 * group_list: group_list ',' grouping_expr | grouping_expr
 				 */
-				$group_by_list = $group_by->get_first_child_node( 'orderList' );
-				foreach ( $group_by_list->get_child_nodes() as $group_by_item ) {
+				$group_by_list = $group_by->get_first_child_node( 'group_list' );
+				foreach ( $group_by_list->get_flattened_child_nodes( 'grouping_expr' ) as $group_by_item ) {
 					$group_by_expr                 = $group_by_item->get_first_child_node( 'expr' );
 					$disambiguated_item            = $this->disambiguate_item( $disambiguation_map, $group_by_expr );
 					$disambiguated_group_by_list[] = $disambiguated_item ?? $this->translate( $group_by_expr );
@@ -4295,7 +4333,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if ( $having ) {
 				/*
 				 * [GRAMMAR]
-				 * havingClause: HAVING_SYMBOL expr
+				 * opt_having_clause: HAVING expr
 				 */
 				$having_expr          = $having->get_first_child_node();
 				$having_expr_children = $having_expr->get_children();
@@ -4314,9 +4352,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// items with the ones that were disambiguated using the SELECT list.
 			$parts = array();
 			foreach ( $node->get_children() as $child ) {
-				if ( $child instanceof WP_Parser_Node && 'groupByClause' === $child->rule_name ) {
+				if ( $child instanceof WP_Parser_Node && 'opt_group_clause' === $child->rule_name ) {
 					$parts[] = $group_by_clause;
-				} elseif ( $child instanceof WP_Parser_Node && 'havingClause' === $child->rule_name ) {
+				} elseif ( $child instanceof WP_Parser_Node && 'opt_having_clause' === $child->rule_name ) {
 					// SQLite doesn't allow using the "HAVING" clause without "GROUP BY".
 					// In such cases, let's prefix the "HAVING" clause with "GROUP BY 1".
 					if ( ! $group_by ) {
@@ -4349,7 +4387,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['VALUES'] === $token->id ) {
 			return sprintf(
 				'`excluded`.%s',
-				$this->translate( $node->get_first_child_node( 'simpleIdentifier' ) )
+				$this->translate( $node->get_first_child_node( 'simple_ident_nospvar' ) )
 			);
 		}
 
@@ -4360,14 +4398,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * In SQLite, COLLATE BINARY is equivalent in comparison contexts.
 		 */
 		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $token->id ) {
-			$expr = $node->get_first_child_node( 'simpleExpr' );
+			$expr = $node->get_first_child_node( 'simple_expr' );
 			return sprintf( '%s COLLATE BINARY', $this->translate( $expr ) );
 		}
 
 		// Translate "CAST(expr AS type)" to its SQLite equivalent.
 		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['CAST'] === $token->id ) {
 			$expr      = $node->get_first_child_node( 'expr' );
-			$cast_type = $node->get_first_child_node( 'castType' );
+			$cast_type = $node->get_first_child_node( 'cast_type' );
 			return $this->translate_cast_expr( $expr, $cast_type );
 		}
 
@@ -4380,7 +4418,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 */
 		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['CONVERT'] === $token->id ) {
 			$expr      = $node->get_first_child_node( 'expr' );
-			$cast_type = $node->get_first_child_node( 'castType' );
+			$cast_type = $node->get_first_child_node( 'cast_type' );
 
 			if ( null !== $cast_type ) {
 				// CONVERT(expr, type): Translate to cast expression.
@@ -4420,19 +4458,35 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a MySQL LIKE expression to SQLite.
 	 *
-	 * @param WP_Parser_Node $node        The "predicateOperations" AST node.
+	 * @param WP_Parser_Node $node        The "predicate" AST node with a LIKE operator.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
 	private function translate_like( WP_Parser_Node $node ): string {
-		$tokens    = $node->get_descendant_tokens();
-		$is_binary = isset( $tokens[1] ) && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $tokens[1]->id;
+		/*
+		 * [GRAMMAR]
+		 * predicate: bit_expr (not)? LIKE simple_expr (ESCAPE simple_expr)? | ...
+		 */
+		$children   = $node->get_children();
+		$like_index = 0;
+		foreach ( $children as $i => $child ) {
+			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Tokens::KEYWORDS['LIKE'] === $child->id ) {
+				$like_index = $i;
+				break;
+			}
+		}
+		$pattern    = $children[ $like_index + 1 ] ?? null;
+		$is_binary  = (
+			$pattern instanceof WP_Parser_Node
+			&& null !== $pattern->get_first_child_token( WP_MySQL_Tokens::KEYWORDS['BINARY'] )
+		);
+		$has_escape = $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['ESCAPE'] );
 
 		if ( true === $is_binary ) {
-			$children = $node->get_children();
 			return sprintf(
-				'GLOB _helper_like_to_glob_pattern(%s)',
-				$this->translate( $children[1] )
+				'%s GLOB _helper_like_to_glob_pattern(%s)',
+				$this->translate_sequence( array_slice( $children, 0, $like_index ) ),
+				$this->translate( $pattern )
 			);
 		}
 
@@ -4454,8 +4508,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * We'll probably need to overload the like() function:
 		 *   https://www.sqlite.org/lang_corefunc.html#like
 		 */
-		$statement = $this->translate_sequence( $node->get_children() );
-		if ( $this->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
+		$statement = $this->translate_sequence( $children );
+		if ( $has_escape || $this->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
 			return $statement;
 		}
 		return $statement . " ESCAPE '\\'";
@@ -4464,13 +4518,27 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate MySQL REGEXP expression to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "predicateOperations" AST node.
+	 * @param  WP_Parser_Node $node       The "predicate" AST node with a REGEXP operator.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
 	private function translate_regexp_functions( WP_Parser_Node $node ): string {
-		$tokens    = $node->get_descendant_tokens();
-		$is_binary = isset( $tokens[1] ) && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $tokens[1]->id;
+		/*
+		 * [GRAMMAR]
+		 * predicate: bit_expr (not)? REGEXP bit_expr | ...
+		 */
+		$children     = $node->get_children();
+		$regexp_index = 0;
+		foreach ( $children as $i => $child ) {
+			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Tokens::KEYWORDS['REGEXP'] === $child->id ) {
+				$regexp_index = $i;
+				break;
+			}
+		}
+		$subject       = $this->translate_sequence( array_slice( $children, 0, $regexp_index ) );
+		$pattern       = $children[ $regexp_index + 1 ] ?? null;
+		$pattern_token = $pattern instanceof WP_Parser_Node ? $pattern->get_first_descendant_token() : null;
+		$is_binary     = null !== $pattern_token && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $pattern_token->id;
 
 		/*
 		 * If the query says REGEXP BINARY, the comparison is byte-by-byte
@@ -4486,15 +4554,19 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * regular expressions anyway.
 		 */
 		if ( true === $is_binary ) {
-			return 'REGEXP CHAR(0) || ' . $this->translate( $node->get_first_child_node() );
+			return $subject . ' REGEXP CHAR(0) || ' . $this->translate( $pattern );
 		}
-		return 'REGEXP ' . $this->translate( $node->get_first_child_node() );
+		return $subject . ' REGEXP ' . $this->translate( $pattern );
 	}
 
 	/**
 	 * Translate a MySQL runtime function call to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "runtimeFunctionCall" AST node.
+	 * Runtime function calls are functions with their own grammar rules, i.e.
+	 * the "function_call_keyword", "function_call_nonkeyword", and
+	 * "function_call_conflict" AST nodes.
+	 *
+	 * @param  WP_Parser_Node $node       The function call AST node.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
@@ -4508,7 +4580,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			case WP_MySQL_Tokens::KEYWORDS['DATABASE']:
 				return $this->quote_sqlite_value( $this->db_name );
 			case WP_MySQL_Tokens::KEYWORDS['CURRENT_TIMESTAMP']:
-			case WP_MySQL_Tokens::KEYWORDS['NOW']:
 				/*
 				 * 1) SQLite doesn't support CURRENT_TIMESTAMP() with parentheses.
 				 * 2) In MySQL, CURRENT_TIMESTAMP and CURRENT_TIMESTAMP() are an
@@ -4538,6 +4609,22 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$this->translate( $nodes[0] ),
 					$this->translate( $nodes[1] )
 				);
+			case WP_MySQL_Tokens::KEYWORDS['SUBSTRING']:
+				$nodes = $node->get_child_nodes();
+				if ( count( $nodes ) === 2 ) {
+					return sprintf(
+						'SUBSTR(%s, %s)',
+						$this->translate( $nodes[0] ),
+						$this->translate( $nodes[1] )
+					);
+				} else {
+					return sprintf(
+						'SUBSTR(%s, %s, %s)',
+						$this->translate( $nodes[0] ),
+						$this->translate( $nodes[1] ),
+						$this->translate( $nodes[2] )
+					);
+				}
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
@@ -4546,7 +4633,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a MySQL function call to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "functionCall" AST node.
+	 * @param  WP_Parser_Node $node       The "function_call_generic" AST node.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
@@ -4556,9 +4643,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$this->unquote_sqlite_identifier( $this->translate( $nodes[0] ) )
 		);
 
-		$args = array();
-		if ( isset( $nodes[1] ) ) {
-			foreach ( $nodes[1]->get_child_nodes() as $child ) {
+		$args      = array();
+		$args_list = $node->get_first_child_node( 'opt_udf_expr_list' );
+		if ( null !== $args_list ) {
+			foreach ( $args_list->get_first_child_node()->get_flattened_child_nodes( 'udf_expr' ) as $child ) {
 				$args[] = $this->translate( $child );
 			}
 		}
@@ -4754,17 +4842,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * First, let's translate the select item subtree.
 		 *
 		 * [GRAMMAR]
-		 * selectItem: tableWild | (expr selectAlias?)
+		 * select_item: table_wild | expr select_alias
 		 */
 		$item = $this->translate_sequence( $node->get_children() );
 
 		// A table wildcard (e.g., "SELECT *, t.*, ...") never has an alias.
-		if ( $node->has_child_node( 'tableWild' ) ) {
+		if ( $node->has_child_node( 'table_wild' ) ) {
 			return $item;
 		}
 
 		// When an explicit alias is provided, we can use it as is.
-		$alias = $node->get_first_child_node( 'selectAlias' );
+		$alias = $node->get_first_child_node( 'select_alias' );
 		if ( $alias ) {
 			return $item;
 		}
@@ -4780,7 +4868,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * In this case, SQLite uses the same logic as MySQL, so using the value
 		 * as is without adding an explicit alias will produce the correct result.
 		 */
-		$column_ref    = $node->get_first_descendant_node( 'columnRef' );
+		$column_ref    = $node->get_first_descendant_node( 'simple_ident' );
 		$is_column_ref = $column_ref && $item === $this->translate( $column_ref );
 		if ( $is_column_ref ) {
 			return $item;
@@ -4795,19 +4883,19 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * For example, for "SELECT 'abc'", the resulting column name is "abc"
 		 * in MySQL, but would be "'abc'" in SQLite if an alias was not used.
 		 *
-		 * Descend the AST until we reach a textStringLiteral. If at any level
+		 * Descend the AST until we reach a text_literal. If at any level
 		 * we don't have a single child node, bail out; it's not a bare literal.
 		 */
 		$current = $node;
-		while ( 'textStringLiteral' !== $current->rule_name ) {
+		while ( 'text_literal' !== $current->rule_name ) {
 			$children = $current->get_children();
 			if ( 1 !== count( $children ) || ! $children[0] instanceof WP_Parser_Node ) {
 				break;
 			}
 			$current = $children[0];
 		}
-		if ( 'textStringLiteral' === $current->rule_name ) {
-			$alias = $current->get_first_child_token()->get_value();
+		if ( 'text_literal' === $current->rule_name ) {
+			$alias = $this->collect_text_literal_value( $current );
 
 			// When the literal value contains a NULL byte, MySQL truncates the
 			// resulting identifier at the position of the first one of them.
@@ -4861,13 +4949,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *
 	 * The same logic will be applied to table references in JOIN clauses as well.
 	 *
-	 * @param  WP_Parser_Node $node       The "tableRef" AST node.
+	 * @param  WP_Parser_Node $node       The "table_ident" AST node.
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
 	public function translate_table_ref( WP_Parser_Node $node ): string {
 		// The table reference is in "<schema>.<table>" or "<table>" format.
-		$parts  = $node->get_descendant_nodes( 'identifier' );
+		$parts  = $node->get_descendant_nodes( 'ident' );
 		$table  = array_pop( $parts );
 		$schema = array_pop( $parts );
 
@@ -4902,7 +4990,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			)->fetchAll( PDO::FETCH_COLUMN );
 
 			if ( count( $columns ) === 0 ) {
-				return $this->translate_sequence( $node->get_children() );
+				return $this->translate_qualified_identifier( $schema, $table );
 			}
 
 			// List all columns in the table, replacing columns targeting database
@@ -4969,7 +5057,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->quote_sqlite_identifier( $table_name )
 			);
 		}
-		return $this->translate_sequence( $node->get_children() );
+		return $this->translate_qualified_identifier( $schema, $table );
 	}
 
 	/**
@@ -5086,11 +5174,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	): void {
 		// Find the last AUTO_INCREMENT = N option (MySQL uses the last one).
 		$value = null;
-		foreach ( $node->get_descendant_nodes( 'createTableOption' ) as $option ) {
+		foreach ( $node->get_descendant_nodes( 'create_table_option' ) as $option ) {
 			if ( ! $option->has_child_token( WP_MySQL_Tokens::KEYWORDS['AUTO_INCREMENT'] ) ) {
 				continue;
 			}
-			$number_node = $option->get_first_child_node( 'ulonglong_number' );
+			$number_node = $option->get_first_child_node( 'ulonglong_num' );
 			if ( null === $number_node ) {
 				continue;
 			}
@@ -5151,16 +5239,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a MySQL SHOW LIKE ... or SHOW WHERE ... condition to SQLite.
 	 *
-	 * @param  WP_Parser_Node $like_or_where The "likeOrWhere" AST node.
+	 * @param  WP_Parser_Node $like_or_where The "opt_wild_or_where" AST node.
 	 * @param  string         $like_column   The column name to use in the LIKE clause ("table_name", "column_name", etc.).
 	 * @return string                        The translated value.
 	 * @throws WP_SQLite_Driver_Exception    When the translation fails.
 	 */
 	private function translate_show_like_or_where_condition( WP_Parser_Node $like_or_where, string $like_column ): string {
-		$like_clause = $like_or_where->get_first_child_node( 'likeClause' );
-		if ( null !== $like_clause ) {
-			$value = $this->translate(
-				$like_clause->get_first_child_node( 'textStringLiteral' )
+		if ( $like_or_where->has_child_token( WP_MySQL_Tokens::KEYWORDS['LIKE'] ) ) {
+			$value = $this->translate_string_literal(
+				$like_or_where->get_first_child_node( 'TEXT_STRING_literal' )
 			);
 			return sprintf(
 				"AND %s LIKE %s ESCAPE '\\'",
@@ -5169,7 +5256,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			);
 		}
 
-		$where_clause = $like_or_where->get_first_child_node( 'whereClause' );
+		$where_clause = $like_or_where->get_first_child_node( 'where_clause' );
 		if ( null !== $where_clause ) {
 			$value = $this->translate(
 				$where_clause->get_first_child_node( 'expr' )
@@ -5232,7 +5319,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
 	 * @param  string         $table_name The name of the target table.
-	 * @param  WP_Parser_Node $node       The "insertQueryExpression" or "insertValues" AST node.
+	 * @param  WP_Parser_Node $node       The "insert_from_constructor", "insert_query_expression", or "update_list" AST node.
 	 * @return string                     The translated INSERT query body.
 	 */
 	private function translate_insert_or_replace_body(
@@ -5276,17 +5363,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Get a list of columns that are targeted by the INSERT or REPLACE query.
 		// This is either an explicit column list, or all columns of the table.
 		$insert_list = array();
-		$fields_node = $node->get_first_child_node( 'fields' );
+		$fields_node = $node->get_first_child_node( 'insert_columns' );
 		if ( $fields_node ) {
 			// "INSERT INTO ... (column1, column2, ...)"
-			foreach ( $fields_node->get_child_nodes() as $field ) {
+			foreach ( $fields_node->get_flattened_child_nodes( 'insert_column' ) as $field ) {
 				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $field ) );
 				$insert_list[] = strtolower( $column_name );
 			}
-		} elseif ( 'updateList' === $node->rule_name ) {
+		} elseif ( 'update_list' === $node->rule_name ) {
 			// "INSERT INTO ... SET column1 = value1, column2 = value2, ..."
-			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
-				$column_ref    = $update_element->get_first_child_node( 'columnRef' );
+			foreach ( $node->get_flattened_child_nodes( 'update_elem' ) as $update_element ) {
+				$column_ref    = $update_element->get_first_child_node( 'simple_ident_nospvar' );
 				$column_name   = $this->unquote_sqlite_identifier( $this->translate( $column_ref ) );
 				$insert_list[] = strtolower( $column_name );
 			}
@@ -5347,10 +5434,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *   INSERT INTO ... SELECT <select-list> FROM (<values-from-original-query>)
 		 */
 		$select_list = array();
-		if ( 'insertQueryExpression' === $node->rule_name ) {
+		if ( 'insert_query_expression' === $node->rule_name ) {
 			// When inserting from a SELECT query, we don't know the column names.
 			// Let's wrap the query with a "SELECT (...) LIMIT 0" to obtain them.
-			$expr = $node->get_first_child_node( 'queryExpressionOrParens' );
+			$expr = $node->get_first_child_node( 'query_expression_with_opt_locking_clauses' );
 			$stmt = $this->execute_sqlite_query(
 				'SELECT * FROM (' . $this->translate( $expr ) . ') LIMIT 1'
 			);
@@ -5442,7 +5529,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 * AUTO_INCREMENT columns are excluded. A NULL value advances
 				 * the sequence regardless of the column's nullability.
 				 */
-				$is_insert_from_select = 'insertQueryExpression' === $node->rule_name;
+				$is_insert_from_select = 'insert_query_expression' === $node->rule_name;
 				if (
 					! $is_strict_mode
 					&& ! $is_auto_increment
@@ -5459,9 +5546,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		// Wrap the original insert VALUES, SELECT, or SET list in a FROM clause.
-		if ( 'insertFromConstructor' === $node->rule_name ) {
+		if ( 'insert_from_constructor' === $node->rule_name ) {
 			// VALUES (...)
-			$insert_values = $node->get_first_child_node( 'insertValues' );
+			$insert_values = $node->get_first_child_node( 'insert_values' );
 			$from          = $this->translate( $insert_values );
 
 			/**
@@ -5476,11 +5563,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			 */
 			$is_values_naming_supported = version_compare( $this->get_sqlite_version(), '3.33.0', '>=' );
 			if ( ! $is_values_naming_supported ) {
-				$values_list = $insert_values->get_first_child_node( 'valueList' );
-				$values      = $values_list->get_first_child_node( 'values' );
+				$values_list = $insert_values->get_first_child_node( 'values_list' );
+				$first_row   = $values_list->get_flattened_child_nodes( 'row_value' )[0];
+				$values      = $first_row->get_first_descendant_node( 'values' );
 				$value_count = (
-					count( $values->get_child_nodes( 'expr' ) )
-					+ count( $values->get_child_nodes( WP_MySQL_Tokens::KEYWORDS['DEFAULT'] ) )
+					null === $values ? 0 : count( $values->get_flattened_child_nodes( 'expr_or_default' ) )
 				);
 
 				$columns_list = '';
@@ -5490,16 +5577,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 				$from = 'SELECT ' . $columns_list . ' WHERE FALSE UNION ALL ' . $from;
 			}
-		} elseif ( 'insertQueryExpression' === $node->rule_name ) {
+		} elseif ( 'insert_query_expression' === $node->rule_name ) {
 			// SELECT ...
 			$from = $this->translate(
-				$node->get_first_child_node( 'queryExpressionOrParens' )
+				$node->get_first_child_node( 'query_expression_with_opt_locking_clauses' )
 			);
 		} else {
 			// SET c1 = v1, c2 = v2, ...
 			$values = array();
-			foreach ( $node->get_child_nodes( 'updateElement' ) as $update_element ) {
-				$values[] = $this->translate( $update_element->get_first_child_node( 'expr' ) );
+			foreach ( $node->get_flattened_child_nodes( 'update_elem' ) as $update_element ) {
+				$values[] = $this->translate( $update_element->get_first_child_node( 'expr_or_default' ) );
 			}
 			$from = 'VALUES (' . implode( ', ', $values ) . ')';
 		}
@@ -5548,11 +5635,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
 	 * @param  string         $table_name  The name of the target table.
-	 * @param  WP_Parser_Node $parent_node The "updateList" AST node parent node.
+	 * @param  WP_Parser_Node $parent_node The "update_list" AST node parent node.
 	 * @return string                      The translated UPDATE list.
 	 */
 	private function translate_update_list( string $table_name, WP_Parser_Node $parent_node ): string {
-		$node = $parent_node->get_first_child_node( 'updateList' );
+		$node = $parent_node->get_first_child_node( 'update_list' );
 
 		// This method is always used with the main database.
 		$database = $this->get_saved_db_name( $this->main_db_name );
@@ -5591,10 +5678,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// Translate the UPDATE list, emulating IMPLICIT DEFAULTs for NULL values.
 		$fragment = '';
-		foreach ( $node->get_child_nodes() as $i => $update_element ) {
-			$column_ref       = $update_element->get_first_child_node( 'columnRef' );
-			$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
-			$expr             = $update_element->get_first_child_node( 'expr' );
+		foreach ( $node->get_flattened_child_nodes( 'update_elem' ) as $i => $update_element ) {
+			$column_ref       = $update_element->get_first_child_node( 'simple_ident_nospvar' );
+			$column_ref_parts = $column_ref->get_descendant_nodes( 'ident' );
+			$expr_or_default  = $update_element->get_first_child_node( 'expr_or_default' );
+			$expr             = $expr_or_default ? $expr_or_default->get_first_child_node( 'expr' ) : null;
 
 			// Get column info.
 			$column_name = $this->unquote_sqlite_identifier( $this->translate( end( $column_ref_parts ) ) );
@@ -5629,7 +5717,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			 * updating to a NULL value saves an IMPLICIT DEFAULT value instead.
 			 * This behavior does not apply to ON DUPLICATE KEY UPDATE clauses.
 			 */
-			$is_on_duplicate_key_update = 'insertUpdateList' === $parent_node->rule_name;
+			$is_on_duplicate_key_update = 'opt_insert_update_list' === $parent_node->rule_name;
 			if ( ! $is_strict_mode && ! $is_nullable && ! $is_on_duplicate_key_update ) {
 				$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
 				if ( null !== $implicit_default ) {
@@ -5697,24 +5785,23 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function unnest_parenthesized_expression( WP_Parser_Node $node ): WP_Parser_Node {
 		$children = $node->get_children();
 
-		// Descend the "expr -> boolPri -> predicate -> bitExpr -> simpleExpr" -> "simpleExprBody"
+		// Descend the "expr -> bool_pri -> predicate -> bit_expr -> simple_expr"
 		// tree, when on each level we have only a single child node (expression nesting).
 		if (
 			1 === count( $children )
 			&& $children[0] instanceof WP_Parser_Node
-			&& in_array( $children[0]->rule_name, array( 'expr', 'boolPri', 'predicate', 'bitExpr', 'simpleExpr', 'simpleExprBody' ), true )
+			&& in_array( $children[0]->rule_name, array( 'expr', 'bool_pri', 'predicate', 'bit_expr', 'simple_expr' ), true )
 		) {
 			$unnested = $this->unnest_parenthesized_expression( $children[0] );
 			return $unnested === $children[0] ? $node : $unnested;
 		}
 
-		// Unnest "OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL" to "exprList".
+		// Unnest "OPEN_PAR_SYMBOL expr CLOSE_PAR_SYMBOL" to "expr".
 		if (
 			count( $children ) === 3
 			&& $children[0] instanceof WP_MySQL_Token && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $children[0]->id
-			&& $children[1] instanceof WP_Parser_Node && 'exprList' === $children[1]->rule_name
+			&& $children[1] instanceof WP_Parser_Node && 'expr' === $children[1]->rule_name
 			&& $children[2] instanceof WP_MySQL_Token && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $children[2]->id
-			&& 1 === count( $children[1]->get_children() )
 		) {
 			return $this->unnest_parenthesized_expression( $children[1] );
 		}
@@ -5759,10 +5846,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *                                            null when the expression cannot be disambiguated.
 	 */
 	private function disambiguate_item( array $disambiguation_map, WP_Parser_Node $expr ) {
-		// Skip when there is no column in the expression (no "columnRef" node),
-		// or when the column is already qualified (has a "dotIdentifier" node).
-		$column_ref = $expr->get_first_descendant_node( 'columnRef' );
-		if ( ! $column_ref || $column_ref->get_first_descendant_node( 'dotIdentifier' ) ) {
+		// Skip when there is no column in the expression (no "simple_ident"
+		// node), or when the column is already qualified (multiple parts).
+		$column_ref = $expr->get_first_descendant_node( 'simple_ident' );
+		if ( ! $column_ref || count( $column_ref->get_descendant_nodes( 'ident' ) ) > 1 ) {
 			return null;
 		}
 
@@ -5800,35 +5887,35 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function create_select_item_disambiguation_map( WP_Parser_Node $select_item_list ): array {
 		// Create a map of SELECT item column names to their qualified values.
 		$disambiguation_map = array();
-		foreach ( $select_item_list->get_child_nodes() as $select_item ) {
+		foreach ( $select_item_list->get_flattened_child_nodes( 'select_item' ) as $select_item ) {
 			/*
 			 * [GRAMMAR]
-			 * selectItem: tableWild | (expr selectAlias?)
+			 * select_item: table_wild | expr select_alias
 			 */
 
-			// Skip when a "tableWild" node is used (no "expr" node).
+			// Skip when a "table_wild" node is used (no "expr" node).
 			$select_item_expr = $select_item->get_first_child_node( 'expr' );
 			if ( ! $select_item_expr ) {
 				continue;
 			}
 
 			// A SELECT item alias always needs to be preserved as-is.
-			$alias = $select_item->get_first_child_node( 'selectAlias' );
+			$alias = $select_item->get_first_child_node( 'select_alias' );
 			if ( $alias ) {
 				$alias_value                        = $this->translate( $alias->get_first_child_node() );
 				$disambiguation_map[ $alias_value ] = array( $alias_value );
 				continue;
 			}
 
-			// Skip when there is no column listed (no "columnRef" node).
-			$select_column_ref = $select_item_expr->get_first_descendant_node( 'columnRef' );
+			// Skip when there is no column listed (no "simple_ident" node).
+			$select_column_ref = $select_item_expr->get_first_descendant_node( 'simple_ident' );
 			if ( ! $select_column_ref ) {
 				continue;
 			}
 
-			// Skip when the column reference is not qualified (no "dotIdentifier" node).
-			$dot_identifiers = $select_column_ref->get_descendant_nodes( 'dotIdentifier' );
-			if ( 0 === count( $dot_identifiers ) ) {
+			// Skip when the column reference is not qualified (a single part).
+			$ident_parts = $select_column_ref->get_descendant_nodes( 'ident' );
+			if ( count( $ident_parts ) < 2 ) {
 				continue;
 			}
 
@@ -5842,8 +5929,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				continue;
 			}
 
-			// The column name is the last "dotIdentifier" node.
-			$key = $this->translate( end( $dot_identifiers )->get_first_child_node() );
+			// The column name is the last "ident" part.
+			$key = $this->translate( end( $ident_parts ) );
 
 			$disambiguation_map[ $key ]   = $disambiguation_map[ $key ] ?? array();
 			$disambiguation_map[ $key ][] = $column_value;
@@ -5852,7 +5939,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Analyze a "tableReferenceList" AST node and extract table data.
+	 * Analyze a "table_reference_list" AST node and extract table data.
 	 *
 	 * This method extracts table data for all tables that are used at the root
 	 * level of a given query, including tables that are referenced using JOINs.
@@ -5872,64 +5959,101 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * Which is equivalent to:
 	 *   SELECT * FROM (t1 CROSS JOIN t2) JOIN t3 ON 1
 	 *
-	 * @param  WP_Parser_Node $node The "tableReferenceList" AST node.
+	 * @param  WP_Parser_Node $node The "table_reference_list" AST node.
 	 * @return array                The table reference map (table alias => array of table data).
 	 */
 	private function create_table_reference_map( WP_Parser_Node $node ): array {
 		$table_map = array();
-
-		// Collect all table references, including the ones used in JOINs.
-		$table_refs = array();
-		foreach ( $node->get_child_nodes( 'tableReference' ) as $table_ref ) {
-			$table_refs[] = $table_ref;
-			foreach ( $table_ref->get_child_nodes( 'joinedTable' ) as $joined_table ) {
-				$table_refs[] = $joined_table;
-			}
-		}
-
-		// Process each table reference, extracting table data.
-		foreach ( $table_refs as $table_ref ) {
-			$table_factor = $table_ref->get_first_descendant_node( 'tableFactor' );
-			$join_expr    = $table_ref->get_first_child_node( 'expr' );
-			$child        = $table_factor->get_first_child_node();
-
-			// Descend all "singleTableParens" nodes to get the "singleTable" node.
-			if ( 'singleTableParens' === $child->rule_name ) {
-				$child = $child->get_first_descendant_node( 'singleTable' );
-			}
-
-			if ( 'singleTable' === $child->rule_name ) {
-				// Extract data from the "singleTable" node.
-				$table_ref  = $child->get_first_child_node( 'tableRef' );
-				$name       = $this->translate( $table_ref );
-				$alias_node = $child->get_first_child_node( 'tableAlias' );
-				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
-
-				$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
-					'database'   => $this->get_database_name( $table_ref ),
-					'table_name' => $this->unquote_sqlite_identifier( $name ),
-					'table_expr' => null,
-					'join_expr'  => $this->translate( $join_expr ),
-				);
-			} elseif ( 'derivedTable' === $child->rule_name ) {
-				// Extract data from the "derivedTable" node.
-				$subquery   = $child->get_first_descendant_node( 'subquery' );
-				$alias_node = $child->get_first_child_node( 'tableAlias' );
-				$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'identifier' ) ) : null;
-
-				$table_map[ $this->unquote_sqlite_identifier( $alias ) ] = array(
-					'database'   => null,
-					'table_name' => null,
-					'table_expr' => $this->translate( $subquery ),
-					'join_expr'  => $this->translate( $join_expr ),
-				);
-			} elseif ( 'tableReferenceListParens' === $child->rule_name ) {
-				// Recursively process the "tableReferenceListParens" node.
-				$table_ref_list = $child->get_first_descendant_node( 'tableReferenceList' );
-				$table_map      = array_merge( $table_map, $this->create_table_reference_map( $table_ref_list ) );
-			}
+		foreach ( $node->get_flattened_child_nodes( 'table_reference' ) as $table_ref ) {
+			$this->collect_table_reference_data( $table_ref, null, $table_map );
 		}
 		return $table_map;
+	}
+
+	/**
+	 * Collect table data from a table reference into a table reference map.
+	 *
+	 * JOINs nest through the left operand of the "joined_table" rule, so the
+	 * reference tree is descended recursively, attaching each join's ON
+	 * expression to the table on the right side of the join (as in MySQL).
+	 *
+	 * @see WP_PDO_MySQL_On_SQLite::create_table_reference_map()
+	 *
+	 * @param WP_Parser_Node      $node      The "table_reference" AST node.
+	 * @param WP_Parser_Node|null $join_expr The ON expression the table is joined with, if any.
+	 * @param array               $table_map The table reference map to populate.
+	 */
+	private function collect_table_reference_data(
+		WP_Parser_Node $node,
+		?WP_Parser_Node $join_expr,
+		array &$table_map
+	): void {
+		// Descend into JOINs ("table_reference: table_factor | joined_table").
+		$joined_table = $node->get_first_child_node( 'joined_table' );
+		if ( null !== $joined_table ) {
+			$operands = $joined_table->get_child_nodes( 'table_reference' );
+			$on_expr  = $joined_table->get_first_child_node( 'expr' );
+			$this->collect_table_reference_data( $operands[0], $join_expr, $table_map );
+			if ( isset( $operands[1] ) ) {
+				$this->collect_table_reference_data( $operands[1], $on_expr, $table_map );
+			}
+			return;
+		}
+
+		$table_factor = $node->get_first_child_node( 'table_factor' );
+		if ( null === $table_factor ) {
+			return;
+		}
+		$child = $table_factor->get_first_child_node();
+
+		// Descend all "single_table_parens" nodes to get the "single_table" node.
+		if ( 'single_table_parens' === $child->rule_name ) {
+			$child = $child->get_first_descendant_node( 'single_table' );
+		}
+
+		if ( 'single_table' === $child->rule_name ) {
+			// Extract data from the "single_table" node.
+			$table_ref  = $child->get_first_child_node( 'table_ident' );
+			$name       = $this->translate( $table_ref );
+			$alias_node = $child->get_first_child_node( 'opt_table_alias' );
+			$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'ident' ) ) : null;
+
+			$table_map[ $this->unquote_sqlite_identifier( $alias ?? $name ) ] = array(
+				'database'   => $this->get_database_name( $table_ref ),
+				'table_name' => $this->unquote_sqlite_identifier( $name ),
+				'table_expr' => null,
+				'join_expr'  => $this->translate( $join_expr ),
+			);
+		} elseif ( 'derived_table' === $child->rule_name ) {
+			// Extract data from the "derived_table" node.
+			$subquery   = $child->get_first_descendant_node( 'subquery' );
+			$alias_node = $child->get_first_child_node( 'opt_table_alias' );
+			$alias      = $alias_node ? $this->translate( $alias_node->get_first_child_node( 'ident' ) ) : null;
+
+			$table_map[ $this->unquote_sqlite_identifier( $alias ) ] = array(
+				'database'   => null,
+				'table_name' => null,
+				'table_expr' => $this->translate( $subquery ),
+				'join_expr'  => $this->translate( $join_expr ),
+			);
+		} elseif ( 'table_reference_list_parens' === $child->rule_name ) {
+			// Recursively process the "table_reference_list_parens" node.
+			$table_ref_list = $child->get_first_descendant_node( 'table_reference_list' );
+			foreach ( $table_ref_list->get_flattened_child_nodes( 'table_reference' ) as $table_ref ) {
+				$this->collect_table_reference_data( $table_ref, null, $table_map );
+			}
+		} elseif ( 'joined_table_parens' === $child->rule_name ) {
+			// Process the parenthesized JOIN like an unparenthesized one.
+			$inner = $child->get_first_child_node( 'joined_table' );
+			if ( null !== $inner ) {
+				$operands = $inner->get_child_nodes( 'table_reference' );
+				$on_expr  = $inner->get_first_child_node( 'expr' );
+				$this->collect_table_reference_data( $operands[0], $join_expr, $table_map );
+				if ( isset( $operands[1] ) ) {
+					$this->collect_table_reference_data( $operands[1], $on_expr, $table_map );
+				}
+			}
+		}
 	}
 
 	/**
@@ -6105,20 +6229,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
 	 * Get the database name from one of fully-qualified name AST nodes.
 	 *
-	 * @param  WP_Parser_Node $node The AST node. One of "tableName", "tableRef", or "inDb".
+	 * @param  WP_Parser_Node $node The AST node. One of "table_ident" or "opt_db".
 	 * @return string               The database name.
 	 */
 	private function get_database_name( WP_Parser_Node $node ): string {
-		if ( 'tableName' === $node->rule_name || 'tableRef' === $node->rule_name ) {
-			$parts = $node->get_descendant_nodes( 'identifier' );
+		if ( 'table_ident' === $node->rule_name ) {
+			$parts = $node->get_descendant_nodes( 'ident' );
 			if ( count( $parts ) > 1 ) {
 				return $this->unquote_sqlite_identifier( $this->translate( $parts[0] ) );
 			} else {
 				return $this->db_name;
 			}
-		} elseif ( 'inDb' === $node->rule_name ) {
+		} elseif ( 'opt_db' === $node->rule_name ) {
 			return $this->unquote_sqlite_identifier(
-				$this->translate( $node->get_first_child_node( 'identifier' ) )
+				$this->translate( $node->get_first_child_node( 'ident' ) )
 			);
 		}
 
