@@ -149,7 +149,9 @@ class WP_PHP_Engine_Functions {
 				continue;
 			}
 			$code = (int) $arg;
-			if ( function_exists( 'mb_chr' ) ) {
+			if ( 0 === $code ) {
+				$result .= "\x00";
+			} elseif ( function_exists( 'mb_chr' ) ) {
 				$result .= mb_chr( $code, 'UTF-8' );
 			} else {
 				$result .= chr( $code );
