@@ -43,6 +43,13 @@ class WP_PostgreSQL_Connection {
 	private $query_logger;
 
 	/**
+	 * Counter for generated statement savepoints.
+	 *
+	 * @var int
+	 */
+	private $savepoint_counter = 0;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param array $options {
@@ -130,9 +137,28 @@ class WP_PostgreSQL_Connection {
 		if ( $this->query_logger ) {
 			( $this->query_logger )( $sql, $params );
 		}
-		$stmt = $this->pdo->prepare( $sql );
-		$stmt->execute( $params );
-		return $stmt;
+
+		$savepoint = $this->get_statement_savepoint_name( $sql );
+		if ( null !== $savepoint ) {
+			$this->pdo->exec( 'SAVEPOINT ' . $savepoint );
+		}
+
+		try {
+			$stmt = $this->pdo->prepare( $sql );
+			$stmt->execute( $params );
+
+			if ( null !== $savepoint ) {
+				$this->pdo->exec( 'RELEASE SAVEPOINT ' . $savepoint );
+			}
+
+			return $stmt;
+		} catch ( Throwable $exception ) {
+			if ( null !== $savepoint ) {
+				$this->rollback_statement_savepoint( $savepoint );
+			}
+
+			throw $exception;
+		}
 	}
 
 	/**
@@ -217,6 +243,55 @@ class WP_PostgreSQL_Connection {
 	 */
 	public function set_query_logger( callable $logger ): void {
 		$this->query_logger = $logger;
+	}
+
+	/**
+	 * Get a generated statement savepoint name for an active PostgreSQL transaction.
+	 *
+	 * PostgreSQL marks the whole transaction as failed after a statement error.
+	 * Isolating each emulated statement in a savepoint preserves MySQL's behavior
+	 * where the failed statement can be reported without poisoning later queries.
+	 *
+	 * @return string|null Savepoint name, or null when no statement savepoint is needed.
+	 */
+	private function get_statement_savepoint_name( string $sql ): ?string {
+		if (
+			'pgsql' !== $this->get_driver_name()
+			|| ! $this->pdo->inTransaction()
+			|| $this->is_postgresql_transaction_control_statement( $sql )
+		) {
+			return null;
+		}
+
+		++$this->savepoint_counter;
+		return 'wp_statement_' . $this->savepoint_counter;
+	}
+
+	/**
+	 * Check whether SQL directly controls the active transaction.
+	 *
+	 * @param string $sql SQL statement.
+	 * @return bool Whether this is a transaction-control statement.
+	 */
+	private function is_postgresql_transaction_control_statement( string $sql ): bool {
+		return 1 === preg_match(
+			'/^\s*(BEGIN|START\s+TRANSACTION|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)(?:\s|;|$)/i',
+			$sql
+		);
+	}
+
+	/**
+	 * Roll back and release a generated statement savepoint.
+	 *
+	 * @param string $savepoint Savepoint name.
+	 */
+	private function rollback_statement_savepoint( string $savepoint ): void {
+		try {
+			$this->pdo->exec( 'ROLLBACK TO SAVEPOINT ' . $savepoint );
+			$this->pdo->exec( 'RELEASE SAVEPOINT ' . $savepoint );
+		} catch ( Throwable $rollback_exception ) {
+			return;
+		}
 	}
 
 	/**

@@ -1237,6 +1237,36 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Get the stored MySQL collation for a table column.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string|null MySQL collation, or null when unavailable.
+	 */
+	private function get_mysql_table_column_collation(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?string {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT collation_name FROM %s
+				WHERE table_schema = ?
+					AND table_name = ?
+					AND LOWER(column_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $column_name )
+		);
+
+		$collation = $stmt->fetchColumn();
+		return false === $collation || null === $collation ? null : (string) $collation;
+	}
+
+	/**
 	 * Check whether stored MySQL metadata exists for a table.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -7377,7 +7407,19 @@ WHERE option_name IN (
 			return false;
 		}
 
-		$table_name = strtolower( $reference['table'] );
+		return $this->is_mysql_wordpress_table_name( $reference['table'], $table_base );
+	}
+
+	/**
+	 * Check whether a table name matches a WordPress core table base name.
+	 *
+	 * @param string $table_name Table name.
+	 * @param string $table_base Expected unprefixed table name.
+	 * @return bool Whether the table name matches.
+	 */
+	private function is_mysql_wordpress_table_name( string $table_name, string $table_base ): bool {
+		$table_name = strtolower( $table_name );
+		$table_base = strtolower( $table_base );
 		return $table_base === $table_name
 			|| substr( $table_name, -strlen( '_' . $table_base ) ) === '_' . $table_base;
 	}
@@ -9773,6 +9815,16 @@ WHERE option_name IN (
 			return $decimal_like;
 		}
 
+		$wordpress_text_predicate = $this->translate_mysql_wordpress_text_predicate_to_postgresql(
+			$tokens,
+			$position,
+			$end,
+			$scope
+		);
+		if ( null !== $wordpress_text_predicate ) {
+			return $wordpress_text_predicate;
+		}
+
 		$in_predicate = $this->translate_mysql_integer_column_string_in_predicate_to_postgresql(
 			$tokens,
 			$position,
@@ -9808,6 +9860,387 @@ WHERE option_name IN (
 			$position,
 			$end,
 			$scope
+		);
+	}
+
+	/**
+	 * Translate WordPress text predicates with MySQL case-insensitive collation semantics.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $end      Final predicate token position, exclusive.
+	 * @param array           $scope    Statement table scope.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_wordpress_text_predicate_to_postgresql(
+		array $tokens,
+		int $position,
+		int $end,
+		array $scope
+	): ?array {
+		$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+		if (
+			null !== $reference
+			&& $this->is_mysql_case_insensitive_wordpress_text_column_reference( $reference, $scope )
+		) {
+			$like = $this->translate_mysql_wordpress_text_like_predicate_to_postgresql(
+				$tokens,
+				$reference,
+				$reference['end'],
+				$end
+			);
+			if ( null !== $like ) {
+				return $like;
+			}
+
+			$in = $this->translate_mysql_wordpress_text_in_predicate_to_postgresql(
+				$tokens,
+				$reference,
+				$reference['end'],
+				$end
+			);
+			if ( null !== $in ) {
+				return $in;
+			}
+
+			$comparison = $this->translate_mysql_wordpress_text_comparison_to_postgresql(
+				$tokens,
+				$reference,
+				$reference['end'],
+				$end
+			);
+			if ( null !== $comparison ) {
+				return $comparison;
+			}
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! $this->is_mysql_string_literal_token( $tokens[ $position ] )
+			|| ! $this->is_mysql_case_insensitive_equality_operator_token( $tokens[ $position + 1 ] )
+		) {
+			return null;
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $position + 2, $end );
+		if (
+			null === $reference
+			|| ! $this->is_mysql_case_insensitive_wordpress_text_column_reference( $reference, $scope )
+		) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'LOWER(%s) %s LOWER(%s)',
+				$this->translate_mysql_token_to_postgresql( $tokens[ $position ] ),
+				$tokens[ $position + 1 ]->get_bytes(),
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
+			),
+			'position' => $reference['end'] - 1,
+		);
+	}
+
+	/**
+	 * Translate a WordPress text LIKE predicate with case-insensitive semantics.
+	 *
+	 * @param WP_MySQL_Token[] $tokens            MySQL lexer token stream.
+	 * @param array           $reference         Parsed column reference.
+	 * @param int             $operator_position Candidate LIKE or NOT position.
+	 * @param int             $end               Final predicate token position, exclusive.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_wordpress_text_like_predicate_to_postgresql(
+		array $tokens,
+		array $reference,
+		int $operator_position,
+		int $end
+	): ?array {
+		$not_sql = '';
+		if (
+			isset( $tokens[ $operator_position ], $tokens[ $operator_position + 1 ] )
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $operator_position ]->id
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_position + 1 ]->id
+		) {
+			$not_sql = ' NOT';
+			++$operator_position;
+		}
+
+		if (
+			! isset( $tokens[ $operator_position ], $tokens[ $operator_position + 1 ] )
+			|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $operator_position ]->id
+		) {
+			return null;
+		}
+
+		$pattern = $this->get_mysql_string_like_pattern_sql( $tokens, $operator_position + 1, $end );
+		if ( null === $pattern ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'LOWER(%s)%s LIKE LOWER(%s)%s',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] ),
+				$not_sql,
+				$pattern['pattern_sql'],
+				$pattern['escape_sql']
+			),
+			'position' => $pattern['end'] - 1,
+		);
+	}
+
+	/**
+	 * Translate a WordPress text equality predicate with case-insensitive semantics.
+	 *
+	 * @param WP_MySQL_Token[] $tokens            MySQL lexer token stream.
+	 * @param array           $reference         Parsed column reference.
+	 * @param int             $operator_position Candidate comparison operator position.
+	 * @param int             $end               Final predicate token position, exclusive.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_wordpress_text_comparison_to_postgresql(
+		array $tokens,
+		array $reference,
+		int $operator_position,
+		int $end
+	): ?array {
+		if (
+			! isset( $tokens[ $operator_position ], $tokens[ $operator_position + 1 ] )
+			|| $operator_position + 1 >= $end
+			|| ! $this->is_mysql_case_insensitive_equality_operator_token( $tokens[ $operator_position ] )
+			|| ! $this->is_mysql_string_literal_token( $tokens[ $operator_position + 1 ] )
+		) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'LOWER(%s) %s LOWER(%s)',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] ),
+				$tokens[ $operator_position ]->get_bytes(),
+				$this->translate_mysql_token_to_postgresql( $tokens[ $operator_position + 1 ] )
+			),
+			'position' => $operator_position + 1,
+		);
+	}
+
+	/**
+	 * Translate a WordPress text IN predicate with case-insensitive semantics.
+	 *
+	 * @param WP_MySQL_Token[] $tokens            MySQL lexer token stream.
+	 * @param array           $reference         Parsed column reference.
+	 * @param int             $operator_position Candidate IN or NOT position.
+	 * @param int             $end               Final predicate token position, exclusive.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_wordpress_text_in_predicate_to_postgresql(
+		array $tokens,
+		array $reference,
+		int $operator_position,
+		int $end
+	): ?array {
+		$not_sql = '';
+		if (
+			isset( $tokens[ $operator_position ], $tokens[ $operator_position + 1 ] )
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $operator_position ]->id
+			&& WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $operator_position + 1 ]->id
+		) {
+			$not_sql = ' NOT';
+			++$operator_position;
+		}
+
+		if (
+			! isset( $tokens[ $operator_position ], $tokens[ $operator_position + 1 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $operator_position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $operator_position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $operator_position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $operator_position + 2, $after_close - 1 );
+		if ( empty( $items ) ) {
+			return null;
+		}
+
+		$item_sql = array();
+		foreach ( $items as $item ) {
+			if ( ! $this->is_mysql_string_literal_range( $tokens, $item['start'], $item['end'] ) ) {
+				return null;
+			}
+
+			$item_sql[] = 'LOWER(' . $this->translate_mysql_token_to_postgresql( $tokens[ $item['start'] ] ) . ')';
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'LOWER(%s)%s IN (%s)',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] ),
+				$not_sql,
+				implode( ', ', $item_sql )
+			),
+			'position' => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Get a simple string LIKE pattern SQL fragment.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Pattern token position.
+	 * @param int             $end      Final predicate token position, exclusive.
+	 * @return array{pattern_sql: string, escape_sql: string, end: int}|null Pattern SQL, or null when unsupported.
+	 */
+	private function get_mysql_string_like_pattern_sql( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ] )
+			|| $position >= $end
+			|| ! $this->is_mysql_string_literal_token( $tokens[ $position ] )
+		) {
+			return null;
+		}
+
+		$pattern_sql = $this->translate_mysql_token_to_postgresql( $tokens[ $position ] );
+		$escape_sql  = '';
+		$pattern_end = $position + 1;
+
+		if ( isset( $tokens[ $pattern_end ] ) && WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern_end ]->id ) {
+			if (
+				! isset( $tokens[ $pattern_end + 1 ] )
+				|| $pattern_end + 1 >= $end
+				|| ! $this->is_mysql_string_literal_token( $tokens[ $pattern_end + 1 ] )
+			) {
+				return null;
+			}
+
+			$escape_sql   = ' ESCAPE ' . $this->translate_mysql_token_to_postgresql( $tokens[ $pattern_end + 1 ] );
+			$pattern_end += 2;
+		}
+
+		return array(
+			'pattern_sql' => $pattern_sql,
+			'escape_sql'  => $escape_sql,
+			'end'         => $pattern_end,
+		);
+	}
+
+	/**
+	 * Check whether a column is a case-insensitive WordPress text lookup column.
+	 *
+	 * @param array $reference Parsed column reference.
+	 * @param array $scope     Statement table scope.
+	 * @return bool Whether the reference should use MySQL case-insensitive text predicates.
+	 */
+	private function is_mysql_case_insensitive_wordpress_text_column_reference( array $reference, array $scope ): bool {
+		$table = $this->get_mysql_table_for_column_reference( $reference, $scope );
+		if ( null === $table || ! $this->is_mysql_wordpress_case_insensitive_text_column( $table['table'], $reference['column'] ) ) {
+			return false;
+		}
+
+		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope );
+		if ( null === $column_type || ! $this->is_mysql_text_family_column_type( $column_type ) ) {
+			return false;
+		}
+
+		$collation = $this->get_mysql_column_collation_for_reference( $reference, $scope );
+		return null !== $collation && $this->is_mysql_case_insensitive_collation( $collation );
+	}
+
+	/**
+	 * Resolve a column reference to one table in the statement scope.
+	 *
+	 * @param array $reference Parsed column reference.
+	 * @param array $scope     Statement table scope.
+	 * @return array|null Table metadata, or null when missing/ambiguous.
+	 */
+	private function get_mysql_table_for_column_reference( array $reference, array $scope ): ?array {
+		if ( null !== $reference['qualifier'] ) {
+			$alias = strtolower( $reference['qualifier'] );
+			return $scope['aliases'][ $alias ] ?? null;
+		}
+
+		if ( ! empty( $scope['unknown'] ) ) {
+			return null;
+		}
+
+		$matched_table = null;
+		foreach ( $scope['tables'] as $table ) {
+			if (
+				count( $scope['tables'] ) > 1
+				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
+			) {
+				return null;
+			}
+
+			if ( null === $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] ) ) {
+				continue;
+			}
+
+			if ( null !== $matched_table ) {
+				return null;
+			}
+
+			$matched_table = $table;
+		}
+
+		return $matched_table;
+	}
+
+	/**
+	 * Check whether a table/column pair is in a WordPress text lookup surface.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 * @return bool Whether this is a supported text lookup column.
+	 */
+	private function is_mysql_wordpress_case_insensitive_text_column( string $table_name, string $column_name ): bool {
+		$column_name = strtolower( $column_name );
+
+		if ( $this->is_mysql_wordpress_table_name( $table_name, 'posts' ) ) {
+			return in_array( $column_name, array( 'post_content', 'post_excerpt', 'post_title' ), true );
+		}
+
+		if ( $this->is_mysql_wordpress_table_name( $table_name, 'terms' ) ) {
+			return in_array( $column_name, array( 'name', 'slug' ), true );
+		}
+
+		if ( $this->is_mysql_wordpress_table_name( $table_name, 'term_taxonomy' ) ) {
+			return in_array( $column_name, array( 'description', 'taxonomy' ), true );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a MySQL collation is explicitly case-insensitive.
+	 *
+	 * @param string $collation MySQL collation name.
+	 * @return bool Whether the collation is case-insensitive.
+	 */
+	private function is_mysql_case_insensitive_collation( string $collation ): bool {
+		$collation = strtolower( trim( $collation ) );
+		return 1 === preg_match( '/(^|_)ci($|_)/', $collation );
+	}
+
+	/**
+	 * Check whether a token is a case-insensitive equality operator candidate.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is an equality or inequality operator.
+	 */
+	private function is_mysql_case_insensitive_equality_operator_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::EQUAL_OPERATOR,
+				WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
+			),
+			true
 		);
 	}
 
@@ -10949,6 +11382,52 @@ WHERE option_name IN (
 		}
 
 		return $matched_type;
+	}
+
+	/**
+	 * Resolve a column reference to stored MySQL collation metadata.
+	 *
+	 * @param array $reference Parsed column reference.
+	 * @param array $scope     Statement table scope.
+	 * @return string|null MySQL collation, or null when missing/ambiguous.
+	 */
+	private function get_mysql_column_collation_for_reference( array $reference, array $scope ): ?string {
+		if ( null !== $reference['qualifier'] ) {
+			$alias = strtolower( $reference['qualifier'] );
+			if ( ! isset( $scope['aliases'][ $alias ] ) ) {
+				return null;
+			}
+
+			$table = $scope['aliases'][ $alias ];
+			return $this->get_mysql_table_column_collation( $table['schema'], $table['table'], $reference['column'] );
+		}
+
+		if ( ! empty( $scope['unknown'] ) ) {
+			return null;
+		}
+
+		$matched_collation = null;
+		foreach ( $scope['tables'] as $table ) {
+			if (
+				count( $scope['tables'] ) > 1
+				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
+			) {
+				return null;
+			}
+
+			$collation = $this->get_mysql_table_column_collation( $table['schema'], $table['table'], $reference['column'] );
+			if ( null === $collation ) {
+				continue;
+			}
+
+			if ( null !== $matched_collation ) {
+				return null;
+			}
+
+			$matched_collation = $collation;
+		}
+
+		return $matched_collation;
 	}
 
 	/**

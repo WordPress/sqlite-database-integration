@@ -183,6 +183,58 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests failed statements are isolated from the active PostgreSQL transaction.
+	 */
+	public function test_query_rolls_back_failed_postgresql_statement_to_transaction_savepoint(): void {
+		$pdo        = new WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO();
+		$connection = $this->create_connection_with_pdo_fixture( $pdo );
+
+		$pdo->beginTransaction();
+		$connection->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY, value TEXT)' );
+		$connection->query( "INSERT INTO t (id, value) VALUES (1, 'ok')" );
+
+		try {
+			$connection->query( 'INSERT INTO missing_table (id) VALUES (1)' );
+			$this->fail( 'Expected the invalid statement to throw.' );
+		} catch ( PDOException $exception ) {
+			$this->assertStringContainsString( 'missing_table', $exception->getMessage() );
+		}
+
+		$stmt = $connection->query( 'SELECT value FROM t WHERE id = 1' );
+
+		$this->assertSame( 'ok', $stmt->fetchColumn() );
+		$pdo->rollBack();
+		$this->assertSame(
+			array(
+				'SAVEPOINT wp_statement_1',
+				'RELEASE SAVEPOINT wp_statement_1',
+				'SAVEPOINT wp_statement_2',
+				'RELEASE SAVEPOINT wp_statement_2',
+				'SAVEPOINT wp_statement_3',
+				'ROLLBACK TO SAVEPOINT wp_statement_3',
+				'RELEASE SAVEPOINT wp_statement_3',
+				'SAVEPOINT wp_statement_4',
+				'RELEASE SAVEPOINT wp_statement_4',
+			),
+			$pdo->exec_sql
+		);
+	}
+
+	/**
+	 * Tests transaction-control statements are not wrapped in generated savepoints.
+	 */
+	public function test_query_does_not_wrap_transaction_control_statement_in_savepoint(): void {
+		$pdo        = new WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO();
+		$connection = $this->create_connection_with_pdo_fixture( $pdo );
+
+		$pdo->beginTransaction();
+		$connection->query( 'ROLLBACK;' );
+
+		$this->assertFalse( $pdo->inTransaction() );
+		$this->assertSame( array(), $pdo->exec_sql );
+	}
+
+	/**
 	 * Tests prepare returns a PDO statement and logs without parameters.
 	 */
 	public function test_prepare_returns_statement_and_logs_without_params(): void {
@@ -266,5 +318,95 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 		$property->setValue( $connection, $pdo_fixture );
 
 		return $connection;
+	}
+}
+
+/**
+ * PDO-like fixture that records statement savepoint commands.
+ */
+class WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO {
+	/**
+	 * Recorded exec() SQL.
+	 *
+	 * @var string[]
+	 */
+	public $exec_sql = array();
+
+	/**
+	 * SQLite PDO used for real statement execution.
+	 *
+	 * @var PDO
+	 */
+	private $pdo;
+
+	/**
+	 * Constructor.
+	 */
+	public function __construct() {
+		$this->pdo = new PDO( 'sqlite::memory:' );
+		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+		$this->pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+	}
+
+	/**
+	 * Begin a transaction.
+	 *
+	 * @return bool Whether the transaction started.
+	 */
+	public function beginTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return $this->pdo->beginTransaction();
+	}
+
+	/**
+	 * Roll back the active transaction.
+	 *
+	 * @return bool Whether the transaction was rolled back.
+	 */
+	public function rollBack(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return $this->pdo->rollBack();
+	}
+
+	/**
+	 * Check whether a transaction is active.
+	 *
+	 * @return bool Whether a transaction is active.
+	 */
+	public function inTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return $this->pdo->inTransaction();
+	}
+
+	/**
+	 * Prepare a SQL statement.
+	 *
+	 * @param string $sql SQL statement.
+	 * @return PDOStatement Statement object.
+	 */
+	public function prepare( string $sql ): PDOStatement {
+		return $this->pdo->prepare( $sql );
+	}
+
+	/**
+	 * Execute a SQL statement and record savepoint commands.
+	 *
+	 * @param string $sql SQL statement.
+	 * @return int|false Affected row count, or false on failure.
+	 */
+	public function exec( string $sql ) {
+		$this->exec_sql[] = $sql;
+		return $this->pdo->exec( $sql );
+	}
+
+	/**
+	 * Get PDO attributes.
+	 *
+	 * @param int $attribute Attribute identifier.
+	 * @return mixed Attribute value.
+	 */
+	public function getAttribute( int $attribute ) { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+			return 'pgsql';
+		}
+
+		return $this->pdo->getAttribute( $attribute );
 	}
 }

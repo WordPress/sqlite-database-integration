@@ -2074,6 +2074,132 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress term and post-search predicates preserve MySQL case-insensitive collation behavior.
+	 */
+	public function test_wordpress_term_and_post_search_text_predicates_use_case_insensitive_mysql_collation_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_excerpt` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				`post_content` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_terms (
+				`term_id` bigint(20) unsigned NOT NULL,
+				`name` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`slug` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`term_id`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_term_taxonomy (
+				`term_taxonomy_id` bigint(20) unsigned NOT NULL,
+				`term_id` bigint(20) unsigned NOT NULL,
+				`taxonomy` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`description` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				PRIMARY KEY (`term_taxonomy_id`)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (`ID`, `post_title`, `post_excerpt`, `post_content`) VALUES (7, 'Search & Test', '', 'Body')"
+		);
+		$driver->query( "INSERT INTO wptests_terms (`term_id`, `name`, `slug`) VALUES (1, 'burrito', 'burrito')" );
+		$driver->query( "INSERT INTO wptests_terms (`term_id`, `name`, `slug`) VALUES (2, 'taco', 'taco')" );
+		$driver->query(
+			"INSERT INTO wptests_term_taxonomy (`term_taxonomy_id`, `term_id`, `taxonomy`, `description`) VALUES (10, 1, 'post_tag', 'This is a burrito.')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_term_taxonomy (`term_taxonomy_id`, `term_id`, `taxonomy`, `description`) VALUES (20, 2, 'post_tag', 'Burning man.')"
+		);
+
+		$post_rows = $driver->query(
+			"SELECT ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_title LIKE '%test%'"
+		);
+
+		$this->assertSame(
+			array( '7' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$post_rows
+			)
+		);
+		$this->assertStringContainsString(
+			"LOWER(wptests_posts.post_title) LIKE LOWER('%test%')",
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$name_rows = $driver->query(
+			"SELECT t.term_id
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+			WHERE tt.taxonomy = 'post_tag' AND t.name = 'BURRITO'"
+		);
+
+		$this->assertSame(
+			array( '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->term_id;
+				},
+				$name_rows
+			)
+		);
+		$this->assertStringContainsString(
+			"LOWER(t.name) = LOWER('BURRITO')",
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$name_in_rows = $driver->query(
+			"SELECT t.term_id
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+			WHERE tt.taxonomy = 'post_tag' AND t.name IN ('BURRITO')"
+		);
+
+		$this->assertSame(
+			array( '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->term_id;
+				},
+				$name_in_rows
+			)
+		);
+		$this->assertStringContainsString(
+			"LOWER(t.name) IN (LOWER('BURRITO'))",
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$description_rows = $driver->query(
+			"SELECT t.term_id
+			FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+			WHERE tt.taxonomy IN ('post_tag') AND tt.description LIKE '%Bur%'
+			ORDER BY t.term_id ASC"
+		);
+
+		$this->assertSame(
+			array( '1', '2' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->term_id;
+				},
+				$description_rows
+			)
+		);
+		$this->assertStringContainsString(
+			"LOWER(tt.description) LIKE LOWER('%Bur%')",
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+	}
+
+	/**
 	 * Tests ambiguous unqualified integer references do not guess a table.
 	 */
 	public function test_ambiguous_unqualified_integer_reference_fails_closed(): void {
