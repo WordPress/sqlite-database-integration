@@ -16,9 +16,22 @@
  */
 class WP_PDO_MySQL_On_SQLite extends PDO {
 	/**
-	 * The path to the MySQL SQL grammar file.
+	 * Grammar rules of transaction and locking statements.
+	 *
+	 * These are the "simple_statement" alternatives that control transactions
+	 * and locking ("BEGIN" is handled separately, as it is not part of the
+	 * "simple_statement" rule).
 	 */
-	const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
+	const TRANSACTION_OR_LOCKING_STATEMENTS = array(
+		'start',
+		'commit',
+		'rollback',
+		'savepoint',
+		'release',
+		'lock',
+		'unlock',
+		'xa',
+	);
 
 	/**
 	 * The minimum required version of SQLite.
@@ -58,59 +71,59 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	const DATA_TYPE_MAP = array(
 		// Numeric data types:
-		WP_MySQL_Lexer::BIT_SYMBOL                => 'INTEGER',
-		WP_MySQL_Lexer::BOOL_SYMBOL               => 'INTEGER',
-		WP_MySQL_Lexer::BOOLEAN_SYMBOL            => 'INTEGER',
-		WP_MySQL_Lexer::TINYINT_SYMBOL            => 'INTEGER',
-		WP_MySQL_Lexer::SMALLINT_SYMBOL           => 'INTEGER',
-		WP_MySQL_Lexer::MEDIUMINT_SYMBOL          => 'INTEGER',
-		WP_MySQL_Lexer::INT_SYMBOL                => 'INTEGER',
-		WP_MySQL_Lexer::INTEGER_SYMBOL            => 'INTEGER',
-		WP_MySQL_Lexer::BIGINT_SYMBOL             => 'INTEGER',
-		WP_MySQL_Lexer::FLOAT_SYMBOL              => 'REAL',
-		WP_MySQL_Lexer::DOUBLE_SYMBOL             => 'REAL',
-		WP_MySQL_Lexer::REAL_SYMBOL               => 'REAL',
-		WP_MySQL_Lexer::DECIMAL_SYMBOL            => 'REAL',
-		WP_MySQL_Lexer::DEC_SYMBOL                => 'REAL',
-		WP_MySQL_Lexer::FIXED_SYMBOL              => 'REAL',
-		WP_MySQL_Lexer::NUMERIC_SYMBOL            => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['BIT']                => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['BOOL']               => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['BOOLEAN']            => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['TINYINT']            => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['SMALLINT']           => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['MEDIUMINT']          => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['INT']                => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['INTEGER']            => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['BIGINT']             => 'INTEGER',
+		WP_MySQL_Tokens::KEYWORDS['FLOAT']              => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['DOUBLE']             => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['REAL']               => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['DECIMAL']            => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['DEC']                => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['FIXED']              => 'REAL',
+		WP_MySQL_Tokens::KEYWORDS['NUMERIC']            => 'REAL',
 
 		// String data types:
-		WP_MySQL_Lexer::CHAR_SYMBOL               => 'TEXT',
-		WP_MySQL_Lexer::VARCHAR_SYMBOL            => 'TEXT',
-		WP_MySQL_Lexer::NCHAR_SYMBOL              => 'TEXT',
-		WP_MySQL_Lexer::NVARCHAR_SYMBOL           => 'TEXT',
-		WP_MySQL_Lexer::TINYTEXT_SYMBOL           => 'TEXT',
-		WP_MySQL_Lexer::TEXT_SYMBOL               => 'TEXT',
-		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL         => 'TEXT',
-		WP_MySQL_Lexer::LONGTEXT_SYMBOL           => 'TEXT',
-		WP_MySQL_Lexer::ENUM_SYMBOL               => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['CHAR']               => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['VARCHAR']            => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['NCHAR']              => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['NVARCHAR']           => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['TINYTEXT']           => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['TEXT']               => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['MEDIUMTEXT']         => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['LONGTEXT']           => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['ENUM']               => 'TEXT',
 
 		// Date and time data types:
-		WP_MySQL_Lexer::DATE_SYMBOL               => 'TEXT',
-		WP_MySQL_Lexer::TIME_SYMBOL               => 'TEXT',
-		WP_MySQL_Lexer::DATETIME_SYMBOL           => 'TEXT',
-		WP_MySQL_Lexer::TIMESTAMP_SYMBOL          => 'TEXT',
-		WP_MySQL_Lexer::YEAR_SYMBOL               => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['DATE']               => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['TIME']               => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['DATETIME']           => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['TIMESTAMP']          => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['YEAR']               => 'TEXT',
 
 		// Binary data types:
-		WP_MySQL_Lexer::BINARY_SYMBOL             => 'BLOB',
-		WP_MySQL_Lexer::VARBINARY_SYMBOL          => 'BLOB',
-		WP_MySQL_Lexer::TINYBLOB_SYMBOL           => 'BLOB',
-		WP_MySQL_Lexer::BLOB_SYMBOL               => 'BLOB',
-		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL         => 'BLOB',
-		WP_MySQL_Lexer::LONGBLOB_SYMBOL           => 'BLOB',
+		WP_MySQL_Tokens::KEYWORDS['BINARY']             => 'BLOB',
+		WP_MySQL_Tokens::KEYWORDS['VARBINARY']          => 'BLOB',
+		WP_MySQL_Tokens::KEYWORDS['TINYBLOB']           => 'BLOB',
+		WP_MySQL_Tokens::KEYWORDS['BLOB']               => 'BLOB',
+		WP_MySQL_Tokens::KEYWORDS['MEDIUMBLOB']         => 'BLOB',
+		WP_MySQL_Tokens::KEYWORDS['LONGBLOB']           => 'BLOB',
 
 		// Spatial data types:
-		WP_MySQL_Lexer::GEOMETRY_SYMBOL           => 'TEXT',
-		WP_MySQL_Lexer::POINT_SYMBOL              => 'TEXT',
-		WP_MySQL_Lexer::LINESTRING_SYMBOL         => 'TEXT',
-		WP_MySQL_Lexer::POLYGON_SYMBOL            => 'TEXT',
-		WP_MySQL_Lexer::MULTIPOINT_SYMBOL         => 'TEXT',
-		WP_MySQL_Lexer::MULTILINESTRING_SYMBOL    => 'TEXT',
-		WP_MySQL_Lexer::MULTIPOLYGON_SYMBOL       => 'TEXT',
-		WP_MySQL_Lexer::GEOMCOLLECTION_SYMBOL     => 'TEXT',
-		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['GEOMETRY']           => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['POINT']              => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['LINESTRING']         => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['POLYGON']            => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['MULTIPOINT']         => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['MULTILINESTRING']    => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['MULTIPOLYGON']       => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['GEOMCOLLECTION']     => 'TEXT',
+		WP_MySQL_Tokens::KEYWORDS['GEOMETRYCOLLECTION'] => 'TEXT',
 
 		// SERIAL, SET, and JSON types are handled in the translation process.
 	);
@@ -404,18 +417,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	public $client_info;
 
 	/**
-	 * A MySQL query parser grammar.
+	 * A shared MySQL parser instance.
 	 *
-	 * @var WP_Parser_Grammar
-	 */
-	private static $mysql_grammar;
-
-	/**
-	 * A reusable parser instance for MySQL queries.
+	 * The parser is stateless across parses, so a single instance holding the
+	 * materialized parse tables is shared by all driver instances.
 	 *
-	 * @var WP_MySQL_Parser|null
+	 * @var WP_MySQL_Parser
 	 */
-	private $mysql_parser = null;
+	private static $mysql_parser;
 
 	/**
 	 * The main database name.
@@ -740,9 +749,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Register SQLite functions.
 		$this->user_defined_functions = WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
 
-		// Load MySQL grammar.
-		if ( null === self::$mysql_grammar ) {
-			self::$mysql_grammar = new WP_Parser_Grammar( require self::MYSQL_GRAMMAR_PATH );
+		// Load the MySQL parser.
+		if ( null === self::$mysql_parser ) {
+			self::$mysql_parser = new WP_MySQL_Parser( require WP_MySQL_Parser::PARSE_TABLE_PATH );
 		}
 
 		// Initialize information schema builder.
@@ -873,55 +882,46 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		try {
 			// Parse the MySQL query.
-			$parser = $this->create_parser( $query );
-			$parser->next_query();
-			$ast = $parser->get_query_ast();
-			if ( null === $ast ) {
+			$asts = $this->parse_mysql_query( $query );
+			if ( null === $asts ) {
 				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
 			}
 
-			if ( $parser->next_query() ) {
+			if ( count( $asts ) > 1 ) {
 				throw $this->new_driver_exception( 'Multi-query is not supported.' );
 			}
+			$ast = $asts[0];
 
 			/*
 			 * Determine if we need to wrap the translated queries in a transaction.
 			 *
 			 * [GRAMMAR]
-			 * query:
-			 *   EOF
-			 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
+			 * sql_statement: END_OF_INPUT | simple_statement_or_begin (';' opt_end_of_input | END_OF_INPUT)
+			 * simple_statement_or_begin: simple_statement | begin_stmt
 			 */
-			$child_node = $ast->get_first_child_node();
+			$child_node     = $ast->get_first_child_node();
+			$statement_node = null;
+			if ( null !== $child_node && 'simple_statement' === $child_node->get_first_child_node()->rule_name ) {
+				$statement_node = $child_node->get_first_child_node()->get_first_child_node();
+			}
 			if (
-				null === $child_node
-				|| 'beginWork' === $child_node->rule_name
-				|| $child_node->has_child_node( 'transactionOrLockingStatement' )
-				|| $child_node->has_child_node( 'selectStatement' )
+				null === $statement_node
+				|| 'select_stmt' === $statement_node->rule_name
+				|| in_array( $statement_node->rule_name, self::TRANSACTION_OR_LOCKING_STATEMENTS, true )
 			) {
 				$wrap_in_transaction = false;
 			} else {
 				$wrap_in_transaction = true;
 			}
 
-			/*
-			 * Detect read-only statements before opening the wrapper transaction.
-			 *
-			 * [GRAMMAR]
-			 * simpleStatement: selectStatement | showStatement | utilityStatement | ...
-			 */
-			if ( null !== $child_node && $child_node->has_child_node() ) {
-				$statement_node = $child_node->get_first_child_node();
+			// Detect read-only statements before opening the wrapper transaction.
+			if ( null !== $statement_node ) {
 				if (
-					'selectStatement' === $statement_node->rule_name
-					|| 'showStatement' === $statement_node->rule_name
+					'select_stmt' === $statement_node->rule_name
+					|| str_starts_with( $statement_node->rule_name, 'show_' )
+					|| 'describe_stmt' === $statement_node->rule_name
 				) {
 					$this->is_readonly = true;
-				} elseif ( 'utilityStatement' === $statement_node->rule_name ) {
-					$utility_subnode = $statement_node->get_first_child_node();
-					if ( null !== $utility_subnode && 'describeStatement' === $utility_subnode->rule_name ) {
-						$this->is_readonly = true;
-					}
 				}
 			}
 
@@ -1161,37 +1161,72 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Tokenize a MySQL query and initialize a parser.
+	 * Parse a MySQL query string into a list of per-statement ASTs.
 	 *
-	 * @param  string          $query The MySQL query to parse.
-	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
+	 * The MySQL grammar parses a single SQL statement, so the token stream is
+	 * split on the top-level ';' separators and each statement is parsed on
+	 * its own, mirroring how MySQL clients split multi-statement input.
+	 *
+	 * @param  string $query The MySQL query string (possibly multi-statement).
+	 * @return WP_Parser_Node[]|null One "sql_statement" AST per statement, or
+	 *                               null when a statement fails to parse.
 	 */
-	public function create_parser( string $query ): WP_MySQL_Parser {
+	public function parse_mysql_query( string $query ): ?array {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
 			80038,
 			$this->active_sql_modes
 		);
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		return $this->reset_or_create_parser( $tokens );
-	}
+		$tokens = $lexer->remaining_tokens();
 
-	/**
-	 * Reset the reusable parser with new tokens or create it on first use.
-	 *
-	 * @param  array<WP_Parser_Token>|object $tokens Parser tokens.
-	 * @return WP_MySQL_Parser                       A parser initialized for the token stream.
-	 */
-	private function reset_or_create_parser( $tokens ): WP_MySQL_Parser {
-		if ( null === $this->mysql_parser || ! method_exists( $this->mysql_parser, 'reset_tokens' ) ) {
-			$this->mysql_parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
-		} else {
-			$this->mysql_parser->reset_tokens( $tokens );
+		/*
+		 * Split the token stream into statements at the ';' separators. The
+		 * separator can only ever occur at the top level of a statement, as
+		 * string and comment contents are enclosed in single tokens, and the
+		 * driver doesn't support compound statements (stored programs).
+		 *
+		 * A valid stream is terminated by an END_OF_INPUT and an END_MARKER
+		 * token; the terminators are stripped here and re-appended to each
+		 * single-statement token list. For invalid input, the lexer emits a
+		 * partial stream with no terminators, which is a parse error.
+		 */
+		$end_of_input = null;
+		$end_marker   = null;
+		$statements   = array();
+		$statement    = array();
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::END_OF_INPUT === $token->id ) {
+				$end_of_input = $token;
+			} elseif ( WP_MySQL_Lexer::END_MARKER === $token->id ) {
+				$end_marker = $token;
+			} else {
+				$statement[] = $token;
+				if ( WP_MySQL_Lexer::SEMICOLON_SYMBOL === $token->id ) {
+					$statements[] = $statement;
+					$statement    = array();
+				}
+			}
+		}
+		if ( null === $end_of_input || null === $end_marker ) {
+			return null;
+		}
+		if ( count( $statement ) > 0 || 0 === count( $statements ) ) {
+			$statements[] = $statement;
 		}
 
-		return $this->mysql_parser;
+		$asts = array();
+		foreach ( $statements as $statement ) {
+			$statement[] = $end_of_input;
+			$statement[] = $end_marker;
+
+			// The root "start_entry" node wraps a single "sql_statement" node.
+			$ast = self::$mysql_parser->parse( $statement );
+			if ( null === $ast ) {
+				return null;
+			}
+			$asts[] = $ast->get_first_child_node();
+		}
+		return $asts;
 	}
 
 	/**
@@ -1383,17 +1418,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @throws WP_SQLite_Driver_Exception When the query is not supported.
 	 */
 	private function execute_mysql_query( WP_Parser_Node $node ): void {
-		if ( 'query' !== $node->rule_name ) {
+		if ( 'sql_statement' !== $node->rule_name ) {
 			throw $this->new_driver_exception(
-				sprintf( 'Expected "query" node, got: "%s"', $node->rule_name )
+				sprintf( 'Expected "sql_statement" node, got: "%s"', $node->rule_name )
 			);
 		}
 
 		/*
 		 * [GRAMMAR]
-		 * query:
-		 *   EOF
-		 *   | (simpleStatement | beginWork) (SEMICOLON_SYMBOL EOF? | EOF)
+		 * sql_statement: END_OF_INPUT | simple_statement_or_begin (';' opt_end_of_input | END_OF_INPUT)
+		 * simple_statement_or_begin: simple_statement | begin_stmt
 		 */
 		$children = $node->get_child_nodes();
 		if ( count( $children ) !== 1 ) {
@@ -1402,126 +1436,103 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			);
 		}
 
-		if ( 'beginWork' === $children[0]->rule_name ) {
+		$node = $children[0]->get_first_child_node();
+		if ( 'begin_stmt' === $node->rule_name ) {
 			$this->begin_user_transaction();
 			return;
 		}
 
-		if ( 'simpleStatement' !== $children[0]->rule_name ) {
+		if ( 'simple_statement' !== $node->rule_name ) {
 			throw $this->new_driver_exception(
-				sprintf( 'Expected "simpleStatement" node, got: "%s"', $children[0]->rule_name )
+				sprintf( 'Expected "simple_statement" node, got: "%s"', $node->rule_name )
 			);
 		}
 
-		// Process the "simpleStatement" AST node.
-		$node = $children[0]->get_first_child_node();
+		// Process the "simple_statement" AST node.
+		$node = $node->get_first_child_node();
 		switch ( $node->rule_name ) {
-			case 'transactionOrLockingStatement':
+			case 'start':
+			case 'commit':
+			case 'rollback':
+			case 'savepoint':
+			case 'release':
+			case 'lock':
+			case 'unlock':
+			case 'xa':
 				$this->execute_transaction_or_locking_statement( $node );
 				break;
-			case 'selectStatement':
+			case 'select_stmt':
 				$this->execute_select_statement( $node );
 				break;
-			case 'insertStatement':
-			case 'replaceStatement':
+			case 'insert_stmt':
+			case 'replace_stmt':
 				$this->execute_insert_or_replace_statement( $node );
 				break;
-			case 'updateStatement':
+			case 'update_stmt':
 				$this->execute_update_statement( $node );
 				break;
-			case 'deleteStatement':
+			case 'delete_stmt':
 				$this->execute_delete_statement( $node );
 				break;
-			case 'createStatement':
-				$subtree = $node->get_first_child_node();
-				switch ( $subtree->rule_name ) {
-					case 'createDatabase':
-						/*
-						 * TODO:
-						 * We could support this by creating a new SQLite database
-						 * file (e.g., $slugified_db_name.sqlite).
-						 *
-						 * Alternatively, it could be a no-op, in combination with
-						 * DROP DATABASE deleting the data file and recreating it.
-						 */
-					case 'createTable':
-						$this->execute_create_table_statement( $node );
-						break;
-					case 'createIndex':
-						$this->execute_create_index_statement( $node );
-						break;
-					default:
-						throw $this->new_not_supported_exception(
-							sprintf(
-								'statement type: "%s" > "%s"',
-								$node->rule_name,
-								$subtree->rule_name
-							)
-						);
-				}
+			case 'create':
+				/*
+				 * The "create" rule covers CREATE DATABASE and other CREATE
+				 * statements without a dedicated grammar rule.
+				 *
+				 * TODO:
+				 * We could support CREATE DATABASE by creating a new SQLite
+				 * database file (e.g., $slugified_db_name.sqlite).
+				 *
+				 * Alternatively, it could be a no-op, in combination with
+				 * DROP DATABASE deleting the data file and recreating it.
+				 */
+				throw $this->new_not_supported_exception(
+					sprintf( 'statement type: "%s"', $node->rule_name )
+				);
+			case 'create_table_stmt':
+				$this->execute_create_table_statement( $node );
 				break;
-			case 'alterStatement':
-				$subtree = $node->get_first_child_node();
-				switch ( $subtree->rule_name ) {
-					case 'alterTable':
-						$this->execute_alter_table_statement( $node );
-						break;
-					default:
-						throw $this->new_not_supported_exception(
-							sprintf(
-								'statement type: "%s" > "%s"',
-								$node->rule_name,
-								$subtree->rule_name
-							)
-						);
-				}
+			case 'create_index_stmt':
+				$this->execute_create_index_statement( $node );
 				break;
-			case 'dropStatement':
-				$subtree = $node->get_first_child_node();
-				switch ( $subtree->rule_name ) {
-					case 'dropTable':
-						$this->execute_drop_table_statement( $node );
-						break;
-					case 'dropIndex':
-						$this->execute_drop_index_statement( $node );
-						break;
-					default:
-						$query                       = $this->translate( $node );
-						$this->last_result_statement = $this->execute_sqlite_query( $query );
-				}
+			case 'alter_table_stmt':
+				$this->execute_alter_table_statement( $node );
 				break;
-			case 'truncateTableStatement':
+			case 'drop_table_stmt':
+				$this->execute_drop_table_statement( $node );
+				break;
+			case 'drop_index_stmt':
+				$this->execute_drop_index_statement( $node );
+				break;
+			case 'drop_database_stmt':
+			case 'drop_view_stmt':
+			case 'drop_trigger_stmt':
+				$query                       = $this->translate( $node );
+				$this->last_result_statement = $this->execute_sqlite_query( $query );
+				break;
+			case 'truncate_stmt':
 				$this->execute_truncate_table_statement( $node );
 				break;
-			case 'setStatement':
+			case 'set':
 				$this->execute_set_statement( $node );
 				break;
-			case 'showStatement':
-				$this->execute_show_statement( $node );
+			case 'describe_stmt':
+				$this->execute_describe_statement( $node );
 				break;
-			case 'utilityStatement':
-				$subtree = $node->get_first_child_node();
-				switch ( $subtree->rule_name ) {
-					case 'describeStatement':
-						$this->execute_describe_statement( $subtree );
-						break;
-					case 'useCommand':
-						$this->execute_use_statement( $subtree );
-						break;
-					default:
-						throw $this->new_not_supported_exception(
-							sprintf(
-								'statement type: "%s" > "%s"',
-								$node->rule_name,
-								$subtree->rule_name
-							)
-						);
-				}
+			case 'use':
+				$this->execute_use_statement( $node );
 				break;
-			case 'tableAdministrationStatement':
+			case 'analyze_table_stmt':
+			case 'check_table_stmt':
+			case 'optimize_table_stmt':
+			case 'repair_table_stmt':
 				$this->execute_administration_statement( $node );
 				break;
 			default:
+				if ( str_starts_with( $node->rule_name, 'show_' ) ) {
+					$this->execute_show_statement( $node );
+					break;
+				}
 				throw $this->new_not_supported_exception(
 					sprintf( 'statement type: "%s"', $node->rule_name )
 				);
@@ -1688,13 +1699,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		switch ( $subnode->rule_name ) {
 			case 'transactionStatement':
 				// START TRANSACTION.
-				if ( WP_MySQL_Lexer::START_SYMBOL === $token->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['START'] === $token->id ) {
 					$this->begin_user_transaction();
 					return;
 				}
 
 				// COMMIT.
-				if ( WP_MySQL_Lexer::COMMIT_SYMBOL === $token->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['COMMIT'] === $token->id ) {
 					$this->commit_user_transaction();
 					return;
 				}
@@ -1704,7 +1715,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$savepoint_name = $this->translate( $subnode->get_first_child_node( 'identifier' ) );
 
 				// ROLLBACK/ROLLBACK TO SAVEPOINT <identifier>.
-				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['ROLLBACK'] === $token->id ) {
 					if ( null === $savepoint_name ) {
 						$this->rollback_user_transaction();
 					} else {
@@ -1714,13 +1725,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 
 				// SAVEPOINT.
-				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['SAVEPOINT'] === $token->id ) {
 					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
 					return;
 				}
 
 				// RELEASE SAVEPOINT.
-				if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $token->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['RELEASE'] === $token->id ) {
 					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 					return;
 				}
@@ -1729,7 +1740,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			case 'lockStatement':
 				// LOCK TABLE/LOCK TABLES.
 				if (
-					WP_MySQL_Lexer::LOCK_SYMBOL === $token->id
+					WP_MySQL_Tokens::KEYWORDS['LOCK'] === $token->id
 					&& $subnode->has_child_node( 'lockItem' )
 				) {
 					// Check if the table(s) exists.
@@ -1766,10 +1777,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 				// UNLOCK TABLES/UNLOCK TABLE.
 				if (
-					WP_MySQL_Lexer::UNLOCK_SYMBOL === $token->id
+					WP_MySQL_Tokens::KEYWORDS['UNLOCK'] === $token->id
 					&& (
-						$subnode->has_child_token( WP_MySQL_Lexer::TABLE_SYMBOL )
-						|| $subnode->has_child_token( WP_MySQL_Lexer::TABLES_SYMBOL )
+						$subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TABLE'] )
+						|| $subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TABLES'] )
 					)
 				) {
 					// Commit the transaction when created by the LOCK statement.
@@ -1810,7 +1821,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$query = $this->translate( $node->get_first_child() );
 
 		$has_sql_calc_found_rows = null !== $node->get_first_descendant_token(
-			WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL
+			WP_MySQL_Tokens::KEYWORDS['SQL_CALC_FOUND_ROWS']
 		);
 
 		// Handle SQL_CALC_FOUND_ROWS.
@@ -1887,7 +1898,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			if ( $child instanceof WP_Parser_Node && 'tableRef' === $child->rule_name ) {
 				// MySQL supports INSERT without the INTO keyword; SQLite requires it.
-				if ( ! $node->has_child_token( WP_MySQL_Lexer::INTO_SYMBOL ) ) {
+				if ( ! $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['INTO'] ) ) {
 					$parts[] = 'INTO';
 				}
 
@@ -1898,11 +1909,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
-			if ( $is_token && WP_MySQL_Lexer::SET_SYMBOL === $child->id ) {
+			if ( $is_token && WP_MySQL_Tokens::KEYWORDS['SET'] === $child->id ) {
 				continue;
 			}
 
-			if ( $is_token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
+			if ( $is_token && WP_MySQL_Tokens::KEYWORDS['IGNORE'] === $child->id ) {
 				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
@@ -2154,7 +2165,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$with = $this->translate( $node->get_first_child_node( 'withClause' ) );
 
 		// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
-		$or_ignore = $node->has_child_token( WP_MySQL_Lexer::IGNORE_SYMBOL )
+		$or_ignore = $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['IGNORE'] )
 			? 'OR IGNORE'
 			: null;
 
@@ -2386,7 +2397,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$subnode = $node->get_first_child_node();
 
 		// Handle TEMPORARY keyword.
-		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] );
 
 		// Handle CREATE TABLE ... [AS] SELECT.
 		$element_list = $subnode->get_first_child_node( 'tableElementList' );
@@ -2485,14 +2496,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$first_token = $action->get_first_child_token();
 
 			switch ( $first_token->id ) {
-				case WP_MySQL_Lexer::DROP_SYMBOL:
+				case WP_MySQL_Tokens::KEYWORDS['DROP']:
 					$name = $this->translate( $action->get_first_child_node( 'fieldIdentifier' ) );
 					if ( null !== $name ) {
 						$name = $this->unquote_sqlite_identifier( $name );
 						unset( $column_map[ strtolower( $name ) ] );
 					}
 					break;
-				case WP_MySQL_Lexer::CHANGE_SYMBOL:
+				case WP_MySQL_Tokens::KEYWORDS['CHANGE']:
 					$old_name = $this->unquote_sqlite_identifier(
 						$this->translate( $action->get_first_child_node( 'fieldIdentifier' ) )
 					);
@@ -2502,7 +2513,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 					$column_map[ strtolower( $old_name ) ] = $new_name;
 					break;
-				case WP_MySQL_Lexer::RENAME_SYMBOL:
+				case WP_MySQL_Tokens::KEYWORDS['RENAME']:
 					$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
 					if ( null !== $column_ref ) {
 						$old_name = $this->unquote_sqlite_identifier(
@@ -2549,7 +2560,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// In SQLite, we need to execute each DROP TABLE statement separately.
 		$child_node         = $node->get_first_child_node();
 		$table_refs         = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
-		$table_is_temporary = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		$table_is_temporary = $child_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] );
 		$queries            = array();
 		foreach ( $table_refs as $table_ref ) {
 			$database = $this->get_database_name( $table_ref );
@@ -2562,7 +2573,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$is_token = $child instanceof WP_MySQL_Token;
 
 				// Skip the TEMPORARY keyword.
-				if ( $is_token && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $child->id ) {
+				if ( $is_token && WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] === $child->id ) {
 					continue;
 				}
 
@@ -2640,7 +2651,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$index_name = $this->unquote_sqlite_identifier(
 			$this->translate( $create_index->get_first_child_node( 'indexName' ) )
 		);
-		$is_unique  = $create_index->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
+		$is_unique  = $create_index->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] );
 
 		// Get the key parts.
 		$key_list_variants = $target->get_first_child_node( 'keyListVariants' );
@@ -2729,18 +2740,18 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$keyword2 = $tokens[2] ?? null;
 
 		switch ( $keyword1->id ) {
-			case WP_MySQL_Lexer::COLLATION_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['COLLATION']:
 				$this->execute_show_collation_statement( $node );
 				return;
-			case WP_MySQL_Lexer::DATABASES_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['DATABASES']:
 				$this->execute_show_databases_statement( $node );
 				return;
-			case WP_MySQL_Lexer::COLUMNS_SYMBOL:
-			case WP_MySQL_Lexer::FIELDS_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['COLUMNS']:
+			case WP_MySQL_Tokens::KEYWORDS['FIELDS']:
 				$this->execute_show_columns_statement( $node );
 				return;
-			case WP_MySQL_Lexer::CREATE_SYMBOL:
-				if ( WP_MySQL_Lexer::TABLE_SYMBOL === $keyword2->id ) {
+			case WP_MySQL_Tokens::KEYWORDS['CREATE']:
+				if ( WP_MySQL_Tokens::KEYWORDS['TABLE'] === $keyword2->id ) {
 					$table_ref  = $node->get_first_child_node( 'tableRef' );
 					$database   = $this->get_database_name( $table_ref );
 					$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
@@ -2787,12 +2798,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return;
 				}
 				break;
-			case WP_MySQL_Lexer::INDEX_SYMBOL:
-			case WP_MySQL_Lexer::INDEXES_SYMBOL:
-			case WP_MySQL_Lexer::KEYS_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['INDEX']:
+			case WP_MySQL_Tokens::KEYWORDS['INDEXES']:
+			case WP_MySQL_Tokens::KEYWORDS['KEYS']:
 				$this->execute_show_index_statement( $node );
 				return;
-			case WP_MySQL_Lexer::GRANTS_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['GRANTS']:
 				$this->last_result_statement = $this->create_result_statement_from_data(
 					array( 'Grants for root@%' ),
 					array( array( 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION' ) )
@@ -2810,13 +2821,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 				$this->found_rows            = 1;
 				return;
-			case WP_MySQL_Lexer::TABLE_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['TABLE']:
 				$this->execute_show_table_status_statement( $node );
 				return;
-			case WP_MySQL_Lexer::TABLES_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['TABLES']:
 				$this->execute_show_tables_statement( $node );
 				return;
-			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['VARIABLES']:
 				$this->last_column_meta      = array(
 					array(
 						'native_type' => 'STRING',
@@ -3127,7 +3138,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// Handle the FULL keyword.
 		$command_type = $node->get_first_child_node( 'showCommandType' );
-		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
+		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Tokens::KEYWORDS['FULL'] );
 
 		// Fetch table information.
 		$table_tables = $this->information_schema_builder->get_table_name(
@@ -3199,7 +3210,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		// Handle the FULL keyword.
 		$command_type = $node->get_first_child_node( 'showCommandType' );
-		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
+		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Tokens::KEYWORDS['FULL'] );
 
 		// Fetch column information.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
@@ -3368,7 +3379,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * This doesn't apply to "@@" type prefixes (such as "@@SESSION.var_name"),
 		 * which always impact only the immediately following system variable.
 		 */
-		$default_type = WP_MySQL_Lexer::SESSION_SYMBOL;
+		$default_type = WP_MySQL_Tokens::KEYWORDS['SESSION'];
 		foreach ( $definitions as $definition ) {
 			// Check if the definition starts with an "optionType" node with
 			// one of the SESSION, GLOBAL, PERSIST, or PERSIST_ONLY tokens.
@@ -3380,7 +3391,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			if (
 				$part instanceof WP_MySQL_Token
-				&& WP_MySQL_Lexer::NAMES_SYMBOL === $part->id
+				&& WP_MySQL_Tokens::KEYWORDS['NAMES'] === $part->id
 			) {
 				// "SET NAMES ..." is a no-op for now.
 				// TODO: Validate charset compatibility with UTF-8.
@@ -3496,18 +3507,18 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$value = 'on' === $lowercase_value ? 1 : 0;
 		}
 
-		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
+		if ( WP_MySQL_Tokens::KEYWORDS['SESSION'] === $type ) {
 			if ( 'sql_mode' === $name ) {
 				$modes                  = explode( ',', strtoupper( $value ) );
 				$this->active_sql_modes = $modes;
 			} else {
 				$this->session_system_variables[ $name ] = $value;
 			}
-		} elseif ( WP_MySQL_Lexer::GLOBAL_SYMBOL === $type ) {
+		} elseif ( WP_MySQL_Tokens::KEYWORDS['GLOBAL'] === $type ) {
 			throw $this->new_not_supported_exception( "SET statement type: 'GLOBAL'" );
-		} elseif ( WP_MySQL_Lexer::PERSIST_SYMBOL === $type ) {
+		} elseif ( WP_MySQL_Tokens::KEYWORDS['PERSIST'] === $type ) {
 			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST'" );
-		} elseif ( WP_MySQL_Lexer::PERSIST_ONLY_SYMBOL === $type ) {
+		} elseif ( WP_MySQL_Tokens::KEYWORDS['PERSIST_ONLY'] === $type ) {
 			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST_ONLY'" );
 		}
 
@@ -3560,11 +3571,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
 			try {
 				switch ( $first_token->id ) {
-					case WP_MySQL_Lexer::ANALYZE_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['ANALYZE']:
 						$stmt   = $this->execute_sqlite_query( sprintf( 'ANALYZE %s', $quoted_table_name ) );
 						$errors = $stmt->fetchAll( PDO::FETCH_COLUMN );
 						break;
-					case WP_MySQL_Lexer::CHECK_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['CHECK']:
 						$stmt   = $this->execute_sqlite_query(
 							sprintf( 'PRAGMA integrity_check(%s)', $quoted_table_name )
 						);
@@ -3573,8 +3584,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 							array_shift( $errors );
 						}
 						break;
-					case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
-					case WP_MySQL_Lexer::REPAIR_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['OPTIMIZE']:
+					case WP_MySQL_Tokens::KEYWORDS['REPAIR']:
 						/*
 						 * SQLite doesn't support OPTIMIZE and REPAIR TABLE commands.
 						 * We will recreate the table and copy the data instead.
@@ -3777,9 +3788,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				// Handle optional prefixes (data type is the second token):
 				//  1. LONG VARCHAR, LONG CHAR(ACTER) VARYING, LONG VARBINARY.
 				//  2. NATIONAL CHAR, NATIONAL VARCHAR, NATIONAL CHAR(ACTER) VARYING.
-				if ( WP_MySQL_Lexer::LONG_SYMBOL === $child->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['LONG'] === $child->id ) {
 					$child = $node->get_child_tokens()[1] ?? null;
-				} elseif ( WP_MySQL_Lexer::NATIONAL_SYMBOL === $child->id ) {
+				} elseif ( WP_MySQL_Tokens::KEYWORDS['NATIONAL'] === $child->id ) {
 					$child = $node->get_child_tokens()[1] ?? null;
 				}
 
@@ -3793,7 +3804,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 
 				// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
-				if ( WP_MySQL_Lexer::SERIAL_SYMBOL === $child->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['SERIAL'] === $child->id ) {
 					return 'INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE';
 				}
 
@@ -3806,7 +3817,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			case 'fromClause':
 				// FROM DUAL is MySQL-specific syntax that means "FROM no tables"
 				// and it is equivalent to omitting the FROM clause entirely.
-				if ( $node->has_child_token( WP_MySQL_Lexer::DUAL_SYMBOL ) ) {
+				if ( $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['DUAL'] ) ) {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
@@ -3814,9 +3825,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return $this->translate_simple_expr_body( $node );
 			case 'predicateOperations':
 				$token = $node->get_first_child_token();
-				if ( WP_MySQL_Lexer::LIKE_SYMBOL === $token->id ) {
+				if ( WP_MySQL_Tokens::KEYWORDS['LIKE'] === $token->id ) {
 					return $this->translate_like( $node );
-				} elseif ( WP_MySQL_Lexer::REGEXP_SYMBOL === $token->id ) {
+				} elseif ( WP_MySQL_Tokens::KEYWORDS['REGEXP'] === $token->id ) {
 					return $this->translate_regexp_functions( $node );
 				}
 				return $this->translate_sequence( $node->get_children() );
@@ -3848,7 +3859,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 
 				$name = strtolower( $original_name );
-				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
+				$type = $type_token ? $type_token->id : WP_MySQL_Tokens::KEYWORDS['SESSION'];
 				if ( 'sql_mode' === $name ) {
 					$value = implode( ',', $this->active_sql_modes );
 				} elseif ( 'version' === $name ) {
@@ -3861,7 +3872,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					);
 				} elseif ( 'version_comment' === $name ) {
 					$value = 'MySQL Community Server - GPL';
-				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
+				} elseif ( WP_MySQL_Tokens::KEYWORDS['SESSION'] === $type ) {
 					$value = $this->session_system_variables[ $name ] ?? null;
 				} else {
 					// When we have no value, it's reasonable to use NULL.
@@ -3897,25 +3908,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$first_token = $first_child;
 				}
 				switch ( $first_token->id ) {
-					case WP_MySQL_Lexer::BINARY_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['BINARY']:
 						return 'BLOB';
-					case WP_MySQL_Lexer::CHAR_SYMBOL:
-					case WP_MySQL_Lexer::NCHAR_SYMBOL:
-					case WP_MySQL_Lexer::NATIONAL_SYMBOL:
-					case WP_MySQL_Lexer::DATE_SYMBOL:
-					case WP_MySQL_Lexer::TIME_SYMBOL:
-					case WP_MySQL_Lexer::DATETIME_SYMBOL:
-					case WP_MySQL_Lexer::JSON_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['CHAR']:
+					case WP_MySQL_Tokens::KEYWORDS['NCHAR']:
+					case WP_MySQL_Tokens::KEYWORDS['NATIONAL']:
+					case WP_MySQL_Tokens::KEYWORDS['DATE']:
+					case WP_MySQL_Tokens::KEYWORDS['TIME']:
+					case WP_MySQL_Tokens::KEYWORDS['DATETIME']:
+					case WP_MySQL_Tokens::KEYWORDS['JSON']:
 						return 'TEXT';
-					case WP_MySQL_Lexer::SIGNED_SYMBOL:
-					case WP_MySQL_Lexer::UNSIGNED_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['SIGNED']:
+					case WP_MySQL_Tokens::KEYWORDS['UNSIGNED']:
 						// @TODO: Emulate UNSIGNED semantics. MySQL wraps negative
 						//        values, but SQLite has no unsigned integer type.
 						return 'INTEGER';
-					case WP_MySQL_Lexer::DECIMAL_SYMBOL:
-					case WP_MySQL_Lexer::FLOAT_SYMBOL:
-					case WP_MySQL_Lexer::REAL_SYMBOL:
-					case WP_MySQL_Lexer::DOUBLE_SYMBOL:
+					case WP_MySQL_Tokens::KEYWORDS['DECIMAL']:
+					case WP_MySQL_Tokens::KEYWORDS['FLOAT']:
+					case WP_MySQL_Tokens::KEYWORDS['REAL']:
+					case WP_MySQL_Tokens::KEYWORDS['DOUBLE']:
 						return 'REAL';
 					default:
 						throw $this->new_not_supported_exception(
@@ -3950,7 +3961,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_token( WP_MySQL_Token $token ): ?string {
 		switch ( $token->id ) {
-			case WP_MySQL_Lexer::EOF:
+			case WP_MySQL_Lexer::END_OF_INPUT:
 				return null;
 			case WP_MySQL_Lexer::BIN_NUMBER:
 				/*
@@ -3988,16 +3999,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return sprintf( "x'%s'", substr( $value, 2 ) );
 				}
 				return $value;
-			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['AUTO_INCREMENT']:
 				return 'AUTOINCREMENT';
-			case WP_MySQL_Lexer::BINARY_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['BINARY']:
 				/*
 				 * "BINARY expr" is translated in "translate_simple_expr_body()".
 				 * Returning null here is a safety net for any unhandled context
 				 * where a bare BINARY token would otherwise leak into the output.
 				 */
 				return null;
-			case WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['SQL_CALC_FOUND_ROWS']:
 				/*
 				 * The "SQL_CALC_FOUND_ROWS" keyword is implemented in the select
 				 * statement translation and then removed from the output here.
@@ -4178,9 +4189,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			?? $node->get_first_child_node( 'queryExpressionParens' )
 		);
 		$query_term      = $query_expr_main->get_first_descendant_node( 'queryTerm' );
-		$has_union       = $query_expr_main->has_child_token( WP_MySQL_Lexer::UNION_SYMBOL );
-		$has_except      = $query_expr_main->has_child_token( WP_MySQL_Lexer::EXCEPT_SYMBOL );
-		$has_intersect   = $query_term->has_child_token( WP_MySQL_Lexer::INTERSECT_SYMBOL );
+		$has_union       = $query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNION'] );
+		$has_except      = $query_expr_main->has_child_token( WP_MySQL_Tokens::KEYWORDS['EXCEPT'] );
+		$has_intersect   = $query_term->has_child_token( WP_MySQL_Tokens::KEYWORDS['INTERSECT'] );
 
 		/*
 		 * When the ORDER BY clause is present, we need to disambiguate the item
@@ -4335,7 +4346,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$token = $node->get_first_child_token();
 
 		// Translate "VALUES(col)" to "excluded.col" in ON DUPLICATE KEY UPDATE.
-		if ( null !== $token && WP_MySQL_Lexer::VALUES_SYMBOL === $token->id ) {
+		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['VALUES'] === $token->id ) {
 			return sprintf(
 				'`excluded`.%s',
 				$this->translate( $node->get_first_child_node( 'simpleIdentifier' ) )
@@ -4348,13 +4359,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * The MySQL BINARY operator enforces byte-by-byte string comparison.
 		 * In SQLite, COLLATE BINARY is equivalent in comparison contexts.
 		 */
-		if ( null !== $token && WP_MySQL_Lexer::BINARY_SYMBOL === $token->id ) {
+		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $token->id ) {
 			$expr = $node->get_first_child_node( 'simpleExpr' );
 			return sprintf( '%s COLLATE BINARY', $this->translate( $expr ) );
 		}
 
 		// Translate "CAST(expr AS type)" to its SQLite equivalent.
-		if ( null !== $token && WP_MySQL_Lexer::CAST_SYMBOL === $token->id ) {
+		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['CAST'] === $token->id ) {
 			$expr      = $node->get_first_child_node( 'expr' );
 			$cast_type = $node->get_first_child_node( 'castType' );
 			return $this->translate_cast_expr( $expr, $cast_type );
@@ -4367,7 +4378,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 *   1. CONVERT(expr, type):         Equivalent to CAST(expr AS type).
 		 *   2. CONVERT(expr USING charset): Converts the character set.
 		 */
-		if ( null !== $token && WP_MySQL_Lexer::CONVERT_SYMBOL === $token->id ) {
+		if ( null !== $token && WP_MySQL_Tokens::KEYWORDS['CONVERT'] === $token->id ) {
 			$expr      = $node->get_first_child_node( 'expr' );
 			$cast_type = $node->get_first_child_node( 'castType' );
 
@@ -4400,7 +4411,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * Emitting "CAST(expr AS BLOB)" would break equality against TEXT values
 		 * due to SQLite's storage-class ordering (BLOB > TEXT).
 		 */
-		if ( $cast_type->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+		if ( $cast_type->has_child_token( WP_MySQL_Tokens::KEYWORDS['BINARY'] ) ) {
 			return sprintf( 'CAST(%s AS TEXT) COLLATE BINARY', $this->translate( $expr ) );
 		}
 		return sprintf( 'CAST(%s AS %s)', $this->translate( $expr ), $this->translate( $cast_type ) );
@@ -4415,7 +4426,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_like( WP_Parser_Node $node ): string {
 		$tokens    = $node->get_descendant_tokens();
-		$is_binary = isset( $tokens[1] ) && WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[1]->id;
+		$is_binary = isset( $tokens[1] ) && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $tokens[1]->id;
 
 		if ( true === $is_binary ) {
 			$children = $node->get_children();
@@ -4459,7 +4470,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_regexp_functions( WP_Parser_Node $node ): string {
 		$tokens    = $node->get_descendant_tokens();
-		$is_binary = isset( $tokens[1] ) && WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[1]->id;
+		$is_binary = isset( $tokens[1] ) && WP_MySQL_Tokens::KEYWORDS['BINARY'] === $tokens[1]->id;
 
 		/*
 		 * If the query says REGEXP BINARY, the comparison is byte-by-byte
@@ -4494,18 +4505,18 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		switch ( $child->id ) {
-			case WP_MySQL_Lexer::DATABASE_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['DATABASE']:
 				return $this->quote_sqlite_value( $this->db_name );
-			case WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL:
-			case WP_MySQL_Lexer::NOW_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['CURRENT_TIMESTAMP']:
+			case WP_MySQL_Tokens::KEYWORDS['NOW']:
 				/*
 				 * 1) SQLite doesn't support CURRENT_TIMESTAMP() with parentheses.
 				 * 2) In MySQL, CURRENT_TIMESTAMP and CURRENT_TIMESTAMP() are an
 				 *    alias of NOW(). In SQLite, there is no NOW() function.
 				 */
 				return 'CURRENT_TIMESTAMP';
-			case WP_MySQL_Lexer::DATE_ADD_SYMBOL:
-			case WP_MySQL_Lexer::DATE_SUB_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['DATE_ADD']:
+			case WP_MySQL_Tokens::KEYWORDS['DATE_SUB']:
 				$nodes = $node->get_child_nodes();
 				$value = $this->translate( $nodes[1] );
 				$unit  = $this->translate( $nodes[2] );
@@ -4516,11 +4527,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return sprintf(
 					"DATETIME(%s, '%s' || %s || ' %s')",
 					$this->translate( $nodes[0] ),
-					WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id ? '-' : '+',
+					WP_MySQL_Tokens::KEYWORDS['DATE_SUB'] === $child->id ? '-' : '+',
 					$value,
 					$unit
 				);
-			case WP_MySQL_Lexer::LEFT_SYMBOL:
+			case WP_MySQL_Tokens::KEYWORDS['LEFT']:
 				$nodes = $node->get_child_nodes();
 				return sprintf(
 					'SUBSTR(%s, 1, %s)',
@@ -5076,7 +5087,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Find the last AUTO_INCREMENT = N option (MySQL uses the last one).
 		$value = null;
 		foreach ( $node->get_descendant_nodes( 'createTableOption' ) as $option ) {
-			if ( ! $option->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+			if ( ! $option->has_child_token( WP_MySQL_Tokens::KEYWORDS['AUTO_INCREMENT'] ) ) {
 				continue;
 			}
 			$number_node = $option->get_first_child_node( 'ulonglong_number' );
@@ -5469,7 +5480,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$values      = $values_list->get_first_child_node( 'values' );
 				$value_count = (
 					count( $values->get_child_nodes( 'expr' ) )
-					+ count( $values->get_child_nodes( WP_MySQL_Lexer::DEFAULT_SYMBOL ) )
+					+ count( $values->get_child_nodes( WP_MySQL_Tokens::KEYWORDS['DEFAULT'] ) )
 				);
 
 				$columns_list = '';
@@ -6312,8 +6323,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				} elseif ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
 					// Handle DEFAULT values with expressions (DEFAULT_GENERATED).
 					// Translate the default clause from MySQL to SQLite.
-					$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();
-					$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
+					$ast            = $this->parse_mysql_query( 'SELECT ' . $column['COLUMN_DEFAULT'] )[0];
+					$expr           = $ast->get_first_descendant_node( 'select_item' )->get_first_child_node();
 					$default_clause = $this->translate( $expr );
 					$query         .= sprintf( ' DEFAULT (%s)', $default_clause );
 				} else {
@@ -6438,8 +6449,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			// Translate the check clause from MySQL to SQLite.
-			$ast          = $this->create_parser( 'SELECT ' . $check_constraint['CHECK_CLAUSE'] )->parse();
-			$expr         = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
+			$ast          = $this->parse_mysql_query( 'SELECT ' . $check_constraint['CHECK_CLAUSE'] )[0];
+			$expr         = $ast->get_first_descendant_node( 'select_item' )->get_first_child_node();
 			$check_clause = $this->translate( $expr );
 
 			$sql    = sprintf(

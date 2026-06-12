@@ -195,47 +195,47 @@ class WP_SQLite_Information_Schema_Builder {
 	 * This is used to store column data types in the information schema.
 	 */
 	const TOKEN_TO_TYPE_MAP = array(
-		WP_MySQL_Lexer::INT_SYMBOL                => 'int',
-		WP_MySQL_Lexer::TINYINT_SYMBOL            => 'tinyint',
-		WP_MySQL_Lexer::SMALLINT_SYMBOL           => 'smallint',
-		WP_MySQL_Lexer::MEDIUMINT_SYMBOL          => 'mediumint',
-		WP_MySQL_Lexer::BIGINT_SYMBOL             => 'bigint',
-		WP_MySQL_Lexer::REAL_SYMBOL               => 'double',
-		WP_MySQL_Lexer::DOUBLE_SYMBOL             => 'double',
-		WP_MySQL_Lexer::FLOAT_SYMBOL              => 'float',
-		WP_MySQL_Lexer::DECIMAL_SYMBOL            => 'decimal',
-		WP_MySQL_Lexer::NUMERIC_SYMBOL            => 'decimal',
-		WP_MySQL_Lexer::FIXED_SYMBOL              => 'decimal',
-		WP_MySQL_Lexer::BIT_SYMBOL                => 'bit',
-		WP_MySQL_Lexer::BOOL_SYMBOL               => 'tinyint',
-		WP_MySQL_Lexer::BOOLEAN_SYMBOL            => 'tinyint',
-		WP_MySQL_Lexer::BINARY_SYMBOL             => 'binary',
-		WP_MySQL_Lexer::VARBINARY_SYMBOL          => 'varbinary',
-		WP_MySQL_Lexer::YEAR_SYMBOL               => 'year',
-		WP_MySQL_Lexer::DATE_SYMBOL               => 'date',
-		WP_MySQL_Lexer::TIME_SYMBOL               => 'time',
-		WP_MySQL_Lexer::TIMESTAMP_SYMBOL          => 'timestamp',
-		WP_MySQL_Lexer::DATETIME_SYMBOL           => 'datetime',
-		WP_MySQL_Lexer::TINYBLOB_SYMBOL           => 'tinyblob',
-		WP_MySQL_Lexer::BLOB_SYMBOL               => 'blob',
-		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL         => 'mediumblob',
-		WP_MySQL_Lexer::LONGBLOB_SYMBOL           => 'longblob',
-		WP_MySQL_Lexer::TINYTEXT_SYMBOL           => 'tinytext',
-		WP_MySQL_Lexer::TEXT_SYMBOL               => 'text',
-		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL         => 'mediumtext',
-		WP_MySQL_Lexer::LONGTEXT_SYMBOL           => 'longtext',
-		WP_MySQL_Lexer::ENUM_SYMBOL               => 'enum',
-		WP_MySQL_Lexer::SET_SYMBOL                => 'set',
-		WP_MySQL_Lexer::SERIAL_SYMBOL             => 'bigint',
-		WP_MySQL_Lexer::GEOMETRY_SYMBOL           => 'geometry',
-		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'geomcollection',
-		WP_MySQL_Lexer::POINT_SYMBOL              => 'point',
-		WP_MySQL_Lexer::MULTIPOINT_SYMBOL         => 'multipoint',
-		WP_MySQL_Lexer::LINESTRING_SYMBOL         => 'linestring',
-		WP_MySQL_Lexer::MULTILINESTRING_SYMBOL    => 'multilinestring',
-		WP_MySQL_Lexer::POLYGON_SYMBOL            => 'polygon',
-		WP_MySQL_Lexer::MULTIPOLYGON_SYMBOL       => 'multipolygon',
-		WP_MySQL_Lexer::JSON_SYMBOL               => 'json',
+		WP_MySQL_Tokens::KEYWORDS['INT']                => 'int',
+		WP_MySQL_Tokens::KEYWORDS['TINYINT']            => 'tinyint',
+		WP_MySQL_Tokens::KEYWORDS['SMALLINT']           => 'smallint',
+		WP_MySQL_Tokens::KEYWORDS['MEDIUMINT']          => 'mediumint',
+		WP_MySQL_Tokens::KEYWORDS['BIGINT']             => 'bigint',
+		WP_MySQL_Tokens::KEYWORDS['REAL']               => 'double',
+		WP_MySQL_Tokens::KEYWORDS['DOUBLE']             => 'double',
+		WP_MySQL_Tokens::KEYWORDS['FLOAT']              => 'float',
+		WP_MySQL_Tokens::KEYWORDS['DECIMAL']            => 'decimal',
+		WP_MySQL_Tokens::KEYWORDS['NUMERIC']            => 'decimal',
+		WP_MySQL_Tokens::KEYWORDS['FIXED']              => 'decimal',
+		WP_MySQL_Tokens::KEYWORDS['BIT']                => 'bit',
+		WP_MySQL_Tokens::KEYWORDS['BOOL']               => 'tinyint',
+		WP_MySQL_Tokens::KEYWORDS['BOOLEAN']            => 'tinyint',
+		WP_MySQL_Tokens::KEYWORDS['BINARY']             => 'binary',
+		WP_MySQL_Tokens::KEYWORDS['VARBINARY']          => 'varbinary',
+		WP_MySQL_Tokens::KEYWORDS['YEAR']               => 'year',
+		WP_MySQL_Tokens::KEYWORDS['DATE']               => 'date',
+		WP_MySQL_Tokens::KEYWORDS['TIME']               => 'time',
+		WP_MySQL_Tokens::KEYWORDS['TIMESTAMP']          => 'timestamp',
+		WP_MySQL_Tokens::KEYWORDS['DATETIME']           => 'datetime',
+		WP_MySQL_Tokens::KEYWORDS['TINYBLOB']           => 'tinyblob',
+		WP_MySQL_Tokens::KEYWORDS['BLOB']               => 'blob',
+		WP_MySQL_Tokens::KEYWORDS['MEDIUMBLOB']         => 'mediumblob',
+		WP_MySQL_Tokens::KEYWORDS['LONGBLOB']           => 'longblob',
+		WP_MySQL_Tokens::KEYWORDS['TINYTEXT']           => 'tinytext',
+		WP_MySQL_Tokens::KEYWORDS['TEXT']               => 'text',
+		WP_MySQL_Tokens::KEYWORDS['MEDIUMTEXT']         => 'mediumtext',
+		WP_MySQL_Tokens::KEYWORDS['LONGTEXT']           => 'longtext',
+		WP_MySQL_Tokens::KEYWORDS['ENUM']               => 'enum',
+		WP_MySQL_Tokens::KEYWORDS['SET']                => 'set',
+		WP_MySQL_Tokens::KEYWORDS['SERIAL']             => 'bigint',
+		WP_MySQL_Tokens::KEYWORDS['GEOMETRY']           => 'geometry',
+		WP_MySQL_Tokens::KEYWORDS['GEOMETRYCOLLECTION'] => 'geomcollection',
+		WP_MySQL_Tokens::KEYWORDS['POINT']              => 'point',
+		WP_MySQL_Tokens::KEYWORDS['MULTIPOINT']         => 'multipoint',
+		WP_MySQL_Tokens::KEYWORDS['LINESTRING']         => 'linestring',
+		WP_MySQL_Tokens::KEYWORDS['MULTILINESTRING']    => 'multilinestring',
+		WP_MySQL_Tokens::KEYWORDS['POLYGON']            => 'polygon',
+		WP_MySQL_Tokens::KEYWORDS['MULTIPOLYGON']       => 'multipolygon',
+		WP_MySQL_Tokens::KEYWORDS['JSON']               => 'json',
 	);
 
 	/**
@@ -500,7 +500,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 *   2. Ensure that the temporary information schema tables exist.
 		 */
 		$subnode            = $node->get_first_child_node();
-		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] );
 		if ( $table_is_temporary && ! $this->temporary_information_schema_exists ) {
 			$this->ensure_temporary_information_schema_tables();
 		}
@@ -656,7 +656,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$first_token = $action->get_first_child_token();
 
 			// ADD
-			if ( WP_MySQL_Lexer::ADD_SYMBOL === $first_token->id ) {
+			if ( WP_MySQL_Tokens::KEYWORDS['ADD'] === $first_token->id ) {
 				// ADD [COLUMN] (...[, ...])
 				$column_definitions = $action->get_descendant_nodes( 'columnDefinition' );
 				if ( count( $column_definitions ) > 0 ) {
@@ -687,7 +687,7 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 
 			// CHANGE [COLUMN]
-			if ( WP_MySQL_Lexer::CHANGE_SYMBOL === $first_token->id ) {
+			if ( WP_MySQL_Tokens::KEYWORDS['CHANGE'] === $first_token->id ) {
 				$old_name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
 				$new_name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
 				$this->record_change_column(
@@ -701,7 +701,7 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 
 			// MODIFY [COLUMN]
-			if ( WP_MySQL_Lexer::MODIFY_SYMBOL === $first_token->id ) {
+			if ( WP_MySQL_Tokens::KEYWORDS['MODIFY'] === $first_token->id ) {
 				$name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
 				$this->record_modify_column(
 					$table_is_temporary,
@@ -713,22 +713,22 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 
 			// DROP
-			if ( WP_MySQL_Lexer::DROP_SYMBOL === $first_token->id ) {
+			if ( WP_MySQL_Tokens::KEYWORDS['DROP'] === $first_token->id ) {
 				// DROP CONSTRAINT
-				if ( $action->has_child_token( WP_MySQL_Lexer::CONSTRAINT_SYMBOL ) ) {
+				if ( $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['CONSTRAINT'] ) ) {
 					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
 					$this->record_drop_constraint( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 
 				// DROP PRIMARY KEY
-				if ( $action->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+				if ( $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['PRIMARY'] ) ) {
 					$this->record_drop_key( $table_is_temporary, $table_name, 'PRIMARY' );
 					continue;
 				}
 
 				// DROP FOREIGN KEY
-				if ( $action->has_child_token( WP_MySQL_Lexer::FOREIGN_SYMBOL ) ) {
+				if ( $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['FOREIGN'] ) ) {
 					$field_identifier = $action->get_first_child_node( 'fieldIdentifier' );
 					$identifiers      = $field_identifier->get_descendant_nodes( 'identifier' );
 					$name             = $this->get_value( end( $identifiers ) );
@@ -737,7 +737,7 @@ class WP_SQLite_Information_Schema_Builder {
 				}
 
 				// DROP CHECK
-				if ( $action->has_child_token( WP_MySQL_Lexer::CHECK_SYMBOL ) ) {
+				if ( $action->has_child_token( WP_MySQL_Tokens::KEYWORDS['CHECK'] ) ) {
 					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
 					$this->record_drop_check_constraint( $table_is_temporary, $table_name, $name );
 					continue;
@@ -769,7 +769,7 @@ class WP_SQLite_Information_Schema_Builder {
 	public function record_drop_table( WP_Parser_Node $node ): void {
 		$child_node = $node->get_first_child_node();
 
-		$has_temporary_keyword = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		$has_temporary_keyword = $child_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['TEMPORARY'] );
 
 		$table_refs = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
 		foreach ( $table_refs as $table_ref ) {
@@ -1122,10 +1122,10 @@ class WP_SQLite_Information_Schema_Builder {
 		$child                = $node->get_first_child();
 		$first_child_token_id = $child instanceof WP_MySQL_Token ? $child->id : null;
 		if (
-			WP_MySQL_Lexer::KEY_SYMBOL === $first_child_token_id
-			|| WP_MySQL_Lexer::INDEX_SYMBOL === $first_child_token_id
-			|| WP_MySQL_Lexer::FULLTEXT_SYMBOL === $first_child_token_id
-			|| WP_MySQL_Lexer::SPATIAL_SYMBOL === $first_child_token_id
+			WP_MySQL_Tokens::KEYWORDS['KEY'] === $first_child_token_id
+			|| WP_MySQL_Tokens::KEYWORDS['INDEX'] === $first_child_token_id
+			|| WP_MySQL_Tokens::KEYWORDS['FULLTEXT'] === $first_child_token_id
+			|| WP_MySQL_Tokens::KEYWORDS['SPATIAL'] === $first_child_token_id
 		) {
 			$this->record_add_index( $table_is_temporary, $table_name, $node );
 		} else {
@@ -1167,7 +1167,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->sync_column_key_info( $table_is_temporary, $table_name );
 
 		// For UNIQUE index, save also constraint data.
-		if ( $node->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+		if ( $node->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] ) ) {
 			$constraint_data = $this->extract_table_constraint_data(
 				$node,
 				$table_name,
@@ -1259,8 +1259,8 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// PRIMARY KEY and UNIQUE require an index.
 		if (
-			WP_MySQL_Lexer::PRIMARY_SYMBOL === $keyword->id
-			|| WP_MySQL_Lexer::UNIQUE_SYMBOL === $keyword->id
+			WP_MySQL_Tokens::KEYWORDS['PRIMARY'] === $keyword->id
+			|| WP_MySQL_Tokens::KEYWORDS['UNIQUE'] === $keyword->id
 		) {
 			$statistics_data = $this->extract_index_statistics_data( $table_is_temporary, $table_name, $node );
 			$index_name      = $statistics_data[0]['index_name'];
@@ -1557,8 +1557,8 @@ class WP_SQLite_Information_Schema_Builder {
 		bool $nullable
 	): ?array {
 		// Handle inline PRIMARY KEY and UNIQUE constraints.
-		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL );
-		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
+		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['KEY'] );
+		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] );
 		if ( $has_inline_primary_key || $has_inline_unique_key ) {
 			$index_name = $has_inline_primary_key ? 'PRIMARY' : $column_name;
 			return array(
@@ -1837,8 +1837,8 @@ class WP_SQLite_Information_Schema_Builder {
 		string $table_name,
 		?string $index_name = null
 	): array {
-		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
-		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
+		$is_primary = $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['PRIMARY'] );
+		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] );
 		$references = $node->get_first_descendant_node( 'references' );
 		if ( null === $references && ! $is_primary && ! $is_unique ) {
 			return array();
@@ -2030,7 +2030,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function get_table_comment( WP_Parser_Node $node ): string {
 		foreach ( $node->get_descendant_nodes( 'createTableOption' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['COMMENT'] ) ) {
 				return $this->get_value( $attr->get_first_child_node( 'textStringLiteral' ) );
 			}
 		}
@@ -2046,7 +2046,7 @@ class WP_SQLite_Information_Schema_Builder {
 	private function get_column_default( WP_Parser_Node $node ): ?string {
 		$default_attr = null;
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['DEFAULT'] ) ) {
 				$default_attr = $attr;
 			}
 		}
@@ -2065,7 +2065,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 */
 
 		// DEFAULT NOW()
-		if ( $default_attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
+		if ( $default_attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['NOW'] ) ) {
 			return 'CURRENT_TIMESTAMP';
 		}
 
@@ -2082,7 +2082,7 @@ class WP_SQLite_Information_Schema_Builder {
 			// DEFAULT TRUE or DEFAULT FALSE
 			if ( $literal && $literal->has_child_node( 'boolLiteral' ) ) {
 				$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
-				return $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
+				return $bool_literal->has_child_token( WP_MySQL_Tokens::KEYWORDS['TRUE'] ) ? '1' : '0';
 			}
 
 			// @TODO: MySQL seems to normalize default values for numeric
@@ -2108,13 +2108,13 @@ class WP_SQLite_Information_Schema_Builder {
 	private function get_column_nullable( WP_Parser_Node $node ): string {
 		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
 		$data_type = $node->get_first_descendant_node( 'dataType' );
-		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['SERIAL'] ) ) {
 			return 'NO';
 		}
 
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			// PRIMARY KEY columns are always NOT NULL.
-			if ( $attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['KEY'] ) ) {
 				return 'NO';
 			}
 
@@ -2138,24 +2138,24 @@ class WP_SQLite_Information_Schema_Builder {
 	private function get_column_key( WP_Parser_Node $node ): string {
 		// 1. PRI: Column is a primary key or its any component.
 		if (
-			null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL )
+			null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['KEY'] )
 		) {
 			return 'PRI';
 		}
 
 		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
 		$data_type = $node->get_first_descendant_node( 'dataType' );
-		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['SERIAL'] ) ) {
 			return 'PRI';
 		}
 
 		// 2. UNI: Column has UNIQUE constraint.
-		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] ) ) {
 			return 'UNI';
 		}
 
 		// 3. MUL: Column has INDEX.
-		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::INDEX_SYMBOL ) ) {
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['INDEX'] ) ) {
 			return 'MUL';
 		}
 
@@ -2174,13 +2174,13 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// SERIAL
 		$data_type = $node->get_first_descendant_node( 'dataType' );
-		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['SERIAL'] ) ) {
 			return 'auto_increment';
 		}
 
 		// AUTO_INCREMENT columns can't have a DEFAULT value.
 		foreach ( $attributes as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['AUTO_INCREMENT'] ) ) {
 				return 'auto_increment';
 			}
 		}
@@ -2188,10 +2188,10 @@ class WP_SQLite_Information_Schema_Builder {
 		// Check whether DEFAULT value is generated.
 		foreach ( $attributes as $attr ) {
 			if (
-				$attr->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL )
+				$attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['DEFAULT'] )
 				&& (
 					$attr->has_child_node( 'exprWithParentheses' )
-					|| $attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL )
+					|| $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['NOW'] )
 				)
 			) {
 				$extras[] = 'DEFAULT_GENERATED';
@@ -2201,17 +2201,17 @@ class WP_SQLite_Information_Schema_Builder {
 		// Check for ON UPDATE CURRENT_TIMESTAMP.
 		foreach ( $attributes as $attr ) {
 			if (
-				$attr->has_child_token( WP_MySQL_Lexer::ON_SYMBOL )
-				&& $attr->has_child_token( WP_MySQL_Lexer::UPDATE_SYMBOL )
+				$attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['ON'] )
+				&& $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['UPDATE'] )
 			) {
 				$extras[] = 'on update CURRENT_TIMESTAMP';
 			}
 		}
 
 		// Check for generated columns.
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::VIRTUAL_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['VIRTUAL'] ) ) {
 			$extras[] = 'VIRTUAL GENERATED';
-		} elseif ( $node->get_first_descendant_token( WP_MySQL_Lexer::STORED_SYMBOL ) ) {
+		} elseif ( $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['STORED'] ) ) {
 			$extras[] = 'STORED GENERATED';
 		}
 		return implode( ' ', $extras );
@@ -2225,7 +2225,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function get_column_comment( WP_Parser_Node $node ): string {
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['COMMENT'] ) ) {
 				return $this->get_value( $attr->get_first_child_node( 'textLiteral' ) );
 			}
 		}
@@ -2251,36 +2251,36 @@ class WP_SQLite_Information_Schema_Builder {
 			// NCHAR/NATIONAL VARCHAR
 			// CHAR/CHARACTER/NCHAR VARYING
 			// NATIONAL CHAR/CHARACTER VARYING
-			WP_MySQL_Lexer::VARCHAR_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::NVARCHAR_SYMBOL === $token->id
-			|| ( isset( $type[1] ) && WP_MySQL_Lexer::VARCHAR_SYMBOL === $type[1]->id )
-			|| ( isset( $type[1] ) && WP_MySQL_Lexer::VARYING_SYMBOL === $type[1]->id )
-			|| ( isset( $type[2] ) && WP_MySQL_Lexer::VARYING_SYMBOL === $type[2]->id )
+			WP_MySQL_Tokens::KEYWORDS['VARCHAR'] === $token->id
+			|| WP_MySQL_Tokens::KEYWORDS['NVARCHAR'] === $token->id
+			|| ( isset( $type[1] ) && WP_MySQL_Tokens::KEYWORDS['VARCHAR'] === $type[1]->id )
+			|| ( isset( $type[1] ) && WP_MySQL_Tokens::KEYWORDS['VARYING'] === $type[1]->id )
+			|| ( isset( $type[2] ) && WP_MySQL_Tokens::KEYWORDS['VARYING'] === $type[2]->id )
 		) {
 			$type = 'varchar';
 		} elseif (
 			// CHAR, NCHAR, NATIONAL CHAR
-			WP_MySQL_Lexer::CHAR_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::NCHAR_SYMBOL === $token->id
-			|| isset( $type[1] ) && WP_MySQL_Lexer::CHAR_SYMBOL === $type[1]->id
+			WP_MySQL_Tokens::KEYWORDS['CHAR'] === $token->id
+			|| WP_MySQL_Tokens::KEYWORDS['NCHAR'] === $token->id
+			|| isset( $type[1] ) && WP_MySQL_Tokens::KEYWORDS['CHAR'] === $type[1]->id
 		) {
 			$type = 'char';
 		} elseif (
 			// LONG VARBINARY
-			WP_MySQL_Lexer::LONG_SYMBOL === $token->id
-			&& isset( $type[1] ) && WP_MySQL_Lexer::VARBINARY_SYMBOL === $type[1]->id
+			WP_MySQL_Tokens::KEYWORDS['LONG'] === $token->id
+			&& isset( $type[1] ) && WP_MySQL_Tokens::KEYWORDS['VARBINARY'] === $type[1]->id
 		) {
 			$type = 'mediumblob';
 		} elseif (
 			// LONG CHAR/CHARACTER, LONG CHAR/CHARACTER VARYING
-			WP_MySQL_Lexer::LONG_SYMBOL === $token->id
-			&& isset( $type[1] ) && WP_MySQL_Lexer::CHAR_SYMBOL === $type[1]->id
+			WP_MySQL_Tokens::KEYWORDS['LONG'] === $token->id
+			&& isset( $type[1] ) && WP_MySQL_Tokens::KEYWORDS['CHAR'] === $type[1]->id
 		) {
 			$type = 'mediumtext';
 		} elseif (
 			// LONG VARCHAR
-			WP_MySQL_Lexer::LONG_SYMBOL === $token->id
-			&& isset( $type[1] ) && WP_MySQL_Lexer::VARCHAR_SYMBOL === $type[1]->id
+			WP_MySQL_Tokens::KEYWORDS['LONG'] === $token->id
+			&& isset( $type[1] ) && WP_MySQL_Tokens::KEYWORDS['VARCHAR'] === $type[1]->id
 		) {
 			$type = 'mediumtext';
 		} else {
@@ -2325,8 +2325,8 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		if (
-			WP_MySQL_Lexer::BOOL_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::BOOLEAN_SYMBOL === $token->id
+			WP_MySQL_Tokens::KEYWORDS['BOOL'] === $token->id
+			|| WP_MySQL_Tokens::KEYWORDS['BOOLEAN'] === $token->id
 		) {
 			$full_type .= '(1)'; // Add length for booleans.
 		}
@@ -2342,14 +2342,14 @@ class WP_SQLite_Information_Schema_Builder {
 		// UNSIGNED.
 		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
 		if (
-			$type_node->get_first_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL )
-			|| $type_node->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL )
+			$type_node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['UNSIGNED'] )
+			|| $type_node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['SERIAL'] )
 		) {
 			$full_type .= ' unsigned';
 		}
 
 		// ZEROFILL.
-		if ( $type_node->get_first_descendant_token( WP_MySQL_Lexer::ZEROFILL_SYMBOL ) ) {
+		if ( $type_node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['ZEROFILL'] ) ) {
 			$full_type .= ' zerofill';
 		}
 
@@ -2387,17 +2387,17 @@ class WP_SQLite_Information_Schema_Builder {
 			$charset_name_node = $charset_node->get_first_child_node( 'charsetName' );
 			if ( null !== $charset_name_node ) {
 				$charset = strtolower( $this->get_value( $charset_name_node ) );
-			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::ASCII_SYMBOL ) ) {
+			} elseif ( $charset_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['ASCII'] ) ) {
 				$charset = 'latin1';
-			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::UNICODE_SYMBOL ) ) {
+			} elseif ( $charset_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['UNICODE'] ) ) {
 				$charset = 'ucs2';
-			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::BYTE_SYMBOL ) ) {
+			} elseif ( $charset_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['BYTE'] ) ) {
 				// @TODO: This changes varchar to varbinary.
 			}
 
 			// @TODO: "DEFAULT"
 
-			if ( $charset_node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+			if ( $charset_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['BINARY'] ) ) {
 				$is_binary = true;
 			}
 		} else {
@@ -2405,9 +2405,9 @@ class WP_SQLite_Information_Schema_Builder {
 			$data_type_node = $node->get_first_descendant_node( 'dataType' );
 			if (
 				$data_type_node->has_child_node( 'nchar' )
-				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NCHAR_SYMBOL )
-				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NATIONAL_SYMBOL )
-				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NVARCHAR_SYMBOL )
+				|| $data_type_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['NCHAR'] )
+				|| $data_type_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['NATIONAL'] )
+				|| $data_type_node->has_child_token( WP_MySQL_Tokens::KEYWORDS['NVARCHAR'] )
 			) {
 				$charset = 'utf8';
 			}
@@ -2533,13 +2533,13 @@ class WP_SQLite_Information_Schema_Builder {
 		} elseif ( 'int' === $data_type ) {
 			return array( 10, 0 );
 		} elseif ( 'bigint' === $data_type ) {
-			if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL ) ) {
+			if ( null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['UNSIGNED'] ) ) {
 				return array( 20, 0 );
 			}
 
 			// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
 			$data_type = $node->get_first_descendant_node( 'dataType' );
-			if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+			if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['SERIAL'] ) ) {
 				return array( 20, 0 );
 			}
 
@@ -2609,7 +2609,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return string               The column generation expression as stored in information schema.
 	 */
 	private function get_column_generation_expression( WP_Parser_Node $node ): string {
-		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::GENERATED_SYMBOL ) ) {
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['GENERATED'] ) ) {
 			$expr = $node->get_first_descendant_node( 'exprWithParentheses' );
 			return $this->get_value( $expr );
 		}
@@ -2681,10 +2681,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return string|null          The table constraint type as stored in information schema.
 	 */
 	private function get_table_constraint_type( WP_Parser_Node $node ): ?string {
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['PRIMARY'] ) ) {
 			return 'PRIMARY KEY';
 		}
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['UNIQUE'] ) ) {
 			return 'UNIQUE';
 		}
 		if ( $node->get_first_descendant_node( 'references' ) ) {
@@ -2704,7 +2704,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return string                     The index name as stored in information schema.
 	 */
 	private function get_index_name( WP_Parser_Node $node, string $table_name ): string {
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Tokens::KEYWORDS['PRIMARY'] ) ) {
 			return 'PRIMARY';
 		}
 
@@ -2784,8 +2784,8 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function get_index_non_unique( WP_MySQL_Token $token ): int {
 		if (
-			WP_MySQL_Lexer::PRIMARY_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::UNIQUE_SYMBOL === $token->id
+			WP_MySQL_Tokens::KEYWORDS['PRIMARY'] === $token->id
+			|| WP_MySQL_Tokens::KEYWORDS['UNIQUE'] === $token->id
 		) {
 			return 0;
 		}
@@ -2819,9 +2819,9 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// Derive index type from its definition.
-		if ( WP_MySQL_Lexer::FULLTEXT_SYMBOL === $token->id ) {
+		if ( WP_MySQL_Tokens::KEYWORDS['FULLTEXT'] === $token->id ) {
 			return 'FULLTEXT';
-		} elseif ( WP_MySQL_Lexer::SPATIAL_SYMBOL === $token->id ) {
+		} elseif ( WP_MySQL_Tokens::KEYWORDS['SPATIAL'] === $token->id ) {
 			return 'SPATIAL';
 		}
 
@@ -2841,7 +2841,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	public function get_index_comment( WP_Parser_Node $node ): string {
 		foreach ( $node->get_descendant_nodes( 'commonIndexOption' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Tokens::KEYWORDS['COMMENT'] ) ) {
 				return $this->get_value( $attr->get_first_child_node( 'textLiteral' ) );
 			}
 		}
@@ -2922,9 +2922,9 @@ class WP_SQLite_Information_Schema_Builder {
 		$update_option = null;
 		$delete_option = null;
 		foreach ( $children as $i => $child ) {
-			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::UPDATE_SYMBOL === $child->id ) {
+			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Tokens::KEYWORDS['UPDATE'] === $child->id ) {
 				$update_option = $children[ $i + 1 ];
-			} elseif ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::DELETE_SYMBOL === $child->id ) {
+			} elseif ( $child instanceof WP_MySQL_Token && WP_MySQL_Tokens::KEYWORDS['DELETE'] === $child->id ) {
 				$delete_option = $children[ $i + 1 ];
 			}
 		}
@@ -2942,15 +2942,15 @@ class WP_SQLite_Information_Schema_Builder {
 			$tokens    = $option->get_descendant_tokens();
 			$token1_id = isset( $tokens[0] ) ? $tokens[0]->id : null;
 			$token2_id = isset( $tokens[1] ) ? $tokens[1]->id : null;
-			if ( WP_MySQL_Lexer::NO_SYMBOL === $token1_id ) {
+			if ( WP_MySQL_Tokens::KEYWORDS['NO'] === $token1_id ) {
 				$result[ $action ] = 'NO ACTION';
-			} elseif ( WP_MySQL_Lexer::RESTRICT_SYMBOL === $token1_id ) {
+			} elseif ( WP_MySQL_Tokens::KEYWORDS['RESTRICT'] === $token1_id ) {
 				$result[ $action ] = 'RESTRICT';
-			} elseif ( WP_MySQL_Lexer::CASCADE_SYMBOL === $token1_id ) {
+			} elseif ( WP_MySQL_Tokens::KEYWORDS['CASCADE'] === $token1_id ) {
 				$result[ $action ] = 'CASCADE';
-			} elseif ( WP_MySQL_Lexer::SET_SYMBOL === $token1_id && WP_MySQL_Lexer::NULL_SYMBOL === $token2_id ) {
+			} elseif ( WP_MySQL_Tokens::KEYWORDS['SET'] === $token1_id && WP_MySQL_Tokens::KEYWORDS['NULL'] === $token2_id ) {
 				$result[ $action ] = 'SET NULL';
-			} elseif ( WP_MySQL_Lexer::SET_SYMBOL === $token1_id && WP_MySQL_Lexer::DEFAULT_SYMBOL === $token2_id ) {
+			} elseif ( WP_MySQL_Tokens::KEYWORDS['SET'] === $token1_id && WP_MySQL_Tokens::KEYWORDS['DEFAULT'] === $token2_id ) {
 				$result[ $action ] = 'SET DEFAULT';
 			} else {
 				throw new \Exception( sprintf( 'Unsupported foreign key action: %s', $option->get_value() ) );

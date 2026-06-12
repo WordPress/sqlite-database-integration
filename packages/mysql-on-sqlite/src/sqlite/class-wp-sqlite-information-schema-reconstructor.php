@@ -73,11 +73,12 @@ class WP_SQLite_Information_Schema_Reconstructor {
 					$ast = $wp_tables[ $table ];
 				} else {
 					// Other table (a WordPress plugin or unrelated to WordPress).
-					$sql = $this->generate_create_table_statement( $table );
-					$ast = $this->driver->create_parser( $sql )->parse();
-					if ( null === $ast ) {
+					$sql  = $this->generate_create_table_statement( $table );
+					$asts = $this->driver->parse_mysql_query( $sql );
+					if ( null === $asts ) {
 						throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 					}
+					$ast = $asts[0];
 				}
 
 				/*
@@ -108,13 +109,13 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @param string $table_name The name of the table to drop.
 	 */
 	private function record_drop_table( string $table_name ): void {
-		$sql = sprintf( 'DROP TABLE %s', $this->connection->quote_identifier( $table_name ) ); // TODO: mysql quote
-		$ast = $this->driver->create_parser( $sql )->parse();
-		if ( null === $ast ) {
+		$sql  = sprintf( 'DROP TABLE %s', $this->connection->quote_identifier( $table_name ) ); // TODO: mysql quote
+		$asts = $this->driver->parse_mysql_query( $sql );
+		if ( null === $asts ) {
 			throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
 		}
 		$this->schema_builder->record_drop_table(
-			$ast->get_first_descendant_node( 'dropStatement' )
+			$asts[0]->get_first_descendant_node( 'drop_table_stmt' )
 		);
 	}
 
@@ -228,17 +229,16 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		}
 
 		// Parse the schema.
-		$parser    = $this->driver->create_parser( $schema );
-		$wp_tables = array();
-		while ( $parser->next_query() ) {
-			$ast = $parser->get_query_ast();
-			if ( null === $ast ) {
-				throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
-			}
+		$asts = $this->driver->parse_mysql_query( $schema );
+		if ( null === $asts ) {
+			throw new WP_SQLite_Driver_Exception( $this->driver, 'Failed to parse the MySQL query.' );
+		}
 
-			$create_node = $ast->get_first_descendant_node( 'createStatement' );
-			if ( $create_node && $create_node->has_child_node( 'createTable' ) ) {
-				$name_node = $create_node->get_first_descendant_node( 'tableName' );
+		$wp_tables = array();
+		foreach ( $asts as $ast ) {
+			$create_node = $ast->get_first_descendant_node( 'create_table_stmt' );
+			if ( $create_node ) {
+				$name_node = $create_node->get_first_descendant_node( 'table_ident' );
 				$name      = $this->unquote_mysql_identifier(
 					substr( $schema, $name_node->get_start(), $name_node->get_length() )
 				);
