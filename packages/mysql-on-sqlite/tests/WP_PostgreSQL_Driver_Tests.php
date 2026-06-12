@@ -3193,6 +3193,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress role-count aggregates preserve ARRAY_N row shape.
+	 */
+	public function test_user_role_count_aggregate_projection_preserves_array_n_shape(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_users ("ID" INTEGER PRIMARY KEY)' );
+		$driver->query( 'CREATE TABLE wptests_usermeta (user_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID") VALUES (1)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID") VALUES (2)' );
+		$driver->query( 'INSERT INTO wptests_users ("ID") VALUES (3)' );
+		$driver->query( 'INSERT INTO wptests_usermeta (user_id, meta_key, meta_value) VALUES (1, \'wptests_capabilities\', \'a:1:{s:13:"administrator";b:1;}\')' );
+		$driver->query( 'INSERT INTO wptests_usermeta (user_id, meta_key, meta_value) VALUES (2, \'wptests_capabilities\', \'a:1:{s:6:"editor";b:1;}\')' );
+		$driver->query( 'INSERT INTO wptests_usermeta (user_id, meta_key, meta_value) VALUES (3, \'wptests_capabilities\', \'a:0:{}\')' );
+
+		$rows = $driver->query(
+			'SELECT COUNT(NULLIF(`meta_value` LIKE \'%\"administrator\"%\', false)),
+				COUNT(NULLIF(`meta_value` LIKE \'%\"editor\"%\', false)),
+				COUNT(NULLIF(`meta_value` LIKE \'%\"author\"%\', false)),
+				COUNT(NULLIF(`meta_value` LIKE \'%\"contributor\"%\', false)),
+				COUNT(NULLIF(`meta_value` LIKE \'%\"subscriber\"%\', false)),
+				COUNT(NULLIF(`meta_value` = \'a:0:{}\', false)),
+				COUNT(*)
+			FROM wptests_usermeta
+			INNER JOIN wptests_users ON user_id = ID
+			WHERE meta_key = \'wptests_capabilities\''
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame(
+			array( '1', '1', '0', '0', '0', '1', '3' ),
+			array_values( get_object_vars( $rows[0] ) )
+		);
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertSame( 7, substr_count( $sql, ' AS "' ) );
+		$this->assertStringContainsString( 'COUNT (*) AS "COUNT (*)"', $sql );
+	}
+
+	/**
 	 * Tests grouped date archive queries order by an aggregate post date.
 	 */
 	public function test_grouped_date_archive_order_by_uses_aggregate_sort_expression(): void {

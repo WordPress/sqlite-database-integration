@@ -8895,6 +8895,15 @@ WHERE option_name IN (
 			if ( null !== $contextual_sql ) {
 				return $contextual_sql;
 			}
+
+			$contextual_sql = $this->translate_mysql_count_aggregate_projection_alias_query(
+				$tokens,
+				1,
+				$statement_end
+			);
+			if ( null !== $contextual_sql ) {
+				return $contextual_sql;
+			}
 		}
 
 		if ( ! $this->needs_mysql_compatible_rewrite( $tokens, 0, $statement_end ) ) {
@@ -8902,6 +8911,108 @@ WHERE option_name IN (
 		}
 
 		return $this->translate_mysql_token_sequence_to_postgresql( $tokens, 0, $statement_end );
+	}
+
+	/**
+	 * Add explicit aliases to multi-expression COUNT aggregate projections.
+	 *
+	 * PostgreSQL labels every unaliased COUNT expression as "count". WordPress
+	 * later converts fetched objects to ARRAY_N by reading object properties, so
+	 * duplicate labels collapse the result row before ARRAY_N can preserve order.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $projection_start First projection token position.
+	 * @param int              $statement_end    Final statement token position, exclusive.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_mysql_count_aggregate_projection_alias_query( array $tokens, int $projection_start, int $statement_end ): ?string {
+		if (
+			! isset( $tokens[0] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| $this->contains_top_level_mysql_token(
+				$tokens,
+				$projection_start,
+				$statement_end,
+				array(
+					WP_MySQL_Lexer::DISTINCT_SYMBOL,
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		if ( null === $from_position || $projection_start === $from_position ) {
+			return null;
+		}
+
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $from_position );
+		if ( null === $projection_ranges || count( $projection_ranges ) < 2 ) {
+			return null;
+		}
+
+		$projection_sql = array();
+		$alias_lookup   = array();
+		foreach ( $projection_ranges as $range ) {
+			$expression_bounds = $this->get_mysql_select_projection_expression_bounds(
+				$tokens,
+				$range['start'],
+				$range['end']
+			);
+			if (
+				null === $expression_bounds
+				|| $expression_bounds['start'] !== $range['start']
+				|| $expression_bounds['end'] !== $range['end']
+				|| ! $this->is_mysql_count_aggregate_expression(
+					$tokens,
+					$expression_bounds['start'],
+					$expression_bounds['end']
+				)
+			) {
+				return null;
+			}
+
+			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end']
+			);
+			$alias_key      = strtolower( $expression_sql );
+			if ( isset( $alias_lookup[ $alias_key ] ) ) {
+				return null;
+			}
+
+			$alias_lookup[ $alias_key ] = true;
+			$projection_sql[]           = sprintf(
+				'%s AS %s',
+				$expression_sql,
+				$this->connection->quote_identifier( $expression_sql )
+			);
+		}
+
+		return sprintf(
+			'SELECT %s %s',
+			implode( ', ', $projection_sql ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end )
+		);
 	}
 
 	/**
