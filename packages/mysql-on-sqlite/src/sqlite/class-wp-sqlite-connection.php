@@ -46,6 +46,8 @@ class WP_SQLite_Connection {
 	/**
 	 * The supported SQLite synchronous settings.
 	 *
+	 * The list is indexed by the corresponding numeric setting values (0 to 3).
+	 *
 	 * See: https://www.sqlite.org/pragma.html#pragma_synchronous
 	 */
 	const SQLITE_SYNCHRONOUS_SETTINGS = array(
@@ -77,16 +79,16 @@ class WP_SQLite_Connection {
 	 * @param array $options {
 	 *     An array of options.
 	 *
-	 *     @type string|null $path         Optional. SQLite database path.
-	 *                                     For in-memory database, use ':memory:'.
-	 *                                     Must be set when PDO instance is not provided.
-	 *     @type PDO|null    $pdo          Optional. PDO instance with SQLite connection.
-	 *                                     If not provided, a new PDO instance will be created.
-	 *     @type int|null    $timeout      Optional. SQLite timeout in seconds.
-	 *                                     The time to wait for a writable lock.
-	 *     @type string|null $journal_mode Optional. SQLite journal mode. Defaults to WAL.
-	 *     @type string|null $synchronous  Optional. SQLite synchronous setting. Defaults to
-	 *                                     NORMAL when the effective journal mode is WAL.
+	 *     @type string|null     $path         Optional. SQLite database path.
+	 *                                         For in-memory database, use ':memory:'.
+	 *                                         Must be set when PDO instance is not provided.
+	 *     @type PDO|null        $pdo          Optional. PDO instance with SQLite connection.
+	 *                                         If not provided, a new PDO instance will be created.
+	 *     @type int|null        $timeout      Optional. SQLite timeout in seconds.
+	 *                                         The time to wait for a writable lock.
+	 *     @type string|null     $journal_mode Optional. SQLite journal mode. Defaults to WAL.
+	 *     @type string|int|null $synchronous  Optional. SQLite synchronous setting. Defaults to
+	 *                                         NORMAL when the effective journal mode is WAL.
 	 * }
 	 *
 	 * @throws InvalidArgumentException When some connection options are invalid.
@@ -141,8 +143,9 @@ class WP_SQLite_Connection {
 		$synchronous = $options['synchronous'] ?? null;
 		if ( null === $synchronous && 'WAL' === $effective_journal_mode ) {
 			$synchronous = self::DEFAULT_SQLITE_WAL_SYNCHRONOUS;
-		}
-		if ( is_string( $synchronous ) ) {
+		} elseif ( is_int( $synchronous ) && isset( self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ] ) ) {
+			$synchronous = self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ];
+		} elseif ( is_string( $synchronous ) ) {
 			$synchronous = strtoupper( $synchronous );
 		}
 		if ( $synchronous && in_array( $synchronous, self::SQLITE_SYNCHRONOUS_SETTINGS, true ) ) {

@@ -117,6 +117,29 @@ class WP_SQLite_Connection_Tests extends TestCase {
 		$this->assertSame( '2', $this->get_synchronous( $connection ) );
 	}
 
+	public function testSynchronousAcceptsIntegerValues(): void {
+		$connection = new WP_SQLite_Connection(
+			array(
+				'path'        => $this->db_path,
+				'synchronous' => 3,
+			)
+		);
+
+		$this->assertSame( '3', $this->get_synchronous( $connection ) );
+	}
+
+	public function testSynchronousAcceptsIntegerZero(): void {
+		$connection = new WP_SQLite_Connection(
+			array(
+				'path'         => $this->db_path,
+				'journal_mode' => 'DELETE',
+				'synchronous'  => 0,
+			)
+		);
+
+		$this->assertSame( '0', $this->get_synchronous( $connection ) );
+	}
+
 	public function testDefaultJournalModeFallsBackWhenWalIsUnavailable(): void {
 		$this->make_database_directory_read_only();
 
