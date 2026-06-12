@@ -90,6 +90,7 @@ const expectedFailures = [
 
 // DEBUG: inspect the driver mounts inside the cli container.
 try {
+	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
 	execSync( 'cd wordpress && docker compose -f docker-compose.yml -f docker-compose.override.yml config cli', { stdio: 'inherit' } );
 	execSync( 'cd wordpress && docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm --entrypoint bash cli -c "set -x; ls -la /var/www/src/wp-content/plugins/ ; ls -la /var/www/src/wp-content/plugins/mysql-on-sqlite/ ; ls /var/www/src/wp-content/plugins/mysql-on-sqlite/vendor/ ; readlink -f /var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database ; mount | grep -i plugins"', { stdio: 'inherit' } );
 	execSync( 'ls -la wordpress/driver-vendor', { stdio: 'inherit' } );
