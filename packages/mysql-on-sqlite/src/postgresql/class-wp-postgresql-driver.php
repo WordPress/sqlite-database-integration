@@ -10089,6 +10089,15 @@ WHERE option_name IN (
 				$scope
 			);
 			if ( null === $translated_expression ) {
+				$translated_expression = $this->translate_mysql_wordpress_text_expression_predicate_to_postgresql(
+					$tokens,
+					$position,
+					$start,
+					$end,
+					$scope
+				);
+			}
+			if ( null === $translated_expression ) {
 				continue;
 			}
 
@@ -10116,6 +10125,85 @@ WHERE option_name IN (
 		return array(
 			'sql'     => implode( ' ', array_filter( $chunks, 'strlen' ) ),
 			'changed' => true,
+		);
+	}
+
+	/**
+	 * Translate WordPress text predicates embedded in expressions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $start    First expression token position.
+	 * @param int             $end      Final expression token position, exclusive.
+	 * @param array           $scope    Statement table scope.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_wordpress_text_expression_predicate_to_postgresql(
+		array $tokens,
+		int $position,
+		int $start,
+		int $end,
+		array $scope
+	): ?array {
+		if ( ! $this->is_mysql_expression_predicate_start_context( $tokens, $position, $start ) ) {
+			return null;
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+		if (
+			null === $reference
+			|| ! $this->is_mysql_case_insensitive_wordpress_text_column_reference( $reference, $scope )
+		) {
+			return null;
+		}
+
+		return $this->translate_mysql_wordpress_text_like_predicate_to_postgresql(
+			$tokens,
+			$reference,
+			$reference['end'],
+			$end
+		);
+	}
+
+	/**
+	 * Check whether an expression position starts a boolean predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $start    First expression token position.
+	 * @return bool Whether the candidate follows a boolean expression boundary.
+	 */
+	private function is_mysql_expression_predicate_start_context( array $tokens, int $position, int $start ): bool {
+		if ( $position <= $start ) {
+			return false;
+		}
+
+		$previous_token_id = $tokens[ $position - 1 ]->id ?? null;
+		if ( $this->is_mysql_expression_predicate_left_boundary_token_id( $previous_token_id ) ) {
+			return true;
+		}
+
+		return WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous_token_id
+			&& $position - 1 > $start
+			&& $this->is_mysql_expression_predicate_left_boundary_token_id( $tokens[ $position - 2 ]->id ?? null );
+	}
+
+	/**
+	 * Check whether a token can precede a predicate inside an expression.
+	 *
+	 * @param int|null $token_id MySQL token ID.
+	 * @return bool Whether the token is a predicate boundary.
+	 */
+	private function is_mysql_expression_predicate_left_boundary_token_id( ?int $token_id ): bool {
+		return in_array(
+			$token_id,
+			array(
+				WP_MySQL_Lexer::AND_SYMBOL,
+				WP_MySQL_Lexer::OR_SYMBOL,
+				WP_MySQL_Lexer::WHEN_SYMBOL,
+				WP_MySQL_Lexer::XOR_SYMBOL,
+			),
+			true
 		);
 	}
 

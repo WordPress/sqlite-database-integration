@@ -2334,6 +2334,69 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress post-search relevance CASE ordering uses case-insensitive text predicates.
+	 */
+	public function test_wordpress_post_search_relevance_order_by_case_uses_case_insensitive_mysql_collation_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_excerpt` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				`post_content` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (`ID`, `post_title`, `post_excerpt`, `post_content`) VALUES (1, 'This post has foo', '', '')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (`ID`, `post_title`, `post_excerpt`, `post_content`) VALUES (2, '', '', 'This post has foo')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (`ID`, `post_title`, `post_excerpt`, `post_content`) VALUES (3, '', 'This post has foo', '')"
+		);
+
+		$rows = $driver->query(
+			"SELECT ID
+			FROM wptests_posts
+			ORDER BY (CASE
+				WHEN wptests_posts.post_title LIKE '%this post has foo%' THEN 1
+				WHEN wptests_posts.post_title LIKE '%this%' AND wptests_posts.post_title LIKE '%post%' AND wptests_posts.post_title LIKE '%has%' AND wptests_posts.post_title LIKE '%foo%' THEN 2
+				WHEN wptests_posts.post_title LIKE '%this%' OR wptests_posts.post_title LIKE '%post%' OR wptests_posts.post_title LIKE '%has%' OR wptests_posts.post_title LIKE '%foo%' THEN 3
+				WHEN wptests_posts.post_excerpt LIKE '%this post has foo%' THEN 4
+				WHEN wptests_posts.post_content LIKE '%this post has foo%' THEN 5
+				ELSE 6
+			END), wptests_posts.ID ASC"
+		);
+
+		$this->assertSame(
+			array( '1', '3', '2' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringContainsString(
+			"WHEN LOWER(wptests_posts.post_title) LIKE LOWER('%this post has foo%') THEN 1",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"WHEN LOWER(wptests_posts.post_excerpt) LIKE LOWER('%this post has foo%') THEN 4",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"WHEN LOWER(wptests_posts.post_content) LIKE LOWER('%this post has foo%') THEN 5",
+			$sql
+		);
+	}
+
+	/**
 	 * Tests schema-qualified WordPress text predicates do not rewrite qualified-reference suffixes.
 	 */
 	public function test_schema_qualified_wordpress_text_predicates_fail_closed_without_suffix_rewrite(): void {
