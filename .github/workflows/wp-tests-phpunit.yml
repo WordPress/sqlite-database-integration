@@ -74,6 +74,7 @@ jobs:
       - name: Run WordPress PHPUnit tests
         env:
           WP_TEST_DB_BACKEND: postgresql
+          WP_TEST_PHPUNIT_FILTER: '^Tests_DB::'
         run: node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Upload PHPUnit count
@@ -173,11 +174,13 @@ jobs:
 
             const sqlite = readResult( 'sqlite' );
             const postgresql = readResult( 'postgresql' );
-            const progress = renderProgressBar( postgresql.passed, sqlite.passed );
+            const postgresqlLabel = postgresql.filter
+              ? `PostgreSQL ${ formatNumber( postgresql.passed ) }/${ formatNumber( postgresql.total ) } passed with filter \`${ postgresql.filter }\``
+              : `PostgreSQL ${ formatNumber( postgresql.passed ) } passed`;
             const generated = [
               startMarker,
-              `WordPress PHPUnit: SQLite ${ formatNumber( sqlite.passed ) } passed; PostgreSQL ${ formatNumber( postgresql.passed ) } passed`,
-              `\`${ progress }\``,
+              `WordPress PHPUnit: SQLite ${ formatNumber( sqlite.passed ) } passed; ${ postgresqlLabel }`,
+              postgresql.filter ? 'PostgreSQL is running a bounded PR validation subset.' : `\`${ renderProgressBar( postgresql.passed, sqlite.passed ) }\``,
               endMarker,
             ].join( '\n' );
 

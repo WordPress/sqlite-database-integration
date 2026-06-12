@@ -15,10 +15,24 @@
 		<ini name="memory_limit" value="512M"/>
 	</php>
 	<testsuites>
-		<!-- Default test suite to run all tests. -->
+		<!-- Default SQLite-backed package tests. -->
 		<testsuite name="default">
 			<directory suffix="_Tests.php">tests/</directory>
 			<exclude>tests/tools</exclude>
+			<exclude>tests/WP_PostgreSQL_Connection_Tests.php</exclude>
+			<exclude>tests/WP_PostgreSQL_Create_Table_Translator_Tests.php</exclude>
+			<exclude>tests/WP_PostgreSQL_DB_Tests.php</exclude>
+			<exclude>tests/WP_PostgreSQL_Driver_RegExp_Tests.php</exclude>
+			<exclude>tests/WP_PostgreSQL_Driver_Tests.php</exclude>
+			<exclude>tests/WP_PostgreSQL_Install_Functions_Tests.php</exclude>
+		</testsuite>
+		<testsuite name="postgresql">
+			<file>tests/WP_PostgreSQL_Connection_Tests.php</file>
+			<file>tests/WP_PostgreSQL_Create_Table_Translator_Tests.php</file>
+			<file>tests/WP_PostgreSQL_DB_Tests.php</file>
+			<file>tests/WP_PostgreSQL_Driver_RegExp_Tests.php</file>
+			<file>tests/WP_PostgreSQL_Driver_Tests.php</file>
+			<file>tests/WP_PostgreSQL_Install_Functions_Tests.php</file>
 		</testsuite>
 	</testsuites>
 </phpunit>

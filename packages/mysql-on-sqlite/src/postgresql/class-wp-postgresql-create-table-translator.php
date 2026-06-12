@@ -409,13 +409,15 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return array Table metadata.
 	 */
 	private function extract_create_table_metadata( WP_Parser_Node $create_table, bool $include_indexes = false ): array {
-		$table_name                               = $this->get_table_name( $create_table );
-		list ( $table_charset, $table_collation ) = $this->get_table_charset_and_collation( $create_table );
-		$columns                                  = array();
-		$column_types                             = array();
-		$indexes                                  = array();
-		$ordinal                                  = 1;
-		$index_ordinal                            = 1;
+		$table_name    = $this->get_table_name( $create_table );
+		$charset       = $this->get_table_charset_and_collation( $create_table );
+		$columns       = array();
+		$column_types  = array();
+		$indexes       = array();
+		$ordinal       = 1;
+		$index_ordinal = 1;
+
+		list ( $table_charset, $table_collation ) = $charset;
 
 		$element_list = $create_table->get_first_child_node( 'tableElementList' );
 		if ( ! $element_list ) {
@@ -454,7 +456,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 					$column_metadata['extra']    = $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ? 'auto_increment' : '';
 				}
 
-				$columns[] = $column_metadata;
+				$columns[]                           = $column_metadata;
 				$column_types[ strtolower( $name ) ] = $column_type;
 				++$ordinal;
 				continue;

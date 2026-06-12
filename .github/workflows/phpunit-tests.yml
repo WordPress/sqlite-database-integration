@@ -47,3 +47,15 @@ jobs:
       os: ${{ matrix.os }}
       php: ${{ matrix.php }}
       sqlite: ${{ matrix.sqlite || 'latest' }}
+
+  postgresql-test:
+    name: PHP 8.3 / PostgreSQL package tests
+    uses: ./.github/workflows/phpunit-tests-run.yml
+    permissions:
+      contents: read # Required to clone the repo.
+    secrets: inherit
+    with:
+      os: ubuntu-latest
+      php: '8.3'
+      sqlite: latest
+      testsuite: postgresql

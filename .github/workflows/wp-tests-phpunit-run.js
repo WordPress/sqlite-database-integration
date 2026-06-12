@@ -5,13 +5,14 @@
  * Unexpected errors/failures still fail the workflow. Expected failures that
  * stop happening are reported so this allowlist can be reduced over time.
  */
-const { execSync } = require( 'child_process' );
+const { execFileSync, execSync } = require( 'child_process' );
 const fs = require( 'fs' );
 const path = require( 'path' );
 
 const repositoryRoot = path.join( __dirname, '..', '..' );
 const backend = normalizeBackend( process.env.WP_TEST_DB_BACKEND || 'sqlite' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
+const phpunitArgs = getPhpUnitArgs();
 
 const sqliteExpectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -111,6 +112,9 @@ console.log( `Running WordPress PHPUnit tests with ${ backend } expected-result 
 if ( requiresNativeParserExtension ) {
 	console.log( 'Native parser extension is required for this PHPUnit run.' );
 }
+if ( phpunitArgs.length > 0 ) {
+	console.log( 'PHPUnit arguments:', phpunitArgs );
+}
 console.log( 'Expected errors:', expectedByBackend[ backend ].errors );
 console.log( 'Expected failures:', expectedByBackend[ backend ].failures );
 
@@ -132,8 +136,16 @@ try {
 
 	let phpunitCommandError = null;
 	try {
-		execSync(
-			'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose',
+		execFileSync(
+			'composer',
+			[
+				'run',
+				'wp-test-php',
+				'--',
+				'--log-junit=phpunit-results.xml',
+				'--verbose',
+				...phpunitArgs,
+			],
 			{ stdio: 'inherit' }
 		);
 		console.log( '\nAll tests passed, checking if expected errors/failures occurred...' );
@@ -222,6 +234,16 @@ function normalizeBackend( value ) {
 	}
 
 	throw new Error( `Unsupported WP_TEST_DB_BACKEND: ${ value }` );
+}
+
+function getPhpUnitArgs() {
+	const args = [];
+
+	if ( process.env.WP_TEST_PHPUNIT_FILTER ) {
+		args.push( '--filter', process.env.WP_TEST_PHPUNIT_FILTER );
+	}
+
+	return args;
 }
 
 function verifyNativeParserExtension() {
@@ -630,6 +652,7 @@ function summarizeTestcases( testcases ) {
 function emptySummary() {
 	return {
 		backend,
+		filter: process.env.WP_TEST_PHPUNIT_FILTER || '',
 		total: 0,
 		passed: 0,
 		errors: 0,

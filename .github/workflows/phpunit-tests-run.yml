@@ -17,6 +17,11 @@ on:
         required: false
         type: 'string'
         default: 'latest'
+      testsuite:
+        description: 'PHPUnit test suite to run.'
+        required: false
+        type: 'string'
+        default: 'default'
 env:
   LOCAL_PHP: ${{ inputs.php }}-fpm
 
@@ -109,5 +114,5 @@ jobs:
           composer-options: "--optimize-autoloader"
 
       - name: Run PHPUnit tests
-        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist --testsuite '${{ inputs.testsuite }}'
         working-directory: packages/mysql-on-sqlite
