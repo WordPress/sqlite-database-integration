@@ -7,6 +7,13 @@ use PHPUnit\Framework\TestCase;
  */
 class WP_SQLite_Connection_Tests extends TestCase {
 	/**
+	 * Path to the temporary directory holding the SQLite database file.
+	 *
+	 * @var string|null
+	 */
+	private $db_dir;
+
+	/**
 	 * Path to the temporary SQLite database file used in file-based tests.
 	 *
 	 * @var string|null
@@ -14,11 +21,14 @@ class WP_SQLite_Connection_Tests extends TestCase {
 	private $db_path;
 
 	public function setUp(): void {
-		$this->db_path = tempnam( sys_get_temp_dir(), 'wp_sqlite_' );
-		unlink( $this->db_path );
+		$this->db_dir = tempnam( sys_get_temp_dir(), 'wp_sqlite_' );
+		unlink( $this->db_dir );
+		mkdir( $this->db_dir );
+		$this->db_path = $this->db_dir . '/database.sqlite';
 	}
 
 	public function tearDown(): void {
+		chmod( $this->db_dir, 0755 ); // Restore permissions changed by read-only tests.
 		foreach ( array(
 			$this->db_path,
 			$this->db_path . '-wal',
@@ -29,6 +39,8 @@ class WP_SQLite_Connection_Tests extends TestCase {
 				unlink( $path );
 			}
 		}
+		rmdir( $this->db_dir );
+		$this->db_dir  = null;
 		$this->db_path = null;
 	}
 
@@ -103,6 +115,47 @@ class WP_SQLite_Connection_Tests extends TestCase {
 
 		$this->assertSame( 'delete', $this->get_journal_mode( $connection ) );
 		$this->assertSame( '2', $this->get_synchronous( $connection ) );
+	}
+
+	public function testDefaultJournalModeFallsBackWhenWalIsUnavailable(): void {
+		$this->make_database_directory_read_only();
+
+		$connection = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
+
+		$this->assertSame( 'delete', $this->get_journal_mode( $connection ) );
+		$this->assertSame( '2', $this->get_synchronous( $connection ) );
+	}
+
+	public function testExplicitJournalModeSurfacesFailureWhenWalIsUnavailable(): void {
+		$this->make_database_directory_read_only();
+
+		$this->expectException( PDOException::class );
+		new WP_SQLite_Connection(
+			array(
+				'path'         => $this->db_path,
+				'journal_mode' => 'WAL',
+			)
+		);
+	}
+
+	/**
+	 * Create the database file first, and then make its directory read-only,
+	 * so that the WAL sidecar files ("-wal", "-shm") cannot be created.
+	 */
+	private function make_database_directory_read_only(): void {
+		$connection = new WP_SQLite_Connection(
+			array(
+				'path'         => $this->db_path,
+				'journal_mode' => 'DELETE',
+			)
+		);
+		$connection->query( 'CREATE TABLE t ( id INTEGER )' );
+		$connection = null;
+
+		chmod( $this->db_dir, 0555 );
+		if ( is_writable( $this->db_dir ) ) {
+			$this->markTestSkipped( 'The test requires a non-writable database directory.' );
+		}
 	}
 
 	private function get_journal_mode( WP_SQLite_Connection $connection ): string {

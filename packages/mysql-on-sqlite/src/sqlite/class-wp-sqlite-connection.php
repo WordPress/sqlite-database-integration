@@ -122,9 +122,18 @@ class WP_SQLite_Connection {
 			$journal_mode = strtoupper( $journal_mode );
 		}
 		if ( $journal_mode && in_array( $journal_mode, self::SQLITE_JOURNAL_MODES, true ) ) {
-			$effective_journal_mode = strtoupper(
-				(string) $this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn()
-			);
+			try {
+				$effective_journal_mode = strtoupper(
+					(string) $this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn()
+				);
+			} catch ( PDOException $e ) {
+				// WAL may be unavailable in some environments, such as on network
+				// filesystems. When it is explicitly configured, surface the error.
+				// Otherwise, fall back to the default SQLite behavior.
+				if ( isset( $options['journal_mode'] ) ) {
+					throw $e;
+				}
+			}
 		}
 
 		// Configure SQLite synchronous setting. In WAL mode, default to NORMAL.
