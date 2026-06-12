@@ -2200,6 +2200,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests schema-qualified WordPress text predicates do not rewrite qualified-reference suffixes.
+	 */
+	public function test_schema_qualified_wordpress_text_predicates_fail_closed_without_suffix_rewrite(): void {
+		$driver = $this->create_driver();
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_terms (
+				`term_id` bigint(20) unsigned NOT NULL,
+				`name` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`term_id`)
+			)'
+		);
+
+		foreach (
+			array(
+				"SELECT term_id FROM public.wptests_terms WHERE public.wptests_terms.name = 'BURRITO'",
+				"SELECT term_id FROM public.wptests_terms WHERE public.wptests_terms.name LIKE '%Bur%'",
+				"SELECT term_id FROM public.wptests_terms WHERE public.wptests_terms.name IN ('BURRITO')",
+			) as $query
+		) {
+			$sql = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $query );
+
+			if ( null !== $sql ) {
+				$this->assertSame( $query, $sql );
+			}
+			$this->assertStringNotContainsString( 'public. LOWER(', (string) $sql );
+		}
+	}
+
+	/**
 	 * Tests ambiguous unqualified integer references do not guess a table.
 	 */
 	public function test_ambiguous_unqualified_integer_reference_fails_closed(): void {

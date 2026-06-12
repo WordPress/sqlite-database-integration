@@ -9715,6 +9715,10 @@ WHERE option_name IN (
 		$changed       = false;
 
 		for ( $position = $start; $position < $end; $position++ ) {
+			if ( $this->is_mysql_qualified_reference_suffix_position( $tokens, $position, $start ) ) {
+				continue;
+			}
+
 			if (
 				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
 				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
@@ -9861,6 +9865,20 @@ WHERE option_name IN (
 			$end,
 			$scope
 		);
+	}
+
+	/**
+	 * Check whether a scanner position is inside a qualified reference suffix.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate predicate start position.
+	 * @param int             $start    First predicate token position.
+	 * @return bool Whether the position follows a dot in the same predicate.
+	 */
+	private function is_mysql_qualified_reference_suffix_position( array $tokens, int $position, int $start ): bool {
+		return $position > $start
+			&& isset( $tokens[ $position - 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position - 1 ]->id;
 	}
 
 	/**
