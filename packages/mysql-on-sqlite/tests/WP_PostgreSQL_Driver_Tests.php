@@ -209,6 +209,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict INSERT normalizes invalid date/time literals using MySQL metadata.
+	 */
+	public function test_non_strict_insert_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$insert = "INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`) VALUES (1, '2020-12-41 14:15:27', '0000-00-00 00:00:00', '2020-00-15 14:15:27', '2020-06-01T12:13:14Z')";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_posts" ("ID", "post_date", "post_date_gmt", "post_modified", "post_modified_gmt") VALUES (1, \'0000-00-00 00:00:00\', \'0000-00-00 00:00:00\', \'2020-00-15 14:15:27\', \'2020-06-01 12:13:14\')',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$posts = $driver->query( 'SELECT post_date, post_date_gmt, post_modified, post_modified_gmt FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $posts );
+		$this->assertSame( '0000-00-00 00:00:00', $posts[0]->post_date );
+		$this->assertSame( '0000-00-00 00:00:00', $posts[0]->post_date_gmt );
+		$this->assertSame( '2020-00-15 14:15:27', $posts[0]->post_modified );
+		$this->assertSame( '2020-06-01 12:13:14', $posts[0]->post_modified_gmt );
+	}
+
+	/**
 	 * Tests strict SQL mode leaves omitted NOT NULL INSERT columns to fail visibly.
 	 */
 	public function test_strict_insert_does_not_append_omitted_not_null_defaults(): void {
@@ -1386,6 +1415,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '', $rows[0]->option_value );
 		$this->assertSame( 'yes', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests non-strict UPDATE normalizes invalid date/time literals using MySQL metadata.
+	 */
+	public function test_non_strict_update_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_date_gmt, post_modified, post_modified_gmt)
+			VALUES (1, '2020-01-01 01:02:03', '2020-01-01 01:02:03', '2020-01-01 01:02:03', '2020-01-01 01:02:03')"
+		);
+
+		$update = "UPDATE `wptests_posts` SET `post_date_gmt` = '2020-02-31 14:15:27', `post_modified_gmt` = '2020-07-04T01:02:03Z' WHERE `ID` = 1";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_posts" SET "post_date_gmt" = \'0000-00-00 00:00:00\', "post_modified_gmt" = \'2020-07-04 01:02:03\' WHERE "ID" = 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$posts = $driver->query( 'SELECT post_date_gmt, post_modified_gmt FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $posts );
+		$this->assertSame( '0000-00-00 00:00:00', $posts[0]->post_date_gmt );
+		$this->assertSame( '2020-07-04 01:02:03', $posts[0]->post_modified_gmt );
 	}
 
 	/**
@@ -4775,6 +4836,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				autoload varchar(20) NOT NULL DEFAULT 'yes',
 				PRIMARY KEY (option_id),
 				UNIQUE KEY option_name (option_name)
+			)"
+		);
+	}
+
+	/**
+	 * Install a PostgreSQL-like posts table with MySQL datetime metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_posts_datetime_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				"ID" INTEGER PRIMARY KEY,
+				post_date TEXT NOT NULL,
+				post_date_gmt TEXT NOT NULL,
+				post_modified TEXT NOT NULL,
+				post_modified_gmt TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_posts (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_date_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_modified datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_modified_gmt timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+				PRIMARY KEY (ID)
 			)"
 		);
 	}

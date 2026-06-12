@@ -3811,12 +3811,23 @@ WHERE option_name IN (
 		}
 
 		++$position;
-		$values = $this->parse_mysql_value_list( $tokens, $position );
-		if ( null === $values || count( $columns ) !== count( $values ) || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+		$parsed_values = $this->parse_mysql_value_list_with_ranges( $tokens, $position );
+		if ( null === $parsed_values || count( $columns ) !== count( $parsed_values['values'] ) || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
 
-		$this->append_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns, $values );
+		$values          = $parsed_values['values'];
+		$column_metadata = $this->is_mysql_strict_sql_mode_active()
+			? array()
+			: $this->get_mysql_dml_column_metadata( $table_name );
+		$this->normalize_non_strict_mysql_dml_values_for_columns(
+			$columns,
+			$values,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
+		$this->append_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns, $values, $column_metadata );
 
 		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES (%s)',
@@ -3985,12 +3996,23 @@ WHERE option_name IN (
 		}
 
 		++$position;
-		$values = $this->parse_mysql_value_list( $tokens, $position );
-		if ( null === $values || count( $columns ) !== count( $values ) || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+		$parsed_values = $this->parse_mysql_value_list_with_ranges( $tokens, $position );
+		if ( null === $parsed_values || count( $columns ) !== count( $parsed_values['values'] ) || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
 
-		$this->append_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns, $values );
+		$values          = $parsed_values['values'];
+		$column_metadata = $this->is_mysql_strict_sql_mode_active()
+			? array()
+			: $this->get_mysql_dml_column_metadata( $table_name );
+		$this->normalize_non_strict_mysql_dml_values_for_columns(
+			$columns,
+			$values,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
+		$this->append_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns, $values, $column_metadata );
 
 		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES (%s)',
@@ -4360,11 +4382,12 @@ WHERE option_name IN (
 	/**
 	 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
 	 *
-	 * @param string   $table_name Table name.
-	 * @param string[] $columns    DML columns, mutated when defaults are appended.
-	 * @param string[] $values     DML values, mutated when defaults are appended.
+	 * @param string     $table_name      Table name.
+	 * @param string[]   $columns         DML columns, mutated when defaults are appended.
+	 * @param string[]   $values          DML values, mutated when defaults are appended.
+	 * @param array|null $column_metadata Optional ordered column metadata rows.
 	 */
-	private function append_non_strict_dml_defaults_for_omitted_columns( string $table_name, array &$columns, array &$values ): void {
+	private function append_non_strict_dml_defaults_for_omitted_columns( string $table_name, array &$columns, array &$values, ?array $column_metadata = null ): void {
 		if ( $this->is_mysql_strict_sql_mode_active() ) {
 			return;
 		}
@@ -4374,13 +4397,17 @@ WHERE option_name IN (
 			$supplied_columns[ strtolower( (string) $column ) ] = true;
 		}
 
-		foreach ( $this->get_mysql_dml_column_metadata( $table_name ) as $column_metadata ) {
-			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+		if ( null === $column_metadata ) {
+			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		}
+
+		foreach ( $column_metadata as $column_metadata_row ) {
+			$column_name = (string) ( $column_metadata_row['column_name'] ?? '' );
 			if ( '' === $column_name || isset( $supplied_columns[ strtolower( $column_name ) ] ) ) {
 				continue;
 			}
 
-			$default_sql = $this->get_non_strict_dml_default_sql_for_column( $column_metadata );
+			$default_sql = $this->get_non_strict_dml_default_sql_for_column( $column_metadata_row );
 			if ( null === $default_sql ) {
 				continue;
 			}
@@ -4429,7 +4456,6 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$value_sql           = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $assignment_end );
 			$target_column_key   = strtolower( $target_column );
 			$target_metadata     = $column_metadata[ $target_column_key ] ?? null;
 			$coerced_default_sql = null;
@@ -4438,10 +4464,18 @@ WHERE option_name IN (
 				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
 			}
 
+			$value_sql = $coerced_default_sql;
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql ) {
+				$value_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $assignment_end );
+			}
+
 			$assignments[] = sprintf(
 				'%s = %s',
 				$this->connection->quote_identifier( $target_column ),
-				null === $coerced_default_sql ? $value_sql : $coerced_default_sql
+				$value_sql
 			);
 
 			$position = $assignment_end;
@@ -4456,14 +4490,265 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Normalize non-strict DML values using MySQL column metadata.
+	 *
+	 * @param string[]         $columns      DML columns.
+	 * @param string[]         $values       Translated DML values, mutated when needed.
+	 * @param array[]          $value_ranges Original token ranges for each value.
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param array[]          $metadata     Ordered column metadata rows.
+	 */
+	private function normalize_non_strict_mysql_dml_values_for_columns( array $columns, array &$values, array $value_ranges, array $tokens, array $metadata ): void {
+		if ( $this->is_mysql_strict_sql_mode_active() ) {
+			return;
+		}
+
+		$column_metadata = $this->get_mysql_dml_column_metadata_lookup_from_rows( $metadata );
+		foreach ( $columns as $index => $column ) {
+			$column_key = strtolower( (string) $column );
+			if (
+				! isset( $column_metadata[ $column_key ], $value_ranges[ $index ] )
+				|| ! isset( $value_ranges[ $index ]['start'], $value_ranges[ $index ]['end'] )
+			) {
+				continue;
+			}
+
+			$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column(
+				$column_metadata[ $column_key ],
+				$tokens,
+				(int) $value_ranges[ $index ]['start'],
+				(int) $value_ranges[ $index ]['end']
+			);
+			if ( null !== $value_sql ) {
+				$values[ $index ] = $value_sql;
+			}
+		}
+	}
+
+	/**
+	 * Get a non-strict MySQL-compatible DML value for a column when special handling is needed.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when generic translation is sufficient.
+	 */
+	private function get_non_strict_mysql_dml_value_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
+		return $this->get_non_strict_mysql_dml_date_time_literal_sql_for_column( $column_metadata, $tokens, $start, $end );
+	}
+
+	/**
+	 * Get a non-strict MySQL-compatible date/time literal for a column.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when the literal does not need normalization.
+	 */
+	private function get_non_strict_mysql_dml_date_time_literal_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
+		if (
+			$start + 1 !== $end
+			|| ! isset( $tokens[ $start ] )
+			|| ! $this->is_mysql_string_literal_token( $tokens[ $start ] )
+		) {
+			return null;
+		}
+
+		$base_type = $this->get_base_mysql_dml_column_type( (string) ( $column_metadata['column_type'] ?? '' ) );
+		if ( ! in_array( $base_type, array( 'date', 'datetime', 'timestamp' ), true ) ) {
+			return null;
+		}
+
+		$value         = $tokens[ $start ]->get_value();
+		$storage_value = $this->get_non_strict_mysql_dml_date_time_storage_value( $base_type, $value );
+		if ( null === $storage_value || $storage_value === $value ) {
+			return null;
+		}
+
+		return $this->connection->quote( $storage_value );
+	}
+
+	/**
+	 * Get the non-strict MySQL storage value for a date/time literal.
+	 *
+	 * @param string $base_type Base MySQL date/time column type.
+	 * @param string $value     Unquoted literal value.
+	 * @return string|null Storage value, or null when the literal is not date/time-shaped.
+	 */
+	private function get_non_strict_mysql_dml_date_time_storage_value( string $base_type, string $value ): ?string {
+		if ( 'date' === $base_type ) {
+			return $this->get_non_strict_mysql_dml_date_storage_value( $value );
+		}
+
+		return $this->get_non_strict_mysql_dml_datetime_storage_value( $value );
+	}
+
+	/**
+	 * Get the non-strict MySQL storage value for a DATE literal.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return string|null Storage value, or null when the literal is not date-shaped.
+	 */
+	private function get_non_strict_mysql_dml_date_storage_value( string $value ): ?string {
+		$parts = $this->get_mysql_dml_date_parts( $value );
+		if ( null === $parts ) {
+			return null;
+		}
+
+		if ( $this->is_non_strict_mysql_dml_zero_date_allowed( $parts['year'], $parts['month'], $parts['day'] ) ) {
+			return $value;
+		}
+
+		if ( checkdate( (int) $parts['month'], (int) $parts['day'], (int) $parts['year'] ) ) {
+			return $value;
+		}
+
+		return '0000-00-00';
+	}
+
+	/**
+	 * Get the non-strict MySQL storage value for a DATETIME/TIMESTAMP literal.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return string|null Storage value, or null when the literal is not datetime-shaped.
+	 */
+	private function get_non_strict_mysql_dml_datetime_storage_value( string $value ): ?string {
+		$normalized_value = $this->normalize_mysql_dml_datetime_literal_format( $value );
+		$parts            = $this->get_mysql_dml_datetime_parts( $normalized_value );
+		if ( null === $parts ) {
+			return null;
+		}
+
+		$is_valid_time = $this->is_mysql_dml_time_value_valid( $parts['hour'], $parts['minute'], $parts['second'] );
+		if (
+			$is_valid_time
+			&& $this->is_non_strict_mysql_dml_zero_date_allowed( $parts['year'], $parts['month'], $parts['day'] )
+		) {
+			return $normalized_value;
+		}
+
+		if (
+			$is_valid_time
+			&& checkdate( (int) $parts['month'], (int) $parts['day'], (int) $parts['year'] )
+		) {
+			return $normalized_value;
+		}
+
+		return '0000-00-00 00:00:00';
+	}
+
+	/**
+	 * Normalize MySQL-accepted ISO datetime literals to the stored MySQL text shape.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return string Normalized literal value.
+	 */
+	private function normalize_mysql_dml_datetime_literal_format( string $value ): string {
+		if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})Z$/', $value, $matches ) ) {
+			return $matches[1] . ' ' . $matches[2];
+		}
+
+		if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})$/', $value, $matches ) ) {
+			return $matches[1] . ' ' . $matches[2];
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Check whether a zero or partial-zero date is permitted in non-strict mode.
+	 *
+	 * @param string $year  Four-digit year.
+	 * @param string $month Two-digit month.
+	 * @param string $day   Two-digit day.
+	 * @return bool Whether MySQL permits storing the zero date parts.
+	 */
+	private function is_non_strict_mysql_dml_zero_date_allowed( string $year, string $month, string $day ): bool {
+		if ( '0000' === $year && '00' === $month && '00' === $day ) {
+			return true;
+		}
+
+		return '0000' !== $year
+			&& ( '00' === $month || '00' === $day )
+			&& ! $this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' );
+	}
+
+	/**
+	 * Get date parts from a MySQL DATE literal.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return array{year: string, month: string, day: string}|null Date parts, or null when not date-shaped.
+	 */
+	private function get_mysql_dml_date_parts( string $value ): ?array {
+		if ( 1 !== preg_match( '/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/', $value, $matches ) ) {
+			return null;
+		}
+
+		return array(
+			'year'  => $matches[1],
+			'month' => $matches[2],
+			'day'   => $matches[3],
+		);
+	}
+
+	/**
+	 * Get date and time parts from a MySQL DATETIME/TIMESTAMP literal.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return array{year: string, month: string, day: string, hour: string, minute: string, second: string}|null Date/time parts, or null when not datetime-shaped.
+	 */
+	private function get_mysql_dml_datetime_parts( string $value ): ?array {
+		if ( 1 !== preg_match( '/^([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})$/', $value, $matches ) ) {
+			return null;
+		}
+
+		return array(
+			'year'   => $matches[1],
+			'month'  => $matches[2],
+			'day'    => $matches[3],
+			'hour'   => $matches[4],
+			'minute' => $matches[5],
+			'second' => $matches[6],
+		);
+	}
+
+	/**
+	 * Check whether a MySQL DATETIME/TIMESTAMP time part is valid.
+	 *
+	 * @param string $hour   Two-digit hour.
+	 * @param string $minute Two-digit minute.
+	 * @param string $second Two-digit second.
+	 * @return bool Whether the time part is valid.
+	 */
+	private function is_mysql_dml_time_value_valid( string $hour, string $minute, string $second ): bool {
+		return (int) $hour <= 23
+			&& (int) $minute <= 59
+			&& (int) $second <= 59;
+	}
+
+	/**
 	 * Get DML column metadata keyed by lowercase column name.
 	 *
 	 * @param string $table_name Table name.
 	 * @return array<string, array> Column metadata lookup.
 	 */
 	private function get_mysql_dml_column_metadata_lookup( string $table_name ): array {
+		return $this->get_mysql_dml_column_metadata_lookup_from_rows(
+			$this->get_mysql_dml_column_metadata( $table_name )
+		);
+	}
+
+	/**
+	 * Get DML column metadata keyed by lowercase column name from existing rows.
+	 *
+	 * @param array[] $metadata Column metadata rows.
+	 * @return array<string, array> Column metadata lookup.
+	 */
+	private function get_mysql_dml_column_metadata_lookup_from_rows( array $metadata ): array {
 		$lookup = array();
-		foreach ( $this->get_mysql_dml_column_metadata( $table_name ) as $column_metadata ) {
+		foreach ( $metadata as $column_metadata ) {
 			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
 			if ( '' !== $column_name ) {
 				$lookup[ strtolower( $column_name ) ] = $column_metadata;
@@ -4651,6 +4936,23 @@ WHERE option_name IN (
 		foreach ( explode( ',', $this->sql_mode ) as $mode ) {
 			$mode = strtoupper( trim( $mode ) );
 			if ( 'STRICT_TRANS_TABLES' === $mode || 'STRICT_ALL_TABLES' === $mode ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a MySQL session SQL mode is active.
+	 *
+	 * @param string $mode SQL mode name.
+	 * @return bool Whether the mode is active.
+	 */
+	private function is_mysql_sql_mode_active( string $mode ): bool {
+		$mode = strtoupper( $mode );
+		foreach ( explode( ',', $this->sql_mode ) as $active_mode ) {
+			if ( strtoupper( trim( $active_mode ) ) === $mode ) {
 				return true;
 			}
 		}
@@ -9124,15 +9426,16 @@ WHERE option_name IN (
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Current token position, updated on success.
-	 * @return string[]|null Translated SQL values, or null when unsupported.
+	 * @return array{values: string[], ranges: array[]}|null Translated SQL values and token ranges, or null when unsupported.
 	 */
-	private function parse_mysql_value_list( array $tokens, int &$position ): ?array {
+	private function parse_mysql_value_list_with_ranges( array $tokens, int &$position ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
 
 		++$position;
 		$values      = array();
+		$ranges      = array();
 		$value_start = $position;
 		$depth       = 0;
 
@@ -9150,8 +9453,15 @@ WHERE option_name IN (
 					}
 
 					$values[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
+					$ranges[] = array(
+						'start' => $value_start,
+						'end'   => $position,
+					);
 					++$position;
-					return $values;
+					return array(
+						'values' => $values,
+						'ranges' => $ranges,
+					);
 				}
 
 				--$depth;
@@ -9165,6 +9475,10 @@ WHERE option_name IN (
 				}
 
 				$values[]    = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
+				$ranges[]    = array(
+					'start' => $value_start,
+					'end'   => $position,
+				);
 				$value_start = $position + 1;
 			}
 
