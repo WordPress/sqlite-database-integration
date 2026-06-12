@@ -1927,6 +1927,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests admin page search ordering uses MySQL-compatible ID tie-breakers.
+	 */
+	public function test_wordpress_admin_page_search_menu_order_title_order_uses_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_parent` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`menu_order` int(11) NOT NULL DEFAULT 0,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_excerpt` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				`post_content` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+				`post_password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`post_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `menu_order`, `post_title`, `post_excerpt`, `post_content`, `post_password`, `post_type`, `post_status`) VALUES (12, 5, 0, 'Child 1', '', '', '', 'page', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `menu_order`, `post_title`, `post_excerpt`, `post_content`, `post_password`, `post_type`, `post_status`) VALUES (9, 4, 0, 'Child 1', '', '', '', 'page', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `menu_order`, `post_title`, `post_excerpt`, `post_content`, `post_password`, `post_type`, `post_status`) VALUES (10, 4, 0, 'Child 2', '', '', '', 'page', 'publish')" );
+
+		$rows = $driver->query(
+			"SELECT wptests_posts.*
+			FROM wptests_posts
+			WHERE 1=1
+				AND (((wptests_posts.post_title LIKE '%Child%') OR (wptests_posts.post_excerpt LIKE '%Child%') OR (wptests_posts.post_content LIKE '%Child%')))
+				AND (wptests_posts.post_password = '')
+				AND ((wptests_posts.post_type = 'page' AND (wptests_posts.post_status = 'publish')))
+			ORDER BY wptests_posts.menu_order ASC, wptests_posts.post_title ASC"
+		);
+
+		$this->assertSame(
+			array( '9', '12', '10' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+		$this->assertStringContainsString(
+			'ORDER BY wptests_posts.menu_order ASC, wptests_posts.post_title ASC, wptests_posts."ID" ASC',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+	}
+
+	/**
 	 * Tests integer-column IN predicates coerce string literals using stored MySQL metadata.
 	 */
 	public function test_integer_column_in_string_literals_use_mysql_numeric_coercion_from_metadata(): void {

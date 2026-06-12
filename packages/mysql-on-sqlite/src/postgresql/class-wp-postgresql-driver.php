@@ -9948,7 +9948,7 @@ WHERE option_name IN (
 	 * @param int             $start  First ORDER BY item token position.
 	 * @param int             $end    Final ORDER BY token position, exclusive.
 	 * @param array           $scope  Statement table scope.
-	 * @param bool            $allow_wordpress_posts_post_date_tiebreaker Whether to add the WordPress posts date tie-breaker.
+	 * @param bool            $allow_wordpress_posts_id_tiebreaker Whether to add WordPress posts ID tie-breakers.
 	 * @return array{sql: string, changed: bool} Translated ORDER BY SQL and change flag.
 	 */
 	private function translate_mysql_order_by_token_sequence_to_postgresql(
@@ -9956,7 +9956,7 @@ WHERE option_name IN (
 		int $start,
 		int $end,
 		array $scope,
-		bool $allow_wordpress_posts_post_date_tiebreaker
+		bool $allow_wordpress_posts_id_tiebreaker
 	): array {
 		$order_items = $this->parse_mysql_select_order_by_items( $tokens, $start, $end, array(), $scope );
 		if ( null === $order_items ) {
@@ -9979,9 +9979,13 @@ WHERE option_name IN (
 			$order_sql[] = $item_sql;
 		}
 
-		$tiebreaker_sql = $allow_wordpress_posts_post_date_tiebreaker
-			? $this->get_wordpress_posts_post_date_desc_order_id_tiebreaker_sql( $tokens, $order_items, $scope )
-			: null;
+		$tiebreaker_sql = null;
+		if ( $allow_wordpress_posts_id_tiebreaker ) {
+			$tiebreaker_sql = $this->get_wordpress_posts_post_date_desc_order_id_tiebreaker_sql( $tokens, $order_items, $scope );
+			if ( null === $tiebreaker_sql ) {
+				$tiebreaker_sql = $this->get_wordpress_posts_menu_order_title_order_id_tiebreaker_sql( $tokens, $order_items, $scope );
+			}
+		}
 		if ( null !== $tiebreaker_sql ) {
 			$order_sql[] = $tiebreaker_sql;
 			$changed     = true;
@@ -10073,6 +10077,73 @@ WHERE option_name IN (
 		}
 
 		return $this->connection->quote_identifier( 'ID' ) . ' DESC';
+	}
+
+	/**
+	 * Get the MySQL-compatible posts title tie-breaker for admin page searches.
+	 *
+	 * MySQL returns tied page rows for WordPress's menu_order/title ordering in
+	 * primary-key order. PostgreSQL may return those ties in physical order,
+	 * which changes the parent group selected by WP_Posts_List_Table paging.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param array           $order_items Parsed ORDER BY items.
+	 * @param array           $scope       Statement table scope.
+	 * @return string|null PostgreSQL ORDER BY item SQL, or null when not applicable.
+	 */
+	private function get_wordpress_posts_menu_order_title_order_id_tiebreaker_sql( array $tokens, array $order_items, array $scope ): ?string {
+		if (
+			2 !== count( $order_items )
+			|| ! empty( $scope['unknown'] )
+			|| 1 !== count( $scope['tables'] )
+		) {
+			return null;
+		}
+
+		$expected_columns = array( 'menu_order', 'post_title' );
+		$references       = array();
+		$matched_table    = null;
+		foreach ( $expected_columns as $index => $expected_column ) {
+			if ( 'ASC' !== $order_items[ $index ]['direction'] ) {
+				return null;
+			}
+
+			$reference = $this->parse_mysql_column_reference(
+				$tokens,
+				$order_items[ $index ]['expression_start'],
+				$order_items[ $index ]['expression_end']
+			);
+			if (
+				null === $reference
+				|| $reference['end'] !== $order_items[ $index ]['expression_end']
+				|| strtolower( $reference['column'] ) !== $expected_column
+			) {
+				return null;
+			}
+
+			$table = $this->get_mysql_single_scope_table_for_column_reference( $reference, $scope );
+			if ( null === $table || ! $this->is_mysql_wordpress_table_name( $table['table'], 'posts' ) ) {
+				return null;
+			}
+
+			if ( null !== $matched_table && $matched_table !== $table ) {
+				return null;
+			}
+
+			$matched_table = $table;
+			$references[]  = $reference;
+		}
+
+		$qualifier_reference = null !== $references[0]['qualifier'] ? $references[0] : $references[1];
+		if ( null !== $qualifier_reference['qualifier'] ) {
+			return sprintf(
+				'%s.%s ASC',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $qualifier_reference['start'], $qualifier_reference['start'] + 1 ),
+				$this->connection->quote_identifier( 'ID' )
+			);
+		}
+
+		return $this->connection->quote_identifier( 'ID' ) . ' ASC';
 	}
 
 	/**
