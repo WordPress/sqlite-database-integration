@@ -787,6 +787,266 @@ PHP
 	}
 
 	/**
+	 * Tests length checks prefer MySQL column metadata over widened PostgreSQL storage.
+	 */
+	public function test_get_col_length_uses_mysql_declared_metadata_before_postgresql_storage(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $charset       = 'utf8mb4';
+	public $is_mysql      = true;
+	public $table_charset = array();
+	public $col_meta      = array();
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Column_Length_Fake_Connection extends WP_PostgreSQL_Connection {
+	private $pdo;
+	private $queries = array();
+
+	public function __construct() {
+		$this->pdo = new PDO( 'sqlite::memory:' );
+	}
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
+			if ( array( 'wptests_temp_comments' ) === $params ) {
+				return $this->statement_from_rows(
+					array(
+						array(
+							'nspname' => 'pg_temp_42',
+						),
+					)
+				);
+			}
+
+			return $this->statement_from_rows( array() );
+		}
+
+		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
+			$this->queries[] = 'metadata_exists';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'exists' => 0,
+					),
+				)
+			);
+		}
+
+		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
+			$this->queries[] = 'native_columns:' . ( $params[0] ?? '' );
+
+			if ( array( 'wptests_native_text' ) === $params ) {
+				return $this->statement_from_rows(
+					array(
+						array(
+							'column_name'              => 'body',
+							'data_type'                => 'text',
+							'character_maximum_length' => null,
+						),
+					)
+				);
+			}
+
+			if ( array( 'wptests_comments' ) === $params ) {
+				return $this->statement_from_rows(
+					array(
+						array(
+							'column_name'              => 'comment_author',
+							'data_type'                => 'text',
+							'character_maximum_length' => null,
+						),
+					)
+				);
+			}
+		}
+
+		if ( false !== strpos( $sql, 'SELECT data_type, character_maximum_length' ) ) {
+			$this->queries[] = 'direct_length:' . implode( ':', $params );
+			return $this->statement_from_rows(
+				array(
+					array(
+						'data_type'                => 'text',
+						'character_maximum_length' => null,
+					),
+				)
+			);
+		}
+
+		$this->queries[] = 'unexpected';
+		return $this->statement_from_rows( array() );
+	}
+
+	public function get_pdo(): PDO {
+		return $this->pdo;
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+
+	private function statement_from_rows( array $rows ): PDOStatement {
+		if ( empty( $rows ) ) {
+			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		$columns = array_keys( $rows[0] );
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$fields = array();
+			foreach ( $columns as $column ) {
+				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
+				$params[] = $row[ $column ];
+			}
+			$selects[] = 'SELECT ' . implode( ', ', $fields );
+		}
+
+		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
+		$stmt->execute( $params );
+		return $stmt;
+	}
+}
+
+class WP_PostgreSQL_DB_Column_Length_Fake_Driver extends WP_PostgreSQL_Driver {
+	private $fake_connection;
+	private $queries = array();
+
+	public function __construct( WP_PostgreSQL_DB_Column_Length_Fake_Connection $connection ) {
+		$this->fake_connection = $connection;
+	}
+
+	public function get_connection(): WP_PostgreSQL_Connection {
+		return $this->fake_connection;
+	}
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+
+		if ( 'SHOW FULL COLUMNS FROM `wptests_comments`' !== $query ) {
+			return array();
+		}
+
+		$rows = array(
+			array(
+				'Field'     => 'comment_author',
+				'Type'      => 'varchar(245)',
+				'Collation' => 'utf8mb4_unicode_ci',
+			),
+			array(
+				'Field'     => 'comment_content',
+				'Type'      => 'longtext',
+				'Collation' => 'utf8mb4_unicode_ci',
+			),
+		);
+
+		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
+			return $rows;
+		}
+
+		return array_map(
+			static function ( array $row ) {
+				return (object) $row;
+			},
+			$rows
+		);
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+}
+
+$connection = new WP_PostgreSQL_DB_Column_Length_Fake_Connection();
+$driver     = new WP_PostgreSQL_DB_Column_Length_Fake_Driver( $connection );
+$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
+$store_metadata->setAccessible( true );
+$store_metadata->invoke(
+	$db,
+	"CREATE TEMPORARY TABLE wptests_temp_comments (
+		comment_author varchar(245) NOT NULL default '',
+		comment_content longtext NOT NULL
+	) DEFAULT CHARACTER SET utf8mb4"
+);
+
+wp_postgresql_db_test_respond(
+	array(
+		'temporary_comment_author_length' => $db->get_col_length( 'wptests_temp_comments', 'comment_author' ),
+		'comment_author_length'           => $db->get_col_length( 'wptests_comments', 'comment_author' ),
+		'comment_content_length'          => $db->get_col_length( 'wptests_comments', 'comment_content' ),
+		'native_text_length'              => $db->get_col_length( 'wptests_native_text', 'body' ),
+		'connection_queries'              => $connection->get_queries(),
+		'driver_queries'                  => $driver->get_queries(),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 245,
+			),
+			$result['temporary_comment_author_length'],
+			'Temporary CREATE TABLE metadata should preserve declared MySQL varchar length.'
+		);
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 245,
+			),
+			$result['comment_author_length'],
+			'Declared MySQL varchar length should win over PostgreSQL text storage.'
+		);
+		$this->assertSame(
+			array(
+				'type'   => 'byte',
+				'length' => 4294967295,
+			),
+			$result['comment_content_length']
+		);
+		$this->assertSame(
+			array(
+				'type'   => 'byte',
+				'length' => 65535,
+			),
+			$result['native_text_length']
+		);
+		$this->assertSame(
+			array(
+				'temp_schema:wptests_temp_comments',
+				'temp_schema:wptests_comments',
+				'metadata_exists',
+				'temp_schema:wptests_comments',
+				'metadata_exists',
+				'temp_schema:wptests_native_text',
+				'metadata_exists',
+				'native_columns:wptests_native_text',
+			),
+			$result['connection_queries']
+		);
+		$this->assertSame(
+			array(
+				'SHOW FULL COLUMNS FROM `wptests_comments`',
+				'SHOW FULL COLUMNS FROM `wptests_comments`',
+				'SHOW FULL COLUMNS FROM `wptests_native_text`',
+			),
+			$result['driver_queries']
+		);
+	}
+
+	/**
 	 * Tests real wpdb identifier placeholders use PostgreSQL identifier quotes.
 	 */
 	public function test_real_wpdb_prepare_identifier_placeholders_use_postgresql_quotes(): void {

@@ -245,11 +245,18 @@ class WP_PostgreSQL_DB extends wpdb {
 			return false;
 		}
 
-		$table  = trim( (string) $table, "`\" \t\n\r\0\x0B" );
-		$column = trim( (string) $column, "`\" \t\n\r\0\x0B" );
-		if ( false !== strpos( $table, '.' ) ) {
-			$table = substr( $table, strrpos( $table, '.' ) + 1 );
-			$table = trim( $table, "`\" \t\n\r\0\x0B" );
+		$table     = $this->normalize_postgresql_table_name( (string) $table );
+		$column    = trim( (string) $column, "`\" \t\n\r\0\x0B" );
+		$columnkey = $this->get_postgresql_metadata_key( (string) $column );
+
+		$columns = $this->get_postgresql_column_charset_metadata( $table );
+		if ( false !== $columns && isset( $columns[ $columnkey ] ) ) {
+			$length = $this->get_postgresql_column_length_from_mysql_type(
+				(string) $columns[ $columnkey ]->Type
+			);
+			if ( false !== $length ) {
+				return $length;
+			}
 		}
 
 		try {
@@ -885,7 +892,7 @@ class WP_PostgreSQL_DB extends wpdb {
 	 */
 	private function get_postgresql_temporary_table_schema( string $table ) {
 		try {
-			$stmt = $this->dbh->get_connection()->query(
+			$stmt   = $this->dbh->get_connection()->query(
 				'SELECT n.nspname
 				FROM pg_catalog.pg_class c
 				INNER JOIN pg_catalog.pg_namespace n
@@ -1071,6 +1078,77 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		return $columns;
+	}
+
+	/**
+	 * Convert a MySQL-facing column type into WordPress length metadata.
+	 *
+	 * @param string $column_type MySQL column type.
+	 * @return array|false Column length metadata, or false when unrestricted/unknown.
+	 */
+	private function get_postgresql_column_length_from_mysql_type( string $column_type ) {
+		$typeinfo = explode( '(', $column_type, 2 );
+		$type     = strtolower( trim( $typeinfo[0] ) );
+		$length   = false;
+
+		if ( ! empty( $typeinfo[1] ) ) {
+			$length = (int) trim( $typeinfo[1], ") \t\n\r\0\x0B" );
+		}
+
+		switch ( $type ) {
+			case 'char':
+			case 'varchar':
+				if ( false === $length || $length <= 0 ) {
+					return false;
+				}
+
+				return array(
+					'type'   => 'char',
+					'length' => $length,
+				);
+
+			case 'binary':
+			case 'varbinary':
+				if ( false === $length || $length <= 0 ) {
+					return false;
+				}
+
+				return array(
+					'type'   => 'byte',
+					'length' => $length,
+				);
+
+			case 'tinyblob':
+			case 'tinytext':
+				return array(
+					'type'   => 'byte',
+					'length' => 255,
+				);
+
+			case 'blob':
+			case 'text':
+				return array(
+					'type'   => 'byte',
+					'length' => 65535,
+				);
+
+			case 'mediumblob':
+			case 'mediumtext':
+				return array(
+					'type'   => 'byte',
+					'length' => 16777215,
+				);
+
+			case 'longblob':
+			case 'longtext':
+				return array(
+					'type'   => 'byte',
+					'length' => 4294967295,
+				);
+
+			default:
+				return false;
+		}
 	}
 
 	/**
