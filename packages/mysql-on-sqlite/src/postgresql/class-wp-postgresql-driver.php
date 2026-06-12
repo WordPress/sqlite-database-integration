@@ -5079,6 +5079,16 @@ WHERE option_name IN (
 			if ( isset( $tokens[ $order_position + 3 ] ) && $order_position + 3 < $select_end ) {
 				$sql .= ' ' . $tokens[ $order_position + 3 ]->get_bytes();
 			}
+
+			$tiebreaker_sql = $this->get_simple_wordpress_posts_post_date_desc_order_id_tiebreaker_sql(
+				$tokens,
+				$table_name,
+				$order_position,
+				$select_end
+			);
+			if ( null !== $tiebreaker_sql ) {
+				$sql .= ', ' . $tiebreaker_sql;
+			}
 		}
 
 		if ( null !== $limit_position ) {
@@ -9839,7 +9849,17 @@ WHERE option_name IN (
 				$tokens,
 				$order_position + 2,
 				$order_end,
-				$scope
+				$scope,
+				! $this->contains_top_level_mysql_token(
+					$tokens,
+					$projection_start,
+					$statement_end,
+					array(
+						WP_MySQL_Lexer::DISTINCT_SYMBOL,
+						WP_MySQL_Lexer::GROUP_SYMBOL,
+						WP_MySQL_Lexer::HAVING_SYMBOL,
+					)
+				)
 			);
 			if ( $order_sql['changed'] ) {
 				$replacements[] = array(
@@ -9903,13 +9923,15 @@ WHERE option_name IN (
 	 * @param int             $start  First ORDER BY item token position.
 	 * @param int             $end    Final ORDER BY token position, exclusive.
 	 * @param array           $scope  Statement table scope.
+	 * @param bool            $allow_wordpress_posts_post_date_tiebreaker Whether to add the WordPress posts date tie-breaker.
 	 * @return array{sql: string, changed: bool} Translated ORDER BY SQL and change flag.
 	 */
 	private function translate_mysql_order_by_token_sequence_to_postgresql(
 		array $tokens,
 		int $start,
 		int $end,
-		array $scope
+		array $scope,
+		bool $allow_wordpress_posts_post_date_tiebreaker
 	): array {
 		$order_items = $this->parse_mysql_select_order_by_items( $tokens, $start, $end, array(), $scope );
 		if ( null === $order_items ) {
@@ -9932,12 +9954,100 @@ WHERE option_name IN (
 			$order_sql[] = $item_sql;
 		}
 
+		$tiebreaker_sql = $allow_wordpress_posts_post_date_tiebreaker
+			? $this->get_wordpress_posts_post_date_desc_order_id_tiebreaker_sql( $tokens, $order_items, $scope )
+			: null;
+		if ( null !== $tiebreaker_sql ) {
+			$order_sql[] = $tiebreaker_sql;
+			$changed     = true;
+		}
+
 		return array(
 			'sql'     => $changed
 				? implode( ', ', $order_sql )
 				: $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end ),
 			'changed' => $changed,
 		);
+	}
+
+	/**
+	 * Get the MySQL-compatible posts date tie-breaker for a simple SELECT.
+	 *
+	 * WordPress's posts table has the MySQL type_status_date index ending in ID.
+	 * MySQL scans that index backward for default post_date DESC queries, so rows
+	 * with equal post_date values are returned by descending ID.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param string          $table_name     Selected table name.
+	 * @param int             $order_position ORDER token position.
+	 * @param int             $end            Final ORDER BY token position, exclusive.
+	 * @return string|null PostgreSQL ORDER BY item SQL, or null when not applicable.
+	 */
+	private function get_simple_wordpress_posts_post_date_desc_order_id_tiebreaker_sql(
+		array $tokens,
+		string $table_name,
+		int $order_position,
+		int $end
+	): ?string {
+		if (
+			! $this->is_mysql_wordpress_table_name( $table_name, 'posts' )
+			|| $order_position + 4 !== $end
+			|| ! $this->is_mysql_identifier_like_token_value( $tokens[ $order_position + 2 ] ?? null, 'post_date' )
+			|| ! isset( $tokens[ $order_position + 3 ] )
+			|| WP_MySQL_Lexer::DESC_SYMBOL !== $tokens[ $order_position + 3 ]->id
+		) {
+			return null;
+		}
+
+		return $this->connection->quote_identifier( 'ID' ) . ' DESC';
+	}
+
+	/**
+	 * Get the MySQL-compatible posts date tie-breaker for a parsed ORDER BY.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param array           $order_items Parsed ORDER BY items.
+	 * @param array           $scope       Statement table scope.
+	 * @return string|null PostgreSQL ORDER BY item SQL, or null when not applicable.
+	 */
+	private function get_wordpress_posts_post_date_desc_order_id_tiebreaker_sql( array $tokens, array $order_items, array $scope ): ?string {
+		if (
+			1 !== count( $order_items )
+			|| ! empty( $scope['unknown'] )
+			|| 1 !== count( $scope['tables'] )
+			|| 'DESC' !== $order_items[0]['direction']
+		) {
+			return null;
+		}
+
+		$order_item = $order_items[0];
+		$reference  = $this->parse_mysql_column_reference(
+			$tokens,
+			$order_item['expression_start'],
+			$order_item['expression_end']
+		);
+		if (
+			null === $reference
+			|| $reference['end'] !== $order_item['expression_end']
+			|| 'post_date' !== strtolower( $reference['column'] )
+		) {
+			return null;
+		}
+
+		$table = $this->get_mysql_single_scope_table_for_column_reference( $reference, $scope );
+		if ( null === $table || ! $this->is_mysql_wordpress_table_name( $table['table'], 'posts' ) ) {
+			return null;
+		}
+
+		if ( null !== $reference['qualifier'] ) {
+			return sprintf(
+				'%s.%s DESC',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['start'] + 1 ),
+				$this->connection->quote_identifier( 'ID' )
+			);
+		}
+
+		return $this->connection->quote_identifier( 'ID' ) . ' DESC';
 	}
 
 	/**
@@ -10521,6 +10631,26 @@ WHERE option_name IN (
 		}
 
 		return $matched_table;
+	}
+
+	/**
+	 * Resolve a column reference when a statement scope has exactly one table.
+	 *
+	 * @param array $reference Parsed column reference.
+	 * @param array $scope     Statement table scope.
+	 * @return array|null Table metadata, or null when missing/ambiguous.
+	 */
+	private function get_mysql_single_scope_table_for_column_reference( array $reference, array $scope ): ?array {
+		if ( null !== $reference['qualifier'] ) {
+			$alias = strtolower( $reference['qualifier'] );
+			return $scope['aliases'][ $alias ] ?? null;
+		}
+
+		if ( ! empty( $scope['unknown'] ) || 1 !== count( $scope['tables'] ) ) {
+			return null;
+		}
+
+		return $scope['tables'][0];
 	}
 
 	/**

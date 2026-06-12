@@ -1818,6 +1818,79 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress sticky base queries get MySQL's posts date ID tie-breaker.
+	 */
+	public function test_wordpress_posts_post_date_desc_order_uses_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		for ( $id = 1; $id <= 5; $id++ ) {
+			$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES ($id, 'post', 'publish', '2024-01-01 00:00:00')" );
+		}
+
+		$select = "SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1 = 1 AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 5";
+		$rows   = $driver->query( $select );
+
+		$this->assertSame(
+			array( '5', '4', '3', '2', '1' ),
+			array_map(
+				static function ( $row ) {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC LIMIT 5 OFFSET 0',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC) AS "__wp_pg_found_rows"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests non-descending posts date order does not get the sticky tie-breaker.
+	 */
+	public function test_wordpress_posts_post_date_asc_order_does_not_add_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_type, post_status, post_date) VALUES (1, \'post\', \'publish\', \'2024-01-01 00:00:00\')' );
+
+		$select = "SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_type = 'post'
+			ORDER BY wptests_posts.post_date ASC
+			LIMIT 0, 5";
+		$driver->query( $select );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\' ORDER BY wptests_posts.post_date ASC LIMIT 5 OFFSET 0',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\' ORDER BY wptests_posts.post_date ASC) AS "__wp_pg_found_rows"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests integer-column IN predicates coerce string literals using stored MySQL metadata.
 	 */
 	public function test_integer_column_in_string_literals_use_mysql_numeric_coercion_from_metadata(): void {
@@ -2798,11 +2871,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC LIMIT 1 OFFSET 0',
+					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC LIMIT 1 OFFSET 0',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC) AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC) AS "__wp_pg_found_rows"',
 					'params' => array(),
 				),
 			),
