@@ -4,10 +4,6 @@
  * Benchmark the MySQL lexer over the checked-in MySQL server test corpus and
  * report its tokenization throughput (queries lexed per second).
  *
- * Mirrors run-parser-benchmark.php: it loads through src/load.php, so when the
- * native wp_mysql_parser extension is loaded the benchmark runs the native
- * lexer through the same public WP_MySQL_Lexer wrapper that the driver uses.
- *
  * JIT / opcache are start-up ini settings, so this script does not toggle them;
  * it reports the active configuration so every run is self-describing. Run it
  * twice to compare without and with the tracing JIT (the lexer behaves very
@@ -56,8 +52,6 @@ foreach ( $argv as $arg ) {
 	}
 }
 
-// Use the integration loader so an already-loaded native extension selects
-// the same public lexer class that runtime code uses.
 require_once __DIR__ . '/../../src/load.php';
 
 // Load the bounded checked-in corpus before timing so file IO is excluded
@@ -76,17 +70,12 @@ while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 }
 $query_count = count( $queries );
 
-// Lex the whole corpus once. Calling native_token_stream() vs remaining_tokens()
-// mirrors how the driver consumes the chosen lexer.
-$native     = class_exists( 'WP_MySQL_Native_Lexer', false );
-$lex_corpus = function () use ( $queries, $native ) {
+// Lex the whole corpus once.
+$lex_corpus = function () use ( $queries ) {
 	foreach ( $queries as $query ) {
 		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $native && $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		$count  = is_array( $tokens ) ? count( $tokens ) : $tokens->count();
-		if ( 0 === $count ) {
+		$tokens = $lexer->remaining_tokens();
+		if ( 0 === count( $tokens ) ) {
 			throw new Exception( 'Failed to tokenize query: ' . $query );
 		}
 	}
@@ -120,26 +109,25 @@ $spread = $best > 0 ? ( $best - $worst ) / $best : 0.0;
 $opcache_status = function_exists( 'opcache_get_status' ) ? opcache_get_status( false ) : false;
 $opcache_on     = is_array( $opcache_status );
 $jit_on         = $opcache_on && ! empty( $opcache_status['jit']['on'] );
-$implementation = ( extension_loaded( 'wp_mysql_parser' ) && $native ) ? 'native-extension' : 'php';
+$implementation = 'php';
 
 if ( $json ) {
 	echo json_encode(
 		array(
-			'benchmark'        => 'mysql-lexer',
-			'implementation'   => $implementation,
-			'extension_loaded' => extension_loaded( 'wp_mysql_parser' ),
-			'opcache'          => $opcache_on,
-			'jit'              => $jit_on,
-			'queries'          => $query_count,
-			'warmup'           => $warmup,
-			'iterations'       => $iterations,
-			'qps'              => $best, // Headline (best pass); kept as "qps" for compatibility.
-			'qps_best'         => $best,
-			'qps_median'       => $median,
-			'qps_mean'         => $mean,
-			'qps_worst'        => $worst,
-			'spread'           => $spread,
-			'php_version'      => PHP_VERSION,
+			'benchmark'      => 'mysql-lexer',
+			'implementation' => $implementation,
+			'opcache'        => $opcache_on,
+			'jit'            => $jit_on,
+			'queries'        => $query_count,
+			'warmup'         => $warmup,
+			'iterations'     => $iterations,
+			'qps'            => $best, // Headline (best pass); kept as "qps" for compatibility.
+			'qps_best'       => $best,
+			'qps_median'     => $median,
+			'qps_mean'       => $mean,
+			'qps_worst'      => $worst,
+			'spread'         => $spread,
+			'php_version'    => PHP_VERSION,
 		),
 		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
 	), "\n";

@@ -9,10 +9,6 @@ if ( version_compare( $sqlite_version, WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VE
 	define( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS', true );
 }
 
-if ( '1' === getenv( 'WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION' ) ) {
-	require_once __DIR__ . '/tools/verify-native-parser-extension.php';
-}
-
 // Configure the test environment.
 error_reporting( E_ALL );
 define( 'FQDB', ':memory:' );
