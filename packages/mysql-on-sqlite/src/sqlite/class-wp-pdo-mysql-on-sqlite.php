@@ -2278,8 +2278,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$where_clause .= implode( ' AND ', $join_exprs );
 		}
 
+		$legacy_join_update_query = null;
 		// SQLite added UPDATE ... FROM in 3.33.0. Older supported builds still
-		// need joined UPDATEs, so rewrite them as correlated subqueries.
+		// need joined UPDATEs, so keep the normal translated query for logging
+		// and prepare a correlated-subquery fallback for execution.
 		if ( null !== $from && version_compare( $this->get_sqlite_version(), '3.33.0', '<' ) ) {
 			$match_exprs = $join_exprs;
 			if ( $where_clause ) {
@@ -2296,7 +2298,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$assignments[] = trim( $assignment_parts[0] ) . ' = ( SELECT ' . trim( $assignment_parts[1] ) . ' FROM ' . $from_clause . $match_clause . ' LIMIT 1 )';
 			}
 
-			$query = implode(
+			$legacy_join_update_query = implode(
 				' ',
 				array_filter(
 					array(
@@ -2312,9 +2314,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					)
 				)
 			);
-
-			$this->last_result_statement = $this->execute_sqlite_query( $query );
-			return;
 		}
 
 		// Compose the UPDATE query.
@@ -2332,7 +2331,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		);
 		$query = implode( ' ', array_filter( $parts ) );
 
-		$this->last_result_statement = $this->execute_sqlite_query( $query );
+		try {
+			$this->last_result_statement = $this->execute_sqlite_query( $query );
+		} catch ( PDOException $e ) {
+			if ( null === $legacy_join_update_query || false === strpos( $e->getMessage(), 'near "FROM": syntax error' ) ) {
+				throw $e;
+			}
+			$stmt = $this->connection->get_pdo()->prepare( $legacy_join_update_query );
+			$stmt->execute();
+			$this->last_result_statement = $stmt;
+		}
 	}
 
 	/**
