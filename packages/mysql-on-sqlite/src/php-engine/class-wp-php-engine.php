@@ -157,16 +157,25 @@ class WP_PHP_Engine {
 	private $write_lock_held = false;
 
 	/**
+	 * Seconds to wait when acquiring a file lock before reporting SQLITE_BUSY.
+	 *
+	 * @var float
+	 */
+	private $busy_timeout = 0.0;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param string|null $path The database file path, or null/':memory:'.
+	 * @param string|null $path         The database file path, or null/':memory:'.
+	 * @param int|float   $busy_timeout Seconds to wait before reporting SQLITE_BUSY.
 	 *
 	 * @throws WP_PHP_Engine_SQL_Exception When the database file cannot be used.
 	 */
-	public function __construct( $path = null ) {
-		$this->path      = null === $path || ':memory:' === $path || '' === $path ? null : $path;
-		$this->functions = new WP_PHP_Engine_Functions( $this );
-		$this->db        = array(
+	public function __construct( $path = null, $busy_timeout = 0.0 ) {
+		$this->path         = null === $path || ':memory:' === $path || '' === $path ? null : $path;
+		$this->busy_timeout = max( 0.0, (float) $busy_timeout );
+		$this->functions    = new WP_PHP_Engine_Functions( $this );
+		$this->db           = array(
 			'tables'    => array(),
 			'indexes'   => array(),
 			'triggers'  => array(),
@@ -201,7 +210,7 @@ class WP_PHP_Engine {
 		}
 		$this->file_handle = $handle;
 
-		flock( $this->file_handle, LOCK_SH );
+		$this->acquire_shared_lock();
 		try {
 			$this->reload_if_changed();
 		} finally {
@@ -279,9 +288,12 @@ class WP_PHP_Engine {
 				$this->acquire_write_lock();
 				$this->reload_if_changed();
 			} else {
-				flock( $this->file_handle, LOCK_SH );
-				$this->reload_if_changed();
-				flock( $this->file_handle, LOCK_UN );
+				$this->acquire_shared_lock();
+				try {
+					$this->reload_if_changed();
+				} finally {
+					flock( $this->file_handle, LOCK_UN );
+				}
 			}
 		}
 
@@ -2846,6 +2858,7 @@ class WP_PHP_Engine {
 			case 'timeout':
 				if ( null !== $value ) {
 					$this->pragma_values['busy_timeout'] = (int) $value;
+					$this->set_busy_timeout( (int) $value / 1000 );
 					return $this->pragma_result( 'timeout', array( array( (int) $value ) ) );
 				}
 				return $this->pragma_result(
@@ -3253,14 +3266,51 @@ class WP_PHP_Engine {
 	const FILE_MAGIC = 'WP_PHP_ENGINE|1|';
 
 	/**
-	 * Acquire the exclusive write lock (blocking).
+	 * Set the busy timeout used when waiting for file locks.
+	 *
+	 * @param int|float $seconds Seconds to wait before reporting SQLITE_BUSY.
+	 */
+	public function set_busy_timeout( $seconds ) {
+		$this->busy_timeout = max( 0.0, (float) $seconds );
+	}
+
+	/**
+	 * Acquire a shared read lock within the busy timeout.
+	 */
+	private function acquire_shared_lock() {
+		$this->acquire_file_lock( LOCK_SH );
+	}
+
+	/**
+	 * Acquire the exclusive write lock within the busy timeout.
 	 */
 	private function acquire_write_lock() {
 		if ( $this->write_lock_held ) {
 			return;
 		}
-		flock( $this->file_handle, LOCK_EX );
+		$this->acquire_file_lock( LOCK_EX );
 		$this->write_lock_held = true;
+	}
+
+	/**
+	 * Acquire a file lock, waiting up to the configured busy timeout.
+	 *
+	 * @param int $operation The flock() operation.
+	 */
+	private function acquire_file_lock( $operation ) {
+		$deadline = microtime( true ) + $this->busy_timeout;
+		do {
+			$would_block = null;
+			if ( flock( $this->file_handle, $operation | LOCK_NB, $would_block ) ) {
+				return;
+			}
+			if ( microtime( true ) >= $deadline ) {
+				break;
+			}
+			usleep( 10000 );
+		} while ( true );
+
+		throw new WP_PHP_Engine_SQL_Exception( 'database is locked', 'HY000', 5 );
 	}
 
 	/**

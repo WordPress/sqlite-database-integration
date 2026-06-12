@@ -66,9 +66,7 @@ class WP_PHP_Engine_PDO extends PDO {
 		if ( count( $dsn_parts ) < 2 || ! in_array( $dsn_parts[0], array( 'php-engine', 'sqlite' ), true ) ) {
 			throw new PDOException( 'invalid data source name' );
 		}
-		$path         = $dsn_parts[1];
-		$this->engine = new WP_PHP_Engine( $path );
-
+		$path             = $dsn_parts[1];
 		$this->attributes = array(
 			PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
 			PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_BOTH,
@@ -76,6 +74,11 @@ class WP_PHP_Engine_PDO extends PDO {
 			PDO::ATTR_EMULATE_PREPARES   => false,
 			PDO::ATTR_TIMEOUT            => 0,
 		);
+
+		if ( is_array( $options ) && array_key_exists( PDO::ATTR_TIMEOUT, $options ) ) {
+			$this->attributes[ PDO::ATTR_TIMEOUT ] = $options[ PDO::ATTR_TIMEOUT ];
+		}
+		$this->engine = new WP_PHP_Engine( $path, $this->attributes[ PDO::ATTR_TIMEOUT ] );
 
 		if ( is_array( $options ) ) {
 			foreach ( $options as $attribute => $value ) {
@@ -227,6 +230,9 @@ class WP_PHP_Engine_PDO extends PDO {
 	#[\ReturnTypeWillChange]
 	public function setAttribute( $attribute, $value ) {
 		$this->attributes[ $attribute ] = $value;
+		if ( PDO::ATTR_TIMEOUT === $attribute ) {
+			$this->engine->set_busy_timeout( $value );
+		}
 		return true;
 	}
 
