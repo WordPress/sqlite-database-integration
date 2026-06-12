@@ -1303,7 +1303,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wp_options" SET "option_value" = \'value2\' WHERE "option_name" = \'key1\'',
+					'sql'    => 'UPDATE "wp_options" SET "option_value" = \'value2\' WHERE ("option_name" = \'key1\') AND ("option_value" IS DISTINCT FROM (\'value2\'))',
 					'params' => array(),
 				),
 			),
@@ -1314,6 +1314,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'value2', $rows[0]->option_value );
+	}
+
+	/**
+	 * Tests simple WordPress UPDATE statements return changed rows, not matched rows.
+	 */
+	public function test_simple_wordpress_update_returns_zero_for_noop_update(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wp_comments (
+				comment_ID INTEGER PRIMARY KEY,
+				comment_parent INTEGER NOT NULL,
+				comment_content TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wp_comments (comment_ID, comment_parent, comment_content) VALUES (1, 0, 'first')" );
+
+		$update = "UPDATE `wp_comments` SET `comment_parent` = 2, `comment_content` = 'updated' WHERE `comment_ID` = 1";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 0, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wp_comments" SET "comment_parent" = 2, "comment_content" = \'updated\' WHERE ("comment_ID" = 1) AND ("comment_parent" IS DISTINCT FROM (2) OR "comment_content" IS DISTINCT FROM (\'updated\'))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT comment_parent, comment_content FROM wp_comments WHERE "comment_ID" = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->comment_parent );
+		$this->assertSame( 'updated', $rows[0]->comment_content );
 	}
 
 	/**
@@ -1339,7 +1375,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wptests_commentmeta" SET "meta_value" = ' . $driver->get_connection()->quote( $expected_value ) . ' WHERE "comment_id" = \'8\' AND "meta_key" = \'slash_test_2\'',
+					'sql'    => 'UPDATE "wptests_commentmeta" SET "meta_value" = ' . $driver->get_connection()->quote( $expected_value ) . ' WHERE ("comment_id" = \'8\' AND "meta_key" = \'slash_test_2\') AND ("meta_value" IS DISTINCT FROM (' . $driver->get_connection()->quote( $expected_value ) . '))',
 					'params' => array(),
 				),
 			),
@@ -1375,7 +1411,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wptests_commentmeta" SET "meta_value" = ' . $driver->get_connection()->quote( $expected_value ) . ' WHERE "comment_id" = \'8\' AND "meta_key" = \'slash_test_2\'',
+					'sql'    => 'UPDATE "wptests_commentmeta" SET "meta_value" = ' . $driver->get_connection()->quote( $expected_value ) . ' WHERE ("comment_id" = \'8\' AND "meta_key" = \'slash_test_2\') AND ("meta_value" IS DISTINCT FROM (' . $driver->get_connection()->quote( $expected_value ) . '))',
 					'params' => array(),
 				),
 			),
@@ -1403,7 +1439,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wptests_options" SET "option_value" = \'\', "autoload" = \'yes\' WHERE "option_name" = \'cron\'',
+					'sql'    => 'UPDATE "wptests_options" SET "option_value" = \'\', "autoload" = \'yes\' WHERE ("option_name" = \'cron\') AND ("option_value" IS DISTINCT FROM (\'\') OR "autoload" IS DISTINCT FROM (\'yes\'))',
 					'params' => array(),
 				),
 			),
@@ -1435,7 +1471,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wptests_posts" SET "post_date_gmt" = \'0000-00-00 00:00:00\', "post_modified_gmt" = \'2020-07-04 01:02:03\' WHERE "ID" = 1',
+					'sql'    => 'UPDATE "wptests_posts" SET "post_date_gmt" = \'0000-00-00 00:00:00\', "post_modified_gmt" = \'2020-07-04 01:02:03\' WHERE ("ID" = 1) AND ("post_date_gmt" IS DISTINCT FROM (\'0000-00-00 00:00:00\') OR "post_modified_gmt" IS DISTINCT FROM (\'2020-07-04 01:02:03\'))',
 					'params' => array(),
 				),
 			),
@@ -1589,7 +1625,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wp_options" SET "option_value" = \'value2\', "autoload" = \'yes\' WHERE "option_name" = \'key1\'',
+					'sql'    => 'UPDATE "wp_options" SET "option_value" = \'value2\', "autoload" = \'yes\' WHERE ("option_name" = \'key1\') AND ("option_value" IS DISTINCT FROM (\'value2\') OR "autoload" IS DISTINCT FROM (\'yes\'))',
 					'params' => array(),
 				),
 			),

@@ -4348,17 +4348,18 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$set_sql = $this->translate_simple_mysql_update_set_clause( $table_name, $tokens, $position, $set_end );
-		if ( null === $set_sql ) {
+		$update_set_clause = $this->translate_simple_mysql_update_set_clause( $table_name, $tokens, $position, $set_end );
+		if ( null === $update_set_clause ) {
 			return null;
 		}
 
 		$sql = sprintf(
 			'UPDATE %s SET %s',
 			$this->connection->quote_identifier( $table_name ),
-			$set_sql
+			$update_set_clause['set_sql']
 		);
 
+		$where_sql = null;
 		if ( null !== $where_position ) {
 			if (
 				$where_position + 1 >= $statement_end
@@ -4373,7 +4374,17 @@ WHERE option_name IN (
 				$statement_end,
 				$this->get_mysql_single_table_scope( $table_name )
 			);
-			$sql      .= ' WHERE ' . $where_sql['sql'];
+			$where_sql = $where_sql['sql'];
+		}
+
+		if ( null !== $where_sql ) {
+			$sql .= sprintf(
+				' WHERE (%s) AND (%s)',
+				$where_sql,
+				$update_set_clause['changed_predicate_sql']
+			);
+		} else {
+			$sql .= ' WHERE ' . $update_set_clause['changed_predicate_sql'];
 		}
 
 		return $sql;
@@ -4426,13 +4437,14 @@ WHERE option_name IN (
 	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
 	 * @param int              $start      First SET-clause token position.
 	 * @param int              $end        Final SET-clause token position, exclusive.
-	 * @return string|null PostgreSQL SET SQL, or null when unsupported.
+	 * @return array{set_sql: string, changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
 	 */
-	private function translate_simple_mysql_update_set_clause( string $table_name, array $tokens, int $start, int $end ): ?string {
-		$column_metadata = $this->is_mysql_strict_sql_mode_active()
+	private function translate_simple_mysql_update_set_clause( string $table_name, array $tokens, int $start, int $end ): ?array {
+		$column_metadata    = $this->is_mysql_strict_sql_mode_active()
 			? array()
 			: $this->get_mysql_dml_column_metadata_lookup( $table_name );
-		$assignments     = array();
+		$assignments        = array();
+		$changed_predicates = array();
 
 		for ( $position = $start; $position < $end; ) {
 			$target_column = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
@@ -4472,9 +4484,15 @@ WHERE option_name IN (
 				$value_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $assignment_end );
 			}
 
-			$assignments[] = sprintf(
+			$quoted_target_column = $this->connection->quote_identifier( $target_column );
+			$assignments[]        = sprintf(
 				'%s = %s',
-				$this->connection->quote_identifier( $target_column ),
+				$quoted_target_column,
+				$value_sql
+			);
+			$changed_predicates[] = sprintf(
+				'%s IS DISTINCT FROM (%s)',
+				$quoted_target_column,
 				$value_sql
 			);
 
@@ -4486,7 +4504,14 @@ WHERE option_name IN (
 			++$position;
 		}
 
-		return count( $assignments ) > 0 ? implode( ', ', $assignments ) : null;
+		if ( 0 === count( $assignments ) ) {
+			return null;
+		}
+
+		return array(
+			'set_sql'               => implode( ', ', $assignments ),
+			'changed_predicate_sql' => implode( ' OR ', $changed_predicates ),
+		);
 	}
 
 	/**
