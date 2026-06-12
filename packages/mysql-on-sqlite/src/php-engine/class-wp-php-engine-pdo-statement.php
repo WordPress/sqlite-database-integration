@@ -579,13 +579,14 @@ class WP_PHP_Engine_PDO_Statement extends PDOStatement {
 		if ( null === $value ) {
 			return null;
 		}
+		$legacy_emulated_fetches = PHP_VERSION_ID < 80100 && $this->pdo->getAttribute( PDO::ATTR_EMULATE_PREPARES );
 		if ( $value instanceof WP_PHP_Engine_Blob ) {
+			if ( $legacy_emulated_fetches && '' === $value->bytes ) {
+				return null;
+			}
 			return $value->bytes;
 		}
-		if ( PHP_VERSION_ID < 80100 && ( is_int( $value ) || is_float( $value ) || is_bool( $value ) ) ) {
-			return $this->stringify_scalar_value( $value );
-		}
-		if ( ( is_int( $value ) || is_float( $value ) || is_bool( $value ) ) && $this->pdo->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) ) {
+		if ( ( is_int( $value ) || is_float( $value ) || is_bool( $value ) ) && ( $legacy_emulated_fetches || $this->pdo->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) ) ) {
 			// PDO stringifies fetches using PHP value-to-string semantics
 			// (e.g. 0.0 becomes "0", not "0.0") on PHP 8.1+.
 			return $this->stringify_scalar_value( $value );

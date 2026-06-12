@@ -675,6 +675,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$this->connection = new WP_SQLite_Connection( array( 'path' => $path ) );
 		}
 
+		// Match the default PDO SQLite behavior expected by the PDO facade tests.
+		if ( $this->connection->get_pdo() instanceof WP_PHP_Engine_PDO ) {
+			$this->connection->get_pdo()->setAttribute( PDO::ATTR_EMULATE_PREPARES, true );
+		}
+
 		$this->mysql_version = $options['mysql_version'] ?? 80038;
 		$this->main_db_name  = $db_name;
 		$this->db_name       = $db_name;
@@ -2271,6 +2276,45 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( count( $join_exprs ) > 0 ) {
 			$where_clause .= $where_clause ? ' AND ' : ' WHERE ';
 			$where_clause .= implode( ' AND ', $join_exprs );
+		}
+
+		// SQLite added UPDATE ... FROM in 3.33.0. Older supported builds still
+		// need joined UPDATEs, so rewrite them as correlated subqueries.
+		if ( null !== $from && version_compare( $this->get_sqlite_version(), '3.33.0', '<' ) ) {
+			$match_exprs = $join_exprs;
+			if ( $where_clause ) {
+				$match_exprs[] = preg_replace( '/^\s*WHERE\s+/i', '', $where_clause );
+			}
+			$match_clause = count( $match_exprs ) > 0 ? ' WHERE ' . implode( ' AND ', $match_exprs ) : '';
+			$from_clause  = implode( ', ', $from_items );
+			$assignments  = array();
+			foreach ( preg_split( '/\s*,\s*/', $update_list ) as $assignment ) {
+				$assignment_parts = explode( '=', $assignment, 2 );
+				if ( 2 !== count( $assignment_parts ) ) {
+					throw $this->new_driver_exception( 'Unsupported UPDATE JOIN assignment for this SQLite version.' );
+				}
+				$assignments[] = trim( $assignment_parts[0] ) . ' = ( SELECT ' . trim( $assignment_parts[1] ) . ' FROM ' . $from_clause . $match_clause . ' LIMIT 1 )';
+			}
+
+			$query = implode(
+				' ',
+				array_filter(
+					array(
+						$with,
+						'UPDATE',
+						$or_ignore,
+						$update_target_clause,
+						'SET',
+						implode( ', ', $assignments ),
+						'WHERE EXISTS ( SELECT 1 FROM ' . $from_clause . $match_clause . ' )',
+						$order_clause,
+						$limit_clause,
+					)
+				)
+			);
+
+			$this->last_result_statement = $this->execute_sqlite_query( $query );
+			return;
 		}
 
 		// Compose the UPDATE query.

@@ -73,6 +73,7 @@ class WP_PHP_Engine_PDO extends PDO {
 			PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
 			PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_BOTH,
 			PDO::ATTR_STRINGIFY_FETCHES  => false,
+			PDO::ATTR_EMULATE_PREPARES   => false,
 			PDO::ATTR_TIMEOUT            => 0,
 		);
 
