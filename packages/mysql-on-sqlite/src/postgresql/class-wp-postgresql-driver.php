@@ -30,6 +30,11 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_TEXT_ENCODING_HASH_CONTEXT = 'wp-mysql-text-v1:';
 
 	/**
+	 * Bit mask for the base PDO fetch style without fetchAll() grouping flags.
+	 */
+	private const PDO_FETCH_STYLE_MASK = 0x0f;
+
+	/**
 	 * PostgreSQL server version string.
 	 *
 	 * @var string
@@ -98,6 +103,20 @@ class WP_PostgreSQL_Driver {
 	 * @var array<string, array>
 	 */
 	private $mysql_dml_column_metadata_cache = array();
+
+	/**
+	 * Cached MySQL upsert conflict targets keyed by table and inserted columns.
+	 *
+	 * @var array<string, string[]|null>
+	 */
+	private $mysql_upsert_conflict_target_cache = array();
+
+	/**
+	 * Cached MySQL introspection results keyed by query shape.
+	 *
+	 * @var array<string, array{column_meta: array, result: mixed}>
+	 */
+	private $mysql_introspection_result_cache = array();
 
 	/**
 	 * FOUND_ROWS() value for the last SQL_CALC_FOUND_ROWS query.
@@ -818,6 +837,8 @@ class WP_PostgreSQL_Driver {
 	private function clear_mysql_metadata_caches(): void {
 		$this->mysql_table_schema_introspection_cache = array();
 		$this->mysql_dml_column_metadata_cache        = array();
+		$this->mysql_upsert_conflict_target_cache     = array();
+		$this->mysql_introspection_result_cache       = array();
 	}
 
 	/**
@@ -828,6 +849,8 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function clear_mysql_metadata_cache_for_table( string $table_schema, string $table_name ): void {
 		unset( $this->mysql_dml_column_metadata_cache[ $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) ] );
+		$this->mysql_upsert_conflict_target_cache = array();
+		$this->mysql_introspection_result_cache   = array();
 
 		/*
 		 * Temporary table creation/drop can change which backend schema an
@@ -1209,6 +1232,8 @@ class WP_PostgreSQL_Driver {
 				)
 			);
 		}
+
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
 	/**
@@ -1226,6 +1251,7 @@ class WP_PostgreSQL_Driver {
 			),
 			array( $table_schema, $table_name, $index_name )
 		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
 	/**
@@ -1253,6 +1279,7 @@ class WP_PostgreSQL_Driver {
 			),
 			array( $new_column_name, $table_schema, $table_name, $old_column_name )
 		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
 	/**
@@ -2333,9 +2360,19 @@ class WP_PostgreSQL_Driver {
 	private function execute_describe_query( string $table_name, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$cache_key       = $this->get_mysql_introspection_result_cache_key(
+			'describe',
+			$fetch_mode,
+			array( $resolved_schema, $table_name, $fetch_mode, $fetch_mode_args )
+		);
+		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
+			return $this->last_result;
+		}
+
 		$sql    = $this->get_describe_catalog_query();
 		$params = array(
-			$this->resolve_mysql_table_schema_for_introspection( 'public', $table_name ),
+			$resolved_schema,
 			$table_name,
 		);
 		$stmt   = $this->connection->query( $sql, $params );
@@ -2346,6 +2383,8 @@ class WP_PostgreSQL_Driver {
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
 		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+
+		$this->store_mysql_introspection_result_in_cache( $cache_key );
 
 		return $this->last_result;
 	}
@@ -2364,9 +2403,19 @@ class WP_PostgreSQL_Driver {
 	private function execute_show_columns_query( string $schema_name, string $table_name, bool $is_full, ?string $like, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
+		$cache_key       = $this->get_mysql_introspection_result_cache_key(
+			'show_columns',
+			$fetch_mode,
+			array( $resolved_schema, $table_name, $is_full, $like, $fetch_mode, $fetch_mode_args )
+		);
+		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
+			return $this->last_result;
+		}
+
 		$sql    = $this->get_show_columns_catalog_query( $is_full );
 		$params = array(
-			$this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name ),
+			$resolved_schema,
 			$table_name,
 		);
 
@@ -2386,6 +2435,8 @@ ORDER BY ordinal_position';
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
 		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+
+		$this->store_mysql_introspection_result_in_cache( $cache_key );
 
 		return $this->last_result;
 	}
@@ -2634,9 +2685,19 @@ ORDER BY table_name';
 	private function execute_show_index_query( string $table_name, ?string $key_name, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$cache_key       = $this->get_mysql_introspection_result_cache_key(
+			'show_index',
+			$fetch_mode,
+			array( $resolved_schema, $table_name, $key_name, $fetch_mode, $fetch_mode_args )
+		);
+		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
+			return $this->last_result;
+		}
+
 		$sql    = $this->get_show_index_catalog_query();
 		$params = array(
-			$this->resolve_mysql_table_schema_for_introspection( 'public', $table_name ),
+			$resolved_schema,
 			$table_name,
 		);
 
@@ -2665,7 +2726,156 @@ ORDER BY
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
 		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
 
+		$this->store_mysql_introspection_result_in_cache( $cache_key );
+
 		return $this->last_result;
+	}
+
+	/**
+	 * Load a cached MySQL introspection result into the current query state.
+	 *
+	 * @param string|null $cache_key Cache key, or null when this query shape is not cacheable.
+	 * @return bool Whether a cached result was loaded.
+	 */
+	private function load_mysql_introspection_result_from_cache( ?string $cache_key ): bool {
+		if ( null === $cache_key ) {
+			return false;
+		}
+
+		if ( ! array_key_exists( $cache_key, $this->mysql_introspection_result_cache ) ) {
+			return false;
+		}
+
+		$cached = $this->mysql_introspection_result_cache[ $cache_key ];
+		if (
+			! $this->try_copy_mysql_introspection_cache_value( $cached['column_meta'], $column_meta )
+			|| ! $this->try_copy_mysql_introspection_cache_value( $cached['result'], $result )
+		) {
+			unset( $this->mysql_introspection_result_cache[ $cache_key ] );
+			return false;
+		}
+
+		$this->last_column_meta = $column_meta;
+		$this->last_result      = $result;
+
+		return true;
+	}
+
+	/**
+	 * Store the current MySQL introspection result in the request-local cache.
+	 *
+	 * @param string|null $cache_key Cache key, or null when this query shape is not cacheable.
+	 */
+	private function store_mysql_introspection_result_in_cache( ?string $cache_key ): void {
+		if ( null === $cache_key ) {
+			return;
+		}
+
+		if (
+			! $this->try_copy_mysql_introspection_cache_value( $this->last_column_meta, $column_meta )
+			|| ! $this->try_copy_mysql_introspection_cache_value( $this->last_result, $result )
+		) {
+			return;
+		}
+
+		$this->mysql_introspection_result_cache[ $cache_key ] = array(
+			'column_meta' => $column_meta,
+			'result'      => $result,
+		);
+	}
+
+	/**
+	 * Get a cache key for a MySQL introspection query shape.
+	 *
+	 * @param string $query_type Query type.
+	 * @param mixed  $fetch_mode PDO fetch mode.
+	 * @param array  $parts      Query shape parts.
+	 * @return string|null Cache key, or null when the query shape is not cacheable.
+	 */
+	private function get_mysql_introspection_result_cache_key( string $query_type, $fetch_mode, array $parts ): ?string {
+		if ( PDO::FETCH_FUNC === ( (int) $fetch_mode & self::PDO_FETCH_STYLE_MASK ) ) {
+			return null;
+		}
+
+		if ( ! $this->is_mysql_introspection_cache_key_value_safe( $parts ) ) {
+			return null;
+		}
+
+		return $query_type . "\0" . serialize( $parts );
+	}
+
+	/**
+	 * Check whether a value can safely participate in an introspection cache key.
+	 *
+	 * @param mixed $value Value to inspect.
+	 * @param int   $depth Recursion depth guard.
+	 * @return bool Whether the value can be safely serialized into a cache key.
+	 */
+	private function is_mysql_introspection_cache_key_value_safe( $value, int $depth = 0 ): bool {
+		if ( 20 < $depth ) {
+			return false;
+		}
+
+		if ( null === $value || is_scalar( $value ) ) {
+			return true;
+		}
+
+		if ( ! is_array( $value ) ) {
+			return false;
+		}
+
+		foreach ( $value as $key => $item ) {
+			if ( ! is_int( $key ) && ! is_string( $key ) ) {
+				return false;
+			}
+
+			if ( ! $this->is_mysql_introspection_cache_key_value_safe( $item, $depth + 1 ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Copy cached introspection data before exposing it to callers.
+	 *
+	 * @param mixed $value Cached value.
+	 * @param mixed $copy  Copied value.
+	 * @param int   $depth Recursion depth guard.
+	 * @return bool Whether the value could be copied safely.
+	 */
+	private function try_copy_mysql_introspection_cache_value( $value, &$copy, int $depth = 0 ): bool {
+		if ( 20 < $depth ) {
+			return false;
+		}
+
+		if ( is_array( $value ) ) {
+			$copy = array();
+			foreach ( $value as $key => $item ) {
+				if ( ! $this->try_copy_mysql_introspection_cache_value( $item, $item_copy, $depth + 1 ) ) {
+					return false;
+				}
+				$copy[ $key ] = $item_copy;
+			}
+			return true;
+		}
+
+		if ( is_object( $value ) ) {
+			if ( 'stdClass' !== get_class( $value ) ) {
+				return false;
+			}
+
+			$copy = clone $value;
+			return true;
+		}
+
+		if ( is_resource( $value ) ) {
+			return false;
+		}
+
+		$copy = $value;
+		return true;
 	}
 
 	/**
@@ -3731,14 +3941,25 @@ WHERE option_name IN (
 	 */
 	private function get_mysql_upsert_conflict_target_columns( string $table_name, array $columns ): ?array {
 		$insert_column_lookup = array();
+		$insert_columns       = array();
 		foreach ( $columns as $column ) {
-			$insert_column_lookup[ strtolower( $column ) ] = true;
+			$insert_column = strtolower( $column );
+
+			$insert_column_lookup[ $insert_column ] = true;
+			$insert_columns[]                       = $insert_column;
 		}
+		sort( $insert_columns, SORT_STRING );
 
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
-		$stmt         = $this->connection->query(
+		$cache_key    = $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) . "\0" . serialize( $insert_columns );
+		if ( array_key_exists( $cache_key, $this->mysql_upsert_conflict_target_cache ) ) {
+			$cached = $this->mysql_upsert_conflict_target_cache[ $cache_key ];
+			return null === $cached ? null : array_values( $cached );
+		}
+
+		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT key_name, column_name, sub_part
 				FROM %s
@@ -3790,13 +4011,17 @@ WHERE option_name IN (
 			}
 
 			if ( $index['has_sub_part'] ) {
+				$this->mysql_upsert_conflict_target_cache[ $cache_key ] = null;
 				return null;
 			}
 
 			$candidates[] = $index['columns'];
 		}
 
-		return 1 === count( $candidates ) ? $candidates[0] : null;
+		$conflict_columns = 1 === count( $candidates ) ? $candidates[0] : null;
+
+		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_columns;
+		return null === $conflict_columns ? null : array_values( $conflict_columns );
 	}
 
 	/**

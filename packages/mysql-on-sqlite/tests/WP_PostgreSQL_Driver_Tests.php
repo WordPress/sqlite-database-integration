@@ -12,6 +12,13 @@ require_once __DIR__ . '/WP_PostgreSQL_Connection_Stale_Insert_ID_SQLite_Connect
  */
 class WP_PostgreSQL_Driver_Tests extends TestCase {
 	/**
+	 * Number of times the static FETCH_FUNC regression callback was invoked.
+	 *
+	 * @var int
+	 */
+	private static $mysql_introspection_fetch_func_invocations = 0;
+
+	/**
 	 * Tests SELECT queries return fetched rows and normalized metadata.
 	 */
 	public function test_query_returns_rows_and_metadata(): void {
@@ -1246,6 +1253,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->install_options_table_with_mysql_metadata( $driver );
 
+		$unique_index_metadata_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$unique_index_metadata_queries ): void {
+				if ( false !== strpos( $sql, "non_unique = '0'" ) ) {
+					++$unique_index_metadata_queries;
+				}
+			}
+		);
+
 		$insert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('siteurl', 'http://example.org', 'yes')
 			ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
@@ -1264,6 +1280,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver->get_last_postgresql_queries()
 		);
 
+		$this->assertSame( 1, $unique_index_metadata_queries );
+
 		$update = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('siteurl', 'http://example.net', 'no')
 			ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`),
@@ -1281,11 +1299,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver->get_last_postgresql_queries()
 		);
 
+		$this->assertSame( 1, $unique_index_metadata_queries );
+
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'http://example.net', $rows[0]->option_value );
 		$this->assertSame( 'no', $rows[0]->autoload );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_options (
+				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				option_name varchar(191) NOT NULL DEFAULT "",
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL DEFAULT "yes",
+				PRIMARY KEY (option_id)
+			)'
+		);
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$update
+			)
+		);
+		$this->assertSame( 2, $unique_index_metadata_queries );
 	}
 
 	/**
@@ -5176,6 +5215,197 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests catalog-backed MySQL introspection queries are cached until metadata changes.
+	 */
+	public function test_mysql_introspection_result_cache_reuses_catalog_rows_until_metadata_changes(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->get_connection()->get_pdo()->exec(
+			'CREATE TABLE wptests_options (
+				option_id INTEGER,
+				option_name TEXT,
+				option_value TEXT,
+				autoload TEXT
+			)'
+		);
+
+		$describe_catalog_queries     = 0;
+		$show_columns_catalog_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$describe_catalog_queries, &$show_columns_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+					++$describe_catalog_queries;
+				}
+				if ( false !== strpos( $sql, 'show_columns_rows' ) ) {
+					++$show_columns_catalog_queries;
+				}
+			}
+		);
+
+		$describe           = $driver->query( 'DESC `wptests_options`;' );
+		$describe[0]->Field = 'mutated';
+
+		$cached_describe = $driver->query( 'DESC `wptests_options`;' );
+
+		$this->assertSame( 1, $describe_catalog_queries );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( 'option_id', $cached_describe[0]->Field );
+		$this->assertSame( 'Field', $driver->get_last_column_meta()[0]['name'] );
+
+		$columns           = $driver->query( 'SHOW COLUMNS FROM `wptests_options`' );
+		$columns[0]->Field = 'mutated';
+
+		$cached_columns = $driver->query( 'SHOW COLUMNS FROM `wptests_options`' );
+
+		$this->assertSame( 1, $show_columns_catalog_queries );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( 'option_id', $cached_columns[0]->Field );
+		$this->assertSame( 'Null', $driver->get_last_column_meta()[2]['name'] );
+
+		$driver->query( 'ALTER TABLE wptests_options ADD KEY option_value (option_value)' );
+
+		$indexed_columns = $driver->query( 'SHOW COLUMNS FROM `wptests_options`' );
+
+		$this->assertSame( 2, $show_columns_catalog_queries );
+		$this->assertSame( 'MUL', $indexed_columns[2]->Key );
+
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_options (
+				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				option_name varchar(191) NOT NULL DEFAULT '',
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id)
+			)"
+		);
+		$driver->query( 'DESC `wptests_options`;' );
+
+		$this->assertSame( 2, $describe_catalog_queries );
+
+		$index_driver               = $this->create_show_index_driver();
+		$show_index_catalog_queries = 0;
+		$index_driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$show_index_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'show_index_fixture' ) ) {
+					++$show_index_catalog_queries;
+				}
+			}
+		);
+
+		$indexes              = $index_driver->query( 'SHOW INDEX FROM `wptests_options`;' );
+		$indexes[0]->Key_name = 'mutated';
+
+		$cached_indexes = $index_driver->query( 'SHOW INDEX FROM `wptests_options`;' );
+
+		$this->assertSame( 1, $show_index_catalog_queries );
+		$this->assertSame( array(), $index_driver->get_last_postgresql_queries() );
+		$this->assertSame( 'PRIMARY', $cached_indexes[0]->Key_name );
+		$this->assertSame( 'Key_name', $index_driver->get_last_column_meta()[2]['name'] );
+	}
+
+	/**
+	 * Tests introspection caching skips FETCH_FUNC closure arguments.
+	 */
+	public function test_mysql_introspection_result_cache_skips_fetch_func_closure_fetch_mode_args(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$describe_catalog_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+					++$describe_catalog_queries;
+				}
+			}
+		);
+
+		$fetch_field = static function ( ...$values ) {
+			return $values[0];
+		};
+
+		$rows        = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_FUNC, $fetch_field );
+		$cached_rows = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_FUNC, $fetch_field );
+
+		$this->assertSame( 'option_id', $rows[0] );
+		$this->assertSame( 'option_id', $cached_rows[0] );
+		$this->assertSame( 2, $describe_catalog_queries );
+	}
+
+	/**
+	 * Tests introspection caching skips FETCH_FUNC static callback results.
+	 */
+	public function test_mysql_introspection_result_cache_skips_fetch_func_static_callback_results(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$describe_catalog_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+					++$describe_catalog_queries;
+				}
+			}
+		);
+
+		self::$mysql_introspection_fetch_func_invocations = 0;
+		$fetch_field                                      = array( self::class, 'fetch_dynamic_field_for_introspection_cache_test' );
+
+		$rows        = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_FUNC, $fetch_field );
+		$cached_rows = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_FUNC, $fetch_field );
+
+		$this->assertSame(
+			array( '1:option_id', '2:option_name', '3:option_value', '4:autoload' ),
+			$rows
+		);
+		$this->assertSame(
+			array( '5:option_id', '6:option_name', '7:option_value', '8:autoload' ),
+			$cached_rows
+		);
+		$this->assertSame( 8, self::$mysql_introspection_fetch_func_invocations );
+		$this->assertSame( 2, $describe_catalog_queries );
+		$this->assertCount( 1, $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Fetch a dynamic field value for the FETCH_FUNC introspection cache test.
+	 *
+	 * @param mixed ...$values Fetched row values.
+	 * @return string Dynamic field value.
+	 */
+	public static function fetch_dynamic_field_for_introspection_cache_test( ...$values ): string {
+		++self::$mysql_introspection_fetch_func_invocations;
+		return self::$mysql_introspection_fetch_func_invocations . ':' . $values[0];
+	}
+
+	/**
+	 * Tests introspection caching skips FETCH_CLASS rows without public cloning.
+	 */
+	public function test_mysql_introspection_result_cache_skips_fetch_class_rows_without_public_clone(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$describe_catalog_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+					++$describe_catalog_queries;
+				}
+			}
+		);
+
+		$fetch_class = $this->get_no_public_clone_fetch_row_class_name();
+		$rows        = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_CLASS, $fetch_class );
+		$cached_rows = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_CLASS, $fetch_class );
+
+		$this->assertInstanceOf( $fetch_class, $rows[0] );
+		$this->assertInstanceOf( $fetch_class, $cached_rows[0] );
+		$this->assertSame( 'option_id', $rows[0]->Field );
+		$this->assertSame( 'option_id', $cached_rows[0]->Field );
+		$this->assertSame( 2, $describe_catalog_queries );
+	}
+
+	/**
 	 * Tests MySQL-only runtime SET statements are ignored before reaching PDO.
 	 */
 	public function test_mysql_runtime_set_statements_are_noops(): void {
@@ -5949,6 +6179,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get a fetch row class name whose clone operation is not publicly callable.
+	 *
+	 * @return string Fetch row class name.
+	 */
+	private function get_no_public_clone_fetch_row_class_name(): string {
+		$class_name = 'WP_PostgreSQL_Driver_No_Public_Clone_Fetch_Row';
+		if ( class_exists( $class_name, false ) ) {
+			return $class_name;
+		}
+
+		$prototype = new class() {
+			/**
+			 * Fetched values keyed by column name.
+			 *
+			 * @var array<string, mixed>
+			 */
+			private $values = array();
+
+			/**
+			 * Store a fetched column value.
+			 *
+			 * @param string $name  Column name.
+			 * @param mixed  $value Column value.
+			 */
+			public function __set( string $name, $value ): void {
+				$this->values[ $name ] = $value;
+			}
+
+			/**
+			 * Get a fetched column value.
+			 *
+			 * @param string $name Column name.
+			 * @return mixed Column value.
+			 */
+			public function __get( string $name ) {
+				return $this->values[ $name ] ?? null;
+			}
+
+			/**
+			 * Prevent public cloning.
+			 */
+			private function __clone() {}
+		};
+
+		class_alias( get_class( $prototype ), $class_name );
+
+		return $class_name;
 	}
 
 	/**
