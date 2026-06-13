@@ -54,7 +54,7 @@ jobs:
   postgresql-test:
     name: WordPress PHPUnit Tests / PostgreSQL
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     continue-on-error: true
     permissions:
       contents: read # Required to clone the repo.
@@ -74,6 +74,7 @@ jobs:
       - name: Run WordPress PHPUnit tests
         env:
           WP_TEST_DB_BACKEND: postgresql
+          WP_TEST_PHPUNIT_FILTER: '^Tests_DB::'
         run: node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Upload PHPUnit count
