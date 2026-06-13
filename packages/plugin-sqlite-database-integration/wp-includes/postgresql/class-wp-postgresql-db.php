@@ -41,6 +41,20 @@ class WP_PostgreSQL_DB extends wpdb {
 	private $postgresql_temporary_charset_metadata = array();
 
 	/**
+	 * Request-local MySQL charset metadata keyed by normalized table name.
+	 *
+	 * @var array
+	 */
+	private $postgresql_column_charset_metadata_cache = array();
+
+	/**
+	 * Cached existence state for the PostgreSQL MySQL charset metadata table.
+	 *
+	 * @var bool|null
+	 */
+	private $postgresql_charset_metadata_table_exists = null;
+
+	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
 	 * @var bool
@@ -247,9 +261,12 @@ class WP_PostgreSQL_DB extends wpdb {
 
 		$table     = $this->normalize_postgresql_table_name( (string) $table );
 		$column    = trim( (string) $column, "`\" \t\n\r\0\x0B" );
+		$tablekey  = $this->get_postgresql_metadata_key( (string) $table );
 		$columnkey = $this->get_postgresql_metadata_key( (string) $column );
 
-		$columns = $this->get_postgresql_column_charset_metadata( $table );
+		$columns = array_key_exists( $tablekey, $this->col_meta )
+			? $this->col_meta[ $tablekey ]
+			: $this->get_postgresql_column_charset_metadata( $table );
 		if ( false !== $columns && isset( $columns[ $columnkey ] ) ) {
 			$length = $this->get_postgresql_column_length_from_mysql_type(
 				(string) $columns[ $columnkey ]->Type
@@ -537,23 +554,16 @@ class WP_PostgreSQL_DB extends wpdb {
 			return;
 		}
 
+		$table_name = $this->get_postgresql_create_table_name( $query );
+		if ( null !== $table_name ) {
+			$this->clear_postgresql_table_charset_cache( array( $table_name ) );
+		}
+
 		if ( ! class_exists( 'WP_PostgreSQL_Create_Table_Translator', false ) ) {
-			if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
-				$table_name = $this->get_postgresql_create_table_name( $query );
-				if ( null !== $table_name ) {
-					$this->clear_postgresql_table_charset_cache( array( $table_name ) );
-				}
-			}
 			return;
 		}
 
 		if ( ! $this->is_postgresql_mysql_charset_metadata_create_query( $query ) ) {
-			if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
-				$table_name = $this->get_postgresql_create_table_name( $query );
-				if ( null !== $table_name ) {
-					$this->clear_postgresql_table_charset_cache( array( $table_name ) );
-				}
-			}
 			return;
 		}
 
@@ -640,8 +650,7 @@ class WP_PostgreSQL_DB extends wpdb {
 					);
 				}
 
-				$tablekey = $this->get_postgresql_metadata_key( $table_name );
-				unset( $this->table_charset[ $tablekey ], $this->col_meta[ $tablekey ] );
+				$this->clear_postgresql_table_charset_cache( array( $table_name ) );
 			}
 		} catch ( Throwable $e ) {
 			return;
@@ -663,8 +672,9 @@ class WP_PostgreSQL_DB extends wpdb {
 			return;
 		}
 
+		$this->clear_postgresql_table_charset_cache( $tables );
+
 		if ( $this->is_postgresql_drop_temporary_table_query( $query ) ) {
-			$this->clear_postgresql_table_charset_cache( $tables );
 			return;
 		}
 
@@ -680,9 +690,6 @@ class WP_PostgreSQL_DB extends wpdb {
 						AND lower(table_name) = lower(?)',
 					array( $table )
 				);
-
-				$tablekey = $this->get_postgresql_metadata_key( $table );
-				unset( $this->table_charset[ $tablekey ], $this->col_meta[ $tablekey ] );
 			}
 		} catch ( Throwable $e ) {
 			return;
@@ -697,12 +704,27 @@ class WP_PostgreSQL_DB extends wpdb {
 	private function clear_postgresql_table_charset_cache( array $tables ): void {
 		foreach ( $tables as $table ) {
 			$tablekey = $this->get_postgresql_metadata_key( (string) $table );
+			if ( self::MYSQL_CHARSET_METADATA_TABLE === $this->normalize_postgresql_table_name( (string) $table ) ) {
+				$this->postgresql_charset_metadata_table_exists = null;
+			}
+
 			unset(
 				$this->table_charset[ $tablekey ],
 				$this->col_meta[ $tablekey ],
-				$this->postgresql_temporary_charset_metadata[ $tablekey ]
+				$this->postgresql_temporary_charset_metadata[ $tablekey ],
+				$this->postgresql_column_charset_metadata_cache[ $tablekey ]
 			);
 		}
+	}
+
+	/**
+	 * Clear all derived PostgreSQL charset metadata caches.
+	 */
+	private function clear_all_postgresql_table_charset_cache(): void {
+		$this->table_charset                            = array();
+		$this->col_meta                                 = array();
+		$this->postgresql_column_charset_metadata_cache = array();
+		$this->postgresql_charset_metadata_table_exists = null;
 	}
 
 	/**
@@ -721,6 +743,7 @@ class WP_PostgreSQL_DB extends wpdb {
 				PRIMARY KEY (table_schema, table_name, column_name)
 			)'
 		);
+		$this->postgresql_charset_metadata_table_exists = true;
 	}
 
 	/**
@@ -830,6 +853,10 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @return bool Whether the metadata table exists in the current schema.
 	 */
 	private function postgresql_charset_metadata_table_exists(): bool {
+		if ( null !== $this->postgresql_charset_metadata_table_exists ) {
+			return $this->postgresql_charset_metadata_table_exists;
+		}
+
 		try {
 			$stmt = $this->dbh->get_connection()->query(
 				'SELECT EXISTS (
@@ -840,10 +867,12 @@ class WP_PostgreSQL_DB extends wpdb {
 				)',
 				array( self::MYSQL_CHARSET_METADATA_TABLE )
 			);
-			return (bool) $stmt->fetchColumn();
+			$this->postgresql_charset_metadata_table_exists = (bool) $stmt->fetchColumn();
 		} catch ( Throwable $e ) {
-			return false;
+			$this->postgresql_charset_metadata_table_exists = false;
 		}
+
+		return $this->postgresql_charset_metadata_table_exists;
 	}
 
 	/**
@@ -857,31 +886,41 @@ class WP_PostgreSQL_DB extends wpdb {
 			return false;
 		}
 
+		$tablekey = $this->get_postgresql_metadata_key( $table );
+		if ( array_key_exists( $tablekey, $this->postgresql_column_charset_metadata_cache ) ) {
+			return $this->postgresql_column_charset_metadata_cache[ $tablekey ];
+		}
+
 		$temp_schema = $this->get_postgresql_temporary_table_schema( $table );
 		if ( false === $temp_schema ) {
+			$this->postgresql_column_charset_metadata_cache[ $tablekey ] = false;
 			return false;
 		}
 
 		if ( null !== $temp_schema ) {
-			$tablekey = $this->get_postgresql_metadata_key( $table );
 			if ( array_key_exists( $tablekey, $this->postgresql_temporary_charset_metadata ) ) {
-				return $this->postgresql_temporary_charset_metadata[ $tablekey ];
+				$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $this->postgresql_temporary_charset_metadata[ $tablekey ];
+				return $this->postgresql_column_charset_metadata_cache[ $tablekey ];
 			}
 
-			return $this->get_native_postgresql_column_charset_metadata( $table, $temp_schema );
+			$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $this->get_native_postgresql_column_charset_metadata( $table, $temp_schema );
+			return $this->postgresql_column_charset_metadata_cache[ $tablekey ];
 		}
 
 		$columns = $this->get_stored_postgresql_column_charset_metadata( $table );
 		if ( false !== $columns && ! empty( $columns ) ) {
+			$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $columns;
 			return $columns;
 		}
 
 		$columns = $this->get_driver_postgresql_column_charset_metadata( $table );
 		if ( false !== $columns && ! empty( $columns ) ) {
+			$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $columns;
 			return $columns;
 		}
 
-		return $this->get_native_postgresql_column_charset_metadata( $table );
+		$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $this->get_native_postgresql_column_charset_metadata( $table );
+		return $this->postgresql_column_charset_metadata_cache[ $tablekey ];
 	}
 
 	/**
@@ -1862,6 +1901,8 @@ class WP_PostgreSQL_DB extends wpdb {
 			$this->store_postgresql_create_table_charset_metadata( $query );
 		} elseif ( 'drop' === $statement_type ) {
 			$this->delete_postgresql_dropped_table_charset_metadata( $query );
+		} elseif ( in_array( $statement_type, array( 'alter', 'truncate' ), true ) ) {
+			$this->clear_all_postgresql_table_charset_cache();
 		}
 
 		if ( in_array( $statement_type, array( 'create', 'alter', 'truncate', 'drop' ), true ) ) {

@@ -79,6 +79,27 @@ class WP_PostgreSQL_Driver {
 	private $last_postgresql_queries = array();
 
 	/**
+	 * Whether the MySQL metadata side tables were ensured for this connection.
+	 *
+	 * @var bool
+	 */
+	private $mysql_schema_metadata_tables_ensured = false;
+
+	/**
+	 * Resolved backend schema names for MySQL table introspection.
+	 *
+	 * @var array<string, string>
+	 */
+	private $mysql_table_schema_introspection_cache = array();
+
+	/**
+	 * Ordered DML column metadata rows keyed by backend schema and table.
+	 *
+	 * @var array<string, array>
+	 */
+	private $mysql_dml_column_metadata_cache = array();
+
+	/**
 	 * FOUND_ROWS() value for the last SQL_CALC_FOUND_ROWS query.
 	 *
 	 * @var int
@@ -337,6 +358,7 @@ class WP_PostgreSQL_Driver {
 				$drop_query['temporary']
 			);
 			$result           = $this->execute_postgresql_statements( $drop_query['statements'] );
+			$this->maybe_clear_mysql_schema_metadata_table_state( $drop_query['tables'] );
 			$this->delete_mysql_schema_metadata_for_table_targets( $metadata_targets );
 			return $result;
 		}
@@ -742,6 +764,10 @@ class WP_PostgreSQL_Driver {
 	 * Create the MySQL schema metadata tables used by dbDelta emulation.
 	 */
 	private function ensure_mysql_schema_metadata_tables(): void {
+		if ( $this->mysql_schema_metadata_tables_ensured ) {
+			return;
+		}
+
 		$this->connection->query(
 			sprintf(
 				'CREATE TABLE IF NOT EXISTS %s (
@@ -781,6 +807,77 @@ class WP_PostgreSQL_Driver {
 				)',
 				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 			)
+		);
+
+		$this->mysql_schema_metadata_tables_ensured = true;
+	}
+
+	/**
+	 * Clear all cached MySQL metadata derived from side tables.
+	 */
+	private function clear_mysql_metadata_caches(): void {
+		$this->mysql_table_schema_introspection_cache = array();
+		$this->mysql_dml_column_metadata_cache        = array();
+	}
+
+	/**
+	 * Clear cached MySQL metadata for one table.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 */
+	private function clear_mysql_metadata_cache_for_table( string $table_schema, string $table_name ): void {
+		unset( $this->mysql_dml_column_metadata_cache[ $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) ] );
+
+		/*
+		 * Temporary table creation/drop can change which backend schema an
+		 * unqualified MySQL table resolves to, so clear all schema resolutions.
+		 */
+		$this->mysql_table_schema_introspection_cache = array();
+	}
+
+	/**
+	 * Get a cache key for metadata keyed by backend schema and table name.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @return string Cache key.
+	 */
+	private function get_mysql_metadata_cache_key( string $table_schema, string $table_name ): string {
+		return $table_schema . "\0" . $table_name;
+	}
+
+	/**
+	 * Reset metadata side-table state if a query drops the side tables directly.
+	 *
+	 * @param string[] $table_names Dropped table names.
+	 */
+	private function maybe_clear_mysql_schema_metadata_table_state( array $table_names ): void {
+		foreach ( $table_names as $table_name ) {
+			if ( ! $this->is_mysql_schema_metadata_table_name( (string) $table_name ) ) {
+				continue;
+			}
+
+			$this->mysql_schema_metadata_tables_ensured = false;
+			$this->clear_mysql_metadata_caches();
+			return;
+		}
+	}
+
+	/**
+	 * Check whether a table name belongs to the driver's metadata side tables.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether this is a metadata side table.
+	 */
+	private function is_mysql_schema_metadata_table_name( string $table_name ): bool {
+		return in_array(
+			$table_name,
+			array(
+				self::MYSQL_COLUMN_METADATA_TABLE,
+				self::MYSQL_INDEX_METADATA_TABLE,
+			),
+			true
 		);
 	}
 
@@ -886,6 +983,7 @@ class WP_PostgreSQL_Driver {
 			$table_name  = $metadata['table_name'];
 
 			$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $schema_name );
+			$this->clear_mysql_metadata_cache_for_table( $schema_name, $table_name );
 
 			$column_nullable = array();
 			foreach ( $metadata['columns'] as $column ) {
@@ -943,6 +1041,7 @@ class WP_PostgreSQL_Driver {
 				),
 				$params
 			);
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 		}
 	}
 
@@ -1015,6 +1114,7 @@ class WP_PostgreSQL_Driver {
 				),
 				array( $metadata['default'], $table_schema, $table_name, $metadata['column'] )
 			);
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 		}
 	}
 
@@ -1047,6 +1147,7 @@ class WP_PostgreSQL_Driver {
 				$column['extra'] ?? '',
 			)
 		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
 	/**
@@ -1064,6 +1165,7 @@ class WP_PostgreSQL_Driver {
 			),
 			array( $table_schema, $table_name, $column_name )
 		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
 	/**
@@ -2578,8 +2680,16 @@ ORDER BY
 			return $schema_name;
 		}
 
+		$cache_key = $this->get_mysql_metadata_cache_key( $schema_name, $table_name );
+		if ( isset( $this->mysql_table_schema_introspection_cache[ $cache_key ] ) ) {
+			return $this->mysql_table_schema_introspection_cache[ $cache_key ];
+		}
+
 		$temporary_schema = $this->get_active_temporary_table_schema( $table_name );
-		return null === $temporary_schema ? $schema_name : $temporary_schema;
+		$resolved_schema  = null === $temporary_schema ? $schema_name : $temporary_schema;
+
+		$this->mysql_table_schema_introspection_cache[ $cache_key ] = $resolved_schema;
+		return $resolved_schema;
 	}
 
 	/**
@@ -4999,7 +5109,12 @@ WHERE option_name IN (
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
-		$stmt         = $this->connection->query(
+		$cache_key    = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		if ( array_key_exists( $cache_key, $this->mysql_dml_column_metadata_cache ) ) {
+			return $this->mysql_dml_column_metadata_cache[ $cache_key ];
+		}
+
+		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra
 				FROM %s
@@ -5010,7 +5125,8 @@ WHERE option_name IN (
 			array( $table_schema, $table_name )
 		);
 
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$this->mysql_dml_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return $this->mysql_dml_column_metadata_cache[ $cache_key ];
 	}
 
 	/**

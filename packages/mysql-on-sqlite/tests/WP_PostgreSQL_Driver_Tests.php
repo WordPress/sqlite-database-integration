@@ -210,6 +210,65 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests DML column metadata is cached and invalidated after metadata changes.
+	 */
+	public function test_dml_column_metadata_cache_reuses_rows_until_metadata_changes(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query(
+			'CREATE TABLE wptests_cache_dml (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_cache_dml (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				label varchar(20) NOT NULL DEFAULT '',
+				status varchar(20) NOT NULL DEFAULT 'draft',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$metadata_select_count = 0;
+		$connection->set_query_logger(
+			static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
+				if (
+					false !== strpos( $sql, 'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra' )
+					&& false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
+				) {
+					++$metadata_select_count;
+				}
+			}
+		);
+
+		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (1)' ) );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (2)' ) );
+		$this->assertSame( 1, $metadata_select_count );
+
+		$driver->query( "ALTER TABLE wptests_cache_dml ALTER COLUMN status SET DEFAULT 'published'" );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (3)' ) );
+		$this->assertSame( 2, $metadata_select_count );
+
+		$rows = $driver->query( 'SELECT id, label, status FROM wptests_cache_dml ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '1', '', 'draft' ),
+				array( '2', '', 'draft' ),
+				array( '3', '', 'published' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->label, $row->status );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
 	 * Tests non-strict INSERT normalizes invalid date/time literals using MySQL metadata.
 	 */
 	public function test_non_strict_insert_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
