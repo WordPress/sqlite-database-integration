@@ -86,7 +86,19 @@ jobs:
 
       - name: Stop Docker containers
         if: always()
-        run: composer run wp-test-clean
+        env:
+          LOCAL_DB_TYPE: mysql
+          LOCAL_PHP_MEMCACHED: 'false'
+        run: |
+          if [ -f wordpress/docker-compose.yml ]; then
+            cd wordpress
+            if [ -f docker-compose.override.yml ]; then
+              docker compose -f docker-compose.yml -f docker-compose.override.yml down -v --remove-orphans
+            else
+              docker compose -f docker-compose.yml down -v --remove-orphans
+            fi
+            rm -rf src/wp-content/database/.ht.sqlite
+          fi
 
   update-pr-description:
     name: Update PR PHPUnit Progress

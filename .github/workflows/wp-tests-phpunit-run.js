@@ -272,12 +272,9 @@ echo $extension . " is loaded.\\n";
 }
 
 function verifyContainerPhpExtension( service, verifier ) {
-	const runArgs = 'cli' === service ? '--rm --entrypoint php cli' : '--rm php php';
+	const runArgs = 'cli' === service ? [ '--rm', '--entrypoint', 'php', 'cli' ] : [ '--rm', 'php', 'php' ];
 	const containerPath = `/var/www/${ path.basename( verifier ) }`;
-	execSync(
-		`cd wordpress && node tools/local-env/scripts/docker.js run ${ runArgs } ${ containerPath }`,
-		{ stdio: 'inherit' }
-	);
+	runWordPressDockerCompose( [ 'run', ...runArgs, containerPath ] );
 }
 
 function runPhpUnit() {
@@ -302,10 +299,7 @@ function runPhpUnit() {
 			],
 			{
 				cwd: path.join( repositoryRoot, 'wordpress' ),
-				env: {
-					...process.env,
-					COMPOSE_IGNORE_ORPHANS: 'true',
-				},
+				env: getWordPressDockerComposeEnv(),
 				stdio: 'inherit',
 			}
 		);
@@ -352,16 +346,125 @@ function ensureWordPressTestEnvironment() {
 }
 
 function ensurePostgreSqlWordPressTestEnvironment() {
-	execSync(
-		'cd wordpress && npm run env:start && npm run env:install',
+	runWordPressDockerCompose( [ 'up', '-d', 'wordpress-develop' ] );
+	runWordPressDockerCompose( [ 'run', '-T', 'php', 'composer', 'update', '-W' ] );
+	writePostgreSqlWpConfig();
+	writePostgreSqlWpTestsConfig();
+	installPostgreSqlWpImporter();
+}
+
+function runWordPressDockerCompose( args ) {
+	execFileSync(
+		'docker',
+		[
+			'compose',
+			...getWordPressDockerComposeArgs(),
+			...args,
+		],
 		{
-			env: {
-				...process.env,
-				COMPOSE_IGNORE_ORPHANS: 'true',
-			},
+			cwd: path.join( repositoryRoot, 'wordpress' ),
+			env: getWordPressDockerComposeEnv(),
 			stdio: 'inherit',
 		}
 	);
+}
+
+function getWordPressDockerComposeEnv() {
+	return {
+		...process.env,
+		LOCAL_DB_TYPE: process.env.LOCAL_DB_TYPE || 'mysql',
+		LOCAL_PHP_MEMCACHED: process.env.LOCAL_PHP_MEMCACHED || 'false',
+		COMPOSE_IGNORE_ORPHANS: 'true',
+	};
+}
+
+function writePostgreSqlWpConfig() {
+	const wordpressRoot = path.join( repositoryRoot, 'wordpress' );
+	let config = fs.readFileSync( path.join( wordpressRoot, 'wp-config-sample.php' ), 'utf8' );
+	config = config
+		.replace( "define( 'DB_NAME', 'database_name_here' );", "define( 'DB_NAME', 'wordpress_develop' );" )
+		.replace( "define( 'DB_USER', 'username_here' );", "define( 'DB_USER', 'root' );" )
+		.replace( "define( 'DB_PASSWORD', 'password_here' );", "define( 'DB_PASSWORD', 'password' );" )
+		.replace( "define( 'DB_HOST', 'localhost' );", "define( 'DB_HOST', 'postgres' );" )
+		.replace(
+			"define( 'WP_DEBUG', false );",
+			"define( 'WP_DEBUG', " + getPostgreSqlRawConstantValue( 'LOCAL_WP_DEBUG', 'true' ) + " );"
+		)
+		.replace(
+			'/* Add any custom values between this line and the "stop editing" line. */',
+			[
+				'/* Add any custom values between this line and the "stop editing" line. */',
+				'',
+				"define( 'DB_ENGINE', 'postgresql' );",
+				"define( 'DATABASE_ENGINE', 'postgresql' );",
+				"define( 'WP_DEBUG_LOG', " + getPostgreSqlRawConstantValue( 'LOCAL_WP_DEBUG_LOG', 'true' ) + " );",
+				"define( 'WP_DEBUG_DISPLAY', " + getPostgreSqlRawConstantValue( 'LOCAL_WP_DEBUG_DISPLAY', 'true' ) + " );",
+				"define( 'SCRIPT_DEBUG', " + getPostgreSqlRawConstantValue( 'LOCAL_SCRIPT_DEBUG', 'true' ) + " );",
+				"define( 'WP_ENVIRONMENT_TYPE', " + quotePostgreSqlPhpString( getPostgreSqlEnvValue( 'LOCAL_WP_ENVIRONMENT_TYPE', 'local' ) ) + " );",
+				"define( 'WP_DEVELOPMENT_MODE', " + quotePostgreSqlPhpString( getPostgreSqlEnvValue( 'LOCAL_WP_DEVELOPMENT_MODE', 'core' ) ) + " );",
+			].join( '\n' )
+		);
+
+	fs.rmSync( path.join( wordpressRoot, 'src', 'wp-config.php' ), { force: true } );
+	fs.writeFileSync( path.join( wordpressRoot, 'wp-config.php' ), config );
+}
+
+function writePostgreSqlWpTestsConfig() {
+	const wordpressRoot = path.join( repositoryRoot, 'wordpress' );
+	const testConfig = fs.readFileSync( path.join( wordpressRoot, 'wp-tests-config-sample.php' ), 'utf8' )
+		.replace( 'youremptytestdbnamehere', 'wordpress_develop_tests' )
+		.replace( 'yourusernamehere', 'root' )
+		.replace( 'yourpasswordhere', 'password' )
+		.replace( 'localhost', 'postgres' )
+		.replace(
+			"'WP_TESTS_DOMAIN', 'example.org'",
+			"'WP_TESTS_DOMAIN', " + quotePostgreSqlPhpString( getPostgreSqlEnvValue( 'LOCAL_WP_TESTS_DOMAIN', 'example.org' ) )
+		)
+		.concat( "\ndefine( 'DB_ENGINE', 'postgresql' );\n" )
+		.concat( "define( 'DATABASE_ENGINE', 'postgresql' );\n" )
+		.concat( "define( 'FS_METHOD', 'direct' );\n" );
+
+	fs.writeFileSync( path.join( wordpressRoot, 'wp-tests-config.php' ), testConfig );
+}
+
+function installPostgreSqlWpImporter() {
+	const wordpressRoot = path.join( repositoryRoot, 'wordpress' );
+	const testPluginDirectory = path.join( 'tests', 'phpunit', 'data', 'plugins', 'wordpress-importer' );
+	if ( fs.existsSync( path.join( wordpressRoot, testPluginDirectory, 'wordpress-importer.php' ) ) ) {
+		return;
+	}
+
+	fs.rmSync( path.join( wordpressRoot, testPluginDirectory ), { recursive: true, force: true } );
+	execFileSync(
+		'git',
+		[
+			'clone',
+			'https://github.com/WordPress/wordpress-importer.git',
+			testPluginDirectory,
+			'--depth=1',
+		],
+		{
+			cwd: wordpressRoot,
+			stdio: 'inherit',
+		}
+	);
+}
+
+function getPostgreSqlEnvValue( name, defaultValue ) {
+	return process.env[ name ] || defaultValue;
+}
+
+function getPostgreSqlRawConstantValue( name, defaultValue ) {
+	const value = getPostgreSqlEnvValue( name, defaultValue );
+	if ( /^(?:true|false|null|[0-9]+)$/i.test( value ) ) {
+		return value.toLowerCase();
+	}
+
+	throw new Error( `Unsupported raw constant value for ${ name }: ${ value }` );
+}
+
+function quotePostgreSqlPhpString( value ) {
+	return "'" + String( value ).replace( /\\/g, '\\\\' ).replace( /'/g, "\\'" ) + "'";
 }
 
 function ensureGeneratedBackendFiles() {
@@ -390,6 +493,7 @@ function runWordPressSetup() {
 		env: {
 			...process.env,
 			WP_TEST_DB_BACKEND: backend,
+			...( 'postgresql' === backend ? { WP_TEST_SKIP_WORDPRESS_NPM: '1' } : {} ),
 		},
 		stdio: 'inherit',
 	} );
@@ -622,80 +726,66 @@ function removeStaleTestOutput( file ) {
 }
 
 function readJunitTestcases( junitOutputFile ) {
-	const parserPath = require.resolve( 'fast-xml-parser', {
-		paths: [
-			path.join( repositoryRoot, 'wordpress', 'node_modules' ),
-			repositoryRoot,
-		],
-	} );
-	const { XMLParser } = require( parserPath );
-	const parser = new XMLParser( {
-		attributeNamePrefix: '',
-		ignoreAttributes: false,
-		isArray: name => [
-			'testsuite',
-			'testcase',
-			'error',
-			'failure',
-			'skipped',
-			'incomplete',
-			'risky',
-			'warning',
-		].includes( name ),
-	} );
 	const junitXml = fs.readFileSync( junitOutputFile, 'utf8' );
-	const parsed = parser.parse( junitXml );
 	const testcases = [];
-	collectTestcases( parsed, testcases, false );
-	return testcases.map( normalizeTestcase );
+	const testcasePattern = /<testcase\b([^>]*)\/>|<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/g;
+	let match;
+
+	while ( ( match = testcasePattern.exec( junitXml ) ) !== null ) {
+		const attributes = parseXmlAttributes( match[1] || match[2] || '' );
+		const body = match[3] || '';
+		const className = attributes.class || '';
+		const testName = attributes.name || '';
+		const fullName = className ? `${ className }::${ testName }` : testName;
+
+		testcases.push( {
+			name: fullName,
+			hasError: hasJunitChild( body, 'error' ),
+			hasFailure: hasJunitChild( body, 'failure' ),
+			hasSkipped: hasJunitChild( body, 'skipped' ),
+			hasIncomplete: hasJunitChild( body, 'incomplete' ),
+			hasRisky: hasJunitChild( body, 'risky' ),
+			hasWarning: hasJunitChild( body, 'warning' ),
+		} );
+	}
+
+	return testcases;
 }
 
-function collectTestcases( node, testcases, isTestcase ) {
-	if ( Array.isArray( node ) ) {
-		node.forEach( child => collectTestcases( child, testcases, isTestcase ) );
-		return;
+function parseXmlAttributes( attributesXml ) {
+	const attributes = {};
+	const attributePattern = /([A-Za-z_:][A-Za-z0-9_.:-]*)="([^"]*)"/g;
+	let match;
+
+	while ( ( match = attributePattern.exec( attributesXml ) ) !== null ) {
+		attributes[ match[1] ] = decodeXmlEntities( match[2] );
 	}
 
-	if ( ! node || typeof node !== 'object' ) {
-		return;
-	}
-
-	if ( isTestcase ) {
-		testcases.push( node );
-		return;
-	}
-
-	if ( node.testcase ) {
-		collectTestcases( node.testcase, testcases, true );
-	}
-
-	if ( node.testsuite ) {
-		collectTestcases( node.testsuite, testcases, false );
-	}
-
-	if ( node.testsuites ) {
-		collectTestcases( node.testsuites, testcases, false );
-	}
+	return attributes;
 }
 
-function normalizeTestcase( testcase ) {
-	const className = testcase.class || '';
-	const testName = testcase.name || '';
-	const fullName = className ? `${ className }::${ testName }` : testName;
-
-	return {
-		name: fullName,
-		hasError: hasChild( testcase, 'error' ),
-		hasFailure: hasChild( testcase, 'failure' ),
-		hasSkipped: hasChild( testcase, 'skipped' ),
-		hasIncomplete: hasChild( testcase, 'incomplete' ),
-		hasRisky: hasChild( testcase, 'risky' ),
-		hasWarning: hasChild( testcase, 'warning' ),
-	};
+function hasJunitChild( body, childName ) {
+	return new RegExp( `<${ childName }(?:[\\s>/])` ).test( body );
 }
 
-function hasChild( testcase, childName ) {
-	return Array.isArray( testcase[ childName ] ) && testcase[ childName ].length > 0;
+function decodeXmlEntities( value ) {
+	return String( value ).replace( /&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi, entity => {
+		const normalized = entity.slice( 1, -1 ).toLowerCase();
+		if ( normalized.startsWith( '#x' ) ) {
+			return String.fromCodePoint( parseInt( normalized.slice( 2 ), 16 ) );
+		}
+		if ( normalized.startsWith( '#' ) ) {
+			return String.fromCodePoint( parseInt( normalized.slice( 1 ), 10 ) );
+		}
+
+		return {
+			amp: '&',
+			lt: '<',
+			gt: '>',
+			quot: '"',
+			apos: "'",
+		}[ normalized ];
+	} );
 }
 
 function summarizeTestcases( testcases ) {

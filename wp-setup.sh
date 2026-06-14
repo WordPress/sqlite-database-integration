@@ -10,6 +10,7 @@ set -e
 
 WP_VERSION="6.7.2"
 WP_TEST_DB_BACKEND="${WP_TEST_DB_BACKEND:-${1:-sqlite}}"
+WP_TEST_SKIP_WORDPRESS_NPM="${WP_TEST_SKIP_WORDPRESS_NPM:-0}"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 WP_DIR="$DIR/wordpress"
@@ -470,6 +471,10 @@ NODE
 fi
 
 # 6. Install dependencies.
-echo "Installing dependencies..."
-npm --prefix "$WP_DIR" install
-npm --prefix "$WP_DIR" run build:dev
+if [ "$WP_TEST_DB_BACKEND" = "postgresql" ] && [ "$WP_TEST_SKIP_WORDPRESS_NPM" = "1" ]; then
+	echo "Skipping WordPress npm install and JavaScript build for PostgreSQL PHP tests..."
+else
+	echo "Installing dependencies..."
+	npm --prefix "$WP_DIR" install
+	npm --prefix "$WP_DIR" run build:dev
+fi
