@@ -6834,6 +6834,124 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests USE accepts main database identifiers without backend execution.
+	 */
+	public function test_use_statement_accepts_main_database_identifiers_without_backend_execution(): void {
+		$queries = array(
+			'USE wptests',
+			'USE `wptests`',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( array(), $driver->get_last_column_meta(), $query );
+
+			$database = $driver->query( 'SELECT DATABASE()' );
+
+			$this->assertSame( 'wptests', $database[0]->{'DATABASE()'}, $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( 'DATABASE()', $driver->get_last_column_meta()[0]['name'], $query );
+		}
+	}
+
+	/**
+	 * Tests USE information_schema changes current database state without backend execution.
+	 */
+	public function test_use_statement_accepts_information_schema_without_backend_execution(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+
+		$database = $driver->query( 'SELECT DATABASE()' );
+
+		$this->assertSame( 'information_schema', $database[0]->{'DATABASE()'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$tables = $driver->query( 'SHOW TABLES' );
+
+		$this->assertCount( 3, $tables );
+		$this->assertSame( 'Tables_in_information_schema', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 'wptests_options', $tables[0]->Tables_in_information_schema );
+		$this->assertStringNotContainsString( 'SHOW TABLES', $driver->get_last_postgresql_queries()[0]['sql'] );
+
+		$databases = $driver->query( 'SHOW DATABASES' );
+
+		$this->assertEquals(
+			array(
+				(object) array( 'Database' => 'information_schema' ),
+				(object) array( 'Database' => 'wptests' ),
+			),
+			$databases
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests unsupported USE database names fail before backend execution.
+	 */
+	public function test_use_statement_rejects_unsupported_database_before_backend_execution(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'USE other_db' );
+			$this->fail( 'Expected unsupported USE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported USE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$database = $driver->query( 'SELECT DATABASE()' );
+
+		$this->assertSame( 'wptests', $database[0]->{'DATABASE()'} );
+	}
+
+	/**
+	 * Tests USE can switch back from information_schema to the main database.
+	 */
+	public function test_use_statement_switches_back_to_main_database(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+		$this->assertSame( 0, $driver->query( 'USE `wptests`' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$database = $driver->query( 'SELECT DATABASE()' );
+
+		$this->assertSame( 'wptests', $database[0]->{'DATABASE()'} );
+
+		$tables = $driver->query( 'SHOW TABLES' );
+
+		$this->assertCount( 3, $tables );
+		$this->assertSame( 'Tables_in_wptests', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 'wptests_options', $tables[0]->Tables_in_wptests );
+	}
+
+	/**
+	 * Tests information_schema table SELECTs fail closed until routing is implemented.
+	 */
+	public function test_use_statement_information_schema_table_selects_fail_closed(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		try {
+			$driver->query( 'SELECT * FROM tables' );
+			$this->fail( 'Expected information_schema SELECT to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests table administration statements return MySQL-shaped success rows.
 	 */
 	public function test_table_administration_statements_return_mysql_shaped_success_rows(): void {

@@ -59,7 +59,14 @@ class WP_PostgreSQL_Driver {
 	private $connection;
 
 	/**
-	 * MySQL-facing database name.
+	 * Configured main MySQL-facing database name.
+	 *
+	 * @var string
+	 */
+	private $main_db_name;
+
+	/**
+	 * Current MySQL-facing database name.
 	 *
 	 * @var string
 	 */
@@ -269,9 +276,10 @@ class WP_PostgreSQL_Driver {
 		string $database,
 		int $mysql_version = 80038
 	) {
-		$this->connection  = $connection;
-		$this->db_name     = $database;
-		$this->client_info = $this->read_server_version();
+		$this->connection   = $connection;
+		$this->main_db_name = $database;
+		$this->db_name      = $database;
+		$this->client_info  = $this->read_server_version();
 
 		$connection->get_pdo()->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
@@ -403,6 +411,11 @@ class WP_PostgreSQL_Driver {
 			return $this->last_result;
 		}
 
+		$use_database_name = $this->get_mysql_use_database_name( $query );
+		if ( null !== $use_database_name ) {
+			return $this->execute_mysql_use_statement( $use_database_name );
+		}
+
 		$transaction_control_query = $this->get_mysql_transaction_control_query( $query );
 		if ( null !== $transaction_control_query ) {
 			return $this->execute_mysql_transaction_control_query( $transaction_control_query );
@@ -434,6 +447,16 @@ class WP_PostgreSQL_Driver {
 			return $this->last_result;
 		}
 
+		$database_function_column = $this->get_mysql_database_function_select_column( $query );
+		if ( null !== $database_function_column ) {
+			return $this->set_mysql_static_show_result(
+				array( $database_function_column ),
+				array( array( $database_function_column => $this->db_name ) ),
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
 		$show_variables_query = $this->get_show_variables_query( $query );
 		if ( null !== $show_variables_query ) {
 			return $this->execute_show_variables_query( $show_variables_query, $fetch_mode, ...$fetch_mode_args );
@@ -447,6 +470,10 @@ class WP_PostgreSQL_Driver {
 		$show_databases_query = $this->get_show_databases_query( $query );
 		if ( null !== $show_databases_query ) {
 			return $this->execute_show_databases_query( $show_databases_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
+		if ( $this->should_reject_information_schema_backend_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 		}
 
 		if ( $this->is_found_rows_query( $query ) ) {
@@ -3052,6 +3079,26 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Get the target database from a supported MySQL USE statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Target database name, or null when this is not USE.
+	 */
+	private function get_mysql_use_database_name( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::USE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$database_name = $this->get_mysql_identifier_token_value( $tokens[1] ?? null );
+		if ( null === $database_name || ! $this->is_at_mysql_query_end( $tokens, 2 ) ) {
+			throw new InvalidArgumentException( 'Unsupported USE statement.' );
+		}
+
+		return $database_name;
+	}
+
+	/**
 	 * Get the table name from a supported MySQL DESCRIBE/DESC statement.
 	 *
 	 * @param string $query MySQL query.
@@ -3144,7 +3191,8 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$position = 3;
+		$position      = 3;
+		$database_name = $this->db_name;
 		if (
 			isset( $tokens[ $position ] )
 			&& (
@@ -3153,11 +3201,15 @@ class WP_PostgreSQL_Driver {
 			)
 		) {
 			$database_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-			if ( null === $database_name || 0 !== strcasecmp( $database_name, $this->db_name ) ) {
+			if ( null === $database_name ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
 			}
 
 			$position += 2;
+		}
+
+		if ( 0 !== strcasecmp( $database_name, $this->main_db_name ) ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
 		}
 
 		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -4040,6 +4092,28 @@ ORDER BY ordinal_position';
 	}
 
 	/**
+	 * Execute a supported MySQL USE statement in session state.
+	 *
+	 * @param string $database_name Requested MySQL-facing database name.
+	 * @return int MySQL-compatible affected row count.
+	 */
+	private function execute_mysql_use_statement( string $database_name ): int {
+		if ( 0 === strcasecmp( $database_name, $this->main_db_name ) ) {
+			$this->db_name     = $this->main_db_name;
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
+		if ( 0 === strcasecmp( $database_name, 'information_schema' ) ) {
+			$this->db_name     = 'information_schema';
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
+		throw new InvalidArgumentException( 'Unsupported USE statement.' );
+	}
+
+	/**
 	 * Execute a MySQL SHOW TABLES statement through PostgreSQL catalogs.
 	 *
 	 * @param bool        $is_full          Whether this is SHOW FULL TABLES.
@@ -4564,7 +4638,7 @@ ORDER BY table_name';
 		$rows = $this->filter_mysql_static_show_rows(
 			array(
 				array( 'Database' => 'information_schema' ),
-				array( 'Database' => $this->db_name ),
+				array( 'Database' => $this->main_db_name ),
 			),
 			$show_databases_query
 		);
@@ -12939,6 +13013,58 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Check whether a query must fail closed while information_schema is selected.
+	 *
+	 * The PostgreSQL backend does not use MySQL database state for unqualified
+	 * names. Without broad information_schema routing, table-scoped statements
+	 * under USE information_schema would otherwise target public tables.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query should be rejected before backend execution.
+	 */
+	private function should_reject_information_schema_backend_query( string $query ): bool {
+		if ( 0 !== strcasecmp( $this->db_name, 'information_schema' ) ) {
+			return false;
+		}
+
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return in_array(
+				$tokens[0]->id,
+				array(
+					WP_MySQL_Lexer::ALTER_SYMBOL,
+					WP_MySQL_Lexer::CREATE_SYMBOL,
+					WP_MySQL_Lexer::DESCRIBE_SYMBOL,
+					WP_MySQL_Lexer::DELETE_SYMBOL,
+					WP_MySQL_Lexer::DESC_SYMBOL,
+					WP_MySQL_Lexer::DROP_SYMBOL,
+					WP_MySQL_Lexer::INSERT_SYMBOL,
+					WP_MySQL_Lexer::REPLACE_SYMBOL,
+					WP_MySQL_Lexer::TRUNCATE_SYMBOL,
+					WP_MySQL_Lexer::UPDATE_SYMBOL,
+				),
+				true
+			);
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return true;
+		}
+
+		return null !== $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			1,
+			$statement_end
+		);
+	}
+
+	/**
 	 * Add explicit aliases to multi-expression COUNT aggregate projections.
 	 *
 	 * PostgreSQL labels every unaliased COUNT expression as "count". WordPress
@@ -18849,6 +18975,28 @@ WHERE option_name IN (
 		}
 
 		return '@@' . $tokens[2]->get_value() . '.' . $tokens[4]->get_value();
+	}
+
+	/**
+	 * Get the result column name from a supported SELECT DATABASE() query.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Result column name, or null when unsupported.
+	 */
+	private function get_mysql_database_function_select_column( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1], $tokens[2], $tokens[3] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::DATABASE_SYMBOL !== $tokens[1]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[2]->id
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[3]->id
+			|| ! $this->is_at_mysql_query_end( $tokens, 4 )
+		) {
+			return null;
+		}
+
+		return $tokens[1]->get_value() . '()';
 	}
 
 	/**
