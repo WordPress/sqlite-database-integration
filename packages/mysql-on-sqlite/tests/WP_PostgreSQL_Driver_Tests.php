@@ -1087,6 +1087,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests approved comment ID lookups ordered by GMT date use comment_ID as a tie-breaker.
+	 */
+	public function test_simple_select_approved_comment_ids_order_uses_comment_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY, "comment_post_ID" INTEGER NOT NULL, comment_date_gmt TEXT NOT NULL, comment_approved TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (184, 7, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (180, 7, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (181, 7, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (183, 8, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (185, 7, \'2024-01-01 00:00:00\', \'0\')' );
+
+		$select = "SELECT wptests_comments.comment_ID
+			FROM wptests_comments
+			WHERE comment_post_ID = 7 AND comment_approved = '1'
+			ORDER BY wptests_comments.comment_date_gmt ASC";
+		$rows   = $driver->query( $select );
+
+		$this->assertSame(
+			array( '180', '181', '184' ),
+			array_map(
+				static function ( $row ) {
+					return $row->comment_ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_comments."comment_ID" FROM wptests_comments WHERE "comment_post_ID" = 7 AND comment_approved = \'1\' ORDER BY wptests_comments.comment_date_gmt ASC, "comment_ID" ASC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests MySQL offset,count LIMIT syntax is translated to PostgreSQL.
 	 */
 	public function test_simple_select_with_mysql_offset_count_limit_is_translated_to_postgresql(): void {

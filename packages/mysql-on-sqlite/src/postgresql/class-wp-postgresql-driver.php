@@ -6910,9 +6910,8 @@ WHERE option_name IN (
 	private function translate_wordpress_approved_comments_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
-			! isset( $tokens[0], $tokens[1] )
+			! isset( $tokens[0] )
 			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::MULT_OPERATOR !== $tokens[1]->id
 		) {
 			return null;
 		}
@@ -6932,7 +6931,7 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, 2, $select_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 2, $select_end );
 		if (
-			2 !== $from_position
+			null === $from_position
 			|| null === $where_position
 			|| null === $order_position
 			|| $from_position + 2 !== $where_position
@@ -6940,6 +6939,7 @@ WHERE option_name IN (
 			|| $order_position + 2 >= $select_end
 			|| ! isset( $tokens[ $order_position + 1 ] )
 			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
+			|| ! $this->is_supported_simple_select_projection( $tokens, 1, $from_position )
 		) {
 			return null;
 		}
@@ -6978,7 +6978,8 @@ WHERE option_name IN (
 		);
 
 		$sql = sprintf(
-			'SELECT * FROM %s WHERE %s ORDER BY %s, %s',
+			'SELECT %s FROM %s WHERE %s ORDER BY %s, %s',
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 1, $from_position ),
 			$this->translate_mysql_identifier_token_to_postgresql( $table_token ),
 			$where_sql['sql'],
 			$order_sql['sql'],
@@ -11011,22 +11012,23 @@ WHERE option_name IN (
 			return true;
 		}
 
-		for ( $i = $start; $i < $end; $i++ ) {
-			if ( null === $this->get_mysql_identifier_token_value( $tokens[ $i ] ?? null ) ) {
-				return false;
-			}
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $projection_ranges ) {
+			return false;
+		}
 
-			++$i;
-			if ( $i >= $end ) {
-				return true;
-			}
-
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $i ]->id ) {
+		foreach ( $projection_ranges as $projection_range ) {
+			$reference = $this->parse_mysql_column_reference(
+				$tokens,
+				$projection_range['start'],
+				$projection_range['end']
+			);
+			if ( null === $reference || $reference['end'] !== $projection_range['end'] ) {
 				return false;
 			}
 		}
 
-		return false;
+		return true;
 	}
 
 	/**
