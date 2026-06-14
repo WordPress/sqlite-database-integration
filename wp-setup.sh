@@ -246,6 +246,7 @@ if [ "$WP_TEST_DB_BACKEND" != "mysql" ]; then
 	sed -i.bak "s#'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'#__DIR__.'/plugins/sqlite-database-integration'#g" "$WP_DIR"/src/wp-content/db.php
 	sed -i.bak "s#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g" "$WP_DIR"/src/wp-content/db.php
 	sed -i.bak "s#{DATABASE_ENGINE}#$WP_TEST_DB_BACKEND#g" "$WP_DIR"/src/wp-content/db.php
+	rm -f "$WP_DIR"/src/wp-content/db.php.bak
 else
 	echo "Using WordPress default MySQL test database."
 	rm -f "$WP_DIR"/src/wp-content/db.php
@@ -255,10 +256,12 @@ if [ "$WP_TEST_DB_BACKEND" = "sqlite" ]; then
 	# 5. Rewrite helper class WpdbExposedMethodsForTesting to extend WP_SQLite_DB.
 	echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_SQLite_DB..."
 	sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExposedMethodsForTesting extends WP_SQLite_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
+	rm -f "$WP_DIR"/tests/phpunit/includes/utils.php.bak
 elif [ "$WP_TEST_DB_BACKEND" = "postgresql" ]; then
 	# 5. Rewrite helper class WpdbExposedMethodsForTesting to extend WP_PostgreSQL_DB.
 	echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_PostgreSQL_DB..."
 	sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#require_once ABSPATH . 'wp-content/plugins/sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';\nclass WpdbExposedMethodsForTesting extends WP_PostgreSQL_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
+	rm -f "$WP_DIR"/tests/phpunit/includes/utils.php.bak
 
 	echo "Rewriting WordPress local-env install script for PostgreSQL..."
 	node - "$WP_DIR/tools/local-env/scripts/install.js" << 'NODE'
