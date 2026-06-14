@@ -35,6 +35,11 @@ class WP_PostgreSQL_Driver {
 	private const PDO_FETCH_STYLE_MASK = 0x0f;
 
 	/**
+	 * Hidden column used to carry FOUND_ROWS() accounting with a paged result.
+	 */
+	private const SQL_CALC_FOUND_ROWS_WINDOW_COLUMN = '__wp_pg_found_rows';
+
+	/**
 	 * Maximum number of exact MySQL query translations cached per connection.
 	 */
 	private const MYSQL_QUERY_TRANSLATION_CACHE_LIMIT = 256;
@@ -73,6 +78,30 @@ class WP_PostgreSQL_Driver {
 	 * @var array
 	 */
 	private $last_column_meta = array();
+
+	/**
+	 * Number of exposed columns for the last result set.
+	 *
+	 * This is tracked separately so callers can ask for the column count without
+	 * forcing PDO metadata normalization for common WordPress result fetches.
+	 *
+	 * @var int
+	 */
+	private $last_column_count = 0;
+
+	/**
+	 * Statement whose column metadata can be normalized lazily.
+	 *
+	 * @var PDOStatement|null
+	 */
+	private $last_column_meta_statement = null;
+
+	/**
+	 * Lazy metadata column names hidden from MySQL-facing callers.
+	 *
+	 * @var array
+	 */
+	private $last_column_meta_excluded_names = array();
 
 	/**
 	 * Incoming MySQL-dialect query for the last request.
@@ -556,9 +585,17 @@ class WP_PostgreSQL_Driver {
 
 		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
 		$sql_calc_found_rows_query    = $is_sql_calc_found_rows_query ? $query : null;
+		$sql_calc_found_rows_window   = false;
 
 		if ( ! $translated_for_postgresql ) {
-			if ( $this->is_mysql_select_translation_cacheable_query( $query ) ) {
+			$translated_query = null !== $sql_calc_found_rows_query && $this->is_sql_calc_found_rows_window_fetch_mode( $fetch_mode )
+				? $this->translate_sql_calc_found_rows_window_select_query( $query )
+				: null;
+			if ( null !== $translated_query ) {
+				$query                      = $translated_query;
+				$translated_for_postgresql  = true;
+				$sql_calc_found_rows_window = true;
+			} elseif ( $this->is_mysql_select_translation_cacheable_query( $query ) ) {
 				$select_translation        = $this->get_mysql_select_query_translation( $query );
 				$query                     = $select_translation['sql'];
 				$translated_for_postgresql = $select_translation['translated'];
@@ -582,17 +619,24 @@ class WP_PostgreSQL_Driver {
 
 		$affected_rows = $stmt->rowCount();
 
-		if ( $stmt->columnCount() > 0 ) {
-			$this->last_column_meta = $this->normalize_column_meta( $stmt );
-			$this->last_result      = $this->decode_postgresql_text_for_mysql_in_result(
+		$column_count = $stmt->columnCount();
+		if ( $column_count > 0 ) {
+			$this->set_lazy_last_column_meta( $stmt, $column_count );
+			$this->last_result = $this->decode_postgresql_text_for_mysql_in_result(
 				$stmt->fetchAll( $fetch_mode, ...$fetch_mode_args )
 			);
-			if ( null !== $sql_calc_found_rows_query ) {
+			if ( $sql_calc_found_rows_window ) {
+				$found_rows = $this->extract_sql_calc_found_rows_window_result( $this->last_result );
+				$this->remove_sql_calc_found_rows_window_column_meta();
+				$this->last_found_rows = null === $found_rows && null !== $sql_calc_found_rows_query
+					? $this->execute_sql_calc_found_rows_count_query( $sql_calc_found_rows_query )
+					: (int) $found_rows;
+			} elseif ( null !== $sql_calc_found_rows_query ) {
 				$this->last_found_rows = $this->execute_sql_calc_found_rows_count_query( $sql_calc_found_rows_query );
 			}
 		} else {
-			$this->last_column_meta = array();
-			$this->last_result      = $affected_rows;
+			$this->clear_last_column_meta();
+			$this->last_result = $affected_rows;
 			if ( null !== $replace_return_value ) {
 				$this->last_result = $replace_return_value;
 			}
@@ -994,6 +1038,173 @@ class WP_PostgreSQL_Driver {
 		);
 
 		$this->limit_mysql_query_translation_cache( $this->mysql_sql_calc_found_rows_count_query_cache );
+	}
+
+	/**
+	 * Check whether a fetch mode can hide the internal FOUND_ROWS window column.
+	 *
+	 * @param int $fetch_mode PDO fetch mode.
+	 * @return bool Whether the hidden window column can be removed safely.
+	 */
+	private function is_sql_calc_found_rows_window_fetch_mode( $fetch_mode ): bool {
+		$fetch_style = (int) $fetch_mode & self::PDO_FETCH_STYLE_MASK;
+		return in_array( $fetch_style, array( PDO::FETCH_OBJ, PDO::FETCH_ASSOC ), true );
+	}
+
+	/**
+	 * Translate a simple SQL_CALC_FOUND_ROWS SELECT using one PostgreSQL query.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query carrying a hidden FOUND_ROWS value, or null.
+	 */
+	private function translate_sql_calc_found_rows_window_select_query( string $query ): ?string {
+		if ( false !== stripos( $query, self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN ) ) {
+			return null;
+		}
+
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$projection_start = 2;
+		$statement_end    = $this->get_mysql_statement_end_position( $tokens, $projection_start );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$limit_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			return null;
+		}
+
+		$select_end = $limit_position ?? $statement_end;
+		if (
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				$projection_start,
+				$select_end,
+				array(
+					WP_MySQL_Lexer::DISTINCT_SYMBOL,
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			$projection_start,
+			$select_end
+		);
+		if ( null === $from_position || $projection_start === $from_position ) {
+			return null;
+		}
+
+		if ( $this->contains_mysql_aggregate_call( $tokens, $projection_start, $from_position ) ) {
+			return null;
+		}
+
+		$replacements = $this->get_mysql_select_statement_contextual_replacements(
+			$tokens,
+			$projection_start,
+			$select_end
+		) ?? array();
+
+		$sql = sprintf(
+			'SELECT %s, COUNT(*) OVER() AS %s %s',
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $from_position ),
+			$this->connection->quote_identifier( self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN ),
+			$this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				$from_position,
+				$select_end,
+				$replacements
+			)
+		);
+
+		if ( null !== $limit_position ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Extract and remove the hidden FOUND_ROWS window column from result rows.
+	 *
+	 * @param mixed $rows Result rows.
+	 * @return int|null FOUND_ROWS value, or null when the fallback count is needed.
+	 */
+	private function extract_sql_calc_found_rows_window_result( &$rows ): ?int {
+		if ( ! is_array( $rows ) || empty( $rows ) ) {
+			return null;
+		}
+
+		$found_rows = null;
+		$column     = self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN;
+		foreach ( $rows as &$row ) {
+			if ( is_object( $row ) ) {
+				if ( ! property_exists( $row, $column ) ) {
+					return null;
+				}
+
+				$found_rows = (int) $row->{$column};
+				unset( $row->{$column} );
+				continue;
+			}
+
+			if ( ! is_array( $row ) || ! array_key_exists( $column, $row ) ) {
+				return null;
+			}
+
+			$found_rows = (int) $row[ $column ];
+			unset( $row[ $column ] );
+		}
+		unset( $row );
+
+		return $found_rows;
+	}
+
+	/**
+	 * Remove hidden FOUND_ROWS metadata before exposing column metadata to wpdb.
+	 */
+	private function remove_sql_calc_found_rows_window_column_meta(): void {
+		if ( null !== $this->last_column_meta_statement ) {
+			$this->last_column_meta_excluded_names[ self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN ] = true;
+			$this->last_column_count = max( 0, $this->last_column_count - 1 );
+			return;
+		}
+
+		foreach ( $this->last_column_meta as $index => $column_meta ) {
+			if ( self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN !== ( $column_meta['name'] ?? '' ) ) {
+				continue;
+			}
+
+			unset( $this->last_column_meta[ $index ] );
+			$this->last_column_meta = array_values( $this->last_column_meta );
+			return;
+		}
 	}
 
 	/**
@@ -4111,6 +4322,10 @@ show_index_rows AS (
 	 * @return int
 	 */
 	public function get_last_column_count(): int {
+		if ( null !== $this->last_column_meta_statement ) {
+			return $this->last_column_count;
+		}
+
 		return count( $this->last_column_meta );
 	}
 
@@ -4120,6 +4335,7 @@ show_index_rows AS (
 	 * @return array
 	 */
 	public function get_last_column_meta(): array {
+		$this->materialize_last_column_meta();
 		return $this->last_column_meta;
 	}
 
@@ -4160,10 +4376,53 @@ show_index_rows AS (
 	 * Reset per-query state.
 	 */
 	private function reset_query_state(): void {
-		$this->last_result             = null;
-		$this->last_column_meta        = array();
-		$this->last_mysql_query        = null;
-		$this->last_postgresql_queries = array();
+		$this->last_result                     = null;
+		$this->last_column_meta                = array();
+		$this->last_column_count               = 0;
+		$this->last_column_meta_statement      = null;
+		$this->last_column_meta_excluded_names = array();
+		$this->last_mysql_query                = null;
+		$this->last_postgresql_queries         = array();
+	}
+
+	/**
+	 * Clear column metadata for a non-result statement.
+	 */
+	private function clear_last_column_meta(): void {
+		$this->last_column_meta                = array();
+		$this->last_column_count               = 0;
+		$this->last_column_meta_statement      = null;
+		$this->last_column_meta_excluded_names = array();
+	}
+
+	/**
+	 * Store a statement for lazy column metadata normalization.
+	 *
+	 * @param PDOStatement $stmt         Statement with result columns.
+	 * @param int          $column_count Number of result columns.
+	 */
+	private function set_lazy_last_column_meta( PDOStatement $stmt, int $column_count ): void {
+		$this->last_column_meta                = array();
+		$this->last_column_count               = $column_count;
+		$this->last_column_meta_statement      = $stmt;
+		$this->last_column_meta_excluded_names = array();
+	}
+
+	/**
+	 * Normalize deferred column metadata when a caller actually needs it.
+	 */
+	private function materialize_last_column_meta(): void {
+		if ( null === $this->last_column_meta_statement ) {
+			return;
+		}
+
+		$this->last_column_meta                = $this->normalize_column_meta(
+			$this->last_column_meta_statement,
+			$this->last_column_meta_excluded_names
+		);
+		$this->last_column_count               = count( $this->last_column_meta );
+		$this->last_column_meta_statement      = null;
+		$this->last_column_meta_excluded_names = array();
 	}
 
 	/**
@@ -11379,6 +11638,40 @@ WHERE option_name IN (
 		int $statement_end,
 		bool $require_contextual_change
 	): ?string {
+		$replacements = $this->get_mysql_select_statement_contextual_replacements(
+			$tokens,
+			$projection_start,
+			$statement_end
+		);
+		if ( null === $replacements ) {
+			return null;
+		}
+
+		if ( $require_contextual_change && empty( $replacements ) ) {
+			return null;
+		}
+
+		return 'SELECT ' . $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			$projection_start,
+			$statement_end,
+			$replacements
+		);
+	}
+
+	/**
+	 * Get metadata-backed replacements for SELECT WHERE and ORDER BY clauses.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $projection_start First token after SELECT modifiers to render.
+	 * @param int              $statement_end    Final statement token position, exclusive.
+	 * @return array[]|null Replacement ranges, or null when contextual rewriting is unavailable.
+	 */
+	private function get_mysql_select_statement_contextual_replacements(
+		array $tokens,
+		int $projection_start,
+		int $statement_end
+	): ?array {
 		$where_position = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::WHERE_SYMBOL,
@@ -11504,16 +11797,7 @@ WHERE option_name IN (
 			}
 		}
 
-		if ( $require_contextual_change && empty( $replacements ) ) {
-			return null;
-		}
-
-		return 'SELECT ' . $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
-			$tokens,
-			$projection_start,
-			$statement_end,
-			$replacements
-		);
+		return $replacements;
 	}
 
 	/**
@@ -16475,17 +16759,23 @@ WHERE option_name IN (
 	/**
 	 * Normalize PDO column metadata into the MySQLi-shaped fields wpdb expects.
 	 *
-	 * @param PDOStatement $stmt The statement to inspect.
+	 * @param PDOStatement $stmt           The statement to inspect.
+	 * @param array        $excluded_names Column names hidden from callers.
 	 * @return array
 	 */
-	private function normalize_column_meta( PDOStatement $stmt ): array {
+	private function normalize_column_meta( PDOStatement $stmt, array $excluded_names = array() ): array {
 		$meta = array();
 		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
 			$column_meta = $stmt->getColumnMeta( $i );
 			if ( ! is_array( $column_meta ) ) {
 				$column_meta = array();
 			}
-			$meta[] = $this->normalize_single_column_meta( $column_meta );
+			$normalized_column_meta = $this->normalize_single_column_meta( $column_meta );
+			if ( isset( $excluded_names[ $normalized_column_meta['name'] ] ) ) {
+				continue;
+			}
+
+			$meta[] = $normalized_column_meta;
 		}
 		return $meta;
 	}
