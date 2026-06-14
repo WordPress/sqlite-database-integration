@@ -3077,6 +3077,113 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests exact SELECT translations are cached until table metadata changes.
+	 */
+	public function test_select_translation_cache_reuses_exact_sql_until_metadata_changes(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (ID, post_title) VALUES (1, 'Hello')" );
+
+		$query = "SELECT p.ID FROM wptests_posts AS p WHERE p.ID > '0'";
+
+		$driver->query( $query );
+
+		$cache = $this->get_driver_private_property( $driver, 'mysql_select_translation_cache' );
+		$this->assertCount( 1, $cache );
+
+		$entry = reset( $cache );
+		$this->assertIsArray( $entry );
+		$this->assertSame( $query, $entry['query'] );
+		$this->assertTrue( $entry['translated'] );
+		$this->assertStringContainsString( 'p."ID"', $entry['sql'] );
+
+		$driver->query( $query );
+
+		$this->assertSame(
+			$cache,
+			$this->get_driver_private_property( $driver, 'mysql_select_translation_cache' )
+		);
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+
+		$this->assertSame(
+			array(),
+			$this->get_driver_private_property( $driver, 'mysql_select_translation_cache' )
+		);
+	}
+
+	/**
+	 * Tests exact SQL_CALC_FOUND_ROWS count SQL is cached until table metadata changes.
+	 */
+	public function test_sql_calc_found_rows_count_query_cache_reuses_exact_sql_until_metadata_changes(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (ID, post_title) VALUES (1, 'Hello')" );
+		$driver->query( "INSERT INTO wptests_posts (ID, post_title) VALUES (2, 'World')" );
+
+		$query = "SELECT SQL_CALC_FOUND_ROWS p.ID
+			FROM wptests_posts AS p
+			WHERE p.ID > '0'
+			ORDER BY p.ID ASC
+			LIMIT 0, 1";
+
+		$driver->query( $query );
+
+		$count_cache = $this->get_driver_private_property( $driver, 'mysql_sql_calc_found_rows_count_query_cache' );
+		$this->assertCount( 1, $count_cache );
+
+		$entry = reset( $count_cache );
+		$this->assertIsArray( $entry );
+		$this->assertSame( $query, $entry['query'] );
+		$this->assertStringStartsWith( 'SELECT COUNT(*) AS "__wp_pg_found_rows"', $entry['sql'] );
+
+		$postgresql_queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $postgresql_queries );
+		$count_sql = $postgresql_queries[1]['sql'];
+
+		$driver->query( $query );
+
+		$this->assertSame(
+			$count_cache,
+			$this->get_driver_private_property( $driver, 'mysql_sql_calc_found_rows_count_query_cache' )
+		);
+		$this->assertSame( $count_sql, $driver->get_last_postgresql_queries()[1]['sql'] );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+
+		$this->assertSame(
+			array(),
+			$this->get_driver_private_property( $driver, 'mysql_sql_calc_found_rows_count_query_cache' )
+		);
+	}
+
+	/**
 	 * Tests WordPress user text predicates and ordering preserve MySQL collation behavior.
 	 */
 	public function test_wordpress_user_text_predicates_and_ordering_use_case_insensitive_mysql_collation_metadata(): void {
@@ -6604,6 +6711,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		return $translator( $method_name, $query );
+	}
+
+	/**
+	 * Get a private driver property for cache-focused assertions.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver        Driver under test.
+	 * @param string               $property_name Private property name.
+	 * @return mixed Private property value.
+	 */
+	private function get_driver_private_property( WP_PostgreSQL_Driver $driver, string $property_name ) {
+		$property_reader = Closure::bind(
+			function ( string $bound_property_name ) {
+				return $this->$bound_property_name;
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		return $property_reader( $property_name );
 	}
 
 	/**

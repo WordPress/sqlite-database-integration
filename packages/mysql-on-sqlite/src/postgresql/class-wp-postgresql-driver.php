@@ -35,6 +35,11 @@ class WP_PostgreSQL_Driver {
 	private const PDO_FETCH_STYLE_MASK = 0x0f;
 
 	/**
+	 * Maximum number of exact MySQL query translations cached per connection.
+	 */
+	private const MYSQL_QUERY_TRANSLATION_CACHE_LIMIT = 256;
+
+	/**
 	 * PostgreSQL server version string.
 	 *
 	 * @var string
@@ -152,6 +157,20 @@ class WP_PostgreSQL_Driver {
 	 * @var array<string, array{column_meta: array, result: mixed}>
 	 */
 	private $mysql_introspection_result_cache = array();
+
+	/**
+	 * Cached exact MySQL SELECT translations keyed by query hash.
+	 *
+	 * @var array<string, array{query: string, sql: string, translated: bool}>
+	 */
+	private $mysql_select_translation_cache = array();
+
+	/**
+	 * Cached exact SQL_CALC_FOUND_ROWS count SQL keyed by source query hash.
+	 *
+	 * @var array<string, array{query: string, sql: string}>
+	 */
+	private $mysql_sql_calc_found_rows_count_query_cache = array();
 
 	/**
 	 * Most recently tokenized MySQL query.
@@ -538,64 +557,16 @@ class WP_PostgreSQL_Driver {
 		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
 		$sql_calc_found_rows_query    = $is_sql_calc_found_rows_query ? $query : null;
 
-		$translated_query = $this->translate_information_schema_tables_site_health_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_grouped_having_alias_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_wordpress_available_post_mime_types_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_wordpress_term_cache_priming_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_wordpress_approved_comments_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_simple_mysql_select_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_distinct_order_by_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
-		$translated_query = $this->translate_sql_calc_found_rows_select_query( $query );
-		if ( null !== $translated_query ) {
-			$query                     = $translated_query;
-			$translated_for_postgresql = true;
-		}
-
 		if ( ! $translated_for_postgresql ) {
-			$translated_query = $this->translate_mysql_compatible_query( $query );
-			if ( null !== $translated_query ) {
-				$query = $translated_query;
+			if ( $this->is_mysql_select_translation_cacheable_query( $query ) ) {
+				$select_translation        = $this->get_mysql_select_query_translation( $query );
+				$query                     = $select_translation['sql'];
+				$translated_for_postgresql = $select_translation['translated'];
+			} else {
+				$translated_query = $this->translate_mysql_compatible_query( $query );
+				if ( null !== $translated_query ) {
+					$query = $translated_query;
+				}
 			}
 		}
 
@@ -629,6 +600,195 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Check whether a query can use the exact SELECT translation cache.
+	 *
+	 * This intentionally uses a cheap prefix check. Queries with leading comments
+	 * or parenthesized SELECTs keep the uncached fallback path rather than paying
+	 * lexer cost just to decide cacheability.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query is cacheable by exact SQL text.
+	 */
+	private function is_mysql_select_translation_cacheable_query( string $query ): bool {
+		return 1 === preg_match( '/\A\s*SELECT\b/i', $query );
+	}
+
+	/**
+	 * Get the PostgreSQL execution SQL for a MySQL SELECT query.
+	 *
+	 * @param string $query MySQL SELECT query.
+	 * @return array{sql: string, translated: bool} PostgreSQL SQL and translation flag.
+	 */
+	private function get_mysql_select_query_translation( string $query ): array {
+		$cached_translation = $this->get_mysql_select_translation_cache_entry( $query );
+		if ( null !== $cached_translation ) {
+			return array(
+				'sql'        => $cached_translation['sql'],
+				'translated' => $cached_translation['translated'],
+			);
+		}
+
+		$translation = $this->translate_mysql_select_query_for_postgresql( $query );
+		$this->set_mysql_select_translation_cache_entry( $query, $translation );
+
+		return $translation;
+	}
+
+	/**
+	 * Translate a MySQL SELECT query using the existing ordered translator chain.
+	 *
+	 * @param string $query MySQL SELECT query.
+	 * @return array{sql: string, translated: bool} PostgreSQL SQL and translation flag.
+	 */
+	private function translate_mysql_select_query_for_postgresql( string $query ): array {
+		$translated_query = $this->translate_information_schema_tables_site_health_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_grouped_having_alias_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_wordpress_available_post_mime_types_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_wordpress_term_cache_priming_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_wordpress_approved_comments_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_simple_mysql_select_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_distinct_order_by_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_sql_calc_found_rows_select_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_mysql_compatible_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		return array(
+			'sql'        => $query,
+			'translated' => false,
+		);
+	}
+
+	/**
+	 * Get a cached exact SELECT translation.
+	 *
+	 * @param string $query MySQL SELECT query.
+	 * @return array{query: string, sql: string, translated: bool}|null Cached translation.
+	 */
+	private function get_mysql_select_translation_cache_entry( string $query ): ?array {
+		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
+		if (
+			! isset( $this->mysql_select_translation_cache[ $cache_key ] )
+			|| $this->mysql_select_translation_cache[ $cache_key ]['query'] !== $query
+		) {
+			return null;
+		}
+
+		return $this->mysql_select_translation_cache[ $cache_key ];
+	}
+
+	/**
+	 * Store a cached exact SELECT translation.
+	 *
+	 * @param string                           $query       MySQL SELECT query.
+	 * @param array{sql: string, translated: bool} $translation PostgreSQL translation.
+	 */
+	private function set_mysql_select_translation_cache_entry( string $query, array $translation ): void {
+		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
+		$this->mysql_select_translation_cache[ $cache_key ] = array(
+			'query'      => $query,
+			'sql'        => $translation['sql'],
+			'translated' => $translation['translated'],
+		);
+
+		$this->limit_mysql_query_translation_cache( $this->mysql_select_translation_cache );
+	}
+
+	/**
+	 * Get the cache key for an exact MySQL query translation.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string Cache key.
+	 */
+	private function get_mysql_query_translation_cache_key( string $query ): string {
+		return sha1( $query );
+	}
+
+	/**
+	 * Keep an exact query translation cache bounded.
+	 *
+	 * @param array $cache Cache to trim.
+	 */
+	private function limit_mysql_query_translation_cache( array &$cache ): void {
+		while ( count( $cache ) > self::MYSQL_QUERY_TRANSLATION_CACHE_LIMIT ) {
+			reset( $cache );
+			$first_key = key( $cache );
+			if ( null === $first_key ) {
+				return;
+			}
+			unset( $cache[ $first_key ] );
+		}
 	}
 
 	/**
@@ -759,8 +919,14 @@ class WP_PostgreSQL_Driver {
 	 * @return string|null PostgreSQL count query, or null when unsupported.
 	 */
 	private function get_sql_calc_found_rows_count_query( string $query ): ?string {
+		$cached_count_query = $this->get_mysql_sql_calc_found_rows_count_query_cache_entry( $query );
+		if ( null !== $cached_count_query ) {
+			return $cached_count_query;
+		}
+
 		$count_query = $this->get_sql_calc_found_rows_direct_count_query( $query );
 		if ( null !== $count_query ) {
+			$this->set_mysql_sql_calc_found_rows_count_query_cache_entry( $query, $count_query );
 			return $count_query;
 		}
 
@@ -769,12 +935,48 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$alias = $this->connection->quote_identifier( '__wp_pg_found_rows' );
-		return sprintf(
+		$alias       = $this->connection->quote_identifier( '__wp_pg_found_rows' );
+		$count_query = sprintf(
 			'SELECT COUNT(*) AS %1$s FROM (%2$s) AS %1$s',
 			$alias,
 			$select_query
 		);
+		$this->set_mysql_sql_calc_found_rows_count_query_cache_entry( $query, $count_query );
+		return $count_query;
+	}
+
+	/**
+	 * Get cached PostgreSQL SQL for a SQL_CALC_FOUND_ROWS count query.
+	 *
+	 * @param string $query MySQL SQL_CALC_FOUND_ROWS query.
+	 * @return string|null Cached PostgreSQL count SQL.
+	 */
+	private function get_mysql_sql_calc_found_rows_count_query_cache_entry( string $query ): ?string {
+		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
+		if (
+			! isset( $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ] )
+			|| $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['query'] !== $query
+		) {
+			return null;
+		}
+
+		return $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['sql'];
+	}
+
+	/**
+	 * Store cached PostgreSQL SQL for a SQL_CALC_FOUND_ROWS count query.
+	 *
+	 * @param string $query       MySQL SQL_CALC_FOUND_ROWS query.
+	 * @param string $count_query PostgreSQL count SQL.
+	 */
+	private function set_mysql_sql_calc_found_rows_count_query_cache_entry( string $query, string $count_query ): void {
+		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
+		$this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ] = array(
+			'query' => $query,
+			'sql'   => $count_query,
+		);
+
+		$this->limit_mysql_query_translation_cache( $this->mysql_sql_calc_found_rows_count_query_cache );
 	}
 
 	/**
@@ -1188,6 +1390,7 @@ class WP_PostgreSQL_Driver {
 		$this->mysql_table_column_name_cache            = array();
 		$this->mysql_upsert_conflict_target_cache       = array();
 		$this->mysql_introspection_result_cache         = array();
+		$this->clear_mysql_query_translation_caches();
 	}
 
 	/**
@@ -1208,6 +1411,7 @@ class WP_PostgreSQL_Driver {
 		);
 		$this->mysql_upsert_conflict_target_cache = array();
 		$this->mysql_introspection_result_cache   = array();
+		$this->clear_mysql_query_translation_caches();
 
 		/*
 		 * Temporary table creation/drop can change which backend schema an
@@ -1225,6 +1429,14 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function get_mysql_metadata_cache_key( string $table_schema, string $table_name ): string {
 		return $table_schema . "\0" . $table_name;
+	}
+
+	/**
+	 * Clear exact query translation caches derived from metadata-sensitive rewrites.
+	 */
+	private function clear_mysql_query_translation_caches(): void {
+		$this->mysql_select_translation_cache              = array();
+		$this->mysql_sql_calc_found_rows_count_query_cache = array();
 	}
 
 	/**
