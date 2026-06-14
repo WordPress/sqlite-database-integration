@@ -780,10 +780,10 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Build a direct PostgreSQL count query for simple SQL_CALC_FOUND_ROWS SELECTs.
 	 *
-	 * Non-DISTINCT, non-grouped SELECTs have the same FOUND_ROWS cardinality as
-	 * COUNT(*) over the FROM/WHERE source. DISTINCT, GROUP BY, and HAVING shapes
-	 * stay on the derived-table fallback because their projection determines the
-	 * counted row set.
+	 * Non-DISTINCT, non-grouped, non-aggregate SELECTs have the same FOUND_ROWS
+	 * cardinality as COUNT(*) over the FROM/WHERE source. DISTINCT, aggregate,
+	 * GROUP BY, and HAVING shapes stay on the derived-table fallback because
+	 * their projection determines the counted row set.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL count query, or null when the wrapped fallback is required.
@@ -838,6 +838,10 @@ class WP_PostgreSQL_Driver {
 			$statement_end
 		);
 		if ( null === $from_position ) {
+			return null;
+		}
+
+		if ( $this->contains_mysql_aggregate_call( $tokens, $projection_start, $from_position ) ) {
 			return null;
 		}
 

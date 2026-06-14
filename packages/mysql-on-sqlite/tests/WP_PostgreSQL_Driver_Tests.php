@@ -3762,6 +3762,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests aggregate SQL_CALC_FOUND_ROWS counts keep the cardinality-preserving wrapper.
+	 */
+	public function test_aggregate_sql_calc_found_rows_count_keeps_cardinality_preserving_wrapper(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO t (id) VALUES (1)' );
+		$driver->query( 'INSERT INTO t (id) VALUES (2)' );
+
+		$rows = $driver->query( 'SELECT SQL_CALC_FOUND_ROWS COUNT(*) AS c FROM t LIMIT 1, 1' );
+
+		$this->assertCount( 0, $rows );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT COUNT (*) AS c FROM t) AS "__wp_pg_found_rows"',
+			$queries[1]['sql']
+		);
+		$this->assertNotSame(
+			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM t',
+			$queries[1]['sql']
+		);
+		$this->assertStringContainsString( 'FROM (SELECT', $queries[1]['sql'] );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '1', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
 	 * Tests grouped SQL_CALC_FOUND_ROWS counts keep the cardinality-preserving wrapper.
 	 */
 	public function test_grouped_sql_calc_found_rows_count_keeps_cardinality_preserving_wrapper(): void {
