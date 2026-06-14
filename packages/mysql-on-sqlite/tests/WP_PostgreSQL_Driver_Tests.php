@@ -2252,6 +2252,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests leading-comment SELECTs still use the SELECT translator chain.
+	 */
+	public function test_leading_comment_select_uses_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		for ( $id = 1; $id <= 3; $id++ ) {
+			$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES ($id, 'post', 'publish', '2024-01-01 00:00:00')" );
+		}
+
+		$select = "/* cache gate */ SELECT wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_type = 'post' AND wptests_posts.post_status = 'publish'
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 3";
+		$rows   = $driver->query( $select );
+
+		$this->assertSame(
+			array( '3', '2', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\' AND wptests_posts.post_status = \'publish\' ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC LIMIT 3 OFFSET 0',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests non-descending posts date order does not get the sticky tie-breaker.
 	 */
 	public function test_wordpress_posts_post_date_asc_order_does_not_add_id_tiebreaker(): void {
@@ -3860,6 +3898,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES (2, 'post', 'publish', '2024-01-02 00:00:00')" );
 
 		$select = "SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1 = 1 AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 1";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->ID );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC LIMIT 1 OFFSET 0',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests leading-comment SQL_CALC_FOUND_ROWS SELECTs still use FOUND_ROWS accounting.
+	 */
+	public function test_leading_comment_sql_calc_found_rows_select_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES (1, 'post', 'publish', '2024-01-01 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES (2, 'post', 'publish', '2024-01-01 00:00:00')" );
+
+		$select = "/* cache gate */ SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
 			FROM wptests_posts
 			WHERE 1 = 1 AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
 			ORDER BY wptests_posts.post_date DESC

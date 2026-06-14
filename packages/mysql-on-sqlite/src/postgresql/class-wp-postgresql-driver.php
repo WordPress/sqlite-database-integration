@@ -562,6 +562,10 @@ class WP_PostgreSQL_Driver {
 				$select_translation        = $this->get_mysql_select_query_translation( $query );
 				$query                     = $select_translation['sql'];
 				$translated_for_postgresql = $select_translation['translated'];
+			} elseif ( $this->is_mysql_top_level_select_query( $query ) ) {
+				$select_translation        = $this->translate_mysql_select_query_for_postgresql( $query );
+				$query                     = $select_translation['sql'];
+				$translated_for_postgresql = $select_translation['translated'];
 			} else {
 				$translated_query = $this->translate_mysql_compatible_query( $query );
 				if ( null !== $translated_query ) {
@@ -635,6 +639,19 @@ class WP_PostgreSQL_Driver {
 		$this->set_mysql_select_translation_cache_entry( $query, $translation );
 
 		return $translation;
+	}
+
+	/**
+	 * Check whether a query is a top-level MySQL SELECT after lexer normalization.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the lexer sees a complete SELECT statement.
+	 */
+	private function is_mysql_top_level_select_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0] )
+			&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id
+			&& null !== $this->get_mysql_statement_end_position( $tokens, 1 );
 	}
 
 	/**
