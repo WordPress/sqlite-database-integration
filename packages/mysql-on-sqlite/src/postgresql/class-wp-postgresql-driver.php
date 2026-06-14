@@ -3681,10 +3681,10 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Parse a supported MySQL SHOW COLUMNS/SHOW FULL COLUMNS statement.
+	 * Parse a supported MySQL SHOW COLUMNS/FIELDS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, full: bool, like: string|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS statement.
+	 * @return array{schema: string, table: string, full: bool, like: string|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
 	 */
 	private function get_show_columns_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -3703,7 +3703,13 @@ class WP_PostgreSQL_Driver {
 			++$position;
 		}
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COLUMNS_SYMBOL !== $tokens[ $position ]->id ) {
+		if (
+			! isset( $tokens[ $position ] )
+			|| (
+				WP_MySQL_Lexer::COLUMNS_SYMBOL !== $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::FIELDS_SYMBOL !== $tokens[ $position ]->id
+			)
+		) {
 			return null;
 		}
 
@@ -13602,7 +13608,13 @@ WHERE option_name IN (
 			++$position;
 		}
 
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[ $position ]->id ) {
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::FIELDS_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
 			return true;
 		}
 

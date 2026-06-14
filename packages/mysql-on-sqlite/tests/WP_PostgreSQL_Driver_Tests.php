@@ -6244,6 +6244,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW FIELDS returns the same MySQL-shaped rows as SHOW COLUMNS.
+	 */
+	public function test_show_fields_returns_same_catalog_rows_as_show_columns(): void {
+		$columns_driver = $this->create_driver();
+		$fields_driver  = $this->create_driver();
+		$this->install_information_schema_fixture( $columns_driver );
+		$this->install_information_schema_fixture( $fields_driver );
+
+		$columns = $columns_driver->query( 'SHOW COLUMNS FROM `wptests_options`' );
+		$fields  = $fields_driver->query( 'SHOW FIELDS FROM `wptests_options`' );
+
+		$this->assertEquals( $columns, $fields );
+		$this->assertSame( 'SHOW FIELDS FROM `wptests_options`', $fields_driver->get_last_mysql_query() );
+		$this->assertSame( $columns_driver->get_last_column_count(), $fields_driver->get_last_column_count() );
+		$this->assertSame( $columns_driver->get_last_column_meta(), $fields_driver->get_last_column_meta() );
+
+		$queries = $fields_driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'information_schema.columns', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ) );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW FULL/EXTENDED FIELDS use the SHOW COLUMNS parser.
+	 */
+	public function test_show_prefixed_fields_use_show_columns_parser(): void {
+		$full_driver = $this->create_driver();
+		$this->install_information_schema_fixture( $full_driver );
+
+		$full = $full_driver->query( 'SHOW FULL FIELDS FROM `wptests_options`' );
+
+		$this->assertCount( 4, $full );
+		$this->assertSame( 9, $full_driver->get_last_column_count() );
+		$this->assertSame( 'Collation', $full_driver->get_last_column_meta()[2]['name'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $full[1]->Collation );
+		$this->assertStringNotContainsString(
+			'SHOW FULL FIELDS',
+			strtoupper( $full_driver->get_last_postgresql_queries()[0]['sql'] )
+		);
+
+		$extended_driver = $this->create_driver();
+		$this->install_information_schema_fixture( $extended_driver );
+
+		$extended = $extended_driver->query( 'SHOW EXTENDED FIELDS FROM `wptests_options`' );
+
+		$this->assertCount( 4, $extended );
+		$this->assertSame( 6, $extended_driver->get_last_column_count() );
+		$this->assertSame( 'Field', $extended_driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 'option_id', $extended[0]->Field );
+		$this->assertStringNotContainsString(
+			'SHOW EXTENDED FIELDS',
+			strtoupper( $extended_driver->get_last_postgresql_queries()[0]['sql'] )
+		);
+	}
+
+	/**
 	 * Tests SHOW COLUMNS accepts MySQL table qualification forms.
 	 */
 	public function test_show_columns_accepts_table_qualification_forms(): void {
@@ -6273,6 +6330,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW FIELDS accepts MySQL table qualification forms.
+	 */
+	public function test_show_fields_accepts_table_qualification_forms(): void {
+		$cases = array(
+			'SHOW FIELDS IN wptests_options'               => array( 'public', 'wptests_options' ),
+			'SHOW FIELDS FROM public.wptests_options'      => array( 'public', 'wptests_options' ),
+			'SHOW FIELDS FROM wptests_options FROM public' => array( 'public', 'wptests_options' ),
+			'SHOW FIELDS IN wptests_options IN public'     => array( 'public', 'wptests_options' ),
+		);
+
+		foreach ( $cases as $query => $params ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			$result = $driver->query( $query );
+
+			$this->assertCount( 4, $result, $query );
+			$this->assertSame( 'option_id', $result[0]->Field, $query );
+			$this->assertSame( 'autoload', $result[3]->Field, $query );
+
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $queries, $query );
+			$this->assertStringContainsString( 'information_schema.columns', $queries[0]['sql'], $query );
+			$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ), $query );
+			$this->assertSame( $params, $queries[0]['params'], $query );
+		}
+	}
+
+	/**
 	 * Tests SHOW COLUMNS LIKE filters catalog rows with bound parameters.
 	 */
 	public function test_show_columns_like_filters_catalog_rows(): void {
@@ -6291,6 +6377,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( 'field_name LIKE ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW COLUMNS', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'option_%' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW FIELDS LIKE filters catalog rows with bound parameters.
+	 */
+	public function test_show_fields_like_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( "SHOW FIELDS FROM wptests_options LIKE 'option_%'" );
+
+		$this->assertCount( 3, $result );
+		$this->assertSame( 'option_id', $result[0]->Field );
+		$this->assertSame( 'option_name', $result[1]->Field );
+		$this->assertSame( 'option_value', $result[2]->Field );
+		$this->assertSame( 6, $driver->get_last_column_count() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'field_name LIKE ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ) );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_%' ), $queries[0]['params'] );
 	}
 
@@ -6555,6 +6663,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		try {
 			$driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field = 'option_name'" );
 			$this->fail( 'Expected unsupported SHOW COLUMNS WHERE clause to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW COLUMNS statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests unsupported SHOW FIELDS clauses do not fall through to the backend.
+	 */
+	public function test_show_fields_where_clause_does_not_reach_backend(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		try {
+			$driver->query( "SHOW FIELDS FROM wptests_options WHERE Field = 'option_name'" );
+			$this->fail( 'Expected unsupported SHOW FIELDS WHERE clause to throw.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported SHOW COLUMNS statement.', $e->getMessage() );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
@@ -7246,12 +7370,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
 
-		try {
-			$driver->query( 'SHOW COLUMNS FROM wptests_options' );
-			$this->fail( 'Expected information_schema SHOW COLUMNS to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		foreach (
+			array(
+				'SHOW COLUMNS FROM wptests_options',
+				'SHOW FIELDS FROM wptests_options',
+				'SHOW FULL FIELDS FROM wptests_options',
+				'SHOW EXTENDED FIELDS FROM wptests_options',
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected information_schema SHOW COLUMNS/FIELDS to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 
 		$index_driver = $this->create_show_index_driver();
