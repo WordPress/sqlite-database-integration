@@ -608,6 +608,73 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WooCommerce customer lookup REPLACE statements use customer_id conflicts.
+	 */
+	public function test_simple_wordpress_replace_with_customer_id_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_wc_customer_lookup (
+				customer_id INTEGER PRIMARY KEY,
+				user_id INTEGER NOT NULL,
+				email TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_wc_customer_lookup (customer_id, user_id, email) VALUES (1, 1, 'old@example.com')" );
+
+		$replace = "REPLACE INTO `wptests_wc_customer_lookup` (`user_id`, `email`, `customer_id`) VALUES (2, 'new@example.com', '1')";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_wc_customer_lookup" ("user_id", "email", "customer_id") VALUES (2, \'new@example.com\', \'1\') ON CONFLICT ("customer_id") DO UPDATE SET "user_id" = excluded."user_id", "email" = excluded."email", "customer_id" = excluded."customer_id"',
+			$queries[0]['sql']
+		);
+
+		$rows = $driver->query( 'SELECT user_id, email FROM wptests_wc_customer_lookup WHERE customer_id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->user_id );
+		$this->assertSame( 'new@example.com', $rows[0]->email );
+	}
+
+	/**
+	 * Tests WooCommerce product lookup REPLACE statements coerce integer values.
+	 */
+	public function test_woocommerce_product_lookup_replace_uses_product_id_conflict_and_integer_coercion(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_wc_product_meta_lookup (
+				`product_id` bigint(20) unsigned NOT NULL,
+				`sku` varchar(100) NOT NULL DEFAULT "",
+				`total_sales` bigint(20) NOT NULL DEFAULT 0,
+				PRIMARY KEY (`product_id`)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_wc_product_meta_lookup (`product_id`, `sku`, `total_sales`) VALUES (12, 'old-sku', 1)"
+		);
+
+		$replace = "REPLACE INTO `wptests_wc_product_meta_lookup` (`product_id`, `sku`, `total_sales`) VALUES ('12', 'DUMMY SKU100000', '4.000000')";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'ON CONFLICT ("product_id") DO UPDATE SET', $queries[0]['sql'] );
+		$this->assertStringContainsString( $this->get_expected_mysql_integer_cast_sql( "'4.000000'" ), $queries[0]['sql'] );
+
+		$rows = $driver->query( 'SELECT sku, total_sales FROM wptests_wc_product_meta_lookup WHERE product_id = 12' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'DUMMY SKU100000', $rows[0]->sku );
+		$this->assertSame( '4', $rows[0]->total_sales );
+	}
+
+	/**
 	 * Tests non-strict REPLACE applies omitted NOT NULL defaults on insert and conflict paths.
 	 */
 	public function test_non_strict_replace_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
@@ -1332,6 +1399,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests INSERT ... SELECT statements expose generated AUTO_INCREMENT insert IDs.
+	 */
+	public function test_insert_select_from_dual_sets_generated_insert_id(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_actionscheduler_actions (
+				action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				hook TEXT NOT NULL,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_actionscheduler_actions (
+				action_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				hook varchar(191) NOT NULL,
+				status varchar(20) NOT NULL,
+				PRIMARY KEY (action_id)
+			)'
+		);
+
+		$insert = "INSERT INTO wptests_actionscheduler_actions (`hook`, `status`)
+			SELECT 'action_scheduler/migration_hook', 'pending' FROM DUAL
+			WHERE ( SELECT NULL FROM DUAL ) IS NULL";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame(
+			'INSERT INTO wptests_actionscheduler_actions ("hook", "status") SELECT \'action_scheduler/migration_hook\', \'pending\' WHERE (SELECT NULL) IS NULL',
+			$queries[0]['sql']
+		);
+	}
+
+	/**
 	 * Tests explicit MySQL AUTO_INCREMENT values are exposed as the insert ID.
 	 */
 	public function test_get_insert_id_uses_explicit_mysql_auto_increment_value(): void {
@@ -1980,6 +2084,245 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WooCommerce orphan cleanup DELETE statements are translated to anti-joins.
+	 */
+	public function test_mysql_left_join_orphan_delete_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				"ID" INTEGER PRIMARY KEY
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				meta_id INTEGER PRIMARY KEY,
+				post_id INTEGER NOT NULL
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_posts ("ID") VALUES (1)' );
+		$driver->query( 'INSERT INTO wptests_postmeta (meta_id, post_id) VALUES (1, 1)' );
+		$driver->query( 'INSERT INTO wptests_postmeta (meta_id, post_id) VALUES (2, 999)' );
+
+		$delete = 'DELETE meta FROM wptests_postmeta meta LEFT JOIN wptests_posts posts ON posts.ID = meta.post_id WHERE posts.ID IS NULL;';
+
+		$this->assertSame( 1, $driver->query( $delete ) );
+		$this->assertSame( $delete, $driver->get_last_mysql_query() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame(
+			'DELETE FROM "wptests_postmeta" AS meta WHERE NOT EXISTS (SELECT 1 FROM "wptests_posts" AS posts WHERE posts."ID" = meta.post_id)',
+			$queries[0]['sql']
+		);
+
+		$rows = $driver->query( 'SELECT meta_id, post_id FROM wptests_postmeta ORDER BY meta_id' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->meta_id );
+		$this->assertSame( '1', $rows[0]->post_id );
+	}
+
+	/**
+	 * Tests MySQL joined DELETE statements with AS aliases are translated.
+	 */
+	public function test_mysql_join_delete_with_as_alias_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE `postmeta` FROM `wptests_postmeta` AS `postmeta`
+			LEFT JOIN `wptests_posts` AS `posts` ON `posts`.`ID` = `postmeta`.`post_id`
+			WHERE `posts`.`post_type` = 'forum'
+			AND `postmeta`.`meta_key` = '_bbp_reply_count'
+			OR `postmeta`.`meta_key` = '_bbp_total_reply_count'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_postmeta" AS "postmeta" WHERE "postmeta".ctid IN (SELECT "postmeta".ctid FROM "wptests_postmeta" AS "postmeta" LEFT JOIN "wptests_posts" AS "posts" ON "posts"."ID" = "postmeta"."post_id" WHERE "posts"."post_type" = \'forum\' AND "postmeta"."meta_key" = \'_bbp_reply_count\' OR "postmeta"."meta_key" = \'_bbp_total_reply_count\')',
+			$sql
+		);
+	}
+
+	/**
+	 * Tests MySQL DUAL table references are erased in PostgreSQL-compatible SELECTs.
+	 */
+	public function test_mysql_dual_table_reference_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SELECT 1 AS output FROM DUAL' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->output );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT 1 AS output',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests MySQL DUAL table references are erased in INSERT ... SELECT queries.
+	 */
+	public function test_insert_select_from_dual_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_actionscheduler_actions (
+				hook TEXT NOT NULL,
+				status TEXT NOT NULL
+			)'
+		);
+
+		$insert = "INSERT INTO wptests_actionscheduler_actions (`hook`, `status`)
+			SELECT 'action_scheduler/migration_hook', 'pending' FROM DUAL
+			WHERE ( SELECT NULL FROM DUAL ) IS NULL";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame(
+			'INSERT INTO wptests_actionscheduler_actions ("hook", "status") SELECT \'action_scheduler/migration_hook\', \'pending\' WHERE (SELECT NULL) IS NULL',
+			$queries[0]['sql']
+		);
+
+		$rows = $driver->query( 'SELECT hook, status FROM wptests_actionscheduler_actions' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'action_scheduler/migration_hook', $rows[0]->hook );
+		$this->assertSame( 'pending', $rows[0]->status );
+	}
+
+	/**
+	 * Tests bbPress-style INSERT ... SELECT repair queries coerce target types.
+	 */
+	public function test_parenthesized_insert_select_coerces_target_columns_and_grouped_projections(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				"ID" INTEGER PRIMARY KEY,
+				post_parent INTEGER NOT NULL,
+				post_author INTEGER NOT NULL,
+				post_type TEXT NOT NULL,
+				post_status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				meta_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				post_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_parent` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`post_author` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_status` varchar(20) NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_postmeta (
+				`meta_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				`post_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL,
+				PRIMARY KEY (`meta_id`)
+			)'
+		);
+
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `post_author`, `post_type`, `post_status`) VALUES (10, 0, 1, 'forum', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `post_author`, `post_type`, `post_status`) VALUES (100, 10, 3, 'topic', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `post_author`, `post_type`, `post_status`) VALUES (101, 100, 4, 'reply', 'publish')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (100, '_bbp_topic_id', '100')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (101, '_bbp_topic_id', '100')" );
+
+		$engagements_sql = "INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) (
+			SELECT postmeta.meta_value, '_bbp_engagement', posts.post_author
+			FROM wptests_posts AS posts
+			LEFT JOIN wptests_postmeta AS postmeta
+				ON posts.ID = postmeta.post_id
+				AND postmeta.meta_key = '_bbp_topic_id'
+			WHERE posts.post_type IN ('topic', 'reply')
+				AND posts.post_status IN ('publish', 'closed')
+			GROUP BY postmeta.meta_value, posts.post_author)";
+
+		$this->assertSame( 2, $driver->query( $engagements_sql ) );
+
+		$engagement_queries = $driver->get_last_postgresql_queries();
+		$engagement_sql     = $engagement_queries[0]['sql'];
+		$this->assertStringContainsString( 'CASE WHEN CAST(postmeta.meta_value AS text) IS NULL THEN NULL ELSE CAST(COALESCE(SUBSTRING(CAST(postmeta.meta_value AS text)', $engagement_sql );
+		$this->assertStringContainsString( 'CAST(posts.post_author AS text)', $engagement_sql );
+
+		$engagements = $driver->query( "SELECT post_id, meta_key, meta_value FROM wptests_postmeta WHERE meta_key = '_bbp_engagement' ORDER BY meta_value" );
+		$this->assertCount( 2, $engagements );
+		$this->assertSame( '100', $engagements[0]->post_id );
+		$this->assertSame( '3', $engagements[0]->meta_value );
+		$this->assertSame( '100', $engagements[1]->post_id );
+		$this->assertSame( '4', $engagements[1]->meta_value );
+
+		$forum_meta_sql = "INSERT INTO `wptests_postmeta` (`post_id`, `meta_key`, `meta_value`)
+			( SELECT `reply`.`ID`, '_bbp_forum_id', `topic`.`post_parent`
+			FROM `wptests_posts`
+				AS `reply`
+			INNER JOIN `wptests_posts`
+				AS `topic`
+				ON `reply`.`post_parent` = `topic`.`ID`
+			WHERE `topic`.`post_type` = 'topic'
+				AND `reply`.`post_type` = 'reply'
+			GROUP BY `reply`.`ID` )";
+
+		$this->assertSame( 1, $driver->query( $forum_meta_sql ) );
+
+		$forum_meta_queries = $driver->get_last_postgresql_queries();
+		$this->assertStringContainsString(
+			'CAST(MIN("topic"."post_parent") AS text)',
+			$forum_meta_queries[0]['sql']
+		);
+
+		$forum_meta = $driver->query( "SELECT post_id, meta_value FROM wptests_postmeta WHERE meta_key = '_bbp_forum_id'" );
+		$this->assertCount( 1, $forum_meta );
+		$this->assertSame( '101', $forum_meta[0]->post_id );
+		$this->assertSame( '10', $forum_meta[0]->meta_value );
+
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `post_author`, `post_type`, `post_status`) VALUES (102, 100, 5, 'reply', 'spam')" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_parent`, `post_author`, `post_type`, `post_status`) VALUES (103, 100, 6, 'reply', 'pending')" );
+		$hidden_reply_count_sql = "INSERT INTO `wptests_postmeta` (`post_id`, `meta_key`, `meta_value`)
+			(SELECT `post_parent`, '_bbp_reply_count_hidden', COUNT(`post_status`) as `meta_value`
+			FROM `wptests_posts`
+			WHERE `post_type` = 'reply'
+				AND `post_status` IN ('trash','spam','pending')
+			GROUP BY `post_parent`)";
+
+		$this->assertSame( 1, $driver->query( $hidden_reply_count_sql ) );
+
+		$hidden_reply_count_queries = $driver->get_last_postgresql_queries();
+		$this->assertStringContainsString(
+			'CAST(COUNT ("post_status") AS text)',
+			$hidden_reply_count_queries[0]['sql']
+		);
+		$this->assertStringNotContainsString( 'AS "meta_value" AS text', $hidden_reply_count_queries[0]['sql'] );
+
+		$hidden_reply_count = $driver->query( "SELECT post_id, meta_value FROM wptests_postmeta WHERE meta_key = '_bbp_reply_count_hidden'" );
+		$this->assertCount( 1, $hidden_reply_count );
+		$this->assertSame( '100', $hidden_reply_count[0]->post_id );
+		$this->assertSame( '2', $hidden_reply_count[0]->meta_value );
+	}
+
+	/**
 	 * Tests multi-assignment WordPress UPDATE statements are translated to PostgreSQL.
 	 */
 	public function test_multi_assignment_wordpress_update_with_backticks_is_translated_to_postgresql(): void {
@@ -2161,6 +2504,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				),
 			),
 			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests CONVERT(expr, SIGNED) expressions use MySQL integer coercion.
+	 */
+	public function test_convert_signed_expression_uses_mysql_integer_coercion(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query( 'CREATE TABLE wptests_bp_groups_groupmeta (meta_value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_bp_groups_groupmeta (meta_value) VALUES ('10members')" );
+
+		$rows = $driver->query(
+			'SELECT CONVERT(meta_value, SIGNED) AS member_count
+			FROM wptests_bp_groups_groupmeta
+			ORDER BY CONVERT(meta_value, SIGNED) DESC'
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_integer_cast_sql( 'meta_value' );
+		$this->assertSame( '10', $rows[0]->member_count );
+		$this->assertStringContainsString(
+			'SELECT ' . $meta_value_cast_sql . ' AS member_count',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+		$this->assertStringContainsString(
+			'ORDER BY ' . $meta_value_cast_sql . ' DESC',
+			$driver->get_last_postgresql_queries()[0]['sql']
 		);
 	}
 
@@ -2828,6 +3198,114 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests text metadata UPDATE additions use MySQL numeric coercion before text assignment.
+	 */
+	public function test_text_metadata_update_addition_uses_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (1, '_order_total', '10')" );
+
+		$this->assertSame(
+			1,
+			$driver->query( "UPDATE wptests_postmeta SET meta_value = meta_value + 4.000000 WHERE post_id = 1 AND meta_key = '_order_total'" )
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_numeric_cast_sql( 'meta_value' );
+		$this->assertStringContainsString(
+			'"meta_value" = CAST(' . $meta_value_cast_sql . ' + 4.000000 AS text)',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$rows = $driver->query( "SELECT meta_value FROM wptests_postmeta WHERE post_id = 1 AND meta_key = '_order_total'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '14.0', $rows[0]->meta_value );
+	}
+
+	/**
+	 * Tests text metadata UPDATE subtractions use MySQL numeric coercion.
+	 */
+	public function test_text_metadata_update_subtraction_uses_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_usermeta (
+				`user_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_usermeta (`user_id`, `meta_key`, `meta_value`) VALUES (107, 'total_group_count', '7')" );
+
+		$this->assertSame(
+			1,
+			$driver->query( "UPDATE wptests_usermeta SET meta_value = meta_value - 1 WHERE meta_key = 'total_group_count' AND user_id IN ( 107 )" )
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_numeric_cast_sql( 'meta_value' );
+		$this->assertStringContainsString(
+			'"meta_value" = CAST(' . $meta_value_cast_sql . ' - 1 AS text)',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$rows = $driver->query( "SELECT meta_value FROM wptests_usermeta WHERE user_id = 107 AND meta_key = 'total_group_count'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '6', $rows[0]->meta_value );
+	}
+
+	/**
+	 * Tests text metadata SUM aggregates use MySQL numeric coercion from metadata.
+	 */
+	public function test_text_metadata_sum_aggregate_uses_mysql_numeric_coercion_from_metadata(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_parent` bigint(20) unsigned NOT NULL DEFAULT 0,
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_parent`) VALUES (2, 'shop_order_refund', 1)" );
+		$driver->query( "INSERT INTO wptests_posts (`ID`, `post_type`, `post_parent`) VALUES (3, 'shop_order_refund', 1)" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (2, '_refund_amount', '2.25')" );
+		$driver->query( "INSERT INTO wptests_postmeta (`post_id`, `meta_key`, `meta_value`) VALUES (3, '_refund_amount', '3')" );
+
+		$rows = $driver->query(
+			"SELECT SUM( postmeta.meta_value ) AS refunded
+				FROM wptests_postmeta AS postmeta
+				INNER JOIN wptests_posts AS posts ON ( posts.post_type = 'shop_order_refund' AND posts.post_parent = 1 )
+				WHERE postmeta.meta_key = '_refund_amount'
+				AND postmeta.post_id = posts.ID"
+		);
+
+		$meta_value_cast_sql = $this->get_expected_mysql_numeric_cast_sql( 'postmeta.meta_value' );
+		$this->assertStringContainsString(
+			'SUM(' . $meta_value_cast_sql . ') AS refunded',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '5.25', $rows[0]->refunded );
+	}
+
+	/**
 	 * Tests DISTINCT ORDER BY rewrites keep numeric metadata ordering safe.
 	 */
 	public function test_distinct_text_metadata_plus_zero_order_by_uses_mysql_numeric_coercion_from_metadata(): void {
@@ -3228,6 +3706,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array(),
 			$this->get_driver_private_property( $driver, 'mysql_sql_calc_found_rows_count_query_cache' )
 		);
+	}
+
+	/**
+	 * Tests MySQL DATETIME casts in grouped postmeta ordering are translated.
+	 */
+	public function test_sql_calc_grouped_postmeta_order_by_datetime_cast_uses_postgresql_timestamp(): void {
+		$driver = $this->create_driver();
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_select_query_for_postgresql',
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE wptests_postmeta.meta_key = '_bbp_last_active_time'
+			AND wptests_posts.post_type = 'topic'
+			AND wptests_posts.post_status = 'publish'
+			GROUP BY wptests_posts.ID
+			ORDER BY CAST(wptests_postmeta.meta_value AS DATETIME) DESC
+			LIMIT 0, 15"
+		);
+
+		$this->assertIsArray( $translation );
+		$this->assertTrue( $translation['translated'] );
+		$sql = $translation['sql'];
+		$this->assertStringContainsString( 'ORDER BY MAX(CAST(CASE WHEN', $sql );
+		$this->assertStringContainsString( 'AS timestamp)) DESC', $sql );
+		$this->assertStringNotContainsString( ' AS DATETIME', $sql );
 	}
 
 	/**
@@ -5914,6 +6419,68 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'NO', $show[0]->Null );
 		$this->assertNull( $show[0]->Default );
 		$this->assertSame( 'auto_increment', $show[0]->Extra );
+	}
+
+	/**
+	 * Tests MODIFY COLUMN clauses update backend and metadata definitions.
+	 */
+	public function test_modify_column_updates_backend_and_metadata_definitions(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_actionscheduler_actions (
+				scheduled_date_gmt datetime NOT NULL default '2026-01-01 00:00:00',
+				last_attempt_gmt datetime NOT NULL default '2026-01-01 00:00:00'
+			)"
+		);
+
+		$driver->query(
+			"ALTER TABLE wptests_actionscheduler_actions
+				MODIFY COLUMN scheduled_date_gmt datetime NULL default '0000-00-00 00:00:00',
+				MODIFY COLUMN last_attempt_gmt datetime NULL default '0000-00-00 00:00:00'"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "scheduled_date_gmt" TYPE text',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "scheduled_date_gmt" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "scheduled_date_gmt" SET DEFAULT \'0000-00-00 00:00:00\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "last_attempt_gmt" TYPE text',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "last_attempt_gmt" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "last_attempt_gmt" SET DEFAULT \'0000-00-00 00:00:00\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$describe = $driver->query( 'DESC wptests_actionscheduler_actions' );
+
+		$this->assertSame( 'scheduled_date_gmt', $describe[0]->Field );
+		$this->assertSame( 'datetime', $describe[0]->Type );
+		$this->assertSame( 'YES', $describe[0]->Null );
+		$this->assertSame( '0000-00-00 00:00:00', $describe[0]->Default );
+		$this->assertSame( 'last_attempt_gmt', $describe[1]->Field );
+		$this->assertSame( 'datetime', $describe[1]->Type );
+		$this->assertSame( 'YES', $describe[1]->Null );
+		$this->assertSame( '0000-00-00 00:00:00', $describe[1]->Default );
 	}
 
 	/**
