@@ -488,6 +488,11 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 		}
 
+		$lock_tables_query = $this->get_mysql_lock_tables_query( $query );
+		if ( null !== $lock_tables_query ) {
+			return $this->execute_mysql_lock_tables_query( $lock_tables_query );
+		}
+
 		if ( $this->is_found_rows_query( $query ) ) {
 			$this->last_result      = array( (object) array( 'FOUND_ROWS()' => (string) $this->last_found_rows ) );
 			$this->last_column_meta = array(
@@ -4002,6 +4007,125 @@ class WP_PostgreSQL_Driver {
 			'schema' => $first_identifier,
 			'table'  => $table_name,
 		);
+	}
+
+	/**
+	 * Parse a supported MySQL LOCK/UNLOCK TABLES statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{operation: string, tables: array<int, array{schema: string|null, table: string, mode: string}>}|null Lock query, or null when this is not LOCK/UNLOCK.
+	 */
+	private function get_mysql_lock_tables_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::UNLOCK_SYMBOL === $tokens[0]->id ) {
+			if (
+				! isset( $tokens[1] )
+				|| (
+					WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id
+					&& WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[1]->id
+				)
+				|| ! $this->is_at_mysql_query_end( $tokens, 2 )
+			) {
+				throw new InvalidArgumentException( 'Unsupported UNLOCK TABLES statement.' );
+			}
+
+			return array(
+				'operation' => 'unlock',
+				'tables'    => array(),
+			);
+		}
+
+		if ( WP_MySQL_Lexer::LOCK_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[1] )
+			|| (
+				WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id
+				&& WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[1]->id
+			)
+		) {
+			throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
+		}
+
+		$tables   = array();
+		$position = 2;
+		while ( true ) {
+			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			if ( null === $table_reference || ! isset( $tokens[ $position ] ) ) {
+				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
+			}
+
+			if ( WP_MySQL_Lexer::READ_SYMBOL === $tokens[ $position ]->id ) {
+				$mode = 'read';
+			} elseif ( WP_MySQL_Lexer::WRITE_SYMBOL === $tokens[ $position ]->id ) {
+				$mode = 'write';
+			} else {
+				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
+			}
+
+			++$position;
+			$tables[] = array(
+				'schema' => $table_reference['schema'],
+				'table'  => $table_reference['table'],
+				'mode'   => $mode,
+			);
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			break;
+		}
+
+		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
+		}
+
+		return array(
+			'operation' => 'lock',
+			'tables'    => $tables,
+		);
+	}
+
+	/**
+	 * Execute a supported MySQL LOCK/UNLOCK TABLES statement as a compatibility no-op.
+	 *
+	 * @param array $lock_tables_query Parsed lock query.
+	 * @return int Number of affected rows.
+	 */
+	private function execute_mysql_lock_tables_query( array $lock_tables_query ): int {
+		if ( 'unlock' === $lock_tables_query['operation'] ) {
+			$this->last_result = 0;
+			$this->clear_last_column_meta();
+			return $this->last_result;
+		}
+
+		foreach ( $lock_tables_query['tables'] as $table_reference ) {
+			$requested_schema = $table_reference['schema'];
+			$table_name       = $table_reference['table'];
+			if (
+				( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
+				|| ( null !== $requested_schema && 0 === strcasecmp( $requested_schema, 'information_schema' ) )
+			) {
+				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
+			}
+
+			if ( ! $this->mysql_table_administration_table_exists( $requested_schema, $table_name ) ) {
+				$table_label = $this->get_mysql_table_administration_result_table_name( $requested_schema, $table_name );
+				throw new InvalidArgumentException( sprintf( "Table '%s' doesn't exist", $table_label ) );
+			}
+		}
+
+		$this->last_result = 0;
+		$this->clear_last_column_meta();
+		return $this->last_result;
 	}
 
 	/**
@@ -13580,6 +13704,7 @@ WHERE option_name IN (
 				WP_MySQL_Lexer::DESC_SYMBOL,
 				WP_MySQL_Lexer::DROP_SYMBOL,
 				WP_MySQL_Lexer::INSERT_SYMBOL,
+				WP_MySQL_Lexer::LOCK_SYMBOL,
 				WP_MySQL_Lexer::OPTIMIZE_SYMBOL,
 				WP_MySQL_Lexer::REPLACE_SYMBOL,
 				WP_MySQL_Lexer::REPAIR_SYMBOL,

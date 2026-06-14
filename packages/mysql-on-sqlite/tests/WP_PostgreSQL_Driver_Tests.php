@@ -8218,6 +8218,173 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests UNLOCK TABLES forms are MySQL compatibility no-ops.
+	 */
+	public function test_mysql_unlock_tables_statements_are_noops_without_backend_execution(): void {
+		$driver = $this->create_driver();
+
+		foreach ( array( 'UNLOCK TABLES', 'UNLOCK TABLE' ) as $query ) {
+			$driver->query( 'SELECT 1 AS previous_value' );
+
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( array(), $driver->get_last_column_meta(), $query );
+			$this->assertSame( 0, $driver->get_last_column_count(), $query );
+			$this->assertSame( 0, $driver->get_last_return_value(), $query );
+		}
+	}
+
+	/**
+	 * Tests LOCK TABLES forms validate existing tables and then no-op.
+	 */
+	public function test_mysql_lock_tables_existing_tables_are_noops_without_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE lock_table_one (id INTEGER)' );
+		$driver->query( 'CREATE TABLE lock_table_two (id INTEGER)' );
+		$driver->query( 'CREATE TABLE lock_table_three (id INTEGER)' );
+
+		$cases = array(
+			'LOCK TABLES lock_table_one READ',
+			'LOCK TABLES lock_table_one WRITE',
+			'LOCK TABLE lock_table_one READ',
+			'LOCK TABLE lock_table_one WRITE',
+			'LOCK TABLES lock_table_one READ, lock_table_two READ, lock_table_three WRITE',
+		);
+
+		foreach ( $cases as $query ) {
+			$driver->query( 'SELECT 1 AS previous_value' );
+
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( array(), $driver->get_last_column_meta(), $query );
+			$this->assertSame( 0, $driver->get_last_column_count(), $query );
+			$this->assertSame( 0, $driver->get_last_return_value(), $query );
+		}
+	}
+
+	/**
+	 * Tests LOCK TABLES accepts main database-qualified table references.
+	 */
+	public function test_mysql_lock_tables_accepts_main_database_qualified_table_references(): void {
+		$driver = $this->create_driver( 'wp' );
+		$driver->query( 'CREATE TABLE lock_qualified_table (id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'LOCK TABLES wp.lock_qualified_table READ' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+	}
+
+	/**
+	 * Tests LOCK TABLES accepts existing temporary tables.
+	 */
+	public function test_mysql_lock_tables_accepts_existing_temporary_tables(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TEMPORARY TABLE lock_temp_table (id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'LOCK TABLES lock_temp_table WRITE' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+	}
+
+	/**
+	 * Tests LOCK TABLES missing targets fail before raw backend execution.
+	 */
+	public function test_mysql_lock_tables_missing_table_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE lock_existing_table (id INTEGER)' );
+
+		try {
+			$driver->query( 'LOCK TABLES lock_existing_table READ, lock_missing_table WRITE' );
+			$this->fail( 'Expected missing LOCK TABLES target to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Table 'wptests.lock_missing_table' doesn't exist", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests LOCK TABLES information_schema targets fail closed.
+	 */
+	public function test_mysql_lock_tables_information_schema_targets_fail_closed(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'LOCK TABLES information_schema.tables READ' );
+			$this->fail( 'Expected information_schema LOCK TABLES target to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported LOCK TABLES statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests LOCK TABLES under USE information_schema fails closed.
+	 */
+	public function test_mysql_lock_tables_after_use_information_schema_fails_closed(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE tables (id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		try {
+			$driver->query( 'LOCK TABLES tables READ' );
+			$this->fail( 'Expected information_schema LOCK TABLES target to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests unsupported LOCK TABLES modes fail before raw backend execution.
+	 */
+	public function test_mysql_lock_tables_unsupported_modes_fail_before_backend_execution(): void {
+		$queries = array(
+			'LOCK TABLES lock_mode_table LOW_PRIORITY WRITE',
+			'LOCK TABLES lock_mode_table READ LOCAL',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$driver->query( 'CREATE TABLE lock_mode_table (id INTEGER)' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported LOCK TABLES mode to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported LOCK TABLES statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests LOCK/UNLOCK TABLES no-ops do not commit user transactions.
+	 */
+	public function test_mysql_lock_tables_noop_does_not_commit_user_transaction(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE lock_transaction_table (id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'START TRANSACTION' ) );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO lock_transaction_table (id) VALUES (1)' ) );
+
+		$this->assertSame( 0, $driver->query( 'LOCK TABLES lock_transaction_table WRITE' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$this->assertSame( 0, $driver->query( 'UNLOCK TABLES' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$this->assertSame( 0, $driver->query( 'ROLLBACK' ) );
+
+		$rows = $driver->query( 'SELECT COUNT(*) AS lock_row_count FROM lock_transaction_table' );
+		$this->assertSame( 0, (int) $rows[0]->lock_row_count );
+	}
+
+	/**
 	 * Tests the emulated MySQL session SQL mode can be selected.
 	 */
 	public function test_select_session_sql_mode_returns_emulated_driver_state(): void {
