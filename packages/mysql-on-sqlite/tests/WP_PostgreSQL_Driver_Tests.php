@@ -2437,13 +2437,90 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '2', $rows[0]->ID );
 		$this->assertSame( 'match-yololololo', $rows[0]->user_login );
 
-		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$queries = $driver->get_last_postgresql_queries();
+		$sql     = $queries[0]['sql'];
 		$this->assertStringNotContainsString( 'SQL_CALC_FOUND_ROWS', $sql );
 		$this->assertStringContainsString(
 			'"ID" = ' . $this->get_expected_mysql_integer_cast_sql( "'yololololo'" ),
 			$sql
 		);
 		$this->assertStringContainsString( "LOWER(user_login) LIKE LOWER('%yololololo%')", $sql );
+
+		$count_sql = $queries[1]['sql'];
+		$this->assertStringContainsString(
+			'"ID" = ' . $this->get_expected_mysql_integer_cast_sql( "'yololololo'" ),
+			$count_sql
+		);
+	}
+
+	/**
+	 * Tests SQL_CALC_FOUND_ROWS user searches coerce bad ID terms after author subqueries.
+	 */
+	public function test_sql_calc_found_rows_user_search_coerces_integer_id_string_predicate_after_subquery(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$driver->query(
+			'CREATE TABLE wptests_users (
+				`ID` bigint(20) unsigned NOT NULL,
+				`user_login` varchar(60) NOT NULL DEFAULT "",
+				`user_nicename` varchar(50) NOT NULL DEFAULT "",
+				`display_name` varchar(250) NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_author` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`post_status` varchar(20) NOT NULL DEFAULT "publish",
+				`post_type` varchar(20) NOT NULL DEFAULT "post",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'INSERT INTO wptests_users (`ID`, `user_login`, `user_nicename`, `display_name`) ' .
+			'VALUES (1, \'admin\', \'admin\', \'Admin\')'
+		);
+		$driver->query(
+			'INSERT INTO wptests_users (`ID`, `user_login`, `user_nicename`, `display_name`) ' .
+			'VALUES (2, \'match-yololololo\', \'match-yololololo\', \'Match Yololololo\')'
+		);
+		$driver->query(
+			'INSERT INTO wptests_posts (`ID`, `post_author`, `post_status`, `post_type`) ' .
+			'VALUES (1, 2, \'publish\', \'post\')'
+		);
+
+		$select = "SELECT SQL_CALC_FOUND_ROWS wptests_users.ID
+			FROM wptests_users
+			WHERE 1=1
+				AND wptests_users.ID IN (
+					SELECT DISTINCT wptests_posts.post_author
+					FROM wptests_posts
+					WHERE wptests_posts.post_status = 'publish'
+						AND wptests_posts.post_type IN ( 'post', 'page' )
+				)
+				AND (ID = 'yololololo'
+					OR user_login LIKE '%yololololo%'
+					OR user_nicename LIKE '%yololololo%'
+					OR display_name LIKE '%yololololo%')
+			ORDER BY display_name ASC
+			LIMIT 0, 10";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->ID );
+
+		$queries = $driver->get_last_postgresql_queries();
+		foreach ( $queries as $query ) {
+			$sql = $query['sql'];
+			$this->assertStringContainsString(
+				'"ID" = ' . $this->get_expected_mysql_integer_cast_sql( "'yololololo'" ),
+				$sql
+			);
+			$this->assertStringContainsString( "LOWER(user_login) LIKE LOWER('%yololololo%')", $sql );
+			$this->assertStringContainsString( "LOWER(user_nicename) LIKE LOWER('%yololololo%')", $sql );
+			$this->assertStringContainsString( "LOWER(display_name) LIKE LOWER('%yololololo%')", $sql );
+		}
 	}
 
 	/**

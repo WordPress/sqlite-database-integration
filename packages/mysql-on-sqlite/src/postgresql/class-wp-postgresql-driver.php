@@ -848,7 +848,59 @@ class WP_PostgreSQL_Driver {
 		return sprintf(
 			'SELECT COUNT(*) AS %s %s',
 			$this->connection->quote_identifier( '__wp_pg_found_rows' ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end )
+			$this->translate_sql_calc_found_rows_direct_count_source_to_postgresql( $tokens, $from_position, $statement_end )
+		);
+	}
+
+	/**
+	 * Translate a direct FOUND_ROWS count source while preserving contextual predicate rewrites.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $from_position FROM token position.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return string PostgreSQL FROM/WHERE SQL.
+	 */
+	private function translate_sql_calc_found_rows_direct_count_source_to_postgresql(
+		array $tokens,
+		int $from_position,
+		int $statement_end
+	): string {
+		$where_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::WHERE_SYMBOL,
+			$from_position + 1,
+			$statement_end
+		);
+		if ( null === $where_position ) {
+			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end );
+		}
+
+		$scope = $this->get_mysql_select_scope( $tokens, $from_position + 1, $where_position );
+		if ( null === $scope ) {
+			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end );
+		}
+
+		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			$where_position + 1,
+			$statement_end,
+			$scope
+		);
+		if ( ! $where_sql['changed'] ) {
+			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end );
+		}
+
+		return $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			$from_position,
+			$statement_end,
+			array(
+				array(
+					'start' => $where_position + 1,
+					'end'   => $statement_end,
+					'sql'   => $where_sql['sql'],
+				),
+			)
 		);
 	}
 
