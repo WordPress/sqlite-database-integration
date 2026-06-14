@@ -8234,6 +8234,182 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests bare SHOW VARIABLES returns all emulated session variables.
+	 */
+	public function test_bare_show_variables_returns_all_known_session_variables_without_backend_queries(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( "SET NAMES 'utf8' COLLATE 'utf8_general_ci'" ) );
+
+		$rows = $driver->query( 'SHOW VARIABLES' );
+
+		$this->assertSame(
+			array(
+				array(
+					'Variable_name' => 'character_set_client',
+					'Value'         => 'utf8',
+				),
+				array(
+					'Variable_name' => 'character_set_connection',
+					'Value'         => 'utf8',
+				),
+				array(
+					'Variable_name' => 'character_set_results',
+					'Value'         => 'utf8',
+				),
+				array(
+					'Variable_name' => 'character_set_database',
+					'Value'         => 'utf8',
+				),
+				array(
+					'Variable_name' => 'character_set_server',
+					'Value'         => 'utf8',
+				),
+				array(
+					'Variable_name' => 'collation_connection',
+					'Value'         => 'utf8_general_ci',
+				),
+				array(
+					'Variable_name' => 'collation_database',
+					'Value'         => 'utf8_general_ci',
+				),
+				array(
+					'Variable_name' => 'collation_server',
+					'Value'         => 'utf8_general_ci',
+				),
+			),
+			array_map(
+				static function ( $row ) {
+					return array(
+						'Variable_name' => $row->Variable_name,
+						'Value'         => $row->Value,
+					);
+				},
+				$rows
+			)
+		);
+		$this->assertSame( 'SHOW VARIABLES', $driver->get_last_mysql_query() );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( 2, $driver->get_last_column_count() );
+		$this->assertSame(
+			array(
+				array(
+					'name'             => 'Variable_name',
+					'table'            => '',
+					'mysqli:orgtable'  => '',
+					'mysqli:orgname'   => 'Variable_name',
+					'mysqli:db'        => 'wptests',
+					'mysqli:charsetnr' => 45,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
+					'len'              => 64,
+					'precision'        => 0,
+					'native_type'      => 'string',
+				),
+				array(
+					'name'             => 'Value',
+					'table'            => '',
+					'mysqli:orgtable'  => '',
+					'mysqli:orgname'   => 'Value',
+					'mysqli:db'        => 'wptests',
+					'mysqli:charsetnr' => 45,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
+					'len'              => 1024,
+					'precision'        => 0,
+					'native_type'      => 'string',
+				),
+			),
+			$driver->get_last_column_meta()
+		);
+	}
+
+	/**
+	 * Tests SHOW GLOBAL/SESSION VARIABLES match bare SHOW VARIABLES.
+	 */
+	public function test_scoped_show_variables_matches_bare_show_variables(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( "SET NAMES 'utf8' COLLATE 'utf8_general_ci'" ) );
+
+		$bare = $driver->query( 'SHOW VARIABLES' );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$global = $driver->query( 'SHOW GLOBAL VARIABLES' );
+		$this->assertEquals( $bare, $global );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$session = $driver->query( 'SHOW SESSION VARIABLES' );
+		$this->assertEquals( $bare, $session );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests scoped SHOW VARIABLES LIKE and WHERE filters are emulated.
+	 */
+	public function test_scoped_show_variables_like_and_where_filters_work(): void {
+		$driver = $this->create_driver();
+
+		$global_like = $driver->query( "SHOW GLOBAL VARIABLES LIKE 'character_set_c%'" );
+		$this->assertSame(
+			array(
+				'character_set_client',
+				'character_set_connection',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Variable_name;
+				},
+				$global_like
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$session_like = $driver->query( "SHOW SESSION VARIABLES LIKE 'collation_%'" );
+		$this->assertSame(
+			array(
+				'collation_connection',
+				'collation_database',
+				'collation_server',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Variable_name;
+				},
+				$session_like
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$global_where = $driver->query( "SHOW GLOBAL VARIABLES WHERE Variable_name = 'character_set_client'" );
+		$this->assertCount( 1, $global_where );
+		$this->assertSame( 'character_set_client', $global_where[0]->Variable_name );
+		$this->assertSame( 'utf8mb4', $global_where[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$session_where = $driver->query( "SHOW SESSION VARIABLES WHERE Variable_name = 'collation_connection'" );
+		$this->assertCount( 1, $session_where );
+		$this->assertSame( 'collation_connection', $session_where[0]->Variable_name );
+		$this->assertSame( 'utf8mb4_unicode_ci', $session_where[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests unsupported SHOW VARIABLES WHERE clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_variables_where_clause_does_not_reach_backend(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( "SHOW VARIABLES WHERE Value = 'utf8mb4'" );
+			$this->fail( 'Expected unsupported SHOW VARIABLES statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW VARIABLES statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SET NAMES updates MySQL-compatible SHOW VARIABLES output.
 	 */
 	public function test_set_names_updates_show_variables_session_state(): void {

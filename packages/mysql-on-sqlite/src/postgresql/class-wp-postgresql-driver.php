@@ -3420,46 +3420,64 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW VARIABLES statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{type: string, pattern: string}|null SHOW VARIABLES options, or null when unsupported.
+	 * @return array{type: string, pattern: string|null}|null SHOW VARIABLES options, or null when this is not SHOW VARIABLES.
 	 */
 	private function get_show_variables_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
-		if (
-			! isset( $tokens[0], $tokens[1] )
-			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::VARIABLES_SYMBOL !== $tokens[1]->id
-		) {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
 
+		$position = 1;
 		if (
-			isset( $tokens[2], $tokens[3] )
-			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[2]->id
-			&& ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $tokens[3]->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[3]->id )
-			&& $this->is_at_mysql_query_end( $tokens, 4 )
+			WP_MySQL_Lexer::GLOBAL_SYMBOL === $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::SESSION_SYMBOL === $tokens[ $position ]->id
+		) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VARIABLES_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return array(
+				'type'    => 'all',
+				'pattern' => null,
+			);
+		}
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
+			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
 		) {
 			return array(
 				'type'    => 'like',
-				'pattern' => strtolower( $tokens[3]->get_value() ),
+				'pattern' => strtolower( $tokens[ $position + 1 ]->get_value() ),
 			);
 		}
 
 		if (
-			isset( $tokens[2], $tokens[3], $tokens[4], $tokens[5] )
-			&& WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[2]->id
-			&& WP_MySQL_Lexer::IDENTIFIER === $tokens[3]->id
-			&& 'variable_name' === strtolower( $tokens[3]->get_value() )
-			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[4]->id
-			&& ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $tokens[5]->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[5]->id )
-			&& $this->is_at_mysql_query_end( $tokens, 6 )
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+			&& WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id
+			&& 'Variable_name' === $this->get_mysql_show_output_column_name(
+				$tokens[ $position + 1 ],
+				array( 'variable_name' => 'Variable_name' )
+			)
+			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position + 2 ]->id
+			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 3 ] )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 4 )
 		) {
 			return array(
 				'type'    => 'exact',
-				'pattern' => strtolower( $tokens[5]->get_value() ),
+				'pattern' => strtolower( $tokens[ $position + 3 ]->get_value() ),
 			);
 		}
 
-		return null;
+		throw new InvalidArgumentException( 'Unsupported SHOW VARIABLES statement.' );
 	}
 
 	/**
