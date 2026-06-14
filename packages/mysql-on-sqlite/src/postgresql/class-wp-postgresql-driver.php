@@ -1047,8 +1047,7 @@ class WP_PostgreSQL_Driver {
 	 * @return bool Whether the hidden window column can be removed safely.
 	 */
 	private function is_sql_calc_found_rows_window_fetch_mode( $fetch_mode ): bool {
-		$fetch_style = (int) $fetch_mode & self::PDO_FETCH_STYLE_MASK;
-		return in_array( $fetch_style, array( PDO::FETCH_OBJ, PDO::FETCH_ASSOC ), true );
+		return in_array( (int) $fetch_mode, array( PDO::FETCH_OBJ, PDO::FETCH_ASSOC ), true );
 	}
 
 	/**

@@ -4099,6 +4099,74 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests grouped associative SQL_CALC_FOUND_ROWS fetches use the count fallback.
+	 */
+	public function test_sql_calc_found_rows_fetch_group_assoc_uses_count_fallback_without_hidden_column(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO t (id, v) VALUES (1, 'a')" );
+		$driver->query( "INSERT INTO t (id, v) VALUES (2, 'b')" );
+		$driver->query( "INSERT INTO t (id, v) VALUES (3, 'c')" );
+
+		$rows = $driver->query(
+			'SELECT SQL_CALC_FOUND_ROWS id, v FROM t ORDER BY id ASC LIMIT 0, 2',
+			PDO::FETCH_GROUP | PDO::FETCH_ASSOC
+		);
+
+		$this->assertSame( array( 1, 2 ), array_keys( $rows ) );
+		$this->assertSame( array( array( 'v' => 'a' ) ), $rows[1] );
+		$this->assertSame( array( array( 'v' => 'b' ) ), $rows[2] );
+		$this->assertArrayNotHasKey( '__wp_pg_found_rows', $rows[1][0] );
+		$this->assertArrayNotHasKey( '__wp_pg_found_rows', $rows[2][0] );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertStringNotContainsString( 'COUNT(*) OVER() AS "__wp_pg_found_rows"', $queries[0]['sql'] );
+		$this->assertSame( 'SELECT id, v FROM t ORDER BY id ASC LIMIT 2 OFFSET 0', $queries[0]['sql'] );
+		$this->assertSame( 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM t', $queries[1]['sql'] );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '3', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests grouped object SQL_CALC_FOUND_ROWS fetches use the count fallback.
+	 */
+	public function test_sql_calc_found_rows_fetch_group_obj_uses_count_fallback_without_hidden_column(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO t (id, v) VALUES (1, 'a')" );
+		$driver->query( "INSERT INTO t (id, v) VALUES (2, 'b')" );
+		$driver->query( "INSERT INTO t (id, v) VALUES (3, 'c')" );
+
+		$rows = $driver->query(
+			'SELECT SQL_CALC_FOUND_ROWS id, v FROM t ORDER BY id ASC LIMIT 0, 2',
+			PDO::FETCH_GROUP | PDO::FETCH_OBJ
+		);
+
+		$this->assertSame( array( 1, 2 ), array_keys( $rows ) );
+		$this->assertCount( 1, $rows[1] );
+		$this->assertCount( 1, $rows[2] );
+		$this->assertSame( array( 'v' ), array_keys( get_object_vars( $rows[1][0] ) ) );
+		$this->assertSame( 'a', $rows[1][0]->v );
+		$this->assertSame( array( 'v' ), array_keys( get_object_vars( $rows[2][0] ) ) );
+		$this->assertSame( 'b', $rows[2][0]->v );
+		$this->assertFalse( property_exists( $rows[1][0], '__wp_pg_found_rows' ) );
+		$this->assertFalse( property_exists( $rows[2][0], '__wp_pg_found_rows' ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertStringNotContainsString( 'COUNT(*) OVER() AS "__wp_pg_found_rows"', $queries[0]['sql'] );
+		$this->assertSame( 'SELECT id, v FROM t ORDER BY id ASC LIMIT 2 OFFSET 0', $queries[0]['sql'] );
+		$this->assertSame( 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM t', $queries[1]['sql'] );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '3', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
 	 * Tests empty SQL_CALC_FOUND_ROWS pages keep the direct count fallback.
 	 */
 	public function test_simple_sql_calc_found_rows_count_uses_direct_unordered_source_count_for_empty_pages(): void {
