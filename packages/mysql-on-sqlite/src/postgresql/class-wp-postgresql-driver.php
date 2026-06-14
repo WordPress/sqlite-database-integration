@@ -3699,10 +3699,12 @@ class WP_PostgreSQL_Driver {
 
 		$stmt = $this->connection->query(
 			'SELECT 1
-			FROM information_schema.tables
-			WHERE table_schema = ?
-				AND table_name = ?
-				AND table_type = \'BASE TABLE\'
+			FROM pg_catalog.pg_class c
+			INNER JOIN pg_catalog.pg_namespace n
+				ON n.oid = c.relnamespace
+			WHERE n.nspname = ?
+				AND c.relname = ?
+				AND c.relkind IN (\'r\', \'p\')
 			LIMIT 1',
 			array( $schema_name, $table_name )
 		);

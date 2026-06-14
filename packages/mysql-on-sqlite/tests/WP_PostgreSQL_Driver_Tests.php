@@ -6729,6 +6729,47 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests table administration statements treat PostgreSQL temporary tables as existing.
+	 */
+	public function test_table_administration_statements_treat_postgresql_temporary_table_as_existing(): void {
+		$connection = $this->create_table_administration_catalog_fixture_connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$cases = array(
+			'ANALYZE TABLE administration_temp'  => 'analyze',
+			'CHECK TABLE administration_temp'    => 'check',
+			'OPTIMIZE TABLE administration_temp' => 'optimize',
+			'REPAIR TABLE administration_temp'   => 'repair',
+		);
+
+		foreach ( $cases as $query => $operation ) {
+			$rows = $driver->query( $query );
+
+			$this->assertEquals(
+				array(
+					(object) array(
+						'Table'    => 'wptests.administration_temp',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$rows,
+				$query
+			);
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+
+		$catalog_queries = $connection->get_table_administration_catalog_queries();
+		$this->assertCount( count( $cases ), $catalog_queries );
+
+		foreach ( $catalog_queries as $catalog_query ) {
+			$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $catalog_query['sql'] );
+			$this->assertSame( array( 'pg_temp_7', 'administration_temp' ), $catalog_query['params'] );
+		}
+	}
+
+	/**
 	 * Tests table administration statements preserve multiple-table order.
 	 */
 	public function test_table_administration_multiple_tables_preserve_order(): void {
@@ -7593,6 +7634,127 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver_with_postgresql_quote_translation(): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Creates a connection fixture that exercises production PostgreSQL table administration catalogs.
+	 *
+	 * @return WP_PostgreSQL_Connection Connection fixture.
+	 */
+	private function create_table_administration_catalog_fixture_connection(): WP_PostgreSQL_Connection {
+		$pdo = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report PostgreSQL for branch selection while keeping SQLite execution available.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+
+		return new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection {
+			/**
+			 * PostgreSQL catalog existence queries issued by the driver.
+			 *
+			 * @var array[]
+			 */
+			private $table_administration_catalog_queries = array();
+
+			/**
+			 * Constructor.
+			 *
+			 * @param array $options Connection options.
+			 */
+			public function __construct( array $options ) {
+				parent::__construct( $options );
+
+				$pdo = $this->get_pdo();
+				$pdo->exec(
+					'CREATE TABLE table_administration_catalog_fixture (
+						table_schema TEXT NOT NULL,
+						table_name TEXT NOT NULL,
+						relkind TEXT NOT NULL
+					)'
+				);
+				$pdo->exec(
+					"INSERT INTO table_administration_catalog_fixture
+						(table_schema, table_name, relkind)
+					VALUES ('pg_temp_7', 'administration_temp', 'r')"
+				);
+				$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
+				$pdo->exec(
+					'CREATE TABLE information_schema.tables (
+						table_schema TEXT NOT NULL,
+						table_name TEXT NOT NULL,
+						table_type TEXT NOT NULL
+					)'
+				);
+				$pdo->exec(
+					"INSERT INTO information_schema.tables
+						(table_schema, table_name, table_type)
+					VALUES ('pg_temp_7', 'administration_temp', 'LOCAL TEMPORARY')"
+				);
+			}
+
+			/**
+			 * Execute fixture-backed PostgreSQL catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					false !== strpos( $sql, 'FROM pg_catalog.pg_class c' )
+					&& false !== strpos( $sql, 'pg_my_temp_schema()' )
+				) {
+					return parent::query(
+						'SELECT table_schema AS nspname
+						FROM table_administration_catalog_fixture
+						WHERE table_schema = \'pg_temp_7\'
+							AND lower(table_name) = lower(?)
+							AND relkind IN (\'r\', \'p\')
+						LIMIT 1',
+						array( $params[0] ?? '' )
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					$this->table_administration_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'SELECT 1
+						FROM table_administration_catalog_fixture
+						WHERE table_schema = ?
+							AND table_name = ?
+							AND relkind IN (\'r\', \'p\')
+						LIMIT 1',
+						$params
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured table administration catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_table_administration_catalog_queries(): array {
+				return $this->table_administration_catalog_queries;
+			}
+		};
 	}
 
 	/**
