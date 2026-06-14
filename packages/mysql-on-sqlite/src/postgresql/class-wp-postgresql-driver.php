@@ -514,6 +514,15 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		$show_table_status_query = $this->get_show_table_status_query( $query );
+		if ( null !== $show_table_status_query ) {
+			return $this->execute_show_table_status_query(
+				$show_table_status_query,
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
 		$show_columns_query = $this->get_show_columns_query( $query );
 		if ( null !== $show_columns_query ) {
 			return $this->execute_show_columns_query(
@@ -3119,6 +3128,140 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW TABLE STATUS statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{filter_type: string, filter_pattern: string|null, filter_threshold: string|null}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
+	 */
+	private function get_show_table_status_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1], $tokens[2] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id
+			|| WP_MySQL_Lexer::STATUS_SYMBOL !== $tokens[2]->id
+		) {
+			return null;
+		}
+
+		$position = 3;
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			$database_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $database_name || 0 !== strcasecmp( $database_name, $this->db_name ) ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
+			}
+
+			$position += 2;
+		}
+
+		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return array(
+				'filter_type'      => 'all',
+				'filter_pattern'   => null,
+				'filter_threshold' => null,
+			);
+		}
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
+			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
+		) {
+			return array(
+				'filter_type'      => 'like',
+				'filter_pattern'   => $tokens[ $position + 1 ]->get_value(),
+				'filter_threshold' => null,
+			);
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id
+		) {
+			$filter = $this->get_show_table_status_where_filter( $tokens, $position + 1 );
+			if ( null !== $filter ) {
+				return $filter;
+			}
+		}
+
+		throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
+	}
+
+	/**
+	 * Parse a supported SHOW TABLE STATUS WHERE clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First WHERE predicate token position.
+	 * @return array{filter_type: string, filter_pattern: string|null, filter_threshold: string|null}|null Parsed filter, or null when unsupported.
+	 */
+	private function get_show_table_status_where_filter( array $tokens, int $position ): ?array {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		$column = $this->get_mysql_show_output_column_name(
+			$tokens[ $position ],
+			array( 'auto_increment' => 'Auto_increment' )
+		);
+		if ( 'Auto_increment' !== $column || ! isset( $tokens[ $position + 1 ] ) ) {
+			return null;
+		}
+
+		if (
+			WP_MySQL_Lexer::GREATER_THAN_OPERATOR === $tokens[ $position + 1 ]->id
+			&& isset( $tokens[ $position + 2 ] )
+			&& $this->is_mysql_unsigned_integer_token( $tokens[ $position + 2 ] )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 3 )
+		) {
+			return array(
+				'filter_type'      => 'auto_increment_gt',
+				'filter_pattern'   => null,
+				'filter_threshold' => $tokens[ $position + 2 ]->get_value(),
+			);
+		}
+
+		if (
+			WP_MySQL_Lexer::IS_SYMBOL === $tokens[ $position + 1 ]->id
+			&& isset( $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $position + 2 ]->id
+			&& $this->is_at_mysql_query_end( $tokens, $position + 3 )
+		) {
+			return array(
+				'filter_type'      => 'auto_increment_is_null',
+				'filter_pattern'   => null,
+				'filter_threshold' => null,
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token is an unsigned integer literal.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is an unsigned integer literal.
+	 */
+	private function is_mysql_unsigned_integer_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::INT_NUMBER,
+				WP_MySQL_Lexer::LONG_NUMBER,
+				WP_MySQL_Lexer::ULONGLONG_NUMBER,
+			),
+			true
+		);
+	}
+
+	/**
 	 * Parse a supported MySQL SHOW VARIABLES statement.
 	 *
 	 * @param string $query MySQL query.
@@ -3317,6 +3460,7 @@ class WP_PostgreSQL_Driver {
 		return in_array(
 			$token->id,
 			array(
+				WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
 				WP_MySQL_Lexer::CHARSET_SYMBOL,
 				WP_MySQL_Lexer::COLLATION_SYMBOL,
 				WP_MySQL_Lexer::DATABASE_SYMBOL,
@@ -3938,6 +4082,306 @@ ORDER BY table_name';
 		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Execute a MySQL SHOW TABLE STATUS statement through PostgreSQL catalogs.
+	 *
+	 * @param array $show_table_status_query SHOW TABLE STATUS options.
+	 * @param int   $fetch_mode              PDO fetch mode.
+	 * @param array ...$fetch_mode_args      Additional fetch mode arguments.
+	 * @return mixed SHOW TABLE STATUS result rows.
+	 */
+	private function execute_show_table_status_query( array $show_table_status_query, $fetch_mode, ...$fetch_mode_args ) {
+		$rows = array();
+		foreach ( $this->get_show_table_status_catalog_rows() as $catalog_row ) {
+			$table_name      = (string) $catalog_row['table_name'];
+			$identity_column = isset( $catalog_row['identity_column'] ) && null !== $catalog_row['identity_column']
+				? (string) $catalog_row['identity_column']
+				: null;
+
+			$rows[] = $this->get_show_table_status_result_row(
+				$table_name,
+				null === $identity_column
+					? null
+					: $this->get_show_table_status_auto_increment_value( $table_name, $identity_column )
+			);
+		}
+
+		$rows = $this->filter_show_table_status_rows( $rows, $show_table_status_query );
+
+		return $this->set_mysql_static_show_result(
+			array(
+				'Name',
+				'Engine',
+				'Version',
+				'Row_format',
+				'Rows',
+				'Avg_row_length',
+				'Data_length',
+				'Max_data_length',
+				'Index_length',
+				'Data_free',
+				'Auto_increment',
+				'Create_time',
+				'Update_time',
+				'Check_time',
+				'Collation',
+				'Checksum',
+				'Create_options',
+				'Comment',
+			),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Get base table rows used by SHOW TABLE STATUS.
+	 *
+	 * @return array[] Catalog rows.
+	 */
+	private function get_show_table_status_catalog_rows(): array {
+		$sql    = 'SELECT
+				t.table_name,
+				(
+					SELECT c.column_name
+					FROM information_schema.columns c
+					WHERE c.table_schema = t.table_schema
+						AND c.table_name = t.table_name
+						AND (
+							c.is_identity = \'YES\'
+							OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%\'
+						)
+					ORDER BY c.ordinal_position
+					LIMIT 1
+				) AS identity_column
+			FROM information_schema.tables t
+			WHERE t.table_schema = ?
+				AND t.table_type = ?
+				AND t.table_name NOT IN (?, ?, ?)
+			ORDER BY t.table_name';
+		$params = array(
+			'public',
+			'BASE TABLE',
+			self::MYSQL_COLUMN_METADATA_TABLE,
+			self::MYSQL_INDEX_METADATA_TABLE,
+			self::MYSQL_CHARSET_METADATA_TABLE,
+		);
+		$stmt   = $this->connection->query( $sql, $params );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Build a MySQL-shaped SHOW TABLE STATUS row.
+	 *
+	 * @param string      $table_name     Table name.
+	 * @param string|null $auto_increment Next auto-increment value, or null.
+	 * @return array MySQL-shaped row.
+	 */
+	private function get_show_table_status_result_row( string $table_name, ?string $auto_increment ): array {
+		return array(
+			'Name'            => $table_name,
+			'Engine'          => 'InnoDB',
+			'Version'         => '10',
+			'Row_format'      => 'Dynamic',
+			'Rows'            => '0',
+			'Avg_row_length'  => '0',
+			'Data_length'     => '0',
+			'Max_data_length' => '0',
+			'Index_length'    => '0',
+			'Data_free'       => '0',
+			'Auto_increment'  => $auto_increment,
+			'Create_time'     => null,
+			'Update_time'     => null,
+			'Check_time'      => null,
+			'Collation'       => $this->collation,
+			'Checksum'        => null,
+			'Create_options'  => '',
+			'Comment'         => '',
+		);
+	}
+
+	/**
+	 * Get the next MySQL-compatible AUTO_INCREMENT value for a table.
+	 *
+	 * @param string $table_name      Table name.
+	 * @param string $identity_column Identity column name.
+	 * @return string|null Next AUTO_INCREMENT value, or null when unavailable.
+	 */
+	private function get_show_table_status_auto_increment_value( string $table_name, string $identity_column ): ?string {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if ( 'pgsql' === $driver_name ) {
+			return $this->get_postgresql_show_table_status_auto_increment_value( $table_name, $identity_column );
+		}
+
+		if ( 'sqlite' === $driver_name ) {
+			return $this->get_sqlite_show_table_status_auto_increment_value( $table_name );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the next AUTO_INCREMENT value from PostgreSQL identity sequence state.
+	 *
+	 * @param string $table_name      Table name.
+	 * @param string $identity_column Identity column name.
+	 * @return string|null Next AUTO_INCREMENT value, or null when unavailable.
+	 */
+	private function get_postgresql_show_table_status_auto_increment_value( string $table_name, string $identity_column ): ?string {
+		$sequence_sql                    = 'SELECT
+				seq_ns.nspname AS sequence_schema,
+				seq.relname AS sequence_name
+			FROM (
+				SELECT pg_catalog.pg_get_serial_sequence(format(\'%I.%I\', ?, ?), ?)::regclass AS sequence_oid
+			) identity_sequence
+			LEFT JOIN pg_catalog.pg_class seq
+				ON seq.oid = identity_sequence.sequence_oid
+			LEFT JOIN pg_catalog.pg_namespace seq_ns
+				ON seq_ns.oid = seq.relnamespace';
+		$stmt                            = $this->connection->query(
+			$sequence_sql,
+			array( 'public', $table_name, $identity_column )
+		);
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sequence_sql,
+			'params' => array( 'public', $table_name, $identity_column ),
+		);
+
+		$sequence = $stmt->fetch( PDO::FETCH_ASSOC );
+		if (
+			false === $sequence
+			|| empty( $sequence['sequence_schema'] )
+			|| empty( $sequence['sequence_name'] )
+		) {
+			return '1';
+		}
+
+		$sequence_identifier             = $this->get_postgresql_qualified_identifier(
+			(string) $sequence['sequence_schema'],
+			(string) $sequence['sequence_name']
+		);
+		$table_identifier                = $this->get_postgresql_qualified_identifier( 'public', $table_name );
+		$sql                             = sprintf(
+			'WITH sequence_state AS (
+				SELECT last_value, is_called FROM %1$s
+			),
+			table_state AS (
+				SELECT MAX(%2$s) AS max_identity_value FROM %3$s
+			)
+			SELECT GREATEST(
+				CASE WHEN sequence_state.is_called THEN sequence_state.last_value + 1 ELSE sequence_state.last_value END,
+				COALESCE(table_state.max_identity_value + 1, 1)
+			) AS auto_increment
+			FROM sequence_state, table_state',
+			$sequence_identifier,
+			$this->connection->quote_identifier( $identity_column ),
+			$table_identifier
+		);
+		$stmt                            = $this->connection->query( $sql );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => array(),
+		);
+
+		$value = $stmt->fetchColumn();
+		return false === $value ? '1' : (string) $value;
+	}
+
+	/**
+	 * Get the next AUTO_INCREMENT value from SQLite sequence state in tests.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string Next AUTO_INCREMENT value.
+	 */
+	private function get_sqlite_show_table_status_auto_increment_value( string $table_name ): string {
+		$sequence_table_sql              = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence' LIMIT 1";
+		$has_sequence_table              = $this->connection->query( $sequence_table_sql )->fetchColumn();
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sequence_table_sql,
+			'params' => array(),
+		);
+
+		if ( false === $has_sequence_table ) {
+			return '1';
+		}
+
+		$stmt                            = $this->connection->query(
+			'SELECT seq + 1 FROM sqlite_sequence WHERE name = ?',
+			array( $table_name )
+		);
+		$this->last_postgresql_queries[] = array(
+			'sql'    => 'SELECT seq + 1 FROM sqlite_sequence WHERE name = ?',
+			'params' => array( $table_name ),
+		);
+
+		$value = $stmt->fetchColumn();
+		return false === $value ? '1' : (string) $value;
+	}
+
+	/**
+	 * Filter SHOW TABLE STATUS rows with a parsed filter.
+	 *
+	 * @param array[] $rows                    SHOW TABLE STATUS rows.
+	 * @param array   $show_table_status_query Parsed SHOW TABLE STATUS options.
+	 * @return array[] Filtered rows.
+	 */
+	private function filter_show_table_status_rows( array $rows, array $show_table_status_query ): array {
+		if ( 'all' === $show_table_status_query['filter_type'] ) {
+			return $rows;
+		}
+
+		return array_values(
+			array_filter(
+				$rows,
+				function ( array $row ) use ( $show_table_status_query ): bool {
+					if ( 'like' === $show_table_status_query['filter_type'] ) {
+						return null !== $show_table_status_query['filter_pattern']
+							&& $this->matches_mysql_like_pattern( (string) $row['Name'], $show_table_status_query['filter_pattern'] );
+					}
+
+					if ( 'auto_increment_gt' === $show_table_status_query['filter_type'] ) {
+						return null !== $row['Auto_increment']
+							&& null !== $show_table_status_query['filter_threshold']
+							&& $this->is_unsigned_integer_string_greater_than(
+								(string) $row['Auto_increment'],
+								$show_table_status_query['filter_threshold']
+							);
+					}
+
+					return 'auto_increment_is_null' === $show_table_status_query['filter_type']
+						&& null === $row['Auto_increment'];
+				}
+			)
+		);
+	}
+
+	/**
+	 * Compare two unsigned integer strings without losing precision.
+	 *
+	 * @param string $left  Left integer.
+	 * @param string $right Right integer.
+	 * @return bool Whether left is greater than right.
+	 */
+	private function is_unsigned_integer_string_greater_than( string $left, string $right ): bool {
+		$left  = ltrim( $left, '0' );
+		$right = ltrim( $right, '0' );
+		$left  = '' === $left ? '0' : $left;
+		$right = '' === $right ? '0' : $right;
+
+		if ( strlen( $left ) !== strlen( $right ) ) {
+			return strlen( $left ) > strlen( $right );
+		}
+
+		return strcmp( $left, $right ) > 0;
 	}
 
 	/**

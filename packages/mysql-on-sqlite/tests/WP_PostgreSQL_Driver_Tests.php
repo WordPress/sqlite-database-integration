@@ -6584,6 +6584,163 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLE STATUS returns MySQL-shaped catalog rows.
+	 */
+	public function test_show_table_status_returns_mysql_shaped_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS' );
+
+		$this->assertCount( 2, $tables );
+		$this->assertSame( 'wptests_options', $tables[0]->Name );
+		$this->assertSame( 'InnoDB', $tables[0]->Engine );
+		$this->assertSame( '10', $tables[0]->Version );
+		$this->assertSame( 'Dynamic', $tables[0]->Row_format );
+		$this->assertSame( '0', $tables[0]->Rows );
+		$this->assertSame( '0', $tables[0]->Avg_row_length );
+		$this->assertSame( '0', $tables[0]->Data_length );
+		$this->assertSame( '0', $tables[0]->Max_data_length );
+		$this->assertSame( '0', $tables[0]->Index_length );
+		$this->assertSame( '0', $tables[0]->Data_free );
+		$this->assertSame( '1', $tables[0]->Auto_increment );
+		$this->assertNull( $tables[0]->Create_time );
+		$this->assertNull( $tables[0]->Update_time );
+		$this->assertNull( $tables[0]->Check_time );
+		$this->assertSame( $driver->get_collation(), $tables[0]->Collation );
+		$this->assertNull( $tables[0]->Checksum );
+		$this->assertSame( '', $tables[0]->Create_options );
+		$this->assertSame( '', $tables[0]->Comment );
+		$this->assertSame( 'wptests_posts', $tables[1]->Name );
+		$this->assertNull( $tables[1]->Auto_increment );
+		$this->assertSame(
+			$this->get_show_table_status_column_names(),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		foreach ( $driver->get_last_postgresql_queries() as $query ) {
+			$this->assertStringNotContainsString( 'SHOW TABLE STATUS', $query['sql'] );
+		}
+		$this->assertStringContainsString( 'information_schema.tables', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests SHOW TABLE STATUS accepts current database qualification forms.
+	 */
+	public function test_show_table_status_accepts_current_database_qualification_forms(): void {
+		$cases = array(
+			'SHOW TABLE STATUS FROM wptests',
+			'SHOW TABLE STATUS IN `wptests`',
+		);
+
+		foreach ( $cases as $query ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			$tables = $driver->query( $query );
+
+			$this->assertSame( array( 'wptests_options', 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ), $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			foreach ( $driver->get_last_postgresql_queries() as $postgresql_query ) {
+				$this->assertStringNotContainsString( 'SHOW TABLE STATUS', $postgresql_query['sql'], $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests SHOW TABLE STATUS LIKE filters rows and hides internal metadata tables.
+	 */
+	public function test_show_table_status_like_filters_and_hides_internal_metadata_tables(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', '__wp_postgresql_mysql_column_metadata', 'BASE TABLE'),
+				('public', '__wp_postgresql_mysql_index_metadata', 'BASE TABLE'),
+				('public', '__wp_postgresql_mysql_charset_metadata', 'BASE TABLE'),
+				('public', 'other_visible', 'BASE TABLE')"
+		);
+
+		$tables = $driver->query( "SHOW TABLE STATUS LIKE 'wptests_%'" );
+
+		$this->assertSame(
+			array( 'wptests_options', 'wptests_posts' ),
+			array_map( array( $this, 'get_show_table_status_row_name' ), $tables )
+		);
+
+		$internal_tables = $driver->query( "SHOW TABLE STATUS LIKE '__wp_postgresql_mysql_%'" );
+
+		$this->assertSame( array(), $internal_tables );
+	}
+
+	/**
+	 * Tests SHOW TABLE STATUS excludes temporary tables and views.
+	 */
+	public function test_show_table_status_excludes_temporary_tables_and_views(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$driver->get_connection()->get_pdo()->exec( 'CREATE TEMPORARY TABLE wptests_temp (id INTEGER)' );
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', 'wptests_temp', 'LOCAL TEMPORARY')"
+		);
+
+		$tables = $driver->query( 'SHOW TABLE STATUS' );
+		$names  = array_map( array( $this, 'get_show_table_status_row_name' ), $tables );
+
+		$this->assertSame( array( 'wptests_options', 'wptests_posts' ), $names );
+		$this->assertNotContains( 'wptests_view', $names );
+		$this->assertNotContains( 'wptests_temp', $names );
+	}
+
+	/**
+	 * Tests SHOW TABLE STATUS supports the scoped Auto_increment WHERE filters.
+	 */
+	public function test_show_table_status_where_filters_by_auto_increment(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_show_table_status_auto_increment_fixture( $driver );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE `Auto_increment` > 3' );
+
+		$this->assertSame( array( 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+		$this->assertSame( '6', $tables[0]->Auto_increment );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Auto_increment IS NULL' );
+
+		$this->assertSame( array( 'wptests_plain' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+		$this->assertNull( $tables[0]->Auto_increment );
+	}
+
+	/**
+	 * Tests unsupported SHOW TABLE STATUS WHERE clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_table_status_where_clause_does_not_reach_backend(): void {
+		$unsupported_queries = array(
+			"SHOW TABLE STATUS WHERE Name = 'wptests_options'",
+			'SHOW TABLE STATUS WHERE `Auto_increment` >= 1',
+			'SHOW TABLE STATUS FROM other_db',
+		);
+
+		foreach ( $unsupported_queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW TABLE STATUS statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW TABLE STATUS statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests SHOW COLLATION returns MySQL-shaped static collation rows.
 	 */
 	public function test_show_collation_returns_mysql_shaped_rows(): void {
@@ -8336,6 +8493,72 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$pdo->exec( 'INSERT INTO ' . $options_table . ' (id) VALUES (1), (2)' );
 		$pdo->exec( 'INSERT INTO ' . $posts_table . ' (id) VALUES (1)' );
+	}
+
+	/**
+	 * Get the SHOW TABLE STATUS result column names.
+	 *
+	 * @return string[] Column names.
+	 */
+	private function get_show_table_status_column_names(): array {
+		return array(
+			'Name',
+			'Engine',
+			'Version',
+			'Row_format',
+			'Rows',
+			'Avg_row_length',
+			'Data_length',
+			'Max_data_length',
+			'Index_length',
+			'Data_free',
+			'Auto_increment',
+			'Create_time',
+			'Update_time',
+			'Check_time',
+			'Collation',
+			'Checksum',
+			'Create_options',
+			'Comment',
+		);
+	}
+
+	/**
+	 * Get the Name value from a SHOW TABLE STATUS row.
+	 *
+	 * @param object $row SHOW TABLE STATUS row.
+	 * @return string Table name.
+	 */
+	private function get_show_table_status_row_name( $row ): string {
+		return $row->Name;
+	}
+
+	/**
+	 * Install SHOW TABLE STATUS AUTO_INCREMENT fixture rows.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_show_table_status_auto_increment_fixture( WP_PostgreSQL_Driver $driver ): void {
+		$pdo = $driver->get_connection()->get_pdo();
+
+		$pdo->exec( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
+		$pdo->exec(
+			"INSERT INTO wptests_posts (value)
+			VALUES ('a'), ('b'), ('c'), ('d'), ('e')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', 'wptests_plain', 'BASE TABLE')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.columns
+				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, collation_name, is_nullable, column_default, is_identity)
+			VALUES
+				('public', 'wptests_posts', 'ID', 1, 'bigint', NULL, NULL, 'NO', NULL, 'YES'),
+				('public', 'wptests_plain', 'id', 1, 'bigint', NULL, NULL, 'NO', NULL, 'NO')"
+		);
 	}
 
 	/**
