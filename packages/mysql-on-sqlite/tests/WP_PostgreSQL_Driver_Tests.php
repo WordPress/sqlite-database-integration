@@ -7258,7 +7258,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 0, $index_driver->query( 'USE information_schema' ) );
 
-		foreach ( array( 'SHOW INDEX FROM wptests_options', 'SHOW KEYS FROM wptests_options' ) as $query ) {
+		foreach (
+			array(
+				'SHOW INDEX FROM wptests_options',
+				'SHOW KEYS FROM wptests_options',
+				'SHOW EXTENDED INDEX FROM wptests_options',
+				'SHOW EXTENDED INDEXES FROM wptests_options',
+				'SHOW EXTENDED KEYS FROM wptests_options',
+			) as $query
+		) {
 			try {
 				$index_driver->query( $query );
 				$this->fail( 'Expected information_schema SHOW INDEX to throw.' );
@@ -7750,6 +7758,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			try {
 				$driver->query( $query );
 				$this->fail( 'Expected unsupported SHOW KEYS statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW INDEX statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests unsupported SHOW EXTENDED INDEX-family statements fail before reaching the backend.
+	 */
+	public function test_show_extended_index_family_does_not_reach_backend(): void {
+		$queries = array(
+			'SHOW EXTENDED INDEX FROM wptests_options',
+			'SHOW EXTENDED INDEXES FROM wptests_options',
+			'SHOW EXTENDED KEYS FROM wptests_options',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_show_index_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW EXTENDED INDEX statement to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( 'Unsupported SHOW INDEX statement.', $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );

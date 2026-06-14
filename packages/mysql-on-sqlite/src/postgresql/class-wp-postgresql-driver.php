@@ -3812,6 +3812,9 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Parse a supported MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement.
 	 *
+	 * SHOW EXTENDED INDEX-family statements are recognized as part of this
+	 * family so unsupported forms fail before raw backend execution.
+	 *
 	 * @param string $query MySQL query.
 	 * @return array{table: string, key_name: string|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
 	 */
@@ -3821,25 +3824,40 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
+		$position              = 1;
+		$has_extended_modifier = false;
+		if ( WP_MySQL_Lexer::EXTENDED_SYMBOL === $tokens[ $position ]->id ) {
+			$has_extended_modifier = true;
+			++$position;
+		}
+
 		if (
-			WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[1]->id
-			&& WP_MySQL_Lexer::INDEXES_SYMBOL !== $tokens[1]->id
-			&& WP_MySQL_Lexer::KEYS_SYMBOL !== $tokens[1]->id
+			! isset( $tokens[ $position ] )
+			|| (
+				WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::INDEXES_SYMBOL !== $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::KEYS_SYMBOL !== $tokens[ $position ]->id
+			)
 		) {
 			return null;
 		}
 
-		if ( ! isset( $tokens[2] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[2]->id ) {
+		if ( $has_extended_modifier ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[3] ?? null );
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
+		}
+
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
 		if ( null === $table_name ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
-		$position = 4;
-		$key_name = null;
+		$position += 2;
+		$key_name  = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
 			$where_column = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
 			if (
@@ -13596,11 +13614,11 @@ WHERE option_name IN (
 			return true;
 		}
 
-		return isset( $tokens[1] )
+		return isset( $tokens[ $position ] )
 			&& (
-				WP_MySQL_Lexer::INDEX_SYMBOL === $tokens[1]->id
-				|| WP_MySQL_Lexer::INDEXES_SYMBOL === $tokens[1]->id
-				|| WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[1]->id
+				WP_MySQL_Lexer::INDEX_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::INDEXES_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[ $position ]->id
 			);
 	}
 
