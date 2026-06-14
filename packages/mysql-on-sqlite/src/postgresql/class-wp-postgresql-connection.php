@@ -50,6 +50,20 @@ class WP_PostgreSQL_Connection {
 	private $savepoint_counter = 0;
 
 	/**
+	 * Active generated savepoint shared by consecutive read-only statements.
+	 *
+	 * @var string|null
+	 */
+	private $active_read_savepoint = null;
+
+	/**
+	 * Whether the active read savepoint still needs to be created in PostgreSQL.
+	 *
+	 * @var bool
+	 */
+	private $active_read_savepoint_needs_creation = false;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param array $options {
@@ -138,18 +152,22 @@ class WP_PostgreSQL_Connection {
 			( $this->query_logger )( $sql, $params );
 		}
 
-		$savepoint = $this->get_statement_savepoint_name( $sql );
-		if ( null !== $savepoint ) {
-			$this->pdo->exec( 'SAVEPOINT ' . $savepoint );
+		$release_savepoint_on_success = false;
+		$savepoint_exists             = false;
+		$savepoint                    = $this->get_statement_savepoint_name( $sql, $release_savepoint_on_success, $savepoint_exists );
+		if ( null !== $savepoint && ! $savepoint_exists ) {
+			$this->ensure_statement_savepoint_exists( $savepoint );
 		}
 
 		try {
 			$stmt = $this->pdo->prepare( $sql );
 			$stmt->execute( $params );
 
-			if ( null !== $savepoint ) {
-				$this->pdo->exec( 'RELEASE SAVEPOINT ' . $savepoint );
+			if ( null !== $savepoint && $release_savepoint_on_success ) {
+				$this->release_statement_savepoint( $savepoint );
 			}
+
+			$this->maybe_reset_read_savepoint_after_transaction_control( $sql );
 
 			return $stmt;
 		} catch ( Throwable $exception ) {
@@ -173,6 +191,7 @@ class WP_PostgreSQL_Connection {
 		if ( $this->query_logger ) {
 			( $this->query_logger )( $sql, array() );
 		}
+		$this->consume_active_read_savepoint();
 		return $this->pdo->prepare( $sql );
 	}
 
@@ -246,21 +265,54 @@ class WP_PostgreSQL_Connection {
 	}
 
 	/**
+	 * Reset generated statement savepoint state after direct transaction control.
+	 */
+	public function reset_statement_savepoint_state(): void {
+		$this->active_read_savepoint                = null;
+		$this->active_read_savepoint_needs_creation = false;
+	}
+
+	/**
 	 * Get a generated statement savepoint name for an active PostgreSQL transaction.
 	 *
 	 * PostgreSQL marks the whole transaction as failed after a statement error.
 	 * Isolating each emulated statement in a savepoint preserves MySQL's behavior
 	 * where the failed statement can be reported without poisoning later queries.
 	 *
+	 * Consecutive non-locking reads share one generated savepoint. If any read
+	 * fails, rolling back to that savepoint only discards prior reads, while the
+	 * transaction remains usable. The next write or locking statement consumes
+	 * and releases the shared savepoint as its own statement guard.
+	 *
+	 * @param string $sql                          SQL statement.
+	 * @param bool   $release_savepoint_on_success Whether the caller should release the savepoint after success.
+	 * @param bool   $savepoint_exists             Whether the savepoint already exists in PostgreSQL.
 	 * @return string|null Savepoint name, or null when no statement savepoint is needed.
 	 */
-	private function get_statement_savepoint_name( string $sql ): ?string {
+	private function get_statement_savepoint_name( string $sql, bool &$release_savepoint_on_success, bool &$savepoint_exists ): ?string {
+		$release_savepoint_on_success = false;
+		$savepoint_exists             = false;
+
 		if (
 			'pgsql' !== $this->get_driver_name()
 			|| ! $this->pdo->inTransaction()
 			|| $this->is_postgresql_transaction_control_statement( $sql )
 		) {
 			return null;
+		}
+
+		if ( $this->is_postgresql_shared_read_savepoint_statement( $sql ) ) {
+			$savepoint_exists = null !== $this->active_read_savepoint && ! $this->active_read_savepoint_needs_creation;
+			return $this->get_or_create_active_read_savepoint_name();
+		}
+
+		$release_savepoint_on_success = true;
+		if ( null !== $this->active_read_savepoint ) {
+			$savepoint_exists                           = ! $this->active_read_savepoint_needs_creation;
+			$savepoint                                  = $this->active_read_savepoint;
+			$this->active_read_savepoint                = null;
+			$this->active_read_savepoint_needs_creation = false;
+			return $savepoint;
 		}
 
 		++$this->savepoint_counter;
@@ -281,12 +333,100 @@ class WP_PostgreSQL_Connection {
 	}
 
 	/**
+	 * Check whether SQL is a non-locking SELECT that may share a read savepoint.
+	 *
+	 * These high-volume reads do not acquire row locks in WordPress's query
+	 * shapes, so consecutive reads can reuse a generated savepoint while still
+	 * preserving PostgreSQL failed-statement isolation.
+	 *
+	 * @param string $sql SQL statement.
+	 * @return bool Whether this is a non-locking SELECT statement.
+	 */
+	private function is_postgresql_shared_read_savepoint_statement( string $sql ): bool {
+		return 1 === preg_match(
+			'/^\s*SELECT\b(?![\s\S]*(?:\bFOR\s+(?:KEY\s+SHARE|NO\s+KEY\s+UPDATE|SHARE|UPDATE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b|\bINTO\b))/i',
+			$sql
+		);
+	}
+
+	/**
+	 * Get or create the active generated read savepoint.
+	 *
+	 * @return string Savepoint name.
+	 */
+	private function get_or_create_active_read_savepoint_name(): string {
+		if ( null === $this->active_read_savepoint ) {
+			++$this->savepoint_counter;
+			$this->active_read_savepoint                = 'wp_statement_' . $this->savepoint_counter;
+			$this->active_read_savepoint_needs_creation = true;
+		}
+
+		return $this->active_read_savepoint;
+	}
+
+	/**
+	 * Ensure a generated savepoint exists in PostgreSQL.
+	 *
+	 * @param string $savepoint Savepoint name.
+	 */
+	private function ensure_statement_savepoint_exists( string $savepoint ): void {
+		if ( $savepoint === $this->active_read_savepoint && ! $this->active_read_savepoint_needs_creation ) {
+			return;
+		}
+
+		$this->pdo->exec( 'SAVEPOINT ' . $savepoint );
+
+		if ( $savepoint === $this->active_read_savepoint ) {
+			$this->active_read_savepoint_needs_creation = false;
+		}
+	}
+
+	/**
+	 * Consume the active generated read savepoint before unguarded PDO execution.
+	 */
+	private function consume_active_read_savepoint(): void {
+		if ( null === $this->active_read_savepoint ) {
+			return;
+		}
+
+		$savepoint = $this->active_read_savepoint;
+		if ( ! $this->active_read_savepoint_needs_creation ) {
+			$this->release_statement_savepoint( $savepoint );
+		}
+
+		$this->reset_statement_savepoint_state();
+	}
+
+	/**
+	 * Release a generated statement savepoint.
+	 *
+	 * @param string $savepoint Savepoint name.
+	 */
+	private function release_statement_savepoint( string $savepoint ): void {
+		$this->pdo->exec( 'RELEASE SAVEPOINT ' . $savepoint );
+	}
+
+	/**
+	 * Reset cached read savepoint state when SQL controls the transaction.
+	 *
+	 * @param string $sql SQL statement.
+	 */
+	private function maybe_reset_read_savepoint_after_transaction_control( string $sql ): void {
+		if ( $this->is_postgresql_transaction_control_statement( $sql ) ) {
+			$this->reset_statement_savepoint_state();
+		}
+	}
+
+	/**
 	 * Roll back and release a generated statement savepoint.
 	 *
 	 * @param string $savepoint Savepoint name.
 	 */
 	private function rollback_statement_savepoint( string $savepoint ): void {
 		try {
+			if ( $savepoint === $this->active_read_savepoint ) {
+				$this->reset_statement_savepoint_state();
+			}
 			$this->pdo->exec( 'ROLLBACK TO SAVEPOINT ' . $savepoint );
 			$this->pdo->exec( 'RELEASE SAVEPOINT ' . $savepoint );
 		} catch ( Throwable $rollback_exception ) {

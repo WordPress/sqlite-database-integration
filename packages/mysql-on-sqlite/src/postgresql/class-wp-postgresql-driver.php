@@ -291,6 +291,11 @@ class WP_PostgreSQL_Driver {
 		$this->reset_query_state();
 		$this->last_mysql_query = $query;
 
+		if ( $this->is_fast_noop_mysql_runtime_setting( $query ) ) {
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
 		if ( $this->is_noop_mysql_runtime_setting( $query ) ) {
 			$this->last_result = 0;
 			return $this->last_result;
@@ -299,6 +304,11 @@ class WP_PostgreSQL_Driver {
 		if ( $this->apply_mysql_set_names_query( $query ) ) {
 			$this->last_result = 0;
 			return $this->last_result;
+		}
+
+		$transaction_control_query = $this->get_mysql_transaction_control_query( $query );
+		if ( null !== $transaction_control_query ) {
+			return $this->execute_mysql_transaction_control_query( $transaction_control_query );
 		}
 
 		$procedure_result = $this->handle_mysql_procedure_query( $query, $fetch_mode, ...$fetch_mode_args );
@@ -498,6 +508,18 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$translated_query = $this->translate_wordpress_available_post_mime_types_query( $query );
+		if ( null !== $translated_query ) {
+			$query                     = $translated_query;
+			$translated_for_postgresql = true;
+		}
+
+		$translated_query = $this->translate_wordpress_term_cache_priming_query( $query );
+		if ( null !== $translated_query ) {
+			$query                     = $translated_query;
+			$translated_for_postgresql = true;
+		}
+
+		$translated_query = $this->translate_wordpress_approved_comments_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
@@ -708,6 +730,11 @@ class WP_PostgreSQL_Driver {
 	 * @return string|null PostgreSQL SELECT query, or null when unsupported.
 	 */
 	private function translate_sql_calc_found_rows_count_select_query( string $query ): ?string {
+		$query = $this->get_sql_calc_found_rows_count_source_query( $query );
+		if ( null === $query ) {
+			return null;
+		}
+
 		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query, false );
 		if ( null !== $translated_query ) {
 			return $translated_query;
@@ -719,6 +746,35 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return $this->translate_sql_calc_found_rows_select_query( $query, false );
+	}
+
+	/**
+	 * Build the unordered, unbounded MySQL SELECT used for FOUND_ROWS accounting.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null MySQL query without top-level ORDER BY or LIMIT clauses.
+	 */
+	private function get_sql_calc_found_rows_count_source_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
+		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			return null;
+		}
+
+		$select_end     = $limit_position ?? $statement_end;
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 1, $select_end );
+		$count_end      = $order_position ?? $select_end;
+
+		return rtrim( substr( $query, 0, $tokens[ $count_end ]->start ) );
 	}
 
 	/**
@@ -739,6 +795,113 @@ class WP_PostgreSQL_Driver {
 
 		$this->last_column_meta = array();
 		return $this->last_result;
+	}
+
+	/**
+	 * Execute a simple MySQL transaction-control statement in PostgreSQL.
+	 *
+	 * @param string $statement Canonical PostgreSQL transaction statement.
+	 * @return int Number of affected rows.
+	 */
+	private function execute_mysql_transaction_control_query( string $statement ): int {
+		$pdo            = $this->connection->get_pdo();
+		$in_transaction = $pdo->inTransaction();
+
+		if ( 'BEGIN' === $statement ) {
+			if ( $in_transaction ) {
+				$pdo->commit();
+				$this->connection->reset_statement_savepoint_state();
+				$this->last_postgresql_queries[] = array(
+					'sql'    => 'COMMIT',
+					'params' => array(),
+				);
+			}
+			$pdo->beginTransaction();
+			$this->connection->reset_statement_savepoint_state();
+			$this->last_postgresql_queries[] = array(
+				'sql'    => 'BEGIN',
+				'params' => array(),
+			);
+			$this->last_result               = 0;
+			$this->last_column_meta          = array();
+			return $this->last_result;
+		}
+
+		if ( ! $in_transaction ) {
+			$this->connection->reset_statement_savepoint_state();
+			$this->last_result      = 0;
+			$this->last_column_meta = array();
+			return $this->last_result;
+		}
+
+		if ( 'COMMIT' === $statement ) {
+			$pdo->commit();
+		} else {
+			$pdo->rollBack();
+		}
+		$this->connection->reset_statement_savepoint_state();
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $statement,
+			'params' => array(),
+		);
+		$this->last_result               = 0;
+		$this->last_column_meta          = array();
+		return $this->last_result;
+	}
+
+	/**
+	 * Check whether a MySQL runtime setting can be ignored without tokenization.
+	 *
+	 * This covers the high-frequency WordPress PHPUnit transaction setup path.
+	 * Less common supported SET shapes still fall through to the lexer-backed
+	 * runtime-setting handler.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query should be treated as a successful no-op.
+	 */
+	private function is_fast_noop_mysql_runtime_setting( string $query ): bool {
+		return 1 === preg_match(
+			'/\A\s*SET\s+(?:(?:GLOBAL|LOCAL|SESSION)\s+)?(?:autocommit|default_storage_engine|foreign_key_checks|sql_mode|storage_engine)\s*=\s*(?:\'[^\']*\'|"[^"]*"|[^\s,;]+)\s*;?\s*\z/i',
+			$query
+		);
+	}
+
+	/**
+	 * Get the canonical PostgreSQL transaction statement for a simple MySQL query.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Canonical PostgreSQL statement, or null when unsupported.
+	 */
+	private function get_mysql_transaction_control_query( string $query ): ?string {
+		$statement = trim( $query );
+		$statement = preg_replace( '/;\s*\z/', '', $statement );
+		if ( null === $statement ) {
+			return null;
+		}
+
+		$normalized_statement = preg_replace( '/\s+/', ' ', $statement );
+		if ( null === $normalized_statement ) {
+			return null;
+		}
+
+		$statement = trim( $normalized_statement );
+		if ( '' === $statement ) {
+			return null;
+		}
+
+		if ( 1 === preg_match( '/\A(?:START TRANSACTION|BEGIN(?: WORK)?)\z/i', $statement ) ) {
+			return 'BEGIN';
+		}
+
+		if ( 1 === preg_match( '/\ACOMMIT(?: WORK)?\z/i', $statement ) ) {
+			return 'COMMIT';
+		}
+
+		if ( 1 === preg_match( '/\AROLLBACK(?: WORK)?\z/i', $statement ) ) {
+			return 'ROLLBACK';
+		}
+
+		return null;
 	}
 
 	/**
@@ -3510,6 +3673,7 @@ show_index_rows AS (
 	 */
 	public function beginTransaction(): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 		$this->connection->get_pdo()->beginTransaction();
+		$this->connection->reset_statement_savepoint_state();
 	}
 
 	/**
@@ -3526,6 +3690,7 @@ show_index_rows AS (
 	 */
 	public function commit(): void {
 		$this->connection->get_pdo()->commit();
+		$this->connection->reset_statement_savepoint_state();
 	}
 
 	/**
@@ -3533,6 +3698,7 @@ show_index_rows AS (
 	 */
 	public function rollback(): void {
 		$this->connection->get_pdo()->rollBack();
+		$this->connection->reset_statement_savepoint_state();
 	}
 
 	/**
@@ -5636,25 +5802,42 @@ WHERE option_name IN (
 			$this->translate_mysql_identifier_token_to_postgresql( $table_token )
 		);
 
+		$scope = $this->get_mysql_single_table_scope( $table_name );
 		if ( null !== $where_position ) {
 			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
 				$where_end,
-				$this->get_mysql_single_table_scope( $table_name )
+				$scope
 			);
 			$sql      .= ' WHERE ' . $where_sql['sql'];
 		}
 
 		if ( null !== $order_position ) {
-			$sql .= ' ORDER BY ' . $this->translate_mysql_token_to_postgresql( $tokens[ $order_position + 2 ] );
-			if ( isset( $tokens[ $order_position + 3 ] ) && $order_position + 3 < $select_end ) {
-				$sql .= ' ' . $tokens[ $order_position + 3 ]->get_bytes();
-			}
+			$order_sql = $this->translate_mysql_order_by_token_sequence_to_postgresql(
+				$tokens,
+				$order_position + 2,
+				$select_end,
+				$scope,
+				false
+			);
+			$sql      .= ' ORDER BY ' . $order_sql['sql'];
 
 			$tiebreaker_sql = $this->get_simple_wordpress_posts_post_date_desc_order_id_tiebreaker_sql(
 				$tokens,
 				$table_name,
+				$order_position,
+				$select_end
+			);
+			if ( null !== $tiebreaker_sql ) {
+				$sql .= ', ' . $tiebreaker_sql;
+			}
+
+			$tiebreaker_sql = $this->get_simple_wordpress_approved_comments_order_tiebreaker_sql(
+				$tokens,
+				$table_name,
+				$where_position,
+				$where_end,
 				$order_position,
 				$select_end
 			);
@@ -6418,6 +6601,240 @@ WHERE option_name IN (
 			$where_sql['sql'],
 			$this->connection->quote_identifier( 'ID' )
 		);
+	}
+
+	/**
+	 * Translate WordPress term cache priming with MySQL-compatible shared-term order.
+	 *
+	 * WordPress primes term objects with a join query that has no ORDER BY. The
+	 * cache is keyed by term_id, so legacy shared terms rely on MySQL returning
+	 * rows in term_taxonomy_id order and letting the last taxonomy row win.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_wordpress_term_cache_priming_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		if (
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				1,
+				$statement_end,
+				array(
+					WP_MySQL_Lexer::DISTINCT_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		if ( null === $from_position || 1 === $from_position ) {
+			return null;
+		}
+
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, 1, $from_position );
+		if (
+			null === $projection_ranges
+			|| 2 !== count( $projection_ranges )
+			|| ! $this->is_mysql_qualified_star_projection( $tokens, $projection_ranges[0]['start'], $projection_ranges[0]['end'], 't' )
+			|| ! $this->is_mysql_qualified_star_projection( $tokens, $projection_ranges[1]['start'], $projection_ranges[1]['end'], 'tt' )
+		) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $statement_end );
+		if (
+			null === $where_position
+			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $where_position )
+			|| ! $this->is_mysql_term_cache_priming_where_clause( $tokens, $where_position + 1, $statement_end )
+		) {
+			return null;
+		}
+
+		return $this->translate_mysql_token_sequence_to_postgresql( $tokens, 0, $statement_end ) . ' ORDER BY tt.term_taxonomy_id ASC';
+	}
+
+	/**
+	 * Translate WordPress's approved comments lookup with MySQL-compatible ties.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_wordpress_approved_comments_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::MULT_OPERATOR !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 2, $statement_end );
+		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			return null;
+		}
+
+		$select_end     = $limit_position ?? $statement_end;
+		$from_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 2, $select_end );
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, 2, $select_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 2, $select_end );
+		if (
+			2 !== $from_position
+			|| null === $where_position
+			|| null === $order_position
+			|| $from_position + 2 !== $where_position
+			|| $where_position >= $order_position
+			|| $order_position + 2 >= $select_end
+			|| ! isset( $tokens[ $order_position + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$table_token = $tokens[ $from_position + 1 ] ?? null;
+		$table_name  = $this->get_mysql_identifier_token_value( $table_token );
+		if ( null === $table_name || ! $this->is_mysql_wordpress_table_name( $table_name, 'comments' ) ) {
+			return null;
+		}
+
+		$tiebreaker_sql = $this->get_simple_wordpress_approved_comments_order_tiebreaker_sql(
+			$tokens,
+			$table_name,
+			$where_position,
+			$order_position,
+			$order_position,
+			$select_end
+		);
+		if ( null === $tiebreaker_sql ) {
+			return null;
+		}
+
+		$scope     = $this->get_mysql_single_table_scope( $table_name );
+		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			$where_position + 1,
+			$order_position,
+			$scope
+		);
+		$order_sql = $this->translate_mysql_order_by_token_sequence_to_postgresql(
+			$tokens,
+			$order_position + 2,
+			$select_end,
+			$scope,
+			false
+		);
+
+		$sql = sprintf(
+			'SELECT * FROM %s WHERE %s ORDER BY %s, %s',
+			$this->translate_mysql_identifier_token_to_postgresql( $table_token ),
+			$where_sql['sql'],
+			$order_sql['sql'],
+			$tiebreaker_sql
+		);
+		if ( null !== $limit_position ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Check whether a projection item is alias.*.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First projection token.
+	 * @param int             $end    Final projection token, exclusive.
+	 * @param string          $alias  Expected table alias.
+	 * @return bool Whether the projection item is the qualified star.
+	 */
+	private function is_mysql_qualified_star_projection( array $tokens, int $start, int $end, string $alias ): bool {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		return $start + 3 === $end
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start ] ?? null, $alias )
+			&& isset( $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $start + 2 ]->id;
+	}
+
+	/**
+	 * Check whether a WHERE clause is t.term_id IN (integer list).
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First WHERE predicate token.
+	 * @param int             $end    Final WHERE predicate token, exclusive.
+	 * @return bool Whether the WHERE clause matches term cache priming.
+	 */
+	private function is_mysql_term_cache_priming_where_clause( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
+		if (
+			null === $reference
+			|| $reference['end'] + 3 > $end
+			|| 't' !== strtolower( (string) $reference['qualifier'] )
+			|| 'term_id' !== strtolower( $reference['column'] )
+			|| ! isset( $tokens[ $reference['end'] ], $tokens[ $reference['end'] + 1 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $reference['end'] ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $reference['end'] + 1 ]->id
+		) {
+			return false;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $reference['end'] + 1, $end );
+		if ( $after_close !== $end ) {
+			return false;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $reference['end'] + 2, $end - 1 );
+		if ( null === $items || empty( $items ) ) {
+			return false;
+		}
+
+		foreach ( $items as $item ) {
+			if (
+				$item['start'] + 1 !== $item['end']
+				|| ! isset( $tokens[ $item['start'] ] )
+				|| ! in_array(
+					$tokens[ $item['start'] ]->id,
+					array(
+						WP_MySQL_Lexer::INT_NUMBER,
+						WP_MySQL_Lexer::LONG_NUMBER,
+						WP_MySQL_Lexer::ULONGLONG_NUMBER,
+					),
+					true
+				)
+			) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -7219,6 +7636,17 @@ WHERE option_name IN (
 			}
 
 			return null;
+		}
+
+		$tiebreaker_sql = $this->get_strict_grouped_posts_post_date_desc_order_id_tiebreaker_sql(
+			$tokens,
+			$order_items,
+			$group_items,
+			$is_post_id_group
+		);
+		if ( null !== $tiebreaker_sql ) {
+			$order_sql[] = $tiebreaker_sql;
+			$rewritten   = true;
 		}
 
 		if ( ! $rewritten ) {
@@ -9615,6 +10043,45 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Get the MySQL-compatible ID tie-breaker for grouped posts date ordering.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param array           $order_items      Parsed ORDER BY items.
+	 * @param array           $group_items      Parsed GROUP BY item ranges.
+	 * @param bool            $is_post_id_group Whether the query groups by posts.ID.
+	 * @return string|null PostgreSQL ORDER BY item SQL, or null when not applicable.
+	 */
+	private function get_strict_grouped_posts_post_date_desc_order_id_tiebreaker_sql(
+		array $tokens,
+		array $order_items,
+		array $group_items,
+		bool $is_post_id_group
+	): ?string {
+		if (
+			! $is_post_id_group
+			|| 1 !== count( $order_items )
+			|| 1 !== count( $group_items )
+			|| 'DESC' !== $order_items[0]['direction']
+			|| ! $this->is_mysql_column_reference_expression(
+				$tokens,
+				$order_items[0]['expression_start'],
+				$order_items[0]['expression_end'],
+				'post_date',
+				'posts',
+				false
+			)
+		) {
+			return null;
+		}
+
+		return $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$group_items[0]['start'],
+			$group_items[0]['end']
+		) . ' DESC';
+	}
+
+	/**
 	 * Check whether an expression is a supported column reference.
 	 *
 	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
@@ -10651,6 +11118,218 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Get the MySQL-compatible approved-comments date tie-breaker.
+	 *
+	 * get_approved_comments() orders by comment_date_gmt only. MySQL returns
+	 * equal-date rows in comment_ID order for WordPress's comments table shape,
+	 * so make that ordering explicit for PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param string           $table_name     Selected table name.
+	 * @param int|null         $where_position WHERE token position, or null.
+	 * @param int|null         $where_end      Final WHERE token position, exclusive.
+	 * @param int              $order_position ORDER token position.
+	 * @param int              $end            Final ORDER BY token position, exclusive.
+	 * @return string|null PostgreSQL ORDER BY item SQL, or null when not applicable.
+	 */
+	private function get_simple_wordpress_approved_comments_order_tiebreaker_sql(
+		array $tokens,
+		string $table_name,
+		?int $where_position,
+		?int $where_end,
+		int $order_position,
+		int $end
+	): ?string {
+		if (
+			! $this->is_mysql_wordpress_table_name( $table_name, 'comments' )
+			|| null === $where_position
+			|| null === $where_end
+			|| ! $this->is_simple_wordpress_approved_comments_where_clause( $tokens, $where_position + 1, $where_end )
+		) {
+			return null;
+		}
+
+		$order_items = $this->split_top_level_mysql_arguments( $tokens, $order_position + 2, $end );
+		if ( null === $order_items || 1 !== count( $order_items ) ) {
+			return null;
+		}
+
+		$order_item = $order_items[0];
+		$direction  = 'ASC';
+		$item_end   = $order_item['end'];
+		if ( isset( $tokens[ $item_end - 1 ] ) ) {
+			if ( WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
+				return null;
+			}
+			if ( WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
+				$item_end  = $item_end - 1;
+				$direction = 'ASC';
+			}
+		}
+
+		if (
+			'ASC' !== $direction
+			|| ! $this->is_mysql_column_reference_expression(
+				$tokens,
+				$order_item['start'],
+				$item_end,
+				'comment_date_gmt',
+				'comments',
+				true
+			)
+		) {
+			return null;
+		}
+
+		return $this->connection->quote_identifier( 'comment_ID' ) . ' ASC';
+	}
+
+	/**
+	 * Check for get_approved_comments()'s single-post approved comments filter.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First WHERE predicate token.
+	 * @param int              $end    Final WHERE predicate token, exclusive.
+	 * @return bool Whether the WHERE clause matches the approved-comments shape.
+	 */
+	private function is_simple_wordpress_approved_comments_where_clause( array $tokens, int $start, int $end ): bool {
+		$conjuncts = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $start, $end );
+		if ( null === $conjuncts ) {
+			return false;
+		}
+
+		$has_post_id  = false;
+		$has_approved = false;
+		foreach ( $conjuncts as $conjunct ) {
+			$match = $this->get_simple_wordpress_comments_literal_equality(
+				$tokens,
+				$conjunct['start'],
+				$conjunct['end']
+			);
+			if ( null === $match ) {
+				continue;
+			}
+
+			if ( 'comment_post_id' === $match['column'] ) {
+				$has_post_id = true;
+				continue;
+			}
+
+			if ( 'comment_approved' === $match['column'] && '1' === $match['value'] ) {
+				$has_approved = true;
+			}
+		}
+
+		return $has_post_id && $has_approved;
+	}
+
+	/**
+	 * Parse a comments-table column = literal predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First predicate token.
+	 * @param int              $end    Final predicate token, exclusive.
+	 * @return array{column: string, value: string}|null Parsed column and literal value.
+	 */
+	private function get_simple_wordpress_comments_literal_equality( array $tokens, int $start, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		$equal_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $start, $end );
+		if (
+			null === $equal_position
+			|| null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $equal_position + 1, $end )
+		) {
+			return null;
+		}
+
+		$match = $this->get_simple_wordpress_comments_literal_equality_side(
+			$tokens,
+			$start,
+			$equal_position,
+			$equal_position + 1,
+			$end
+		);
+		if ( null !== $match ) {
+			return $match;
+		}
+
+		return $this->get_simple_wordpress_comments_literal_equality_side(
+			$tokens,
+			$equal_position + 1,
+			$end,
+			$start,
+			$equal_position
+		);
+	}
+
+	/**
+	 * Parse one column/literal side of a comments-table equality predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $column_start  First column token.
+	 * @param int              $column_end    Final column token, exclusive.
+	 * @param int              $literal_start First literal token.
+	 * @param int              $literal_end   Final literal token, exclusive.
+	 * @return array{column: string, value: string}|null Parsed column and literal value.
+	 */
+	private function get_simple_wordpress_comments_literal_equality_side(
+		array $tokens,
+		int $column_start,
+		int $column_end,
+		int $literal_start,
+		int $literal_end
+	): ?array {
+		$reference = $this->parse_mysql_column_reference( $tokens, $column_start, $column_end );
+		if (
+			null === $reference
+			|| $reference['end'] !== $column_end
+			|| (
+				null !== $reference['qualifier']
+				&& ! $this->is_mysql_wordpress_table_name( $reference['qualifier'], 'comments' )
+			)
+		) {
+			return null;
+		}
+
+		$literal = $this->get_simple_wordpress_comments_literal_value( $tokens, $literal_start, $literal_end );
+		if ( null === $literal ) {
+			return null;
+		}
+
+		return array(
+			'column' => strtolower( $reference['column'] ),
+			'value'  => $literal,
+		);
+	}
+
+	/**
+	 * Get a supported literal value for the approved-comments WHERE predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First literal token.
+	 * @param int              $end    Final literal token, exclusive.
+	 * @return string|null Literal value, "literal" for unconstrained post IDs, or null.
+	 */
+	private function get_simple_wordpress_comments_literal_value( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$start  = $bounds['start'];
+		$end    = $bounds['end'];
+
+		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
+			return $tokens[ $start ]->get_value();
+		}
+
+		$literal = $this->parse_mysql_numeric_literal( $tokens, $start, $end );
+		if ( null !== $literal && $literal['end'] === $end ) {
+			return 'literal';
+		}
+
+		return null;
+	}
+
+	/**
 	 * Get the MySQL-compatible posts date tie-breaker for a parsed ORDER BY.
 	 *
 	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
@@ -10804,6 +11483,15 @@ WHERE option_name IN (
 				$scope
 			);
 			if ( null === $translated_expression ) {
+				$translated_expression = $this->translate_mysql_wordpress_text_order_expression_to_postgresql(
+					$tokens,
+					$position,
+					$start,
+					$end,
+					$scope
+				);
+			}
+			if ( null === $translated_expression ) {
 				$translated_expression = $this->translate_mysql_wordpress_text_expression_predicate_to_postgresql(
 					$tokens,
 					$position,
@@ -10840,6 +11528,50 @@ WHERE option_name IN (
 		return array(
 			'sql'     => implode( ' ', array_filter( $chunks, 'strlen' ) ),
 			'changed' => true,
+		);
+	}
+
+	/**
+	 * Translate WordPress text ORDER BY expressions with MySQL collation semantics.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Candidate expression start position.
+	 * @param int             $start    First expression token position.
+	 * @param int             $end      Final expression token position, exclusive.
+	 * @param array           $scope    Statement table scope.
+	 * @return array{sql: string, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_wordpress_text_order_expression_to_postgresql(
+		array $tokens,
+		int $position,
+		int $start,
+		int $end,
+		array $scope
+	): ?array {
+		if ( $position !== $start ) {
+			return null;
+		}
+
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		if ( $bounds['start'] !== $start || $bounds['end'] !== $end ) {
+			return null;
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $bounds['start'], $bounds['end'] );
+		if (
+			null === $reference
+			|| $reference['end'] !== $bounds['end']
+			|| ! $this->is_mysql_case_insensitive_wordpress_text_column_reference( $reference, $scope )
+		) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'LOWER(%s)',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] )
+			),
+			'position' => $bounds['end'] - 1,
 		);
 	}
 
@@ -11487,6 +12219,20 @@ WHERE option_name IN (
 
 		if ( $this->is_mysql_wordpress_table_name( $table_name, 'postmeta' ) ) {
 			return 'meta_value' === $column_name;
+		}
+
+		if ( $this->is_mysql_wordpress_table_name( $table_name, 'users' ) ) {
+			return in_array(
+				$column_name,
+				array(
+					'display_name',
+					'user_email',
+					'user_login',
+					'user_nicename',
+					'user_url',
+				),
+				true
+			);
 		}
 
 		return false;

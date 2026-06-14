@@ -215,9 +215,114 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 				'ROLLBACK TO SAVEPOINT wp_statement_3',
 				'RELEASE SAVEPOINT wp_statement_3',
 				'SAVEPOINT wp_statement_4',
-				'RELEASE SAVEPOINT wp_statement_4',
 			),
 			$pdo->exec_sql
+		);
+	}
+
+	/**
+	 * Tests consecutive plain SELECT statements reuse one generated read savepoint.
+	 */
+	public function test_query_reuses_read_savepoint_for_consecutive_plain_select_statements(): void {
+		$pdo        = new WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO();
+		$connection = $this->create_connection_with_pdo_fixture( $pdo );
+
+		$pdo->beginTransaction();
+		$first  = $connection->query( 'SELECT 1 AS value' );
+		$second = $connection->query( 'SELECT 2 AS value' );
+		$connection->query( 'CREATE TABLE t (id INTEGER)' );
+
+		$this->assertSame( '1', $first->fetchColumn() );
+		$this->assertSame( '2', $second->fetchColumn() );
+		$this->assertSame(
+			array( 'SELECT 1 AS value', 'SELECT 2 AS value', 'CREATE TABLE t (id INTEGER)' ),
+			$pdo->prepared_sql
+		);
+		$this->assertSame(
+			array(
+				'SAVEPOINT wp_statement_1',
+				'RELEASE SAVEPOINT wp_statement_1',
+			),
+			$pdo->exec_sql
+		);
+		$pdo->rollBack();
+	}
+
+	/**
+	 * Tests failed read statements are isolated from the active PostgreSQL transaction.
+	 */
+	public function test_query_rolls_back_failed_read_to_shared_savepoint(): void {
+		$pdo        = new WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO();
+		$connection = $this->create_connection_with_pdo_fixture( $pdo );
+
+		$pdo->beginTransaction();
+		$connection->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY, value TEXT)' );
+
+		try {
+			$connection->query( 'SELECT missing_column FROM t' );
+			$this->fail( 'Expected the invalid read to throw.' );
+		} catch ( PDOException $exception ) {
+			$this->assertStringContainsString( 'missing_column', $exception->getMessage() );
+		}
+
+		$stmt = $connection->query( 'SELECT 1 AS value' );
+
+		$this->assertSame( '1', $stmt->fetchColumn() );
+		$pdo->rollBack();
+		$this->assertSame(
+			array(
+				'SAVEPOINT wp_statement_1',
+				'RELEASE SAVEPOINT wp_statement_1',
+				'SAVEPOINT wp_statement_2',
+				'ROLLBACK TO SAVEPOINT wp_statement_2',
+				'RELEASE SAVEPOINT wp_statement_2',
+				'SAVEPOINT wp_statement_3',
+			),
+			$pdo->exec_sql
+		);
+	}
+
+	/**
+	 * Tests locking SELECT statements use per-statement savepoints.
+	 *
+	 * @dataProvider data_locking_select_statements
+	 *
+	 * @param string $sql Locking SELECT statement.
+	 */
+	public function test_query_wraps_locking_select_statement_in_per_statement_savepoint( string $sql ): void {
+		$pdo        = new WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO();
+		$connection = $this->create_connection_with_pdo_fixture( $pdo );
+
+		$pdo->beginTransaction();
+
+		try {
+			$connection->query( $sql );
+			$this->fail( 'Expected SQLite to reject the PostgreSQL/MySQL locking SELECT shape.' );
+		} catch ( PDOException $exception ) {
+			$this->assertNotSame( '', $exception->getMessage() );
+		}
+
+		$pdo->rollBack();
+		$this->assertSame(
+			array(
+				'SAVEPOINT wp_statement_1',
+				'ROLLBACK TO SAVEPOINT wp_statement_1',
+				'RELEASE SAVEPOINT wp_statement_1',
+			),
+			$pdo->exec_sql
+		);
+	}
+
+	/**
+	 * Provides locking SELECT statements.
+	 *
+	 * @return array<string, array{string}>
+	 */
+	public function data_locking_select_statements(): array {
+		return array(
+			'for_update'         => array( 'SELECT 1 FOR UPDATE' ),
+			'for_share'          => array( 'SELECT 1 FOR SHARE' ),
+			'lock_in_share_mode' => array( 'SELECT 1 LOCK IN SHARE MODE' ),
 		);
 	}
 
@@ -253,6 +358,56 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 		$this->assertInstanceOf( PDOStatement::class, $stmt );
 		$this->assertSame( array( 'value' => 'ok' ), $stmt->fetch( PDO::FETCH_ASSOC ) );
 		$this->assertSame( array( array( 'SELECT ? AS value', array() ) ), $log );
+	}
+
+	/**
+	 * Tests prepare consumes an active read savepoint before returning a statement.
+	 */
+	public function test_prepare_consumes_active_read_savepoint_before_prepared_write(): void {
+		$pdo        = new WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO();
+		$connection = $this->create_connection_with_pdo_fixture( $pdo );
+
+		$pdo->beginTransaction();
+		$connection->query( 'CREATE TABLE t (id INTEGER PRIMARY KEY, value TEXT)' );
+		$connection->query( 'SELECT 1' );
+
+		$stmt = $connection->prepare( 'INSERT INTO t (id, value) VALUES (1, ?)' );
+		$stmt->execute( array( 'kept' ) );
+
+		try {
+			$connection->query( 'SELECT missing_column FROM t' );
+			$this->fail( 'Expected the invalid read to throw.' );
+		} catch ( PDOException $exception ) {
+			$this->assertStringContainsString( 'missing_column', $exception->getMessage() );
+		}
+
+		$count = $connection->query( 'SELECT COUNT(*) FROM t' );
+
+		$this->assertSame( '1', $count->fetchColumn() );
+		$pdo->rollBack();
+		$this->assertSame(
+			array(
+				'CREATE TABLE t (id INTEGER PRIMARY KEY, value TEXT)',
+				'SELECT 1',
+				'INSERT INTO t (id, value) VALUES (1, ?)',
+				'SELECT missing_column FROM t',
+				'SELECT COUNT(*) FROM t',
+			),
+			$pdo->prepared_sql
+		);
+		$this->assertSame(
+			array(
+				'SAVEPOINT wp_statement_1',
+				'RELEASE SAVEPOINT wp_statement_1',
+				'SAVEPOINT wp_statement_2',
+				'RELEASE SAVEPOINT wp_statement_2',
+				'SAVEPOINT wp_statement_3',
+				'ROLLBACK TO SAVEPOINT wp_statement_3',
+				'RELEASE SAVEPOINT wp_statement_3',
+				'SAVEPOINT wp_statement_4',
+			),
+			$pdo->exec_sql
+		);
 	}
 
 	/**

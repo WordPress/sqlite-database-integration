@@ -136,18 +136,7 @@ try {
 
 	let phpunitCommandError = null;
 	try {
-		execFileSync(
-			'composer',
-			[
-				'run',
-				'wp-test-php',
-				'--',
-				'--log-junit=phpunit-results.xml',
-				'--verbose',
-				...phpunitArgs,
-			],
-			{ stdio: 'inherit' }
-		);
+		runPhpUnit();
 		console.log( '\nAll tests passed, checking if expected errors/failures occurred...' );
 	} catch ( error ) {
 		phpunitCommandError = error;
@@ -291,6 +280,68 @@ function verifyContainerPhpExtension( service, verifier ) {
 	);
 }
 
+function runPhpUnit() {
+	const args = [
+		'--log-junit=phpunit-results.xml',
+		'--verbose',
+		...phpunitArgs,
+	];
+
+	if ( 'postgresql' === backend ) {
+		removeWordPressSqliteHtAccessFile();
+		execFileSync(
+			'docker',
+			[
+				'compose',
+				...getWordPressDockerComposeArgs(),
+				'run',
+				'--rm',
+				'php',
+				'./vendor/bin/phpunit',
+				...args,
+			],
+			{
+				cwd: path.join( repositoryRoot, 'wordpress' ),
+				env: {
+					...process.env,
+					COMPOSE_IGNORE_ORPHANS: 'true',
+				},
+				stdio: 'inherit',
+			}
+		);
+		return;
+	}
+
+	execFileSync(
+		'composer',
+		[
+			'run',
+			'wp-test-php',
+			'--',
+			...args,
+		],
+		{ stdio: 'inherit' }
+	);
+}
+
+function getWordPressDockerComposeArgs() {
+	const args = [ '-f', 'docker-compose.yml' ];
+	if ( fs.existsSync( path.join( repositoryRoot, 'wordpress', 'docker-compose.override.yml' ) ) ) {
+		args.push( '-f', 'docker-compose.override.yml' );
+	}
+
+	return args;
+}
+
+function removeWordPressSqliteHtAccessFile() {
+	fs.rmSync(
+		path.join( repositoryRoot, 'wordpress', 'src', 'wp-content', 'database', '.ht.sqlite' ),
+		{
+			force: true,
+		}
+	);
+}
+
 function ensureWordPressTestEnvironment() {
 	if ( 'postgresql' === backend ) {
 		ensurePostgreSqlWordPressTestEnvironment();
@@ -429,6 +480,13 @@ function validateGeneratedBackendFiles() {
 			'\nvolumes:\n  mysql: !reset null\n  postgres: {}',
 			'docker-compose.override.yml removes the inherited MySQL volume'
 		);
+		for ( const setting of [ 'fsync=off', 'synchronous_commit=off', 'full_page_writes=off' ] ) {
+			assertFileContains(
+				composeOverride,
+				setting,
+				`docker-compose.override.yml sets PostgreSQL ${ setting } for test runs`
+			);
+		}
 		assertFileContains(
 			postgresqlPhpDockerfile,
 			'docker-php-ext-install pdo_pgsql',
@@ -441,8 +499,28 @@ function validateGeneratedBackendFiles() {
 		);
 		assertFileContains(
 			installScript,
-			"const { existsSync, renameSync, readFileSync, writeFileSync } = require( 'fs' );",
-			'install.js imports guarded wp-config file helpers'
+			"const fs = require( 'fs' );",
+			'install.js imports the fs object for direct PostgreSQL setup'
+		);
+		assertFileContains(
+			installScript,
+			"const { existsSync, renameSync, readFileSync, writeFileSync } = fs;",
+			'install.js imports guarded wp-config file helpers from fs'
+		);
+		assertFileContains(
+			installScript,
+			'install_postgresql_test_environment();',
+			'install.js runs the direct PostgreSQL test-environment setup path'
+		);
+		assertFileContains(
+			installScript,
+			'write_postgresql_wp_config();',
+			'install.js writes wp-config.php without WP-CLI for PostgreSQL'
+		);
+		assertFileContains(
+			installScript,
+			'write_postgresql_wp_tests_config();',
+			'install.js writes wp-tests-config.php without WP-CLI for PostgreSQL'
 		);
 		assertFileContains(
 			installScript,
@@ -484,10 +562,20 @@ function validateGeneratedBackendFiles() {
 			"wp_cli( 'db reset --yes' );",
 			'install.js does not call the MySQL-backed db reset command for PostgreSQL'
 		);
-		assertFileDoesNotContain(
+		assertFileContains(
 			installScript,
 			'install_wp_importer();',
-			'install.js does not call WP-CLI plugin installation for PostgreSQL'
+			'install.js installs the WordPress Importer test plugin for PostgreSQL'
+		);
+		assertFileContains(
+			installScript,
+			'run --rm --workdir /var/www php git clone https://github.com/WordPress/wordpress-importer.git',
+			'install.js runs the WordPress Importer clone from a valid PostgreSQL container workdir'
+		);
+		assertFileContains(
+			installScript,
+			'git clone https://github.com/WordPress/wordpress-importer.git \' + testPluginDirectory + \' --depth=1',
+			'install.js clones the WordPress Importer directly for the fast PostgreSQL setup path'
 		);
 		assertFileDoesNotContain(
 			installScript,

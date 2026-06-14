@@ -992,6 +992,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests approved comments ordered by GMT date use comment_ID as a tie-breaker.
+	 */
+	public function test_simple_select_approved_comments_order_uses_comment_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_comments ("comment_ID" INTEGER PRIMARY KEY, "comment_post_ID" INTEGER NOT NULL, comment_date_gmt TEXT NOT NULL, comment_approved TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (184, 7, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (180, 7, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (181, 7, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (183, 8, \'2024-01-01 00:00:00\', \'1\')' );
+		$driver->query( 'INSERT INTO wptests_comments ("comment_ID", "comment_post_ID", comment_date_gmt, comment_approved) VALUES (185, 7, \'2024-01-01 00:00:00\', \'0\')' );
+
+		$select = "SELECT *
+			FROM wptests_comments
+			WHERE comment_post_ID = 7 AND comment_approved = '1'
+			ORDER BY wptests_comments.comment_date_gmt ASC";
+		$rows   = $driver->query( $select );
+
+		$this->assertSame(
+			array( '180', '181', '184' ),
+			array_map(
+				static function ( $row ) {
+					return $row->comment_ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT * FROM wptests_comments WHERE "comment_post_ID" = 7 AND comment_approved = \'1\' ORDER BY wptests_comments.comment_date_gmt ASC, "comment_ID" ASC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests MySQL offset,count LIMIT syntax is translated to PostgreSQL.
 	 */
 	public function test_simple_select_with_mysql_offset_count_limit_is_translated_to_postgresql(): void {
@@ -2069,7 +2108,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC) AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))) AS "__wp_pg_found_rows"',
 					'params' => array(),
 				),
 			),
@@ -2100,7 +2139,51 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\' ORDER BY wptests_posts.post_date ASC) AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\') AS "__wp_pg_found_rows"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests grouped posts post_date DESC order keeps MySQL's ID tie-breaker.
+	 */
+	public function test_wordpress_grouped_posts_post_date_desc_order_uses_id_tiebreaker(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		for ( $id = 1; $id <= 3; $id++ ) {
+			$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES ($id, 'post', 'publish', '2024-01-01 00:00:00')" );
+		}
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_type = 'post' AND wptests_posts.post_status = 'publish'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 3"
+		);
+
+		$this->assertSame(
+			array( '3', '2', '1' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\' AND wptests_posts.post_status = \'publish\' GROUP BY wptests_posts."ID" ORDER BY MAX(wptests_posts.post_date) DESC, wptests_posts."ID" DESC LIMIT 3 OFFSET 0',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\' AND wptests_posts.post_status = \'publish\' GROUP BY wptests_posts."ID") AS "__wp_pg_found_rows"',
 					'params' => array(),
 				),
 			),
@@ -2152,7 +2235,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 		$this->assertStringContainsString(
-			'ORDER BY wptests_posts.menu_order ASC, wptests_posts.post_title ASC, wptests_posts."ID" ASC',
+			'ORDER BY wptests_posts.menu_order ASC, LOWER(wptests_posts.post_title) ASC, wptests_posts."ID" ASC',
 			$driver->get_last_postgresql_queries()[0]['sql']
 		);
 	}
@@ -2304,7 +2387,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'"ID" = ' . $this->get_expected_mysql_integer_cast_sql( "'yololololo'" ),
 			$sql
 		);
-		$this->assertStringContainsString( "user_login LIKE '%yololololo%'", $sql );
+		$this->assertStringContainsString( "LOWER(user_login) LIKE LOWER('%yololololo%')", $sql );
 	}
 
 	/**
@@ -2667,6 +2750,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"LOWER(tt.description) LIKE LOWER('%Bur%')",
 			$driver->get_last_postgresql_queries()[0]['sql']
 		);
+	}
+
+	/**
+	 * Tests WordPress user text predicates and ordering preserve MySQL collation behavior.
+	 */
+	public function test_wordpress_user_text_predicates_and_ordering_use_case_insensitive_mysql_collation_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_users (
+				`ID` bigint(20) unsigned NOT NULL,
+				`user_login` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`user_nicename` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`user_email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`user_url` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				`display_name` varchar(250) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_users (`ID`, `user_login`, `user_nicename`, `user_email`, `user_url`, `display_name`) VALUES (2, 'subscriber', 'subscriber', 'subscriber@example.com', '', 'subscriber')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_users (`ID`, `user_login`, `user_nicename`, `user_email`, `user_url`, `display_name`) VALUES (33, 'zzzz', 'zzzz', 'zzzz@example.com', '', 'ZZZZ')"
+		);
+
+		$email_rows = $driver->query( "SELECT ID FROM wptests_users WHERE user_email = 'Subscriber@Example.com'" );
+
+		$this->assertSame(
+			array( '2' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->ID;
+				},
+				$email_rows
+			)
+		);
+		$this->assertStringContainsString(
+			"LOWER(user_email) = LOWER('Subscriber@Example.com')",
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+
+		$order_rows = $driver->query( 'SELECT ID FROM wptests_users ORDER BY display_name DESC LIMIT 1' );
+
+		$this->assertStringContainsString(
+			'ORDER BY LOWER(display_name) DESC',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+		$this->assertSame( '33', $order_rows[0]->ID );
 	}
 
 	/**
@@ -3077,6 +3209,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress term cache priming preserves MySQL shared-term row order.
+	 */
+	public function test_wordpress_term_cache_priming_orders_shared_terms_by_term_taxonomy_id(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_terms (term_id INTEGER PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_term_taxonomy (term_taxonomy_id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL, taxonomy TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (1, 'Shared')" );
+		$driver->query( "INSERT INTO wptests_terms (term_id, name) VALUES (2, 'Single')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (20, 1, 'second_tax')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (10, 1, 'first_tax')" );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (30, 2, 'single_tax')" );
+
+		$rows = $driver->query(
+			'SELECT t.*, tt.* FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (1,2)'
+		);
+
+		$this->assertSame(
+			array( '10', '20', '30' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->term_taxonomy_id;
+				},
+				$rows
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT t.*, tt.* FROM wptests_terms AS t INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (1, 2) ORDER BY tt.term_taxonomy_id ASC',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests SELECT DISTINCT term ID queries hide relationship order columns.
 	 */
 	public function test_distinct_term_id_order_by_term_order_preserves_visible_projection(): void {
@@ -3274,7 +3444,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\'))) ORDER BY wptests_posts.post_date DESC, wptests_posts."ID" DESC) AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))) AS "__wp_pg_found_rows"',
 					'params' => array(),
 				),
 			),
@@ -3372,7 +3542,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$queries[0]['sql']
 		);
 		$this->assertSame(
-			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT "__wp_pg_distinct"."ID" AS "ID" FROM (SELECT wptests_users."ID" AS "ID", MIN(user_login) AS "__wp_pg_order_0" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\' GROUP BY wptests_users."ID") AS "__wp_pg_distinct" ORDER BY "__wp_pg_distinct"."__wp_pg_order_0" ASC) AS "__wp_pg_found_rows"',
+			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT DISTINCT wptests_users."ID" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\') AS "__wp_pg_found_rows"',
 			$queries[1]['sql']
 		);
 
@@ -3727,6 +3897,86 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $numeric_rows );
 		$this->assertSame( '2', $numeric_rows[0]->ID );
 		$this->assertStringNotContainsString( 'AS text) >', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests FOUND_ROWS count queries preserve MySQL token adjacency before translation.
+	 */
+	public function test_found_rows_count_source_preserves_mysql_cast_and_regexp_tokens(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_type` varchar(20) NOT NULL DEFAULT "",
+				`post_status` varchar(20) NOT NULL DEFAULT "",
+				`post_date` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				`post_id` bigint(20) unsigned NOT NULL,
+				`meta_key` varchar(255) NOT NULL DEFAULT "",
+				`meta_value` longtext NOT NULL
+			)'
+		);
+
+		$unsigned_count_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'get_sql_calc_found_rows_count_query',
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'num_as_longtext'
+				AND CAST(wptests_postmeta.meta_value AS UNSIGNED) > '0'
+			GROUP BY wptests_posts.ID
+			ORDER BY CAST(wptests_postmeta.meta_value AS UNSIGNED) ASC
+			LIMIT 0, 10"
+		);
+
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_integer_cast_sql( 'wptests_postmeta.meta_value' ) . " > '0'",
+			$unsigned_count_sql
+		);
+		$this->assertStringNotContainsString( 'UNSIGNED', $unsigned_count_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $unsigned_count_sql );
+		$this->assertStringNotContainsString( 'LIMIT', $unsigned_count_sql );
+
+		$binary_count_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'get_sql_calc_found_rows_count_query',
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND CAST(wptests_postmeta.meta_key AS BINARY) REGEXP BINARY 'AAA_FOO_.*'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertStringContainsString( 'CAST(wptests_postmeta.meta_key AS text) ~', $binary_count_sql );
+		$this->assertStringNotContainsString( 'BINARY', $binary_count_sql );
+		$this->assertStringNotContainsString( 'REGEXP', $binary_count_sql );
+
+		$decimal_like_count_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'get_sql_calc_found_rows_count_query',
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND wptests_postmeta.meta_key = 'decimal_value'
+				AND CAST(wptests_postmeta.meta_value AS DECIMAL(10,2)) LIKE '%.3%'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+
+		$this->assertStringContainsString( 'AS text) LIKE', $decimal_like_count_sql );
+		$this->assertStringNotContainsString( 'DECIMAL (10, 2)) LIKE', $decimal_like_count_sql );
 	}
 
 	/**
@@ -5368,6 +5618,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests introspection caching skips FETCH_FUNC named function results.
+	 */
+	public function test_mysql_introspection_result_cache_skips_fetch_func_named_function_results(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$describe_catalog_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+					++$describe_catalog_queries;
+				}
+			}
+		);
+
+		global $wp_postgresql_driver_named_fetch_func_invocations;
+		$wp_postgresql_driver_named_fetch_func_invocations = 0;
+		$fetch_field                                       = 'wp_postgresql_driver_fetch_dynamic_field_for_introspection_cache_test';
+
+		$rows        = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_FUNC, $fetch_field );
+		$cached_rows = $driver->query( 'DESC `wptests_options`;', PDO::FETCH_FUNC, $fetch_field );
+
+		$this->assertSame(
+			array( '1:option_id', '2:option_name', '3:option_value', '4:autoload' ),
+			$rows
+		);
+		$this->assertSame(
+			array( '5:option_id', '6:option_name', '7:option_value', '8:autoload' ),
+			$cached_rows
+		);
+		$this->assertSame( 8, $wp_postgresql_driver_named_fetch_func_invocations );
+		$this->assertSame( 2, $describe_catalog_queries );
+		$this->assertCount( 1, $driver->get_last_postgresql_queries() );
+	}
+
+	/**
 	 * Fetch a dynamic field value for the FETCH_FUNC introspection cache test.
 	 *
 	 * @param mixed ...$values Fetched row values.
@@ -5432,6 +5718,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->assertSame( 0, $driver->get_last_column_count() );
 			$this->assertSame( 0, $driver->get_last_return_value() );
 		}
+	}
+
+	/**
+	 * Tests simple MySQL transaction-control statements use direct backend statements.
+	 */
+	public function test_mysql_transaction_control_statements_use_fast_backend_path(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'START TRANSACTION;' ) );
+		$this->assertSame( 'START TRANSACTION;', $driver->get_last_mysql_query() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'BEGIN',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$driver->query( 'CREATE TABLE transaction_test (id INTEGER)' );
+		$driver->query( 'INSERT INTO transaction_test (id) VALUES (1)' );
+
+		$this->assertSame( 0, $driver->query( 'ROLLBACK' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ROLLBACK',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$tables = $driver->query( "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'transaction_test'" );
+		$this->assertSame( array(), $tables );
+
+		$this->assertSame( 0, $driver->query( 'COMMIT' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( 0, $driver->get_last_column_count() );
 	}
 
 	/**
@@ -6351,4 +6677,17 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'option_name')"
 		);
 	}
+}
+
+/**
+ * Fetch a dynamic field value for the named-function FETCH_FUNC cache test.
+ *
+ * @param mixed ...$values Fetched row values.
+ * @return string Dynamic field value.
+ */
+function wp_postgresql_driver_fetch_dynamic_field_for_introspection_cache_test( ...$values ): string {
+	global $wp_postgresql_driver_named_fetch_func_invocations;
+
+	++$wp_postgresql_driver_named_fetch_func_invocations;
+	return $wp_postgresql_driver_named_fetch_func_invocations . ':' . $values[0];
 }

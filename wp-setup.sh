@@ -205,6 +205,14 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
     networks:
       - wpdevnet
     ports:
@@ -257,9 +265,19 @@ const fs = require( 'fs' );
 const file = process.argv[2];
 const replacements = [
 	{
+		from: "local_env_utils.determine_auth_option();",
+		to: [
+			"local_env_utils.determine_auth_option();",
+			"",
+			"install_postgresql_test_environment();",
+			"return;",
+		],
+	},
+	{
 		from: "const { renameSync, readFileSync, writeFileSync } = require( 'fs' );",
 		to: [
-			"const { existsSync, renameSync, readFileSync, writeFileSync } = require( 'fs' );",
+			"const fs = require( 'fs' );",
+			"const { existsSync, renameSync, readFileSync, writeFileSync } = fs;",
 		],
 	},
 	{
@@ -293,12 +311,6 @@ const replacements = [
 			"\t.concat( \"\\ndefine( 'DB_ENGINE', 'postgresql' );\\n\" )",
 			"\t.concat( \"define( 'DATABASE_ENGINE', 'postgresql' );\\n\" )",
 			"\t.concat( \"define( 'FS_METHOD', 'direct' );\\n\" );",
-		],
-	},
-	{
-		from: "install_wp_importer();",
-		to: [
-			"// Skip WP-CLI plugin installation until the PostgreSQL runtime is wired.",
 		],
 	},
 	{
@@ -356,7 +368,104 @@ for ( const replacement of replacements ) {
 	}
 }
 
-fs.writeFileSync( file, output.join( '\n' ) );
+let contents = output.join( '\n' );
+let importerExecReplacementCount = 0;
+contents = contents.replace(
+	/exec -T php (rm -rf \$\{testPluginDirectory\}|git clone https:\/\/github\.com\/WordPress\/wordpress-importer\.git \$\{testPluginDirectory\} --depth=1)/g,
+	( match, command ) => {
+		importerExecReplacementCount++;
+		return `run --rm --workdir /var/www php ${ command }`;
+	}
+);
+
+if ( 2 !== importerExecReplacementCount ) {
+	throw new Error( `Expected to rewrite 2 WordPress Importer docker exec commands in ${ file }, rewrote ${ importerExecReplacementCount }.` );
+}
+
+contents += `
+
+function install_postgresql_test_environment() {
+	write_postgresql_wp_config();
+	write_postgresql_wp_tests_config();
+	install_postgresql_wp_importer();
+}
+
+function write_postgresql_wp_config() {
+	let config = fs.readFileSync( 'wp-config-sample.php', 'utf8' );
+	config = config
+		.replace( "define( 'DB_NAME', 'database_name_here' );", "define( 'DB_NAME', 'wordpress_develop' );" )
+		.replace( "define( 'DB_USER', 'username_here' );", "define( 'DB_USER', 'root' );" )
+		.replace( "define( 'DB_PASSWORD', 'password_here' );", "define( 'DB_PASSWORD', 'password' );" )
+		.replace( "define( 'DB_HOST', 'localhost' );", "define( 'DB_HOST', 'postgres' );" )
+		.replace(
+			"define( 'WP_DEBUG', false );",
+			"define( 'WP_DEBUG', " + get_postgresql_raw_constant_value( 'LOCAL_WP_DEBUG', 'true' ) + " );"
+		)
+		.replace(
+			'/* Add any custom values between this line and the "stop editing" line. */',
+			[
+				'/* Add any custom values between this line and the "stop editing" line. */',
+				'',
+				"define( 'DB_ENGINE', 'postgresql' );",
+				"define( 'DATABASE_ENGINE', 'postgresql' );",
+				"define( 'WP_DEBUG_LOG', " + get_postgresql_raw_constant_value( 'LOCAL_WP_DEBUG_LOG', 'true' ) + " );",
+				"define( 'WP_DEBUG_DISPLAY', " + get_postgresql_raw_constant_value( 'LOCAL_WP_DEBUG_DISPLAY', 'true' ) + " );",
+				"define( 'SCRIPT_DEBUG', " + get_postgresql_raw_constant_value( 'LOCAL_SCRIPT_DEBUG', 'true' ) + " );",
+				"define( 'WP_ENVIRONMENT_TYPE', " + quote_postgresql_php_string( get_postgresql_env_value( 'LOCAL_WP_ENVIRONMENT_TYPE', 'local' ) ) + " );",
+				"define( 'WP_DEVELOPMENT_MODE', " + quote_postgresql_php_string( get_postgresql_env_value( 'LOCAL_WP_DEVELOPMENT_MODE', 'core' ) ) + " );",
+			].join( '\\n' )
+		);
+
+	fs.rmSync( 'src/wp-config.php', { force: true } );
+	fs.writeFileSync( 'wp-config.php', config );
+}
+
+function write_postgresql_wp_tests_config() {
+	const testConfig = fs.readFileSync( 'wp-tests-config-sample.php', 'utf8' )
+		.replace( 'youremptytestdbnamehere', 'wordpress_develop_tests' )
+		.replace( 'yourusernamehere', 'root' )
+		.replace( 'yourpasswordhere', 'password' )
+		.replace( 'localhost', 'postgres' )
+		.replace(
+			"'WP_TESTS_DOMAIN', 'example.org'",
+			"'WP_TESTS_DOMAIN', " + quote_postgresql_php_string( get_postgresql_env_value( 'LOCAL_WP_TESTS_DOMAIN', 'example.org' ) )
+		)
+		.concat( "\\ndefine( 'DB_ENGINE', 'postgresql' );\\n" )
+		.concat( "define( 'DATABASE_ENGINE', 'postgresql' );\\n" )
+		.concat( "define( 'FS_METHOD', 'direct' );\\n" );
+
+	fs.writeFileSync( 'wp-tests-config.php', testConfig );
+}
+
+function install_postgresql_wp_importer() {
+	const testPluginDirectory = 'tests/phpunit/data/plugins/wordpress-importer';
+	if ( fs.existsSync( testPluginDirectory + '/wordpress-importer.php' ) ) {
+		return;
+	}
+
+	fs.rmSync( testPluginDirectory, { recursive: true, force: true } );
+	execSync( 'git clone https://github.com/WordPress/wordpress-importer.git ' + testPluginDirectory + ' --depth=1', { stdio: 'inherit' } );
+}
+
+function get_postgresql_env_value( name, defaultValue ) {
+	return process.env[ name ] || defaultValue;
+}
+
+function get_postgresql_raw_constant_value( name, defaultValue ) {
+	const value = get_postgresql_env_value( name, defaultValue );
+	if ( /^(?:true|false|null|[0-9]+)$/i.test( value ) ) {
+		return value.toLowerCase();
+	}
+
+	throw new Error( \`Unsupported raw constant value for \${ name }: \${ value }\` );
+}
+
+function quote_postgresql_php_string( value ) {
+	return "'" + String( value ).replace( /\\\\/g, '\\\\\\\\' ).replace( /'/g, "\\\\'" ) + "'";
+}
+`;
+
+fs.writeFileSync( file, contents );
 NODE
 fi
 
