@@ -48,6 +48,13 @@ class WP_PostgreSQL_DB extends wpdb {
 	private $postgresql_column_charset_metadata_cache = array();
 
 	/**
+	 * Request-local column length metadata keyed by normalized table and column names.
+	 *
+	 * @var array
+	 */
+	private $postgresql_column_length_cache = array();
+
+	/**
 	 * Cached existence state for the PostgreSQL MySQL charset metadata table.
 	 *
 	 * @var bool|null
@@ -276,6 +283,13 @@ class WP_PostgreSQL_DB extends wpdb {
 			}
 		}
 
+		if (
+			isset( $this->postgresql_column_length_cache[ $tablekey ] )
+			&& array_key_exists( $columnkey, $this->postgresql_column_length_cache[ $tablekey ] )
+		) {
+			return $this->postgresql_column_length_cache[ $tablekey ][ $columnkey ];
+		}
+
 		try {
 			$stmt = $this->dbh->get_connection()->query(
 				'SELECT data_type, character_maximum_length
@@ -307,6 +321,7 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		if ( ! is_array( $row ) ) {
+			$this->postgresql_column_length_cache[ $tablekey ][ $columnkey ] = false;
 			return false;
 		}
 
@@ -314,19 +329,22 @@ class WP_PostgreSQL_DB extends wpdb {
 		$length = isset( $row['character_maximum_length'] ) ? (int) $row['character_maximum_length'] : 0;
 
 		if ( in_array( $type, array( 'character varying', 'character', 'varchar', 'char' ), true ) && $length > 0 ) {
-			return array(
+			$this->postgresql_column_length_cache[ $tablekey ][ $columnkey ] = array(
 				'type'   => 'char',
 				'length' => $length,
 			);
+			return $this->postgresql_column_length_cache[ $tablekey ][ $columnkey ];
 		}
 
 		if ( 'text' === $type ) {
-			return array(
+			$this->postgresql_column_length_cache[ $tablekey ][ $columnkey ] = array(
 				'type'   => 'byte',
 				'length' => 65535,
 			);
+			return $this->postgresql_column_length_cache[ $tablekey ][ $columnkey ];
 		}
 
+		$this->postgresql_column_length_cache[ $tablekey ][ $columnkey ] = false;
 		return false;
 	}
 
@@ -712,7 +730,8 @@ class WP_PostgreSQL_DB extends wpdb {
 				$this->table_charset[ $tablekey ],
 				$this->col_meta[ $tablekey ],
 				$this->postgresql_temporary_charset_metadata[ $tablekey ],
-				$this->postgresql_column_charset_metadata_cache[ $tablekey ]
+				$this->postgresql_column_charset_metadata_cache[ $tablekey ],
+				$this->postgresql_column_length_cache[ $tablekey ]
 			);
 		}
 	}
@@ -724,6 +743,7 @@ class WP_PostgreSQL_DB extends wpdb {
 		$this->table_charset                            = array();
 		$this->col_meta                                 = array();
 		$this->postgresql_column_charset_metadata_cache = array();
+		$this->postgresql_column_length_cache           = array();
 		$this->postgresql_charset_metadata_table_exists = null;
 	}
 

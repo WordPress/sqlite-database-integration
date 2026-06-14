@@ -105,6 +105,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_dml_column_metadata_cache = array();
 
 	/**
+	 * DML identity metadata rows keyed by backend schema and table.
+	 *
+	 * @var array<string, array>
+	 */
+	private $mysql_dml_identity_column_metadata_cache = array();
+
+	/**
 	 * MySQL column type metadata keyed by backend schema, table, and column.
 	 *
 	 * @var array<string, array<string, string|null>>
@@ -124,6 +131,13 @@ class WP_PostgreSQL_Driver {
 	 * @var array<string, bool>
 	 */
 	private $mysql_table_has_column_metadata_cache = array();
+
+	/**
+	 * Stored MySQL column names keyed by backend schema, table, and requested column.
+	 *
+	 * @var array<string, array<string, string|null>>
+	 */
+	private $mysql_table_column_name_cache = array();
 
 	/**
 	 * Cached MySQL upsert conflict targets keyed by table and inserted columns.
@@ -1019,13 +1033,15 @@ class WP_PostgreSQL_Driver {
 	 * Clear all cached MySQL metadata derived from side tables.
 	 */
 	private function clear_mysql_metadata_caches(): void {
-		$this->mysql_table_schema_introspection_cache = array();
-		$this->mysql_dml_column_metadata_cache        = array();
-		$this->mysql_table_column_type_cache          = array();
-		$this->mysql_table_column_collation_cache     = array();
-		$this->mysql_table_has_column_metadata_cache  = array();
-		$this->mysql_upsert_conflict_target_cache     = array();
-		$this->mysql_introspection_result_cache       = array();
+		$this->mysql_table_schema_introspection_cache   = array();
+		$this->mysql_dml_column_metadata_cache          = array();
+		$this->mysql_dml_identity_column_metadata_cache = array();
+		$this->mysql_table_column_type_cache            = array();
+		$this->mysql_table_column_collation_cache       = array();
+		$this->mysql_table_has_column_metadata_cache    = array();
+		$this->mysql_table_column_name_cache            = array();
+		$this->mysql_upsert_conflict_target_cache       = array();
+		$this->mysql_introspection_result_cache         = array();
 	}
 
 	/**
@@ -1038,9 +1054,11 @@ class WP_PostgreSQL_Driver {
 		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
 		unset(
 			$this->mysql_dml_column_metadata_cache[ $cache_key ],
+			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ],
 			$this->mysql_table_column_type_cache[ $cache_key ],
 			$this->mysql_table_column_collation_cache[ $cache_key ],
-			$this->mysql_table_has_column_metadata_cache[ $cache_key ]
+			$this->mysql_table_has_column_metadata_cache[ $cache_key ],
+			$this->mysql_table_column_name_cache[ $cache_key ]
 		);
 		$this->mysql_upsert_conflict_target_cache = array();
 		$this->mysql_introspection_result_cache   = array();
@@ -4942,6 +4960,11 @@ WHERE option_name IN (
 	private function get_dml_identity_column_metadata( string $table_schema, string $table_name ): array {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		if ( array_key_exists( $cache_key, $this->mysql_dml_identity_column_metadata_cache ) ) {
+			return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
+		}
+
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT
@@ -4973,7 +4996,8 @@ WHERE option_name IN (
 			array( $table_schema, $table_name )
 		);
 
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$this->mysql_dml_identity_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
 	}
 
 	/**
@@ -12773,6 +12797,15 @@ WHERE option_name IN (
 	): ?string {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$table_cache_key  = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		$column_cache_key = $column_name;
+		if (
+			isset( $this->mysql_table_column_name_cache[ $table_cache_key ] )
+			&& array_key_exists( $column_cache_key, $this->mysql_table_column_name_cache[ $table_cache_key ] )
+		) {
+			return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
+		}
+
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT column_name FROM %s
@@ -12787,7 +12820,8 @@ WHERE option_name IN (
 
 		$stored_column_name = $stmt->fetchColumn();
 		if ( false !== $stored_column_name ) {
-			return (string) $stored_column_name;
+			$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = (string) $stored_column_name;
+			return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
 		}
 
 		$lowercase_column_name = strtolower( $column_name );
@@ -12804,7 +12838,10 @@ WHERE option_name IN (
 		);
 
 		$stored_column_name = $stmt->fetchColumn();
-		return false === $stored_column_name ? null : (string) $stored_column_name;
+		$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = false === $stored_column_name
+			? null
+			: (string) $stored_column_name;
+		return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
 	}
 
 	/**

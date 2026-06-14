@@ -276,6 +276,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests DML identity metadata is cached and invalidated after metadata changes.
+	 */
+	public function test_dml_identity_metadata_cache_reuses_rows_until_metadata_changes(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_cache_identity', 'id', 'wptests_cache_identity_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_cache_identity (id INTEGER PRIMARY KEY, label TEXT NOT NULL)' );
+
+		$metadata_select_count = 0;
+		$connection->set_query_logger(
+			static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
+				if ( false !== strpos( $sql, 'FROM dml_identity_metadata_fixture' ) ) {
+					++$metadata_select_count;
+				}
+			}
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (1, 'first')" ) );
+		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (2, 'second')" ) );
+		$this->assertSame( 1, $metadata_select_count );
+
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_cache_identity (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				label varchar(20) NOT NULL DEFAULT '',
+				PRIMARY KEY (id)
+			)"
+		);
+		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (3, 'third')" ) );
+		$this->assertSame( 2, $metadata_select_count );
+	}
+
+	/**
 	 * Tests non-strict INSERT normalizes invalid date/time literals using MySQL metadata.
 	 */
 	public function test_non_strict_insert_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
@@ -2819,6 +2854,49 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertGreaterThan( $type_queries_after_first, $column_type_queries );
 		$this->assertGreaterThan( $collation_queries_after_first, $column_collation_queries );
 		$this->assertGreaterThan( $metadata_queries_after_first, $table_has_metadata_queries );
+	}
+
+	/**
+	 * Tests qualified column-name metadata lookups are cached until table metadata changes.
+	 */
+	public function test_wordpress_column_name_metadata_cache_reuses_lookups_until_metadata_changes(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+
+		$column_name_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$column_name_queries ): void {
+				if ( false !== strpos( $sql, 'SELECT column_name FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
+					++$column_name_queries;
+				}
+			}
+		);
+
+		$query = 'SELECT p.ID FROM wptests_posts AS p WHERE p.ID > 0';
+
+		$driver->query( $query );
+		$column_name_queries_after_first = $column_name_queries;
+		$this->assertGreaterThan( 0, $column_name_queries_after_first );
+
+		$driver->query( $query );
+		$this->assertSame( $column_name_queries_after_first, $column_name_queries );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( $query );
+		$this->assertGreaterThan( $column_name_queries_after_first, $column_name_queries );
 	}
 
 	/**

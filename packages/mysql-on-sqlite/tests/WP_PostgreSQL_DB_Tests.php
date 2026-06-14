@@ -1398,6 +1398,200 @@ PHP
 	}
 
 	/**
+	 * Tests direct PostgreSQL column length fallback metadata is cached until invalidated.
+	 */
+	public function test_column_length_fallback_cache_reuses_lookup_until_invalidated(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $charset       = 'utf8mb4';
+	public $is_mysql      = true;
+	public $table_charset = array();
+	public $col_meta      = array();
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Connection extends WP_PostgreSQL_Connection {
+	private $pdo;
+	private $queries = array();
+	private $length = 50;
+
+	public function __construct() {
+		$this->pdo = new PDO( 'sqlite::memory:' );
+	}
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
+			return $this->statement_from_rows( array() );
+		}
+
+		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
+			$this->queries[] = 'metadata_exists';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'exists' => 0,
+					),
+				)
+			);
+		}
+
+		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
+			$this->queries[] = 'native_columns:' . ( $params[0] ?? '' );
+			return $this->statement_from_rows( array() );
+		}
+
+		if ( false !== strpos( $sql, 'SELECT data_type, character_maximum_length' ) ) {
+			$this->queries[] = 'direct_length:' . implode( ':', $params );
+			return $this->statement_from_rows(
+				array(
+					array(
+						'data_type'                => 'character varying',
+						'character_maximum_length' => $this->length,
+					),
+				)
+			);
+		}
+
+		$this->queries[] = 'unexpected';
+		return $this->statement_from_rows( array() );
+	}
+
+	public function get_pdo(): PDO {
+		return $this->pdo;
+	}
+
+	public function set_length( int $length ): void {
+		$this->length = $length;
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+
+	private function statement_from_rows( array $rows ): PDOStatement {
+		if ( empty( $rows ) ) {
+			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		$columns = array_keys( $rows[0] );
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$fields = array();
+			foreach ( $columns as $column ) {
+				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
+				$params[] = $row[ $column ];
+			}
+			$selects[] = 'SELECT ' . implode( ', ', $fields );
+		}
+
+		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
+		$stmt->execute( $params );
+		return $stmt;
+	}
+}
+
+class WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Driver extends WP_PostgreSQL_Driver {
+	private $fake_connection;
+	private $queries = array();
+
+	public function __construct( WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Connection $connection ) {
+		$this->fake_connection = $connection;
+	}
+
+	public function get_connection(): WP_PostgreSQL_Connection {
+		return $this->fake_connection;
+	}
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+		return array();
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+}
+
+$connection = new WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Connection();
+$driver     = new WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Driver( $connection );
+$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$first = $db->get_col_length( 'wptests_length_fallback_cache', 'name' );
+
+$connection->set_length( 75 );
+$second = $db->get_col_length( 'WPTESTS_LENGTH_FALLBACK_CACHE', 'NAME' );
+
+$clear_cache = new ReflectionMethod( WP_PostgreSQL_DB::class, 'clear_postgresql_table_charset_cache' );
+$clear_cache->setAccessible( true );
+$clear_cache->invoke( $db, array( 'wptests_length_fallback_cache' ) );
+
+$third = $db->get_col_length( 'wptests_length_fallback_cache', 'name' );
+
+wp_postgresql_db_test_respond(
+	array(
+		'first'              => $first,
+		'second'             => $second,
+		'third'              => $third,
+		'connection_queries' => $connection->get_queries(),
+		'driver_queries'     => $driver->get_queries(),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 50,
+			),
+			$result['first']
+		);
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 50,
+			),
+			$result['second']
+		);
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 75,
+			),
+			$result['third']
+		);
+		$this->assertSame(
+			array(
+				'temp_schema:wptests_length_fallback_cache',
+				'metadata_exists',
+				'native_columns:wptests_length_fallback_cache',
+				'direct_length:wptests_length_fallback_cache:name',
+				'temp_schema:wptests_length_fallback_cache',
+				'native_columns:wptests_length_fallback_cache',
+				'direct_length:wptests_length_fallback_cache:name',
+			),
+			$result['connection_queries']
+		);
+		$this->assertSame(
+			array(
+				'SHOW FULL COLUMNS FROM `wptests_length_fallback_cache`',
+				'SHOW FULL COLUMNS FROM `wptests_length_fallback_cache`',
+			),
+			$result['driver_queries']
+		);
+	}
+
+	/**
 	 * Tests plain permanent CREATE TABLE invalidates cached missing metadata.
 	 */
 	public function test_plain_create_table_invalidates_cached_missing_column_charset_metadata(): void {
