@@ -59,6 +59,13 @@ class WP_PostgreSQL_Driver {
 	public $client_info;
 
 	/**
+	 * MySQL server version emulated by the driver.
+	 *
+	 * @var int
+	 */
+	private $mysql_version;
+
+	/**
 	 * PostgreSQL connection.
 	 *
 	 * @var WP_PostgreSQL_Connection
@@ -265,6 +272,20 @@ class WP_PostgreSQL_Driver {
 	private $collation = self::DEFAULT_MYSQL_COLLATION;
 
 	/**
+	 * MySQL-compatible session variable overrides.
+	 *
+	 * @var array<string, string>
+	 */
+	private $mysql_session_variable_values = array();
+
+	/**
+	 * MySQL-compatible user variables.
+	 *
+	 * @var array<string, string|null>
+	 */
+	private $mysql_user_variables = array();
+
+	/**
 	 * Narrow in-memory procedure registry for WordPress mysqli compatibility tests.
 	 *
 	 * @var array<string, string>
@@ -276,17 +297,18 @@ class WP_PostgreSQL_Driver {
 	 *
 	 * @param WP_PostgreSQL_Connection $connection    PostgreSQL connection.
 	 * @param string                   $database      MySQL-facing database name.
-	 * @param int                      $mysql_version Reserved for parity with the SQLite driver.
+	 * @param int                      $mysql_version MySQL version to emulate.
 	 */
 	public function __construct(
 		WP_PostgreSQL_Connection $connection,
 		string $database,
 		int $mysql_version = 80038
 	) {
-		$this->connection   = $connection;
-		$this->main_db_name = $database;
-		$this->db_name      = $database;
-		$this->client_info  = $this->read_server_version();
+		$this->connection    = $connection;
+		$this->main_db_name  = $database;
+		$this->db_name       = $database;
+		$this->mysql_version = $mysql_version;
+		$this->client_info   = $this->read_server_version();
 
 		$connection->get_pdo()->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
@@ -343,6 +365,7 @@ class WP_PostgreSQL_Driver {
 	 */
 	public function set_sql_mode( string $sql_mode ): void {
 		$this->sql_mode = $sql_mode;
+		unset( $this->mysql_session_variable_values['sql_mode'] );
 	}
 
 	/**
@@ -364,6 +387,7 @@ class WP_PostgreSQL_Driver {
 		if ( 'default' === $this->normalize_mysql_charset_name( $charset ) ) {
 			$this->charset   = self::DEFAULT_MYSQL_CHARSET;
 			$this->collation = self::DEFAULT_MYSQL_COLLATION;
+			$this->sync_mysql_charset_session_variables();
 			return;
 		}
 
@@ -371,6 +395,7 @@ class WP_PostgreSQL_Driver {
 		$this->collation = null === $collation || '' === $collation
 			? $this->get_default_mysql_collation_for_charset( $this->charset )
 			: $this->normalize_mysql_collation_name( $collation );
+		$this->sync_mysql_charset_session_variables();
 	}
 
 	/**
@@ -403,19 +428,9 @@ class WP_PostgreSQL_Driver {
 		$this->reset_query_state();
 		$this->last_mysql_query = $query;
 
-		if ( $this->is_fast_noop_mysql_runtime_setting( $query ) ) {
-			$this->last_result = 0;
-			return $this->last_result;
-		}
-
-		if ( $this->is_noop_mysql_runtime_setting( $query ) ) {
-			$this->last_result = 0;
-			return $this->last_result;
-		}
-
-		if ( $this->apply_mysql_set_names_query( $query ) ) {
-			$this->last_result = 0;
-			return $this->last_result;
+		$runtime_setting_result = $this->execute_mysql_runtime_setting_query( $query );
+		if ( null !== $runtime_setting_result ) {
+			return $runtime_setting_result;
 		}
 
 		$use_database_name = $this->get_mysql_use_database_name( $query );
@@ -433,25 +448,13 @@ class WP_PostgreSQL_Driver {
 			return $procedure_result;
 		}
 
-		$sql_mode_variable = $this->get_sql_mode_select_variable( $query );
-		if ( null !== $sql_mode_variable ) {
-			$this->last_result      = array( (object) array( $sql_mode_variable => $this->sql_mode ) );
-			$this->last_column_meta = array(
-				array(
-					'name'             => $sql_mode_variable,
-					'table'            => '',
-					'mysqli:orgtable'  => '',
-					'mysqli:orgname'   => $sql_mode_variable,
-					'mysqli:db'        => $this->db_name,
-					'mysqli:charsetnr' => 45,
-					'mysqli:flags'     => 0,
-					'mysqli:type'      => 253,
-					'len'              => 1024,
-					'precision'        => 0,
-					'native_type'      => 'string',
-				),
+		$mysql_variable_select_query = $this->get_mysql_variable_select_query( $query );
+		if ( null !== $mysql_variable_select_query ) {
+			return $this->execute_mysql_variable_select_query(
+				$mysql_variable_select_query,
+				$fetch_mode,
+				...$fetch_mode_args
 			);
-			return $this->last_result;
 		}
 
 		$database_function_column = $this->get_mysql_database_function_select_column( $query );
@@ -1564,20 +1567,360 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Check whether a MySQL runtime setting can be ignored without tokenization.
-	 *
-	 * This covers the high-frequency WordPress PHPUnit transaction setup path.
-	 * Less common supported SET shapes still fall through to the lexer-backed
-	 * runtime-setting handler.
+	 * Execute a supported MySQL runtime SET statement from emulated session state.
 	 *
 	 * @param string $query MySQL query.
-	 * @return bool Whether the query should be treated as a successful no-op.
+	 * @return int|null Query result for handled SET statements, or null when this is not SET.
 	 */
-	private function is_fast_noop_mysql_runtime_setting( string $query ): bool {
-		return 1 === preg_match(
-			'/\A\s*SET\s+(?:(?:GLOBAL|LOCAL|SESSION)\s+)?(?:autocommit|default_storage_engine|foreign_key_checks|sql_mode|storage_engine)\s*=\s*(?:\'[^\']*\'|"[^"]*"|[^\s,;]+)\s*;?\s*\z/i',
-			$query
+	private function execute_mysql_runtime_setting_query( string $query ): ?int {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		if ( $this->apply_mysql_set_names_tokens( $tokens ) || $this->apply_mysql_set_charset_tokens( $tokens ) ) {
+			$this->last_result      = 0;
+			$this->last_column_meta = array();
+			return $this->last_result;
+		}
+
+		$operations = $this->get_mysql_set_assignment_operations( $tokens );
+		if ( null === $operations ) {
+			throw new InvalidArgumentException( 'Unsupported SET statement.' );
+		}
+
+		foreach ( $operations as $operation ) {
+			if ( 'user' === $operation['target_type'] ) {
+				$this->mysql_user_variables[ $operation['name'] ] = $operation['value'];
+				continue;
+			}
+
+			$this->set_mysql_session_variable_value( $operation['name'], $operation['value'] );
+		}
+
+		$this->last_result      = 0;
+		$this->last_column_meta = array();
+		return $this->last_result;
+	}
+
+	/**
+	 * Apply a supported MySQL SET NAMES statement to the emulated session.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the query was handled.
+	 */
+	private function apply_mysql_set_names_tokens( array $tokens ): bool {
+		if (
+			! isset( $tokens[0], $tokens[1], $tokens[2] )
+			|| WP_MySQL_Lexer::SET_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::NAMES_SYMBOL !== $tokens[1]->id
+			|| ! $this->is_mysql_charset_token( $tokens[2] )
+		) {
+			return false;
+		}
+
+		$charset   = $this->get_mysql_charset_token_value( $tokens[2] );
+		$collation = null;
+		$position  = 3;
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $position ]->id ) {
+			if ( ! isset( $tokens[ $position + 1 ] ) || ! $this->is_mysql_charset_token( $tokens[ $position + 1 ] ) ) {
+				return false;
+			}
+
+			$collation = $this->get_mysql_charset_token_value( $tokens[ $position + 1 ] );
+			$position += 2;
+		}
+
+		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return false;
+		}
+
+		$this->set_charset( $charset, $collation );
+		return true;
+	}
+
+	/**
+	 * Apply supported MySQL SET CHARSET and SET CHARACTER SET statements.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the query was handled.
+	 */
+	private function apply_mysql_set_charset_tokens( array $tokens ): bool {
+		if (
+			isset( $tokens[0], $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[0]->id
+			&& $this->is_mysql_token_value( $tokens[1], 'charset' )
+			&& $this->is_mysql_charset_token( $tokens[2] )
+			&& $this->is_at_mysql_query_end( $tokens, 3 )
+		) {
+			$this->set_charset( $this->get_mysql_charset_token_value( $tokens[2] ) );
+			return true;
+		}
+
+		if (
+			isset( $tokens[0], $tokens[1], $tokens[2], $tokens[3] )
+			&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[0]->id
+			&& $this->is_mysql_token_value( $tokens[1], 'character' )
+			&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[2]->id
+			&& $this->is_mysql_charset_token( $tokens[3] )
+			&& $this->is_at_mysql_query_end( $tokens, 4 )
+		) {
+			$this->set_charset( $this->get_mysql_charset_token_value( $tokens[3] ) );
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Parse supported MySQL SET assignment operations.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return array<int, array{target_type: string, name: string, value: string|null}>|null Assignment operations, or null when unsupported.
+	 */
+	private function get_mysql_set_assignment_operations( array $tokens ): ?array {
+		$position = 1;
+		$this->get_mysql_set_statement_scope( $tokens, $position );
+		$ops = array();
+
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
+			$target = $this->parse_mysql_set_assignment_target( $tokens, $position );
+			if ( null === $target ) {
+				return null;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			++$position;
+			$operation = $this->parse_mysql_set_assignment_operation( $tokens, $position, $target );
+			if ( null === $operation ) {
+				return null;
+			}
+
+			$ops[] = $operation;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			break;
+		}
+
+		if ( array() === $ops || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return null;
+		}
+
+		return $ops;
+	}
+
+	/**
+	 * Get the statement-level SET scope, if present.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @return string|null SET scope.
+	 */
+	private function get_mysql_set_statement_scope( array $tokens, int &$position ): ?string {
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::GLOBAL_SYMBOL,
+					WP_MySQL_Lexer::LOCAL_SYMBOL,
+					WP_MySQL_Lexer::SESSION_SYMBOL,
+				),
+				true
+			)
+		) {
+			return strtolower( $tokens[ $position++ ]->get_value() );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse a SET assignment target.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @return array{type: string, name: string}|null Assignment target.
+	 */
+	private function parse_mysql_set_assignment_target( array $tokens, int &$position ): ?array {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
+			return array(
+				'type' => 'user',
+				'name' => $this->normalize_mysql_user_variable_name( $tokens[ $position++ ]->get_value() ),
+			);
+		}
+
+		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $tokens[ $position ]->id ) {
+			$name = $this->parse_mysql_system_variable_reference( $tokens, $position );
+			if ( null === $name || ! $this->is_supported_mysql_system_variable( $name ) ) {
+				return null;
+			}
+
+			return array(
+				'type' => 'system',
+				'name' => $name,
+			);
+		}
+
+		$name = strtolower( $tokens[ $position ]->get_value() );
+		if ( ! $this->is_supported_mysql_system_variable( $name ) ) {
+			return null;
+		}
+
+		++$position;
+		return array(
+			'type' => 'system',
+			'name' => $name,
 		);
+	}
+
+	/**
+	 * Parse a SET assignment operation.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param array            $target   Parsed assignment target.
+	 * @return array{target_type: string, name: string, value: string|null}|null Assignment operation.
+	 */
+	private function parse_mysql_set_assignment_operation( array $tokens, int &$position, array $target ): ?array {
+		$value = $this->parse_mysql_set_assignment_value( $tokens, $position, $target );
+		if ( null === $value ) {
+			return null;
+		}
+
+		if ( 'system' === $target['type'] ) {
+			$value = $this->normalize_mysql_system_variable_assignment_value( $target['name'], $value );
+			if ( null === $value ) {
+				return null;
+			}
+		}
+
+		return array(
+			'target_type' => $target['type'],
+			'name'        => $target['name'],
+			'value'       => $value,
+		);
+	}
+
+	/**
+	 * Parse a supported SET assignment value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param array            $target   Parsed assignment target.
+	 * @return string|null Assignment value, or null when unsupported.
+	 */
+	private function parse_mysql_set_assignment_value( array $tokens, int &$position, array $target ): ?string {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
+			$user_variable_name = $this->normalize_mysql_user_variable_name( $tokens[ $position++ ]->get_value() );
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $position ]->id ) {
+				return $this->parse_mysql_user_variable_increment_value(
+					$tokens,
+					$position,
+					$target,
+					$user_variable_name
+				);
+			}
+
+			return $this->get_mysql_user_variable_value( $user_variable_name );
+		}
+
+		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $tokens[ $position ]->id ) {
+			$system_variable_name = $this->parse_mysql_system_variable_reference( $tokens, $position );
+			return null === $system_variable_name ? null : $this->get_mysql_system_variable_value( $system_variable_name );
+		}
+
+		$value = $this->get_mysql_set_literal_token_value( $tokens[ $position ] );
+		if ( null === $value ) {
+			return null;
+		}
+
+		++$position;
+		return $value;
+	}
+
+	/**
+	 * Parse @name = @name + integer assignment values.
+	 *
+	 * @param WP_MySQL_Token[] $tokens               MySQL lexer token stream.
+	 * @param int              $position             Current token position, updated on success.
+	 * @param array            $target               Parsed assignment target.
+	 * @param string           $source_variable_name Source user variable name.
+	 * @return string|null Incremented value, or null when unsupported.
+	 */
+	private function parse_mysql_user_variable_increment_value(
+		array $tokens,
+		int &$position,
+		array $target,
+		string $source_variable_name
+	): ?string {
+		if (
+			'user' !== $target['type']
+			|| $target['name'] !== $source_variable_name
+			|| ! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::PLUS_OPERATOR !== $tokens[ $position ]->id
+			|| ! $this->is_mysql_unsigned_integer_token( $tokens[ $position + 1 ] )
+		) {
+			return null;
+		}
+
+		$current_value = $this->get_mysql_user_variable_value( $source_variable_name );
+		if ( null === $current_value || ! preg_match( '/\A[0-9]+\z/', $current_value ) ) {
+			return null;
+		}
+
+		$increment = $tokens[ $position + 1 ]->get_value();
+		$position += 2;
+		return (string) ( (int) $current_value + (int) $increment );
+	}
+
+	/**
+	 * Get a simple literal token value allowed in supported SET assignments.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return string|null Literal value, or null when unsupported.
+	 */
+	private function get_mysql_set_literal_token_value( WP_MySQL_Token $token ): ?string {
+		if (
+			in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL,
+					WP_MySQL_Lexer::AT_SIGN_SYMBOL,
+					WP_MySQL_Lexer::AT_TEXT_SUFFIX,
+					WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::DOT_SYMBOL,
+					WP_MySQL_Lexer::EOF,
+					WP_MySQL_Lexer::EQUAL_OPERATOR,
+					WP_MySQL_Lexer::MINUS_OPERATOR,
+					WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
+					WP_MySQL_Lexer::PLUS_OPERATOR,
+					WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		return $token->get_value();
 	}
 
 	/**
@@ -1616,44 +1959,6 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Apply a supported MySQL SET NAMES statement to the emulated session.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether the query was handled.
-	 */
-	private function apply_mysql_set_names_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if (
-			! isset( $tokens[0], $tokens[1], $tokens[2] )
-			|| WP_MySQL_Lexer::SET_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::NAMES_SYMBOL !== $tokens[1]->id
-			|| ! $this->is_mysql_charset_token( $tokens[2] )
-		) {
-			return false;
-		}
-
-		$charset   = $this->get_mysql_charset_token_value( $tokens[2] );
-		$collation = null;
-		$position  = 3;
-
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $position ]->id ) {
-			if ( ! isset( $tokens[ $position + 1 ] ) || ! $this->is_mysql_charset_token( $tokens[ $position + 1 ] ) ) {
-				return false;
-			}
-
-			$collation = $this->get_mysql_charset_token_value( $tokens[ $position + 1 ] );
-			$position += 2;
-		}
-
-		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return false;
-		}
-
-		$this->set_charset( $charset, $collation );
-		return true;
 	}
 
 	/**
@@ -5072,6 +5377,23 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Execute a simple MySQL variable SELECT query from emulated variable state.
+	 *
+	 * @param array $mysql_variable_select_query Parsed variable SELECT query.
+	 * @param int   $fetch_mode                  PDO fetch mode.
+	 * @param array ...$fetch_mode_args          Additional fetch mode arguments.
+	 * @return mixed Variable SELECT result rows.
+	 */
+	private function execute_mysql_variable_select_query( array $mysql_variable_select_query, $fetch_mode, ...$fetch_mode_args ) {
+		return $this->set_mysql_static_show_result(
+			$mysql_variable_select_query['columns'],
+			array( $mysql_variable_select_query['row'] ),
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
 	 * Execute a MySQL SHOW VARIABLES statement from emulated session state.
 	 *
 	 * @param array  $show_variables_query SHOW VARIABLES options.
@@ -5412,15 +5734,383 @@ ORDER BY table_name';
 	 * @return array<string, string> Session variables keyed by lowercase name.
 	 */
 	private function get_mysql_session_variables(): array {
+		return array_replace(
+			array(
+				'character_set_client'     => $this->charset,
+				'character_set_connection' => $this->charset,
+				'character_set_results'    => $this->charset,
+				'character_set_database'   => $this->charset,
+				'character_set_server'     => $this->charset,
+				'collation_connection'     => $this->collation,
+				'collation_database'       => $this->collation,
+				'collation_server'         => $this->collation,
+				'sql_mode'                 => $this->sql_mode,
+			),
+			$this->mysql_session_variable_values
+		);
+	}
+
+	/**
+	 * Synchronize SET NAMES/CHARSET state with individual session variables.
+	 */
+	private function sync_mysql_charset_session_variables(): void {
+		foreach (
+			array(
+				'character_set_client',
+				'character_set_connection',
+				'character_set_results',
+				'character_set_database',
+				'character_set_server',
+			) as $variable
+		) {
+			$this->mysql_session_variable_values[ $variable ] = $this->charset;
+		}
+
+		foreach (
+			array(
+				'collation_connection',
+				'collation_database',
+				'collation_server',
+			) as $variable
+		) {
+			$this->mysql_session_variable_values[ $variable ] = $this->collation;
+		}
+	}
+
+	/**
+	 * Set an emulated MySQL session variable.
+	 *
+	 * @param string $name  Lowercase variable name.
+	 * @param string $value Variable value.
+	 */
+	private function set_mysql_session_variable_value( string $name, string $value ): void {
+		if ( 'sql_mode' === $name ) {
+			$this->set_sql_mode( $value );
+			return;
+		}
+
+		$this->mysql_session_variable_values[ $name ] = $value;
+	}
+
+	/**
+	 * Get an emulated MySQL system variable value.
+	 *
+	 * @param string $name Variable name.
+	 * @return string|null Variable value, or null when unsupported.
+	 */
+	private function get_mysql_system_variable_value( string $name ): ?string {
+		$name      = strtolower( $name );
+		$variables = $this->get_mysql_session_variables();
+		if ( array_key_exists( $name, $variables ) ) {
+			return $variables[ $name ];
+		}
+
+		if ( 'sql_mode' === $name ) {
+			return $this->sql_mode;
+		}
+
+		$read_only_variables = $this->get_read_only_mysql_system_variable_values();
+		if ( array_key_exists( $name, $read_only_variables ) ) {
+			return $read_only_variables[ $name ];
+		}
+
+		$defaults = $this->get_default_mysql_system_variable_values();
+		return array_key_exists( $name, $defaults ) ? $defaults[ $name ] : null;
+	}
+
+	/**
+	 * Get a stored MySQL user variable value.
+	 *
+	 * @param string $name Normalized user variable name.
+	 * @return string|null User variable value, or null when unset.
+	 */
+	private function get_mysql_user_variable_value( string $name ): ?string {
+		return array_key_exists( $name, $this->mysql_user_variables ) ? $this->mysql_user_variables[ $name ] : null;
+	}
+
+	/**
+	 * Parse a MySQL @@system_variable reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param string|null      $display  Optional display name, populated when requested.
+	 * @return string|null Lowercase system variable name, or null when unsupported.
+	 */
+	private function parse_mysql_system_variable_reference( array $tokens, int &$position, ?string &$display = null ): ?string {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$display_parts = array( '@@' );
+		++$position;
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::GLOBAL_SYMBOL,
+					WP_MySQL_Lexer::LOCAL_SYMBOL,
+					WP_MySQL_Lexer::SESSION_SYMBOL,
+				),
+				true
+			)
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$display_parts[] = $tokens[ $position ]->get_value();
+			$display_parts[] = '.';
+			$position       += 2;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || ! $this->is_mysql_system_variable_name_token( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		$display_parts[] = $tokens[ $position ]->get_value();
+		$name            = strtolower( $tokens[ $position++ ]->get_value() );
+		$display         = implode( '', $display_parts );
+		return $name;
+	}
+
+	/**
+	 * Check whether a token can be a system variable name.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token can name a supported variable.
+	 */
+	private function is_mysql_system_variable_name_token( WP_MySQL_Token $token ): bool {
+		if (
+			in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL,
+					WP_MySQL_Lexer::AT_SIGN_SYMBOL,
+					WP_MySQL_Lexer::AT_TEXT_SUFFIX,
+					WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::DOT_SYMBOL,
+					WP_MySQL_Lexer::EOF,
+					WP_MySQL_Lexer::EQUAL_OPERATOR,
+					WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
+					WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+				),
+				true
+			)
+		) {
+			return false;
+		}
+
+		return '' !== $token->get_value();
+	}
+
+	/**
+	 * Normalize a MySQL user variable name for storage.
+	 *
+	 * @param string $name User variable token value.
+	 * @return string Normalized user variable name.
+	 */
+	private function normalize_mysql_user_variable_name( string $name ): string {
+		return strtolower( ltrim( $name, '@' ) );
+	}
+
+	/**
+	 * Normalize a SET value for a supported system variable.
+	 *
+	 * @param string $name  Lowercase variable name.
+	 * @param string $value Raw assignment value.
+	 * @return string|null Normalized value, or null when unsupported.
+	 */
+	private function normalize_mysql_system_variable_assignment_value( string $name, string $value ): ?string {
+		if ( $this->is_mysql_boolean_system_variable( $name ) ) {
+			return $this->normalize_mysql_boolean_system_variable_value( $value );
+		}
+
+		if ( $this->is_mysql_charset_session_variable( $name ) || $this->is_mysql_collation_session_variable( $name ) ) {
+			return strtolower( trim( $value, "'\"` \t\n\r\0\x0B" ) );
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Normalize a MySQL boolean system variable value.
+	 *
+	 * @param string $value Raw assignment value.
+	 * @return string|null Normalized 1/0 value, or null when unsupported.
+	 */
+	private function normalize_mysql_boolean_system_variable_value( string $value ): ?string {
+		$value = strtolower( trim( $value, "'\"` \t\n\r\0\x0B" ) );
+		if ( in_array( $value, array( '1', 'on', 'true' ), true ) ) {
+			return '1';
+		}
+
+		if ( in_array( $value, array( '0', 'off', 'false' ), true ) ) {
+			return '0';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a MySQL system variable is supported by the emulation layer.
+	 *
+	 * @param string $name Lowercase variable name.
+	 * @return bool Whether the variable is supported.
+	 */
+	private function is_supported_mysql_system_variable( string $name ): bool {
+		$name = strtolower( $name );
+		if (
+			$this->is_mysql_charset_session_variable( $name )
+			|| $this->is_mysql_collation_session_variable( $name )
+			|| 'sql_mode' === $name
+		) {
+			return true;
+		}
+
+		$defaults = $this->get_default_mysql_system_variable_values();
+		return array_key_exists( $name, $defaults );
+	}
+
+	/**
+	 * Check whether a variable stores a charset name.
+	 *
+	 * @param string $name Lowercase variable name.
+	 * @return bool Whether this is a charset variable.
+	 */
+	private function is_mysql_charset_session_variable( string $name ): bool {
+		return in_array(
+			$name,
+			array(
+				'character_set_client',
+				'character_set_connection',
+				'character_set_results',
+				'character_set_database',
+				'character_set_server',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a variable stores a collation name.
+	 *
+	 * @param string $name Lowercase variable name.
+	 * @return bool Whether this is a collation variable.
+	 */
+	private function is_mysql_collation_session_variable( string $name ): bool {
+		return in_array(
+			$name,
+			array(
+				'collation_connection',
+				'collation_database',
+				'collation_server',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a variable accepts MySQL boolean values.
+	 *
+	 * @param string $name Lowercase variable name.
+	 * @return bool Whether this is a boolean variable.
+	 */
+	private function is_mysql_boolean_system_variable( string $name ): bool {
+		return in_array(
+			$name,
+			array(
+				'autocommit',
+				'big_tables',
+				'end_markers_in_json',
+				'explicit_defaults_for_timestamp',
+				'foreign_key_checks',
+				'keep_files_on_create',
+				'old_alter_table',
+				'print_identified_with_as_hex',
+				'require_row_format',
+				'select_into_disk_sync',
+				'session_track_schema',
+				'session_track_state_change',
+				'show_create_table_skip_secondary_engine',
+				'show_create_table_verbosity',
+				'sql_auto_is_null',
+				'sql_big_selects',
+				'sql_buffer_result',
+				'sql_notes',
+				'sql_safe_updates',
+				'sql_warnings',
+				'transaction_read_only',
+				'unique_checks',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Get defaults for supported MySQL system variables.
+	 *
+	 * @return array<string, string> Default values keyed by lowercase name.
+	 */
+	private function get_default_mysql_system_variable_values(): array {
 		return array(
-			'character_set_client'     => $this->charset,
-			'character_set_connection' => $this->charset,
-			'character_set_results'    => $this->charset,
-			'character_set_database'   => $this->charset,
-			'character_set_server'     => $this->charset,
-			'collation_connection'     => $this->collation,
-			'collation_database'       => $this->collation,
-			'collation_server'         => $this->collation,
+			'autocommit'                              => '1',
+			'big_tables'                              => '0',
+			'default_collation_for_utf8mb4'           => 'utf8mb4_0900_ai_ci',
+			'default_storage_engine'                  => 'InnoDB',
+			'end_markers_in_json'                     => '0',
+			'explicit_defaults_for_timestamp'         => '1',
+			'foreign_key_checks'                      => '1',
+			'keep_files_on_create'                    => '0',
+			'old_alter_table'                         => '0',
+			'print_identified_with_as_hex'            => '0',
+			'require_row_format'                      => '0',
+			'resultset_metadata'                      => 'FULL',
+			'select_into_disk_sync'                   => '0',
+			'session_track_gtids'                     => 'OFF',
+			'session_track_schema'                    => '1',
+			'session_track_state_change'              => '0',
+			'session_track_transaction_info'          => 'OFF',
+			'show_create_table_skip_secondary_engine' => '0',
+			'show_create_table_verbosity'             => '0',
+			'sql_auto_is_null'                        => '0',
+			'sql_big_selects'                         => '1',
+			'sql_buffer_result'                       => '0',
+			'sql_notes'                               => '1',
+			'sql_safe_updates'                        => '0',
+			'sql_warnings'                            => '0',
+			'storage_engine'                          => 'InnoDB',
+			'time_zone'                               => 'SYSTEM',
+			'transaction_isolation'                   => 'REPEATABLE-READ',
+			'transaction_read_only'                   => '0',
+			'unique_checks'                           => '1',
+			'use_secondary_engine'                    => 'ON',
+		);
+	}
+
+	/**
+	 * Get read-only MySQL system variable values.
+	 *
+	 * @return array<string, string> Read-only values keyed by lowercase name.
+	 */
+	private function get_read_only_mysql_system_variable_values(): array {
+		return array(
+			'version'         => $this->get_mysql_version_string(),
+			'version_comment' => 'MySQL Community Server - GPL',
+		);
+	}
+
+	/**
+	 * Get the emulated MySQL server version string.
+	 *
+	 * @return string MySQL-compatible version string.
+	 */
+	private function get_mysql_version_string(): string {
+		$version = (string) $this->mysql_version;
+		return sprintf(
+			'%d.%d.%d',
+			$version[0],
+			substr( $version, 1, 2 ),
+			substr( $version, 3, 2 )
 		);
 	}
 
@@ -19877,44 +20567,96 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get the selected MySQL sql_mode variable name from a supported query.
+	 * Get a simple MySQL variable SELECT query.
 	 *
 	 * @param string $query MySQL query.
-	 * @return string|null Selected variable name, or null when unsupported.
+	 * @return array{columns: string[], row: array<string, string|null>}|null Parsed variable query, or null when not applicable.
 	 */
-	private function get_sql_mode_select_variable( string $query ): ?string {
+	private function get_mysql_variable_select_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
-			! isset( $tokens[0], $tokens[1], $tokens[2] )
+			! isset( $tokens[0], $tokens[1] )
 			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[1]->id
-		) {
-			return null;
-		}
-
-		if (
-			WP_MySQL_Lexer::IDENTIFIER === $tokens[2]->id
-			&& 'sql_mode' === strtolower( $tokens[2]->get_value() )
-			&& $this->is_at_mysql_query_end( $tokens, 3 )
-		) {
-			return '@@' . $tokens[2]->get_value();
-		}
-
-		if (
-			! isset( $tokens[3], $tokens[4] )
 			|| (
-				WP_MySQL_Lexer::SESSION_SYMBOL !== $tokens[2]->id
-				&& WP_MySQL_Lexer::GLOBAL_SYMBOL !== $tokens[2]->id
+				WP_MySQL_Lexer::AT_TEXT_SUFFIX !== $tokens[1]->id
+				&& WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[1]->id
 			)
-			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[3]->id
-			|| WP_MySQL_Lexer::IDENTIFIER !== $tokens[4]->id
-			|| 'sql_mode' !== strtolower( $tokens[4]->get_value() )
-			|| ! $this->is_at_mysql_query_end( $tokens, 5 )
 		) {
 			return null;
 		}
 
-		return '@@' . $tokens[2]->get_value() . '.' . $tokens[4]->get_value();
+		$position = 1;
+		$columns  = array();
+		$row      = array();
+
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
+			$variable = $this->parse_mysql_select_variable_reference( $tokens, $position );
+			if ( null === $variable ) {
+				throw new InvalidArgumentException( 'Unsupported MySQL variable SELECT statement.' );
+			}
+
+			$columns[]                   = $variable['display'];
+			$row[ $variable['display'] ] = $variable['value'];
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			break;
+		}
+
+		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL variable SELECT statement.' );
+		}
+
+		return array(
+			'columns' => $columns,
+			'row'     => $row,
+		);
+	}
+
+	/**
+	 * Parse a variable reference in a simple SELECT list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @return array{display: string, value: string|null}|null Variable result descriptor.
+	 */
+	private function parse_mysql_select_variable_reference( array $tokens, int &$position ): ?array {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
+			$display = $tokens[ $position ]->get_value();
+			++$position;
+
+			return array(
+				'display' => $display,
+				'value'   => $this->get_mysql_user_variable_value( $this->normalize_mysql_user_variable_name( $display ) ),
+			);
+		}
+
+		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$display = null;
+		$name    = $this->parse_mysql_system_variable_reference( $tokens, $position, $display );
+		if ( null === $name || null === $display ) {
+			return null;
+		}
+
+		$value = $this->get_mysql_system_variable_value( $name );
+		if ( null === $value ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL system variable.' );
+		}
+
+		return array(
+			'display' => $display,
+			'value'   => $value,
+		);
 	}
 
 	/**
@@ -19959,86 +20701,6 @@ WHERE option_name IN (
 		}
 
 		return $this->is_at_mysql_query_end( $tokens, 4 );
-	}
-
-	/**
-	 * Check whether a MySQL runtime setting is intentionally ignored.
-	 *
-	 * WordPress PHPUnit bootstrap emits MySQL-only SET statements before schema
-	 * installation. PostgreSQL has no equivalent state for these settings, so they
-	 * should not be sent to PDO. Keep this intentionally narrow so unsupported SET
-	 * statements still fail visibly.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether the query should be treated as a successful no-op.
-	 */
-	private function is_noop_mysql_runtime_setting( string $query ): bool {
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
-
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[0]->id ) {
-			return false;
-		}
-
-		$position = 1;
-		if (
-			isset( $tokens[ $position ] )
-			&& in_array(
-				$tokens[ $position ]->id,
-				array(
-					WP_MySQL_Lexer::GLOBAL_SYMBOL,
-					WP_MySQL_Lexer::LOCAL_SYMBOL,
-					WP_MySQL_Lexer::SESSION_SYMBOL,
-				),
-				true
-			)
-		) {
-			++$position;
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::IDENTIFIER !== $tokens[ $position ]->id ) {
-			return false;
-		}
-
-		$variable = strtolower( $tokens[ $position ]->get_value() );
-		if (
-			! in_array(
-				$variable,
-				array(
-					'autocommit',
-					'default_storage_engine',
-					'foreign_key_checks',
-					'sql_mode',
-					'storage_engine',
-				),
-				true
-			)
-		) {
-			return false;
-		}
-
-		++$position;
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
-			return false;
-		}
-
-		++$position;
-		$has_value = false;
-		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
-			if ( WP_MySQL_Lexer::SEMICOLON_SYMBOL === $tokens[ $position ]->id ) {
-				++$position;
-				break;
-			}
-
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
-				return false;
-			}
-
-			$has_value = true;
-			++$position;
-		}
-
-		return $has_value && isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF === $tokens[ $position ]->id;
 	}
 
 	/**

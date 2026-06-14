@@ -8149,7 +8149,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests MySQL-only runtime SET statements are ignored before reaching PDO.
+	 * Tests MySQL-only runtime SET statements are handled before reaching PDO.
 	 */
 	public function test_mysql_runtime_set_statements_are_noops(): void {
 		$driver = $this->create_driver();
@@ -8401,6 +8401,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests built-in MySQL version variables are selected from emulated state.
+	 */
+	public function test_select_builtin_version_variables_returns_mysql_compatible_values_without_backend_queries(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SELECT @@version, @@version_comment' );
+
+		$this->assertSame( '8.0.38', $rows[0]->{'@@version'} );
+		$this->assertSame( 'MySQL Community Server - GPL', $rows[0]->{'@@version_comment'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( '@@version', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( '@@version_comment', $driver->get_last_column_meta()[1]['name'] );
+	}
+
+	/**
+	 * Tests public SQL mode changes override earlier SQL SET state consistently.
+	 */
+	public function test_public_sql_mode_setter_overrides_sql_set_state_for_select_and_show_variables(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( "SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO'" ) );
+		$this->assertSame( 'NO_AUTO_VALUE_ON_ZERO', $driver->get_sql_mode() );
+
+		$driver->set_sql_mode( 'STRICT_ALL_TABLES' );
+
+		$this->assertSame( 'STRICT_ALL_TABLES', $driver->get_sql_mode() );
+
+		$rows = $driver->query( 'SELECT @@sql_mode' );
+		$this->assertSame( 'STRICT_ALL_TABLES', $rows[0]->{'@@sql_mode'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='sql_mode'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'sql_mode', $rows[0]->Variable_name );
+		$this->assertSame( 'STRICT_ALL_TABLES', $rows[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
 	 * Tests bare SHOW VARIABLES returns all emulated session variables.
 	 */
 	public function test_bare_show_variables_returns_all_known_session_variables_without_backend_queries(): void {
@@ -8443,6 +8482,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				array(
 					'Variable_name' => 'collation_server',
 					'Value'         => 'utf8_general_ci',
+				),
+				array(
+					'Variable_name' => 'sql_mode',
+					'Value'         => 'NO_ENGINE_SUBSTITUTION',
 				),
 			),
 			array_map(
@@ -8615,6 +8658,128 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SET CHARSET aliases update MySQL-compatible SHOW VARIABLES output.
+	 */
+	public function test_set_charset_aliases_update_show_variables_session_state(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'SET CHARSET utf8' ) );
+
+		$charset = $driver->query( "SHOW VARIABLES WHERE Variable_name='character_set_client'" );
+		$this->assertCount( 1, $charset );
+		$this->assertSame( 'utf8', $charset[0]->Value );
+
+		$collation = $driver->query( "SHOW VARIABLES WHERE Variable_name='collation_connection'" );
+		$this->assertCount( 1, $collation );
+		$this->assertSame( 'utf8_general_ci', $collation[0]->Value );
+
+		$this->assertSame( 0, $driver->query( 'SET CHARACTER SET utf8mb4' ) );
+
+		$charset = $driver->query( "SHOW VARIABLES WHERE Variable_name='character_set_client'" );
+		$this->assertCount( 1, $charset );
+		$this->assertSame( 'utf8mb4', $charset[0]->Value );
+
+		$collation = $driver->query( "SHOW VARIABLES WHERE Variable_name='collation_connection'" );
+		$this->assertCount( 1, $collation );
+		$this->assertSame( 'utf8mb4_unicode_ci', $collation[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests supported MySQL session variables can be selected with MySQL aliases.
+	 */
+	public function test_session_system_variables_can_be_selected_with_mysql_aliases(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( "SET character_set_client = 'latin1'" ) );
+		$rows = $driver->query( 'SELECT @@character_set_client' );
+		$this->assertSame( 'latin1', $rows[0]->{'@@character_set_client'} );
+
+		$this->assertSame( 0, $driver->query( "SET @@character_set_client = 'utf8mb3'" ) );
+		$rows = $driver->query( 'SELECT @@character_set_client' );
+		$this->assertSame( 'utf8mb3', $rows[0]->{'@@character_set_client'} );
+
+		$this->assertSame( 0, $driver->query( "SET @@session.character_set_client = 'utf8mb4'" ) );
+		$rows = $driver->query( 'SELECT @@session.character_set_client' );
+		$this->assertSame( 'utf8mb4', $rows[0]->{'@@session.character_set_client'} );
+
+		$this->assertSame( 0, $driver->query( 'SET default_storage_engine = InnoDB' ) );
+		$rows = $driver->query( 'SELECT @@default_storage_engine' );
+		$this->assertSame( 'InnoDB', $rows[0]->{'@@default_storage_engine'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests comma-separated boolean SET assignments are applied atomically.
+	 */
+	public function test_comma_separated_boolean_set_assignments_are_atomic(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'SET autocommit = ON, big_tables = OFF' ) );
+
+		$rows = $driver->query( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $rows[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $rows[0]->{'@@big_tables'} );
+
+		try {
+			$driver->query( 'SET autocommit = OFF, unsupported_setting = 1' );
+			$this->fail( 'Expected unsupported SET statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SET statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$rows = $driver->query( 'SELECT @@autocommit, @@big_tables' );
+		$this->assertSame( '1', $rows[0]->{'@@autocommit'} );
+		$this->assertSame( '0', $rows[0]->{'@@big_tables'} );
+	}
+
+	/**
+	 * Tests user variables can be set, incremented, selected, and used for restore.
+	 */
+	public function test_user_variables_can_be_set_incremented_selected_and_used_for_restore(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'SET @my_var = 1' ) );
+		$rows = $driver->query( 'SELECT @my_var' );
+		$this->assertSame( '1', $rows[0]->{'@my_var'} );
+
+		$this->assertSame( 0, $driver->query( 'SET @my_var = @my_var + 1' ) );
+		$rows = $driver->query( 'SELECT @my_var' );
+		$this->assertSame( '2', $rows[0]->{'@my_var'} );
+
+		$this->assertSame( 0, $driver->query( 'SET @saved_cs_client = @@character_set_client' ) );
+		$this->assertSame( 0, $driver->query( 'SET character_set_client = latin1' ) );
+
+		$rows = $driver->query( 'SELECT @@character_set_client' );
+		$this->assertSame( 'latin1', $rows[0]->{'@@character_set_client'} );
+
+		$this->assertSame( 0, $driver->query( 'SET character_set_client = @saved_cs_client' ) );
+		$rows = $driver->query( 'SELECT @@character_set_client' );
+		$this->assertSame( 'utf8mb4', $rows[0]->{'@@character_set_client'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests conditional-comment SET wrappers work for supported backup and restore forms.
+	 */
+	public function test_conditional_comment_set_wrappers_handle_supported_backup_and_restore(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( '/*!50503 SET NAMES utf8 */;' ) );
+		$this->assertSame( 0, $driver->query( '/*!40101 SET @saved_cs_client = @@character_set_client */; ' ) );
+		$this->assertSame( 0, $driver->query( '/*!50503 SET character_set_client = latin1 */;' ) );
+
+		$rows = $driver->query( 'SELECT @@character_set_client' );
+		$this->assertSame( 'latin1', $rows[0]->{'@@character_set_client'} );
+
+		$this->assertSame( 0, $driver->query( '/*!40101 SET character_set_client = @saved_cs_client */;' ) );
+		$rows = $driver->query( 'SELECT @@character_set_client' );
+		$this->assertSame( 'utf8', $rows[0]->{'@@character_set_client'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
 	 * Tests SHOW VARIABLES LIKE honors MySQL wildcard patterns.
 	 */
 	public function test_show_variables_like_matches_wildcard_patterns(): void {
@@ -8641,25 +8806,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported SET statements are still sent to PDO.
+	 * Tests unsupported SET statements fail before reaching PDO.
 	 */
-	public function test_unsupported_set_statement_still_reaches_backend(): void {
+	public function test_unsupported_set_statements_do_not_reach_backend(): void {
 		$driver = $this->create_driver();
 
-		$this->expectException( PDOException::class );
-
-		$driver->query( 'SET unsupported_setting = 1' );
-	}
-
-	/**
-	 * Tests multi-assignment SET statements are not silently ignored.
-	 */
-	public function test_multi_assignment_set_statement_still_reaches_backend(): void {
-		$driver = $this->create_driver();
-
-		$this->expectException( PDOException::class );
-
-		$driver->query( 'SET foreign_key_checks = 0, unsupported_setting = 1' );
+		foreach (
+			array(
+				'SET unsupported_setting = 1',
+				'SET foreign_key_checks = 0, unsupported_setting = 1',
+				'SET autocommit = 1 + 1',
+				'SET @my_var = @my_var * 1',
+				"SET @@version = '8.0.39'",
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SET statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SET statement.', $e->getMessage() );
+				$this->assertSame( $query, $driver->get_last_mysql_query() );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+			}
+		}
 	}
 
 	/**
