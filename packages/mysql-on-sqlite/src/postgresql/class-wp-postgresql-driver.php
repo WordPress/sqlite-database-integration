@@ -536,6 +536,15 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		$table_administration_query = $this->get_mysql_table_administration_query( $query );
+		if ( null !== $table_administration_query ) {
+			return $this->execute_mysql_table_administration_query(
+				$table_administration_query,
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
 		$translated_for_postgresql = false;
 		$dml_identity_repair_query = null;
 
@@ -3514,6 +3523,282 @@ class WP_PostgreSQL_Driver {
 			'table'    => $table_name,
 			'key_name' => $key_name,
 		);
+	}
+
+	/**
+	 * Parse a supported MySQL table administration statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{operation: string, tables: array<int, array{schema: string|null, table: string}>}|null Administration query, or null when this is not a table administration statement.
+	 */
+	private function get_mysql_table_administration_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return null;
+		}
+
+		switch ( $tokens[0]->id ) {
+			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
+				$operation = 'analyze';
+				break;
+			case WP_MySQL_Lexer::CHECK_SYMBOL:
+				$operation = 'check';
+				break;
+			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
+				$operation = 'optimize';
+				break;
+			case WP_MySQL_Lexer::REPAIR_SYMBOL:
+				$operation = 'repair';
+				break;
+			default:
+				return null;
+		}
+
+		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id ) {
+			throw new InvalidArgumentException( 'Unsupported table administration statement.' );
+		}
+
+		$tables   = array();
+		$position = 2;
+		while ( true ) {
+			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			if ( null === $table_reference ) {
+				throw new InvalidArgumentException( 'Unsupported table administration statement.' );
+			}
+
+			$tables[] = $table_reference;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			break;
+		}
+
+		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			throw new InvalidArgumentException( 'Unsupported table administration statement.' );
+		}
+
+		return array(
+			'operation' => $operation,
+			'tables'    => $tables,
+		);
+	}
+
+	/**
+	 * Parse one table reference from a MySQL table administration statement.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Current token position, updated on success.
+	 * @return array{schema: string|null, table: string}|null Parsed table reference, or null when unsupported.
+	 */
+	private function get_mysql_table_administration_table_reference( array $tokens, int &$position ): ?array {
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $position ]->id ) {
+			return array(
+				'schema' => null,
+				'table'  => $first_identifier,
+			);
+		}
+
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		if ( null === $table_name ) {
+			return null;
+		}
+
+		$position += 2;
+		return array(
+			'schema' => $first_identifier,
+			'table'  => $table_name,
+		);
+	}
+
+	/**
+	 * Execute a MySQL table administration statement.
+	 *
+	 * @param array $administration_query Parsed administration query.
+	 * @param int   $fetch_mode           PDO fetch mode.
+	 * @param array ...$fetch_mode_args   Additional fetch mode arguments.
+	 * @return mixed Administration result rows.
+	 */
+	private function execute_mysql_table_administration_query( array $administration_query, $fetch_mode, ...$fetch_mode_args ) {
+		$operation = $administration_query['operation'];
+		$rows      = array();
+
+		foreach ( $administration_query['tables'] as $table_reference ) {
+			$requested_schema = $table_reference['schema'];
+			$table_name       = $table_reference['table'];
+			if ( null !== $requested_schema && 'information_schema' === strtolower( $requested_schema ) ) {
+				throw new InvalidArgumentException( 'Unsupported table administration statement.' );
+			}
+
+			$table_label = $this->get_mysql_table_administration_result_table_name( $requested_schema, $table_name );
+			if ( $this->mysql_table_administration_table_exists( $requested_schema, $table_name ) ) {
+				$rows[] = array(
+					'Table'    => $table_label,
+					'Op'       => $operation,
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				);
+				continue;
+			}
+
+			$rows[] = array(
+				'Table'    => $table_label,
+				'Op'       => $operation,
+				'Msg_type' => 'Error',
+				'Msg_text' => sprintf( "Table '%s' doesn't exist", $table_name ),
+			);
+			$rows[] = array(
+				'Table'    => $table_label,
+				'Op'       => $operation,
+				'Msg_type' => 'status',
+				'Msg_text' => 'Operation failed',
+			);
+		}
+
+		return $this->set_mysql_static_show_result(
+			array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Get the MySQL-facing Table column value for an administration result row.
+	 *
+	 * @param string|null $requested_schema Requested schema, or null for the current database.
+	 * @param string      $table_name       Table name.
+	 * @return string MySQL-facing qualified table name.
+	 */
+	private function get_mysql_table_administration_result_table_name( ?string $requested_schema, string $table_name ): string {
+		$display_schema = null === $requested_schema ? $this->db_name : $requested_schema;
+		return $display_schema . '.' . $table_name;
+	}
+
+	/**
+	 * Check whether a table administration target exists.
+	 *
+	 * @param string|null $requested_schema Requested schema, or null for the current database.
+	 * @param string      $table_name       Table name.
+	 * @return bool Whether the backend table exists.
+	 */
+	private function mysql_table_administration_table_exists( ?string $requested_schema, string $table_name ): bool {
+		$schema_name = $this->get_mysql_table_administration_backend_schema( $requested_schema, $table_name );
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+
+		if ( 'sqlite' === $driver_name ) {
+			return $this->sqlite_table_administration_table_exists( $schema_name, $table_name );
+		}
+
+		$stmt = $this->connection->query(
+			'SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = ?
+				AND table_name = ?
+				AND table_type = \'BASE TABLE\'
+			LIMIT 1',
+			array( $schema_name, $table_name )
+		);
+
+		return false !== $stmt->fetchColumn();
+	}
+
+	/**
+	 * Resolve the backend schema for a MySQL table administration target.
+	 *
+	 * @param string|null $requested_schema Requested schema, or null for the current database.
+	 * @param string      $table_name       Table name.
+	 * @return string Backend schema name.
+	 */
+	private function get_mysql_table_administration_backend_schema( ?string $requested_schema, string $table_name ): string {
+		if ( null === $requested_schema || 0 === strcasecmp( $requested_schema, $this->db_name ) ) {
+			return $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		}
+
+		return $this->resolve_mysql_table_schema_for_introspection( $requested_schema, $table_name );
+	}
+
+	/**
+	 * Check whether a SQLite-backed test table administration target exists.
+	 *
+	 * @param string $schema_name Backend schema name.
+	 * @param string $table_name  Table name.
+	 * @return bool Whether the table exists.
+	 */
+	private function sqlite_table_administration_table_exists( string $schema_name, string $table_name ): bool {
+		if ( 'temp' === $schema_name ) {
+			return $this->sqlite_table_administration_table_exists_in_catalog( 'sqlite_temp_master', $table_name );
+		}
+
+		if ( 'public' === $schema_name ) {
+			if (
+				$this->sqlite_database_schema_exists( 'public' )
+				&& $this->sqlite_table_administration_table_exists_in_catalog(
+					$this->connection->quote_identifier( 'public' ) . '.sqlite_master',
+					$table_name
+				)
+			) {
+				return true;
+			}
+
+			return $this->sqlite_table_administration_table_exists_in_catalog( 'sqlite_master', $table_name );
+		}
+
+		if ( 'main' === $schema_name ) {
+			return $this->sqlite_table_administration_table_exists_in_catalog( 'sqlite_master', $table_name );
+		}
+
+		if ( ! $this->sqlite_database_schema_exists( $schema_name ) ) {
+			return false;
+		}
+
+		return $this->sqlite_table_administration_table_exists_in_catalog(
+			$this->connection->quote_identifier( $schema_name ) . '.sqlite_master',
+			$table_name
+		);
+	}
+
+	/**
+	 * Check whether a table exists in one SQLite catalog table.
+	 *
+	 * @param string $catalog_sql SQLite catalog table SQL.
+	 * @param string $table_name  Table name.
+	 * @return bool Whether the table exists.
+	 */
+	private function sqlite_table_administration_table_exists_in_catalog( string $catalog_sql, string $table_name ): bool {
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT name FROM %s WHERE type = \'table\' AND name = ? LIMIT 1',
+				$catalog_sql
+			),
+			array( $table_name )
+		);
+
+		return false !== $stmt->fetchColumn();
+	}
+
+	/**
+	 * Check whether a SQLite attached database schema exists.
+	 *
+	 * @param string $schema_name Schema name.
+	 * @return bool Whether the schema exists.
+	 */
+	private function sqlite_database_schema_exists( string $schema_name ): bool {
+		$stmt = $this->connection->query( 'PRAGMA database_list' );
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $database ) {
+			if ( isset( $database['name'] ) && $schema_name === (string) $database['name'] ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

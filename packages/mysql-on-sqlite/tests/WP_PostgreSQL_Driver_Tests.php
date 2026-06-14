@@ -6677,6 +6677,179 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests table administration statements return MySQL-shaped success rows.
+	 */
+	public function test_table_administration_statements_return_mysql_shaped_success_rows(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE administration_one (id INTEGER)' );
+		$driver->query( 'CREATE TABLE administration_two (id INTEGER)' );
+
+		$cases = array(
+			'ANALYZE TABLE administration_one'  => 'analyze',
+			'CHECK TABLE `administration_one`'  => 'check',
+			'OPTIMIZE TABLE administration_one' => 'optimize',
+			'REPAIR TABLE administration_one'   => 'repair',
+		);
+
+		foreach ( $cases as $query => $operation ) {
+			$rows = $driver->query( $query );
+
+			$this->assertEquals(
+				array(
+					(object) array(
+						'Table'    => 'wptests.administration_one',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$rows,
+				$query
+			);
+			$this->assertSame(
+				array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+				array_column( $driver->get_last_column_meta(), 'name' ),
+				$query
+			);
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+
+		$qualified_rows = $driver->query( 'CHECK TABLE `wptests`.`administration_two`' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wptests.administration_two',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$qualified_rows
+		);
+	}
+
+	/**
+	 * Tests table administration statements preserve multiple-table order.
+	 */
+	public function test_table_administration_multiple_tables_preserve_order(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE administration_first (id INTEGER)' );
+		$driver->query( 'CREATE TABLE administration_second (id INTEGER)' );
+
+		$rows = $driver->query( 'CHECK TABLE administration_second, administration_first' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wptests.administration_second',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+				(object) array(
+					'Table'    => 'wptests.administration_first',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests table administration statements return MySQL-shaped missing-table errors.
+	 */
+	public function test_table_administration_missing_table_returns_error_and_failed_status(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'OPTIMIZE TABLE administration_missing' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wptests.administration_missing',
+					'Op'       => 'optimize',
+					'Msg_type' => 'Error',
+					'Msg_text' => "Table 'administration_missing' doesn't exist",
+				),
+				(object) array(
+					'Table'    => 'wptests.administration_missing',
+					'Op'       => 'optimize',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests table administration statements preserve mixed existing and missing table order.
+	 */
+	public function test_table_administration_mixed_existing_and_missing_tables_preserve_order(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE administration_existing (id INTEGER)' );
+
+		$rows = $driver->query( 'REPAIR TABLE administration_existing, administration_missing' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wptests.administration_existing',
+					'Op'       => 'repair',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+				(object) array(
+					'Table'    => 'wptests.administration_missing',
+					'Op'       => 'repair',
+					'Msg_type' => 'Error',
+					'Msg_text' => "Table 'administration_missing' doesn't exist",
+				),
+				(object) array(
+					'Table'    => 'wptests.administration_missing',
+					'Op'       => 'repair',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests unsupported table administration clauses fail before reaching the backend.
+	 */
+	public function test_table_administration_unsupported_clauses_fail_closed(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE administration_existing (id INTEGER)' );
+
+		try {
+			$driver->query( 'CHECK TABLE administration_existing FOR UPGRADE' );
+			$this->fail( 'Expected unsupported table administration clause to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported table administration statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests information_schema table administration targets fail closed.
+	 */
+	public function test_table_administration_information_schema_target_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'CHECK TABLE `information_schema`.`tables`' );
+			$this->fail( 'Expected information_schema table administration target to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported table administration statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests Site Health's information_schema.TABLES query returns rows for existing catalog tables only.
 	 */
 	public function test_information_schema_tables_site_health_query_returns_mysql_shape_with_single_quoted_aliases(): void {
