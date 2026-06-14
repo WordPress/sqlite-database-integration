@@ -19,6 +19,13 @@ class WP_PostgreSQL_Driver {
 	const DEFAULT_MYSQL_CHARSET        = 'utf8mb4';
 	const DEFAULT_MYSQL_COLLATION      = 'utf8mb4_unicode_ci';
 
+	private const MYSQL_SHOW_GRANTS_COLUMN = 'Grants for root@%';
+
+	private const MYSQL_SHOW_GRANTS_VALUE = 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, ' .
+		'PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, ' .
+		'EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, ' .
+		'CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION';
+
 	/**
 	 * Prefix for encoded MySQL text bytes PostgreSQL text cannot store directly.
 	 */
@@ -470,6 +477,11 @@ class WP_PostgreSQL_Driver {
 		$show_databases_query = $this->get_show_databases_query( $query );
 		if ( null !== $show_databases_query ) {
 			return $this->execute_show_databases_query( $show_databases_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
+		$show_grants_query = $this->get_show_grants_query( $query );
+		if ( null !== $show_grants_query ) {
+			return $this->execute_show_grants_query( $fetch_mode, ...$fetch_mode_args );
 		}
 
 		if ( $this->should_reject_information_schema_backend_query( $query ) ) {
@@ -3512,6 +3524,50 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW GRANTS statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{}|null Empty options array, or null when this is not SHOW GRANTS.
+	 */
+	private function get_show_grants_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::GRANTS_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		if ( $this->is_at_mysql_query_end( $tokens, 2 ) ) {
+			return array();
+		}
+
+		if (
+			! isset( $tokens[2], $tokens[3] )
+			|| WP_MySQL_Lexer::FOR_SYMBOL !== $tokens[2]->id
+			|| WP_MySQL_Lexer::CURRENT_USER_SYMBOL !== $tokens[3]->id
+		) {
+			throw new InvalidArgumentException( 'Unsupported SHOW GRANTS statement.' );
+		}
+
+		if ( $this->is_at_mysql_query_end( $tokens, 4 ) ) {
+			return array();
+		}
+
+		if (
+			isset( $tokens[4], $tokens[5] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[4]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[5]->id
+			&& $this->is_at_mysql_query_end( $tokens, 6 )
+		) {
+			return array();
+		}
+
+		throw new InvalidArgumentException( 'Unsupported SHOW GRANTS statement.' );
+	}
+
+	/**
 	 * Parse optional LIKE or simple WHERE filters for static SHOW result sets.
 	 *
 	 * @param WP_MySQL_Token[]    $tokens          MySQL lexer token stream.
@@ -5038,6 +5094,31 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Execute a MySQL SHOW GRANTS statement from static MySQL-compatible metadata.
+	 *
+	 * @param int   $fetch_mode         PDO fetch mode.
+	 * @param array ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed SHOW GRANTS result rows.
+	 */
+	private function execute_show_grants_query( $fetch_mode, ...$fetch_mode_args ) {
+		$this->last_found_rows = 1;
+
+		$result                           = $this->set_mysql_static_show_result(
+			array( self::MYSQL_SHOW_GRANTS_COLUMN ),
+			array(
+				array(
+					self::MYSQL_SHOW_GRANTS_COLUMN => self::MYSQL_SHOW_GRANTS_VALUE,
+				),
+			),
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+		$this->last_column_meta[0]['len'] = 4096;
+
+		return $result;
+	}
+
+	/**
 	 * Filter static SHOW rows with a parsed MySQL LIKE or WHERE filter.
 	 *
 	 * @param array[] $rows        Rows keyed by output column names.
@@ -5096,6 +5177,7 @@ ORDER BY table_name';
 				'native_type'      => 'string',
 			);
 		}
+		$this->last_column_count = count( $this->last_column_meta );
 
 		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
 			$this->last_result = $rows;

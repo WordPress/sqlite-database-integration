@@ -6838,6 +6838,124 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW GRANTS returns a static MySQL-shaped grants row.
+	 */
+	public function test_show_grants_returns_static_mysql_shaped_row(): void {
+		$driver = $this->create_driver();
+
+		$grants = $driver->query( 'SHOW GRANTS' );
+
+		$this->assertEquals( $this->get_show_grants_expected_result(), $grants );
+		$this->assertSame( 'SHOW GRANTS', $driver->get_last_mysql_query() );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( 1, $driver->get_last_column_count() );
+		$this->assertSame(
+			array(
+				array(
+					'name'             => 'Grants for root@%',
+					'table'            => '',
+					'mysqli:orgtable'  => '',
+					'mysqli:orgname'   => 'Grants for root@%',
+					'mysqli:db'        => 'wptests',
+					'mysqli:charsetnr' => 45,
+					'mysqli:flags'     => 0,
+					'mysqli:type'      => 253,
+					'len'              => 4096,
+					'precision'        => 0,
+					'native_type'      => 'string',
+				),
+			),
+			$driver->get_last_column_meta()
+		);
+
+		$assoc = $driver->query( 'SHOW GRANTS', PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Grants for root@%' => $this->get_show_grants_expected_value(),
+				),
+			),
+			$assoc
+		);
+
+		$num = $driver->query( 'SHOW GRANTS', PDO::FETCH_NUM );
+		$this->assertSame( array( array( $this->get_show_grants_expected_value() ) ), $num );
+	}
+
+	/**
+	 * Tests supported SHOW GRANTS CURRENT_USER forms return the static grants row.
+	 */
+	public function test_show_grants_current_user_forms_return_static_row(): void {
+		$queries = array(
+			'SHOW GRANTS FOR current_user();',
+			'SHOW GRANTS FOR CURRENT_USER',
+			'sHoW gRaNtS FoR CuRrEnT_UsEr()',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			$grants = $driver->query( $query );
+
+			$this->assertEquals( $this->get_show_grants_expected_result(), $grants, $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( array( 'Grants for root@%' ), array_column( $driver->get_last_column_meta(), 'name' ), $query );
+		}
+	}
+
+	/**
+	 * Tests SHOW GRANTS updates FOUND_ROWS() accounting.
+	 */
+	public function test_show_grants_sets_found_rows_to_one(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'SHOW GRANTS' );
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+
+		$this->assertSame( '1', $found_rows[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests SHOW GRANTS is not table-scoped under USE information_schema.
+	 */
+	public function test_show_grants_after_use_information_schema_returns_static_row(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$grants = $driver->query( 'SHOW GRANTS' );
+
+		$this->assertEquals( $this->get_show_grants_expected_result(), $grants );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( 'information_schema', $driver->get_last_column_meta()[0]['mysqli:db'] );
+	}
+
+	/**
+	 * Tests unsupported SHOW GRANTS syntax fails before backend execution.
+	 */
+	public function test_unsupported_show_grants_syntax_fails_closed(): void {
+		$queries = array(
+			'SHOW GRANTS FOR root',
+			'SHOW GRANTS USING role1',
+			'SHOW GRANTS FOR CURRENT_USER() USING role1',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW GRANTS statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW GRANTS statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests SHOW COLLATION returns MySQL-shaped static collation rows.
 	 */
 	public function test_show_collation_returns_mysql_shaped_rows(): void {
@@ -8690,6 +8808,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get the expected SHOW GRANTS result rows.
+	 *
+	 * @return object[] Expected result rows.
+	 */
+	private function get_show_grants_expected_result(): array {
+		return array(
+			(object) array(
+				'Grants for root@%' => $this->get_show_grants_expected_value(),
+			),
+		);
+	}
+
+	/**
+	 * Get the expected static SHOW GRANTS row value.
+	 *
+	 * @return string Expected grant text.
+	 */
+	private function get_show_grants_expected_value(): string {
+		return 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, ' .
+			'PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, ' .
+			'EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, ' .
+			'CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION';
 	}
 
 	/**
