@@ -105,6 +105,27 @@ class WP_PostgreSQL_Driver {
 	private $mysql_dml_column_metadata_cache = array();
 
 	/**
+	 * MySQL column type metadata keyed by backend schema, table, and column.
+	 *
+	 * @var array<string, array<string, string|null>>
+	 */
+	private $mysql_table_column_type_cache = array();
+
+	/**
+	 * MySQL column collation metadata keyed by backend schema, table, and column.
+	 *
+	 * @var array<string, array<string, string|null>>
+	 */
+	private $mysql_table_column_collation_cache = array();
+
+	/**
+	 * Stored MySQL column metadata existence keyed by backend schema and table.
+	 *
+	 * @var array<string, bool>
+	 */
+	private $mysql_table_has_column_metadata_cache = array();
+
+	/**
 	 * Cached MySQL upsert conflict targets keyed by table and inserted columns.
 	 *
 	 * @var array<string, string[]|null>
@@ -1000,6 +1021,9 @@ class WP_PostgreSQL_Driver {
 	private function clear_mysql_metadata_caches(): void {
 		$this->mysql_table_schema_introspection_cache = array();
 		$this->mysql_dml_column_metadata_cache        = array();
+		$this->mysql_table_column_type_cache          = array();
+		$this->mysql_table_column_collation_cache     = array();
+		$this->mysql_table_has_column_metadata_cache  = array();
 		$this->mysql_upsert_conflict_target_cache     = array();
 		$this->mysql_introspection_result_cache       = array();
 	}
@@ -1011,7 +1035,13 @@ class WP_PostgreSQL_Driver {
 	 * @param string $table_name   Table name.
 	 */
 	private function clear_mysql_metadata_cache_for_table( string $table_schema, string $table_name ): void {
-		unset( $this->mysql_dml_column_metadata_cache[ $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) ] );
+		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		unset(
+			$this->mysql_dml_column_metadata_cache[ $cache_key ],
+			$this->mysql_table_column_type_cache[ $cache_key ],
+			$this->mysql_table_column_collation_cache[ $cache_key ],
+			$this->mysql_table_has_column_metadata_cache[ $cache_key ]
+		);
 		$this->mysql_upsert_conflict_target_cache = array();
 		$this->mysql_introspection_result_cache   = array();
 
@@ -1521,6 +1551,15 @@ class WP_PostgreSQL_Driver {
 	): ?string {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$table_cache_key  = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		$column_cache_key = strtolower( $column_name );
+		if (
+			isset( $this->mysql_table_column_type_cache[ $table_cache_key ] )
+			&& array_key_exists( $column_cache_key, $this->mysql_table_column_type_cache[ $table_cache_key ] )
+		) {
+			return $this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ];
+		}
+
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT column_type FROM %s
@@ -1533,7 +1572,11 @@ class WP_PostgreSQL_Driver {
 		);
 
 		$column_type = $stmt->fetchColumn();
-		return false === $column_type ? null : (string) $column_type;
+		$this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ] = false === $column_type
+			? null
+			: (string) $column_type;
+
+		return $this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ];
 	}
 
 	/**
@@ -1551,6 +1594,15 @@ class WP_PostgreSQL_Driver {
 	): ?string {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$table_cache_key  = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		$column_cache_key = strtolower( $column_name );
+		if (
+			isset( $this->mysql_table_column_collation_cache[ $table_cache_key ] )
+			&& array_key_exists( $column_cache_key, $this->mysql_table_column_collation_cache[ $table_cache_key ] )
+		) {
+			return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
+		}
+
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT collation_name FROM %s
@@ -1563,7 +1615,11 @@ class WP_PostgreSQL_Driver {
 		);
 
 		$collation = $stmt->fetchColumn();
-		return false === $collation || null === $collation ? null : (string) $collation;
+		$this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ] = false === $collation || null === $collation
+			? null
+			: (string) $collation;
+
+		return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
 	}
 
 	/**
@@ -1576,6 +1632,11 @@ class WP_PostgreSQL_Driver {
 	private function mysql_table_has_column_metadata( string $table_schema, string $table_name ): bool {
 		$this->ensure_mysql_schema_metadata_tables();
 
+		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
+		if ( array_key_exists( $cache_key, $this->mysql_table_has_column_metadata_cache ) ) {
+			return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
+		}
+
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? LIMIT 1',
@@ -1584,7 +1645,8 @@ class WP_PostgreSQL_Driver {
 			array( $table_schema, $table_name )
 		);
 
-		return false !== $stmt->fetchColumn();
+		$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
+		return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
 	}
 
 	/**

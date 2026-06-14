@@ -2753,6 +2753,75 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests column-reference metadata lookups are cached until table metadata changes.
+	 */
+	public function test_wordpress_column_reference_metadata_cache_reuses_lookups_until_metadata_changes(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_terms (
+				`term_id` bigint(20) unsigned NOT NULL,
+				`name` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`term_id`)
+			)'
+		);
+
+		$column_type_queries        = 0;
+		$column_collation_queries   = 0;
+		$table_has_metadata_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$column_type_queries, &$column_collation_queries, &$table_has_metadata_queries ): void {
+				if ( false !== strpos( $sql, 'SELECT column_type FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
+					++$column_type_queries;
+				}
+				if ( false !== strpos( $sql, 'SELECT collation_name FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
+					++$column_collation_queries;
+				}
+				if ( false !== strpos( $sql, 'SELECT 1 FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
+					++$table_has_metadata_queries;
+				}
+			}
+		);
+
+		$query = "SELECT post_title FROM wptests_posts, wptests_terms WHERE post_title LIKE '%test%'";
+
+		$driver->query( $query );
+
+		$type_queries_after_first      = $column_type_queries;
+		$collation_queries_after_first = $column_collation_queries;
+		$metadata_queries_after_first  = $table_has_metadata_queries;
+		$this->assertGreaterThan( 0, $type_queries_after_first );
+		$this->assertGreaterThan( 0, $collation_queries_after_first );
+		$this->assertGreaterThan( 0, $metadata_queries_after_first );
+
+		$driver->query( $query );
+
+		$this->assertSame( $type_queries_after_first, $column_type_queries );
+		$this->assertSame( $collation_queries_after_first, $column_collation_queries );
+		$this->assertSame( $metadata_queries_after_first, $table_has_metadata_queries );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				`ID` bigint(20) unsigned NOT NULL,
+				`post_title` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
+				PRIMARY KEY (`ID`)
+			)'
+		);
+		$driver->query( $query );
+
+		$this->assertGreaterThan( $type_queries_after_first, $column_type_queries );
+		$this->assertGreaterThan( $collation_queries_after_first, $column_collation_queries );
+		$this->assertGreaterThan( $metadata_queries_after_first, $table_has_metadata_queries );
+	}
+
+	/**
 	 * Tests WordPress user text predicates and ordering preserve MySQL collation behavior.
 	 */
 	public function test_wordpress_user_text_predicates_and_ordering_use_case_insensitive_mysql_collation_metadata(): void {
