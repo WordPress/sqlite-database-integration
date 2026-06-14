@@ -706,6 +706,10 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 
+		if ( $this->contains_mysql_index_hint_syntax( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL index hint syntax.' );
+		}
+
 		$stmt                            = $this->connection->query( $query );
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $query,
@@ -17350,6 +17354,9 @@ WHERE option_name IN (
 			$fragment_token_id   = $token->id;
 			$translated_fragment = $this->translate_mysql_dual_table_reference_to_postgresql( $tokens, $i, $end );
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_index_hint_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_limit_offset_count_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -17479,6 +17486,209 @@ WHERE option_name IN (
 			),
 			true
 		);
+	}
+
+	/**
+	 * Erase supported MySQL optimizer index hints.
+	 *
+	 * PostgreSQL has no equivalent for MySQL's USE/FORCE/IGNORE INDEX hints.
+	 * Keep this bounded to the parsed hint clause so surrounding aliases, joins,
+	 * predicates, grouping, ordering, and limits are still rendered normally.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Hint keyword token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_index_hint_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_index_hint_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => '',
+			'token_id' => $tokens[ $position ]->id,
+			'position' => $bounds['end'] - 1,
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL optimizer index hint.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Hint keyword token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{end: int}|null Hint bounds, or null when unsupported.
+	 */
+	private function get_mysql_index_hint_bounds( array $tokens, int $position, int $end ): ?array {
+		if ( ! $this->is_mysql_index_hint_marker( $tokens, $position, $end ) ) {
+			return null;
+		}
+
+		$hint_action = $tokens[ $position ]->id;
+		$position   += 2;
+
+		if ( isset( $tokens[ $position ] ) && $position < $end && WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $position ]->id ) {
+			$position = $this->get_mysql_index_hint_scope_end( $tokens, $position, $end );
+			if ( null === $position ) {
+				return null;
+			}
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || $position >= $end || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$allow_empty_list = WP_MySQL_Lexer::USE_SYMBOL === $hint_action;
+		if ( ! $this->is_mysql_index_hint_identifier_list( $tokens, $position + 1, $after_close - 1, $allow_empty_list ) ) {
+			return null;
+		}
+
+		return array(
+			'end' => $after_close,
+		);
+	}
+
+	/**
+	 * Check whether tokens at a position begin a MySQL optimizer index hint.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Current token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return bool Whether an index hint marker is present.
+	 */
+	private function is_mysql_index_hint_marker( array $tokens, int $position, int $end ): bool {
+		return $position + 1 < $end
+			&& $this->is_mysql_index_hint_action_token( $tokens[ $position ] ?? null )
+			&& $this->is_mysql_index_hint_type_token( $tokens[ $position + 1 ] ?? null );
+	}
+
+	/**
+	 * Check whether a token starts a MySQL optimizer index hint.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return bool Whether the token is USE, FORCE, or IGNORE.
+	 */
+	private function is_mysql_index_hint_action_token( ?WP_MySQL_Token $token ): bool {
+		if ( null === $token ) {
+			return false;
+		}
+
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::FORCE_SYMBOL,
+				WP_MySQL_Lexer::IGNORE_SYMBOL,
+				WP_MySQL_Lexer::USE_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a token names the hinted object type.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return bool Whether the token is INDEX or KEY.
+	 */
+	private function is_mysql_index_hint_type_token( ?WP_MySQL_Token $token ): bool {
+		if ( null === $token ) {
+			return false;
+		}
+
+		return WP_MySQL_Lexer::INDEX_SYMBOL === $token->id || WP_MySQL_Lexer::KEY_SYMBOL === $token->id;
+	}
+
+	/**
+	 * Get the position after a supported MySQL optimizer index hint scope.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position FOR token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return int|null Position after scope tokens, or null when unsupported.
+	 */
+	private function get_mysql_index_hint_scope_end( array $tokens, int $position, int $end ): ?int {
+		if ( ! isset( $tokens[ $position ], $tokens[ $position + 1 ] ) || $position + 1 >= $end ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::FOR_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $position + 1 ]->id ) {
+			return $position + 2;
+		}
+
+		if (
+			isset( $tokens[ $position + 2 ] )
+			&& $position + 2 < $end
+			&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $position + 2 ]->id
+			&& (
+				WP_MySQL_Lexer::GROUP_SYMBOL === $tokens[ $position + 1 ]->id
+				|| WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position + 1 ]->id
+			)
+		) {
+			return $position + 3;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token range is a supported MySQL index-name list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int             $start       First list token position.
+	 * @param int             $end         Final list token position, exclusive.
+	 * @param bool            $allow_empty Whether an empty list is valid.
+	 * @return bool Whether the token range is a supported index-name list.
+	 */
+	private function is_mysql_index_hint_identifier_list( array $tokens, int $start, int $end, bool $allow_empty ): bool {
+		if ( $start === $end ) {
+			return $allow_empty;
+		}
+
+		$expect_identifier = true;
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( $expect_identifier ) {
+				if ( ! $this->is_mysql_index_hint_identifier_token( $tokens[ $i ] ?? null ) ) {
+					return false;
+				}
+
+				$expect_identifier = false;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $i ]->id ) {
+				return false;
+			}
+
+			$expect_identifier = true;
+		}
+
+		return ! $expect_identifier;
+	}
+
+	/**
+	 * Check whether a token can name an index in a MySQL optimizer hint.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return bool Whether the token is a supported index identifier.
+	 */
+	private function is_mysql_index_hint_identifier_token( ?WP_MySQL_Token $token ): bool {
+		if ( null === $token ) {
+			return false;
+		}
+
+		return WP_MySQL_Lexer::PRIMARY_SYMBOL === $token->id
+			|| null !== $this->get_mysql_identifier_token_value( $token );
 	}
 
 	/**
@@ -19307,6 +19517,10 @@ WHERE option_name IN (
 				return true;
 			}
 
+			if ( null !== $this->get_mysql_index_hint_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
 			if ( null !== $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'field' ) ) {
 				return true;
 			}
@@ -19364,6 +19578,23 @@ WHERE option_name IN (
 				&& $this->should_quote_bare_mysql_identifier( $token->get_value() )
 				&& ( ! isset( $tokens[ $i + 1 ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id )
 			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a query still contains raw MySQL optimizer index hint syntax.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether raw MySQL index hint syntax remains.
+	 */
+	private function contains_mysql_index_hint_syntax( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		for ( $i = 0; isset( $tokens[ $i ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $i ]->id; $i++ ) {
+			if ( $this->is_mysql_index_hint_marker( $tokens, $i, count( $tokens ) ) ) {
 				return true;
 			}
 		}

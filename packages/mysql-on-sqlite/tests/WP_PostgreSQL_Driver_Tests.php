@@ -49,6 +49,68 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL optimizer index hints are removed before PostgreSQL execution.
+	 */
+	public function test_select_index_hints_are_removed_before_postgresql_execution(): void {
+		$driver = $this->create_driver_with_index_hint_tables();
+
+		$queries = array(
+			'SELECT * FROM t USE INDEX (i)'    => 'SELECT * FROM t',
+			'SELECT * FROM t USE KEY (k)'      => 'SELECT * FROM t',
+			'SELECT * FROM t FORCE INDEX (i)'  => 'SELECT * FROM t',
+			'SELECT * FROM t FORCE KEY (k)'    => 'SELECT * FROM t',
+			'SELECT * FROM t IGNORE INDEX (i)' => 'SELECT * FROM t',
+			'SELECT * FROM t IGNORE KEY (k)'   => 'SELECT * FROM t',
+			'SELECT * FROM t USE INDEX FOR JOIN (i) JOIN j ON t.id = j.t_id' => 'SELECT * FROM t JOIN j ON t.id = j.t_id',
+			'SELECT * FROM t USE INDEX FOR ORDER BY (i) ORDER BY id DESC' => 'SELECT * FROM t ORDER BY id DESC',
+			'SELECT * FROM t USE INDEX FOR GROUP BY (i) GROUP BY id HAVING id = 1' => 'SELECT * FROM t GROUP BY id HAVING id = 1',
+			'SELECT * FROM `t` USE INDEX (i) USE INDEX FOR JOIN (j) USE KEY FOR ORDER BY (o) IGNORE INDEX FOR GROUP BY (g) JOIN j ON t.id = j.t_id WHERE id = 1 GROUP BY id HAVING id = 1 ORDER BY id DESC' => 'SELECT * FROM "t" JOIN j ON t.id = j.t_id WHERE id = 1 GROUP BY id HAVING id = 1 ORDER BY id DESC',
+		);
+
+		foreach ( $queries as $mysql_query => $postgresql_sql ) {
+			$rows = $driver->query( $mysql_query );
+
+			$this->assertSame( array(), $rows, $mysql_query );
+			$sql = $this->get_last_single_postgresql_sql( $driver );
+			$this->assertSame( $postgresql_sql, $sql, $mysql_query );
+			$this->assert_postgresql_sql_omits_mysql_index_hints( $sql );
+		}
+	}
+
+	/**
+	 * Tests quoted table and index identifiers keep aliases while index hints are removed.
+	 */
+	public function test_select_index_hints_preserve_quoted_table_and_alias(): void {
+		$driver = $this->create_driver_with_index_hint_tables();
+
+		$driver->query( "INSERT INTO t (id, value) VALUES (1, 'first')" );
+
+		$rows = $driver->query( 'SELECT tt.id FROM `t` AS tt USE INDEX (`ix_t_id`) WHERE tt.id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertSame( 'SELECT tt.id FROM "t" AS tt WHERE tt.id = 1', $sql );
+		$this->assert_postgresql_sql_omits_mysql_index_hints( $sql );
+	}
+
+	/**
+	 * Tests malformed MySQL index hints are not sent raw to PostgreSQL.
+	 */
+	public function test_malformed_select_index_hint_is_rejected_before_postgresql_execution(): void {
+		$driver = $this->create_driver_with_index_hint_tables();
+
+		try {
+			$driver->query( 'SELECT * FROM t USE INDEX' );
+			$this->fail( 'Malformed MySQL index hint was not rejected.' );
+		} catch ( InvalidArgumentException $exception ) {
+			$this->assertSame( 'Unsupported MySQL index hint syntax.', $exception->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests result column metadata is normalized only when requested.
 	 */
 	public function test_query_defers_column_metadata_until_requested(): void {
@@ -8174,6 +8236,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver( string $db_name = 'wptests' ): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, $db_name );
+	}
+
+	/**
+	 * Creates a PostgreSQL driver with tables used by index hint translation tests.
+	 *
+	 * @return WP_PostgreSQL_Driver Driver under test.
+	 */
+	private function create_driver_with_index_hint_tables(): WP_PostgreSQL_Driver {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE t (id INTEGER, value TEXT)' );
+		$driver->query( 'CREATE TABLE j (t_id INTEGER, value TEXT)' );
+
+		return $driver;
+	}
+
+	/**
+	 * Get the last single PostgreSQL SQL statement executed by a driver.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @return string Last PostgreSQL SQL.
+	 */
+	private function get_last_single_postgresql_sql( WP_PostgreSQL_Driver $driver ): string {
+		$queries = $driver->get_last_postgresql_queries();
+
+		$this->assertCount( 1, $queries );
+		return $queries[0]['sql'];
+	}
+
+	/**
+	 * Assert a PostgreSQL SQL string does not contain raw MySQL index hints.
+	 *
+	 * @param string $sql PostgreSQL SQL.
+	 */
+	private function assert_postgresql_sql_omits_mysql_index_hints( string $sql ): void {
+		$uppercase_sql = strtoupper( $sql );
+		foreach ( array( 'USE INDEX', 'USE KEY', 'FORCE INDEX', 'FORCE KEY', 'IGNORE INDEX', 'IGNORE KEY' ) as $hint ) {
+			$this->assertStringNotContainsString( $hint, $uppercase_sql );
+		}
 	}
 
 	/**
