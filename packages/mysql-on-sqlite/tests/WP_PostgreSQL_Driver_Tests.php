@@ -6621,6 +6621,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$where_rows = $driver->query( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
 		$this->assertSame( array( 'utf8_bin' ), array( $where_rows[0]->Collation ) );
+
+		try {
+			$driver->query( "SHOW COLLATION WHERE 'Collation' = 'utf8_bin'" );
+			$this->fail( 'Expected quoted SHOW COLLATION WHERE left operand to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW COLLATION statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -6646,6 +6654,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$where_rows = $driver->query( 'SHOW DATABASES WHERE `Database` = "information_schema"' );
 		$this->assertEquals( array( (object) array( 'Database' => 'information_schema' ) ), $where_rows );
+
+		$where_rows = $driver->query( "SHOW DATABASES WHERE Database = 'information_schema'" );
+		$this->assertEquals( array( (object) array( 'Database' => 'information_schema' ) ), $where_rows );
+
+		$unsupported_where_queries = array(
+			"SHOW DATABASES WHERE 'Database' = 'information_schema'",
+			'SHOW DATABASES WHERE "Database" = \'information_schema\'',
+		);
+		foreach ( $unsupported_where_queries as $query ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected quoted SHOW DATABASES WHERE left operand to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW DATABASES statement.', $e->getMessage() );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+			}
+		}
 
 		$schemas = $driver->query( 'SHOW SCHEMAS' );
 		$this->assertEquals( $databases, $schemas );

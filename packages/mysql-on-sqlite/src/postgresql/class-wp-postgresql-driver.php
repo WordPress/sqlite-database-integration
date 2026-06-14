@@ -3287,12 +3287,34 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function get_mysql_show_output_column_name( WP_MySQL_Token $token, array $allowed_columns ): ?string {
 		$column = $this->get_mysql_identifier_token_value( $token );
-		if ( null === $column ) {
+		if ( null === $column && $this->is_mysql_show_output_column_keyword_token( $token ) ) {
 			$column = $token->get_value();
+		}
+		if ( null === $column ) {
+			return null;
 		}
 
 		$column_key = strtolower( $column );
 		return $allowed_columns[ $column_key ] ?? null;
+	}
+
+	/**
+	 * Check whether a MySQL keyword token can represent a SHOW output column.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a supported SHOW output column keyword.
+	 */
+	private function is_mysql_show_output_column_keyword_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::CHARSET_SYMBOL,
+				WP_MySQL_Lexer::COLLATION_SYMBOL,
+				WP_MySQL_Lexer::DATABASE_SYMBOL,
+				WP_MySQL_Lexer::DEFAULT_SYMBOL,
+			),
+			true
+		);
 	}
 
 	/**
