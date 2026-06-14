@@ -1126,6 +1126,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests approved comment aggregate lookups are not rewritten with a row tie-breaker.
+	 */
+	public function test_simple_select_approved_comments_order_does_not_rewrite_count_projection(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT COUNT(comment_ID) as c
+			FROM wptests_comments
+			WHERE comment_post_ID = 7 AND comment_approved = '1'
+			ORDER BY wptests_comments.comment_date_gmt ASC";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_wordpress_approved_comments_query',
+				$select
+			)
+		);
+	}
+
+	/**
+	 * Tests approved comment projections must belong to the selected comments table.
+	 */
+	public function test_simple_select_approved_comments_order_does_not_rewrite_foreign_projection_qualifier(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT other.comment_ID
+			FROM wptests_comments
+			WHERE comment_post_ID = 7 AND comment_approved = '1'
+			ORDER BY wptests_comments.comment_date_gmt ASC";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_wordpress_approved_comments_query',
+				$select
+			)
+		);
+	}
+
+	/**
 	 * Tests MySQL offset,count LIMIT syntax is translated to PostgreSQL.
 	 */
 	public function test_simple_select_with_mysql_offset_count_limit_is_translated_to_postgresql(): void {

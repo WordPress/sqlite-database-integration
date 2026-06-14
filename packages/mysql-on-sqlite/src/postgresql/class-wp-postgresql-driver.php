@@ -6939,14 +6939,17 @@ WHERE option_name IN (
 			|| $order_position + 2 >= $select_end
 			|| ! isset( $tokens[ $order_position + 1 ] )
 			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
-			|| ! $this->is_supported_simple_select_projection( $tokens, 1, $from_position )
 		) {
 			return null;
 		}
 
 		$table_token = $tokens[ $from_position + 1 ] ?? null;
 		$table_name  = $this->get_mysql_identifier_token_value( $table_token );
-		if ( null === $table_name || ! $this->is_mysql_wordpress_table_name( $table_name, 'comments' ) ) {
+		if (
+			null === $table_name
+			|| ! $this->is_mysql_wordpress_table_name( $table_name, 'comments' )
+			|| ! $this->is_supported_wordpress_approved_comments_select_projection( $tokens, 1, $from_position, $table_name )
+		) {
 			return null;
 		}
 
@@ -6990,6 +6993,55 @@ WHERE option_name IN (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Validate the approved-comments SELECT projection.
+	 *
+	 * This translator appends comment_ID to ORDER BY, so it must stay limited
+	 * to row-returning projections. Aggregate/function/expression projections
+	 * can become invalid when the tie-breaker is appended.
+	 *
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      First projection token position.
+	 * @param int              $end        Final projection token position, exclusive.
+	 * @param string           $table_name Selected comments table name.
+	 * @return bool Whether the projection is supported.
+	 */
+	private function is_supported_wordpress_approved_comments_select_projection(
+		array $tokens,
+		int $start,
+		int $end,
+		string $table_name
+	): bool {
+		if ( $start + 1 === $end && WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $start ]->id ) {
+			return true;
+		}
+
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $projection_ranges ) {
+			return false;
+		}
+
+		foreach ( $projection_ranges as $projection_range ) {
+			$reference = $this->parse_mysql_column_reference(
+				$tokens,
+				$projection_range['start'],
+				$projection_range['end']
+			);
+			if (
+				null === $reference
+				|| $reference['end'] !== $projection_range['end']
+				|| (
+					null !== $reference['qualifier']
+					&& strtolower( $reference['qualifier'] ) !== strtolower( $table_name )
+				)
+			) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -11012,23 +11064,22 @@ WHERE option_name IN (
 			return true;
 		}
 
-		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
-		if ( null === $projection_ranges ) {
-			return false;
-		}
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( null === $this->get_mysql_identifier_token_value( $tokens[ $i ] ?? null ) ) {
+				return false;
+			}
 
-		foreach ( $projection_ranges as $projection_range ) {
-			$reference = $this->parse_mysql_column_reference(
-				$tokens,
-				$projection_range['start'],
-				$projection_range['end']
-			);
-			if ( null === $reference || $reference['end'] !== $projection_range['end'] ) {
+			++$i;
+			if ( $i >= $end ) {
+				return true;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $i ]->id ) {
 				return false;
 			}
 		}
 
-		return true;
+		return false;
 	}
 
 	/**
