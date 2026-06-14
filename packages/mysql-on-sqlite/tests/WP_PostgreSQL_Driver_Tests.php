@@ -8218,6 +8218,144 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests public SAVEPOINT statements return MySQL-compatible results.
+	 */
+	public function test_mysql_savepoint_statements_use_public_query_path(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES' );
+
+		$this->assertSame( 0, $driver->query( 'START TRANSACTION' ) );
+		$driver->query( 'CREATE TABLE savepoint_public (id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'SAVEPOINT s1' ) );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 'SAVEPOINT "s1"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$driver->query( 'INSERT INTO savepoint_public VALUES (1)' );
+		$driver->query( 'SELECT 1 AS warm_read' );
+
+		$this->assertSame( 0, $driver->query( 'ROLLBACK TO SAVEPOINT s1' ) );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 'ROLLBACK TO SAVEPOINT "s1"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$this->assertSame( 0, $driver->query( 'RELEASE SAVEPOINT s1' ) );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 'RELEASE SAVEPOINT "s1"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT COUNT(*) AS row_count FROM savepoint_public' );
+
+		$this->assertSame( '0', $rows[0]->row_count );
+	}
+
+	/**
+	 * Tests unsupported savepoint-family statements fail before raw backend execution.
+	 */
+	public function test_unsupported_mysql_savepoint_statements_fail_closed_without_backend_execution(): void {
+		$cases = array(
+			'RELEASE s',
+			'ROLLBACK WORK TO SAVEPOINT s',
+			'ROLLBACK WORK TO s',
+		);
+
+		foreach ( $cases as $query ) {
+			$driver = $this->create_driver();
+			$driver->query( 'SAVEPOINT s' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SAVEPOINT statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SAVEPOINT statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests TRUNCATE TABLE removes rows and returns empty result metadata.
+	 */
+	public function test_mysql_truncate_table_removes_rows_and_returns_empty_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE truncate_test (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
+		$driver->query( "INSERT INTO truncate_test (value) VALUES ('before')" );
+		$driver->query( "INSERT INTO truncate_test (value) VALUES ('again')" );
+
+		$this->assertSame( 0, $driver->query( 'TRUNCATE TABLE truncate_test' ) );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 'DELETE FROM "truncate_test"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT COUNT(*) AS row_count FROM truncate_test' );
+		$this->assertSame( '0', $rows[0]->row_count );
+
+		$driver->query( "INSERT INTO truncate_test (value) VALUES ('after')" );
+		$rows = $driver->query( 'SELECT id, value FROM truncate_test' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'after',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests main database-qualified table names work for a focused basic operation slice.
+	 */
+	public function test_main_database_qualified_table_names_work_for_basic_table_operations(): void {
+		$driver = $this->create_driver( 'wp' );
+
+		$this->assertSame( 0, $driver->query( 'CREATE TABLE wp.t (id INT PRIMARY KEY)' ) );
+		$this->assertStringStartsWith( 'CREATE TABLE "t"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$this->assertSame( 1, $driver->query( 'INSERT INTO wp.t (id) VALUES (1)' ) );
+		$this->assertSame( 'INSERT INTO "t" ("id") VALUES (1)', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT * FROM wp.t' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $rows );
+		$this->assertSame( 'SELECT * FROM t', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$driver->query( 'UPDATE wp.t SET id = 2' );
+		$rows = $driver->query( 'SELECT * FROM wp.t' );
+		$this->assertEquals( array( (object) array( 'id' => '2' ) ), $rows );
+
+		$this->assertSame( 1, $driver->query( 'DELETE FROM wp.t WHERE id = 2' ) );
+		$rows = $driver->query( 'SELECT * FROM wp.t' );
+		$this->assertSame( array(), $rows );
+
+		$driver->query( 'INSERT INTO wp.t (id) VALUES (3)' );
+		$this->assertSame( 0, $driver->query( 'TRUNCATE TABLE wp.t' ) );
+		$this->assertSame( 0, $driver->get_last_column_count() );
+		$this->assertSame( array(), $driver->get_last_column_meta() );
+		$this->assertSame( 'DELETE FROM "t"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT * FROM wp.t' );
+		$this->assertSame( array(), $rows );
+	}
+
+	/**
+	 * Tests malformed main database-qualified CREATE TABLE targets fail closed.
+	 */
+	public function test_create_table_rejects_extra_qualified_main_database_target(): void {
+		$driver = $this->create_driver( 'wp' );
+
+		try {
+			$driver->query( 'CREATE TABLE wp.other.t (id INT)' );
+			$this->fail( 'Expected extra qualified CREATE TABLE target to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported CREATE TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests UNLOCK TABLES forms are MySQL compatibility no-ops.
 	 */
 	public function test_mysql_unlock_tables_statements_are_noops_without_backend_execution(): void {
@@ -9047,23 +9185,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @return WP_PostgreSQL_Connection Connection fixture.
 	 */
 	private function create_table_administration_catalog_fixture_connection(): WP_PostgreSQL_Connection {
-		$pdo = new class( 'sqlite::memory:' ) extends PDO {
-			/**
-			 * Report PostgreSQL for branch selection while keeping SQLite execution available.
-			 *
-			 * @param int $attribute PDO attribute.
-			 * @return mixed Attribute value.
-			 */
-			#[\ReturnTypeWillChange]
-			public function getAttribute( $attribute ) {
-				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-					return 'pgsql';
-				}
-
-				return parent::getAttribute( $attribute );
-			}
-		};
-
+		$pdo = new PDO( 'sqlite::memory:' );
 		return new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection {
 			/**
 			 * PostgreSQL catalog existence queries issued by the driver.
@@ -9158,6 +9280,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 */
 			public function get_table_administration_catalog_queries(): array {
 				return $this->table_administration_catalog_queries;
+			}
+
+			/**
+			 * Report PostgreSQL for branch selection while keeping SQLite execution available.
+			 *
+			 * @return string Driver name.
+			 */
+			public function get_driver_name(): string {
+				return 'pgsql';
 			}
 		};
 	}

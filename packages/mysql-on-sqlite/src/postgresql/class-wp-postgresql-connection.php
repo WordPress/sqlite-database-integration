@@ -232,7 +232,7 @@ class WP_PostgreSQL_Connection {
 	 *
 	 * @return string PDO driver name.
 	 */
-	protected function get_driver_name(): string {
+	public function get_driver_name(): string {
 		return (string) $this->pdo->getAttribute( PDO::ATTR_DRIVER_NAME );
 	}
 

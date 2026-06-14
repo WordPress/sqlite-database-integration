@@ -9,7 +9,7 @@ class WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection extends WP_PostgreS
 	 *
 	 * @return string PDO driver name.
 	 */
-	protected function get_driver_name(): string {
+	public function get_driver_name(): string {
 		return 'pgsql';
 	}
 }

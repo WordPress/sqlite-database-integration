@@ -443,6 +443,11 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_mysql_transaction_control_query( $transaction_control_query );
 		}
 
+		$savepoint_query = $this->get_mysql_savepoint_query( $query );
+		if ( null !== $savepoint_query ) {
+			return $this->execute_mysql_savepoint_query( $savepoint_query );
+		}
+
 		$procedure_result = $this->handle_mysql_procedure_query( $query, $fetch_mode, ...$fetch_mode_args );
 		if ( null !== $procedure_result ) {
 			return $procedure_result;
@@ -496,6 +501,11 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_mysql_lock_tables_query( $lock_tables_query );
 		}
 
+		$truncate_table_query = $this->get_mysql_truncate_table_query( $query );
+		if ( null !== $truncate_table_query ) {
+			return $this->execute_mysql_truncate_table_query( $truncate_table_query );
+		}
+
 		if ( $this->is_found_rows_query( $query ) ) {
 			$this->last_result      = array( (object) array( 'FOUND_ROWS()' => (string) $this->last_found_rows ) );
 			$this->last_column_meta = array(
@@ -517,6 +527,8 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( $this->is_create_table_query( $query ) ) {
+			$this->validate_mysql_create_table_target_database( $query );
+
 			$translator = new WP_PostgreSQL_Create_Table_Translator();
 			$result     = $this->execute_postgresql_statements( $translator->translate_schema( $query ) );
 			if ( $this->is_temporary_create_table_query( $query ) ) {
@@ -1567,6 +1579,24 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Execute a public MySQL savepoint statement.
+	 *
+	 * @param string $statement Canonical PostgreSQL savepoint statement.
+	 * @return int Number of affected rows.
+	 */
+	private function execute_mysql_savepoint_query( string $statement ): int {
+		$this->connection->query( $statement );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $statement,
+			'params' => array(),
+		);
+		$this->last_result               = 0;
+		$this->clear_last_column_meta();
+
+		return $this->last_result;
+	}
+
+	/**
 	 * Execute a supported MySQL runtime SET statement from emulated session state.
 	 *
 	 * @param string $query MySQL query.
@@ -1959,6 +1989,134 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get the canonical PostgreSQL statement for a public MySQL savepoint query.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Canonical PostgreSQL savepoint statement, or null when this is not SAVEPOINT SQL.
+	 */
+	private function get_mysql_savepoint_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $tokens[0]->id ) {
+			$position = 1;
+			$name     = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $name || ! $this->is_at_mysql_query_end( $tokens, $position + 1 ) ) {
+				throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
+			}
+
+			return 'SAVEPOINT ' . $this->connection->quote_identifier( $name );
+		}
+
+		if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $tokens[0]->id ) {
+			$position = 1;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WORK_SYMBOL === $tokens[ $position ]->id ) {
+				if ( isset( $tokens[ $position + 1 ] ) && WP_MySQL_Lexer::TO_SYMBOL === $tokens[ $position + 1 ]->id ) {
+					throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
+				}
+
+				return null;
+			}
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $tokens[ $position ]->id ) {
+				throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TO_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			++$position;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+			}
+
+			$name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $name || ! $this->is_at_mysql_query_end( $tokens, $position + 1 ) ) {
+				throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
+			}
+
+			return 'ROLLBACK TO SAVEPOINT ' . $this->connection->quote_identifier( $name );
+		}
+
+		if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $tokens[0]->id ) {
+			$position = 1;
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SAVEPOINT_SYMBOL !== $tokens[ $position ]->id ) {
+				throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
+			}
+
+			++$position;
+			$name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $name || ! $this->is_at_mysql_query_end( $tokens, $position + 1 ) ) {
+				throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
+			}
+
+			return 'RELEASE SAVEPOINT ' . $this->connection->quote_identifier( $name );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Execute a supported MySQL TRUNCATE TABLE statement.
+	 *
+	 * @param array{schema: string|null, table: string} $truncate_table_query Parsed truncate query.
+	 * @return int Number of affected rows.
+	 */
+	private function execute_mysql_truncate_table_query( array $truncate_table_query ): int {
+		$requested_schema = $truncate_table_query['schema'];
+		$table_name       = $truncate_table_query['table'];
+
+		if (
+			( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
+			|| ( null !== $requested_schema && 0 !== strcasecmp( $requested_schema, $this->main_db_name ) )
+		) {
+			throw new InvalidArgumentException( 'Unsupported TRUNCATE TABLE statement.' );
+		}
+
+		$statement = 'TRUNCATE TABLE ' . $this->connection->quote_identifier( $table_name ) . ' RESTART IDENTITY';
+		if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+			$statement = 'DELETE FROM ' . $this->connection->quote_identifier( $table_name );
+		}
+
+		$this->connection->query( $statement );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $statement,
+			'params' => array(),
+		);
+
+		if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+			$this->reset_sqlite_autoincrement_sequence( $table_name );
+		}
+
+		$this->mysql_introspection_result_cache = array();
+		$this->last_result                      = 0;
+		$this->clear_last_column_meta();
+
+		return $this->last_result;
+	}
+
+	/**
+	 * Reset a SQLite AUTOINCREMENT sequence after TRUNCATE emulation.
+	 *
+	 * @param string $table_name Table name.
+	 */
+	private function reset_sqlite_autoincrement_sequence( string $table_name ): void {
+		try {
+			$this->connection->query(
+				'DELETE FROM sqlite_sequence WHERE name = ?',
+				array( $table_name )
+			);
+		} catch ( PDOException $e ) {
+			if ( false === strpos( $e->getMessage(), 'no such table' ) ) {
+				throw $e;
+			}
+		}
 	}
 
 	/**
@@ -4315,6 +4473,31 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a supported MySQL TRUNCATE TABLE statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{schema: string|null, table: string}|null Truncate query, or null when this is not TRUNCATE.
+	 */
+	private function get_mysql_truncate_table_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::TRUNCATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $table_reference || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			throw new InvalidArgumentException( 'Unsupported TRUNCATE TABLE statement.' );
+		}
+
+		return $table_reference;
+	}
+
+	/**
 	 * Parse a supported MySQL LOCK/UNLOCK TABLES statement.
 	 *
 	 * @param string $query MySQL query.
@@ -4506,7 +4689,7 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function mysql_table_administration_table_exists( ?string $requested_schema, string $table_name ): bool {
 		$schema_name = $this->get_mysql_table_administration_backend_schema( $requested_schema, $table_name );
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		$driver_name = $this->connection->get_driver_name();
 
 		if ( 'sqlite' === $driver_name ) {
 			return $this->sqlite_table_administration_table_exists( $schema_name, $table_name );
@@ -6401,31 +6584,50 @@ ORDER BY
 	 * @return string|null Temporary schema name, or null when no active temporary table exists.
 	 */
 	private function get_active_temporary_table_schema( string $table_name ): ?string {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		$driver_name     = $this->connection->get_driver_name();
+		$pdo_driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
 
 		if ( 'sqlite' === $driver_name ) {
-			$stmt = $this->connection->query(
-				"SELECT name FROM sqlite_temp_master WHERE type = 'table' AND LOWER(name) = LOWER(?) LIMIT 1",
-				array( $table_name )
-			);
-
-			return false === $stmt->fetchColumn() ? null : 'temp';
+			return $this->get_active_sqlite_temporary_table_schema( $table_name );
 		}
 
-		$stmt = $this->connection->query(
-			'SELECT n.nspname
-			FROM pg_catalog.pg_class c
-			INNER JOIN pg_catalog.pg_namespace n
-				ON n.oid = c.relnamespace
-			WHERE n.oid = pg_my_temp_schema()
-				AND lower(c.relname) = lower(?)
-				AND c.relkind IN (\'r\', \'p\')
-			LIMIT 1',
-			array( $table_name )
-		);
+		try {
+			$stmt = $this->connection->query(
+				'SELECT n.nspname
+				FROM pg_catalog.pg_class c
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = c.relnamespace
+				WHERE n.oid = pg_my_temp_schema()
+					AND lower(c.relname) = lower(?)
+					AND c.relkind IN (\'r\', \'p\')
+				LIMIT 1',
+				array( $table_name )
+			);
+		} catch ( PDOException $e ) {
+			if ( 'sqlite' !== $pdo_driver_name ) {
+				throw $e;
+			}
+
+			return $this->get_active_sqlite_temporary_table_schema( $table_name );
+		}
 
 		$schema_name = $stmt->fetchColumn();
 		return false === $schema_name ? null : (string) $schema_name;
+	}
+
+	/**
+	 * Get the active SQLite temporary schema for a table name.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string|null Temporary schema name, or null when no active temporary table exists.
+	 */
+	private function get_active_sqlite_temporary_table_schema( string $table_name ): ?string {
+		$stmt = $this->connection->query(
+			"SELECT name FROM sqlite_temp_master WHERE type = 'table' AND LOWER(name) = LOWER(?) LIMIT 1",
+			array( $table_name )
+		);
+
+		return false === $stmt->fetchColumn() ? null : 'temp';
 	}
 
 	/**
@@ -7356,21 +7558,26 @@ WHERE option_name IN (
 	private function translate_simple_mysql_delete_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
-			! isset( $tokens[0], $tokens[1], $tokens[2], $tokens[3] )
+			! isset( $tokens[0], $tokens[1] )
 			|| WP_MySQL_Lexer::DELETE_SYMBOL !== $tokens[0]->id
 			|| WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[1]->id
-			|| WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[3]->id
 		) {
 			return null;
 		}
 
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[2] );
+		$position   = 2;
+		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 4 );
-		if ( null === $statement_end || 4 >= $statement_end ) {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$where_position = $position;
+		$statement_end  = $this->get_mysql_statement_end_position( $tokens, $where_position + 1 );
+		if ( null === $statement_end || $where_position + 1 >= $statement_end ) {
 			return null;
 		}
 
@@ -7383,14 +7590,14 @@ WHERE option_name IN (
 			WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
 			WP_MySQL_Lexer::USING_SYMBOL,
 		);
-		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, $unsupported_tokens ) ) {
+		if ( $this->contains_top_level_mysql_token( $tokens, $where_position + 1, $statement_end, $unsupported_tokens ) ) {
 			return null;
 		}
 
 		return sprintf(
 			'DELETE FROM %s WHERE %s',
 			$this->connection->quote_identifier( $table_name ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 4, $statement_end )
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $statement_end )
 		);
 	}
 
@@ -7417,12 +7624,11 @@ WHERE option_name IN (
 		}
 
 		++$position;
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
 
-		++$position;
 		$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 		if ( null === $columns ) {
 			return null;
@@ -7835,12 +8041,11 @@ WHERE option_name IN (
 		}
 
 		++$position;
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
 
-		++$position;
 		$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 		if ( null === $columns ) {
 			return null;
@@ -8028,12 +8233,11 @@ WHERE option_name IN (
 		}
 
 		++$position;
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
 
-		++$position;
 		$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 		if ( null === $columns ) {
 			return null;
@@ -8103,12 +8307,18 @@ WHERE option_name IN (
 		}
 
 		++$position;
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$table_reference_start = $position;
+		$table_name            = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
+		$table_reference_end = $position;
+		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
+			$tokens,
+			$table_reference_start,
+			$table_reference_end
+		);
 
-		++$position;
 		$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 		if ( null === $columns ) {
 			return null;
@@ -8121,7 +8331,13 @@ WHERE option_name IN (
 
 		$select_start        = $position;
 		$select_end          = $statement_end;
-		$outer_replacements  = array();
+		$outer_replacements  = array(
+			array(
+				'start' => $table_reference_start,
+				'end'   => $table_reference_end,
+				'sql'   => $table_reference_sql,
+			),
+		);
 		$closing_replacement = array();
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
@@ -8875,12 +9091,11 @@ WHERE option_name IN (
 		}
 
 		$position   = 1;
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
 
-		++$position;
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
@@ -9664,13 +9879,18 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$table_token = $tokens[ $from_position + 1 ] ?? null;
-		$table_name  = $this->get_mysql_identifier_token_value( $table_token );
+		$table_reference_start = $from_position + 1;
+		$position              = $table_reference_start;
+		$table_name            = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
+		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
+			$tokens,
+			$table_reference_start,
+			$position
+		);
 
-		$position       = $from_position + 2;
 		$where_position = null;
 		$where_end      = null;
 		$order_position = null;
@@ -9706,7 +9926,7 @@ WHERE option_name IN (
 		$sql = sprintf(
 			'SELECT %s FROM %s',
 			$this->translate_simple_select_projection_to_postgresql( $tokens, 1, $from_position ),
-			$this->translate_mysql_identifier_token_to_postgresql( $table_token )
+			$table_reference_sql
 		);
 
 		$scope = $this->get_mysql_single_table_scope( $table_name );
@@ -17467,6 +17687,53 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Parse an unqualified or main database-qualified MySQL table target.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Table-name start position, updated on success.
+	 * @return string|null Table name, or null when unsupported.
+	 */
+	private function parse_mysql_main_database_table_name( array $tokens, int &$position ): ?string {
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $position ]->id ) {
+			return $first_identifier;
+		}
+
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		if ( null === $table_name || 0 !== strcasecmp( $first_identifier, $this->main_db_name ) ) {
+			return null;
+		}
+
+		$position += 2;
+		return $table_name;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for an unqualified or main database-qualified table target.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First table-reference token position.
+	 * @param int              $end    Final table-reference token position, exclusive.
+	 * @return string PostgreSQL table reference SQL.
+	 */
+	private function get_mysql_main_database_table_reference_sql( array $tokens, int $start, int $end ): string {
+		if (
+			$start + 3 === $end
+			&& isset( $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+		) {
+			return $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start + 2 ] );
+		}
+
+		return $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start ] ?? null );
+	}
+
+	/**
 	 * Parse a simple table reference and optional alias.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -20486,9 +20753,73 @@ WHERE option_name IN (
 			++$position;
 		}
 
+		$table_name_position = $position + 1;
+
 		return isset( $tokens[ $position ] )
 			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id
-			&& $this->has_mysql_create_table_marker( $tokens );
+			&& (
+				$this->has_mysql_create_table_marker( $tokens )
+				|| $this->is_mysql_create_table_qualified_target( $tokens, $table_name_position )
+			);
+	}
+
+	/**
+	 * Validate a CREATE TABLE target database qualifier.
+	 *
+	 * @param string $query MySQL query.
+	 */
+	private function validate_mysql_create_table_target_database( string $query ): void {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+			return;
+		}
+
+		++$position;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$position += 3;
+		}
+
+		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
+		if ( null === $table_name || ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+	}
+
+	/**
+	 * Check whether a CREATE TABLE statement uses a qualified table target.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Table-name position.
+	 * @return bool Whether the table target is qualified.
+	 */
+	private function is_mysql_create_table_qualified_target( array $tokens, int $position ): bool {
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$position += 3;
+		}
+
+		return null !== $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null )
+			&& isset( $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $position + 2 ] ?? null );
 	}
 
 	/**

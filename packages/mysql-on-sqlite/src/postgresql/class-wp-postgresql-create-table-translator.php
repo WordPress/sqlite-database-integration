@@ -374,7 +374,37 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return string Table name.
 	 */
 	private function get_table_name( WP_Parser_Node $create_table ): string {
-		return $this->get_identifier_value( $create_table->get_first_child_node( 'tableName' ) );
+		return $this->get_last_identifier_value( $create_table->get_first_child_node( 'tableName' ) );
+	}
+
+	/**
+	 * Get the last identifier value in a node.
+	 *
+	 * @param WP_Parser_Node|null $node Node containing an identifier.
+	 * @return string Identifier value.
+	 */
+	private function get_last_identifier_value( ?WP_Parser_Node $node ): string {
+		if ( ! $node ) {
+			throw new InvalidArgumentException( 'Expected identifier node.' );
+		}
+
+		$identifier = null;
+		$tokens     = $node->get_descendant_tokens();
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::IDENTIFIER === $token->id || WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
+				$identifier = $token->get_value();
+			}
+		}
+
+		if ( null !== $identifier ) {
+			return $identifier;
+		}
+
+		if ( 1 === count( $tokens ) && '' !== $tokens[0]->get_value() ) {
+			return $tokens[0]->get_value();
+		}
+
+		throw new InvalidArgumentException( 'Expected identifier token.' );
 	}
 
 	/**
