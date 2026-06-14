@@ -11,6 +11,7 @@ set -e
 WP_VERSION="6.7.2"
 WP_TEST_DB_BACKEND="${WP_TEST_DB_BACKEND:-${1:-sqlite}}"
 WP_TEST_SKIP_WORDPRESS_NPM="${WP_TEST_SKIP_WORDPRESS_NPM:-0}"
+WP_RELEASE_REPOSITORY_URL="${WP_RELEASE_REPOSITORY_URL:-https://github.com/WordPress/WordPress.git}"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 WP_DIR="$DIR/wordpress"
@@ -470,9 +471,55 @@ fs.writeFileSync( file, contents );
 NODE
 fi
 
+install_wordpress_release_assets() {
+	local release_asset_path
+	local release_dir
+	release_dir="$(mktemp -d "${TMPDIR:-/tmp}/wordpress-release-assets.XXXXXX")"
+
+	echo "Hydrating WordPress release assets for PostgreSQL PHP tests..."
+	if ! git clone -c advice.detachedHead=false --depth 1 --filter=blob:none --sparse --single-branch --branch "$WP_VERSION" "$WP_RELEASE_REPOSITORY_URL" "$release_dir"; then
+		rm -rf "$release_dir"
+		return 1
+	fi
+
+	if ! git -C "$release_dir" sparse-checkout set \
+		wp-admin/css \
+		wp-admin/js \
+		wp-includes/assets \
+		wp-includes/blocks \
+		wp-includes/css \
+		wp-includes/js
+	then
+		rm -rf "$release_dir"
+		return 1
+	fi
+
+	for release_asset_path in \
+		wp-admin/css \
+		wp-admin/js \
+		wp-includes/assets \
+		wp-includes/blocks \
+		wp-includes/css \
+		wp-includes/js
+	do
+		if [ ! -e "$release_dir/$release_asset_path" ]; then
+			echo "Error: WordPress release asset path is missing: $release_asset_path" >&2
+			rm -rf "$release_dir"
+			return 1
+		fi
+
+		rm -rf "$WP_DIR/src/$release_asset_path"
+		mkdir -p "$(dirname "$WP_DIR/src/$release_asset_path")"
+		cp -R "$release_dir/$release_asset_path" "$WP_DIR/src/$release_asset_path"
+	done
+
+	rm -rf "$release_dir"
+}
+
 # 6. Install dependencies.
 if [ "$WP_TEST_DB_BACKEND" = "postgresql" ] && [ "$WP_TEST_SKIP_WORDPRESS_NPM" = "1" ]; then
 	echo "Skipping WordPress npm install and JavaScript build for PostgreSQL PHP tests..."
+	install_wordpress_release_assets
 else
 	echo "Installing dependencies..."
 	npm --prefix "$WP_DIR" install

@@ -686,6 +686,17 @@ function validateGeneratedBackendFiles() {
 			`core \${ installCommand }`,
 			'install.js does not call the MySQL-backed core install command for PostgreSQL'
 		);
+		for ( const [ assetPath, description ] of [
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-includes', 'assets', 'script-loader-packages.php' ), 'WordPress package script-loader assets' ],
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-includes', 'assets', 'script-modules-packages.php' ), 'WordPress package script-module assets' ],
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-includes', 'js', 'dist', 'i18n.min.js' ), 'WordPress package JavaScript builds' ],
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-includes', 'css', 'dist', 'block-library', 'style.min.css' ), 'WordPress package stylesheet builds' ],
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-admin', 'js', 'common.min.js' ), 'WordPress admin JavaScript builds' ],
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-admin', 'css', 'common-rtl.min.css' ), 'WordPress admin RTL stylesheet builds' ],
+			[ path.join( repositoryRoot, 'wordpress', 'src', 'wp-includes', 'blocks', 'file', 'view.js' ), 'WordPress block view scripts' ],
+		] ) {
+			assertFileExists( assetPath, description );
+		}
 	}
 }
 
@@ -708,6 +719,12 @@ function assertFileDoesNotContain( file, unexpected, description ) {
 	const contents = readGeneratedFile( file );
 	if ( contents.includes( unexpected ) ) {
 		throw new Error( `Expected ${ description } in ${ file }.` );
+	}
+}
+
+function assertFileExists( file, description ) {
+	if ( ! fs.existsSync( file ) ) {
+		throw new Error( `Expected generated ${ description } to exist: ${ file }.` );
 	}
 }
 
