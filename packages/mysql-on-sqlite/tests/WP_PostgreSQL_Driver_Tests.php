@@ -6741,6 +6741,103 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW CREATE TABLE returns MySQL-shaped metadata rows.
+	 */
+	public function test_show_create_table_returns_mysql_shaped_metadata_result(): void {
+		$driver = $this->create_driver();
+		$this->install_show_create_table_fixture( $driver, 'wptests_show_create' );
+
+		$tables = $driver->query( 'SHOW CREATE TABLE wptests_show_create' );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wptests_show_create', $tables[0]->Table );
+		$this->assertSame( array( 'Table', 'Create Table' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$create_table = $tables[0]->{'Create Table'};
+		$this->assertStringStartsWith( "CREATE TABLE `wptests_show_create` (\n", $create_table );
+		$this->assertStringContainsString( '  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT', $create_table );
+		$this->assertStringContainsString( "  `title` varchar(191) NOT NULL DEFAULT ''", $create_table );
+		$this->assertStringContainsString( '  `description` text DEFAULT NULL', $create_table );
+		$this->assertStringContainsString( "  `status` varchar(20) NOT NULL DEFAULT 'draft'", $create_table );
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
+		$this->assertStringContainsString( '  UNIQUE KEY `title` (`title`)', $create_table );
+		$this->assertStringContainsString( '  KEY `status` (`status`)', $create_table );
+		$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $queries[1]['sql'] );
+		foreach ( $queries as $query ) {
+			$this->assertStringNotContainsString( 'SHOW CREATE TABLE', $query['sql'] );
+		}
+
+		$assoc = $driver->query( 'SHOW CREATE TABLE wptests_show_create', PDO::FETCH_ASSOC );
+		$this->assertSame( 'wptests_show_create', $assoc[0]['Table'] );
+		$this->assertSame( $create_table, $assoc[0]['Create Table'] );
+
+		$num = $driver->query( 'SHOW CREATE TABLE wptests_show_create', PDO::FETCH_NUM );
+		$this->assertSame( array( 'wptests_show_create', $create_table ), $num[0] );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE accepts backtick and main database qualifications.
+	 */
+	public function test_show_create_table_accepts_backtick_and_main_database_qualification_forms(): void {
+		$queries = array(
+			'SHOW CREATE TABLE `wptests_show_create_forms`',
+			'SHOW CREATE TABLE wptests.wptests_show_create_forms',
+			'SHOW CREATE TABLE `wptests`.`wptests_show_create_forms`',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$this->install_show_create_table_fixture( $driver, 'wptests_show_create_forms' );
+
+			$tables = $driver->query( $query );
+
+			$this->assertCount( 1, $tables, $query );
+			$this->assertSame( 'wptests_show_create_forms', $tables[0]->Table, $query );
+			$this->assertStringStartsWith( "CREATE TABLE `wptests_show_create_forms` (\n", $tables[0]->{'Create Table'}, $query );
+			foreach ( $driver->get_last_postgresql_queries() as $postgresql_query ) {
+				$this->assertStringNotContainsString( 'SHOW CREATE TABLE', $postgresql_query['sql'], $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE for a missing table returns an empty metadata result.
+	 */
+	public function test_show_create_table_missing_table_returns_empty_result(): void {
+		$driver = $this->create_driver();
+
+		$tables = $driver->query( 'SHOW CREATE TABLE wptests_missing' );
+
+		$this->assertSame( array(), $tables );
+		$this->assertSame( array( 'Table', 'Create Table' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW CREATE TABLE', $queries[0]['sql'] );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE information_schema targets fail closed.
+	 */
+	public function test_show_create_table_information_schema_target_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'SHOW CREATE TABLE information_schema.tables' );
+			$this->fail( 'Expected information_schema SHOW CREATE TABLE target to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SHOW COLLATION returns MySQL-shaped static collation rows.
 	 */
 	public function test_show_collation_returns_mysql_shaped_rows(): void {
@@ -6987,6 +7084,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
 			$this->assertSame( array(), $index_driver->get_last_postgresql_queries() );
+		}
+
+		$show_create_driver = $this->create_driver();
+		$this->install_show_create_table_fixture( $show_create_driver, 'wptests_options' );
+
+		$this->assertSame( 0, $show_create_driver->query( 'USE information_schema' ) );
+
+		try {
+			$show_create_driver->query( 'SHOW CREATE TABLE wptests_options' );
+			$this->fail( 'Expected information_schema SHOW CREATE TABLE to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $show_create_driver->get_last_postgresql_queries() );
 		}
 	}
 
@@ -8733,6 +8843,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			VALUES
 				('public', 'wptests_posts', 'ID', 1, 'bigint', NULL, NULL, 'NO', NULL, 'YES'),
 				('public', 'wptests_plain', 'id', 1, 'bigint', NULL, NULL, 'NO', NULL, 'NO')"
+		);
+	}
+
+	/**
+	 * Install a table shape covered by SHOW CREATE TABLE reconstruction tests.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Table name.
+	 */
+	private function install_show_create_table_fixture( WP_PostgreSQL_Driver $driver, string $table_name ): void {
+		$driver->query(
+			sprintf(
+				"CREATE TABLE %s (
+					id bigint(20) unsigned NOT NULL,
+					title varchar(191) NOT NULL DEFAULT '',
+					description text,
+					status varchar(20) NOT NULL DEFAULT 'draft',
+					PRIMARY KEY (id),
+					UNIQUE KEY title (title),
+					KEY status (status)
+				)",
+				$table_name
+			)
+		);
+		$driver->store_mysql_schema_metadata(
+			sprintf(
+				"CREATE TABLE %s (
+					id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					title varchar(191) NOT NULL DEFAULT '',
+					description text,
+					status varchar(20) NOT NULL DEFAULT 'draft',
+					PRIMARY KEY (id),
+					UNIQUE KEY title (title),
+					KEY status (status)
+				)",
+				$table_name
+			)
 		);
 	}
 

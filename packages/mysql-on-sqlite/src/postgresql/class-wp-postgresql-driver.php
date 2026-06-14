@@ -550,6 +550,15 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		$show_create_table_query = $this->get_show_create_table_query( $query );
+		if ( null !== $show_create_table_query ) {
+			return $this->execute_show_create_table_query(
+				$show_create_table_query,
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
 		$show_columns_query = $this->get_show_columns_query( $query );
 		if ( null !== $show_columns_query ) {
 			return $this->execute_show_columns_query(
@@ -3296,6 +3305,84 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW CREATE TABLE statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{schema: string, table: string}|null SHOW CREATE TABLE options, or null when this is not SHOW CREATE TABLE.
+	 */
+	private function get_show_create_table_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		if ( ! isset( $tokens[2] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[2]->id ) {
+			return null;
+		}
+
+		$table_reference = $this->get_show_create_table_reference( $tokens, 3 );
+		if ( null === $table_reference || ! $this->is_at_mysql_query_end( $tokens, $table_reference['position'] ) ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW CREATE TABLE statement.' );
+		}
+
+		if ( null !== $table_reference['schema'] ) {
+			if ( 0 === strcasecmp( $table_reference['schema'], 'information_schema' ) ) {
+				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+			}
+
+			if (
+				0 !== strcasecmp( $table_reference['schema'], $this->main_db_name )
+				&& 0 !== strcasecmp( $table_reference['schema'], 'public' )
+			) {
+				throw new InvalidArgumentException( 'Unsupported SHOW CREATE TABLE statement.' );
+			}
+		}
+
+		return array(
+			'schema' => 'public',
+			'table'  => $table_reference['table'],
+		);
+	}
+
+	/**
+	 * Parse a SHOW CREATE TABLE table reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Table reference start position.
+	 * @return array{schema: string|null, table: string, position: int}|null Parsed reference, or null when unsupported.
+	 */
+	private function get_show_create_table_reference( array $tokens, int $position ): ?array {
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $position ]->id ) {
+			return array(
+				'schema'   => null,
+				'table'    => $first_identifier,
+				'position' => $position,
+			);
+		}
+
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		if ( null === $table_name ) {
+			return null;
+		}
+
+		return array(
+			'schema'   => $first_identifier,
+			'table'    => $table_name,
+			'position' => $position + 2,
+		);
+	}
+
+	/**
 	 * Check whether a token is an unsigned integer literal.
 	 *
 	 * @param WP_MySQL_Token $token MySQL token.
@@ -4209,6 +4296,305 @@ ORDER BY table_name';
 			$fetch_mode,
 			...$fetch_mode_args
 		);
+	}
+
+	/**
+	 * Execute a MySQL SHOW CREATE TABLE statement from stored MySQL schema metadata.
+	 *
+	 * @param array $show_create_table_query SHOW CREATE TABLE options.
+	 * @param int   $fetch_mode              PDO fetch mode.
+	 * @param array ...$fetch_mode_args      Additional fetch mode arguments.
+	 * @return mixed SHOW CREATE TABLE result rows.
+	 */
+	private function execute_show_create_table_query( array $show_create_table_query, $fetch_mode, ...$fetch_mode_args ) {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_name      = $show_create_table_query['table'];
+		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection(
+			$show_create_table_query['schema'],
+			$table_name
+		);
+		$cache_key       = $this->get_mysql_introspection_result_cache_key(
+			'show_create_table',
+			$fetch_mode,
+			array( $resolved_schema, $table_name, $fetch_mode, $fetch_mode_args )
+		);
+		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
+			return $this->last_result;
+		}
+
+		$columns = $this->get_show_create_table_column_metadata_rows( $resolved_schema, $table_name );
+		if ( empty( $columns ) ) {
+			return $this->set_mysql_static_show_result(
+				array( 'Table', 'Create Table' ),
+				array(),
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
+		$indexes          = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
+		$create_statement = $this->get_mysql_create_table_statement_from_metadata( $table_name, $columns, $indexes );
+		$rows             = array(
+			array(
+				'Table'        => $table_name,
+				'Create Table' => $create_statement,
+			),
+		);
+
+		$result = $this->set_mysql_static_show_result(
+			array( 'Table', 'Create Table' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+
+		$this->store_mysql_introspection_result_in_cache( $cache_key );
+
+		return $result;
+	}
+
+	/**
+	 * Get column metadata rows for SHOW CREATE TABLE.
+	 *
+	 * @param string $schema_name Backend metadata schema.
+	 * @param string $table_name  Table name.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_show_create_table_column_metadata_rows( string $schema_name, string $table_name ): array {
+		$sql    = sprintf(
+			'SELECT column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra
+			FROM %s
+			WHERE table_schema = ? AND table_name = ?
+			ORDER BY ordinal_position',
+			$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+		);
+		$params = array( $schema_name, $table_name );
+		$stmt   = $this->connection->query( $sql, $params );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get index metadata rows for SHOW CREATE TABLE.
+	 *
+	 * @param string $schema_name Backend metadata schema.
+	 * @param string $table_name  Table name.
+	 * @return array[] Index metadata rows.
+	 */
+	private function get_show_create_table_index_metadata_rows( string $schema_name, string $table_name ): array {
+		$sql    = sprintf(
+			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part
+			FROM %s
+			WHERE table_schema = ? AND table_name = ?
+			ORDER BY
+				key_name = \'PRIMARY\' DESC,
+				non_unique = \'0\' DESC,
+				index_type = \'SPATIAL\' DESC,
+				index_type = \'BTREE\' DESC,
+				index_type = \'FULLTEXT\' DESC,
+				index_ordinal,
+				seq_in_index',
+			$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+		);
+		$params = array( $schema_name, $table_name );
+		$stmt   = $this->connection->query( $sql, $params );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Build a MySQL CREATE TABLE statement from stored MySQL metadata rows.
+	 *
+	 * @param string  $table_name Table name.
+	 * @param array[] $columns    Column metadata rows.
+	 * @param array[] $indexes    Index metadata rows.
+	 * @return string MySQL-compatible CREATE TABLE statement.
+	 */
+	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes ): string {
+		$definitions = array();
+		foreach ( $columns as $column ) {
+			$definitions[] = $this->get_mysql_create_table_column_definition_from_metadata( $column );
+		}
+
+		foreach ( $this->group_show_create_table_index_metadata_rows( $indexes ) as $index ) {
+			$definitions[] = $this->get_mysql_create_table_index_definition_from_metadata( $index );
+		}
+
+		$collation = $this->get_mysql_create_table_collation_from_metadata( $columns );
+		$charset   = $this->get_mysql_charset_from_collation( $collation );
+
+		return sprintf(
+			"CREATE TABLE %s (\n%s\n) ENGINE=InnoDB DEFAULT CHARSET=%s COLLATE=%s",
+			$this->quote_mysql_identifier( $table_name ),
+			implode( ",\n", $definitions ),
+			$charset,
+			$collation
+		);
+	}
+
+	/**
+	 * Build one MySQL column definition from stored metadata.
+	 *
+	 * @param array $column Column metadata row.
+	 * @return string Column definition SQL.
+	 */
+	private function get_mysql_create_table_column_definition_from_metadata( array $column ): string {
+		$sql = sprintf(
+			'  %s %s',
+			$this->quote_mysql_identifier( (string) $column['column_name'] ),
+			(string) $column['column_type']
+		);
+
+		if ( 'NO' === strtoupper( (string) $column['is_nullable'] ) ) {
+			$sql .= ' NOT NULL';
+		}
+
+		if ( false !== stripos( (string) $column['extra'], 'auto_increment' ) ) {
+			$sql .= ' AUTO_INCREMENT';
+		}
+
+		if ( null !== $column['column_default'] ) {
+			$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( (string) $column['column_default'] );
+		} elseif ( 'NO' !== strtoupper( (string) $column['is_nullable'] ) ) {
+			$sql .= ' DEFAULT NULL';
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Group stored index metadata rows by index name.
+	 *
+	 * @param array[] $indexes Index metadata rows.
+	 * @return array[] Grouped index metadata rows.
+	 */
+	private function group_show_create_table_index_metadata_rows( array $indexes ): array {
+		$grouped = array();
+		foreach ( $indexes as $index ) {
+			$key_name = (string) $index['key_name'];
+			if ( ! isset( $grouped[ $key_name ] ) ) {
+				$grouped[ $key_name ] = array();
+			}
+
+			$grouped[ $key_name ][] = $index;
+		}
+
+		return array_values( $grouped );
+	}
+
+	/**
+	 * Build one MySQL key definition from grouped stored metadata.
+	 *
+	 * @param array[] $index Grouped index metadata rows.
+	 * @return string Key definition SQL.
+	 */
+	private function get_mysql_create_table_index_definition_from_metadata( array $index ): string {
+		$first = $index[0];
+		if ( 'PRIMARY' === strtoupper( (string) $first['key_name'] ) ) {
+			return sprintf(
+				'  PRIMARY KEY (%s)',
+				implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
+			);
+		}
+
+		return sprintf(
+			'  %s%sKEY %s (%s)',
+			'0' === (string) $first['non_unique'] ? 'UNIQUE ' : '',
+			'BTREE' !== strtoupper( (string) $first['index_type'] ) ? strtoupper( (string) $first['index_type'] ) . ' ' : '',
+			$this->quote_mysql_identifier( (string) $first['key_name'] ),
+			implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
+		);
+	}
+
+	/**
+	 * Build quoted MySQL key part definitions from grouped index metadata rows.
+	 *
+	 * @param array[] $index Grouped index metadata rows.
+	 * @return string[] Key part definitions.
+	 */
+	private function get_mysql_create_table_index_column_definitions( array $index ): array {
+		$columns = array();
+		foreach ( $index as $column ) {
+			$definition = $this->quote_mysql_identifier( (string) $column['column_name'] );
+			if ( null !== $column['sub_part'] ) {
+				$definition .= sprintf( '(%d)', (int) $column['sub_part'] );
+			}
+
+			$columns[] = $definition;
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Get a table collation for SHOW CREATE TABLE from column metadata.
+	 *
+	 * @param array[] $columns Column metadata rows.
+	 * @return string MySQL collation.
+	 */
+	private function get_mysql_create_table_collation_from_metadata( array $columns ): string {
+		foreach ( $columns as $column ) {
+			if ( ! empty( $column['collation_name'] ) ) {
+				return (string) $column['collation_name'];
+			}
+		}
+
+		return $this->collation;
+	}
+
+	/**
+	 * Get a MySQL charset name from a collation.
+	 *
+	 * @param string $collation MySQL collation.
+	 * @return string MySQL charset.
+	 */
+	private function get_mysql_charset_from_collation( string $collation ): string {
+		$underscore_position = strpos( $collation, '_' );
+		if ( false === $underscore_position ) {
+			return $collation;
+		}
+
+		return substr( $collation, 0, $underscore_position );
+	}
+
+	/**
+	 * Quote an identifier for use in a MySQL query.
+	 *
+	 * @param string $identifier Unquoted identifier value.
+	 * @return string Quoted identifier.
+	 */
+	private function quote_mysql_identifier( string $identifier ): string {
+		return '`' . str_replace( '`', '``', $identifier ) . '`';
+	}
+
+	/**
+	 * Quote a MySQL UTF-8 string literal for SHOW CREATE TABLE output.
+	 *
+	 * @param string $literal Literal value.
+	 * @return string Quoted literal.
+	 */
+	private function quote_mysql_utf8_string_literal( string $literal ): string {
+		$backslash    = chr( 92 );
+		$replacements = array(
+			"'"        => "''",
+			$backslash => $backslash . $backslash,
+			chr( 0 )   => $backslash . '0',
+			chr( 10 )  => $backslash . 'n',
+			chr( 13 )  => $backslash . 'r',
+		);
+
+		return "'" . strtr( $literal, $replacements ) . "'";
 	}
 
 	/**
@@ -13112,6 +13498,14 @@ WHERE option_name IN (
 		}
 
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[ $position ]->id ) {
+			return true;
+		}
+
+		if (
+			isset( $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id
+		) {
 			return true;
 		}
 
