@@ -47,8 +47,18 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 		$fixture_params = array( $params[0] ?? '', $params[1] ?? '' );
 
 		if ( isset( $params[2] ) ) {
-			$fixture_sql     .= '
+			$filter_column = $this->get_show_index_fixture_filter_column( $sql );
+			if ( null !== $filter_column ) {
+				$fixture_sql .= sprintf(
+					'
+			AND %s = ?',
+					$filter_column
+				);
+			} else {
+				$fixture_sql .= '
 			AND key_name = ?';
+			}
+
 			$fixture_params[] = $params[2];
 		}
 
@@ -56,6 +66,38 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 		ORDER BY sort_position, CAST(seq_in_index AS INTEGER)';
 
 		return parent::query( $fixture_sql, $fixture_params );
+	}
+
+	/**
+	 * Get the fixture column backing the SHOW INDEX filter in the driver query.
+	 *
+	 * @param string $sql Driver SQL query.
+	 * @return string|null Fixture column name, or null for the legacy key_name filter.
+	 */
+	private function get_show_index_fixture_filter_column( string $sql ): ?string {
+		if ( ! preg_match( '/WHERE\s+"([^"]+)"\s+=\s+\?/i', $sql, $matches ) ) {
+			return null;
+		}
+
+		$columns = array(
+			'Table'         => 'table_name',
+			'Non_unique'    => 'non_unique',
+			'Key_name'      => 'key_name',
+			'Seq_in_index'  => 'seq_in_index',
+			'Column_name'   => 'column_name',
+			'Collation'     => 'collation',
+			'Cardinality'   => 'cardinality',
+			'Sub_part'      => 'sub_part',
+			'Packed'        => 'packed',
+			'Null'          => 'nullable',
+			'Index_type'    => 'index_type',
+			'Comment'       => 'comment',
+			'Index_comment' => 'index_comment',
+			'Visible'       => 'visible',
+			'Expression'    => 'expression',
+		);
+
+		return $columns[ $matches[1] ] ?? null;
 	}
 
 	/**

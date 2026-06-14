@@ -571,9 +571,14 @@ class WP_PostgreSQL_Driver {
 			return $this->last_result;
 		}
 
-		$describe_table_name = $this->get_describe_table_name( $query );
-		if ( null !== $describe_table_name ) {
-			return $this->execute_describe_query( $describe_table_name, $fetch_mode, ...$fetch_mode_args );
+		$describe_table_reference = $this->get_describe_table_reference( $query );
+		if ( null !== $describe_table_reference ) {
+			return $this->execute_describe_query(
+				$describe_table_reference['schema'],
+				$describe_table_reference['table'],
+				$fetch_mode,
+				...$fetch_mode_args
+			);
 		}
 
 		$show_tables_query = $this->get_show_tables_query( $query );
@@ -583,6 +588,7 @@ class WP_PostgreSQL_Driver {
 				$show_tables_query['schema'],
 				$show_tables_query['database'],
 				$show_tables_query['like'],
+				$show_tables_query['where'],
 				$fetch_mode,
 				...$fetch_mode_args
 			);
@@ -613,6 +619,7 @@ class WP_PostgreSQL_Driver {
 				$show_columns_query['table'],
 				$show_columns_query['full'],
 				$show_columns_query['like'],
+				$show_columns_query['where'],
 				$fetch_mode,
 				...$fetch_mode_args
 			);
@@ -623,7 +630,7 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_show_index_query(
 				$show_index_query['schema'],
 				$show_index_query['table'],
-				$show_index_query['key_name'],
+				$show_index_query['where'],
 				$fetch_mode,
 				...$fetch_mode_args
 			);
@@ -4131,12 +4138,12 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Get the table name from a supported MySQL DESCRIBE/DESC statement.
+	 * Get the table reference from a supported MySQL DESCRIBE/DESC statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return string|null Table name, or null when the statement is unsupported.
+	 * @return array{schema: string, table: string}|null Table reference, or null when this is not DESCRIBE/DESC.
 	 */
-	private function get_describe_table_name( string $query ): ?string {
+	private function get_describe_table_reference( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
 			! isset( $tokens[0] )
@@ -4148,19 +4155,23 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[1] ?? null );
-		if ( null === $table_name || ! $this->is_at_mysql_query_end( $tokens, 2 ) ) {
-			return null;
+		$position        = 1;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $table_reference || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			throw new InvalidArgumentException( 'Unsupported DESCRIBE statement.' );
 		}
 
-		return $table_name;
+		return array(
+			'schema' => $this->get_mysql_writable_table_backend_schema( $table_reference, 'DESCRIBE' ),
+			'table'  => $table_reference['table'],
+		);
 	}
 
 	/**
 	 * Parse a supported MySQL SHOW TABLES statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{full: bool, schema: string, database: string, like: string|null}|null SHOW TABLES options, or null when unsupported.
+	 * @return array{full: bool, schema: string, database: string, like: string|null, where: array{column: string, value: string}|null}|null SHOW TABLES options, or null when unsupported.
 	 */
 	private function get_show_tables_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -4221,6 +4232,27 @@ class WP_PostgreSQL_Driver {
 			$position += 2;
 		}
 
+		$where = null;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
+			if ( null !== $like ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
+			}
+
+			$allowed_columns = array(
+				strtolower( 'Tables_in_' . $database_name ) => 'Tables_in_' . $database_name,
+			);
+			if ( $is_full ) {
+				$allowed_columns['table_type'] = 'Table_type';
+			}
+
+			$where = $this->get_mysql_show_exact_where_filter( $tokens, $position, $allowed_columns );
+			if ( null === $where ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
+			}
+
+			$position += 4;
+		}
+
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
@@ -4230,6 +4262,7 @@ class WP_PostgreSQL_Driver {
 			'schema'   => $schema_name,
 			'database' => $database_name,
 			'like'     => $like,
+			'where'    => $where,
 		);
 	}
 
@@ -4682,6 +4715,36 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a safe exact WHERE filter for dynamic SHOW result sets.
+	 *
+	 * @param WP_MySQL_Token[]    $tokens          MySQL lexer token stream.
+	 * @param int                 $position        WHERE token position.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @return array{column: string, value: string}|null Parsed filter, or null when unsupported.
+	 */
+	private function get_mysql_show_exact_where_filter( array $tokens, int $position, array $allowed_columns ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+			|| WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position + 2 ]->id
+			|| ! $this->is_mysql_quoted_text_token( $tokens[ $position + 3 ] )
+			|| ! $this->is_at_mysql_query_end( $tokens, $position + 4 )
+		) {
+			return null;
+		}
+
+		$column = $this->get_mysql_show_output_column_name( $tokens[ $position + 1 ], $allowed_columns );
+		if ( null === $column ) {
+			return null;
+		}
+
+		return array(
+			'column' => $column,
+			'value'  => $tokens[ $position + 3 ]->get_value(),
+		);
+	}
+
+	/**
 	 * Get the MySQL SHOW output column name represented by a token.
 	 *
 	 * @param WP_MySQL_Token      $token           MySQL token.
@@ -4714,8 +4777,16 @@ class WP_PostgreSQL_Driver {
 				WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
 				WP_MySQL_Lexer::CHARSET_SYMBOL,
 				WP_MySQL_Lexer::COLLATION_SYMBOL,
+				WP_MySQL_Lexer::COLUMN_NAME_SYMBOL,
+				WP_MySQL_Lexer::COMMENT_SYMBOL,
 				WP_MySQL_Lexer::DATABASE_SYMBOL,
 				WP_MySQL_Lexer::DEFAULT_SYMBOL,
+				WP_MySQL_Lexer::KEY_SYMBOL,
+				WP_MySQL_Lexer::NULL_SYMBOL,
+				WP_MySQL_Lexer::PRIVILEGES_SYMBOL,
+				WP_MySQL_Lexer::TABLE_SYMBOL,
+				WP_MySQL_Lexer::TYPE_SYMBOL,
+				WP_MySQL_Lexer::VISIBLE_SYMBOL,
 			),
 			true
 		);
@@ -4736,7 +4807,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW COLUMNS/FIELDS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, full: bool, like: string|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
+	 * @return array{schema: string, table: string, full: bool, like: string|null, where: array{column: string, value: string}|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
 	 */
 	private function get_show_columns_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -4821,6 +4892,34 @@ class WP_PostgreSQL_Driver {
 			$position += 2;
 		}
 
+		$where = null;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
+			if ( null !== $like ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
+			}
+
+			$allowed_columns = array(
+				'field'   => 'Field',
+				'type'    => 'Type',
+				'null'    => 'Null',
+				'key'     => 'Key',
+				'default' => 'Default',
+				'extra'   => 'Extra',
+			);
+			if ( $is_full ) {
+				$allowed_columns['collation']  = 'Collation';
+				$allowed_columns['privileges'] = 'Privileges';
+				$allowed_columns['comment']    = 'Comment';
+			}
+
+			$where = $this->get_mysql_show_exact_where_filter( $tokens, $position, $allowed_columns );
+			if ( null === $where ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
+			}
+
+			$position += 4;
+		}
+
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 		}
@@ -4830,6 +4929,7 @@ class WP_PostgreSQL_Driver {
 			'table'  => $table_name,
 			'full'   => $is_full,
 			'like'   => $like,
+			'where'  => $where,
 		);
 	}
 
@@ -4874,7 +4974,7 @@ class WP_PostgreSQL_Driver {
 	 * family so unsupported forms fail before raw backend execution.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, key_name: string|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
+	 * @return array{schema: string, table: string, where: array{column: string, value: string}|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
 	 */
 	private function get_show_index_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -4937,23 +5037,33 @@ class WP_PostgreSQL_Driver {
 
 		$schema_name = $this->get_mysql_writable_table_backend_schema( $table_reference, 'SHOW INDEX' );
 		$table_name  = $table_reference['table'];
-		$key_name    = null;
+		$where       = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
-			$where_column = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-			if (
-				null === $where_column
-				|| 'key_name' !== strtolower( $where_column )
-				|| ! isset( $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
-				|| WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position + 2 ]->id
-				|| (
-					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $position + 3 ]->id
-					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $position + 3 ]->id
+			$where = $this->get_mysql_show_exact_where_filter(
+				$tokens,
+				$position,
+				array(
+					'table'         => 'Table',
+					'non_unique'    => 'Non_unique',
+					'key_name'      => 'Key_name',
+					'seq_in_index'  => 'Seq_in_index',
+					'column_name'   => 'Column_name',
+					'collation'     => 'Collation',
+					'cardinality'   => 'Cardinality',
+					'sub_part'      => 'Sub_part',
+					'packed'        => 'Packed',
+					'null'          => 'Null',
+					'index_type'    => 'Index_type',
+					'comment'       => 'Comment',
+					'index_comment' => 'Index_comment',
+					'visible'       => 'Visible',
+					'expression'    => 'Expression',
 				)
-			) {
+			);
+			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 			}
 
-			$key_name  = $tokens[ $position + 3 ]->get_value();
 			$position += 4;
 		}
 
@@ -4962,9 +5072,9 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return array(
-			'schema'   => $schema_name,
-			'table'    => $table_name,
-			'key_name' => $key_name,
+			'schema' => $schema_name,
+			'table'  => $table_name,
+			'where'  => $where,
 		);
 	}
 
@@ -5393,15 +5503,16 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Execute a MySQL DESCRIBE/DESC statement through PostgreSQL catalogs.
 	 *
+	 * @param string $schema_name         Schema name.
 	 * @param string $table_name          Table name.
 	 * @param int    $fetch_mode          PDO fetch mode.
 	 * @param array  ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed DESCRIBE result rows.
 	 */
-	private function execute_describe_query( string $table_name, $fetch_mode, ...$fetch_mode_args ) {
+	private function execute_describe_query( string $schema_name, string $table_name, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
-		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
 		$cache_key       = $this->get_mysql_introspection_result_cache_key(
 			'describe',
 			$fetch_mode,
@@ -5437,18 +5548,19 @@ class WP_PostgreSQL_Driver {
 	 * @param string      $table_name          Table name.
 	 * @param bool        $is_full             Whether this is SHOW FULL COLUMNS.
 	 * @param string|null $like                Optional MySQL LIKE pattern.
+	 * @param array|null  $where_filter        Optional exact MySQL WHERE filter.
 	 * @param int         $fetch_mode          PDO fetch mode.
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW COLUMNS result rows.
 	 */
-	private function execute_show_columns_query( string $schema_name, string $table_name, bool $is_full, ?string $like, $fetch_mode, ...$fetch_mode_args ) {
+	private function execute_show_columns_query( string $schema_name, string $table_name, bool $is_full, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
 		$cache_key       = $this->get_mysql_introspection_result_cache_key(
 			'show_columns',
 			$fetch_mode,
-			array( $resolved_schema, $table_name, $is_full, $like, $fetch_mode, $fetch_mode_args )
+			array( $resolved_schema, $table_name, $is_full, $like, $where_filter, $fetch_mode, $fetch_mode_args )
 		);
 		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
 			return $this->last_result;
@@ -5463,6 +5575,11 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $like ) {
 			$sql     .= " AND field_name LIKE ? ESCAPE '\\'";
 			$params[] = $like;
+		}
+
+		if ( null !== $where_filter ) {
+			$sql     .= sprintf( ' AND %s = ?', $this->get_show_columns_filter_column_expression( $where_filter['column'] ) );
+			$params[] = $where_filter['value'];
 		}
 
 		$sql .= '
@@ -5480,6 +5597,37 @@ ORDER BY ordinal_position';
 		$this->store_mysql_introspection_result_in_cache( $cache_key );
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Get the SQL expression that backs a MySQL SHOW COLUMNS output column.
+	 *
+	 * @param string $column MySQL output column name.
+	 * @return string SQL expression.
+	 */
+	private function get_show_columns_filter_column_expression( string $column ): string {
+		switch ( $column ) {
+			case 'Field':
+				return 'field_name';
+			case 'Type':
+				return 'column_type';
+			case 'Collation':
+				return 'collation_name';
+			case 'Null':
+				return 'is_nullable';
+			case 'Key':
+				return 'column_key';
+			case 'Default':
+				return 'column_default';
+			case 'Extra':
+				return 'column_extra';
+			case 'Privileges':
+				return "'select,insert,update,references'";
+			case 'Comment':
+				return "''";
+		}
+
+		throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 	}
 
 	/**
@@ -5511,11 +5659,12 @@ ORDER BY ordinal_position';
 	 * @param string      $schema_name     Backend schema name.
 	 * @param string      $database_name   MySQL-facing database name.
 	 * @param string|null $like            Optional MySQL LIKE pattern.
+	 * @param array|null  $where_filter    Optional exact MySQL WHERE filter.
 	 * @param int         $fetch_mode      PDO fetch mode.
 	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW TABLES result rows.
 	 */
-	private function execute_show_tables_query( bool $is_full, string $schema_name, string $database_name, ?string $like, $fetch_mode, ...$fetch_mode_args ) {
+	private function execute_show_tables_query( bool $is_full, string $schema_name, string $database_name, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
 		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $database_name );
 		$sql          = sprintf(
 			'SELECT table_name AS %s%s
@@ -5536,6 +5685,11 @@ ORDER BY ordinal_position';
 			$params[] = $like;
 		}
 
+		if ( null !== $where_filter ) {
+			$sql     .= sprintf( ' AND %s = ?', $this->get_show_tables_filter_column_expression( $where_filter['column'], $table_column ) );
+			$params[] = $where_filter['value'];
+		}
+
 		$sql .= '
 ORDER BY table_name';
 
@@ -5549,6 +5703,25 @@ ORDER BY table_name';
 		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Get the SQL expression that backs a MySQL SHOW TABLES output column.
+	 *
+	 * @param string $column       MySQL output column name.
+	 * @param string $table_column Quoted Tables_in_* output column.
+	 * @return string SQL expression.
+	 */
+	private function get_show_tables_filter_column_expression( string $column, string $table_column ): string {
+		if ( $table_column === $this->connection->quote_identifier( $column ) ) {
+			return 'table_name';
+		}
+
+		if ( 'Table_type' === $column ) {
+			return "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END";
+		}
+
+		throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
 	}
 
 	/**
@@ -6943,19 +7116,19 @@ ORDER BY table_name';
 	 * Execute a MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement through PostgreSQL catalogs.
 	 *
 	 * @param string      $table_name          Table name.
-	 * @param string|null $key_name            Optional MySQL Key_name filter.
+	 * @param array|null  $where_filter        Optional exact MySQL WHERE filter.
 	 * @param int         $fetch_mode          PDO fetch mode.
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW INDEX result rows.
 	 */
-	private function execute_show_index_query( string $schema_name, string $table_name, ?string $key_name, $fetch_mode, ...$fetch_mode_args ) {
+	private function execute_show_index_query( string $schema_name, string $table_name, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
 		$cache_key       = $this->get_mysql_introspection_result_cache_key(
 			'show_index',
 			$fetch_mode,
-			array( $resolved_schema, $table_name, $key_name, $fetch_mode, $fetch_mode_args )
+			array( $resolved_schema, $table_name, $where_filter, $fetch_mode, $fetch_mode_args )
 		);
 		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
 			return $this->last_result;
@@ -6967,10 +7140,13 @@ ORDER BY table_name';
 			$table_name,
 		);
 
-		if ( null !== $key_name ) {
-			$sql     .= '
-WHERE "Key_name" = ?';
-			$params[] = $key_name;
+		if ( null !== $where_filter ) {
+			$sql     .= sprintf(
+				'
+WHERE %s = ?',
+				$this->connection->quote_identifier( $where_filter['column'] )
+			);
+			$params[] = $where_filter['value'];
 		}
 
 		$sql .= '

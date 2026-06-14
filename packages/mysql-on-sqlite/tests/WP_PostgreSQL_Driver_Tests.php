@@ -6459,6 +6459,59 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests DESCRIBE/DESC accepts current database-qualified table references.
+	 */
+	public function test_describe_accepts_current_database_qualification_forms(): void {
+		$cases = array(
+			'DESCRIBE wptests.wptests_options',
+			'DESC public.wptests_options',
+			'DESC `wptests`.`wptests_options`',
+		);
+
+		foreach ( $cases as $query ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			$result = $driver->query( $query );
+
+			$this->assertCount( 4, $result, $query );
+			$this->assertSame( 'option_id', $result[0]->Field, $query );
+			$this->assertSame( 'autoload', $result[3]->Field, $query );
+
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $queries, $query );
+			$this->assertStringContainsString( 'information_schema.columns', $queries[0]['sql'], $query );
+			$this->assertStringNotContainsString( 'DESCRIBE', $queries[0]['sql'], $query );
+			$this->assertStringNotContainsString( 'DESC', $queries[0]['sql'], $query );
+			$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'], $query );
+		}
+	}
+
+	/**
+	 * Tests unsupported DESCRIBE/DESC qualifiers fail before backend execution.
+	 */
+	public function test_describe_unsupported_qualification_does_not_reach_backend(): void {
+		$queries = array(
+			'DESC other_db.wptests_options'           => 'Unsupported DESCRIBE statement.',
+			'DESC information_schema.wptests_options' => 'Unsupported information_schema query.',
+			'DESC wptests.wptests_options.extra'      => 'Unsupported DESCRIBE statement.',
+		);
+
+		foreach ( $queries as $query => $message ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported DESCRIBE statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests SHOW FULL COLUMNS returns MySQL-shaped PostgreSQL catalog rows.
 	 */
 	public function test_show_full_columns_returns_mysql_shaped_catalog_rows(): void {
@@ -6909,34 +6962,93 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported SHOW COLUMNS clauses do not fall through to the backend.
+	 * Tests SHOW COLUMNS WHERE exact filters catalog rows with bound parameters.
 	 */
-	public function test_show_columns_where_clause_does_not_reach_backend(): void {
+	public function test_show_columns_where_exact_filters_catalog_rows(): void {
 		$driver = $this->create_driver();
 		$this->install_information_schema_fixture( $driver );
 
-		try {
-			$driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field = 'option_name'" );
-			$this->fail( 'Expected unsupported SHOW COLUMNS WHERE clause to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported SHOW COLUMNS statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+		$result = $driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field = 'option_name'" );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'option_name', $result[0]->Field );
+		$this->assertSame( 'varchar(191)', $result[0]->Type );
+		$this->assertSame( 6, $driver->get_last_column_count() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'field_name = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW COLUMNS', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'option_name' ), $queries[0]['params'] );
 	}
 
 	/**
-	 * Tests unsupported SHOW FIELDS clauses do not fall through to the backend.
+	 * Tests SHOW FIELDS WHERE exact filters use the SHOW COLUMNS parser.
 	 */
-	public function test_show_fields_where_clause_does_not_reach_backend(): void {
+	public function test_show_fields_where_exact_filters_catalog_rows(): void {
 		$driver = $this->create_driver();
 		$this->install_information_schema_fixture( $driver );
 
-		try {
-			$driver->query( "SHOW FIELDS FROM wptests_options WHERE Field = 'option_name'" );
-			$this->fail( 'Expected unsupported SHOW FIELDS WHERE clause to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported SHOW COLUMNS statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$result = $driver->query( "SHOW FIELDS FROM wptests_options WHERE Type = 'varchar(191)'" );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'option_name', $result[0]->Field );
+		$this->assertSame( 'varchar(191)', $result[0]->Type );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'column_type = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ) );
+		$this->assertSame( array( 'public', 'wptests_options', 'varchar(191)' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW FULL COLUMNS WHERE exact filters full catalog rows.
+	 */
+	public function test_show_full_columns_where_exact_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( "SHOW FULL COLUMNS FROM wptests_options WHERE Field = 'option_name'" );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'option_name', $result[0]->Field );
+		$this->assertSame( 'utf8mb4_unicode_ci', $result[0]->Collation );
+		$this->assertSame( 9, $driver->get_last_column_count() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'field_name = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW FULL COLUMNS', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'option_name' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests unsupported SHOW COLUMNS/FIELDS WHERE forms do not reach the backend.
+	 */
+	public function test_show_columns_where_unsupported_forms_do_not_reach_backend(): void {
+		$queries = array(
+			"SHOW COLUMNS FROM wptests_options WHERE Field <> 'option_name'",
+			'SHOW COLUMNS FROM wptests_options WHERE Field = option_name',
+			"SHOW COLUMNS FROM wptests_options WHERE Unknown = 'option_name'",
+			"SHOW COLUMNS FROM wptests_options WHERE Field = 'option_name' AND Type = 'varchar(191)'",
+			"SHOW FIELDS FROM wptests_options WHERE Privileges = 'select,insert,update,references'",
+			"SHOW COLUMNS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
+			"SHOW FIELDS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
+			"SHOW FULL COLUMNS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW COLUMNS statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW COLUMNS statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 
@@ -7001,6 +7113,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLES WHERE exact filters catalog rows with bound parameters.
+	 */
+	public function test_show_tables_where_exact_filters_catalog_rows(): void {
+		$cases = array(
+			"SHOW TABLES WHERE Tables_in_wptests = 'wptests_options'" => array(
+				'Tables_in_wptests',
+				1,
+				array( 'public', 'wptests_options' ),
+			),
+			"SHOW TABLES FROM wptests WHERE Tables_in_wptests = 'wptests_options'" => array(
+				'Tables_in_wptests',
+				1,
+				array( 'public', 'wptests_options' ),
+			),
+			"SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'" => array(
+				'Tables_in_wptests',
+				2,
+				array( 'public', 'BASE TABLE' ),
+			),
+			"SHOW FULL TABLES FROM wptests WHERE Tables_in_wptests = 'wptests_options'" => array(
+				'Tables_in_wptests',
+				1,
+				array( 'public', 'wptests_options' ),
+			),
+		);
+
+		foreach ( $cases as $query => $expected ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			$tables = $driver->query( $query );
+
+			$this->assertCount( $expected[1], $tables, $query );
+			$this->assertSame( $expected[0], $driver->get_last_column_meta()[0]['name'], $query );
+			$this->assertSame( 'wptests_options', $tables[0]->{$expected[0]}, $query );
+
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $queries, $query );
+			$this->assertStringNotContainsString( 'SHOW TABLES', $queries[0]['sql'], $query );
+			$this->assertSame( $expected[2], $queries[0]['params'], $query );
+		}
+	}
+
+	/**
 	 * Tests unsupported SHOW TABLES database qualifiers fail before backend execution.
 	 */
 	public function test_show_tables_unsupported_database_qualification_does_not_reach_backend(): void {
@@ -7012,6 +7168,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage() );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests unsupported SHOW TABLES WHERE forms do not reach the backend.
+	 */
+	public function test_show_tables_where_unsupported_forms_do_not_reach_backend(): void {
+		$queries = array(
+			"SHOW TABLES WHERE Table_type = 'BASE TABLE'",
+			"SHOW TABLES WHERE Tables_in_wptests LIKE 'wptests_%'",
+			'SHOW TABLES WHERE Tables_in_wptests = wptests_options',
+			"SHOW TABLES WHERE Unknown = 'wptests_options'",
+			"SHOW TABLES WHERE Tables_in_wptests = 'wptests_options' AND Table_type = 'BASE TABLE'",
+			"SHOW TABLES LIKE 'wptests_%' WHERE Tables_in_wptests = 'wptests_options'",
+			"SHOW FULL TABLES LIKE 'wptests_%' WHERE Table_type = 'BASE TABLE'",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW TABLES statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 
@@ -8170,6 +8354,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'WHERE "Key_name" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW KEYS', strtoupper( $queries[0]['sql'] ) );
 		$this->assertSame( array( 'public', 'wptests_options', 'autoload' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW INDEX WHERE exact filters support additional output columns.
+	 */
+	public function test_show_index_where_exact_filters_additional_output_columns(): void {
+		$driver = $this->create_show_index_driver();
+
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_options WHERE Column_name = 'option_name'" );
+
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'option_name', $indexes[0]->Key_name );
+		$this->assertSame( 'option_name', $indexes[0]->Column_name );
+		$this->assertSame( '0', $indexes[0]->Non_unique );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE "Column_name" = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW INDEX', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'option_name' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW KEYS WHERE exact filters support additional output columns.
+	 */
+	public function test_show_keys_where_exact_filters_additional_output_columns(): void {
+		$driver = $this->create_show_index_driver();
+
+		$indexes = $driver->query( "SHOW KEYS FROM wptests_options WHERE Non_unique = '0'" );
+
+		$this->assertCount( 2, $indexes );
+		$this->assertSame( 'PRIMARY', $indexes[0]->Key_name );
+		$this->assertSame( 'option_name', $indexes[1]->Key_name );
+		$this->assertSame( array( '0', '0' ), array( $indexes[0]->Non_unique, $indexes[1]->Non_unique ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE "Non_unique" = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW KEYS', strtoupper( $queries[0]['sql'] ) );
+		$this->assertSame( array( 'public', 'wptests_options', '0' ), $queries[0]['params'] );
 	}
 
 	/**
