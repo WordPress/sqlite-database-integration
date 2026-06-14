@@ -20,16 +20,6 @@ class WP_SQLite_Connection {
 	const DEFAULT_SQLITE_TIMEOUT = 10;
 
 	/**
-	 * The default SQLite journal mode.
-	 */
-	const DEFAULT_SQLITE_JOURNAL_MODE = 'WAL';
-
-	/**
-	 * The default SQLite synchronous setting for WAL mode.
-	 */
-	const DEFAULT_SQLITE_WAL_SYNCHRONOUS = 'NORMAL';
-
-	/**
 	 * The supported SQLite journal modes.
 	 *
 	 * See: https://www.sqlite.org/pragma.html#pragma_journal_mode
@@ -117,9 +107,9 @@ class WP_SQLite_Connection {
 		}
 		$this->pdo->setAttribute( PDO::ATTR_TIMEOUT, $timeout );
 
-		// Configure SQLite journal mode.
+		// Configure SQLite journal mode. Default to WAL for best throughput.
 		$effective_journal_mode = null;
-		$journal_mode           = $options['journal_mode'] ?? self::DEFAULT_SQLITE_JOURNAL_MODE;
+		$journal_mode           = $options['journal_mode'] ?? 'WAL';
 		if ( is_string( $journal_mode ) ) {
 			$journal_mode = strtoupper( $journal_mode );
 		}
@@ -138,17 +128,38 @@ class WP_SQLite_Connection {
 			}
 		}
 
-		// Configure SQLite synchronous setting. In WAL mode, default to NORMAL.
-		// Otherwise, use SQLite's default value.
+		/*
+		 * Configure SQLite synchronous setting. Default to NORMAL for WAL mode.
+		 *
+		 * WAL improves read/write concurrency and "synchronous = NORMAL" avoids
+		 * frequent sync to the main database, which could become a bottleneck.
+		 * In WAL mode, NORMAL is safe and recommended. From the SQLite docs:
+		 *
+		 *   The synchronous=NORMAL setting provides the best balance between
+		 *   performance and safety for most applications running in WAL mode.
+		 *   You lose durability across power lose with synchronous NORMAL in WAL
+		 *   mode, but that is not important for most applications. Transactions
+		 *   are still atomic, consistent, and isolated, which are the most
+		 *   important characteristics in most use cases.
+		 *
+		 * SQLite defaults to "synchronous = FULL" to avoid data corruption with
+		 * other journal modes. With WAL, this is not necessary.
+		 *
+		 * See: https://sqlite.org/pragma.html#pragma_synchronous
+		 */
 		$synchronous = $options['synchronous'] ?? null;
-		if ( null === $synchronous && 'WAL' === $effective_journal_mode ) {
-			$synchronous = self::DEFAULT_SQLITE_WAL_SYNCHRONOUS;
-		} elseif ( is_int( $synchronous ) && isset( self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ] ) ) {
-			$synchronous = self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ];
-		} elseif ( is_string( $synchronous ) ) {
-			$synchronous = strtoupper( $synchronous );
+		if ( isset( $synchronous ) ) {
+			// Validate and normalize explicitly provided synchronous value.
+			if ( is_int( $synchronous ) && isset( self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ] ) ) {
+				$synchronous = self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ];
+			} elseif ( is_string( $synchronous ) ) {
+				$synchronous = strtoupper( $synchronous );
+			}
+		} elseif ( 'WAL' === $effective_journal_mode ) {
+			// Default to NORMAL for WAL mode.
+			$synchronous = 'NORMAL';
 		}
-		if ( $synchronous && in_array( $synchronous, self::SQLITE_SYNCHRONOUS_SETTINGS, true ) ) {
+		if ( in_array( $synchronous, self::SQLITE_SYNCHRONOUS_SETTINGS, true ) ) {
 			$this->query( 'PRAGMA synchronous = ' . $synchronous );
 		}
 	}
