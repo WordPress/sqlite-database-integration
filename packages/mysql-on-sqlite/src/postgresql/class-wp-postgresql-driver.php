@@ -13032,25 +13032,56 @@ WHERE option_name IN (
 			return false;
 		}
 
-		if ( WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
-			return in_array(
-				$tokens[0]->id,
-				array(
-					WP_MySQL_Lexer::ALTER_SYMBOL,
-					WP_MySQL_Lexer::CREATE_SYMBOL,
-					WP_MySQL_Lexer::DESCRIBE_SYMBOL,
-					WP_MySQL_Lexer::DELETE_SYMBOL,
-					WP_MySQL_Lexer::DESC_SYMBOL,
-					WP_MySQL_Lexer::DROP_SYMBOL,
-					WP_MySQL_Lexer::INSERT_SYMBOL,
-					WP_MySQL_Lexer::REPLACE_SYMBOL,
-					WP_MySQL_Lexer::TRUNCATE_SYMBOL,
-					WP_MySQL_Lexer::UPDATE_SYMBOL,
-				),
-				true
-			);
+		if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id ) {
+			return $this->information_schema_select_has_table_reference( $tokens );
 		}
 
+		if ( WP_MySQL_Lexer::SHOW_SYMBOL === $tokens[0]->id ) {
+			return $this->is_information_schema_table_scoped_show_query( $tokens );
+		}
+
+		if (
+			in_array(
+				$tokens[0]->id,
+				array(
+					WP_MySQL_Lexer::EXPLAIN_SYMBOL,
+					WP_MySQL_Lexer::WITH_SYMBOL,
+				),
+				true
+			)
+		) {
+			return true;
+		}
+
+		return in_array(
+			$tokens[0]->id,
+			array(
+				WP_MySQL_Lexer::ALTER_SYMBOL,
+				WP_MySQL_Lexer::ANALYZE_SYMBOL,
+				WP_MySQL_Lexer::CHECK_SYMBOL,
+				WP_MySQL_Lexer::CREATE_SYMBOL,
+				WP_MySQL_Lexer::DESCRIBE_SYMBOL,
+				WP_MySQL_Lexer::DELETE_SYMBOL,
+				WP_MySQL_Lexer::DESC_SYMBOL,
+				WP_MySQL_Lexer::DROP_SYMBOL,
+				WP_MySQL_Lexer::INSERT_SYMBOL,
+				WP_MySQL_Lexer::OPTIMIZE_SYMBOL,
+				WP_MySQL_Lexer::REPLACE_SYMBOL,
+				WP_MySQL_Lexer::REPAIR_SYMBOL,
+				WP_MySQL_Lexer::TRUNCATE_SYMBOL,
+				WP_MySQL_Lexer::UPDATE_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a SELECT under USE information_schema reaches a table source.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the SELECT should be rejected.
+	 */
+	private function information_schema_select_has_table_reference( array $tokens ): bool {
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		if ( null === $statement_end ) {
 			return true;
@@ -13062,6 +13093,33 @@ WHERE option_name IN (
 			1,
 			$statement_end
 		);
+	}
+
+	/**
+	 * Check whether a SHOW query is table-scoped under USE information_schema.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the SHOW query should be rejected.
+	 */
+	private function is_information_schema_table_scoped_show_query( array $tokens ): bool {
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EXTENDED_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::FULL_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[ $position ]->id ) {
+			return true;
+		}
+
+		return isset( $tokens[1] )
+			&& (
+				WP_MySQL_Lexer::INDEX_SYMBOL === $tokens[1]->id
+				|| WP_MySQL_Lexer::INDEXES_SYMBOL === $tokens[1]->id
+			);
 	}
 
 	/**

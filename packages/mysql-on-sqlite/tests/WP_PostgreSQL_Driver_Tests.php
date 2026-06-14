@@ -6935,16 +6935,73 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests information_schema table SELECTs fail closed until routing is implemented.
+	 * Tests information_schema table reads fail closed until routing is implemented.
 	 */
-	public function test_use_statement_information_schema_table_selects_fail_closed(): void {
+	public function test_use_statement_information_schema_table_reads_fail_closed(): void {
 		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_options (option_id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$queries = array(
+			'SELECT * FROM wptests_options',
+			'WITH q AS (SELECT * FROM wptests_options) SELECT * FROM q',
+			'EXPLAIN SELECT * FROM wptests_options',
+		);
+
+		foreach ( $queries as $query ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected information_schema table read to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests information_schema table metadata handlers fail closed until routing is implemented.
+	 */
+	public function test_use_statement_information_schema_table_metadata_handlers_fail_closed(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
 
 		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
 
 		try {
-			$driver->query( 'SELECT * FROM tables' );
-			$this->fail( 'Expected information_schema SELECT to throw.' );
+			$driver->query( 'SHOW COLUMNS FROM wptests_options' );
+			$this->fail( 'Expected information_schema SHOW COLUMNS to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$index_driver = $this->create_show_index_driver();
+
+		$this->assertSame( 0, $index_driver->query( 'USE information_schema' ) );
+
+		try {
+			$index_driver->query( 'SHOW INDEX FROM wptests_options' );
+			$this->fail( 'Expected information_schema SHOW INDEX to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $index_driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests information_schema table administration handlers fail closed until routing is implemented.
+	 */
+	public function test_use_statement_information_schema_table_administration_fails_closed(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_options (option_id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		try {
+			$driver->query( 'CHECK TABLE wptests_options' );
+			$this->fail( 'Expected information_schema table administration to throw.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
