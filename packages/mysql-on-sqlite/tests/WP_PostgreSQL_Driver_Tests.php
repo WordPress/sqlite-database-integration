@@ -311,6 +311,27 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL tokenization reuses the most recent query token stream.
+	 */
+	public function test_mysql_token_cache_reuses_most_recent_query_tokens(): void {
+		$driver     = $this->create_driver();
+		$get_tokens = Closure::bind(
+			function ( string $query ): array {
+				return $this->get_mysql_tokens( $query );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$first_tokens  = $get_tokens( 'SELECT ID FROM wptests_posts WHERE ID = 1' );
+		$second_tokens = $get_tokens( 'SELECT ID FROM wptests_posts WHERE ID = 1' );
+		$third_tokens  = $get_tokens( 'SELECT ID FROM wptests_posts WHERE ID = 2' );
+
+		$this->assertSame( $first_tokens, $second_tokens );
+		$this->assertNotSame( $first_tokens, $third_tokens );
+	}
+
+	/**
 	 * Tests non-strict INSERT normalizes invalid date/time literals using MySQL metadata.
 	 */
 	public function test_non_strict_insert_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
@@ -2143,7 +2164,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))) AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))',
 					'params' => array(),
 				),
 			),
@@ -2174,7 +2195,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE wptests_posts.post_type = \'post\') AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM wptests_posts WHERE wptests_posts.post_type = \'post\'',
 					'params' => array(),
 				),
 			),
@@ -3591,7 +3612,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))) AS "__wp_pg_found_rows"',
+					'sql'    => 'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM wptests_posts WHERE 1 = 1 AND ((wptests_posts.post_type = \'post\' AND (wptests_posts.post_status = \'publish\')))',
 					'params' => array(),
 				),
 			),
@@ -3692,6 +3713,89 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT DISTINCT wptests_users."ID" FROM wptests_users INNER JOIN wptests_usermeta ON (wptests_users."ID" = wptests_usermeta.user_id) WHERE 1 = 1 AND wptests_usermeta.meta_key = \'foo\') AS "__wp_pg_found_rows"',
 			$queries[1]['sql']
 		);
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '2', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests simple SQL_CALC_FOUND_ROWS counts use a direct unordered source count.
+	 */
+	public function test_simple_sql_calc_found_rows_count_uses_direct_unordered_source_count(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_postmeta (post_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_type, post_status, post_date) VALUES (1, \'post\', \'publish\', \'2024-01-01 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_type, post_status, post_date) VALUES (2, \'post\', \'publish\', \'2024-01-02 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_type, post_status, post_date) VALUES (3, \'post\', \'draft\', \'2024-01-03 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (1, \'color\', \'blue\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (1, \'color\', \'green\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (2, \'color\', \'red\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (3, \'color\', \'red\')' );
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE wptests_posts.post_status = 'publish'
+				AND wptests_postmeta.meta_key = 'color'
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 1"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->ID );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM wptests_posts INNER JOIN wptests_postmeta ON (wptests_posts."ID" = wptests_postmeta.post_id) WHERE wptests_posts.post_status = \'publish\' AND wptests_postmeta.meta_key = \'color\'',
+			$queries[1]['sql']
+		);
+		$this->assertStringNotContainsString( 'ORDER BY', $queries[1]['sql'] );
+		$this->assertStringNotContainsString( 'LIMIT', $queries[1]['sql'] );
+		$this->assertStringNotContainsString( 'FROM (SELECT', $queries[1]['sql'] );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '3', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests grouped SQL_CALC_FOUND_ROWS counts keep the cardinality-preserving wrapper.
+	 */
+	public function test_grouped_sql_calc_found_rows_count_keeps_cardinality_preserving_wrapper(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_postmeta (post_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_type, post_status, post_date) VALUES (1, \'post\', \'publish\', \'2024-01-01 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_type, post_status, post_date) VALUES (2, \'post\', \'publish\', \'2024-01-02 00:00:00\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (1, \'color\', \'blue\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (1, \'color\', \'green\')' );
+		$driver->query( 'INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES (2, \'color\', \'red\')' );
+
+		$driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+				INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE wptests_posts.post_status = 'publish'
+				AND wptests_postmeta.meta_key = 'color'
+			GROUP BY wptests_posts.ID
+			HAVING COUNT(*) >= 1
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 1"
+		);
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'SELECT COUNT(*) AS "__wp_pg_found_rows" FROM (SELECT wptests_posts."ID" FROM wptests_posts INNER JOIN wptests_postmeta ON (wptests_posts."ID" = wptests_postmeta.post_id) WHERE wptests_posts.post_status = \'publish\' AND wptests_postmeta.meta_key = \'color\' GROUP BY wptests_posts."ID" HAVING COUNT (*) >= 1) AS "__wp_pg_found_rows"',
+			$queries[1]['sql']
+		);
+		$this->assertStringNotContainsString( 'ORDER BY', $queries[1]['sql'] );
+		$this->assertStringNotContainsString( 'LIMIT', $queries[1]['sql'] );
+		$this->assertStringContainsString( 'FROM (SELECT', $queries[1]['sql'] );
 
 		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
 		$this->assertSame( '2', $found_rows[0]->{'FOUND_ROWS()'} );

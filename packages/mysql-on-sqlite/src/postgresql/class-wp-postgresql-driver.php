@@ -154,6 +154,20 @@ class WP_PostgreSQL_Driver {
 	private $mysql_introspection_result_cache = array();
 
 	/**
+	 * Most recently tokenized MySQL query.
+	 *
+	 * @var string|null
+	 */
+	private $mysql_token_cache_query = null;
+
+	/**
+	 * Token stream for the most recently tokenized MySQL query.
+	 *
+	 * @var WP_MySQL_Token[]
+	 */
+	private $mysql_token_cache_tokens = array();
+
+	/**
 	 * FOUND_ROWS() value for the last SQL_CALC_FOUND_ROWS query.
 	 *
 	 * @var int
@@ -745,6 +759,11 @@ class WP_PostgreSQL_Driver {
 	 * @return string|null PostgreSQL count query, or null when unsupported.
 	 */
 	private function get_sql_calc_found_rows_count_query( string $query ): ?string {
+		$count_query = $this->get_sql_calc_found_rows_direct_count_query( $query );
+		if ( null !== $count_query ) {
+			return $count_query;
+		}
+
 		$select_query = $this->translate_sql_calc_found_rows_count_select_query( $query );
 		if ( null === $select_query ) {
 			return null;
@@ -755,6 +774,77 @@ class WP_PostgreSQL_Driver {
 			'SELECT COUNT(*) AS %1$s FROM (%2$s) AS %1$s',
 			$alias,
 			$select_query
+		);
+	}
+
+	/**
+	 * Build a direct PostgreSQL count query for simple SQL_CALC_FOUND_ROWS SELECTs.
+	 *
+	 * Non-DISTINCT, non-grouped SELECTs have the same FOUND_ROWS cardinality as
+	 * COUNT(*) over the FROM/WHERE source. DISTINCT, GROUP BY, and HAVING shapes
+	 * stay on the derived-table fallback because their projection determines the
+	 * counted row set.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL count query, or null when the wrapped fallback is required.
+	 */
+	private function get_sql_calc_found_rows_direct_count_query( string $query ): ?string {
+		$query = $this->get_sql_calc_found_rows_count_source_query( $query );
+		if ( null === $query ) {
+			return null;
+		}
+
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$projection_start = 1;
+		if ( WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL === $tokens[ $projection_start ]->id ) {
+			++$projection_start;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $projection_start );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		if (
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				$projection_start,
+				$statement_end,
+				array(
+					WP_MySQL_Lexer::DISTINCT_SYMBOL,
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		if ( null === $from_position ) {
+			return null;
+		}
+
+		return sprintf(
+			'SELECT COUNT(*) AS %s %s',
+			$this->connection->quote_identifier( '__wp_pg_found_rows' ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end )
 		);
 	}
 
@@ -10573,8 +10663,17 @@ WHERE option_name IN (
 	 * @return WP_MySQL_Token[] MySQL lexer token stream.
 	 */
 	private function get_mysql_tokens( string $query ): array {
-		$lexer = new WP_MySQL_Lexer( $query );
-		return $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		if ( $query === $this->mysql_token_cache_query ) {
+			return $this->mysql_token_cache_tokens;
+		}
+
+		$lexer  = new WP_MySQL_Lexer( $query );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+
+		$this->mysql_token_cache_query  = $query;
+		$this->mysql_token_cache_tokens = $tokens;
+
+		return $tokens;
 	}
 
 	/**
