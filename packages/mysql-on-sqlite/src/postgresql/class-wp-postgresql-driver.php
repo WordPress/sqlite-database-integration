@@ -539,6 +539,14 @@ class WP_PostgreSQL_Driver {
 			return $result;
 		}
 
+		$create_index_query = $this->translate_mysql_create_index_query( $query );
+		if ( null !== $create_index_query ) {
+			$this->execute_postgresql_statements( $create_index_query['statements'] );
+			$this->apply_mysql_create_index_metadata( $create_index_query['metadata'] );
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
 		$alter_query = $this->translate_mysql_dbdelta_alter_table_query( $query );
 		if ( null !== $alter_query ) {
 			$result = $this->execute_postgresql_statements( $alter_query['statements'] );
@@ -548,14 +556,19 @@ class WP_PostgreSQL_Driver {
 
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
-			$metadata_targets = $this->get_mysql_schema_metadata_drop_targets(
-				$drop_query['tables'],
-				$drop_query['temporary']
-			);
-			$result           = $this->execute_postgresql_statements( $drop_query['statements'] );
+			$this->execute_postgresql_statements( $drop_query['statements'] );
 			$this->maybe_clear_mysql_schema_metadata_table_state( $drop_query['tables'] );
-			$this->delete_mysql_schema_metadata_for_table_targets( $metadata_targets );
-			return $result;
+			$this->delete_mysql_schema_metadata_for_table_targets( $drop_query['metadata_targets'] );
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
+		$drop_index_query = $this->translate_mysql_drop_index_query( $query );
+		if ( null !== $drop_index_query ) {
+			$this->execute_postgresql_statements( $drop_index_query['statements'] );
+			$this->apply_mysql_drop_index_metadata( $drop_index_query['metadata'] );
+			$this->last_result = 0;
+			return $this->last_result;
 		}
 
 		$describe_table_name = $this->get_describe_table_name( $query );
@@ -567,6 +580,8 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $show_tables_query ) {
 			return $this->execute_show_tables_query(
 				$show_tables_query['full'],
+				$show_tables_query['schema'],
+				$show_tables_query['database'],
 				$show_tables_query['like'],
 				$fetch_mode,
 				...$fetch_mode_args
@@ -606,6 +621,7 @@ class WP_PostgreSQL_Driver {
 		$show_index_query = $this->get_show_index_query( $query );
 		if ( null !== $show_index_query ) {
 			return $this->execute_show_index_query(
+				$show_index_query['schema'],
 				$show_index_query['table'],
 				$show_index_query['key_name'],
 				$fetch_mode,
@@ -2514,6 +2530,38 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Store MySQL metadata for a standalone CREATE INDEX statement.
+	 *
+	 * @param array $metadata CREATE INDEX metadata.
+	 */
+	private function apply_mysql_create_index_metadata( array $metadata ): void {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema = $metadata['schema'];
+		$table_name   = $metadata['table'];
+		$index        = $metadata['index'];
+
+		$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
+		$index['ordinal'] = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
+		$this->insert_mysql_index_metadata( $table_schema, $table_name, $index );
+	}
+
+	/**
+	 * Remove MySQL metadata for a standalone DROP INDEX statement.
+	 *
+	 * @param array $metadata DROP INDEX metadata.
+	 */
+	private function apply_mysql_drop_index_metadata( array $metadata ): void {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$this->delete_mysql_index_metadata(
+			$metadata['schema'],
+			$metadata['table'],
+			$metadata['index']
+		);
+	}
+
+	/**
 	 * Insert or replace column metadata.
 	 *
 	 * @param string $table_schema Table schema.
@@ -2695,6 +2743,25 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Get the next stored index ordinal for a table.
+	 *
+	 * @param string $table_schema Table schema.
+	 * @param string $table_name   Table name.
+	 * @return int Next ordinal.
+	 */
+	private function get_next_mysql_index_ordinal( string $table_schema, string $table_name ): int {
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT COALESCE(MAX(index_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		return (int) $stmt->fetchColumn();
+	}
+
+	/**
 	 * Get stored nullable metadata for an index column.
 	 *
 	 * @param string $table_schema Table schema.
@@ -2826,6 +2893,348 @@ class WP_PostgreSQL_Driver {
 
 		$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
 		return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
+	}
+
+	/**
+	 * Translate supported standalone MySQL CREATE INDEX statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL CREATE INDEX query.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when this is not CREATE INDEX.
+	 */
+	private function translate_mysql_create_index_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		$position  = 1;
+		$is_unique = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[ $position ]->id ) {
+			$is_unique = true;
+			++$position;
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::FULLTEXT_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::SPATIAL_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$index_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $index_name ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		++$position;
+		if ( ! $this->consume_mysql_supported_create_index_type( $tokens, $position ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		++$position;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $table_reference ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'CREATE INDEX' );
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		$key_list_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+		if ( null === $key_list_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		$key_parts = $this->parse_mysql_create_index_key_parts(
+			$tokens,
+			$position + 1,
+			$key_list_end - 1,
+			$is_unique
+		);
+		if ( null === $key_parts ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		$position = $key_list_end;
+		if ( ! $this->consume_mysql_supported_create_index_options( $tokens, $position, $statement_end ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+		}
+
+		$table_name       = $table_reference['table'];
+		$postgresql_index = $this->connection->quote_identifier( $table_name . '__' . $index_name );
+		$postgresql_table = $this->get_postgresql_schema_identifier( $table_schema, $table_name );
+
+		return array(
+			'statements' => array(
+				sprintf(
+					'CREATE %sINDEX %s ON %s (%s)',
+					$is_unique ? 'UNIQUE ' : '',
+					$postgresql_index,
+					$postgresql_table,
+					implode( ', ', $key_parts['sql'] )
+				),
+			),
+			'metadata'   => array(
+				'schema' => $table_schema,
+				'table'  => $table_name,
+				'index'  => array(
+					'name'       => $index_name,
+					'non_unique' => $is_unique ? '0' : '1',
+					'index_type' => 'BTREE',
+					'columns'    => $key_parts['metadata'],
+				),
+			),
+		);
+	}
+
+	/**
+	 * Consume a supported MySQL CREATE INDEX USING clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @return bool Whether the optional index type is supported.
+	 */
+	private function consume_mysql_supported_create_index_type( array $tokens, int &$position ): bool {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::USING_SYMBOL !== $tokens[ $position ]->id ) {
+			return true;
+		}
+
+		if ( ! isset( $tokens[ $position + 1 ] ) || ! $this->is_mysql_token_value( $tokens[ $position + 1 ], 'btree' ) ) {
+			return false;
+		}
+
+		$position += 2;
+		return true;
+	}
+
+	/**
+	 * Parse standalone CREATE INDEX key parts.
+	 *
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First key-part token position.
+	 * @param int              $end       Final key-part token position, exclusive.
+	 * @param bool             $is_unique Whether the index is unique.
+	 * @return array{sql: string[], metadata: array[]}|null Key part SQL and metadata, or null when unsupported.
+	 */
+	private function parse_mysql_create_index_key_parts( array $tokens, int $start, int $end, bool $is_unique ): ?array {
+		$key_part_ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $key_part_ranges || array() === $key_part_ranges ) {
+			return null;
+		}
+
+		$sql_parts      = array();
+		$metadata_parts = array();
+		foreach ( $key_part_ranges as $key_part_range ) {
+			$position    = $key_part_range['start'];
+			$column_name = $this->get_mysql_index_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $column_name ) {
+				return null;
+			}
+
+			++$position;
+			$sub_part = null;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				if (
+					! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+					|| ! $this->is_mysql_unsigned_integer_token( $tokens[ $position + 1 ] )
+					|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position + 2 ]->id
+				) {
+					return null;
+				}
+
+				if ( $is_unique ) {
+					return null;
+				}
+
+				$sub_part  = $tokens[ $position + 1 ]->get_value();
+				$position += 3;
+			}
+
+			$direction = '';
+			if (
+				isset( $tokens[ $position ] )
+				&& (
+					WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $position ]->id
+				)
+			) {
+				$direction = ' ' . strtoupper( $tokens[ $position ]->get_value() );
+				++$position;
+			}
+
+			if ( $position !== $key_part_range['end'] ) {
+				return null;
+			}
+
+			$sql_parts[]      = $this->connection->quote_identifier( $column_name ) . $direction;
+			$metadata_parts[] = array(
+				'column_name'  => $column_name,
+				'seq_in_index' => count( $metadata_parts ) + 1,
+				'sub_part'     => $sub_part,
+			);
+		}
+
+		return array(
+			'sql'      => $sql_parts,
+			'metadata' => $metadata_parts,
+		);
+	}
+
+	/**
+	 * Get a column identifier token value from a CREATE INDEX key part.
+	 *
+	 * MySQL permits some unquoted keyword-like names, such as "value" and
+	 * "name", in key parts. Keep this fallback local to index column parsing so
+	 * statement structure keywords are still handled explicitly by the parser.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return string|null Identifier value, or null when unsupported.
+	 */
+	private function get_mysql_index_identifier_token_value( ?WP_MySQL_Token $token ): ?string {
+		$identifier = $this->get_mysql_identifier_token_value( $token );
+		if ( null !== $identifier ) {
+			return $identifier;
+		}
+
+		if ( null === $token ) {
+			return null;
+		}
+
+		if (
+			in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::ASC_SYMBOL,
+					WP_MySQL_Lexer::COMMENT_SYMBOL,
+					WP_MySQL_Lexer::DESC_SYMBOL,
+					WP_MySQL_Lexer::INDEX_SYMBOL,
+					WP_MySQL_Lexer::ON_SYMBOL,
+					WP_MySQL_Lexer::USING_SYMBOL,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		$value = $token->get_value();
+		if ( 1 === preg_match( '/^[A-Za-z_][A-Za-z0-9_]*$/', $value ) ) {
+			return $value;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Consume supported MySQL CREATE INDEX options.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether all remaining options are supported.
+	 */
+	private function consume_mysql_supported_create_index_options( array $tokens, int &$position, int $statement_end ): bool {
+		while ( $position < $statement_end ) {
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::COMMENT_SYMBOL === $tokens[ $position ]->id
+				&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
+			) {
+				$position += 2;
+				continue;
+			}
+
+			$before_type_position = $position;
+			if ( ! $this->consume_mysql_supported_create_index_type( $tokens, $position ) ) {
+				return false;
+			}
+			if ( $position !== $before_type_position ) {
+				continue;
+			}
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VISIBLE_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			return $position === $statement_end;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Resolve the backend schema for a writable MySQL table reference.
+	 *
+	 * @param array  $table_reference Parsed table reference.
+	 * @param string $statement_type  Statement type for error messages.
+	 * @return string Backend schema name.
+	 */
+	private function get_mysql_writable_table_backend_schema( array $table_reference, string $statement_type ): string {
+		$requested_schema = $table_reference['schema'];
+		$table_name       = $table_reference['table'];
+
+		if ( null === $requested_schema ) {
+			if ( 0 === strcasecmp( $this->db_name, 'information_schema' ) ) {
+				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+			}
+
+			return $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		}
+
+		if ( 0 === strcasecmp( $requested_schema, 'information_schema' ) ) {
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+		}
+
+		if (
+			0 === strcasecmp( $requested_schema, $this->main_db_name )
+			|| 0 === strcasecmp( $requested_schema, 'public' )
+		) {
+			return 'public';
+		}
+
+		throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+	}
+
+	/**
+	 * Build a backend identifier in a specific schema when the test backend supports it.
+	 *
+	 * @param string $schema_name Backend schema name.
+	 * @param string $object_name Object name.
+	 * @return string Backend SQL identifier.
+	 */
+	private function get_postgresql_schema_identifier( string $schema_name, string $object_name ): string {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if (
+			'sqlite' === $driver_name
+			&& (
+				'main' === $schema_name
+				|| ( 'public' === $schema_name && ! $this->sqlite_database_schema_exists( 'public' ) )
+			)
+		) {
+			return $this->connection->quote_identifier( $object_name );
+		}
+
+		return $this->connection->quote_identifier( $schema_name ) . '.' . $this->connection->quote_identifier( $object_name );
 	}
 
 	/**
@@ -3206,36 +3615,166 @@ class WP_PostgreSQL_Driver {
 	 * Translate supported DROP TABLE statements and expose dropped table names.
 	 *
 	 * @param string $query MySQL DROP TABLE query.
-	 * @return array{statements: string[], tables: string[], temporary: bool}|null Translation, or null when unsupported.
+	 * @return array{statements: string[], tables: string[], metadata_targets: array[]}|null Translation, or null when unsupported.
 	 */
 	private function translate_mysql_drop_table_query( string $query ): ?array {
-		if ( ! preg_match( '/^\s*DROP\s+(?P<temporary>TEMPORARY\s+)?TABLE\s+(?P<if_exists>IF\s+EXISTS\s+)?(?P<tables>.+?)\s*;?\s*$/is', $query, $matches ) ) {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
 
-		$table_names = $this->parse_mysql_identifier_csv( $matches['tables'] );
-		if ( null === $table_names ) {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
+		}
+
+		$position  = 1;
+		$temporary = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			$temporary = true;
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
 
-		$temporary         = ! empty( $matches['temporary'] );
+		++$position;
+		$if_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$if_exists = true;
+			$position += 2;
+		}
+
+		$table_names       = array();
 		$table_identifiers = array();
-		foreach ( $table_names as $table_name ) {
-			$table_identifiers[] = $temporary
-				? $this->get_temporary_drop_table_identifier( $table_name )
-				: $this->connection->quote_identifier( $table_name );
+		$metadata_targets  = array();
+		while ( $position < $statement_end ) {
+			$reference_start = $position;
+			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			if ( null === $table_reference ) {
+				throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
+			}
+
+			$table_name    = $table_reference['table'];
+			$table_names[] = $table_name;
+
+			if ( $temporary ) {
+				if ( null !== $table_reference['schema'] ) {
+					$this->get_mysql_writable_table_backend_schema( $table_reference, 'DROP TABLE' );
+				}
+
+				$table_identifiers[] = $this->get_temporary_drop_table_identifier( $table_name );
+				foreach ( $this->get_mysql_schema_metadata_drop_targets( array( $table_name ), true ) as $target ) {
+					$metadata_targets[] = $target;
+				}
+			} else {
+				$table_schema        = $this->get_mysql_writable_table_backend_schema( $table_reference, 'DROP TABLE' );
+				$table_identifiers[] = null === $table_reference['schema']
+					? $this->connection->quote_identifier( $table_name )
+					: $this->get_postgresql_schema_identifier( $table_schema, $table_name );
+				$metadata_targets[]  = array(
+					'schema' => $table_schema,
+					'table'  => $table_name,
+				);
+			}
+
+			if ( $position === $reference_start ) {
+				throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
+			}
+
+			if ( $position === $statement_end ) {
+				break;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
+			}
+
+			++$position;
+			if ( $position === $statement_end ) {
+				throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
+			}
+		}
+
+		if ( array() === $table_names ) {
+			throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
+		}
+
+		$statements = array();
+		foreach ( $table_identifiers as $table_identifier ) {
+			$statements[] = sprintf(
+				'DROP TABLE %s%s',
+				$if_exists ? 'IF EXISTS ' : '',
+				$table_identifier
+			);
 		}
 
 		return array(
+			'statements'       => $statements,
+			'tables'           => $table_names,
+			'metadata_targets' => $metadata_targets,
+		);
+	}
+
+	/**
+	 * Translate supported standalone MySQL DROP INDEX statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL DROP INDEX query.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when this is not DROP INDEX.
+	 */
+	private function translate_mysql_drop_index_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[1]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+		}
+
+		$position   = 2;
+		$index_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $index_name ) {
+			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+		}
+
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+		}
+
+		++$position;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $table_reference || $position !== $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+		}
+
+		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
+			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+		}
+
+		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'DROP INDEX' );
+		$table_name   = $table_reference['table'];
+
+		return array(
 			'statements' => array(
-				sprintf(
-					'DROP TABLE %s%s',
-					! empty( $matches['if_exists'] ) ? 'IF EXISTS ' : '',
-					implode( ', ', $table_identifiers )
-				),
+				'DROP INDEX ' . $this->get_postgresql_schema_identifier( $table_schema, $table_name . '__' . $index_name ),
 			),
-			'tables'     => $table_names,
-			'temporary'  => $temporary,
+			'metadata'   => array(
+				'schema' => $table_schema,
+				'table'  => $table_name,
+				'index'  => $index_name,
+			),
 		);
 	}
 
@@ -3621,7 +4160,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW TABLES statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{full: bool, like: string|null}|null SHOW TABLES options, or null when unsupported.
+	 * @return array{full: bool, schema: string, database: string, like: string|null}|null SHOW TABLES options, or null when unsupported.
 	 */
 	private function get_show_tables_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -3641,6 +4180,31 @@ class WP_PostgreSQL_Driver {
 		}
 
 		++$position;
+		$schema_name   = 'public';
+		$database_name = $this->db_name;
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			$database_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $database_name ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
+			}
+
+			if (
+				0 !== strcasecmp( $database_name, $this->main_db_name )
+				&& 0 !== strcasecmp( $database_name, 'public' )
+			) {
+				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
+			}
+
+			$schema_name = 'public';
+			$position   += 2;
+		}
+
 		$like = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
 			if (
@@ -3662,8 +4226,10 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return array(
-			'full' => $is_full,
-			'like' => $like,
+			'full'     => $is_full,
+			'schema'   => $schema_name,
+			'database' => $database_name,
+			'like'     => $like,
 		);
 	}
 
@@ -4308,7 +4874,7 @@ class WP_PostgreSQL_Driver {
 	 * family so unsupported forms fail before raw backend execution.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{table: string, key_name: string|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
+	 * @return array{schema: string, table: string, key_name: string|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
 	 */
 	private function get_show_index_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -4343,13 +4909,35 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-		if ( null === $table_name ) {
+		++$position;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $table_reference ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
-		$position += 2;
-		$key_name  = null;
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			if ( null !== $table_reference['schema'] ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
+			}
+
+			$schema_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $schema_name ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
+			}
+
+			$table_reference['schema'] = $schema_name;
+			$position                 += 2;
+		}
+
+		$schema_name = $this->get_mysql_writable_table_backend_schema( $table_reference, 'SHOW INDEX' );
+		$table_name  = $table_reference['table'];
+		$key_name    = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
 			$where_column = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
 			if (
@@ -4374,6 +4962,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return array(
+			'schema'   => $schema_name,
 			'table'    => $table_name,
 			'key_name' => $key_name,
 		);
@@ -4918,14 +5507,16 @@ ORDER BY ordinal_position';
 	/**
 	 * Execute a MySQL SHOW TABLES statement through PostgreSQL catalogs.
 	 *
-	 * @param bool        $is_full          Whether this is SHOW FULL TABLES.
-	 * @param string|null $like             Optional MySQL LIKE pattern.
-	 * @param int         $fetch_mode       PDO fetch mode.
+	 * @param bool        $is_full         Whether this is SHOW FULL TABLES.
+	 * @param string      $schema_name     Backend schema name.
+	 * @param string      $database_name   MySQL-facing database name.
+	 * @param string|null $like            Optional MySQL LIKE pattern.
+	 * @param int         $fetch_mode      PDO fetch mode.
 	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW TABLES result rows.
 	 */
-	private function execute_show_tables_query( bool $is_full, ?string $like, $fetch_mode, ...$fetch_mode_args ) {
-		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $this->db_name );
+	private function execute_show_tables_query( bool $is_full, string $schema_name, string $database_name, ?string $like, $fetch_mode, ...$fetch_mode_args ) {
+		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $database_name );
 		$sql          = sprintf(
 			'SELECT table_name AS %s%s
 	FROM information_schema.tables
@@ -4938,7 +5529,7 @@ ORDER BY ordinal_position';
 			$this->connection->quote( self::MYSQL_INDEX_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE )
 		);
-		$params       = array( 'public' );
+		$params       = array( $schema_name );
 
 		if ( null !== $like ) {
 			$sql     .= " AND table_name LIKE ? ESCAPE '\\'";
@@ -6357,10 +6948,10 @@ ORDER BY table_name';
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW INDEX result rows.
 	 */
-	private function execute_show_index_query( string $table_name, ?string $key_name, $fetch_mode, ...$fetch_mode_args ) {
+	private function execute_show_index_query( string $schema_name, string $table_name, ?string $key_name, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
 
-		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
 		$cache_key       = $this->get_mysql_introspection_result_cache_key(
 			'show_index',
 			$fetch_mode,

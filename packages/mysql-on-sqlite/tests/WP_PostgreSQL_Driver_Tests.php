@@ -1046,6 +1046,261 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests standalone CREATE INDEX updates PostgreSQL schema and MySQL metadata.
+	 */
+	public function test_standalone_create_index_updates_postgresql_and_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_standalone_index (
+				id int NOT NULL,
+				value varchar(255) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_standalone_index (
+				id int NOT NULL,
+				value varchar(255) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE INDEX idx_value ON wptests_standalone_index (value(16) DESC) COMMENT "Lookup"' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "wptests_standalone_index__idx_value" ON "wptests_standalone_index" ("value" DESC)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_index' );
+		$this->assertSame( array( 'PRIMARY', 'idx_value' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( 'value', $indexes[1]['column_name'] );
+		$this->assertSame( '1', $indexes[1]['non_unique'] );
+		$this->assertSame( 'BTREE', $indexes[1]['index_type'] );
+		$this->assertSame( '16', $indexes[1]['sub_part'] );
+		$this->assertSame( '', $indexes[1]['nullable'] );
+	}
+
+	/**
+	 * Tests standalone CREATE INDEX keeps the index name unqualified for PostgreSQL.
+	 */
+	public function test_standalone_create_index_with_public_schema_qualifies_table_only(): void {
+		$driver     = $this->create_driver();
+		$connection = $driver->get_connection();
+		$pdo        = $connection->get_pdo();
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec(
+			sprintf(
+				'CREATE TABLE %s.%s (%s TEXT)',
+				$connection->quote_identifier( 'public' ),
+				$connection->quote_identifier( 'wptests_public_index' ),
+				$connection->quote_identifier( 'value' )
+			)
+		);
+
+		$translate_create_index = new ReflectionMethod( WP_PostgreSQL_Driver::class, 'translate_mysql_create_index_query' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$translate_create_index->setAccessible( true );
+		}
+
+		$translation = $translate_create_index->invoke(
+			$driver,
+			'CREATE INDEX idx_value ON wptests_public_index (value)'
+		);
+
+		$this->assertIsArray( $translation );
+		$this->assertSame(
+			array(
+				'CREATE INDEX "wptests_public_index__idx_value" ON "public"."wptests_public_index" ("value")',
+			),
+			$translation['statements']
+		);
+	}
+
+	/**
+	 * Tests standalone CREATE UNIQUE INDEX participates in ON DUPLICATE KEY UPDATE translation.
+	 */
+	public function test_standalone_create_unique_index_updates_upsert_conflict_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_standalone_unique_index (slug varchar(191) NOT NULL, value int NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_standalone_unique_index (
+				slug varchar(191) NOT NULL,
+				value int NOT NULL
+			)'
+		);
+		$driver->query( 'CREATE UNIQUE INDEX slug_lookup ON wptests_standalone_unique_index (slug)' );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO wptests_standalone_unique_index (`slug`, `value`)
+				VALUES ('alpha', 1)
+				ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)"
+			)
+		);
+
+		$this->assertSame(
+			'INSERT INTO "wptests_standalone_unique_index" ("slug", "value") VALUES (\'alpha\', 1) ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+	}
+
+	/**
+	 * Tests standalone DROP INDEX removes PostgreSQL schema and MySQL metadata.
+	 */
+	public function test_standalone_drop_index_updates_postgresql_and_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_standalone_drop_index (
+				id int NOT NULL,
+				value varchar(255) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_standalone_drop_index (
+				id int NOT NULL,
+				value varchar(255) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( 'CREATE INDEX idx_value ON wptests_standalone_drop_index (value)' );
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX idx_value ON wptests_standalone_drop_index' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "wptests_standalone_drop_index__idx_value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_drop_index' );
+		$this->assertSame( array( 'PRIMARY' ), array_column( $indexes, 'key_name' ) );
+	}
+
+	/**
+	 * Tests main database-qualified standalone index statements target public table metadata.
+	 */
+	public function test_standalone_index_accepts_main_database_qualified_table_names(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_qualified_index (id int NOT NULL, name varchar(191) NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_qualified_index (
+				id int NOT NULL,
+				name varchar(191) NOT NULL
+			)'
+		);
+
+		$this->assertSame( 0, $driver->query( 'CREATE INDEX idx_name ON wptests.wptests_qualified_index (name)' ) );
+		$this->assertSame(
+			'CREATE INDEX "wptests_qualified_index__idx_name" ON "wptests_qualified_index" ("name")',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+		$this->assertSame(
+			array( 'idx_name' ),
+			array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_qualified_index' ), 'key_name' )
+		);
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX idx_name ON wptests.wptests_qualified_index' ) );
+		$this->assertSame(
+			'DROP INDEX "wptests_qualified_index__idx_name"',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_qualified_index' ) );
+	}
+
+	/**
+	 * Tests main database-qualified DROP TABLE removes tables and MySQL metadata.
+	 */
+	public function test_drop_table_accepts_main_database_qualified_table_names(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_qualified_drop_one (id int NOT NULL, PRIMARY KEY (id))' );
+		$driver->query( 'CREATE TABLE wptests_qualified_drop_two (id int NOT NULL, PRIMARY KEY (id))' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_qualified_drop_one (id int NOT NULL, PRIMARY KEY (id))' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_qualified_drop_two (id int NOT NULL, PRIMARY KEY (id))' );
+
+		$this->assertNotSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_qualified_drop_one' ) );
+		$this->assertNotSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_qualified_drop_two' ) );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'DROP TABLE IF EXISTS wptests.wptests_qualified_drop_one, wptests.wptests_qualified_drop_two' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP TABLE IF EXISTS "wptests_qualified_drop_one"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP TABLE IF EXISTS "wptests_qualified_drop_two"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertFalse( $this->sqlite_table_exists( $driver, 'main', 'wptests_qualified_drop_one' ) );
+		$this->assertFalse( $this->sqlite_table_exists( $driver, 'main', 'wptests_qualified_drop_two' ) );
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_qualified_drop_one' ) );
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_qualified_drop_two' ) );
+	}
+
+	/**
+	 * Tests unsupported standalone index DDL fails before backend execution.
+	 */
+	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
+		$queries = array(
+			'CREATE FULLTEXT INDEX idx_value ON wptests_index_fail (value)',
+			'CREATE INDEX idx_value USING HASH ON wptests_index_fail (value)',
+			'CREATE UNIQUE INDEX idx_value ON wptests_index_fail (value(16))',
+			'CREATE INDEX idx_value ON information_schema.tables (name)',
+			'CREATE INDEX idx_value ON other_db.wptests_index_fail (value)',
+			'DROP INDEX `PRIMARY` ON wptests_index_fail',
+			'DROP INDEX idx_value ON information_schema.tables',
+			'DROP INDEX idx_value ON other_db.wptests_index_fail',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$driver->query( 'CREATE TABLE wptests_index_fail (value varchar(255) NOT NULL)' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported standalone index DDL to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertContains(
+					$e->getMessage(),
+					array(
+						'Unsupported CREATE INDEX statement.',
+						'Unsupported DROP INDEX statement.',
+						'Unsupported information_schema query.',
+					),
+					$query
+				);
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests plain CHAR columns do not route through the MySQL DDL translator.
 	 */
 	public function test_create_table_with_plain_char_and_check_preserves_constraint(): void {
@@ -6719,6 +6974,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLES accepts current database qualification forms.
+	 */
+	public function test_show_tables_accepts_current_database_qualification_forms(): void {
+		$cases = array(
+			'SHOW TABLES FROM wptests'                  => array( 'Tables_in_wptests', 3, array( 'public' ) ),
+			"SHOW TABLES IN `wptests` LIKE 'wptests_%'" => array( 'Tables_in_wptests', 3, array( 'public', 'wptests_%' ) ),
+			"SHOW FULL TABLES FROM wptests LIKE 'wptests_%'" => array( 'Tables_in_wptests', 3, array( 'public', 'wptests_%' ) ),
+		);
+
+		foreach ( $cases as $query => $expected ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+
+			$tables = $driver->query( $query );
+
+			$this->assertCount( $expected[1], $tables, $query );
+			$this->assertSame( $expected[0], $driver->get_last_column_meta()[0]['name'], $query );
+			$this->assertSame( 'wptests_options', $tables[0]->{$expected[0]}, $query );
+
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $queries, $query );
+			$this->assertStringNotContainsString( 'SHOW TABLES', $queries[0]['sql'], $query );
+			$this->assertSame( $expected[2], $queries[0]['params'], $query );
+		}
+	}
+
+	/**
+	 * Tests unsupported SHOW TABLES database qualifiers fail before backend execution.
+	 */
+	public function test_show_tables_unsupported_database_qualification_does_not_reach_backend(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'SHOW TABLES FROM other_db' );
+			$this->fail( 'Expected unsupported SHOW TABLES statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SHOW TABLES hides internal PostgreSQL metadata tables.
 	 */
 	public function test_show_tables_hides_internal_postgresql_metadata_tables(): void {
@@ -7876,11 +8173,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported SHOW KEYS clauses fail before reaching the backend.
+	 * Tests SHOW INDEX-family statements accept current database qualification forms.
 	 */
-	public function test_show_keys_unsupported_syntax_does_not_reach_backend(): void {
+	public function test_show_index_accepts_current_database_qualification_forms(): void {
+		$cases = array(
+			'SHOW INDEX FROM wptests.wptests_options' => array( 'public', 'wptests_options' ),
+			'SHOW INDEXES FROM wptests_options FROM wptests' => array( 'public', 'wptests_options' ),
+			"SHOW KEYS FROM wptests_options IN `wptests` WHERE Key_name = 'autoload'" => array( 'public', 'wptests_options', 'autoload' ),
+		);
+
+		foreach ( $cases as $query => $params ) {
+			$driver = $this->create_show_index_driver();
+
+			$indexes = $driver->query( $query );
+
+			$this->assertNotCount( 0, $indexes, $query );
+			$this->assertSame( 'wptests_options', $indexes[0]->Table, $query );
+
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $queries, $query );
+			$this->assertStringContainsString( 'pg_catalog.pg_index', $queries[0]['sql'], $query );
+			$this->assertSame( $params, $queries[0]['params'], $query );
+		}
+	}
+
+	/**
+	 * Tests unsupported SHOW INDEX-family clauses fail before reaching the backend.
+	 */
+	public function test_show_index_family_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
+			'SHOW INDEX FROM other_db.wptests_options FROM wptests',
 			'SHOW KEYS IN wptests_options',
+			'SHOW KEYS FROM other_db.wptests_options IN wptests',
 			'SHOW KEYS FROM wptests_options WHERE Non_unique = 0',
 			'SHOW KEYS FROM wptests_options LIMIT 1',
 		);
@@ -7890,7 +8214,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 			try {
 				$driver->query( $query );
-				$this->fail( 'Expected unsupported SHOW KEYS statement to throw.' );
+				$this->fail( 'Expected unsupported SHOW INDEX statement to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( 'Unsupported SHOW INDEX statement.', $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
