@@ -551,6 +551,10 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $alter_query ) {
 			$result = $this->execute_postgresql_statements( $alter_query['statements'] );
 			$this->apply_mysql_dbdelta_alter_metadata( $alter_query['metadata'] );
+			if ( 'drop_index' === ( $alter_query['metadata']['operation'] ?? '' ) ) {
+				$this->last_result = 0;
+				return $this->last_result;
+			}
 			return $result;
 		}
 
@@ -2524,6 +2528,11 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
+		if ( 'drop_index' === $metadata['operation'] ) {
+			$this->apply_mysql_drop_index_metadata( $metadata );
+			return;
+		}
+
 		if ( 'set_default' === $metadata['operation'] ) {
 			$this->connection->query(
 				sprintf(
@@ -3371,6 +3380,29 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		if ( preg_match( '/^DROP\s+PRIMARY\s+KEY$/is', $clause ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
+
+		if ( preg_match( '/^DROP\s+(?:INDEX|KEY)\s+(?:`(?P<index_quoted>[^`]+)`|(?P<index>[A-Za-z0-9_]+))$/is', $clause, $drop_index_matches ) ) {
+			$index_name       = '' !== ( $drop_index_matches['index_quoted'] ?? '' ) ? $drop_index_matches['index_quoted'] : $drop_index_matches['index'];
+			$drop_index_query = $this->get_mysql_drop_index_translation(
+				array(
+					'schema' => null,
+					'table'  => $table_name,
+				),
+				$index_name,
+				'ALTER TABLE'
+			);
+
+			$drop_index_query['metadata']['operation'] = 'drop_index';
+			return $drop_index_query;
+		}
+
+		if ( preg_match( '/^DROP\s+(?:INDEX|KEY)\b/is', $clause ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
+
 		if ( preg_match( '/^ALTER\s+COLUMN\s+(?:`(?P<column_quoted>[^`]+)`|(?P<column>[A-Za-z0-9_]+))\s+SET\s+DEFAULT\s+(?P<default>.+)$/is', $clause, $default_matches ) ) {
 			$column_name = '' !== ( $default_matches['column_quoted'] ?? '' ) ? $default_matches['column_quoted'] : $default_matches['column'];
 			$default     = $this->translate_mysql_default_fragment( $default_matches['default'] );
@@ -3770,7 +3802,23 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
 		}
 
-		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'DROP INDEX' );
+		return $this->get_mysql_drop_index_translation( $table_reference, $index_name, 'DROP INDEX' );
+	}
+
+	/**
+	 * Build PostgreSQL DROP INDEX SQL and metadata cleanup target.
+	 *
+	 * @param array{schema: string|null, table: string} $table_reference MySQL table reference.
+	 * @param string                                   $index_name      MySQL index name.
+	 * @param string                                   $statement_type  Statement type for fail-closed error messages.
+	 * @return array{statements: string[], metadata: array} Drop index translation.
+	 */
+	private function get_mysql_drop_index_translation( array $table_reference, string $index_name, string $statement_type ): array {
+		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
+			throw new InvalidArgumentException( 'Unsupported ' . $statement_type . ' statement.' );
+		}
+
+		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, $statement_type );
 		$table_name   = $table_reference['table'];
 
 		return array(

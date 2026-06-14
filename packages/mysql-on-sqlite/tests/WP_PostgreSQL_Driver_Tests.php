@@ -1194,6 +1194,130 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE DROP INDEX removes PostgreSQL schema and MySQL metadata.
+	 */
+	public function test_alter_table_drop_index_updates_postgresql_and_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_alter_drop_index (
+				id int NOT NULL,
+				option_name varchar(191) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_index (
+				id int NOT NULL,
+				option_name varchar(191) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( 'CREATE INDEX option_name ON wptests_alter_drop_index (option_name)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_alter_drop_index DROP INDEX option_name' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "wptests_alter_drop_index__option_name"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_index' );
+		$this->assertSame( array( 'PRIMARY' ), array_column( $indexes, 'key_name' ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP INDEX accepts backticked identifiers.
+	 */
+	public function test_alter_table_drop_index_accepts_backticked_identifiers(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_alter_drop_backtick_index (
+				option_name varchar(191) NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_backtick_index (
+				option_name varchar(191) NOT NULL
+			)'
+		);
+		$driver->query( 'CREATE INDEX option_name ON wptests_alter_drop_backtick_index (option_name)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE `wptests_alter_drop_backtick_index` DROP INDEX `option_name`' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "wptests_alter_drop_backtick_index__option_name"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_backtick_index' ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP KEY removes PostgreSQL schema and MySQL metadata.
+	 */
+	public function test_alter_table_drop_key_updates_postgresql_and_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_alter_drop_key (
+				option_name varchar(191) NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_key (
+				option_name varchar(191) NOT NULL
+			)'
+		);
+		$driver->query( 'CREATE INDEX option_name ON wptests_alter_drop_key (option_name)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_alter_drop_key DROP KEY option_name' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "wptests_alter_drop_key__option_name"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_key' ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE primary-key drop forms fail before backend execution.
+	 */
+	public function test_alter_table_drop_primary_key_forms_do_not_reach_backend(): void {
+		$queries = array(
+			'ALTER TABLE wptests_alter_drop_primary DROP PRIMARY KEY',
+			'ALTER TABLE wptests_alter_drop_primary DROP INDEX PRIMARY',
+			'ALTER TABLE wptests_alter_drop_primary DROP KEY `PRIMARY`',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported ALTER TABLE primary-key drop to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests main database-qualified standalone index statements target public table metadata.
 	 */
 	public function test_standalone_index_accepts_main_database_qualified_table_names(): void {
