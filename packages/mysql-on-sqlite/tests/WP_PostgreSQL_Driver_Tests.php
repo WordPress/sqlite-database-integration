@@ -6584,6 +6584,74 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW COLLATION returns MySQL-shaped static collation rows.
+	 */
+	public function test_show_collation_returns_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SHOW COLLATION' );
+
+		$this->assertSame(
+			array(
+				'binary',
+				'utf8_bin',
+				'utf8_general_ci',
+				'utf8_unicode_ci',
+				'utf8mb4_bin',
+				'utf8mb4_unicode_ci',
+				'utf8mb4_0900_ai_ci',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Collation;
+				},
+				$rows
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame(
+			array( 'Collation', 'Charset', 'Id', 'Default', 'Compiled', 'Sortlen', 'Pad_attribute' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		$like_rows = $driver->query( "SHOW COLLATION LIKE 'utf8%'" );
+		$this->assertCount( 6, $like_rows );
+		$this->assertSame( 'utf8_bin', $like_rows[0]->Collation );
+		$this->assertSame( 'utf8mb4_0900_ai_ci', $like_rows[5]->Collation );
+
+		$where_rows = $driver->query( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
+		$this->assertSame( array( 'utf8_bin' ), array( $where_rows[0]->Collation ) );
+	}
+
+	/**
+	 * Tests SHOW DATABASES and SHOW SCHEMAS return MySQL-shaped database rows.
+	 */
+	public function test_show_databases_and_schemas_return_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$databases = $driver->query( 'SHOW DATABASES' );
+
+		$this->assertEquals(
+			array(
+				(object) array( 'Database' => 'information_schema' ),
+				(object) array( 'Database' => 'wptests' ),
+			),
+			$databases
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array( 'Database' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$like_rows = $driver->query( 'SHOW DATABASES LIKE "w%"' );
+		$this->assertEquals( array( (object) array( 'Database' => 'wptests' ) ), $like_rows );
+
+		$where_rows = $driver->query( 'SHOW DATABASES WHERE `Database` = "information_schema"' );
+		$this->assertEquals( array( (object) array( 'Database' => 'information_schema' ) ), $where_rows );
+
+		$schemas = $driver->query( 'SHOW SCHEMAS' );
+		$this->assertEquals( $databases, $schemas );
+	}
+
+	/**
 	 * Tests Site Health's information_schema.TABLES query returns rows for existing catalog tables only.
 	 */
 	public function test_information_schema_tables_site_health_query_returns_mysql_shape_with_single_quoted_aliases(): void {

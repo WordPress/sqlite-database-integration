@@ -439,6 +439,16 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_show_variables_query( $show_variables_query, $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$show_collation_query = $this->get_show_collation_query( $query );
+		if ( null !== $show_collation_query ) {
+			return $this->execute_show_collation_query( $show_collation_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
+		$show_databases_query = $this->get_show_databases_query( $query );
+		if ( null !== $show_databases_query ) {
+			return $this->execute_show_databases_query( $show_databases_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
 		if ( $this->is_found_rows_query( $query ) ) {
 			$this->last_result      = array( (object) array( 'FOUND_ROWS()' => (string) $this->last_found_rows ) );
 			$this->last_column_meta = array(
@@ -3146,6 +3156,157 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW COLLATION statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{type: string, column: string|null, pattern: string|null}|null SHOW COLLATION options, or null when this is not SHOW COLLATION.
+	 */
+	private function get_show_collation_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::COLLATION_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$allowed_columns = array(
+			'collation'     => 'Collation',
+			'charset'       => 'Charset',
+			'id'            => 'Id',
+			'default'       => 'Default',
+			'compiled'      => 'Compiled',
+			'sortlen'       => 'Sortlen',
+			'pad_attribute' => 'Pad_attribute',
+		);
+		$filter          = $this->get_show_static_result_filter( $tokens, 2, 'Collation', $allowed_columns );
+		if ( null === $filter ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW COLLATION statement.' );
+		}
+
+		return $filter;
+	}
+
+	/**
+	 * Parse a supported MySQL SHOW DATABASES/SHOW SCHEMAS statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{type: string, column: string|null, pattern: string|null}|null SHOW DATABASES options, or null when this is not SHOW DATABASES.
+	 */
+	private function get_show_databases_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| (
+				WP_MySQL_Lexer::DATABASES_SYMBOL !== $tokens[1]->id
+				&& WP_MySQL_Lexer::SCHEMAS_SYMBOL !== $tokens[1]->id
+			)
+		) {
+			return null;
+		}
+
+		$filter = $this->get_show_static_result_filter(
+			$tokens,
+			2,
+			'Database',
+			array( 'database' => 'Database' )
+		);
+		if ( null === $filter ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW DATABASES statement.' );
+		}
+
+		return $filter;
+	}
+
+	/**
+	 * Parse optional LIKE or simple WHERE filters for static SHOW result sets.
+	 *
+	 * @param WP_MySQL_Token[]    $tokens          MySQL lexer token stream.
+	 * @param int                 $position        Current token position.
+	 * @param string              $like_column     Output column filtered by LIKE.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @return array{type: string, column: string|null, pattern: string|null}|null Parsed filter, or null when unsupported.
+	 */
+	private function get_show_static_result_filter(
+		array $tokens,
+		int $position,
+		string $like_column,
+		array $allowed_columns
+	): ?array {
+		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return array(
+				'type'    => 'all',
+				'column'  => null,
+				'pattern' => null,
+			);
+		}
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
+			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
+		) {
+			return array(
+				'type'    => 'like',
+				'column'  => $like_column,
+				'pattern' => $tokens[ $position + 1 ]->get_value(),
+			);
+		}
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+			&& WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position + 2 ]->id
+			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 3 ] )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 4 )
+		) {
+			$column = $this->get_mysql_show_output_column_name( $tokens[ $position + 1 ], $allowed_columns );
+			if ( null === $column ) {
+				return null;
+			}
+
+			return array(
+				'type'    => 'exact',
+				'column'  => $column,
+				'pattern' => $tokens[ $position + 3 ]->get_value(),
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the MySQL SHOW output column name represented by a token.
+	 *
+	 * @param WP_MySQL_Token      $token           MySQL token.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @return string|null Output column name, or null when unsupported.
+	 */
+	private function get_mysql_show_output_column_name( WP_MySQL_Token $token, array $allowed_columns ): ?string {
+		$column = $this->get_mysql_identifier_token_value( $token );
+		if ( null === $column ) {
+			$column = $token->get_value();
+		}
+
+		$column_key = strtolower( $column );
+		return $allowed_columns[ $column_key ] ?? null;
+	}
+
+	/**
+	 * Check whether a MySQL token is a quoted text literal.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is quoted text.
+	 */
+	private function is_mysql_quoted_text_token( WP_MySQL_Token $token ): bool {
+		return WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id
+			|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id;
+	}
+
+	/**
 	 * Parse a supported MySQL SHOW COLUMNS/SHOW FULL COLUMNS statement.
 	 *
 	 * @param string $query MySQL query.
@@ -3531,6 +3692,197 @@ ORDER BY table_name';
 				'native_type'      => 'string',
 			),
 		);
+
+		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
+			$this->last_result = $rows;
+			return $this->last_result;
+		}
+
+		if ( PDO::FETCH_NUM === $fetch_mode ) {
+			$this->last_result = array_map( 'array_values', $rows );
+			return $this->last_result;
+		}
+
+		$this->last_result = array_map(
+			static function ( array $row ) {
+				return (object) $row;
+			},
+			$rows
+		);
+
+		return $this->last_result;
+	}
+
+	/**
+	 * Execute a MySQL SHOW COLLATION statement from static MySQL-compatible metadata.
+	 *
+	 * @param array $show_collation_query SHOW COLLATION options.
+	 * @param int   $fetch_mode           PDO fetch mode.
+	 * @param array ...$fetch_mode_args   Additional fetch mode arguments.
+	 * @return mixed SHOW COLLATION result rows.
+	 */
+	private function execute_show_collation_query( array $show_collation_query, $fetch_mode, ...$fetch_mode_args ) {
+		$rows = $this->filter_mysql_static_show_rows(
+			array(
+				array(
+					'Collation'     => 'binary',
+					'Charset'       => 'binary',
+					'Id'            => '63',
+					'Default'       => 'Yes',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '1',
+					'Pad_attribute' => 'NO PAD',
+				),
+				array(
+					'Collation'     => 'utf8_bin',
+					'Charset'       => 'utf8',
+					'Id'            => '83',
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '1',
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8_general_ci',
+					'Charset'       => 'utf8',
+					'Id'            => '33',
+					'Default'       => 'Yes',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '1',
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8_unicode_ci',
+					'Charset'       => 'utf8',
+					'Id'            => '192',
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '8',
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8mb4_bin',
+					'Charset'       => 'utf8mb4',
+					'Id'            => '46',
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '1',
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8mb4_unicode_ci',
+					'Charset'       => 'utf8mb4',
+					'Id'            => '224',
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '8',
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8mb4_0900_ai_ci',
+					'Charset'       => 'utf8mb4',
+					'Id'            => '255',
+					'Default'       => 'Yes',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => '0',
+					'Pad_attribute' => 'NO PAD',
+				),
+			),
+			$show_collation_query
+		);
+
+		return $this->set_mysql_static_show_result(
+			array( 'Collation', 'Charset', 'Id', 'Default', 'Compiled', 'Sortlen', 'Pad_attribute' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Execute a MySQL SHOW DATABASES/SHOW SCHEMAS statement from emulated database metadata.
+	 *
+	 * @param array $show_databases_query SHOW DATABASES options.
+	 * @param int   $fetch_mode           PDO fetch mode.
+	 * @param array ...$fetch_mode_args   Additional fetch mode arguments.
+	 * @return mixed SHOW DATABASES result rows.
+	 */
+	private function execute_show_databases_query( array $show_databases_query, $fetch_mode, ...$fetch_mode_args ) {
+		$rows = $this->filter_mysql_static_show_rows(
+			array(
+				array( 'Database' => 'information_schema' ),
+				array( 'Database' => $this->db_name ),
+			),
+			$show_databases_query
+		);
+
+		return $this->set_mysql_static_show_result(
+			array( 'Database' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Filter static SHOW rows with a parsed MySQL LIKE or WHERE filter.
+	 *
+	 * @param array[] $rows        Rows keyed by output column names.
+	 * @param array   $show_filter Parsed SHOW filter.
+	 * @return array[] Filtered rows.
+	 */
+	private function filter_mysql_static_show_rows( array $rows, array $show_filter ): array {
+		if ( 'all' === $show_filter['type'] ) {
+			return $rows;
+		}
+
+		$column  = $show_filter['column'];
+		$pattern = $show_filter['pattern'];
+
+		return array_values(
+			array_filter(
+				$rows,
+				function ( array $row ) use ( $show_filter, $column, $pattern ): bool {
+					if ( null === $column || null === $pattern || ! array_key_exists( $column, $row ) ) {
+						return false;
+					}
+
+					if ( 'like' === $show_filter['type'] ) {
+						return $this->matches_mysql_like_pattern( (string) $row[ $column ], $pattern );
+					}
+
+					return 0 === strcasecmp( (string) $row[ $column ], $pattern );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Store static SHOW result rows using common MySQL-shaped metadata.
+	 *
+	 * @param string[] $columns         Result column names.
+	 * @param array[]  $rows            Rows keyed by column names.
+	 * @param int      $fetch_mode      PDO fetch mode.
+	 * @param array    ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed Result rows formatted for the requested fetch mode.
+	 */
+	private function set_mysql_static_show_result( array $columns, array $rows, $fetch_mode, ...$fetch_mode_args ) {
+		$this->last_column_meta = array();
+		foreach ( $columns as $column ) {
+			$this->last_column_meta[] = array(
+				'name'             => $column,
+				'table'            => '',
+				'mysqli:orgtable'  => '',
+				'mysqli:orgname'   => $column,
+				'mysqli:db'        => $this->db_name,
+				'mysqli:charsetnr' => 45,
+				'mysqli:flags'     => 0,
+				'mysqli:type'      => 253,
+				'len'              => 1024,
+				'precision'        => 0,
+				'native_type'      => 'string',
+			);
+		}
 
 		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
 			$this->last_result = $rows;
