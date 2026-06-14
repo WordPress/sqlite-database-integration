@@ -3810,10 +3810,10 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Parse a supported MySQL SHOW INDEX/SHOW INDEXES statement.
+	 * Parse a supported MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{table: string, key_name: string|null}|null SHOW INDEX options, or null when unsupported.
+	 * @return array{table: string, key_name: string|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
 	 */
 	private function get_show_index_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -3824,17 +3824,18 @@ class WP_PostgreSQL_Driver {
 		if (
 			WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[1]->id
 			&& WP_MySQL_Lexer::INDEXES_SYMBOL !== $tokens[1]->id
+			&& WP_MySQL_Lexer::KEYS_SYMBOL !== $tokens[1]->id
 		) {
 			return null;
 		}
 
 		if ( ! isset( $tokens[2] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[2]->id ) {
-			return null;
+			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
 		$table_name = $this->get_mysql_identifier_token_value( $tokens[3] ?? null );
 		if ( null === $table_name ) {
-			return null;
+			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
 		$position = 4;
@@ -3851,7 +3852,7 @@ class WP_PostgreSQL_Driver {
 					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $position + 3 ]->id
 				)
 			) {
-				return null;
+				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 			}
 
 			$key_name  = $tokens[ $position + 3 ]->get_value();
@@ -3859,7 +3860,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return null;
+			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
 		return array(
@@ -5309,7 +5310,7 @@ ORDER BY table_name';
 	}
 
 	/**
-	 * Execute a MySQL SHOW INDEX/SHOW INDEXES statement through PostgreSQL catalogs.
+	 * Execute a MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement through PostgreSQL catalogs.
 	 *
 	 * @param string      $table_name          Table name.
 	 * @param string|null $key_name            Optional MySQL Key_name filter.
@@ -5971,7 +5972,7 @@ WHERE 1 = 1',
 	}
 
 	/**
-	 * Get the PostgreSQL catalog query backing MySQL SHOW INDEX/SHOW INDEXES.
+	 * Get the PostgreSQL catalog query backing MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS.
 	 *
 	 * @return string SQL query.
 	 */
@@ -13599,6 +13600,7 @@ WHERE option_name IN (
 			&& (
 				WP_MySQL_Lexer::INDEX_SYMBOL === $tokens[1]->id
 				|| WP_MySQL_Lexer::INDEXES_SYMBOL === $tokens[1]->id
+				|| WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[1]->id
 			);
 	}
 

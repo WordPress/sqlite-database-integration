@@ -7258,12 +7258,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 0, $index_driver->query( 'USE information_schema' ) );
 
-		try {
-			$index_driver->query( 'SHOW INDEX FROM wptests_options' );
-			$this->fail( 'Expected information_schema SHOW INDEX to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
-			$this->assertSame( array(), $index_driver->get_last_postgresql_queries() );
+		foreach ( array( 'SHOW INDEX FROM wptests_options', 'SHOW KEYS FROM wptests_options' ) as $query ) {
+			try {
+				$index_driver->query( $query );
+				$this->fail( 'Expected information_schema SHOW INDEX to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $query );
+				$this->assertSame( array(), $index_driver->get_last_postgresql_queries(), $query );
+			}
 		}
 
 		$show_create_driver = $this->create_driver();
@@ -7670,6 +7672,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW KEYS returns the same MySQL-shaped rows as SHOW INDEX.
+	 */
+	public function test_show_keys_returns_same_catalog_rows_as_show_index(): void {
+		$index_driver = $this->create_show_index_driver();
+		$keys_driver  = $this->create_show_index_driver();
+
+		$indexes = $index_driver->query( 'SHOW INDEX FROM `wptests_options`;' );
+		$keys    = $keys_driver->query( 'SHOW KEYS FROM `wptests_options`;' );
+
+		$this->assertEquals( $indexes, $keys );
+		$this->assertSame( 'SHOW KEYS FROM `wptests_options`;', $keys_driver->get_last_mysql_query() );
+		$this->assertSame( 15, $keys_driver->get_last_column_count() );
+		$this->assertSame( 'Table', $keys_driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 'Key_name', $keys_driver->get_last_column_meta()[2]['name'] );
+
+		$queries = $keys_driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW KEYS', strtoupper( $queries[0]['sql'] ) );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+	}
+
+	/**
 	 * Tests SHOW INDEXES WHERE Key_name filters on normalized MySQL index names.
 	 */
 	public function test_show_indexes_where_key_name_filters_catalog_rows(): void {
@@ -7687,6 +7712,49 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'WHERE "Key_name" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW INDEXES', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'autoload' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW KEYS WHERE Key_name uses the SHOW INDEX key-name filter.
+	 */
+	public function test_show_keys_where_key_name_filters_catalog_rows(): void {
+		$driver = $this->create_show_index_driver();
+
+		$indexes = $driver->query( "SHOW KEYS FROM wptests_options WHERE Key_name = 'autoload'" );
+
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'autoload', $indexes[0]->Key_name );
+		$this->assertSame( 'autoload', $indexes[0]->Column_name );
+		$this->assertSame( '1', $indexes[0]->Non_unique );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE "Key_name" = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW KEYS', strtoupper( $queries[0]['sql'] ) );
+		$this->assertSame( array( 'public', 'wptests_options', 'autoload' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests unsupported SHOW KEYS clauses fail before reaching the backend.
+	 */
+	public function test_show_keys_unsupported_syntax_does_not_reach_backend(): void {
+		$queries = array(
+			'SHOW KEYS IN wptests_options',
+			'SHOW KEYS FROM wptests_options WHERE Non_unique = 0',
+			'SHOW KEYS FROM wptests_options LIMIT 1',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_show_index_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW KEYS statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW INDEX statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
