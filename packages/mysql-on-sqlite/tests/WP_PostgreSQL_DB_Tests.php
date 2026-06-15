@@ -7,6 +7,64 @@ use PHPUnit\Framework\TestCase;
  */
 class WP_PostgreSQL_DB_Tests extends TestCase {
 	/**
+	 * Tests the constructor registers itself globally and normalizes charset state.
+	 */
+	public function test_constructor_registers_global_wpdb_and_defaults_empty_charset(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	class wpdb {
+		public static $next_charset = '';
+
+		public $charset;
+		public $parent_args;
+
+		public function __construct( $dbuser, $dbpassword, $dbname, $dbhost ) {
+			$this->charset     = self::$next_charset;
+			$this->parent_args = array( $dbuser, $dbpassword, $dbname, $dbhost );
+		}
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+wpdb::$next_charset = '';
+$default_db          = new WP_PostgreSQL_DB( 'pg_user', 'pg_pass', 'pg_db', 'pg_host' );
+$default_is_global  = $GLOBALS['wpdb'] === $default_db;
+
+wpdb::$next_charset = 'latin1';
+$latin_db           = new WP_PostgreSQL_DB( 'latin_user', 'latin_pass', 'latin_db', 'latin_host' );
+$latin_is_global    = $GLOBALS['wpdb'] === $latin_db;
+
+wp_postgresql_db_test_respond(
+	array(
+		'default_is_global' => $default_is_global,
+		'default_args'      => $default_db->parent_args,
+		'default_charset'   => $default_db->charset,
+		'latin_is_global'   => $latin_is_global,
+		'latin_args'        => $latin_db->parent_args,
+		'latin_charset'     => $latin_db->charset,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'default_is_global' => true,
+				'default_args'      => array( 'pg_user', 'pg_pass', 'pg_db', 'pg_host' ),
+				'default_charset'   => 'utf8mb4',
+				'latin_is_global'   => true,
+				'latin_args'        => array( 'latin_user', 'latin_pass', 'latin_db', 'latin_host' ),
+				'latin_charset'     => 'latin1',
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests WordPress core's expected wpdb capability checks.
 	 */
 	public function test_has_cap_matches_wordpress_db_expectations(): void {
