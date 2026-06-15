@@ -11321,6 +11321,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( array( 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
 		$this->assertSame( '6', $tables[0]->Auto_increment );
 
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Auto_increment >= 1' );
+
+		$this->assertSame( array( 'wptests_options', 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+
+		$tables = $driver->query( "SHOW TABLE STATUS WHERE Name = 'wptests_posts' OR Auto_increment IS NULL" );
+
+		$this->assertSame( array( 'wptests_plain', 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+
+		$tables = $driver->query( "SHOW TABLE STATUS WHERE SUBSTR(Name, 9, 7) = 'options'" );
+
+		$this->assertSame( array( 'wptests_options' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+
 		$tables = $driver->query( "SHOW TABLE STATUS WHERE Name LIKE 'wptests_%'" );
 
 		$this->assertSame(
@@ -11343,7 +11355,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$unsupported_queries = array(
 			'SHOW TABLE STATUS WHERE Name LIKE wptests_%',
 			'SHOW TABLE STATUS WHERE Name = wptests_options',
-			'SHOW TABLE STATUS WHERE `Auto_increment` >= 1',
 			'SHOW TABLE STATUS FROM other_db',
 		);
 
@@ -11661,8 +11672,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
+		$non_zero_values = $driver->query( "SHOW STATUS WHERE Value <> '0'" );
+		$this->assertSame(
+			array(
+				'Connections',
+				'Threads_connected',
+				'Threads_created',
+				'Threads_running',
+			),
+			array_map(
+				static function ( $row ): string {
+					return $row->Variable_name;
+				},
+				$non_zero_values
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$thread_or_one_values = $driver->query( "SHOW STATUS WHERE Variable_name LIKE 'Threads_%' OR Value = '1'" );
+		$this->assertSame(
+			array(
+				'Connections',
+				'Threads_cached',
+				'Threads_connected',
+				'Threads_created',
+				'Threads_running',
+			),
+			array_map(
+				static function ( $row ): string {
+					return $row->Variable_name;
+				},
+				$thread_or_one_values
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
 		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '3', $found_rows[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( '5', $found_rows[0]->{'FOUND_ROWS()'} );
 	}
 
 	/**
@@ -11671,8 +11717,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_show_status_clauses_fail_closed(): void {
 		$queries = array(
 			"SHOW STATUS WHERE Unknown = '0'",
-			"SHOW STATUS WHERE Value <> '0'",
-			"SHOW STATUS WHERE Variable_name LIKE 'Threads_%' OR Value = '1'",
 			'SHOW STATUS LIMIT 1',
 			'SHOW STATUS LIKE Threads_%',
 		);
@@ -11858,13 +11902,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$collation_rows = $driver->query( "SHOW CHARACTER SET WHERE `Default collation` = 'binary'" );
 		$this->assertSame( array( 'binary' ), array( $collation_rows[0]->Charset ) );
 
-		try {
-			$driver->query( "SHOW CHARACTER SET WHERE 'Charset' = 'utf8mb4'" );
-			$this->fail( 'Expected quoted SHOW CHARACTER SET WHERE left operand to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported SHOW CHARACTER SET statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+		$where_expression_rows = $driver->query( "SHOW CHARACTER SET WHERE Charset <> 'binary' AND Maxlen >= 4" );
+		$this->assertSame( array( 'utf8mb4' ), array( $where_expression_rows[0]->Charset ) );
+
+		$literal_left_rows = $driver->query( "SHOW CHARACTER SET WHERE 'Charset' = 'utf8mb4'" );
+		$this->assertSame( array(), $literal_left_rows );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**
@@ -11906,13 +11949,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$where_rows = $driver->query( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
 		$this->assertSame( array( 'utf8_bin' ), array( $where_rows[0]->Collation ) );
 
-		try {
-			$driver->query( "SHOW COLLATION WHERE 'Collation' = 'utf8_bin'" );
-			$this->fail( 'Expected quoted SHOW COLLATION WHERE left operand to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported SHOW COLLATION statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+		$where_expression_rows = $driver->query( "SHOW COLLATION WHERE Collation LIKE 'utf8%' AND Charset = 'utf8'" );
+		$this->assertSame(
+			array( 'utf8_bin', 'utf8_general_ci', 'utf8_unicode_ci' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Collation;
+				},
+				$where_expression_rows
+			)
+		);
+
+		$not_equal_rows = $driver->query( "SHOW COLLATION WHERE Collation <> 'binary' AND Charset = 'utf8mb4'" );
+		$this->assertSame(
+			array( 'utf8mb4_bin', 'utf8mb4_unicode_ci', 'utf8mb4_0900_ai_ci' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Collation;
+				},
+				$not_equal_rows
+			)
+		);
+
+		$literal_left_rows = $driver->query( "SHOW COLLATION WHERE 'Collation' = 'utf8_bin'" );
+		$this->assertSame( array(), $literal_left_rows );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**
@@ -11942,19 +12003,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$where_rows = $driver->query( "SHOW DATABASES WHERE Database = 'information_schema'" );
 		$this->assertEquals( array( (object) array( 'Database' => 'information_schema' ) ), $where_rows );
 
-		$unsupported_where_queries = array(
-			"SHOW DATABASES WHERE 'Database' = 'information_schema'",
-			'SHOW DATABASES WHERE "Database" = \'information_schema\'',
-		);
-		foreach ( $unsupported_where_queries as $query ) {
-			try {
-				$driver->query( $query );
-				$this->fail( 'Expected quoted SHOW DATABASES WHERE left operand to throw.' );
-			} catch ( InvalidArgumentException $e ) {
-				$this->assertSame( 'Unsupported SHOW DATABASES statement.', $e->getMessage() );
-				$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-			}
-		}
+		$where_like_rows = $driver->query( "SHOW DATABASES WHERE Database LIKE 'info%'" );
+		$this->assertEquals( array( (object) array( 'Database' => 'information_schema' ) ), $where_like_rows );
+
+		$where_or_rows = $driver->query( "SHOW DATABASES WHERE Database = 'wptests' OR Database = 'information_schema'" );
+		$this->assertEquals( $databases, $where_or_rows );
+
+		$this->assertSame( array(), $driver->query( "SHOW DATABASES WHERE 'Database' = 'information_schema'" ) );
+		$this->assertSame( array(), $driver->query( 'SHOW DATABASES WHERE "Database" = \'information_schema\'' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$schemas = $driver->query( 'SHOW SCHEMAS' );
 		$this->assertEquals( $databases, $schemas );
@@ -14732,6 +14789,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$value_not_equal = $driver->query( "SHOW VARIABLES WHERE Value <> 'utf8mb4'" );
+		$this->assertNotSame( array(), $value_not_equal );
+		foreach ( $value_not_equal as $row ) {
+			$this->assertNotSame( 'utf8mb4', $row->Value );
+		}
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$or_filter = $driver->query( "SHOW VARIABLES WHERE Variable_name LIKE 'character_set_%' OR Value = 'utf8mb4'" );
+		$this->assertSame(
+			array(
+				'character_set_client',
+				'character_set_connection',
+				'character_set_results',
+				'character_set_database',
+				'character_set_server',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Variable_name;
+				},
+				$or_filter
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**
@@ -14743,8 +14825,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		foreach (
 			array(
 				"SHOW VARIABLES WHERE Unknown = 'utf8mb4'",
-				"SHOW VARIABLES WHERE Value <> 'utf8mb4'",
-				"SHOW VARIABLES WHERE Variable_name LIKE 'character_set_%' OR Value = 'utf8mb4'",
 			) as $query
 		) {
 			try {
