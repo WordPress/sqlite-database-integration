@@ -1132,6 +1132,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests schema-qualified install-translated CREATE INDEX IF NOT EXISTS DDL updates MySQL metadata.
+	 */
+	public function test_standalone_create_index_accepts_schema_qualified_install_translated_if_not_exists_quoted_identifiers(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_schema_quoted_index (
+				option_name varchar(191) NOT NULL,
+				option_value varchar(255) NOT NULL,
+				PRIMARY KEY (option_name)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_schema_quoted_index (
+				option_name varchar(191) NOT NULL,
+				option_value varchar(255) NOT NULL,
+				PRIMARY KEY (option_name)
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE INDEX IF NOT EXISTS "wptests_schema_quoted_index__option_value" ON "wptests"."wptests_schema_quoted_index" ("option_value")' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX IF NOT EXISTS "wptests_schema_quoted_index__option_value" ON "wptests_schema_quoted_index" ("option_value")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_schema_quoted_index' );
+		$this->assertSame( array( 'PRIMARY', 'option_value' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( 'option_value', $indexes[1]['column_name'] );
+		$this->assertSame( '1', $indexes[1]['non_unique'] );
+		$this->assertSame( 'BTREE', $indexes[1]['index_type'] );
+	}
+
+	/**
 	 * Tests standalone CREATE INDEX keeps the index name unqualified for PostgreSQL.
 	 */
 	public function test_standalone_create_index_with_public_schema_qualifies_table_only(): void {
