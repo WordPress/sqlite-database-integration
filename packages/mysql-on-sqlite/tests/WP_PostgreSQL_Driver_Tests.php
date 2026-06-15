@@ -1635,6 +1635,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests standalone CREATE UNIQUE INDEX supports MySQL prefix key parts.
+	 */
+	public function test_standalone_create_unique_prefix_index_updates_postgresql_and_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_standalone_prefix_unique (
+				value varchar(255) NOT NULL,
+				label varchar(255) NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_standalone_prefix_unique (
+				value varchar(255) NOT NULL,
+				label varchar(255) NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE UNIQUE INDEX value_prefix ON wptests_standalone_prefix_unique (value(16))' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE UNIQUE INDEX "wptests_standalone_prefix_unique__value_prefix" ON "wptests_standalone_prefix_unique" (SUBSTR(CAST("value" AS text), 1, 16))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_prefix_unique' );
+		$this->assertSame( array( 'value_prefix' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( 'value', $indexes[0]['column_name'] );
+		$this->assertSame( '0', $indexes[0]['non_unique'] );
+		$this->assertSame( '16', $indexes[0]['sub_part'] );
+	}
+
+	/**
 	 * Tests standalone CREATE/DROP INDEX ignore supported MySQL-only options.
 	 */
 	public function test_standalone_create_and_drop_index_ignore_supported_mysql_options(): void {
@@ -2291,7 +2331,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
 			'CREATE INDEX idx_value USING HASH ON wptests_index_fail (value)',
-			'CREATE UNIQUE INDEX idx_value ON wptests_index_fail (value(16))',
 			'CREATE INDEX idx_value ON wptests_index_fail (value) KEY_BLOCK_SIZE=bad',
 			'CREATE INDEX idx_value ON wptests_index_fail (value) ALGORITHM=INSTANT',
 			'CREATE INDEX idx_value ON wptests_index_fail (value) LOCK=UNKNOWN',
@@ -3733,23 +3772,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests prefix unique duplicate-key arbiters fail closed.
+	 * Tests prefix unique duplicate-key arbiters use PostgreSQL expression conflicts.
 	 */
-	public function test_prefix_unique_on_duplicate_key_update_returns_null(): void {
+	public function test_prefix_unique_on_duplicate_key_update_uses_expression_conflict_target(): void {
 		$driver = $this->create_driver();
 
-		$this->install_prefix_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE prefix_unique_upsert (
+				slug varchar(255) NOT NULL,
+				value text NOT NULL,
+				UNIQUE KEY slug_prefix (slug(10))
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+		$driver->query( "INSERT INTO prefix_unique_upsert (`slug`, `value`) VALUES ('existing-slug-one', 'old')" );
 
-		$upsert = "INSERT INTO `prefix_ambiguous` (`id`, `slug`, `value`) VALUES (2, 'existing-slug', 'new')
+		$upsert = "INSERT INTO `prefix_unique_upsert` (`slug`, `value`) VALUES ('existing-slug-two', 'new')
 			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
-		$this->assertNull(
-			$this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$upsert
-			)
+		$this->assertSame( 1, $driver->query( $upsert ) );
+
+		$this->assertSame(
+			'INSERT INTO "prefix_unique_upsert" ("slug", "value") VALUES (\'existing-slug-two\', \'new\') ON CONFLICT (SUBSTR(CAST("slug" AS text), 1, 10)) DO UPDATE SET "value" = excluded."value"',
+			$driver->get_last_postgresql_queries()[0]['sql']
 		);
+		$rows = $driver->query( 'SELECT slug, value FROM prefix_unique_upsert' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'existing-slug-one', $rows[0]->slug );
+		$this->assertSame( 'new', $rows[0]->value );
 	}
 
 	/**

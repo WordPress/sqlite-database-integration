@@ -361,7 +361,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$if_not_exists ? 'IF NOT EXISTS ' : '',
 			$this->quote_identifier( $table_name . '__' . $index_name ),
 			$this->quote_identifier( $table_name ),
-			implode( ', ', $this->quote_key_parts( $table_constraint ) )
+			implode( ', ', $this->quote_key_parts( $table_constraint, $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) )
 		);
 	}
 
@@ -446,18 +446,50 @@ class WP_PostgreSQL_Create_Table_Translator {
 	/**
 	 * Get quoted key parts from a MySQL key constraint.
 	 *
-	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @param WP_Parser_Node $table_constraint       Table constraint node.
+	 * @param bool           $use_prefix_expressions Whether explicit key-part prefix lengths should become expressions.
 	 * @return string[] Quoted PostgreSQL column names.
 	 */
-	private function quote_key_parts( WP_Parser_Node $table_constraint ): array {
-		return array_map( array( $this, 'quote_identifier' ), $this->get_key_parts( $table_constraint ) );
+	private function quote_key_parts( WP_Parser_Node $table_constraint, bool $use_prefix_expressions = false ): array {
+		$quoted_parts = array();
+
+		foreach ( $table_constraint->get_descendant_nodes( 'keyPart' ) as $key_part ) {
+			$column_name = $this->get_identifier_value( $key_part->get_first_child_node( 'identifier' ) );
+			$sub_part    = $this->get_field_length( $key_part );
+			if ( $use_prefix_expressions && null !== $sub_part ) {
+				$quoted_parts[] = $this->get_prefix_key_part_expression_sql( $column_name, $sub_part );
+			} else {
+				$quoted_parts[] = $this->quote_identifier( $column_name );
+			}
+		}
+
+		if ( empty( $quoted_parts ) ) {
+			throw new InvalidArgumentException( 'Index definition does not contain any key parts.' );
+		}
+
+		return $quoted_parts;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL prefix key part.
+	 *
+	 * @param string $column_name Column name.
+	 * @param int    $sub_part    Prefix length.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_prefix_key_part_expression_sql( string $column_name, int $sub_part ): string {
+		return sprintf(
+			'SUBSTR(CAST(%s AS text), 1, %d)',
+			$this->quote_identifier( $column_name ),
+			$sub_part
+		);
 	}
 
 	/**
 	 * Get key part column names.
 	 *
-	 * Prefix lengths, e.g. meta_key(191), are deliberately ignored for the
-	 * initial WordPress install slice.
+	 * Prefix lengths are handled by quote_key_parts() when a PostgreSQL index
+	 * expression is needed; this helper returns only the underlying names.
 	 *
 	 * @param WP_Parser_Node $table_constraint Table constraint node.
 	 * @return string[] Column names.

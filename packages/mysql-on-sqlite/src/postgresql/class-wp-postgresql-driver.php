@@ -4121,10 +4121,6 @@ class WP_PostgreSQL_Driver {
 					return null;
 				}
 
-				if ( $is_unique ) {
-					return null;
-				}
-
 				$sub_part  = $tokens[ $position + 1 ]->get_value();
 				$position += 3;
 			}
@@ -4145,7 +4141,7 @@ class WP_PostgreSQL_Driver {
 				return null;
 			}
 
-			$sql_parts[]      = $this->connection->quote_identifier( $column_name ) . $direction;
+			$sql_parts[]      = $this->get_mysql_index_key_part_sql( $column_name, $is_unique ? $sub_part : null ) . $direction;
 			$metadata_parts[] = array(
 				'column_name'  => $column_name,
 				'seq_in_index' => count( $metadata_parts ) + 1,
@@ -4203,6 +4199,25 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL index key part.
+	 *
+	 * @param string          $column_name Column name.
+	 * @param int|string|null $sub_part    Optional prefix length.
+	 * @return string PostgreSQL key-part SQL.
+	 */
+	private function get_mysql_index_key_part_sql( string $column_name, $sub_part ): string {
+		if ( null !== $sub_part && '' !== (string) $sub_part ) {
+			return sprintf(
+				'SUBSTR(CAST(%s AS text), 1, %d)',
+				$this->connection->quote_identifier( $column_name ),
+				(int) $sub_part
+			);
+		}
+
+		return $this->connection->quote_identifier( $column_name );
 	}
 
 	/**
@@ -6318,7 +6333,10 @@ class WP_PostgreSQL_Driver {
 		$index   = $metadata[0]['indexes'][0];
 		$columns = array();
 		foreach ( $index['columns'] as $column ) {
-			$columns[] = $this->connection->quote_identifier( $column['column_name'] );
+			$columns[] = $this->get_mysql_index_key_part_sql(
+				(string) $column['column_name'],
+				'0' === (string) $index['non_unique'] ? $column['sub_part'] : null
+			);
 		}
 
 		if ( 'PRIMARY' === strtoupper( $index['name'] ) ) {
@@ -12127,10 +12145,11 @@ WHERE option_name IN (
 		}
 		unset( $values );
 
-		$conflict_columns = $this->get_mysql_upsert_conflict_target_columns( $table_name, $columns );
-		if ( null === $conflict_columns ) {
+		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
+		if ( null === $conflict_target ) {
 			return null;
 		}
+		$conflict_columns = $conflict_target['columns'];
 
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
@@ -12150,7 +12169,7 @@ WHERE option_name IN (
 			$columns,
 			$value_rows,
 			$probe_safe_rows,
-			$conflict_columns
+			$conflict_target['parts']
 		);
 		if ( null === $inserted_value_rows ) {
 			return null;
@@ -12168,7 +12187,7 @@ WHERE option_name IN (
 				$this->connection->quote_identifier( $table_name ),
 				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
 				'VALUES ' . implode( ', ', $sql_value_rows ),
-				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $conflict_columns ) ),
+				implode( ', ', $conflict_target['sql'] ),
 				implode( ', ', $assignments )
 			),
 			'table_name'           => $table_name,
@@ -12257,10 +12276,11 @@ WHERE option_name IN (
 		$table_column_lookup   = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
 
-		$conflict_columns = $this->get_mysql_upsert_conflict_target_columns( $table_name, $columns );
-		if ( null === $conflict_columns ) {
+		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
+		if ( null === $conflict_target ) {
 			return null;
 		}
+		$conflict_columns = $conflict_target['columns'];
 
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
@@ -12300,7 +12320,7 @@ WHERE option_name IN (
 				$columns,
 				$insert_id_value_rows,
 				array( $literal_value_row['probe_safe_values'] ),
-				$conflict_columns
+				$conflict_target['parts']
 			);
 			if ( null === $inserted_value_rows ) {
 				return null;
@@ -12329,7 +12349,7 @@ WHERE option_name IN (
 					$on_duplicate,
 					$replacements
 				),
-				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $conflict_columns ) ),
+				implode( ', ', $conflict_target['sql'] ),
 				implode( ', ', $assignments )
 			),
 			'table_name'           => $table_name,
@@ -12557,9 +12577,9 @@ WHERE option_name IN (
 	 *
 	 * @param string   $table_name Table name.
 	 * @param string[] $columns    Inserted column names.
-	 * @return string[]|null Conflict target columns, or null when unsupported.
+	 * @return array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>, sql: string[]}|null Conflict target, or null when unsupported.
 	 */
-	private function get_mysql_upsert_conflict_target_columns( string $table_name, array $columns ): ?array {
+	private function get_mysql_upsert_conflict_target( string $table_name, array $columns ): ?array {
 		$insert_column_lookup = array();
 		$insert_columns       = array();
 		foreach ( $columns as $column ) {
@@ -12576,12 +12596,12 @@ WHERE option_name IN (
 		$cache_key    = $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) . "\0" . serialize( $insert_columns );
 		if ( array_key_exists( $cache_key, $this->mysql_upsert_conflict_target_cache ) ) {
 			$cached = $this->mysql_upsert_conflict_target_cache[ $cache_key ];
-			return null === $cached ? null : array_values( $cached );
+			return null === $cached ? null : $cached;
 		}
 
 		$stmt = $this->connection->query(
 			sprintf(
-				'SELECT key_name, column_name, sub_part
+				'SELECT key_name, column_name, index_type, sub_part
 				FROM %s
 				WHERE table_schema = ? AND table_name = ? AND non_unique = \'0\'
 				ORDER BY
@@ -12602,8 +12622,9 @@ WHERE option_name IN (
 
 			if ( ! isset( $indexes[ $key_name ] ) ) {
 				$indexes[ $key_name ] = array(
-					'columns'      => array(),
-					'has_sub_part' => false,
+					'columns'    => array(),
+					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
+					'parts'      => array(),
 				);
 			}
 
@@ -12613,14 +12634,19 @@ WHERE option_name IN (
 			}
 
 			$indexes[ $key_name ]['columns'][] = $column_name;
-			if ( null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ) {
-				$indexes[ $key_name ]['has_sub_part'] = true;
-			}
+			$indexes[ $key_name ]['parts'][]   = array(
+				'column'   => $column_name,
+				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
+			);
 		}
 
 		$candidates = array();
 		foreach ( $indexes as $index ) {
 			if ( empty( $index['columns'] ) ) {
+				continue;
+			}
+
+			if ( in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
 				continue;
 			}
 
@@ -12630,18 +12656,28 @@ WHERE option_name IN (
 				}
 			}
 
-			if ( $index['has_sub_part'] ) {
-				$this->mysql_upsert_conflict_target_cache[ $cache_key ] = null;
-				return null;
-			}
-
-			$candidates[] = $index['columns'];
+			$candidates[] = array(
+				'columns' => $index['columns'],
+				'parts'   => $index['parts'],
+			);
 		}
 
-		$conflict_columns = 1 === count( $candidates ) ? $candidates[0] : null;
+		if ( 1 !== count( $candidates ) ) {
+			$this->mysql_upsert_conflict_target_cache[ $cache_key ] = null;
+			return null;
+		}
 
-		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_columns;
-		return null === $conflict_columns ? null : array_values( $conflict_columns );
+		$conflict_target = array(
+			'columns' => array_values( $candidates[0]['columns'] ),
+			'parts'   => array_values( $candidates[0]['parts'] ),
+			'sql'     => array(),
+		);
+		foreach ( $conflict_target['parts'] as $part ) {
+			$conflict_target['sql'][] = $this->get_mysql_index_key_part_sql( $part['column'], $part['sub_part'] );
+		}
+
+		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_target;
+		return $conflict_target;
 	}
 
 	/**
@@ -12651,25 +12687,27 @@ WHERE option_name IN (
 	 * @param string[] $columns          Inserted column names.
 	 * @param array[]  $value_rows       Translated PostgreSQL VALUES rows.
 	 * @param array[]  $probe_safe_rows  Per-value conflict-probe safety flags.
-	 * @param string[] $conflict_columns Conflict target columns.
+	 * @param array[]  $conflict_parts   Conflict target key parts.
 	 * @return array[]|null Inserted VALUES rows, or null when unsupported.
 	 */
-	private function get_mysql_upsert_inserted_value_rows( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_columns ): ?array {
+	private function get_mysql_upsert_inserted_value_rows( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_parts ): ?array {
 		$column_indexes = array();
 		foreach ( $columns as $index => $column ) {
 			$column_indexes[ strtolower( $column ) ] = $index;
 		}
 
 		$conflict_indexes = array();
-		foreach ( $conflict_columns as $column ) {
+		foreach ( $conflict_parts as $part ) {
+			$column     = (string) ( $part['column'] ?? '' );
 			$column_key = strtolower( $column );
 			if ( ! isset( $column_indexes[ $column_key ] ) ) {
 				return null;
 			}
 
 			$conflict_indexes[] = array(
-				'column' => $column,
-				'index'  => $column_indexes[ $column_key ],
+				'column'   => $column,
+				'index'    => $column_indexes[ $column_key ],
+				'sub_part' => $part['sub_part'] ?? null,
 			);
 		}
 
@@ -12717,11 +12755,20 @@ WHERE option_name IN (
 				return false;
 			}
 
-			$where[] = sprintf(
-				'%s = %s',
-				$this->connection->quote_identifier( (string) $conflict_index['column'] ),
-				$value
-			);
+			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+				$where[] = sprintf(
+					'%s = SUBSTR(CAST(%s AS text), 1, %d)',
+					$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
+					$value,
+					(int) $conflict_index['sub_part']
+				);
+			} else {
+				$where[] = sprintf(
+					'%s = %s',
+					$this->connection->quote_identifier( (string) $conflict_index['column'] ),
+					$value
+				);
+			}
 		}
 
 		$stmt = $this->connection->query(
