@@ -2435,6 +2435,150 @@ PHP
 	}
 
 	/**
+	 * Tests check_connection() probes an existing driver and reconnects after failure.
+	 */
+	public function test_check_connection_probes_existing_driver_and_reconnects_after_failure(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	class wpdb {
+		public $ready      = true;
+		public $last_error = '';
+		public $dbname     = '';
+		public $bail_calls = array();
+
+		public function bail( $message, $error_code = '500' ) {
+			$this->bail_calls[] = array( $message, $error_code );
+		}
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Check_Fake_Connection extends WP_PostgreSQL_Connection {
+	public $queries      = array();
+	public $should_throw = false;
+
+	public function __construct() {}
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		$this->queries[] = array( $sql, $params );
+
+		if ( $this->should_throw ) {
+			throw new RuntimeException( 'health probe failed' );
+		}
+
+		return ( new ReflectionClass( PDOStatement::class ) )->newInstanceWithoutConstructor();
+	}
+}
+
+class WP_PostgreSQL_DB_Check_Fake_Driver extends WP_PostgreSQL_Driver {
+	public $connection;
+
+	public function __construct() {}
+
+	public function get_connection(): WP_PostgreSQL_Connection {
+		return $this->connection;
+	}
+}
+
+class WP_PostgreSQL_DB_Check_Testable extends WP_PostgreSQL_DB {
+	public $db_connect_calls = array();
+
+	public function __construct() {}
+
+	public function db_connect( $allow_bail = true ) {
+		$this->db_connect_calls[] = $allow_bail;
+		return false;
+	}
+}
+
+function wp_postgresql_db_check_set_driver( WP_PostgreSQL_DB $db, $driver ) {
+	$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+	if ( PHP_VERSION_ID < 80100 ) {
+		$driver_property->setAccessible( true );
+	}
+	$driver_property->setValue( $db, $driver );
+}
+
+function wp_postgresql_db_check_get_driver( WP_PostgreSQL_DB $db ) {
+	$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+	if ( PHP_VERSION_ID < 80100 ) {
+		$driver_property->setAccessible( true );
+	}
+	return $driver_property->getValue( $db );
+}
+
+$success_connection             = new WP_PostgreSQL_DB_Check_Fake_Connection();
+$success_driver                 = new WP_PostgreSQL_DB_Check_Fake_Driver();
+$success_driver->connection     = $success_connection;
+$success_db                     = new WP_PostgreSQL_DB_Check_Testable();
+$success_db->ready              = true;
+$success_db->last_error         = 'previous';
+$success_db->dbname             = strtolower( 'WordPress' );
+wp_postgresql_db_check_set_driver( $success_db, $success_driver );
+$success_result                 = $success_db->check_connection( false );
+$success_driver_after_probe     = wp_postgresql_db_check_get_driver( $success_db );
+
+$failure_connection               = new WP_PostgreSQL_DB_Check_Fake_Connection();
+$failure_connection->should_throw = true;
+$failure_driver                   = new WP_PostgreSQL_DB_Check_Fake_Driver();
+$failure_driver->connection       = $failure_connection;
+$failure_db                       = new WP_PostgreSQL_DB_Check_Testable();
+$failure_db->ready                = true;
+$failure_db->last_error           = 'previous';
+$failure_db->dbname               = strtolower( 'WordPress' );
+wp_postgresql_db_check_set_driver( $failure_db, $failure_driver );
+$failure_result                   = $failure_db->check_connection( false );
+$failure_driver_after_probe       = wp_postgresql_db_check_get_driver( $failure_db );
+
+wp_postgresql_db_test_respond(
+	array(
+		'success_result'             => $success_result,
+		'success_queries'            => $success_connection->queries,
+		'success_ready'              => $success_db->ready,
+		'success_last_error'         => $success_db->last_error,
+		'success_db_connect_calls'   => $success_db->db_connect_calls,
+		'success_driver_after_probe' => $success_driver_after_probe instanceof WP_PostgreSQL_Driver,
+		'failure_queries'            => $failure_connection->queries,
+		'failure_result'             => $failure_result,
+		'failure_ready'              => $failure_db->ready,
+		'failure_last_error'         => $failure_db->last_error,
+		'failure_driver_after_probe' => null === $failure_driver_after_probe,
+		'failure_db_connect_calls'   => $failure_db->db_connect_calls,
+		'failure_bail_calls'         => $failure_db->bail_calls,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'success_result'             => true,
+				'success_queries'            => array(
+					array( 'SELECT 1', array() ),
+				),
+				'success_ready'              => true,
+				'success_last_error'         => 'previous',
+				'success_db_connect_calls'   => array(),
+				'success_driver_after_probe' => true,
+				'failure_queries'            => array(
+					array( 'SELECT 1', array() ),
+				),
+				'failure_result'             => false,
+				'failure_ready'              => false,
+				'failure_last_error'         => 'health probe failed',
+				'failure_driver_after_probe' => true,
+				'failure_db_connect_calls'   => array( false ),
+				'failure_bail_calls'         => array(),
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests db_server_info() reports a pending PostgreSQL connection without a driver.
 	 */
 	public function test_db_server_info_reports_pending_connection_without_driver(): void {
