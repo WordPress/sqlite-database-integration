@@ -85,6 +85,32 @@ class WP_PostgreSQL_Connection_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL DSN construction preserves socket-style host paths.
+	 */
+	public function test_build_dsn_preserves_socket_style_host_paths(): void {
+		$this->assertSame(
+			'pgsql:host=/var/run/postgresql;dbname=wp',
+			WP_PostgreSQL_Connection::build_dsn(
+				array(
+					'host'   => '/var/run/postgresql',
+					'dbname' => 'wp',
+				)
+			)
+		);
+
+		$this->assertSame(
+			'pgsql:host=/tmp/.s.PGSQL.5432;port=5432;dbname=wp',
+			WP_PostgreSQL_Connection::build_dsn(
+				array(
+					'host'   => '/tmp/.s.PGSQL.5432',
+					'port'   => 5432,
+					'dbname' => 'wp',
+				)
+			)
+		);
+	}
+
+	/**
 	 * Tests PostgreSQL DSN separator rejection.
 	 */
 	public function test_build_dsn_rejects_structured_option_separators(): void {
