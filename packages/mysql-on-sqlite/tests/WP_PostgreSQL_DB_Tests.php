@@ -2356,18 +2356,46 @@ PHP
 
 	$db->charset = 'utf8mb4';
 
+	$marker_like_value = '__wp_pg_identifier_' . spl_object_hash( $db ) . '_1_0__';
+	$prepared_marker_collision = $db->prepare(
+		'SELECT %s AS value FROM %i',
+		$marker_like_value,
+		'my_table'
+	);
+
+	$identifier_collision_value    = '__wp_pg_identifier_' . spl_object_hash( $db ) . '_4_1__';
+	$prepared_identifier_collision = $db->prepare(
+		'SELECT %i, %i',
+		$identifier_collision_value,
+		'second'
+	);
+
 	wp_postgresql_db_test_respond(
 		array(
-			'has_identifier_cap'  => $db->has_cap( 'identifier_placeholders' ),
-			'quoted_table'        => $db->quote_identifier( 'wptests_options' ),
-			'quoted_weird'        => $db->quote_identifier( 'weird"name' ),
-			'prepared_identifier' => $db->prepare(
+			'has_identifier_cap'            => $db->has_cap( 'identifier_placeholders' ),
+			'quoted_table'                  => $db->quote_identifier( 'wptests_options' ),
+			'quoted_weird'                  => $db->quote_identifier( 'weird"name' ),
+			'marker_like_value'             => $marker_like_value,
+			'prepared_marker_collision'     => $prepared_marker_collision,
+			'identifier_collision_value'    => $identifier_collision_value,
+			'prepared_identifier_collision' => $prepared_identifier_collision,
+			'prepared_identifier'           => $db->prepare(
 				'SELECT * FROM %i WHERE %i = %s',
 				'wptests_options',
 				'option_name',
 				"Bob's"
 			),
-			'prepared_string'     => $db->prepare( 'SELECT %s', "Bob's" ),
+			'prepared_identifier_array'      => $db->prepare(
+				'SELECT %i FROM %i WHERE %i = %s',
+				array( 'option_value', 'wptests_options', 'option_name', "Bob's" )
+			),
+			'prepared_formatted_identifier'  => $db->prepare(
+				'SELECT * FROM %05i WHERE %i = %s',
+				'wptests_options',
+				'option_name',
+				"Bob's"
+			),
+			'prepared_string'                => $db->prepare( 'SELECT %s', "Bob's" ),
 		)
 	);
 PHP
@@ -2377,8 +2405,28 @@ PHP
 		$this->assertSame( '"wptests_options"', $result['quoted_table'] );
 		$this->assertSame( '"weird""name"', $result['quoted_weird'] );
 		$this->assertSame(
-			'SELECT * FROM `wptests_options` WHERE `option_name` = \'Bob\\\'s\'',
+			'SELECT * FROM "wptests_options" WHERE "option_name" = \'Bob\\\'s\'',
 			$result['prepared_identifier']
+		);
+		$this->assertSame(
+			'SELECT \'' . $result['marker_like_value'] . '\' AS value FROM "my_table"',
+			$result['prepared_marker_collision']
+		);
+		$this->assertSame(
+			'SELECT "' . $result['identifier_collision_value'] . '", "second"',
+			$result['prepared_identifier_collision']
+		);
+		$this->assertNotSame(
+			'SELECT ""second"", "second"',
+			$result['prepared_identifier_collision']
+		);
+		$this->assertSame(
+			'SELECT "option_value" FROM "wptests_options" WHERE "option_name" = \'Bob\\\'s\'',
+			$result['prepared_identifier_array']
+		);
+		$this->assertSame(
+			'SELECT * FROM `wptests_options` WHERE `option_name` = \'Bob\\\'s\'',
+			$result['prepared_formatted_identifier']
 		);
 		$this->assertSame( "SELECT 'Bob\\'s'", $result['prepared_string'] );
 	}

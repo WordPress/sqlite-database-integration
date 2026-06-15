@@ -1651,7 +1651,26 @@ class WP_PostgreSQL_DB extends wpdb {
 			return parent::prepare( $query, ...$args );
 		}
 
-		return parent::prepare( $query, ...$args );
+		$identifier_prepare = $this->prepare_identifier_placeholders( $query, $args );
+		if ( null === $identifier_prepare ) {
+			return parent::prepare( $query, ...$args );
+		}
+
+		if ( $identifier_prepare['passed_as_array'] ) {
+			$prepared = parent::prepare( $identifier_prepare['query'], $identifier_prepare['args'] );
+		} else {
+			$prepared = parent::prepare( $identifier_prepare['query'], ...$identifier_prepare['args'] );
+		}
+
+		if ( ! is_string( $prepared ) ) {
+			return $prepared;
+		}
+
+		foreach ( $identifier_prepare['identifiers'] as $marker => $identifier ) {
+			$prepared = str_replace( "'" . $marker . "'", $identifier, $prepared );
+		}
+
+		return $prepared;
 	}
 
 	/**
@@ -1659,7 +1678,7 @@ class WP_PostgreSQL_DB extends wpdb {
 	 *
 	 * Core wpdb::prepare() hardcodes %i as a MySQL-backticked placeholder. This
 	 * adapter supports the common unnumbered %i form by letting core prepare all
-	 * non-identifier values, then replacing unquoted marker values with
+	 * non-identifier values, then replacing exact quoted marker values with
 	 * PostgreSQL-quoted identifiers. Numbered or formatted identifier placeholders
 	 * fall back to core behavior until they can be mapped safely.
 	 *
@@ -1679,6 +1698,7 @@ class WP_PostgreSQL_DB extends wpdb {
 
 		$passed_as_array  = isset( $args[0] ) && is_array( $args[0] ) && 1 === count( $args );
 		$prepare_args     = $passed_as_array ? $args[0] : $args;
+		$collision_args   = $prepare_args;
 		$identifiers      = array();
 		static $marker_id = 0;
 
@@ -1687,8 +1707,11 @@ class WP_PostgreSQL_DB extends wpdb {
 				continue;
 			}
 
-			++$marker_id;
-			$marker                     = '__wp_pg_identifier_' . spl_object_hash( $this ) . '_' . $marker_id . '_' . $index . '__';
+			do {
+				++$marker_id;
+				$marker = '__wp_pg_identifier_' . spl_object_hash( $this ) . '_' . $marker_id . '_' . $index . '__';
+			} while ( $this->prepare_identifier_marker_has_collision( $marker, $query, $collision_args ) );
+
 			$identifiers[ $marker ]     = $this->quote_identifier( $prepare_args[ $arg_index ] );
 			$prepare_args[ $arg_index ] = $marker;
 		}
@@ -1699,6 +1722,32 @@ class WP_PostgreSQL_DB extends wpdb {
 			'identifiers'     => $identifiers,
 			'passed_as_array' => $passed_as_array,
 		);
+	}
+
+	/**
+	 * Checks whether an internal identifier marker appears in caller-controlled SQL.
+	 *
+	 * @param string $marker Marker candidate.
+	 * @param string $query  Query statement with placeholders.
+	 * @param array  $args   Variables to substitute.
+	 * @return bool Whether the marker collides with the query or arguments.
+	 */
+	private function prepare_identifier_marker_has_collision( $marker, $query, array $args ) {
+		if ( false !== strpos( $query, $marker ) ) {
+			return true;
+		}
+
+		foreach ( $args as $arg ) {
+			if ( ! is_scalar( $arg ) ) {
+				continue;
+			}
+
+			if ( false !== strpos( (string) $arg, $marker ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -1754,7 +1803,7 @@ class WP_PostgreSQL_DB extends wpdb {
 
 				$has_identifier           = true;
 				$identifier_arg_indexes[] = $placeholder_index;
-				$rewritten               .= substr( $query, $copy_from, $placeholder_start - $copy_from ) . '%0s';
+				$rewritten               .= substr( $query, $copy_from, $placeholder_start - $copy_from ) . '%s';
 				$copy_from                = $placeholder['end'];
 			}
 
