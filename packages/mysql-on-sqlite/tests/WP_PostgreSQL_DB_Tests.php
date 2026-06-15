@@ -399,6 +399,56 @@ PHP
 	}
 
 	/**
+	 * Tests _real_escape() escapes scalar values and rejects non-scalar values.
+	 */
+	public function test_real_escape_escapes_scalars_and_rejects_non_scalars(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	class wpdb {
+		public function add_placeholder_escape( $query ) {
+			return 'placeholder:' . $query;
+		}
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+wp_postgresql_db_test_respond(
+	array(
+		'apostrophe'   => $db->_real_escape( "Bob's" ),
+		'backslash'    => $db->_real_escape( 'C:\\Temp' ),
+		'nul_byte'     => $db->_real_escape( "a\0b" ),
+		'integer'      => $db->_real_escape( 123 ),
+		'boolean_true' => $db->_real_escape( true ),
+		'null'         => $db->_real_escape( null ),
+		'array'        => $db->_real_escape( array( 'x' ) ),
+		'object'       => $db->_real_escape( (object) array( 'x' => true ) ),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'apostrophe'   => 'placeholder:' . addslashes( "Bob's" ),
+				'backslash'    => 'placeholder:' . addslashes( 'C:\\Temp' ),
+				'nul_byte'     => 'placeholder:' . addslashes( "a\0b" ),
+				'integer'      => 'placeholder:123',
+				'boolean_true' => 'placeholder:1',
+				'null'         => '',
+				'array'        => '',
+				'object'       => '',
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests the PostgreSQL adapter strips legacy charset text without MySQL.
 	 */
 	public function test_strip_invalid_text_handles_legacy_charsets_in_php(): void {
