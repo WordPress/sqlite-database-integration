@@ -9822,6 +9822,128 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Get static MySQL-compatible character set metadata rows.
+	 *
+	 * @return array[] Rows keyed by information_schema.CHARACTER_SETS columns.
+	 */
+	private function get_mysql_static_character_set_rows(): array {
+		return array(
+			array(
+				'CHARACTER_SET_NAME'   => 'binary',
+				'DEFAULT_COLLATE_NAME' => 'binary',
+				'DESCRIPTION'          => 'Binary pseudo charset',
+				'MAXLEN'               => '1',
+			),
+			array(
+				'CHARACTER_SET_NAME'   => 'utf8',
+				'DEFAULT_COLLATE_NAME' => 'utf8_general_ci',
+				'DESCRIPTION'          => 'UTF-8 Unicode',
+				'MAXLEN'               => '3',
+			),
+			array(
+				'CHARACTER_SET_NAME'   => 'utf8mb4',
+				'DEFAULT_COLLATE_NAME' => 'utf8mb4_0900_ai_ci',
+				'DESCRIPTION'          => 'UTF-8 Unicode',
+				'MAXLEN'               => '4',
+			),
+		);
+	}
+
+	/**
+	 * Get static MySQL-compatible collation metadata rows.
+	 *
+	 * @return array[] Rows keyed by information_schema.COLLATIONS columns.
+	 */
+	private function get_mysql_static_collation_rows(): array {
+		return array(
+			array(
+				'COLLATION_NAME'     => 'binary',
+				'CHARACTER_SET_NAME' => 'binary',
+				'ID'                 => '63',
+				'IS_DEFAULT'         => 'Yes',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '1',
+				'PAD_ATTRIBUTE'      => 'NO PAD',
+			),
+			array(
+				'COLLATION_NAME'     => 'utf8_bin',
+				'CHARACTER_SET_NAME' => 'utf8',
+				'ID'                 => '83',
+				'IS_DEFAULT'         => '',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '1',
+				'PAD_ATTRIBUTE'      => 'PAD SPACE',
+			),
+			array(
+				'COLLATION_NAME'     => 'utf8_general_ci',
+				'CHARACTER_SET_NAME' => 'utf8',
+				'ID'                 => '33',
+				'IS_DEFAULT'         => 'Yes',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '1',
+				'PAD_ATTRIBUTE'      => 'PAD SPACE',
+			),
+			array(
+				'COLLATION_NAME'     => 'utf8_unicode_ci',
+				'CHARACTER_SET_NAME' => 'utf8',
+				'ID'                 => '192',
+				'IS_DEFAULT'         => '',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '8',
+				'PAD_ATTRIBUTE'      => 'PAD SPACE',
+			),
+			array(
+				'COLLATION_NAME'     => 'utf8mb4_bin',
+				'CHARACTER_SET_NAME' => 'utf8mb4',
+				'ID'                 => '46',
+				'IS_DEFAULT'         => '',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '1',
+				'PAD_ATTRIBUTE'      => 'PAD SPACE',
+			),
+			array(
+				'COLLATION_NAME'     => 'utf8mb4_unicode_ci',
+				'CHARACTER_SET_NAME' => 'utf8mb4',
+				'ID'                 => '224',
+				'IS_DEFAULT'         => '',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '8',
+				'PAD_ATTRIBUTE'      => 'PAD SPACE',
+			),
+			array(
+				'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+				'CHARACTER_SET_NAME' => 'utf8mb4',
+				'ID'                 => '255',
+				'IS_DEFAULT'         => 'Yes',
+				'IS_COMPILED'        => 'Yes',
+				'SORTLEN'            => '0',
+				'PAD_ATTRIBUTE'      => 'NO PAD',
+			),
+		);
+	}
+
+	/**
+	 * Get static MySQL-compatible SHOW COLLATION rows.
+	 *
+	 * @return array[] SHOW COLLATION rows.
+	 */
+	private function get_mysql_static_show_collation_rows(): array {
+		$rows = array();
+		foreach ( $this->get_mysql_static_collation_rows() as $row ) {
+			$rows[] = array(
+				'Collation'     => $row['COLLATION_NAME'],
+				'Charset'       => $row['CHARACTER_SET_NAME'],
+				'Id'            => $row['ID'],
+				'Default'       => $row['IS_DEFAULT'],
+				'Compiled'      => $row['IS_COMPILED'],
+				'Sortlen'       => $row['SORTLEN'],
+				'Pad_attribute' => $row['PAD_ATTRIBUTE'],
+			);
+		}
+		return $rows;
+	}
+
+	/**
 	 * Execute a MySQL SHOW COLLATION statement from static MySQL-compatible metadata.
 	 *
 	 * @param array $show_collation_query SHOW COLLATION options.
@@ -9831,71 +9953,7 @@ ORDER BY table_name';
 	 */
 	private function execute_show_collation_query( array $show_collation_query, $fetch_mode, ...$fetch_mode_args ) {
 		$rows = $this->filter_mysql_static_show_rows(
-			array(
-				array(
-					'Collation'     => 'binary',
-					'Charset'       => 'binary',
-					'Id'            => '63',
-					'Default'       => 'Yes',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '1',
-					'Pad_attribute' => 'NO PAD',
-				),
-				array(
-					'Collation'     => 'utf8_bin',
-					'Charset'       => 'utf8',
-					'Id'            => '83',
-					'Default'       => '',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '1',
-					'Pad_attribute' => 'PAD SPACE',
-				),
-				array(
-					'Collation'     => 'utf8_general_ci',
-					'Charset'       => 'utf8',
-					'Id'            => '33',
-					'Default'       => 'Yes',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '1',
-					'Pad_attribute' => 'PAD SPACE',
-				),
-				array(
-					'Collation'     => 'utf8_unicode_ci',
-					'Charset'       => 'utf8',
-					'Id'            => '192',
-					'Default'       => '',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '8',
-					'Pad_attribute' => 'PAD SPACE',
-				),
-				array(
-					'Collation'     => 'utf8mb4_bin',
-					'Charset'       => 'utf8mb4',
-					'Id'            => '46',
-					'Default'       => '',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '1',
-					'Pad_attribute' => 'PAD SPACE',
-				),
-				array(
-					'Collation'     => 'utf8mb4_unicode_ci',
-					'Charset'       => 'utf8mb4',
-					'Id'            => '224',
-					'Default'       => '',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '8',
-					'Pad_attribute' => 'PAD SPACE',
-				),
-				array(
-					'Collation'     => 'utf8mb4_0900_ai_ci',
-					'Charset'       => 'utf8mb4',
-					'Id'            => '255',
-					'Default'       => 'Yes',
-					'Compiled'      => 'Yes',
-					'Sortlen'       => '0',
-					'Pad_attribute' => 'NO PAD',
-				),
-			),
+			$this->get_mysql_static_show_collation_rows(),
 			$show_collation_query
 		);
 
@@ -18416,6 +18474,8 @@ WHERE option_name IN (
 				'key_column_usage',
 				'referential_constraints',
 				'check_constraints',
+				'character_sets',
+				'collations',
 			),
 			true
 		);
@@ -18599,6 +18659,25 @@ WHERE option_name IN (
 					'CONSTRAINT_NAME',
 					'CHECK_CLAUSE',
 				);
+
+			case 'character_sets':
+				return array(
+					'CHARACTER_SET_NAME',
+					'DEFAULT_COLLATE_NAME',
+					'DESCRIPTION',
+					'MAXLEN',
+				);
+
+			case 'collations':
+				return array(
+					'COLLATION_NAME',
+					'CHARACTER_SET_NAME',
+					'ID',
+					'IS_DEFAULT',
+					'IS_COMPILED',
+					'SORTLEN',
+					'PAD_ATTRIBUTE',
+				);
 		}
 
 		return null;
@@ -18679,6 +18758,9 @@ WHERE option_name IN (
 					'CARDINALITY',
 					'SUB_PART',
 					'POSITION_IN_UNIQUE_CONSTRAINT',
+					'MAXLEN',
+					'ID',
+					'SORTLEN',
 				),
 				true
 			)
@@ -18721,6 +18803,10 @@ WHERE option_name IN (
 				return $this->get_direct_information_schema_referential_constraints_relation_sql();
 			case 'check_constraints':
 				return $this->get_direct_information_schema_check_constraints_relation_sql();
+			case 'character_sets':
+				return $this->get_direct_information_schema_character_sets_relation_sql();
+			case 'collations':
+				return $this->get_direct_information_schema_collations_relation_sql();
 		}
 
 		return null;
@@ -19113,6 +19199,30 @@ WHERE option_name IN (
 					'DEFAULT_ENCRYPTION'         => 'NO',
 				),
 			)
+		);
+	}
+
+	/**
+	 * Build the MySQL-shaped information_schema.CHARACTER_SETS relation.
+	 *
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_character_sets_relation_sql(): string {
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( 'character_sets' ),
+			$this->get_mysql_static_character_set_rows()
+		);
+	}
+
+	/**
+	 * Build the MySQL-shaped information_schema.COLLATIONS relation.
+	 *
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_collations_relation_sql(): string {
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( 'collations' ),
+			$this->get_mysql_static_collation_rows()
 		);
 	}
 

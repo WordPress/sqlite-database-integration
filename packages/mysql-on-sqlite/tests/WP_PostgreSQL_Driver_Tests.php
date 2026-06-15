@@ -12280,6 +12280,138 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema charset and collation SELECTs return MySQL-shaped rows.
+	 */
+	public function test_direct_information_schema_character_sets_and_collations_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+
+		$character_sets = $driver->query( 'SELECT * FROM INFORMATION_SCHEMA.CHARACTER_SETS ORDER BY CHARACTER_SET_NAME' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'binary',
+					'DEFAULT_COLLATE_NAME' => 'binary',
+					'DESCRIPTION'          => 'Binary pseudo charset',
+					'MAXLEN'               => '1',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'utf8',
+					'DEFAULT_COLLATE_NAME' => 'utf8_general_ci',
+					'DESCRIPTION'          => 'UTF-8 Unicode',
+					'MAXLEN'               => '3',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'utf8mb4',
+					'DEFAULT_COLLATE_NAME' => 'utf8mb4_0900_ai_ci',
+					'DESCRIPTION'          => 'UTF-8 Unicode',
+					'MAXLEN'               => '4',
+				),
+			),
+			$character_sets
+		);
+
+		$collations = $driver->query( 'SELECT * FROM INFORMATION_SCHEMA.COLLATIONS ORDER BY COLLATION_NAME' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLLATION_NAME'     => 'binary',
+					'CHARACTER_SET_NAME' => 'binary',
+					'ID'                 => '63',
+					'IS_DEFAULT'         => 'Yes',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'NO PAD',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8_bin',
+					'CHARACTER_SET_NAME' => 'utf8',
+					'ID'                 => '83',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8_general_ci',
+					'CHARACTER_SET_NAME' => 'utf8',
+					'ID'                 => '33',
+					'IS_DEFAULT'         => 'Yes',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8_unicode_ci',
+					'CHARACTER_SET_NAME' => 'utf8',
+					'ID'                 => '192',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '8',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '255',
+					'IS_DEFAULT'         => 'Yes',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '0',
+					'PAD_ATTRIBUTE'      => 'NO PAD',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_bin',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '46',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_unicode_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '224',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '8',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+			),
+			$collations
+		);
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$defaults = $driver->query(
+			"SELECT cs.character_set_name, c.collation_name
+			FROM character_sets AS cs
+			JOIN collations AS c ON c.character_set_name = cs.character_set_name
+			WHERE c.is_default = 'Yes'
+			ORDER BY c.collation_name"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CHARACTER_SET_NAME' => 'binary',
+					'COLLATION_NAME'     => 'binary',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME' => 'utf8',
+					'COLLATION_NAME'     => 'utf8_general_ci',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$defaults
+		);
+	}
+
+	/**
 	 * Tests direct information_schema aliases and star projections return MySQL-shaped rows.
 	 */
 	public function test_direct_information_schema_alias_star_and_count_selects_return_mysql_shape(): void {
