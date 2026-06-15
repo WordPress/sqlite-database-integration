@@ -505,8 +505,19 @@ function validateGeneratedBackendFiles() {
 	}
 
 	const generatedDropin = path.join( repositoryRoot, 'wordpress', 'src', 'wp-content', 'db.php' );
+	const generatedDropinBackup = path.join( repositoryRoot, 'wordpress', 'src', 'wp-content', 'db.php.bak' );
+	const generatedTestUtils = path.join( repositoryRoot, 'wordpress', 'tests', 'phpunit', 'includes', 'utils.php' );
+	const generatedTestUtilsBackup = path.join( repositoryRoot, 'wordpress', 'tests', 'phpunit', 'includes', 'utils.php.bak' );
 	const composeOverride = path.join( repositoryRoot, 'wordpress', 'docker-compose.override.yml' );
 
+	assertFileAbsent(
+		generatedDropinBackup,
+		'generated db.php sed backup'
+	);
+	assertFileAbsent(
+		generatedTestUtilsBackup,
+		'generated PHPUnit utils.php sed backup'
+	);
 	assertFileContains(
 		generatedDropin,
 		`: '${ backend }'`,
@@ -538,10 +549,28 @@ function validateGeneratedBackendFiles() {
 		`docker-compose.override.yml sets DATABASE_ENGINE=${ backend }`
 	);
 
+	if ( 'sqlite' === backend ) {
+		assertFileContains(
+			generatedTestUtils,
+			'class WpdbExposedMethodsForTesting extends WP_SQLite_DB {',
+			'generated PHPUnit helper extends WP_SQLite_DB'
+		);
+	}
+
 	if ( 'postgresql' === backend ) {
 		const installScript = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'scripts', 'install.js' );
 		const postgresqlPhpDockerfile = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'Dockerfile.postgresql-php' );
 		const postgresqlCliDockerfile = path.join( repositoryRoot, 'wordpress', 'tools', 'local-env', 'Dockerfile.postgresql-cli' );
+		assertFileContains(
+			generatedTestUtils,
+			"require_once ABSPATH . 'wp-content/plugins/sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';",
+			'generated PHPUnit helper loads the PostgreSQL wpdb adapter'
+		);
+		assertFileContains(
+			generatedTestUtils,
+			'class WpdbExposedMethodsForTesting extends WP_PostgreSQL_DB {',
+			'generated PHPUnit helper extends WP_PostgreSQL_DB'
+		);
 		assertFileContains(
 			composeOverride,
 			'postgres:',
@@ -725,6 +754,12 @@ function assertFileDoesNotContain( file, unexpected, description ) {
 function assertFileExists( file, description ) {
 	if ( ! fs.existsSync( file ) ) {
 		throw new Error( `Expected generated ${ description } to exist: ${ file }.` );
+	}
+}
+
+function assertFileAbsent( file, description ) {
+	if ( fs.existsSync( file ) ) {
+		throw new Error( `Expected stale ${ description } to be absent: ${ file }.` );
 	}
 }
 

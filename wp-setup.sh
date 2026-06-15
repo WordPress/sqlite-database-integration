@@ -521,7 +521,9 @@ install_wordpress_release_assets() {
 
 # 6. Install dependencies.
 if [ "$WP_TEST_DB_BACKEND" = "postgresql" ] && [ "$WP_TEST_SKIP_WORDPRESS_NPM" = "1" ]; then
-	echo "Skipping WordPress npm install and JavaScript build for PostgreSQL PHP tests..."
+	echo "Installing WordPress npm dependencies without building assets for PostgreSQL PHP tests..."
+	npm --prefix "$WP_DIR" install --include=dev --ignore-scripts --no-audit --no-fund
+	echo "Hydrating WordPress release assets and skipping JavaScript build for PostgreSQL PHP tests..."
 	install_wordpress_release_assets
 else
 	echo "Installing dependencies..."
