@@ -208,6 +208,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple MySQL INSERT forms without INTO and with multi-row VALUES are translated.
+	 */
+	public function test_simple_insert_without_into_and_multi_row_values_translate_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_bulk_insert (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+
+		$this->assertSame(
+			2,
+			$driver->query( "INSERT wptests_bulk_insert (`id`, `value`) VALUES (1, 'one'), (2, 'two')" )
+		);
+		$this->assertSame(
+			'INSERT INTO "wptests_bulk_insert" ("id", "value") VALUES (1, \'one\'), (2, \'two\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query( "INSERT IGNORE wptests_bulk_insert (`id`, `value`) VALUES (2, 'duplicate'), (3, 'three')" )
+		);
+		$this->assertSame(
+			'INSERT INTO "wptests_bulk_insert" ("id", "value") VALUES (2, \'duplicate\'), (3, \'three\') ON CONFLICT DO NOTHING',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_bulk_insert ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '1', 'one' ),
+				array( '2', 'two' ),
+				array( '3', 'three' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
 	 * Tests non-strict INSERT statements append metadata-derived NOT NULL defaults.
 	 */
 	public function test_non_strict_insert_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
@@ -992,6 +1034,27 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests REPLACE accepts MySQL's optional INTO keyword.
+	 */
+	public function test_simple_replace_without_into_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_replace_without_into ("ID" INTEGER PRIMARY KEY, display_name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_replace_without_into ("ID", display_name) VALUES (2, \'old\')' );
+
+		$replace = "REPLACE `wptests_replace_without_into` (`ID`, `display_name`) VALUES (2, 'new')";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_replace_without_into" ("ID", "display_name") VALUES (2, \'new\') ON CONFLICT ("ID") DO UPDATE SET "ID" = excluded."ID", "display_name" = excluded."display_name"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT display_name FROM wptests_replace_without_into WHERE "ID" = 2' );
+		$this->assertSame( 'new', $rows[0]->display_name );
+	}
+
+	/**
 	 * Tests WooCommerce customer lookup REPLACE statements use customer_id conflicts.
 	 */
 	public function test_simple_wordpress_replace_with_customer_id_is_translated_to_postgresql(): void {
@@ -1413,6 +1476,58 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests standalone FULLTEXT/SPATIAL CREATE INDEX updates MySQL metadata without PostgreSQL index DDL.
+	 */
+	public function test_standalone_fulltext_and_spatial_create_index_are_metadata_only(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_search_geo (
+				id int NOT NULL,
+				body longtext NOT NULL,
+				shape point NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_search_geo (
+				id int NOT NULL,
+				body longtext NOT NULL,
+				shape point NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE FULLTEXT INDEX body_fulltext ON wptests_search_geo (body)' )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE SPATIAL INDEX shape_spatial ON wptests_search_geo (shape)' )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_search_geo' );
+		$this->assertSame( array( 'body_fulltext', 'shape_spatial' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( array( 'FULLTEXT', 'SPATIAL' ), array_column( $indexes, 'index_type' ) );
+		$this->assertNull( $indexes[0]['sub_part'] );
+		$this->assertSame( '32', $indexes[1]['sub_part'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_search_geo' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  SPATIAL KEY `shape_spatial` (`shape`(32))', $create_table );
+		$this->assertStringContainsString( '  FULLTEXT KEY `body_fulltext` (`body`)', $create_table );
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX body_fulltext ON wptests_search_geo' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array( 'shape_spatial' ), array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_search_geo' ), 'key_name' ) );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_search_geo DROP KEY shape_spatial' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_search_geo' ) );
+	}
+
+	/**
 	 * Tests install-translated quoted CREATE INDEX IF NOT EXISTS DDL updates MySQL metadata.
 	 */
 	public function test_standalone_create_index_accepts_install_translated_if_not_exists_quoted_identifiers(): void {
@@ -1702,9 +1817,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests ALTER TABLE primary-key drop forms fail before backend execution.
+	 * Tests ALTER TABLE ADD primary and unique constraints update backend and MySQL metadata.
 	 */
-	public function test_alter_table_drop_primary_key_forms_do_not_reach_backend(): void {
+	public function test_alter_table_add_primary_and_unique_constraints_update_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_add_constraints (
+				id int NOT NULL,
+				slug varchar(191) NOT NULL
+			)'
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alter_add_constraints
+				ADD CONSTRAINT ignored_primary_name PRIMARY KEY (id),
+				ADD CONSTRAINT slug_unique UNIQUE (slug)'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_add_constraints" ADD PRIMARY KEY ("id")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE UNIQUE INDEX "wptests_alter_add_constraints__slug_unique" ON "wptests_alter_add_constraints" ("slug")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_add_constraints' );
+
+		$this->assertSame( array( 'PRIMARY', 'slug_unique' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+		$this->assertSame( array( '0' ), array_values( array_unique( array_column( $indexes, 'non_unique' ) ) ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP primary-key forms update backend and MySQL metadata.
+	 */
+	public function test_alter_table_drop_primary_key_forms_update_backend_and_metadata(): void {
 		$queries = array(
 			'ALTER TABLE wptests_alter_drop_primary DROP PRIMARY KEY',
 			'ALTER TABLE wptests_alter_drop_primary DROP INDEX PRIMARY',
@@ -1712,16 +1866,129 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		foreach ( $queries as $query ) {
-			$driver = $this->create_driver();
+			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$this->install_information_schema_fixture( $driver );
+			$driver->store_mysql_schema_metadata(
+				'CREATE TABLE wptests_alter_drop_primary (
+					id int NOT NULL,
+					slug varchar(191) NOT NULL,
+					PRIMARY KEY (id),
+					UNIQUE KEY slug (slug)
+				)'
+			);
 
-			try {
-				$driver->query( $query );
-				$this->fail( 'Expected unsupported ALTER TABLE primary-key drop to throw.' );
-			} catch ( InvalidArgumentException $e ) {
-				$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage(), $query );
-				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
-			}
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'ALTER TABLE "wptests_alter_drop_primary" DROP CONSTRAINT "wptests_alter_drop_primary_pkey"',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries(),
+				$query
+			);
+
+			$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_primary' );
+			$this->assertSame( array( 'slug' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ), $query );
 		}
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP CONSTRAINT maps unique-key metadata to a PostgreSQL index drop.
+	 */
+	public function test_alter_table_drop_constraint_updates_unique_key_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_constraint (
+				id int NOT NULL,
+				name varchar(191) NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY name_unique (name)
+			)'
+		);
+		$driver->get_connection()->get_pdo()->exec( 'CREATE TABLE wptests_alter_drop_constraint (id INTEGER, name TEXT)' );
+		$driver->get_connection()->get_pdo()->exec( 'CREATE UNIQUE INDEX "wptests_alter_drop_constraint__name_unique" ON wptests_alter_drop_constraint (name)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_alter_drop_constraint DROP CONSTRAINT name_unique' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "wptests_alter_drop_constraint__name_unique"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_constraint' );
+
+		$this->assertSame( array( 'PRIMARY' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE ADD/DROP CHECK forms translate to PostgreSQL constraints.
+	 */
+	public function test_alter_table_check_constraint_forms_translate_to_postgresql(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_check (
+				id int NOT NULL
+			)'
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alter_check
+				ADD CONSTRAINT positive_id CHECK (id > 0),
+				ADD CHECK (id < 10),
+				ADD CHECK (id > 1)'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" ADD CONSTRAINT "positive_id" CHECK (id > 0)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" ADD CONSTRAINT "wptests_alter_check_chk_1" CHECK (id < 10)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" ADD CONSTRAINT "wptests_alter_check_chk_2" CHECK (id > 1)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alter_check
+				DROP CONSTRAINT positive_id,
+				DROP CHECK wptests_alter_check_chk_1,
+				DROP CHECK wptests_alter_check_chk_2'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" DROP CONSTRAINT "positive_id"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" DROP CONSTRAINT "wptests_alter_check_chk_1"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" DROP CONSTRAINT "wptests_alter_check_chk_2"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
 	}
 
 	/**
@@ -1799,8 +2066,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
-			'CREATE FULLTEXT INDEX idx_value ON wptests_index_fail (value)',
-			'CREATE SPATIAL INDEX idx_value ON wptests_index_fail (value)',
 			'CREATE INDEX idx_value USING HASH ON wptests_index_fail (value)',
 			'CREATE UNIQUE INDEX idx_value ON wptests_index_fail (value(16))',
 			'CREATE INDEX IF NOT EXISTS "wptests_index_fail__" ON "wptests_index_fail" ("value")',
@@ -1834,25 +2099,77 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported CREATE TABLE index types fail before backend execution.
+	 * Tests CREATE TABLE FULLTEXT/SPATIAL indexes update metadata without PostgreSQL index DDL.
 	 */
-	public function test_create_table_fulltext_and_spatial_indexes_do_not_reach_backend(): void {
-		$queries = array(
-			'CREATE TABLE wptests_fulltext_fail (id int NOT NULL, value text, FULLTEXT KEY value_fulltext (value))',
-			'CREATE TABLE wptests_spatial_fail (id int NOT NULL, value text, SPATIAL KEY value_spatial (value))',
+	public function test_create_table_fulltext_and_spatial_indexes_are_metadata_only(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_create_search_geo (
+					id int NOT NULL,
+					body text,
+					shape point NOT NULL,
+					FULLTEXT KEY body_fulltext (body),
+					SPATIAL KEY shape_spatial (shape)
+				)'
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_create_search_geo\" (\n  \"id\" integer NOT NULL,\n  \"body\" text,\n  \"shape\" text NOT NULL\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
 		);
 
-		foreach ( $queries as $query ) {
-			$driver = $this->create_driver();
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_create_search_geo' );
+		$this->assertSame( array( 'body_fulltext', 'shape_spatial' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( array( 'FULLTEXT', 'SPATIAL' ), array_column( $indexes, 'index_type' ) );
+		$this->assertNull( $indexes[0]['sub_part'] );
+		$this->assertSame( '32', $indexes[1]['sub_part'] );
 
-			try {
-				$driver->query( $query );
-				$this->fail( 'Expected unsupported CREATE TABLE index type to throw.' );
-			} catch ( InvalidArgumentException $e ) {
-				$this->assertSame( 'Unsupported CREATE TABLE statement.', $e->getMessage(), $query );
-				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
-			}
-		}
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_create_search_geo' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  SPATIAL KEY `shape_spatial` (`shape`(32))', $create_table );
+		$this->assertStringContainsString( '  FULLTEXT KEY `body_fulltext` (`body`)', $create_table );
+	}
+
+	/**
+	 * Tests CREATE TABLE zero-date defaults stay text-backed while SHOW CREATE preserves MySQL metadata.
+	 */
+	public function test_create_table_zero_date_defaults_are_text_and_show_create_preserves_mysql_shape(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE wptests_zero_dates (
+					id int NOT NULL,
+					created_date date NOT NULL DEFAULT '0000-00-00',
+					created_at datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+					updated_at timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+					PRIMARY KEY (id)
+				) DEFAULT CHARACTER SET utf8mb4"
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_zero_dates\" (\n  \"id\" integer NOT NULL,\n  \"created_date\" text NOT NULL DEFAULT '0000-00-00',\n  \"created_at\" text NOT NULL DEFAULT '0000-00-00 00:00:00',\n  \"updated_at\" text NOT NULL DEFAULT '0000-00-00 00:00:00',\n  PRIMARY KEY (\"id\")\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_zero_dates' )[0]->{'Create Table'};
+
+		$this->assertStringContainsString( "  `created_date` date NOT NULL DEFAULT '0000-00-00'", $create_table );
+		$this->assertStringContainsString( "  `created_at` datetime NOT NULL DEFAULT '0000-00-00 00:00:00'", $create_table );
+		$this->assertStringContainsString( "  `updated_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00'", $create_table );
 	}
 
 	/**
@@ -2308,6 +2625,64 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests INSERT ... SELECT accepts MySQL's optional INTO keyword.
+	 */
+	public function test_insert_select_without_into_is_translated_with_postgresql_into(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_insert_select_without_into (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query( "INSERT wptests_insert_select_without_into (`id`, `value`) SELECT 1, 'one' FROM DUAL" )
+		);
+		$this->assertSame(
+			'INSERT INTO wptests_insert_select_without_into ("id", "value") SELECT 1, \'one\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_insert_select_without_into' );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'one', $rows[0]->value );
+	}
+
+	/**
+	 * Tests unsupported generic DML shapes fail closed in the narrow translators.
+	 */
+	public function test_unsupported_simple_dml_shapes_return_null_translation(): void {
+		$driver = $this->create_driver();
+
+		$unsupported_query_methods = array(
+			'INSERT INTO wptests_unsupported SET id = 1' => 'translate_simple_mysql_insert_query',
+			'REPLACE INTO wptests_unsupported (id) VALUES (1), (2)' => 'translate_simple_mysql_replace_query',
+			'UPDATE wptests_unsupported SET id = 1 ORDER BY id ASC' => 'translate_simple_mysql_update_query',
+			'UPDATE wptests_unsupported AS u JOIN wptests_other AS o ON u.id = o.id SET u.id = 1' => 'translate_simple_mysql_update_query',
+			'DELETE FROM wptests_unsupported ORDER BY id ASC' => 'translate_simple_mysql_delete_query',
+			'DELETE FROM wptests_unsupported LIMIT 1, 2' => 'translate_simple_mysql_delete_query',
+		);
+
+		foreach ( $unsupported_query_methods as $query => $method_name ) {
+			if ( 'translate_simple_mysql_insert_query' === $method_name || 'translate_simple_mysql_replace_query' === $method_name ) {
+				$this->assertNull(
+					$this->translate_driver_query_data_with_private_method( $driver, $method_name, $query ),
+					$query
+				);
+				continue;
+			}
+
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method( $driver, $method_name, $query ),
+				$query
+			);
+		}
+	}
+
+	/**
 	 * Tests explicit MySQL AUTO_INCREMENT values are exposed as the insert ID.
 	 */
 	public function test_get_insert_id_uses_explicit_mysql_auto_increment_value(): void {
@@ -2714,6 +3089,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE decodes text-targeted hex literals.
+	 */
+	public function test_upsert_update_assignments_decode_hex_literals_for_text_columns(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_hex_values (value TEXT UNIQUE)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_hex_values (
+				value varchar(20) NOT NULL,
+				UNIQUE KEY value (value)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_hex_values (value) VALUES ('test')" );
+
+		$upsert = "INSERT INTO wptests_hex_values (value)
+			VALUES ('test')
+			ON DUPLICATE KEY UPDATE value = 0x61";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_hex_values" ("value") VALUES (\'test\') ON CONFLICT ("value") DO UPDATE SET "value" = \'a\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT value FROM wptests_hex_values' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'a', $rows[0]->value );
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE assignment literals use strict target-column coercion.
 	 */
 	public function test_upsert_update_assignments_use_strict_target_column_coercion(): void {
@@ -2857,6 +3268,85 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests INSERT ... SELECT ON DUPLICATE KEY UPDATE uses MySQL unique-key metadata.
+	 */
+	public function test_insert_select_on_duplicate_key_update_uses_metadata_conflict_target(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_plugin_lookup (
+				source TEXT NOT NULL,
+				external_id TEXT NOT NULL,
+				attempts INTEGER NOT NULL,
+				payload TEXT NOT NULL,
+				UNIQUE (source, external_id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_plugin_lookup (
+				source varchar(64) NOT NULL,
+				external_id varchar(64) NOT NULL,
+				attempts int(11) NOT NULL DEFAULT 0,
+				payload longtext NOT NULL,
+				UNIQUE KEY source_external_id (source, external_id)
+			)'
+		);
+
+		$insert = "INSERT INTO `wptests_plugin_lookup` (`source`, `external_id`, `attempts`, `payload`)
+			SELECT 'feed', 'abc', 1, 'first' FROM DUAL
+			ON DUPLICATE KEY UPDATE `attempts` = `attempts` + VALUES(`attempts`),
+			                        `payload` = VALUES(`payload`)";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 1, \'first\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$update = "INSERT INTO `wptests_plugin_lookup` (`source`, `external_id`, `attempts`, `payload`)
+			SELECT 'feed', 'abc', 3, 'second' FROM DUAL
+			ON DUPLICATE KEY UPDATE `attempts` = `attempts` + VALUES(`attempts`),
+			                        `payload` = VALUES(`payload`)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+
+		$rows = $driver->query( "SELECT attempts, payload FROM wptests_plugin_lookup WHERE source = 'feed' AND external_id = 'abc'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '4', $rows[0]->attempts );
+		$this->assertSame( 'second', $rows[0]->payload );
+	}
+
+	/**
+	 * Tests SELECT-sourced upserts with AUTO_INCREMENT targets fail closed.
+	 */
+	public function test_insert_select_on_duplicate_key_update_with_auto_increment_target_returns_null(): void {
+		$driver = $this->create_driver();
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`)
+			SELECT 1, 'selected' FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$upsert
+			)
+		);
+
+		$this->expectException( PDOException::class );
+
+		$driver->query( $upsert );
+	}
+
+	/**
 	 * Tests ambiguous duplicate-key arbiters fail closed.
 	 */
 	public function test_ambiguous_on_duplicate_key_update_returns_null(): void {
@@ -2969,6 +3459,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '2', $rows[0]->comment_parent );
 		$this->assertSame( 'updated', $rows[0]->comment_content );
+	}
+
+	/**
+	 * Tests simple single-table UPDATE aliases and qualified assignment targets.
+	 */
+	public function test_simple_update_with_alias_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_alias (
+				id INTEGER PRIMARY KEY,
+				value INTEGER NOT NULL
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_update_alias (id, value) VALUES (1, 4), (2, 8)' );
+
+		$update = 'UPDATE `wptests_update_alias` AS ua SET ua.value = ua.value + 1 WHERE ua.id = 1';
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_update_alias" AS "ua" SET "value" = ua.value + 1 WHERE (ua.id = 1) AND ("ua"."value" IS DISTINCT FROM (ua.value + 1))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_update_alias ORDER BY id' );
+		$this->assertSame( '5', $rows[0]->value );
+		$this->assertSame( '8', $rows[1]->value );
+	}
+
+	/**
+	 * Tests bounded UPDATE ORDER BY/LIMIT forms translate through PostgreSQL ctid.
+	 */
+	public function test_simple_update_order_by_limit_translates_to_ctid_subquery(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE wptests_update_limited SET `value` = 9 WHERE id > 0 ORDER BY id DESC LIMIT 1'
+		);
+
+		$this->assertSame(
+			'UPDATE "wptests_update_limited" SET "value" = 9 WHERE (ctid IN (SELECT ctid FROM "wptests_update_limited" WHERE id > 0 ORDER BY id DESC LIMIT 1)) AND ("value" IS DISTINCT FROM (9))',
+			$sql
+		);
 	}
 
 	/**
@@ -3154,6 +3694,64 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'home', $rows[0]->option_name );
+	}
+
+	/**
+	 * Tests simple DELETE without WHERE is translated instead of passed through raw.
+	 */
+	public function test_simple_delete_without_where_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_delete_all (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_delete_all (id, value) VALUES (1, 'one'), (2, 'two')" );
+
+		$delete = 'DELETE FROM wptests_delete_all';
+
+		$this->assertSame( 2, $driver->query( $delete ) );
+		$this->assertSame( 'DELETE FROM "wptests_delete_all"', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT id FROM wptests_delete_all' );
+		$this->assertSame( array(), $rows );
+	}
+
+	/**
+	 * Tests simple single-table DELETE aliases are translated to PostgreSQL aliases.
+	 */
+	public function test_simple_delete_with_alias_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_delete_alias (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_delete_alias (id, value) VALUES (1, 'one'), (2, 'two')" );
+
+		$delete = 'DELETE FROM `wptests_delete_alias` AS d WHERE d.id = 1';
+
+		$this->assertSame( 1, $driver->query( $delete ) );
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_alias" AS "d" WHERE d.id = 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_delete_alias ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->id );
+	}
+
+	/**
+	 * Tests bounded DELETE ORDER BY/LIMIT forms translate through PostgreSQL ctid.
+	 */
+	public function test_simple_delete_order_by_limit_translates_to_ctid_subquery(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_delete_query',
+			"DELETE FROM wptests_delete_limited AS d WHERE d.value = 'stale' ORDER BY d.id ASC LIMIT 1"
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_limited" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM "wptests_delete_limited" AS "d" WHERE d.value = \'stale\' ORDER BY d.id ASC LIMIT 1)',
+			$sql
+		);
 	}
 
 	/**
@@ -3738,6 +4336,187 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '0', $rows[0]->null_position );
 		$this->assertSame( '0', $rows[0]->missing_position );
 		$this->assertSame( '2', $rows[0]->alpha_position );
+	}
+
+	/**
+	 * Tests common MySQL runtime functions from the SQLite compatibility layer are translated.
+	 */
+	public function test_common_mysql_runtime_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT MD5('abc') AS md5_hash,
+			LEFT('Lorem ipsum', 5) AS left_part,
+			UCASE('abc') AS upper_part,
+			LCASE('ABC') AS lower_part,
+			ISNULL(NULL) AS is_null_value,
+			IF(1, 'yes', 'no') AS if_numeric,
+			IF(1 = 0, 'yes', 'no') AS if_predicate,
+			IFNULL(NULL, 'fallback') AS ifnull_value,
+			CONCAT('wp', '_', 'db') AS concat_value,
+			CHAR_LENGTH('hello') AS char_length_value,
+			CHARACTER_LENGTH('hello') AS character_length_value,
+			SUBSTRING('abcdef', 2, 3) AS substring_value,
+			SUBSTRING('abcdef' FROM 2 FOR 3) AS substring_from_value,
+			SUBSTR('abcdef', 4) AS substr_value,
+			MID('abcdef', 2, 2) AS mid_value,
+			REPLACE('banana', 'na', 'NA') AS replace_value,
+			LEAST(3, 9, 4) AS least_value,
+			GREATEST(3, 9, 4) AS greatest_value,
+			LOG(8) AS natural_log_value,
+			LOG(2, 8) AS based_log_value,
+			DATEDIFF('2024-01-05', '2024-01-02') AS day_diff,
+			LOCATE('or', 'WordPress') AS locate_value,
+			LOCATE('r', 'WordPress', 4) AS locate_with_position,
+			HEX('Az') AS hex_value,
+			UNHEX('417a') AS unhex_value,
+			TO_BASE64('wp') AS base64_value,
+			FROM_BASE64('d3A=') AS base64_decoded,
+			INET_ATON('127.0.0.1') AS inet_number,
+			INET_NTOA(2130706433) AS inet_address,
+			FROM_UNIXTIME(0) AS epoch_datetime,
+			UNIX_TIMESTAMP('1970-01-02 00:00:00') AS epoch_seconds";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			$select
+		);
+
+		$this->assertStringContainsString( "MD5(CAST('abc' AS text)) AS md5_hash", $sql );
+		$this->assertStringContainsString( "LEFT(CAST('Lorem ipsum' AS text), CAST(5 AS integer)) AS left_part", $sql );
+		$this->assertStringContainsString( "UPPER(CAST('abc' AS text)) AS upper_part", $sql );
+		$this->assertStringContainsString( "LOWER(CAST('ABC' AS text)) AS lower_part", $sql );
+		$this->assertStringContainsString( 'CASE WHEN NULL IS NULL THEN 1 ELSE 0 END AS is_null_value', $sql );
+		$this->assertStringContainsString( "THEN 'yes' ELSE 'no' END AS if_numeric", $sql );
+		$this->assertStringContainsString( "CASE WHEN (1 = 0) THEN 'yes' ELSE 'no' END AS if_predicate", $sql );
+		$this->assertStringContainsString( "COALESCE(NULL, 'fallback') AS ifnull_value", $sql );
+		$this->assertStringContainsString( "(CAST('wp' AS text) || CAST('_' AS text) || CAST('db' AS text)) AS concat_value", $sql );
+		$this->assertStringContainsString( "CHAR_LENGTH(CAST('hello' AS text)) AS char_length_value", $sql );
+		$this->assertStringContainsString( "CHAR_LENGTH(CAST('hello' AS text)) AS character_length_value", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST('abcdef' AS text) FROM CASE WHEN CAST(2 AS integer) > 0 THEN CAST(2 AS integer) WHEN CAST(2 AS integer) < 0 THEN CHAR_LENGTH(CAST('abcdef' AS text)) + CAST(2 AS integer) + 1 ELSE 0 END FOR CAST(3 AS integer)) END AS substring_value", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST('abcdef' AS text) FROM CASE WHEN CAST(2 AS integer) > 0 THEN CAST(2 AS integer) WHEN CAST(2 AS integer) < 0 THEN CHAR_LENGTH(CAST('abcdef' AS text)) + CAST(2 AS integer) + 1 ELSE 0 END FOR CAST(3 AS integer)) END AS substring_from_value", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST('abcdef' AS text) FROM CASE WHEN CAST(4 AS integer) > 0 THEN CAST(4 AS integer) WHEN CAST(4 AS integer) < 0 THEN CHAR_LENGTH(CAST('abcdef' AS text)) + CAST(4 AS integer) + 1 ELSE 0 END) END AS substr_value", $sql );
+		$this->assertStringContainsString( "SUBSTRING(CAST('abcdef' AS text) FROM CASE WHEN CAST(2 AS integer) > 0 THEN CAST(2 AS integer) WHEN CAST(2 AS integer) < 0 THEN CHAR_LENGTH(CAST('abcdef' AS text)) + CAST(2 AS integer) + 1 ELSE 0 END FOR CAST(2 AS integer)) END AS mid_value", $sql );
+		$this->assertStringContainsString( "REPLACE(CAST('banana' AS text), CAST('na' AS text), CAST('NA' AS text)) AS replace_value", $sql );
+		$this->assertStringContainsString( 'CASE WHEN 3 IS NULL OR 9 IS NULL OR 4 IS NULL THEN NULL ELSE LEAST(3, 9, 4) END AS least_value', $sql );
+		$this->assertStringContainsString( 'CASE WHEN 3 IS NULL OR 9 IS NULL OR 4 IS NULL THEN NULL ELSE GREATEST(3, 9, 4) END AS greatest_value', $sql );
+		$this->assertStringContainsString( 'CASE WHEN CAST(8 AS double precision) IS NULL OR CAST(8 AS double precision) <= 0 THEN NULL ELSE LN(CAST(8 AS double precision)) END AS natural_log_value', $sql );
+		$this->assertStringContainsString( 'CASE WHEN CAST(2 AS double precision) IS NULL OR CAST(8 AS double precision) IS NULL OR CAST(2 AS double precision) <= 1 OR CAST(8 AS double precision) <= 0 THEN NULL ELSE LN(CAST(8 AS double precision)) / LN(CAST(2 AS double precision)) END AS based_log_value', $sql );
+		$this->assertStringContainsString( "CAST((CAST('2024-01-05' AS date) - CAST('2024-01-02' AS date)) AS integer) AS day_diff", $sql );
+		$this->assertStringContainsString( "STRPOS(CAST('WordPress' AS text), CAST('or' AS text)) AS locate_value", $sql );
+		$this->assertStringContainsString( "STRPOS(SUBSTRING(CAST('WordPress' AS text) FROM CAST(4 AS integer)), CAST('r' AS text)) + CAST(4 AS integer) - 1 END AS locate_with_position", $sql );
+		$this->assertStringContainsString( "UPPER(ENCODE(CONVERT_TO(CAST('Az' AS text), 'UTF8'), 'hex')) AS hex_value", $sql );
+		$this->assertStringContainsString( "CONVERT_FROM(DECODE(CAST('417a' AS text), 'hex'), 'UTF8') AS unhex_value", $sql );
+		$this->assertStringContainsString( "ENCODE(CONVERT_TO(CAST('wp' AS text), 'UTF8'), 'base64') AS base64_value", $sql );
+		$this->assertStringContainsString( "CONVERT_FROM(DECODE(CAST('d3A=' AS text), 'base64'), 'UTF8') AS base64_decoded", $sql );
+		$this->assertStringContainsString( "SPLIT_PART(CAST('127.0.0.1' AS text), '.', 1)", $sql );
+		$this->assertStringContainsString( '((CAST(2130706433 AS bigint) >> 24) & 255)::text', $sql );
+		$this->assertStringContainsString( "TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS epoch_datetime", $sql );
+		$this->assertStringContainsString( 'CAST(FLOOR(EXTRACT(EPOCH FROM CAST(CASE WHEN CAST(\'1970-01-02 00:00:00\' AS text)', $sql );
+		$this->assertStringNotContainsString( 'UNIX_TIMESTAMP', $sql );
+		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+		$this->assertStringNotContainsString( 'INET_ATON', $sql );
+		$this->assertStringNotContainsString( 'INET_NTOA', $sql );
+		$this->assertStringNotContainsString( 'FROM_BASE64', $sql );
+		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
+		$this->assertStringNotContainsString( 'IFNULL', $sql );
+		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+	}
+
+	/**
+	 * Tests nested MySQL base64 runtime functions from the SQLite parity suite are translated.
+	 */
+	public function test_nested_base64_runtime_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT
+			TO_BASE64(FROM_BASE64('dGVzdA==')) AS encoded_round_trip,
+			FROM_BASE64(TO_BASE64('binary')) AS decoded_round_trip,
+			COALESCE(FROM_BASE64(''), 'fallback') AS empty_decoded";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			$select
+		);
+
+		$this->assertStringContainsString(
+			"ENCODE(CONVERT_TO(CAST(CONVERT_FROM(DECODE(CAST('dGVzdA==' AS text), 'base64'), 'UTF8') AS text), 'UTF8'), 'base64') AS encoded_round_trip",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"CONVERT_FROM(DECODE(CAST(ENCODE(CONVERT_TO(CAST('binary' AS text), 'UTF8'), 'base64') AS text), 'base64'), 'UTF8') AS decoded_round_trip",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"COALESCE (CONVERT_FROM(DECODE(CAST('' AS text), 'base64'), 'UTF8'), 'fallback') AS empty_decoded",
+			$sql
+		);
+		$this->assertStringNotContainsString( 'FROM_BASE64', $sql );
+		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
+	}
+
+	/**
+	 * Tests NULL-only MySQL base64 runtime calls still trigger PostgreSQL translation.
+	 */
+	public function test_null_base64_runtime_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT FROM_BASE64(NULL) AS decoded_null, TO_BASE64(NULL) AS encoded_null'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "CONVERT_FROM(DECODE(CAST(NULL AS text), 'base64'), 'UTF8') AS decoded_null", $sql );
+		$this->assertStringContainsString( "ENCODE(CONVERT_TO(CAST(NULL AS text), 'UTF8'), 'base64') AS encoded_null", $sql );
+		$this->assertStringNotContainsString( 'FROM_BASE64', $sql );
+		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
+	}
+
+	/**
+	 * Tests common MySQL runtime functions trigger rewrite without literal arguments.
+	 */
+	public function test_common_mysql_runtime_functions_with_column_arguments_trigger_postgresql_rewrite(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT IFNULL(primary_value, fallback_value) AS selected_value, CONCAT(prefix, suffix) AS joined_value, CHAR_LENGTH(display_name) AS name_length FROM runtime_names'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'COALESCE(primary_value, fallback_value) AS selected_value', $sql );
+		$this->assertStringContainsString( '(CAST(prefix AS text) || CAST(suffix AS text)) AS joined_value', $sql );
+		$this->assertStringContainsString( 'CHAR_LENGTH(CAST(display_name AS text)) AS name_length', $sql );
+		$this->assertStringNotContainsString( 'IFNULL', $sql );
+		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+	}
+
+	/**
+	 * Tests unsupported common MySQL runtime function forms are left without compatibility translations.
+	 */
+	public function test_unsupported_common_mysql_runtime_function_forms_return_null_translation(): void {
+		$driver  = $this->create_driver();
+		$queries = array(
+			'SELECT FROM_UNIXTIME(created_at, format_mask) AS formatted_date FROM runtime_events',
+			'SELECT CONCAT() AS empty_concat',
+			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
+			'SELECT LOG() AS invalid_log',
+		);
+
+		foreach ( $queries as $query ) {
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					$query
+				),
+				$query
+			);
+		}
 	}
 
 	/**
@@ -7834,6 +8613,184 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE ADD FOREIGN KEY forms update PostgreSQL and SHOW CREATE metadata.
+	 */
+	public function test_alter_table_add_foreign_key_updates_postgresql_and_show_create_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_fk_parent (id int NOT NULL, code int NOT NULL, PRIMARY KEY (id, code))' );
+		$driver->query( 'CREATE TABLE wptests_fk_child (id int, code int)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_fk_child (id int, code int)' );
+
+		$driver->query( 'ALTER TABLE wptests_fk_child ADD FOREIGN KEY (id) REFERENCES wptests_fk_parent (id)' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_fk_child" ADD CONSTRAINT "wptests_fk_child_ibfk_1" FOREIGN KEY ("id") REFERENCES "wptests_fk_parent" ("id")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_fk_child
+				ADD CONSTRAINT fk_child_parent FOREIGN KEY (id, code)
+				REFERENCES wptests_fk_parent (id, code)
+				ON DELETE CASCADE ON UPDATE SET NULL'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_fk_child" ADD CONSTRAINT "fk_child_parent" FOREIGN KEY ("id", "code") REFERENCES "wptests_fk_parent" ("id", "code") ON DELETE CASCADE ON UPDATE SET NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name'        => 'fk_child_parent',
+					'seq_in_index'           => '1',
+					'column_name'            => 'id',
+					'referenced_table_name'  => 'wptests_fk_parent',
+					'referenced_column_name' => 'id',
+					'update_rule'            => 'SET NULL',
+					'delete_rule'            => 'CASCADE',
+				),
+				array(
+					'constraint_name'        => 'fk_child_parent',
+					'seq_in_index'           => '2',
+					'column_name'            => 'code',
+					'referenced_table_name'  => 'wptests_fk_parent',
+					'referenced_column_name' => 'code',
+					'update_rule'            => 'SET NULL',
+					'delete_rule'            => 'CASCADE',
+				),
+				array(
+					'constraint_name'        => 'wptests_fk_child_ibfk_1',
+					'seq_in_index'           => '1',
+					'column_name'            => 'id',
+					'referenced_table_name'  => 'wptests_fk_parent',
+					'referenced_column_name' => 'id',
+					'update_rule'            => 'NO ACTION',
+					'delete_rule'            => 'NO ACTION',
+				),
+			),
+			$this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_fk_child' )
+		);
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_fk_child' );
+		$this->assertStringContainsString(
+			'  CONSTRAINT `fk_child_parent` FOREIGN KEY (`id`, `code`) REFERENCES `wptests_fk_parent` (`id`, `code`) ON DELETE CASCADE ON UPDATE SET NULL',
+			$show_create[0]->{'Create Table'}
+		);
+		$this->assertStringContainsString(
+			'  CONSTRAINT `wptests_fk_child_ibfk_1` FOREIGN KEY (`id`) REFERENCES `wptests_fk_parent` (`id`)',
+			$show_create[0]->{'Create Table'}
+		);
+		$this->assertStringContainsString(
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			$driver->get_last_postgresql_queries()[2]['sql']
+		);
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP FOREIGN KEY updates PostgreSQL and SHOW CREATE metadata.
+	 */
+	public function test_alter_table_drop_foreign_key_updates_postgresql_and_show_create_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( 'CREATE TABLE wptests_fk_drop_parent (id int NOT NULL, PRIMARY KEY (id))' );
+		$driver->query( 'CREATE TABLE wptests_fk_drop_child (id int)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_fk_drop_child (id int)' );
+		$driver->query( 'ALTER TABLE wptests_fk_drop_child ADD FOREIGN KEY (id) REFERENCES wptests_fk_drop_parent (id)' );
+		$driver->query( 'ALTER TABLE wptests_fk_drop_child ADD CONSTRAINT fk_drop_parent FOREIGN KEY (id) REFERENCES wptests_fk_drop_parent (id) ON DELETE CASCADE' );
+
+		$driver->query( 'ALTER TABLE wptests_fk_drop_child DROP FOREIGN KEY wptests_fk_drop_child_ibfk_1' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_fk_drop_child" DROP CONSTRAINT "wptests_fk_drop_child_ibfk_1"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array( 'fk_drop_parent' ),
+			array_values( array_unique( array_column( $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_fk_drop_child' ), 'constraint_name' ) ) )
+		);
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_fk_drop_child' );
+		$this->assertStringContainsString( 'CONSTRAINT `fk_drop_parent` FOREIGN KEY', $show_create[0]->{'Create Table'} );
+		$this->assertStringNotContainsString( 'wptests_fk_drop_child_ibfk_1', $show_create[0]->{'Create Table'} );
+
+		$driver->query( 'ALTER TABLE wptests_fk_drop_child DROP FOREIGN KEY fk_drop_parent' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_fk_drop_child" DROP CONSTRAINT "fk_drop_parent"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( array(), $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_fk_drop_child' ) );
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_fk_drop_child' );
+		$this->assertStringNotContainsString( 'FOREIGN KEY', $show_create[0]->{'Create Table'} );
+	}
+
+	/**
+	 * Tests ALTER TABLE ADD FULLTEXT/SPATIAL indexes update metadata without PostgreSQL index DDL.
+	 */
+	public function test_alter_table_add_fulltext_and_spatial_indexes_are_metadata_only(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_alter_search_geo (
+				id int NOT NULL,
+				body longtext NOT NULL,
+				shape geometry NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_search_geo (
+				id int NOT NULL,
+				body longtext NOT NULL,
+				shape geometry NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE wptests_alter_search_geo
+					ADD FULLTEXT KEY body_fulltext (body),
+					ADD SPATIAL INDEX shape_spatial (shape)'
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_search_geo' );
+		$this->assertSame( array( 'body_fulltext', 'shape_spatial' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( array( 'FULLTEXT', 'SPATIAL' ), array_column( $indexes, 'index_type' ) );
+		$this->assertNull( $indexes[0]['sub_part'] );
+		$this->assertSame( '32', $indexes[1]['sub_part'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_alter_search_geo' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  SPATIAL KEY `shape_spatial` (`shape`(32))', $create_table );
+		$this->assertStringContainsString( '  FULLTEXT KEY `body_fulltext` (`body`)', $create_table );
+	}
+
+	/**
 	 * Tests ALTER TABLE DROP COLUMN removes column and dependent index metadata.
 	 */
 	public function test_alter_table_drop_column_updates_backend_and_metadata(): void {
@@ -8353,11 +9310,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLE STATUS WHERE exact filters match materialized output columns.
+	 */
+	public function test_show_table_status_where_exact_filters_output_columns(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_show_table_status_auto_increment_fixture( $driver );
+
+		$tables = $driver->query( "SHOW TABLE STATUS WHERE Name = 'wptests_options'" );
+
+		$this->assertSame( array( 'wptests_options' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Version = 10' );
+
+		$this->assertSame(
+			array( 'wptests_options', 'wptests_plain', 'wptests_posts' ),
+			array_map( array( $this, 'get_show_table_status_row_name' ), $tables )
+		);
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Auto_increment = 6' );
+
+		$this->assertSame( array( 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+		$this->assertSame( '6', $tables[0]->Auto_increment );
+	}
+
+	/**
 	 * Tests unsupported SHOW TABLE STATUS WHERE clauses fail before backend execution.
 	 */
 	public function test_unsupported_show_table_status_where_clause_does_not_reach_backend(): void {
 		$unsupported_queries = array(
-			"SHOW TABLE STATUS WHERE Name = 'wptests_options'",
+			"SHOW TABLE STATUS WHERE Name LIKE 'wptests_%'",
+			'SHOW TABLE STATUS WHERE Name = wptests_options',
 			'SHOW TABLE STATUS WHERE `Auto_increment` >= 1',
 			'SHOW TABLE STATUS FROM other_db',
 		);
@@ -8399,10 +9382,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '  KEY `status` (`status`)', $create_table );
 		$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
 
-		$queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 2, $queries );
-		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
-		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $queries[1]['sql'] );
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 3, $queries );
+			$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
+			$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $queries[1]['sql'] );
+			$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $queries[2]['sql'] );
 		foreach ( $queries as $query ) {
 			$this->assertStringNotContainsString( 'SHOW CREATE TABLE', $query['sql'] );
 		}
@@ -9215,6 +10199,267 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema.TABLES SELECTs return MySQL-shaped rows.
+	 */
+	public function test_direct_information_schema_tables_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$count = $driver->query( "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'wptests'" );
+
+		$this->assertSame( '3', $count[0]->{'COUNT(*)'} );
+		$this->assertSame( 'COUNT(*)', $driver->get_last_column_meta()[0]['name'] );
+
+		$tables = $driver->query(
+			"SELECT table_name AS name, ENGINE AS engine, CAST(data_length / 1024 / 1024 AS UNSIGNED) AS data
+			FROM INFORMATION_SCHEMA.TABLES
+			WHERE TABLE_NAME = 'wptests_options'
+			ORDER BY name ASC"
+		);
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wptests_options', $tables[0]->name );
+		$this->assertSame( 'InnoDB', $tables[0]->engine );
+		$this->assertSame( '0', $tables[0]->data );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$current_database_tables = $driver->query( "SELECT ENGINE FROM tables WHERE TABLE_NAME = 'wptests_options'" );
+
+		$this->assertCount( 1, $current_database_tables );
+		$this->assertSame( 'InnoDB', $current_database_tables[0]->ENGINE );
+		$this->assertNotEmpty(
+			array_filter(
+				$driver->get_last_postgresql_queries(),
+				static function ( array $query ): bool {
+					return false !== strpos( $query['sql'], 'AS "tables"' );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Tests direct information_schema.SCHEMATA SELECTs return MySQL-shaped rows.
+	 */
+	public function test_direct_information_schema_schemata_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver( 'wp_test_new' );
+
+		$schemata = $driver->query( 'SELECT schema_name FROM information_schema.schemata ORDER BY schema_name' );
+
+		$this->assertEquals(
+			array(
+				(object) array( 'SCHEMA_NAME' => 'information_schema' ),
+				(object) array( 'SCHEMA_NAME' => 'wp_test_new' ),
+			),
+			$schemata
+		);
+
+		$aliased = $driver->query( 'SELECT s.schema_name FROM information_schema.schemata AS s WHERE s.schema_name = \'wp_test_new\'' );
+
+		$this->assertEquals( array( (object) array( 'SCHEMA_NAME' => 'wp_test_new' ) ), $aliased );
+
+		$star = $driver->query( 'SELECT * FROM information_schema.schemata WHERE schema_name = \'information_schema\'' );
+
+		$this->assertCount( 1, $star );
+		$this->assertSame( 'def', $star[0]->CATALOG_NAME );
+		$this->assertSame( 'information_schema', $star[0]->SCHEMA_NAME );
+		$this->assertSame( 'utf8mb4', $star[0]->DEFAULT_CHARACTER_SET_NAME );
+		$this->assertSame( 'utf8mb4_unicode_ci', $star[0]->DEFAULT_COLLATION_NAME );
+		$this->assertNull( $star[0]->SQL_PATH );
+		$this->assertSame( 'NO', $star[0]->DEFAULT_ENCRYPTION );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$current_database_schemata = $driver->query( 'SELECT schema_name FROM schemata WHERE schema_name = \'wp_test_new\'' );
+
+		$this->assertEquals( array( (object) array( 'SCHEMA_NAME' => 'wp_test_new' ) ), $current_database_schemata );
+	}
+
+	/**
+	 * Tests direct information_schema aliases and star projections return MySQL-shaped rows.
+	 */
+	public function test_direct_information_schema_alias_star_and_count_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$tables = $driver->query( "SELECT t.* FROM information_schema.tables AS t WHERE t.table_name = 'wptests_options'" );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'def', $tables[0]->TABLE_CATALOG );
+		$this->assertSame( 'wptests', $tables[0]->TABLE_SCHEMA );
+		$this->assertSame( 'wptests_options', $tables[0]->TABLE_NAME );
+		$this->assertSame( 'BASE TABLE', $tables[0]->TABLE_TYPE );
+		$this->assertSame( 'InnoDB', $tables[0]->ENGINE );
+		$this->assertSame( 'utf8mb4_unicode_ci', $tables[0]->TABLE_COLLATION );
+
+		$count = $driver->query( "SELECT COUNT(*) FROM information_schema.columns AS c WHERE c.table_name = 'wptests_options'" );
+
+		$this->assertSame( '4', $count[0]->{'COUNT(*)'} );
+		$this->assertSame( 'COUNT(*)', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertStringContainsString( 'AS "c"', $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
+	 * Tests direct information_schema column/index/constraint SELECTs use MySQL metadata.
+	 */
+	public function test_direct_information_schema_columns_statistics_and_key_constraints_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$columns = $driver->query(
+			"SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, COLUMN_KEY, EXTRA
+			FROM information_schema.columns
+			WHERE table_name = 'wptests_options'
+			ORDER BY ordinal_position"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'option_id', 'bigint', 'bigint(20) unsigned', 'PRI', 'auto_increment' ),
+				array( 'option_name', 'varchar', 'varchar(191)', 'UNI', '' ),
+				array( 'option_value', 'longtext', 'longtext', '', '' ),
+				array( 'autoload', 'varchar', 'varchar(20)', 'MUL', '' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->COLUMN_NAME, $row->DATA_TYPE, $row->COLUMN_TYPE, $row->COLUMN_KEY, $row->EXTRA );
+				},
+				$columns
+			)
+		);
+
+		$statistics = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX
+			FROM information_schema.statistics
+			WHERE table_name = 'wptests_options'
+			ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+		);
+
+		$statistics_by_name = array();
+		foreach ( $statistics as $row ) {
+			$statistics_by_name[ $row->INDEX_NAME ] = array( $row->COLUMN_NAME, $row->NON_UNIQUE, $row->SEQ_IN_INDEX );
+		}
+		ksort( $statistics_by_name );
+
+		$this->assertSame(
+			array(
+				'PRIMARY'     => array( 'option_id', '0', '1' ),
+				'autoload'    => array( 'autoload', '1', '1' ),
+				'option_name' => array( 'option_name', '0', '1' ),
+			),
+			$statistics_by_name
+		);
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+			FROM information_schema.table_constraints
+			WHERE table_name = 'wptests_options'
+			ORDER BY CONSTRAINT_NAME"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'PRIMARY', 'PRIMARY KEY' ),
+				array( 'option_name', 'UNIQUE' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->CONSTRAINT_NAME, $row->CONSTRAINT_TYPE );
+				},
+				$constraints
+			)
+		);
+
+		$key_usage = $driver->query(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+			FROM information_schema.key_column_usage
+			WHERE table_name = 'wptests_options'
+			ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'PRIMARY', 'option_id', '1' ),
+				array( 'option_name', 'option_name', '1' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->CONSTRAINT_NAME, $row->COLUMN_NAME, $row->ORDINAL_POSITION );
+				},
+				$key_usage
+			)
+		);
+	}
+
+	/**
+	 * Tests direct FK and CHECK information_schema SELECTs return MySQL-shaped rows.
+	 */
+	public function test_direct_information_schema_foreign_and_check_constraints_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+			FROM information_schema.table_constraints
+			WHERE table_name = 'wptests_posts'
+			ORDER BY CONSTRAINT_NAME"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'wptests_posts_author_fk', 'FOREIGN KEY' ),
+				array( 'wptests_posts_status_chk', 'CHECK' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->CONSTRAINT_NAME, $row->CONSTRAINT_TYPE );
+				},
+				$constraints
+			)
+		);
+
+		$key_usage = $driver->query(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_name = 'wptests_posts'
+			ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'wptests_posts_author_fk', 'post_author', 'wptests_options', 'option_id' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->CONSTRAINT_NAME, $row->COLUMN_NAME, $row->REFERENCED_TABLE_NAME, $row->REFERENCED_COLUMN_NAME );
+				},
+				$key_usage
+			)
+		);
+
+		$referential = $driver->query(
+			"SELECT CONSTRAINT_NAME, DELETE_RULE, REFERENCED_TABLE_NAME
+			FROM information_schema.referential_constraints
+			WHERE table_name = 'wptests_posts'"
+		);
+
+		$this->assertSame( 'wptests_posts_author_fk', $referential[0]->CONSTRAINT_NAME );
+		$this->assertSame( 'CASCADE', $referential[0]->DELETE_RULE );
+		$this->assertSame( 'wptests_options', $referential[0]->REFERENCED_TABLE_NAME );
+
+		$checks = $driver->query(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_name = 'wptests_posts_status_chk'"
+		);
+
+		$this->assertSame( 'wptests_posts_status_chk', $checks[0]->CONSTRAINT_NAME );
+		$this->assertSame( 'post_status IS NOT NULL', $checks[0]->CHECK_CLAUSE );
+	}
+
+	/**
 	 * Tests SHOW INDEX returns MySQL-shaped PostgreSQL catalog rows.
 	 */
 	public function test_show_index_returns_mysql_shaped_catalog_rows(): void {
@@ -9285,6 +10530,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW INDEX reports MySQL FULLTEXT and SPATIAL metadata rows.
+	 */
+	public function test_show_index_reports_fulltext_and_spatial_metadata_rows(): void {
+		$driver = $this->create_show_index_driver();
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO show_index_fixture
+				(table_schema, table_name, sort_position, non_unique, key_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, visible, expression)
+			VALUES
+				('public', 'wptests_search_geo', 1, '1', 'shape_spatial', '1', 'shape', 'A', '0', '32', NULL, '', 'SPATIAL', '', '', 'YES', NULL),
+				('public', 'wptests_search_geo', 2, '1', 'body_fulltext', '1', 'body', NULL, '0', NULL, NULL, '', 'FULLTEXT', '', '', 'YES', NULL)"
+		);
+
+		$indexes = $driver->query( 'SHOW INDEX FROM wptests_search_geo' );
+
+		$this->assertCount( 2, $indexes );
+		$this->assertSame( 'shape_spatial', $indexes[0]->Key_name );
+		$this->assertSame( 'SPATIAL', $indexes[0]->Index_type );
+		$this->assertSame( 'A', $indexes[0]->Collation );
+		$this->assertSame( '32', $indexes[0]->Sub_part );
+		$this->assertSame( 'body_fulltext', $indexes[1]->Key_name );
+		$this->assertSame( 'FULLTEXT', $indexes[1]->Index_type );
+		$this->assertNull( $indexes[1]->Collation );
+		$this->assertNull( $indexes[1]->Sub_part );
+		$this->assertStringContainsString(
+			'CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE \'A\' END AS "Collation"',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+	}
+
+	/**
+	 * Tests SHOW INDEX WHERE filters match FULLTEXT/SPATIAL metadata output columns.
+	 */
+	public function test_show_index_where_filters_fulltext_and_spatial_metadata_rows(): void {
+		$driver = $this->create_show_index_driver();
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO show_index_fixture
+				(table_schema, table_name, sort_position, non_unique, key_name, seq_in_index, column_name, collation, cardinality, sub_part, packed, nullable, index_type, comment, index_comment, visible, expression)
+			VALUES
+				('public', 'wptests_search_geo', 1, '1', 'shape_spatial', '1', 'shape', 'A', '0', '32', NULL, '', 'SPATIAL', '', '', 'YES', NULL),
+				('public', 'wptests_search_geo', 2, '1', 'body_fulltext', '1', 'body', NULL, '0', NULL, NULL, '', 'FULLTEXT', '', '', 'YES', NULL)"
+		);
+
+		$fulltext = $driver->query( "SHOW INDEX FROM wptests_search_geo WHERE Index_type = 'FULLTEXT'" );
+
+		$this->assertCount( 1, $fulltext );
+		$this->assertSame( 'body_fulltext', $fulltext[0]->Key_name );
+		$this->assertSame( 'FULLTEXT', $fulltext[0]->Index_type );
+		$this->assertNull( $fulltext[0]->Sub_part );
+		$this->assertSame( array( 'public', 'wptests_search_geo', 'FULLTEXT' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$spatial = $driver->query( 'SHOW INDEX FROM wptests_search_geo WHERE Sub_part = 32' );
+
+		$this->assertCount( 1, $spatial );
+		$this->assertSame( 'shape_spatial', $spatial[0]->Key_name );
+		$this->assertSame( 'SPATIAL', $spatial[0]->Index_type );
+		$this->assertSame( '32', $spatial[0]->Sub_part );
+		$this->assertSame( array( 'public', 'wptests_search_geo', '32' ), $driver->get_last_postgresql_queries()[0]['params'] );
+	}
+
+	/**
 	 * Tests SHOW INDEXES WHERE Key_name filters on normalized MySQL index names.
 	 */
 	public function test_show_indexes_where_key_name_filters_catalog_rows(): void {
@@ -9350,7 +10655,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_show_keys_where_exact_filters_additional_output_columns(): void {
 		$driver = $this->create_show_index_driver();
 
-		$indexes = $driver->query( "SHOW KEYS FROM wptests_options WHERE Non_unique = '0'" );
+		$indexes = $driver->query( 'SHOW KEYS FROM wptests_options WHERE Non_unique = 0' );
 
 		$this->assertCount( 2, $indexes );
 		$this->assertSame( 'PRIMARY', $indexes[0]->Key_name );
@@ -9397,7 +10702,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SHOW INDEX FROM other_db.wptests_options FROM wptests',
 			'SHOW KEYS IN wptests_options',
 			'SHOW KEYS FROM other_db.wptests_options IN wptests',
-			'SHOW KEYS FROM wptests_options WHERE Non_unique = 0',
+			'SHOW KEYS FROM wptests_options WHERE Non_unique > 0',
 			'SHOW KEYS FROM wptests_options LIMIT 1',
 		);
 
@@ -11611,6 +12916,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Get stored MySQL foreign key metadata rows for a table.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Table name.
+	 * @param string               $schema     Metadata schema name.
+	 * @return array Stored metadata rows.
+	 */
+	private function get_mysql_foreign_key_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
+		$stmt = $driver->get_connection()->query(
+			sprintf(
+				'SELECT constraint_name, seq_in_index, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY constraint_name, seq_in_index',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $schema, $table_name )
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
 	 * Get the expected SHOW GRANTS result rows.
 	 *
 	 * @return object[] Expected result rows.
@@ -11827,6 +13155,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Install MySQL-facing metadata for direct information_schema SELECT tests.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_direct_information_schema_options_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_options (
+				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				option_name varchar(191) NOT NULL DEFAULT '',
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload)
+			)"
+		);
+	}
+
+	/**
 	 * Install a small information_schema fixture into the injected PDO.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver Driver under test.
@@ -11850,6 +13197,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				ordinal_position INTEGER NOT NULL,
 				data_type TEXT NOT NULL,
 				character_maximum_length INTEGER,
+				numeric_precision INTEGER,
+				numeric_scale INTEGER,
+				datetime_precision INTEGER,
 				collation_name TEXT,
 				is_nullable TEXT NOT NULL,
 				column_default TEXT,
@@ -11867,6 +13217,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$pdo->exec(
 			'CREATE TABLE information_schema.key_column_usage (
+				constraint_schema TEXT NOT NULL,
+				constraint_name TEXT NOT NULL,
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				column_name TEXT NOT NULL,
+				ordinal_position INTEGER,
+				position_in_unique_constraint INTEGER
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE information_schema.referential_constraints (
+				constraint_schema TEXT NOT NULL,
+				constraint_name TEXT NOT NULL,
+				unique_constraint_schema TEXT NOT NULL,
+				unique_constraint_name TEXT NOT NULL,
+				match_option TEXT NOT NULL,
+				update_rule TEXT NOT NULL,
+				delete_rule TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE information_schema.check_constraints (
+				constraint_schema TEXT NOT NULL,
+				constraint_name TEXT NOT NULL,
+				check_clause TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE information_schema.constraint_column_usage (
 				constraint_schema TEXT NOT NULL,
 				constraint_name TEXT NOT NULL,
 				table_schema TEXT NOT NULL,
@@ -11898,14 +13277,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				(constraint_schema, constraint_name, table_schema, table_name, constraint_type)
 			VALUES
 				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'PRIMARY KEY'),
-				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'UNIQUE')"
+				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'UNIQUE'),
+				('public', 'wptests_posts_author_fk', 'public', 'wptests_posts', 'FOREIGN KEY'),
+				('public', 'wptests_posts_status_chk', 'public', 'wptests_posts', 'CHECK')"
 		);
 		$pdo->exec(
 			"INSERT INTO information_schema.key_column_usage
+				(constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position, position_in_unique_constraint)
+			VALUES
+				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'option_id', 1, NULL),
+				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'option_name', 1, NULL),
+				('public', 'wptests_posts_author_fk', 'public', 'wptests_posts', 'post_author', 1, 1)"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.referential_constraints
+				(constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, match_option, update_rule, delete_rule)
+			VALUES
+				('public', 'wptests_posts_author_fk', 'public', 'wptests_options_pkey', 'NONE', 'NO ACTION', 'CASCADE')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.constraint_column_usage
 				(constraint_schema, constraint_name, table_schema, table_name, column_name)
 			VALUES
 				('public', 'wptests_options_pkey', 'public', 'wptests_options', 'option_id'),
-				('public', 'wptests_options_option_name_key', 'public', 'wptests_options', 'option_name')"
+				('public', 'wptests_posts_author_fk', 'public', 'wptests_options', 'option_id')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.check_constraints
+				(constraint_schema, constraint_name, check_clause)
+			VALUES
+				('public', 'wptests_posts_status_chk', 'post_status IS NOT NULL')"
 		);
 	}
 }

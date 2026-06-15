@@ -111,7 +111,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
-			$indexes[] = $this->translate_secondary_index( $table_constraint, $table_name, $if_not_exists );
+			$index = $this->translate_secondary_index( $table_constraint, $table_name, $if_not_exists );
+			if ( null !== $index ) {
+				$indexes[] = $index;
+			}
 		}
 
 		$definitions = array_merge( $columns, $constraints );
@@ -271,7 +274,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 		} elseif ( in_array( $type, array( 'varchar', 'char' ), true ) ) {
 			$length          = $this->get_field_length( $data_type );
 			$postgresql_type = $length ? sprintf( '%s(%d)', $type, $length ) : $type;
-		} elseif ( in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'datetime', 'timestamp', 'date', 'time', 'year', 'geometrycollection', 'geomcollection' ), true ) ) {
+		} elseif (
+			in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
+			|| $this->is_mysql_spatial_column_type( $type )
+		) {
 			$postgresql_type = 'text';
 		} elseif ( in_array( $type, array( 'binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob' ), true ) ) {
 			$postgresql_type = 'bytea';
@@ -330,14 +336,14 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $table_constraint Table constraint node.
 	 * @param string         $table_name       Table name.
 	 * @param bool           $if_not_exists    Whether CREATE TABLE used IF NOT EXISTS.
-	 * @return string PostgreSQL CREATE INDEX statement.
+	 * @return string|null PostgreSQL CREATE INDEX statement, or null for metadata-only MySQL index types.
 	 */
-	private function translate_secondary_index( WP_Parser_Node $table_constraint, string $table_name, bool $if_not_exists ): string {
+	private function translate_secondary_index( WP_Parser_Node $table_constraint, string $table_name, bool $if_not_exists ): ?string {
 		if (
 			$table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL )
 			|| $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL )
 		) {
-			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+			return null;
 		}
 
 		$index_name_node = $table_constraint->get_first_child_node( 'indexNameAndType' );
@@ -545,15 +551,16 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return array Index metadata.
 	 */
 	private function extract_index_metadata( WP_Parser_Node $table_constraint, int $index_ordinal, array $column_types ): array {
-		$is_primary = $table_constraint->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
-		$key_parts  = $this->get_key_part_metadata( $table_constraint, $column_types );
-		$key_name   = $is_primary ? 'PRIMARY' : $this->get_index_name( $table_constraint, $key_parts );
+		$is_primary       = $table_constraint->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
+		$is_spatial_index = $this->is_mysql_spatial_index_metadata( $table_constraint, $column_types );
+		$key_parts        = $this->get_key_part_metadata( $table_constraint, $column_types, $is_spatial_index );
+		$key_name         = $is_primary ? 'PRIMARY' : $this->get_index_name( $table_constraint, $key_parts );
 
 		return array(
 			'name'       => $key_name,
 			'ordinal'    => $index_ordinal,
 			'non_unique' => $is_primary || $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ? '0' : '1',
-			'index_type' => $this->get_mysql_index_type_metadata( $table_constraint ),
+			'index_type' => $this->get_mysql_index_type_metadata( $table_constraint, $is_spatial_index ),
 			'columns'    => $key_parts,
 		);
 	}
@@ -580,14 +587,15 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * Get MySQL SHOW INDEX Index_type metadata.
 	 *
 	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @param bool           $is_spatial_index  Whether the index targets spatial data.
 	 * @return string Index type.
 	 */
-	private function get_mysql_index_type_metadata( WP_Parser_Node $table_constraint ): string {
+	private function get_mysql_index_type_metadata( WP_Parser_Node $table_constraint, bool $is_spatial_index ): string {
 		if ( $table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL ) ) {
 			return 'FULLTEXT';
 		}
 
-		if ( $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL ) ) {
+		if ( $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL ) || $is_spatial_index ) {
 			return 'SPATIAL';
 		}
 
@@ -595,19 +603,45 @@ class WP_PostgreSQL_Create_Table_Translator {
 	}
 
 	/**
+	 * Check whether index metadata should use MySQL SPATIAL semantics.
+	 *
+	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @param array          $column_types     Column types keyed by lowercase name.
+	 * @return bool Whether the index is spatial.
+	 */
+	private function is_mysql_spatial_index_metadata( WP_Parser_Node $table_constraint, array $column_types ): bool {
+		if ( $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL ) ) {
+			return true;
+		}
+
+		$key_part = $table_constraint->get_first_descendant_node( 'keyPart' );
+		if ( ! $key_part ) {
+			return false;
+		}
+
+		$column_name = $this->get_identifier_value( $key_part->get_first_child_node( 'identifier' ) );
+		$column_type = $column_types[ strtolower( $column_name ) ] ?? null;
+
+		return is_string( $column_type ) && $this->is_mysql_spatial_column_type( $column_type );
+	}
+
+	/**
 	 * Get key part metadata from a MySQL key constraint.
 	 *
 	 * @param WP_Parser_Node $table_constraint Table constraint node.
 	 * @param array          $column_types     Column types keyed by lowercase name.
+	 * @param bool           $is_spatial_index  Whether the index targets spatial data.
 	 * @return array[] Key part metadata.
 	 */
-	private function get_key_part_metadata( WP_Parser_Node $table_constraint, array $column_types ): array {
+	private function get_key_part_metadata( WP_Parser_Node $table_constraint, array $column_types, bool $is_spatial_index ): array {
 		$key_parts = array();
 
 		foreach ( $table_constraint->get_descendant_nodes( 'keyPart' ) as $key_part ) {
 			$column_name = $this->get_identifier_value( $key_part->get_first_child_node( 'identifier' ) );
 			$sub_part    = $this->get_field_length( $key_part );
-			if ( null === $sub_part && ! $table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL ) ) {
+			if ( null === $sub_part && $is_spatial_index ) {
+				$sub_part = 32;
+			} elseif ( null === $sub_part && ! $table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL ) ) {
 				$sub_part = $this->get_implicit_index_sub_part( $column_name, $column_types );
 			}
 
@@ -824,6 +858,31 @@ class WP_PostgreSQL_Create_Table_Translator {
 		return in_array(
 			$data_type,
 			array( 'char', 'varchar', 'tinytext', 'text', 'mediumtext', 'longtext', 'enum', 'set' ),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a MySQL column type is spatial.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return bool Whether the type is spatial.
+	 */
+	private function is_mysql_spatial_column_type( string $data_type ): bool {
+		$base_type = $this->get_base_mysql_column_type( $data_type );
+		return in_array(
+			$base_type,
+			array(
+				'geometry',
+				'point',
+				'linestring',
+				'polygon',
+				'multipoint',
+				'multilinestring',
+				'multipolygon',
+				'geometrycollection',
+				'geomcollection',
+			),
 			true
 		);
 	}
