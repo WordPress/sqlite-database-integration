@@ -19331,9 +19331,10 @@ WHERE option_name IN (
 	 * Translate common direct MySQL information_schema SELECT statements.
 	 *
 	 * This is intentionally limited to supported information_schema relations as
-	 * top-level FROM/JOIN sources. CTEs, nested catalog sources, mixed application
-	 * table joins, and unsupported relation shapes fail closed rather than
-	 * receiving a partial rewrite.
+	 * FROM/JOIN sources, including derived subqueries that themselves use only
+	 * supported information_schema relations. CTEs, mixed application table
+	 * joins, and unsupported relation shapes fail closed rather than receiving a
+	 * partial rewrite.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the shape is unsupported.
@@ -19349,15 +19350,40 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if (
-			$this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) )
-			|| $this->contains_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::SELECT_SYMBOL ) )
-		) {
+		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) ) ) {
 			return null;
 		}
 
-		$context = $this->get_direct_information_schema_select_context( $tokens, $statement_end );
+		$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end );
 		if ( null === $context ) {
+			return null;
+		}
+
+		$source_cover_ranges = array();
+		foreach ( $context['sources'] as $source ) {
+			$source_cover_ranges[] = array(
+				'start' => $source['source_start'],
+				'end'   => $source['source_end'],
+			);
+		}
+
+		$nested_select_replacements = $this->get_direct_information_schema_nested_select_replacements(
+			$query,
+			$tokens,
+			$context['clause_ranges']
+		);
+		if ( null === $nested_select_replacements ) {
+			return null;
+		}
+
+		if (
+			! $this->direct_information_schema_nested_selects_are_covered(
+				$tokens,
+				1,
+				$statement_end,
+				array_merge( $source_cover_ranges, $nested_select_replacements )
+			)
+		) {
 			return null;
 		}
 
@@ -19411,7 +19437,8 @@ WHERE option_name IN (
 				$tokens,
 				$expression_bounds['start'],
 				$expression_bounds['end'],
-				$context
+				$context,
+				array()
 			);
 			if ( null === $column_replacements ) {
 				return null;
@@ -19431,7 +19458,8 @@ WHERE option_name IN (
 				$tokens,
 				$range['start'],
 				$range['end'],
-				$context
+				$context,
+				$nested_select_replacements
 			);
 			if ( null === $column_replacements ) {
 				return null;
@@ -19442,21 +19470,13 @@ WHERE option_name IN (
 			}
 		}
 
-		foreach ( $context['sources'] as $source ) {
-			$relation_sql = $this->get_direct_information_schema_relation_sql( $source['view'] );
-			if ( null === $relation_sql ) {
-				return null;
-			}
+		$source_replacements = $this->get_direct_information_schema_source_replacements( $context );
+		if ( null === $source_replacements ) {
+			return null;
+		}
 
-			$replacements[] = array(
-				'start' => $source['source_start'],
-				'end'   => $source['source_end'],
-				'sql'   => sprintf(
-					'(%s) AS %s',
-					$relation_sql,
-					$this->connection->quote_identifier( $source['alias'] )
-				),
-			);
+		foreach ( array_merge( $source_replacements, $nested_select_replacements ) as $replacement ) {
+			$replacements[] = $replacement;
 		}
 
 		usort(
@@ -19477,11 +19497,12 @@ WHERE option_name IN (
 	/**
 	 * Get the direct information_schema SELECT context for supported sources.
 	 *
+	 * @param string           $query         Original MySQL query.
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $statement_end Final statement token position, exclusive.
 	 * @return array{sources: array[], from_position: int, source_start: int, source_end: int, join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[], clause_ranges: array[]}|null Context, or null.
 	 */
-	private function get_direct_information_schema_select_context( array $tokens, int $statement_end ): ?array {
+	private function get_direct_information_schema_select_context( string $query, array $tokens, int $statement_end ): ?array {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
 		if ( null === $from_position || 1 === $from_position ) {
 			return null;
@@ -19493,7 +19514,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$sources = $this->parse_direct_information_schema_select_sources( $tokens, $source_start, $source_end );
+		$sources = $this->parse_direct_information_schema_select_sources( $query, $tokens, $source_start, $source_end );
 		if ( null === $sources ) {
 			return null;
 		}
@@ -19563,12 +19584,13 @@ WHERE option_name IN (
 	/**
 	 * Parse supported direct information_schema FROM/JOIN sources.
 	 *
+	 * @param string           $query  Original MySQL query.
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int              $start  First source token position.
 	 * @param int              $end    Source end position, exclusive.
 	 * @return array{sources: array[], join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[]}|null Parsed sources, or null.
 	 */
-	private function parse_direct_information_schema_select_sources( array $tokens, int $start, int $end ): ?array {
+	private function parse_direct_information_schema_select_sources( string $query, array $tokens, int $start, int $end ): ?array {
 		$sources                     = array();
 		$aliases                     = array();
 		$join_predicate_ranges       = array();
@@ -19578,7 +19600,7 @@ WHERE option_name IN (
 
 		while ( $position < $end ) {
 			$source_start = $position;
-			$source       = $this->parse_direct_information_schema_select_source( $tokens, $position, $end );
+			$source       = $this->parse_direct_information_schema_select_source( $query, $tokens, $position, $end );
 			if ( null === $source ) {
 				return null;
 			}
@@ -19588,7 +19610,7 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$columns = $this->get_direct_information_schema_relation_columns( $source['view'] );
+			$columns = $source['columns'] ?? $this->get_direct_information_schema_relation_columns( $source['view'] );
 			if ( null === $columns ) {
 				return null;
 			}
@@ -19668,7 +19690,7 @@ WHERE option_name IN (
 
 		if ( count( $sources ) > 1 ) {
 			foreach ( $sources as $source ) {
-				if ( ! $this->is_direct_information_schema_join_relation( $source['view'] ) ) {
+				if ( ! isset( $source['view'] ) || ! $this->is_direct_information_schema_join_relation( $source['view'] ) ) {
 					return null;
 				}
 			}
@@ -19685,12 +19707,17 @@ WHERE option_name IN (
 	/**
 	 * Parse one supported direct information_schema source at the current token.
 	 *
+	 * @param string           $query    Original MySQL query.
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int              $position Source token position.
 	 * @param int              $end      Source range end position, exclusive.
-	 * @return array{view: string, alias: string, position: int}|null Parsed source, or null.
+	 * @return array{view?: string, alias: string, position: int, relation_sql?: string, columns?: string[]}|null Parsed source, or null.
 	 */
-	private function parse_direct_information_schema_select_source( array $tokens, int $position, int $end ): ?array {
+	private function parse_direct_information_schema_select_source( string $query, array $tokens, int $position, int $end ): ?array {
+		if ( isset( $tokens[ $position ], $tokens[ $position + 1 ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			return $this->parse_direct_information_schema_derived_select_source( $query, $tokens, $position, $end );
+		}
+
 		$first = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
 		if ( null === $first ) {
 			return null;
@@ -19749,6 +19776,283 @@ WHERE option_name IN (
 			'alias'    => $alias,
 			'position' => $position,
 		);
+	}
+
+	/**
+	 * Parse a derived information_schema SELECT source.
+	 *
+	 * @param string           $query    Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Source token position.
+	 * @param int              $end      Source range end position, exclusive.
+	 * @return array{alias:string,position:int,relation_sql:string,columns:string[]}|null Parsed source, or null.
+	 */
+	private function parse_direct_information_schema_derived_select_source( string $query, array $tokens, int $position, int $end ): ?array {
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if (
+			null === $after_close
+			|| ! isset( $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$select_start = $position + 1;
+		$select_end   = $after_close - 1;
+		$select_query = $this->get_mysql_token_range_bytes( $query, $tokens, $select_start, $select_end );
+		if ( '' === $select_query ) {
+			return null;
+		}
+
+		$translated_select = $this->translate_direct_information_schema_select_query( $select_query );
+		if ( null === $translated_select ) {
+			return null;
+		}
+
+		$select_tokens        = $this->get_mysql_tokens( $select_query );
+		$select_statement_end = $this->get_mysql_statement_end_position( $select_tokens, 1 );
+		if ( null === $select_statement_end ) {
+			return null;
+		}
+
+		$select_context = $this->get_direct_information_schema_select_context( $select_query, $select_tokens, $select_statement_end );
+		if ( null === $select_context ) {
+			return null;
+		}
+
+		$columns = $this->get_direct_information_schema_select_output_columns( $select_tokens, $select_context );
+		if ( null === $columns || array() === $columns ) {
+			return null;
+		}
+
+		$position = $after_close;
+		$alias    = 'derived';
+		if ( $position < $end ) {
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+				if ( null === $parsed_alias ) {
+					return null;
+				}
+				$alias = $parsed_alias;
+				++$position;
+			} else {
+				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+				if ( null !== $parsed_alias ) {
+					$alias = $parsed_alias;
+					++$position;
+				}
+			}
+		}
+
+		return array(
+			'alias'        => $alias,
+			'position'     => $position,
+			'relation_sql' => $translated_select,
+			'columns'      => $columns,
+		);
+	}
+
+	/**
+	 * Build source replacement ranges for a direct information_schema context.
+	 *
+	 * @param array $context Direct information_schema SELECT context.
+	 * @return array[]|null Replacement ranges, or null when a source is unsupported.
+	 */
+	private function get_direct_information_schema_source_replacements( array $context ): ?array {
+		$replacements = array();
+		foreach ( $context['sources'] as $source ) {
+			$relation_sql = $source['relation_sql'] ?? $this->get_direct_information_schema_relation_sql( $source['view'] ?? '' );
+			if ( null === $relation_sql ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $source['source_start'],
+				'end'   => $source['source_end'],
+				'sql'   => sprintf(
+					'(%s) AS %s',
+					$relation_sql,
+					$this->connection->quote_identifier( $source['alias'] )
+				),
+			);
+		}
+
+		return $replacements;
+	}
+
+	/**
+	 * Get output column names for a supported direct information_schema SELECT.
+	 *
+	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
+	 * @param array            $context Direct information_schema SELECT context.
+	 * @return string[]|null Output column names, or null when unsupported.
+	 */
+	private function get_direct_information_schema_select_output_columns( array $tokens, array $context ): ?array {
+		$projection_start = 1;
+		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
+			++$projection_start;
+		}
+
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $context['from_position'] );
+		if ( null === $ranges || array() === $ranges ) {
+			return null;
+		}
+
+		$columns = array();
+		foreach ( $ranges as $range ) {
+			$expression_bounds = $this->get_mysql_select_projection_expression_bounds( $tokens, $range['start'], $range['end'] );
+			if ( null === $expression_bounds ) {
+				return null;
+			}
+
+			$star_columns = $this->get_direct_information_schema_star_projection_output_columns(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end'],
+				$context
+			);
+			if ( null !== $star_columns ) {
+				if ( null !== $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] ) ) {
+					return null;
+				}
+				$columns = array_merge( $columns, $star_columns );
+				continue;
+			}
+
+			$alias = $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] );
+			if ( null !== $alias ) {
+				$columns[] = $alias;
+				continue;
+			}
+
+			if ( $this->is_direct_information_schema_count_star_projection( $tokens, $expression_bounds['start'], $expression_bounds['end'] ) ) {
+				$columns[] = 'COUNT(*)';
+				continue;
+			}
+
+			$column = $this->get_direct_information_schema_projection_column_name(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end'],
+				$context
+			);
+			if ( null === $column ) {
+				return null;
+			}
+			$columns[] = $column;
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Get an explicit or implicit SELECT projection alias.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First projection token.
+	 * @param int              $end    Final projection token, exclusive.
+	 * @return string|null Alias, or null.
+	 */
+	private function get_mysql_select_projection_explicit_or_implicit_alias( array $tokens, int $start, int $end ): ?string {
+		$as_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $start, $end );
+		if ( null !== $as_position ) {
+			if ( $as_position <= $start || $as_position + 2 !== $end ) {
+				return null;
+			}
+
+			return $this->get_mysql_projection_alias_token_value( $tokens[ $as_position + 1 ] ?? null );
+		}
+
+		return $this->get_mysql_implicit_projection_alias( $tokens, $start, $end );
+	}
+
+	/**
+	 * Get output columns for a star projection.
+	 *
+	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
+	 * @param int              $start   First expression token.
+	 * @param int              $end     Final expression token, exclusive.
+	 * @param array            $context Direct information_schema SELECT context.
+	 * @return string[]|null Output columns, or null when not a supported star.
+	 */
+	private function get_direct_information_schema_star_projection_output_columns( array $tokens, int $start, int $end, array $context ): ?array {
+		if ( $start + 1 === $end && isset( $tokens[ $start ] ) && '*' === $tokens[ $start ]->get_bytes() ) {
+			return 1 === count( $context['sources'] ) ? $context['sources'][0]['columns'] : null;
+		}
+
+		if (
+			$start + 3 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& '*' === $tokens[ $start + 2 ]->get_bytes()
+		) {
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			return null === $source ? null : $source['columns'];
+		}
+
+		if (
+			$start + 5 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
+			&& '*' === $tokens[ $start + 4 ]->get_bytes()
+		) {
+			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
+				return null;
+			}
+
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			return null === $source ? null : $source['columns'];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the visible column name for a simple information_schema projection.
+	 *
+	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
+	 * @param int              $start   First expression token.
+	 * @param int              $end     Final expression token, exclusive.
+	 * @param array            $context Direct information_schema SELECT context.
+	 * @return string|null Output column name, or null.
+	 */
+	private function get_direct_information_schema_projection_column_name( array $tokens, int $start, int $end, array $context ): ?string {
+		if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
+			return $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context );
+		}
+
+		if (
+			$start + 3 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+		) {
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			return null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] );
+		}
+
+		if (
+			$start + 5 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
+		) {
+			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
+				return null;
+			}
+
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			return null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] );
+		}
+
+		return null;
 	}
 
 	/**
@@ -20455,9 +20759,15 @@ WHERE option_name IN (
 	 * @param array            $context Direct information_schema SELECT context.
 	 * @return array[]|null Replacement ranges, or null when a source-qualified reference is unsupported.
 	 */
-	private function get_direct_information_schema_column_replacements( array $tokens, int $start, int $end, array $context ): ?array {
+	private function get_direct_information_schema_column_replacements( array $tokens, int $start, int $end, array $context, array $protected_ranges = array() ): ?array {
 		$replacements = array();
 		for ( $position = $start; $position < $end; $position++ ) {
+			$protected_end = $this->get_covering_mysql_replacement_range_end( $position, $protected_ranges );
+			if ( null !== $protected_end ) {
+				$position = $protected_end - 1;
+				continue;
+			}
+
 			if (
 				isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ], $tokens[ $position + 4 ] )
 				&& $position + 4 < $end
@@ -20533,6 +20843,95 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Get the end of a replacement range that covers a token position.
+	 *
+	 * @param int     $position     Token position.
+	 * @param array[] $replacements Replacement ranges.
+	 * @return int|null Range end, or null.
+	 */
+	private function get_covering_mysql_replacement_range_end( int $position, array $replacements ): ?int {
+		foreach ( $replacements as $replacement ) {
+			if ( $position >= $replacement['start'] && $position < $replacement['end'] ) {
+				return $replacement['end'];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get nested SELECT replacements for supported direct information_schema clause subqueries.
+	 *
+	 * @param string           $query         Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param array[]          $clause_ranges Clause token ranges.
+	 * @return array[]|null Replacement ranges, or null when a nested SELECT is unsupported.
+	 */
+	private function get_direct_information_schema_nested_select_replacements( string $query, array $tokens, array $clause_ranges ): ?array {
+		$replacements = array();
+		foreach ( $clause_ranges as $range ) {
+			for ( $position = $range['start']; $position < $range['end']; $position++ ) {
+				if (
+					! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+					|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+				) {
+					continue;
+				}
+
+				$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $range['end'] );
+				if ( null === $after_close ) {
+					return null;
+				}
+
+				$select_start = $position + 1;
+				$select_end   = $after_close - 1;
+				$select_query = $this->get_mysql_token_range_bytes( $query, $tokens, $select_start, $select_end );
+				if ( '' === $select_query ) {
+					return null;
+				}
+
+				$translated_select = $this->translate_direct_information_schema_select_query( $select_query );
+				if ( null === $translated_select ) {
+					return null;
+				}
+
+				$replacements[] = array(
+					'start' => $select_start,
+					'end'   => $select_end,
+					'sql'   => $translated_select,
+				);
+				$position       = $after_close - 1;
+			}
+		}
+
+		return $replacements;
+	}
+
+	/**
+	 * Check whether every nested SELECT is covered by a complete replacement range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First token position.
+	 * @param int              $end          Final token position, exclusive.
+	 * @param array[]          $replacements Replacement ranges.
+	 * @return bool Whether nested SELECTs are fully handled.
+	 */
+	private function direct_information_schema_nested_selects_are_covered( array $tokens, int $start, int $end, array $replacements ): bool {
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			if ( null === $this->get_covering_mysql_replacement_range_end( $position, $replacements ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * Get a direct information_schema source for a qualifier.
 	 *
 	 * @param string $qualifier Qualifier token value.
@@ -20546,7 +20945,7 @@ WHERE option_name IN (
 				return $source;
 			}
 
-			if ( 0 === strcasecmp( $qualifier, $source['view'] ) ) {
+			if ( isset( $source['view'] ) && 0 === strcasecmp( $qualifier, $source['view'] ) ) {
 				$matches[] = $source;
 			}
 		}
@@ -20562,6 +20961,39 @@ WHERE option_name IN (
 	 * @return string|false|null SQL, false when ambiguous, or null when not a known column.
 	 */
 	private function get_direct_information_schema_unqualified_column_sql( WP_MySQL_Token $token, array $context ) {
+		$column = $this->get_direct_information_schema_unqualified_column_name( $token, $context );
+		if ( false === $column ) {
+			return false;
+		}
+		if ( null === $column ) {
+			return null;
+		}
+
+		if ( isset( $context['using_columns'][ strtolower( $column ) ] ) ) {
+			return $this->connection->quote_identifier( $column );
+		}
+
+		if ( 1 === count( $context['sources'] ) ) {
+			return $this->connection->quote_identifier( $column );
+		}
+
+		foreach ( $context['sources'] as $source ) {
+			if ( isset( $source['column_map'][ strtolower( $column ) ] ) ) {
+				return $this->get_direct_information_schema_qualified_column_sql( $source, $column );
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Get an unqualified information_schema column name.
+	 *
+	 * @param WP_MySQL_Token $token   MySQL token.
+	 * @param array          $context Direct information_schema SELECT context.
+	 * @return string|false|null Column name, false when ambiguous, or null when unknown.
+	 */
+	private function get_direct_information_schema_unqualified_column_name( WP_MySQL_Token $token, array $context ) {
 		$value = $this->get_direct_information_schema_identifier_token_value( $token );
 		if ( null === $value ) {
 			return null;
@@ -20591,17 +21023,13 @@ WHERE option_name IN (
 					}
 				}
 
-				return $this->connection->quote_identifier( $using_column['column'] );
+				return $using_column['column'];
 			}
 
 			return false;
 		}
 
-		if ( 1 === count( $context['sources'] ) ) {
-			return $this->connection->quote_identifier( $matches[0]['column'] );
-		}
-
-		return $this->get_direct_information_schema_qualified_column_sql( $matches[0]['source'], $matches[0]['column'] );
+		return $matches[0]['column'];
 	}
 
 	/**
@@ -25632,11 +26060,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id ) {
 			$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 			if ( null !== $statement_end ) {
-				$has_unsupported_direct_shape = $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) )
-					|| $this->contains_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::SELECT_SYMBOL ) );
+				$has_unsupported_direct_shape = $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) );
 				if (
 					! $has_unsupported_direct_shape
-					&& null !== $this->get_direct_information_schema_select_context( $tokens, $statement_end )
+					&& null !== $this->translate_direct_information_schema_select_query( $query )
 				) {
 					return false;
 				}

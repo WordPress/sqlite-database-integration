@@ -12702,7 +12702,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "table"' );
 		$this->assertStringContainsString( 'AS "table"', $sql );
 		$this->assertStringContainsString( 'AS "rows"', $sql );
 		$this->assertStringContainsString( 'AS "bytes"', $sql );
@@ -12735,7 +12735,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '2', $rows[0]->rows );
 		$this->assertSame( '0', $rows[0]->bytes );
 
-		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "table"' );
 		$this->assertStringContainsString( 'AS "table"', $sql );
 		$this->assertStringContainsString( "\"TABLE_SCHEMA\" = 'wptests'", $sql );
 		$this->assertStringContainsString( "TABLE_NAME = 'wptests_options'", $sql );
@@ -13103,6 +13103,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema derived SELECT sources return MySQL-shaped rows.
+	 */
+	public function test_direct_information_schema_derived_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$aliased = $driver->query(
+			"SELECT d.table_name AS table_name
+			FROM (
+				SELECT table_name
+				FROM information_schema.tables
+				WHERE table_schema = 'wptests'
+			) AS d
+			WHERE d.table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $aliased );
+		$this->assertSame( 'wptests_options', $aliased[0]->table_name );
+
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "d"' );
+		$this->assertStringContainsString( 'AS "d"', $sql );
+		$this->assertStringContainsString( '"d"."TABLE_NAME" = \'wptests_options\'', $sql );
+
+		$unaliased = $driver->query(
+			"SELECT table_name
+			FROM (
+				SELECT table_name
+				FROM information_schema.tables
+				WHERE table_schema = 'wptests'
+			)
+			WHERE table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $unaliased );
+		$this->assertSame( 'wptests_options', $unaliased[0]->TABLE_NAME );
+		$this->assertStringContainsString(
+			'AS "derived"',
+			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "derived"' )
+		);
+	}
+
+	/**
 	 * Tests INSERT ... SELECT can source supported direct information_schema relations.
 	 */
 	public function test_insert_select_from_information_schema_routes_mysql_shape(): void {
@@ -13205,34 +13247,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported INSERT ... SELECT information_schema shapes fail closed.
+	 * Tests INSERT ... SELECT routes supported nested information_schema SELECTs.
 	 */
-	public function test_insert_select_unsupported_information_schema_shape_fails_closed(): void {
+	public function test_insert_select_from_nested_information_schema_routes_mysql_shape(): void {
 		$driver = $this->create_driver();
 		$this->install_information_schema_fixture( $driver );
 
 		$driver->get_connection()->get_pdo()->exec(
-			'CREATE TABLE wptests_information_schema_unsupported_insert (
+			'CREATE TABLE wptests_information_schema_nested_insert (
 				id INTEGER NOT NULL,
 				value TEXT NOT NULL
 			)'
 		);
 
-		try {
+		$this->assertSame(
+			1,
 			$driver->query(
-				'INSERT INTO wptests_information_schema_unsupported_insert (id, value)
+				'INSERT INTO wptests_information_schema_nested_insert (id, value)
 				SELECT 3, table_name
+				FROM (
+					SELECT table_name
+					FROM information_schema.tables
+					WHERE table_name = "wptests_options"
+				)'
+			)
+		);
+
+		$queries = $driver->get_last_postgresql_queries();
+		$sql     = $this->get_logged_postgresql_sql_containing( $queries, 'INSERT INTO wptests_information_schema_nested_insert' );
+		$this->assertStringContainsString( 'AS "derived"', $sql );
+		$this->assertStringContainsString( '"TABLE_NAME"', $sql );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'INSERT INTO wptests_information_schema_nested_insert (id, value)
+				SELECT 4, table_name
 				FROM information_schema.tables
 				WHERE table_name IN (
 					SELECT table_name FROM information_schema.tables
-				)'
-			);
-			$this->fail( 'Expected unsupported information_schema insert-select query.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
-		}
+				)
+				AND table_name = "wptests_options"'
+			)
+		);
 
-		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$rows = $driver->query( 'SELECT id, value FROM wptests_information_schema_nested_insert ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '3', 'wptests_options' ),
+				array( '4', 'wptests_options' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
 	}
 
 	/**
@@ -13250,7 +13321,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				'SELECT t.table_name
 				FROM information_schema.tables AS t
 				WHERE t.table_name IN (
-					SELECT table_name FROM information_schema.tables
+					SELECT option_name FROM wptests_options
 				)',
 				'SELECT table_name
 				FROM information_schema.tables AS t
