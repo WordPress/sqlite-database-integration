@@ -2784,6 +2784,129 @@ PHP
 	}
 
 	/**
+	 * Tests PostgreSQL connection options only reuse PostgreSQL-backed global PDO objects.
+	 */
+	public function test_get_connection_options_reuses_only_global_postgresql_pdo(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $dbuser     = 'pg_user';
+	public $dbpassword = 'pg_password';
+	public $dbname     = 'wptests';
+	public $dbhost     = 'postgres:5432';
+
+	public function parse_db_host( $host ) {
+		return array( 'postgres', 5432, null, false );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_PDO_Filter_Fake_PDO extends PDO {
+	private $driver_name;
+	private $throw_on_driver_lookup;
+
+	public function __construct( $driver_name, $throw_on_driver_lookup = false ) {
+		$this->driver_name           = $driver_name;
+		$this->throw_on_driver_lookup = $throw_on_driver_lookup;
+	}
+
+	/**
+	 * Get a fake PDO attribute.
+	 *
+	 * @param int $attribute PDO attribute.
+	 * @return mixed Attribute value.
+	 */
+	#[\ReturnTypeWillChange]
+	public function getAttribute( $attribute ) {
+		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+			if ( $this->throw_on_driver_lookup ) {
+				throw new RuntimeException( 'driver lookup failed' );
+			}
+
+			return $this->driver_name;
+		}
+
+		return null;
+	}
+}
+
+function wp_postgresql_db_get_connection_options_for_global_pdo( $global_value, $set_global ) {
+	if ( $set_global ) {
+		$GLOBALS['@pdo'] = $global_value;
+	} else {
+		unset( $GLOBALS['@pdo'] );
+	}
+
+	$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+	$method = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_connection_options' );
+	if ( PHP_VERSION_ID < 80100 ) {
+		$method->setAccessible( true );
+	}
+
+	$options = $method->invoke( $db );
+
+	return array(
+		'has_pdo'  => array_key_exists( 'pdo', $options ),
+		'pdo_same' => array_key_exists( 'pdo', $options ) ? $options['pdo'] === $global_value : null,
+		'keys'     => array_keys( $options ),
+	);
+}
+
+$pgsql_pdo    = new WP_PostgreSQL_DB_PDO_Filter_Fake_PDO( 'pgsql' );
+$mysql_pdo    = new WP_PostgreSQL_DB_PDO_Filter_Fake_PDO( 'mysql' );
+$throwing_pdo = new WP_PostgreSQL_DB_PDO_Filter_Fake_PDO( 'pgsql', true );
+
+wp_postgresql_db_test_respond(
+	array(
+		'no_global'     => wp_postgresql_db_get_connection_options_for_global_pdo( null, false ),
+		'pgsql_pdo'     => wp_postgresql_db_get_connection_options_for_global_pdo( $pgsql_pdo, true ),
+		'mysql_pdo'     => wp_postgresql_db_get_connection_options_for_global_pdo( $mysql_pdo, true ),
+		'throwing_pdo'  => wp_postgresql_db_get_connection_options_for_global_pdo( $throwing_pdo, true ),
+		'non_pdo_value' => wp_postgresql_db_get_connection_options_for_global_pdo( (object) array( 'driver' => 'pgsql' ), true ),
+	)
+);
+PHP
+		);
+
+		$base_keys = array( 'host', 'port', 'dbname', 'user', 'password' );
+
+		$this->assertSame(
+			array(
+				'no_global'     => array(
+					'has_pdo'  => false,
+					'pdo_same' => null,
+					'keys'     => $base_keys,
+				),
+				'pgsql_pdo'     => array(
+					'has_pdo'  => true,
+					'pdo_same' => true,
+					'keys'     => array_merge( $base_keys, array( 'pdo' ) ),
+				),
+				'mysql_pdo'     => array(
+					'has_pdo'  => false,
+					'pdo_same' => null,
+					'keys'     => $base_keys,
+				),
+				'throwing_pdo'  => array(
+					'has_pdo'  => false,
+					'pdo_same' => null,
+					'keys'     => $base_keys,
+				),
+				'non_pdo_value' => array(
+					'has_pdo'  => false,
+					'pdo_same' => null,
+					'keys'     => $base_keys,
+				),
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests select() uses the current PostgreSQL driver when no handle is passed.
 	 */
 	public function test_select_uses_current_postgresql_driver_when_handle_is_omitted(): void {
