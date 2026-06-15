@@ -341,6 +341,37 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL data type aliases translate while preserving MySQL metadata.
+	 */
+	public function test_mysql_data_type_aliases_are_supported(): void {
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$sql        = 'CREATE TABLE wp_alias_test (
+			flags BIT(10),
+			enabled BOOL NOT NULL DEFAULT 0,
+			toggled BOOLEAN,
+			amount DEC(10,2),
+			fixed_value FIXED(8,3),
+			real_value REAL
+		)';
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_alias_test\" (\n  \"flags\" integer,\n  \"enabled\" integer NOT NULL DEFAULT '0',\n  \"toggled\" integer,\n  \"amount\" numeric(10,2),\n  \"fixed_value\" numeric(8,3),\n  \"real_value\" double precision\n)",
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql );
+
+		$this->assertSame( 'bit(10)', $metadata[0]['columns'][0]['type'] );
+		$this->assertSame( 'bool', $metadata[0]['columns'][1]['type'] );
+		$this->assertSame( 'boolean', $metadata[0]['columns'][2]['type'] );
+		$this->assertSame( 'dec(10,2)', $metadata[0]['columns'][3]['type'] );
+		$this->assertSame( 'fixed(8,3)', $metadata[0]['columns'][4]['type'] );
+		$this->assertSame( 'real', $metadata[0]['columns'][5]['type'] );
+	}
+
+	/**
 	 * Tests unsupported CREATE TABLE ... SELECT statements are rejected.
 	 */
 	public function test_translate_rejects_create_table_as_select(): void {

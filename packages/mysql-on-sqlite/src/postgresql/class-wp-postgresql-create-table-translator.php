@@ -271,7 +271,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$type = strtolower( $type_token->get_value() );
 		if ( 'bigint' === $type ) {
 			$postgresql_type = 'bigint';
-		} elseif ( in_array( $type, array( 'int', 'integer', 'mediumint', 'smallint', 'tinyint' ), true ) ) {
+		} elseif ( in_array( $type, array( 'bit', 'bool', 'boolean', 'int', 'integer', 'mediumint', 'smallint', 'tinyint' ), true ) ) {
 			$postgresql_type = 'integer';
 		} elseif ( in_array( $type, array( 'varchar', 'char' ), true ) ) {
 			$length          = $this->get_field_length( $data_type );
@@ -283,10 +283,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$postgresql_type = 'text';
 		} elseif ( in_array( $type, array( 'binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob' ), true ) ) {
 			$postgresql_type = 'bytea';
-		} elseif ( in_array( $type, array( 'float', 'double' ), true ) ) {
+		} elseif ( in_array( $type, array( 'float', 'double', 'real' ), true ) ) {
 			$precision_fragment = $this->get_numeric_precision_fragment( $data_type );
 			$postgresql_type    = '' === $precision_fragment ? 'double precision' : 'numeric' . $precision_fragment;
-		} elseif ( in_array( $type, array( 'decimal', 'numeric' ), true ) ) {
+		} elseif ( in_array( $type, array( 'dec', 'decimal', 'fixed', 'numeric' ), true ) ) {
 			$postgresql_type = 'numeric' . $this->get_numeric_precision_fragment( $data_type );
 		} else {
 			throw new InvalidArgumentException( sprintf( 'Unsupported MySQL column type for PostgreSQL install DDL: %s.', $type ) );
@@ -930,12 +930,12 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		$numeric_precision = $this->get_numeric_precision_fragment( $data_type );
-		if ( '' !== $numeric_precision && in_array( $type, array( 'decimal', 'double', 'float', 'numeric' ), true ) ) {
+		if ( '' !== $numeric_precision && in_array( $type, array( 'dec', 'decimal', 'double', 'fixed', 'float', 'numeric' ), true ) ) {
 			$type .= $numeric_precision;
 		}
 
 		$length = $this->get_field_length( $data_type );
-		if ( null !== $length && in_array( $type, array( 'bigint', 'binary', 'char', 'int', 'mediumint', 'smallint', 'tinyint', 'varbinary', 'varchar' ), true ) ) {
+		if ( null !== $length && in_array( $type, array( 'bigint', 'binary', 'bit', 'char', 'int', 'mediumint', 'smallint', 'tinyint', 'varbinary', 'varchar' ), true ) ) {
 			$type = sprintf( '%s(%d)', $type, $length );
 		}
 

@@ -996,6 +996,14 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		$translated_query = $this->translate_mysql_select_row_locking_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
 		$translated_query = $this->translate_direct_information_schema_select_query( $query );
 		if ( null !== $translated_query ) {
 			return array(
@@ -6149,7 +6157,7 @@ class WP_PostgreSQL_Driver {
 		$fragment = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
 
 		return 1 === preg_match(
-			'/^(?:ENGINE|ROW_FORMAT|COMMENT)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET)\s*=|^COLLATE\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b/',
+			'/^(?:ENGINE|ROW_FORMAT|COMMENT)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b/',
 			$fragment
 		);
 	}
@@ -7757,28 +7765,127 @@ class WP_PostgreSQL_Driver {
 			return array();
 		}
 
-		if (
-			! isset( $tokens[2], $tokens[3] )
-			|| WP_MySQL_Lexer::FOR_SYMBOL !== $tokens[2]->id
-			|| WP_MySQL_Lexer::CURRENT_USER_SYMBOL !== $tokens[3]->id
-		) {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		if ( null === $statement_end ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW GRANTS statement.' );
 		}
 
-		if ( $this->is_at_mysql_query_end( $tokens, 4 ) ) {
-			return array();
+		$position = 2;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $position ]->id ) {
+			$position = $this->parse_supported_show_grants_principal( $tokens, $position + 1, $statement_end );
+			if ( null === $position ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW GRANTS statement.' );
+			}
 		}
 
-		if (
-			isset( $tokens[4], $tokens[5] )
-			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[4]->id
-			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[5]->id
-			&& $this->is_at_mysql_query_end( $tokens, 6 )
-		) {
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $position ]->id ) {
+			$position = $this->parse_supported_show_grants_role_list( $tokens, $position + 1, $statement_end );
+			if ( null === $position ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW GRANTS statement.' );
+			}
+		}
+
+		if ( $position === $statement_end ) {
 			return array();
 		}
 
 		throw new InvalidArgumentException( 'Unsupported SHOW GRANTS statement.' );
+	}
+
+	/**
+	 * Parse the optional principal in a SHOW GRANTS statement.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First principal token.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Position after the principal, or null when unsupported.
+	 */
+	private function parse_supported_show_grants_principal( array $tokens, int $start, int $end ): ?int {
+		if ( ! isset( $tokens[ $start ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::CURRENT_USER_SYMBOL === $tokens[ $start ]->id ) {
+			$position = $start + 1;
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$position += 2;
+			}
+
+			return $position;
+		}
+
+		return $this->parse_supported_show_grants_account_name( $tokens, $start, $end );
+	}
+
+	/**
+	 * Parse a SHOW GRANTS role list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First role token.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Position after the role list, or null when unsupported.
+	 */
+	private function parse_supported_show_grants_role_list( array $tokens, int $start, int $end ): ?int {
+		$position = $this->parse_supported_show_grants_account_name( $tokens, $start, $end );
+		if ( null === $position ) {
+			return null;
+		}
+
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+			$position = $this->parse_supported_show_grants_account_name( $tokens, $position + 1, $end );
+			if ( null === $position ) {
+				return null;
+			}
+		}
+
+		return $position;
+	}
+
+	/**
+	 * Parse a MySQL account-style name used by SHOW GRANTS.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First account token.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Position after the account name, or null when unsupported.
+	 */
+	private function parse_supported_show_grants_account_name( array $tokens, int $start, int $end ): ?int {
+		if ( $start >= $end || ! $this->is_supported_show_grants_name_part( $tokens[ $start ] ?? null ) ) {
+			return null;
+		}
+
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
+			return $position + 1;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AT_SIGN_SYMBOL === $tokens[ $position ]->id ) {
+			if ( ! $this->is_supported_show_grants_name_part( $tokens[ $position + 1 ] ?? null ) ) {
+				return null;
+			}
+
+			return $position + 2;
+		}
+
+		return $position;
+	}
+
+	/**
+	 * Check whether a token is a supported SHOW GRANTS account/role part.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return bool Whether the token can name a user, host, or role part.
+	 */
+	private function is_supported_show_grants_name_part( ?WP_MySQL_Token $token ): bool {
+		return null !== $token
+			&& (
+				null !== $this->get_mysql_identifier_token_value( $token, true )
+				|| WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id
+			);
 	}
 
 	/**
@@ -30345,6 +30452,191 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
+	 * Strip MySQL SELECT row-locking clauses.
+	 *
+	 * SQLite strips these clauses because file-level locking already protects the
+	 * database. The PostgreSQL adapter uses the same compatibility behavior so
+	 * MySQL plugin queries keep running even when the test backend is SQLite.
+	 *
+	 * @param string $query MySQL SELECT query.
+	 * @return string|null PostgreSQL SQL without the locking clause, or null when absent.
+	 */
+	private function translate_mysql_select_row_locking_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$locking_start = $this->find_mysql_select_row_locking_clause_start( $tokens, 1, $statement_end );
+		if ( null === $locking_start ) {
+			return null;
+		}
+
+		$stripped_query = $this->translate_mysql_token_sequence_to_postgresql( $tokens, 0, $locking_start );
+		return $this->translate_mysql_select_query_for_postgresql( $stripped_query )['sql'];
+	}
+
+	/**
+	 * Find a supported trailing SELECT row-locking clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token to scan.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Locking clause start position, or null when absent.
+	 */
+	private function find_mysql_select_row_locking_clause_start( array $tokens, int $start, int $end ): ?int {
+		$depth = 0;
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 !== $depth ) {
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $i ]->id
+				&& isset( $tokens[ $i + 1 ] )
+				&& in_array( $tokens[ $i + 1 ]->id, array( WP_MySQL_Lexer::SHARE_SYMBOL, WP_MySQL_Lexer::UPDATE_SYMBOL ), true )
+			) {
+				if ( $end === $this->parse_supported_mysql_select_row_locking_clause( $tokens, $i, $end ) ) {
+					return $i;
+				}
+
+				throw new InvalidArgumentException( 'Unsupported SELECT locking clause.' );
+			}
+
+			if (
+				WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $i ]->id
+				&& isset( $tokens[ $i + 1 ] )
+				&& WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $i + 1 ]->id
+			) {
+				if ( $end === $this->parse_supported_mysql_select_row_locking_clause( $tokens, $i, $end ) ) {
+					return $i;
+				}
+
+				throw new InvalidArgumentException( 'Unsupported SELECT locking clause.' );
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse a supported MySQL SELECT row-locking clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First locking token.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Position after the clause, or null when unsupported.
+	 */
+	private function parse_supported_mysql_select_row_locking_clause( array $tokens, int $start, int $end ): ?int {
+		if (
+			isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
+			&& WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $start ]->id
+			&& WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::SHARE_SYMBOL === $tokens[ $start + 2 ]->id
+			&& WP_MySQL_Lexer::MODE_SYMBOL === $tokens[ $start + 3 ]->id
+		) {
+			return $start + 4;
+		}
+
+		if (
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::FOR_SYMBOL !== $tokens[ $start ]->id
+			|| ! in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::SHARE_SYMBOL, WP_MySQL_Lexer::UPDATE_SYMBOL ), true )
+		) {
+			return null;
+		}
+
+		$position = $start + 2;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OF_SYMBOL === $tokens[ $position ]->id ) {
+			$position = $this->parse_mysql_select_locking_table_reference_list( $tokens, $position + 1, $end );
+			if ( null === $position ) {
+				return null;
+			}
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::NOWAIT_SYMBOL === $tokens[ $position ]->id ) {
+			return $position + 1;
+		}
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::SKIP_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::LOCKED_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			return $position + 2;
+		}
+
+		return $position;
+	}
+
+	/**
+	 * Parse an OF table-reference list in a SELECT locking clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First table-reference token.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Position after the list, or null when unsupported.
+	 */
+	private function parse_mysql_select_locking_table_reference_list( array $tokens, int $start, int $end ): ?int {
+		$position = $this->parse_mysql_select_locking_table_reference( $tokens, $start, $end );
+		if ( null === $position ) {
+			return null;
+		}
+
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+			$position = $this->parse_mysql_select_locking_table_reference( $tokens, $position + 1, $end );
+			if ( null === $position ) {
+				return null;
+			}
+		}
+
+		return $position;
+	}
+
+	/**
+	 * Parse one table reference in a SELECT locking clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First table-reference token.
+	 * @param int              $end    Final statement token position, exclusive.
+	 * @return int|null Position after the table reference, or null when unsupported.
+	 */
+	private function parse_mysql_select_locking_table_reference( array $tokens, int $start, int $end ): ?int {
+		if ( $start >= $end || null === $this->get_mysql_identifier_token_value( $tokens[ $start ] ?? null ) ) {
+			return null;
+		}
+
+		$position = $start + 1;
+		while (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id
+			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] )
+		) {
+			$position += 2;
+		}
+
+		return $position;
+	}
+
+	/**
 	 * Find the token position ending a single MySQL statement.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -34139,10 +34431,16 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					array(
 						WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
 						WP_MySQL_Lexer::BACK_TICK_QUOTED_ID,
+						WP_MySQL_Lexer::BIT_SYMBOL,
+						WP_MySQL_Lexer::BOOLEAN_SYMBOL,
+						WP_MySQL_Lexer::BOOL_SYMBOL,
 						WP_MySQL_Lexer::CHARSET_SYMBOL,
 						WP_MySQL_Lexer::COLLATE_SYMBOL,
+						WP_MySQL_Lexer::DEC_SYMBOL,
 						WP_MySQL_Lexer::ENGINE_SYMBOL,
+						WP_MySQL_Lexer::FIXED_SYMBOL,
 						WP_MySQL_Lexer::FULLTEXT_SYMBOL,
+						WP_MySQL_Lexer::REAL_SYMBOL,
 						WP_MySQL_Lexer::ROW_FORMAT_SYMBOL,
 						WP_MySQL_Lexer::SPATIAL_SYMBOL,
 						WP_MySQL_Lexer::UNSIGNED_SYMBOL,

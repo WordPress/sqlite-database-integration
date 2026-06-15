@@ -7040,6 +7040,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL SELECT row-locking clauses are stripped like the SQLite backend.
+	 */
+	public function test_select_row_locking_clauses_are_supported_noops(): void {
+		$queries = array(
+			"SELECT value FROM wptests_locking WHERE name = 'test_lock' FOR UPDATE",
+			"SELECT value FROM wptests_locking WHERE name = 'test_lock' FOR SHARE",
+			"SELECT value FROM wptests_locking WHERE name = 'test_lock' LOCK IN SHARE MODE",
+			"SELECT value FROM wptests_locking WHERE name = 'test_lock' FOR UPDATE SKIP LOCKED",
+			"SELECT value FROM wptests_locking WHERE name = 'test_lock' FOR UPDATE NOWAIT",
+			"SELECT value FROM wptests_locking WHERE name = 'test_lock' FOR SHARE OF wptests_locking NOWAIT",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$driver->query( 'CREATE TABLE wptests_locking (name VARCHAR(255), value VARCHAR(255))' );
+			$driver->query( "INSERT INTO wptests_locking (name, value) VALUES ('test_lock', '123')" );
+
+			$rows = $driver->query( $query );
+
+			$this->assertSame( '123', $rows[0]->value, $query );
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'SELECT value FROM wptests_locking WHERE name = \'test_lock\'',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries(),
+				$query
+			);
+		}
+	}
+
+	/**
 	 * Tests MySQL-only expression names inside string literals are not rewritten.
 	 */
 	public function test_expression_rewrite_does_not_replace_string_literals(): void {
@@ -9986,6 +10020,103 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests alias-only CREATE TABLE statements use the MySQL DDL translator.
+	 */
+	public function test_create_table_with_only_mysql_type_alias_markers_uses_translator(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_alias_create (
+					flags BIT(10),
+					enabled BOOL,
+					amount DEC(10,2),
+					fixed_value FIXED(8,3),
+					real_value REAL
+				)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_alias_create\" (\n  \"flags\" integer,\n  \"enabled\" integer,\n  \"amount\" numeric(10,2),\n  \"fixed_value\" numeric(8,3),\n  \"real_value\" double precision\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alias_create' );
+		$this->assertSame(
+			array( 'bit(10)', 'bool', 'dec(10,2)', 'fixed(8,3)', 'real' ),
+			array_column( $columns, 'column_type' )
+		);
+	}
+
+	/**
+	 * Tests ALTER TABLE ADD accepts MySQL data type aliases.
+	 */
+	public function test_alter_table_add_accepts_mysql_data_type_aliases(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_alias_alter (
+				id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alias_alter
+				ADD flags BIT(10),
+				ADD enabled BOOL NOT NULL DEFAULT 0,
+				ADD toggled BOOLEAN,
+				ADD amount DEC(10,2),
+				ADD fixed_value FIXED(8,3),
+				ADD real_value REAL'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "flags" integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "enabled" integer NOT NULL DEFAULT \'0\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "toggled" integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "amount" numeric(10,2)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "fixed_value" numeric(8,3)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "real_value" double precision',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alias_alter' );
+		$this->assertSame(
+			array( 'int(11)', 'bit(10)', 'bool', 'boolean', 'dec(10,2)', 'fixed(8,3)', 'real' ),
+			array_column( $columns, 'column_type' )
+		);
+	}
+
+	/**
 	 * Tests ALTER TABLE accepts current database-qualified targets and updates metadata.
 	 */
 	public function test_alter_table_accepts_current_database_qualified_targets_and_updates_metadata(): void {
@@ -10650,6 +10781,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				'ALTER TABLE wptests_plugin_options
 					ENGINE=InnoDB,
 					DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci,
+					DEFAULT COLLATE=utf8mb4_unicode_ci,
 					ROW_FORMAT=DYNAMIC'
 			)
 		);
@@ -11581,13 +11713,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests supported SHOW GRANTS CURRENT_USER forms return the static grants row.
+	 * Tests supported SHOW GRANTS FOR/USING forms return the static grants row.
 	 */
-	public function test_show_grants_current_user_forms_return_static_row(): void {
+	public function test_show_grants_for_and_using_forms_return_static_row(): void {
 		$queries = array(
 			'SHOW GRANTS FOR current_user();',
 			'SHOW GRANTS FOR CURRENT_USER',
 			'sHoW gRaNtS FoR CuRrEnT_UsEr()',
+			'SHOW GRANTS FOR root',
+			"SHOW GRANTS FOR 'root'@'localhost'",
+			'SHOW GRANTS USING role1',
+			'SHOW GRANTS FOR CURRENT_USER() USING role1',
+			'SHOW GRANTS FOR u@h USING r1,r2',
 		);
 
 		foreach ( $queries as $query ) {
@@ -11631,13 +11768,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported SHOW GRANTS syntax fails before backend execution.
+	 * Tests malformed SHOW GRANTS syntax fails before backend execution.
 	 */
-	public function test_unsupported_show_grants_syntax_fails_closed(): void {
+	public function test_malformed_show_grants_syntax_fails_closed(): void {
 		$queries = array(
-			'SHOW GRANTS FOR root',
-			'SHOW GRANTS USING role1',
-			'SHOW GRANTS FOR CURRENT_USER() USING role1',
+			'SHOW GRANTS FOR',
+			'SHOW GRANTS USING',
+			'SHOW GRANTS FOR CURRENT_USER(1)',
+			'SHOW GRANTS FOR root USING',
+			"SHOW GRANTS FOR root USING role1 WHERE User = 'root'",
 		);
 
 		foreach ( $queries as $query ) {
