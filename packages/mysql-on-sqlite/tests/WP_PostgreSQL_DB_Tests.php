@@ -2599,6 +2599,63 @@ PHP
 	}
 
 	/**
+	 * Tests metadata helpers return final table identifiers for qualified DDL.
+	 */
+	public function test_postgresql_metadata_helpers_parse_schema_qualified_table_names(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$create_table_name = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_postgresql_create_table_name' );
+$create_table_name->setAccessible( true );
+
+$drop_table_names = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_postgresql_drop_table_names' );
+$drop_table_names->setAccessible( true );
+
+wp_postgresql_db_test_respond(
+	array(
+		'create_names' => array(
+			'plain'              => $create_table_name->invoke( $db, 'CREATE TABLE wptests_plain (id bigint)' ),
+			'qualified'          => $create_table_name->invoke( $db, 'CREATE TABLE app_schema.wptests_qualified (id bigint)' ),
+			'quoted_qualified'   => $create_table_name->invoke( $db, 'CREATE TABLE `app_schema`.`wptests_quoted` (id bigint)' ),
+			'temporary_if_exists' => $create_table_name->invoke( $db, 'CREATE TEMPORARY TABLE IF NOT EXISTS `app_schema`.`wptests_temp` (id bigint)' ),
+		),
+		'drop_names'   => array(
+			'plain'               => $drop_table_names->invoke( $db, 'DROP TABLE wptests_plain' ),
+			'qualified_list'      => $drop_table_names->invoke( $db, 'DROP TABLE IF EXISTS app_schema.wptests_one, `app_schema`.`wptests_two`, wptests_three CASCADE' ),
+			'temporary_qualified' => $drop_table_names->invoke( $db, 'DROP TEMPORARY TABLE IF EXISTS `app_schema`.`wptests_temp`, scratch.wptests_other RESTRICT' ),
+		),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'plain'               => 'wptests_plain',
+				'qualified'           => 'wptests_qualified',
+				'quoted_qualified'    => 'wptests_quoted',
+				'temporary_if_exists' => 'wptests_temp',
+			),
+			$result['create_names']
+		);
+		$this->assertSame(
+			array(
+				'plain'               => array( 'wptests_plain' ),
+				'qualified_list'      => array( 'wptests_one', 'wptests_two', 'wptests_three' ),
+				'temporary_qualified' => array( 'wptests_temp', 'wptests_other' ),
+			),
+			$result['drop_names']
+		);
+	}
+
+	/**
 	 * Tests real wpdb identifier placeholders use PostgreSQL identifier quotes.
 	 */
 	public function test_real_wpdb_prepare_identifier_placeholders_use_postgresql_quotes(): void {
@@ -4427,43 +4484,64 @@ class WP_PostgreSQL_DB_Empty_Where_Fake_Driver extends WP_PostgreSQL_Driver {
 	}
 }
 
-$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+function wp_postgresql_db_test_empty_where_result( string $query ): array {
+	$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
-$driver = new WP_PostgreSQL_DB_Empty_Where_Fake_Driver();
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-if ( PHP_VERSION_ID < 80100 ) {
-	$driver_property->setAccessible( true );
+	$driver = new WP_PostgreSQL_DB_Empty_Where_Fake_Driver();
+	$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+	if ( PHP_VERSION_ID < 80100 ) {
+		$driver_property->setAccessible( true );
+	}
+	$driver_property->setValue( $db, $driver );
+
+	$db->ready           = true;
+	$db->is_mysql        = false;
+	$db->dbname          = 'wptests';
+	$db->charset         = 'utf8mb4';
+	$db->suppress_errors = true;
+
+	$return = $db->query( $query );
+
+	return array(
+		'return'        => $return,
+		'last_error'    => $db->last_error,
+		'queries'       => $driver->get_recorded_queries(),
+		'rows_affected' => $db->rows_affected,
+		'num_queries'   => $db->num_queries,
+	);
 }
-$driver_property->setValue( $db, $driver );
 
-$db->ready           = true;
-$db->is_mysql        = false;
-$db->dbname          = 'wptests';
-$db->charset         = 'utf8mb4';
-$db->suppress_errors = true;
+$queries = array(
+	'plain' => "UPDATE `wptests_options` SET `option_value` = 'x' WHERE",
+	'block' => "/* plugin preamble */\nUPDATE `wptests_options` SET `option_value` = 'x' WHERE",
+	'dash'  => "-- plugin preamble\nUPDATE `wptests_options` SET `option_value` = 'x' WHERE",
+	'hash'  => "# plugin preamble\nUPDATE `wptests_options` SET `option_value` = 'x' WHERE",
+);
 
-$return = $db->query( "UPDATE `wptests_options` SET `option_value` = 'x' WHERE" );
+$results = array();
+foreach ( $queries as $name => $query ) {
+	$results[ $name ] = wp_postgresql_db_test_empty_where_result( $query );
+}
 
 wp_postgresql_db_test_respond(
 	array(
-		'return'         => $return,
-		'last_error'     => $db->last_error,
-		'queries'        => $driver->get_recorded_queries(),
-		'rows_affected'  => $db->rows_affected,
-		'num_queries'    => $db->num_queries,
+		'results' => $results,
 	)
 );
 PHP
 		);
 
-		$this->assertFalse( $result['return'] );
-		$this->assertSame(
-			'PostgreSQL query rejected because UPDATE requires a non-empty WHERE condition.',
-			$result['last_error']
-		);
-		$this->assertSame( array(), $result['queries'] );
-		$this->assertSame( 0, $result['rows_affected'] );
-		$this->assertSame( 0, $result['num_queries'] );
+		foreach ( $result['results'] as $case => $case_result ) {
+			$this->assertFalse( $case_result['return'], $case );
+			$this->assertSame(
+				'PostgreSQL query rejected because UPDATE requires a non-empty WHERE condition.',
+				$case_result['last_error'],
+				$case
+			);
+			$this->assertSame( array(), $case_result['queries'], $case );
+			$this->assertSame( 0, $case_result['rows_affected'], $case );
+			$this->assertSame( 0, $case_result['num_queries'], $case );
+		}
 	}
 
 	/**

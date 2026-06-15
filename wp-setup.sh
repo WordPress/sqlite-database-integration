@@ -366,6 +366,41 @@ elif [ "$WP_TEST_DB_BACKEND" = "postgresql" ]; then
 	sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#require_once ABSPATH . 'wp-content/plugins/sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';\nclass WpdbExposedMethodsForTesting extends WP_PostgreSQL_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
 	rm -f "$WP_DIR"/tests/phpunit/includes/utils.php.bak
 
+	echo "Rewriting WordPress wpdb::prepare identifier expectation tests for PostgreSQL..."
+	node - "$WP_DIR/tests/phpunit/tests/db.php" << 'NODE'
+const fs = require( 'fs' );
+
+const file = process.argv[2];
+let contents = fs.readFileSync( file, 'utf8' );
+
+const replacements = new Map( [
+	[ "'SELECT * FROM `my_table` WHERE `my_field` = 321;'", "'SELECT * FROM \"my_table\" WHERE \"my_field\" = 321;'" ],
+	[ "'WHERE `evil_``_field` = 321;'", "'WHERE \"evil_`_field\" = 321;'" ],
+	[ "'WHERE `evil_````````````````_field` = 321;'", "'WHERE \"evil_````````_field\" = 321;'" ],
+	[ "'WHERE `````evil_field````` = 321;'", "'WHERE \"``evil_field``\" = 321;'" ],
+	[ "'WHERE `evil\\'field` = 321;'", "'WHERE \"evil\\'field\" = 321;'" ],
+	[ "'WHERE `evil_\\````_field` = 321;'", "'WHERE \"evil_\\``_field\" = 321;'" ],
+	[ "\"WHERE `evil_{$placeholder_escape}s_field` = 321;\"", "'WHERE \"evil_%s_field\" = 321;'" ],
+	[ "'WHERE `value``` = 321;'", "'WHERE \"value`\" = 321;'" ],
+	[ "'WHERE `` AND evil_value` = 321;'", "'WHERE `\" AND evil_value\" = 321;'" ],
+	[ "'WHERE `evil_value -- `` = 321;'", "'WHERE \"evil_value -- \"` = 321;'" ],
+	[ "'WHERE `` AND true -- ``` = 321;'", "'WHERE `\" AND true -- \"`` = 321;'" ],
+	[ "'WHERE ``` AND true -- `` = 321;'", "'WHERE ``\" AND true -- \"` = 321;'" ],
+	[ "\"WHERE `field' -- ` LIKE 'field\\' -- ' LIMIT 1\"", "\"WHERE \\\"field' -- \\\" LIKE 'field\\' -- ' LIMIT 1\"" ],
+] );
+
+for ( const [ from, to ] of replacements ) {
+	const count = contents.split( from ).length - 1;
+	if ( 1 !== count ) {
+		throw new Error( `Expected exactly one Tests_DB PostgreSQL prepare replacement for: ${ from }; found ${ count }.` );
+	}
+
+	contents = contents.replace( from, to );
+}
+
+fs.writeFileSync( file, contents );
+NODE
+
 	echo "Rewriting WordPress local-env install script for PostgreSQL..."
 	node - "$WP_DIR/tools/local-env/scripts/install.js" << 'NODE'
 const fs = require( 'fs' );

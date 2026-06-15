@@ -837,14 +837,26 @@ class WP_PostgreSQL_DB extends wpdb {
 			$position += 3;
 		}
 
-		if (
-			! isset( $tokens[ $position ] )
-			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::IDENTIFIER, WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ), true )
-		) {
+		$table_name = $this->get_postgresql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $table_name ) {
 			return null;
 		}
 
-		return $tokens[ $position ]->get_value();
+		++$position;
+		while (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id
+		) {
+			$qualified_table_name = $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] );
+			if ( null === $qualified_table_name ) {
+				break;
+			}
+
+			$table_name = $qualified_table_name;
+			$position  += 2;
+		}
+
+		return $table_name;
 	}
 
 	/**
@@ -1336,17 +1348,88 @@ class WP_PostgreSQL_DB extends wpdb {
 			return array();
 		}
 
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+			return array();
+		}
+
+		++$position;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$position += 2;
+		}
+
 		$tables = array();
-		foreach ( $tokens as $token ) {
-			if ( WP_MySQL_Lexer::IDENTIFIER === $token->id || WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-				$value = $token->get_value();
-				if ( ! in_array( strtolower( $value ), array( 'drop', 'temporary', 'table', 'if', 'exists', 'restrict', 'cascade' ), true ) ) {
-					$tables[] = $value;
-				}
+		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
+			$table_name = $this->parse_postgresql_table_reference( $tokens, $position );
+			if ( null === $table_name ) {
+				break;
 			}
+
+			$tables[] = $table_name;
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				break;
+			}
+
+			++$position;
 		}
 
 		return $tables;
+	}
+
+	/**
+	 * Parse a table reference and return its final identifier.
+	 *
+	 * @param array $tokens   MySQL lexer token stream.
+	 * @param int   $position Current token position, updated on success.
+	 * @return string|null Table identifier, or null when unavailable.
+	 */
+	private function parse_postgresql_table_reference( array $tokens, int &$position ): ?string {
+		$table_name = $this->get_postgresql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $table_name ) {
+			return null;
+		}
+
+		++$position;
+		while (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id
+		) {
+			$qualified_table_name = $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] );
+			if ( null === $qualified_table_name ) {
+				break;
+			}
+
+			$table_name = $qualified_table_name;
+			$position  += 2;
+		}
+
+		return $table_name;
+	}
+
+	/**
+	 * Get the value from an identifier token.
+	 *
+	 * @param object|null $token MySQL lexer token.
+	 * @return string|null Identifier value, or null when the token is not an identifier.
+	 */
+	private function get_postgresql_identifier_token_value( $token ): ?string {
+		if (
+			! $token
+			|| ! in_array( $token->id, array( WP_MySQL_Lexer::IDENTIFIER, WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ), true )
+		) {
+			return null;
+		}
+
+		return $token->get_value();
 	}
 
 	/**
@@ -1949,7 +2032,7 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 		$this->last_query = $query;
 
-		if ( is_string( $query ) && preg_match( '/^\s*UPDATE\s+.+\s+WHERE\s*$/is', $query ) ) {
+		if ( is_string( $query ) && $this->is_empty_where_update_query( $query ) ) {
 			$this->last_error = 'PostgreSQL query rejected because UPDATE requires a non-empty WHERE condition.';
 			return false;
 		}
@@ -2194,6 +2277,40 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @return string Lowercase statement keyword, or empty string.
 	 */
 	private function get_statement_keyword( $query ) {
+		$i      = $this->get_statement_start_offset( $query );
+		$length = strlen( $query );
+
+		$start = $i;
+		while ( $i < $length && ( ctype_alpha( $query[ $i ] ) || '_' === $query[ $i ] ) ) {
+			++$i;
+		}
+
+		return strtolower( substr( $query, $start, $i - $start ) );
+	}
+
+	/**
+	 * Check whether an UPDATE statement has no WHERE condition.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether this is an UPDATE ending with an empty WHERE clause.
+	 */
+	private function is_empty_where_update_query( string $query ): bool {
+		if ( 'update' !== $this->get_statement_keyword( $query ) ) {
+			return false;
+		}
+
+		$statement = substr( $query, $this->get_statement_start_offset( $query ) );
+
+		return 1 === preg_match( '/^UPDATE\s+.+\s+WHERE\s*$/is', $statement );
+	}
+
+	/**
+	 * Return the offset of the first SQL statement keyword after leading comments.
+	 *
+	 * @param string $query SQL query.
+	 * @return int Statement keyword offset.
+	 */
+	private function get_statement_start_offset( string $query ): int {
 		$length = strlen( $query );
 		$i      = 0;
 
@@ -2212,6 +2329,14 @@ class WP_PostgreSQL_DB extends wpdb {
 				continue;
 			}
 
+			if ( '#' === $char ) {
+				++$i;
+				while ( $i < $length && "\n" !== $query[ $i ] ) {
+					++$i;
+				}
+				continue;
+			}
+
 			if ( '/' === $char && $i + 1 < $length && '*' === $query[ $i + 1 ] ) {
 				$i += 2;
 				while ( $i + 1 < $length && ! ( '*' === $query[ $i ] && '/' === $query[ $i + 1 ] ) ) {
@@ -2224,12 +2349,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			break;
 		}
 
-		$start = $i;
-		while ( $i < $length && ( ctype_alpha( $query[ $i ] ) || '_' === $query[ $i ] ) ) {
-			++$i;
-		}
-
-		return strtolower( substr( $query, $start, $i - $start ) );
+		return $i;
 	}
 
 	/**
