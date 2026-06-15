@@ -29879,6 +29879,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			}
 		}
 
+		if ( 'timestampadd' === $bounds['function'] ) {
+			return $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
+		}
+
 		$argument_sql = array();
 		foreach ( $arguments as $argument ) {
 			$argument_sql[] = $this->translate_mysql_token_sequence_to_postgresql(
@@ -30059,6 +30063,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'replace',
 			'substr',
 			'substring',
+			'timestampadd',
 			'to_base64',
 			'ucase',
 			'unhex',
@@ -31040,6 +31045,62 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
+	 * Translate MySQL TIMESTAMPADD(unit, interval, datetime_expr) to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[]                            $tokens    MySQL lexer token stream.
+	 * @param array<int,array{start:int,end:int}>         $arguments Function argument bounds.
+	 * @param int                                         $close     Closing parenthesis token position.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_timestampadd_function_to_postgresql( array $tokens, array $arguments, int $close ): ?array {
+		if ( 3 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$unit = $this->get_mysql_timestampadd_interval_unit( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+		if ( null === $unit ) {
+			return null;
+		}
+
+		$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[1]['start'],
+			$arguments[1]['end']
+		);
+		$datetime_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[2]['start'],
+			$arguments[2]['end']
+		);
+
+		return array(
+			'sql'      => sprintf(
+				'(%1$s + %2$s)',
+				$this->get_postgresql_zero_date_safe_timestamp_sql( $datetime_sql ),
+				$this->get_postgresql_mysql_interval_sql( $value_sql, $unit )
+			),
+			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+			'position' => $close,
+		);
+	}
+
+	/**
+	 * Get a supported TIMESTAMPADD interval unit from the first function argument.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First unit token.
+	 * @param int              $end    Final unit token, exclusive.
+	 * @return string|null PostgreSQL interval unit, or null when unsupported.
+	 */
+	private function get_mysql_timestampadd_interval_unit( array $tokens, int $start, int $end ): ?string {
+		if ( $start + 1 !== $end || ! isset( $tokens[ $start ] ) ) {
+			return null;
+		}
+
+		return $this->get_postgresql_simple_interval_unit( $tokens[ $start ] );
+	}
+
+	/**
 	 * Translate MySQL WEEK(expr, 1) calls to PostgreSQL.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -31644,6 +31705,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'MONTH':
 				return sprintf( 'CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer)', $expression_text_sql );
 
+			case 'QUARTER':
+				return sprintf( 'CAST(FLOOR((CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer) + 2) / 3.0) AS integer)', $expression_text_sql );
+
 			case 'DAY':
 				return sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql );
 
@@ -31783,6 +31847,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 			case WP_MySQL_Lexer::MONTH_SYMBOL:
 				return 'MONTH';
+
+			case WP_MySQL_Lexer::QUARTER_SYMBOL:
+				return 'QUARTER';
 
 			case WP_MySQL_Lexer::DAY_SYMBOL:
 			case WP_MySQL_Lexer::DAYOFMONTH_SYMBOL:

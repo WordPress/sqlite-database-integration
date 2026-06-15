@@ -8642,11 +8642,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_date_time_extract_functions_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
-		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, DAYOFMONTH(post_date) AS d, DAY(post_date) AS day_value, HOUR(post_date) AS h, MINUTE(post_date) AS i, SECOND(post_date) AS s, EXTRACT(DAY FROM post_date) AS extracted_day FROM wptests_posts WHERE ID = 1';
+		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, QUARTER(post_date) AS q, DAYOFMONTH(post_date) AS d, DAY(post_date) AS day_value, HOUR(post_date) AS h, MINUTE(post_date) AS i, SECOND(post_date) AS s, EXTRACT(DAY FROM post_date) AS extracted_day, EXTRACT(QUARTER FROM post_date) AS extracted_quarter FROM wptests_posts WHERE ID = 1';
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertSame(
-			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' ) . ' AS y, ' . $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' ) . ' AS m, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS d, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS day_value, ' . $this->get_expected_zero_date_safe_extract_sql( 'HOUR', 'post_date' ) . ' AS h, ' . $this->get_expected_zero_date_safe_extract_sql( 'MINUTE', 'post_date' ) . ' AS i, ' . $this->get_expected_zero_date_safe_extract_sql( 'SECOND', 'post_date' ) . ' AS s, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS extracted_day FROM wptests_posts WHERE "ID" = 1',
+			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' ) . ' AS y, ' . $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' ) . ' AS m, ' . $this->get_expected_zero_date_safe_extract_sql( 'QUARTER', 'post_date' ) . ' AS q, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS d, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS day_value, ' . $this->get_expected_zero_date_safe_extract_sql( 'HOUR', 'post_date' ) . ' AS h, ' . $this->get_expected_zero_date_safe_extract_sql( 'MINUTE', 'post_date' ) . ' AS i, ' . $this->get_expected_zero_date_safe_extract_sql( 'SECOND', 'post_date' ) . ' AS s, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS extracted_day, ' . $this->get_expected_zero_date_safe_extract_sql( 'QUARTER', 'post_date' ) . ' AS extracted_quarter FROM wptests_posts WHERE "ID" = 1',
 			$sql
 		);
 	}
@@ -8694,6 +8694,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array(
 				'name' => 'MONTH',
 				'unit' => 'MONTH',
+			),
+			array(
+				'name' => 'QUARTER',
+				'unit' => 'QUARTER',
 			),
 			array(
 				'name' => 'DAYOFMONTH',
@@ -9010,6 +9014,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$sql,
 				$mysql_unit
 			);
+		}
+	}
+
+	/**
+	 * Tests TIMESTAMPADD supports simple MySQL interval units for PostgreSQL.
+	 */
+	public function test_mysql_timestampadd_supports_simple_mysql_interval_units_for_postgresql(): void {
+		$driver = $this->create_driver();
+		$units  = array(
+			'MICROSECOND'     => 'microsecond',
+			'SECOND'          => 'second',
+			'MINUTE'          => 'minute',
+			'HOUR'            => 'hour',
+			'DAY'             => 'day',
+			'WEEK'            => 'week',
+			'MONTH'           => 'month',
+			'QUARTER'         => '3 months',
+			'YEAR'            => 'year',
+			'SQL_TSI_MINUTE'  => 'minute',
+			'SQL_TSI_QUARTER' => '3 months',
+		);
+
+		foreach ( $units as $mysql_unit => $postgresql_unit ) {
+			$select = 'SELECT TIMESTAMPADD(' . $mysql_unit . ', 2, post_date_gmt) AS shifted';
+			$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+			$this->assertSame(
+				'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'post_date_gmt', '2', $postgresql_unit ) . ' AS shifted',
+				$sql,
+				$mysql_unit
+			);
+			$this->assertStringNotContainsString( 'TIMESTAMPADD', $sql, $mysql_unit );
 		}
 	}
 
@@ -15575,6 +15611,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 			case 'MONTH':
 				return sprintf( 'CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer)', $expression_text_sql );
+
+			case 'QUARTER':
+				return sprintf( 'CAST(FLOOR((CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer) + 2) / 3.0) AS integer)', $expression_text_sql );
 
 			case 'DAY':
 				return sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql );
