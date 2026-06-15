@@ -95,6 +95,58 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests supported MySQL BTREE index options are ignored for PostgreSQL DDL.
+	 */
+	public function test_translate_ignores_supported_btree_index_options(): void {
+		$sql = 'CREATE TABLE wp_index_options (
+			id int NOT NULL,
+			value varchar(255) NOT NULL,
+			KEY value_lookup USING BTREE (value) KEY_BLOCK_SIZE=8 INVISIBLE COMMENT "Lookup",
+			UNIQUE KEY id_lookup (id) VISIBLE
+		) DEFAULT CHARACTER SET utf8mb4';
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_index_options\" (\n  \"id\" integer NOT NULL,\n  \"value\" varchar(255) NOT NULL\n)",
+				'CREATE INDEX "wp_index_options__value_lookup" ON "wp_index_options" ("value")',
+				'CREATE UNIQUE INDEX "wp_index_options__id_lookup" ON "wp_index_options" ("id")',
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql, true );
+		$this->assertSame(
+			array( 'value_lookup', 'id_lookup' ),
+			array_column( $metadata[0]['indexes'], 'name' )
+		);
+	}
+
+	/**
+	 * Tests unsupported MySQL index options fail explicitly.
+	 */
+	public function test_translate_rejects_unsupported_index_options(): void {
+		$queries = array(
+			'CREATE TABLE wp_bad_index_option (id int, value varchar(255), KEY value_lookup USING HASH (value))',
+			'CREATE TABLE wp_bad_index_option (id int, body text, FULLTEXT KEY body_fulltext (body) WITH PARSER ngram)',
+			'CREATE TABLE wp_bad_index_option (id int, shape point, SPATIAL KEY shape_spatial (shape) KEY_BLOCK_SIZE=8)',
+			'CREATE TABLE wp_bad_index_option (id int, PRIMARY KEY (id) INVISIBLE)',
+		);
+
+		foreach ( $queries as $query ) {
+			$translator = new WP_PostgreSQL_Create_Table_Translator();
+
+			try {
+				$translator->translate_schema( $query );
+				$this->fail( 'Expected unsupported CREATE TABLE index option to throw.' );
+			} catch ( InvalidArgumentException $exception ) {
+				$this->assertSame( 'Unsupported CREATE TABLE index option.', $exception->getMessage(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests zero date defaults are translated as text while MySQL metadata is preserved.
 	 */
 	public function test_translate_zero_date_defaults_as_text_and_metadata_defaults(): void {

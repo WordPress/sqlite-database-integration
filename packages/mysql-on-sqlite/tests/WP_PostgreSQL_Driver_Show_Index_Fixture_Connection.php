@@ -47,16 +47,17 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 		$fixture_params = array( $params[0] ?? '', $params[1] ?? '' );
 
 		if ( isset( $params[2] ) ) {
-			$filter_column = $this->get_show_index_fixture_filter_column( $sql );
-			if ( null !== $filter_column ) {
+			$filter = $this->get_show_index_fixture_filter( $sql );
+			if ( null !== $filter ) {
 				$fixture_sql .= sprintf(
 					'
-			AND %s = ?',
-					$filter_column
+				AND %s %s ?',
+					$filter['column'],
+					$filter['operator']
 				);
 			} else {
 				$fixture_sql .= '
-			AND key_name = ?';
+				AND key_name = ?';
 			}
 
 			$fixture_params[] = $params[2];
@@ -69,13 +70,13 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 	}
 
 	/**
-	 * Get the fixture column backing the SHOW INDEX filter in the driver query.
+	 * Get the fixture column/operator backing the SHOW INDEX filter in the driver query.
 	 *
 	 * @param string $sql Driver SQL query.
-	 * @return string|null Fixture column name, or null for the legacy key_name filter.
+	 * @return array{column: string, operator: string}|null Fixture filter, or null for the legacy key_name filter.
 	 */
-	private function get_show_index_fixture_filter_column( string $sql ): ?string {
-		if ( ! preg_match( '/WHERE\s+"([^"]+)"\s+=\s+\?/i', $sql, $matches ) ) {
+	private function get_show_index_fixture_filter( string $sql ): ?array {
+		if ( ! preg_match( '/WHERE\s+"([^"]+)"\s+(=|LIKE)\s+\?/i', $sql, $matches ) ) {
 			return null;
 		}
 
@@ -97,7 +98,14 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 			'Expression'    => 'expression',
 		);
 
-		return $columns[ $matches[1] ] ?? null;
+		if ( ! isset( $columns[ $matches[1] ] ) ) {
+			return null;
+		}
+
+		return array(
+			'column'   => $columns[ $matches[1] ],
+			'operator' => strtoupper( $matches[2] ),
+		);
 	}
 
 	/**

@@ -106,6 +106,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 				throw new InvalidArgumentException( 'Unsupported CREATE TABLE element.' );
 			}
 
+			$this->validate_mysql_table_constraint_index_options( $table_constraint );
+
 			if ( $table_constraint->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
 				$constraints[] = 'PRIMARY KEY (' . implode( ', ', $this->quote_key_parts( $table_constraint ) ) . ')';
 				continue;
@@ -364,6 +366,84 @@ class WP_PostgreSQL_Create_Table_Translator {
 	}
 
 	/**
+	 * Validate MySQL index options that PostgreSQL DDL can safely ignore.
+	 *
+	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 */
+	private function validate_mysql_table_constraint_index_options( WP_Parser_Node $table_constraint ): void {
+		$is_metadata_only = $table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL )
+			|| $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL );
+
+		if (
+			$is_metadata_only
+			&& (
+				! empty( $table_constraint->get_child_nodes( 'indexOption' ) )
+				|| ! empty( $table_constraint->get_child_nodes( 'fulltextIndexOption' ) )
+				|| ! empty( $table_constraint->get_child_nodes( 'spatialIndexOption' ) )
+			)
+		) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
+		}
+
+		if (
+			! $is_metadata_only
+			&& (
+				! empty( $table_constraint->get_child_nodes( 'fulltextIndexOption' ) )
+				|| ! empty( $table_constraint->get_child_nodes( 'spatialIndexOption' ) )
+			)
+		) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
+		}
+
+		foreach ( $table_constraint->get_descendant_nodes( 'indexType' ) as $index_type ) {
+			if ( ! $index_type->has_child_token( WP_MySQL_Lexer::BTREE_SYMBOL ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
+			}
+		}
+
+		$is_primary = $table_constraint->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
+		foreach ( $table_constraint->get_child_nodes( 'indexOption' ) as $index_option ) {
+			if ( ! $this->is_supported_mysql_table_index_option( $index_option, $is_primary ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
+			}
+		}
+	}
+
+	/**
+	 * Check whether a table index option can be ignored by PostgreSQL DDL.
+	 *
+	 * @param WP_Parser_Node $index_option Index option node.
+	 * @param bool           $is_primary   Whether this is a PRIMARY KEY constraint.
+	 * @return bool Whether the option is supported.
+	 */
+	private function is_supported_mysql_table_index_option( WP_Parser_Node $index_option, bool $is_primary ): bool {
+		$index_type_clause = $index_option->get_first_child_node( 'indexTypeClause' );
+		if ( $index_type_clause ) {
+			$index_type = $index_type_clause->get_first_child_node( 'indexType' );
+			return $index_type && $index_type->has_child_token( WP_MySQL_Lexer::BTREE_SYMBOL );
+		}
+
+		$common_option = $index_option->get_first_child_node( 'commonIndexOption' );
+		if ( ! $common_option ) {
+			return false;
+		}
+
+		if (
+			$common_option->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL )
+			|| $common_option->has_child_token( WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL )
+		) {
+			return true;
+		}
+
+		$visibility = $common_option->get_first_child_node( 'visibility' );
+		if ( ! $visibility ) {
+			return false;
+		}
+
+		return ! $is_primary || $visibility->has_child_token( WP_MySQL_Lexer::VISIBLE_SYMBOL );
+	}
+
+	/**
 	 * Get quoted key parts from a MySQL key constraint.
 	 *
 	 * @param WP_Parser_Node $table_constraint Table constraint node.
@@ -524,6 +604,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			if ( $include_indexes ) {
 				$table_constraint = $table_element->get_first_child_node( 'tableConstraintDef' );
 				if ( $table_constraint ) {
+					$this->validate_mysql_table_constraint_index_options( $table_constraint );
 					$indexes[] = $this->extract_index_metadata( $table_constraint, $index_ordinal, $column_types );
 					++$index_ordinal;
 				}
