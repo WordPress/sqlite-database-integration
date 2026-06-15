@@ -2381,32 +2381,43 @@ PHP
 		'second'
 	);
 
+	$quote_identifier_nul_exception = null;
+	$quote_identifier_nul_message   = null;
+	try {
+		$db->quote_identifier( "wp_\0posts" );
+	} catch ( Throwable $e ) {
+		$quote_identifier_nul_exception = get_class( $e );
+		$quote_identifier_nul_message   = $e->getMessage();
+	}
+
 	wp_postgresql_db_test_respond(
 		array(
-			'has_identifier_cap'            => $db->has_cap( 'identifier_placeholders' ),
-			'quoted_table'                  => $db->quote_identifier( 'wptests_options' ),
-			'quoted_weird'                  => $db->quote_identifier( 'weird"name' ),
-			'marker_like_value'             => $marker_like_value,
-			'prepared_marker_collision'     => $prepared_marker_collision,
-			'identifier_collision_value'    => $identifier_collision_value,
-			'prepared_identifier_collision' => $prepared_identifier_collision,
-			'prepared_identifier'           => $db->prepare(
+			'has_identifier_cap'              => $db->has_cap( 'identifier_placeholders' ),
+			'quoted_table'                    => $db->quote_identifier( 'wptests_options' ),
+			'quoted_weird'                    => $db->quote_identifier( 'weird"name' ),
+			'quote_identifier_nul_exception'  => $quote_identifier_nul_exception,
+			'quote_identifier_nul_message'    => $quote_identifier_nul_message,
+			'marker_like_value'               => $marker_like_value,
+			'prepared_marker_collision'       => $prepared_marker_collision,
+			'identifier_collision_value'      => $identifier_collision_value,
+			'prepared_identifier_collision'   => $prepared_identifier_collision,
+			'prepared_identifier'             => $db->prepare(
 				'SELECT * FROM %i WHERE %i = %s',
 				'wptests_options',
 				'option_name',
 				"Bob's"
 			),
-			'prepared_identifier_array'      => $db->prepare(
+			'prepared_identifier_array'        => $db->prepare(
 				'SELECT %i FROM %i WHERE %i = %s',
 				array( 'option_value', 'wptests_options', 'option_name', "Bob's" )
 			),
-			'prepared_formatted_identifier'  => $db->prepare(
+			'prepared_formatted_identifier'    => $db->prepare(
 				'SELECT * FROM %05i WHERE %i = %s',
 				'wptests_options',
 				'option_name',
 				"Bob's"
 			),
-			'prepared_string'                => $db->prepare( 'SELECT %s', "Bob's" ),
+			'prepared_string'                  => $db->prepare( 'SELECT %s', "Bob's" ),
 		)
 	);
 PHP
@@ -2415,6 +2426,11 @@ PHP
 		$this->assertTrue( $result['has_identifier_cap'] );
 		$this->assertSame( '"wptests_options"', $result['quoted_table'] );
 		$this->assertSame( '"weird""name"', $result['quoted_weird'] );
+		$this->assertSame( 'InvalidArgumentException', $result['quote_identifier_nul_exception'] );
+		$this->assertSame(
+			'PostgreSQL identifiers cannot contain NUL bytes.',
+			$result['quote_identifier_nul_message']
+		);
 		$this->assertSame(
 			'SELECT * FROM "wptests_options" WHERE "option_name" = \'Bob\\\'s\'',
 			$result['prepared_identifier']
