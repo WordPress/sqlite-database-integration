@@ -1090,6 +1090,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests REPLACE ... SET statements use PostgreSQL upserts and MySQL row counts.
+	 */
+	public function test_replace_set_with_known_conflict_column_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_options (
+				option_id INTEGER PRIMARY KEY,
+				option_name TEXT NOT NULL UNIQUE,
+				option_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_options (option_id, option_name, option_value) VALUES (1, 'siteurl', 'old')" );
+
+		$replace = "REPLACE INTO `wptests_options` SET `option_id` = 8, `option_name` = 'siteurl', `option_value` = 'updated'";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_id", "option_name", "option_value") VALUES (8, \'siteurl\', \'updated\') ON CONFLICT ("option_name") DO UPDATE SET "option_id" = excluded."option_id", "option_name" = excluded."option_name", "option_value" = excluded."option_value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT option_id, option_value FROM wptests_options WHERE option_name = 'siteurl'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '8', $rows[0]->option_id );
+		$this->assertSame( 'updated', $rows[0]->option_value );
+
+		$replace = "REPLACE `wptests_options` SET `option_id` = 9, `option_name` = 'home', `option_value` = 'created'";
+
+		$this->assertSame( 1, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_id", "option_name", "option_value") VALUES (9, \'home\', \'created\') ON CONFLICT ("option_name") DO UPDATE SET "option_id" = excluded."option_id", "option_name" = excluded."option_name", "option_value" = excluded."option_value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT option_name, option_value FROM wptests_options ORDER BY option_id' );
+		$this->assertCount( 2, $rows );
+		$this->assertSame( 'siteurl', $rows[0]->option_name );
+		$this->assertSame( 'updated', $rows[0]->option_value );
+		$this->assertSame( 'home', $rows[1]->option_name );
+		$this->assertSame( 'created', $rows[1]->option_value );
+	}
+
+	/**
 	 * Tests multi-row REPLACE statements use PostgreSQL upserts and MySQL row counts.
 	 */
 	public function test_multi_row_replace_with_known_conflict_column_is_translated_to_postgresql(): void {

@@ -13417,6 +13417,10 @@ WHERE option_name IN (
 
 		$column_metadata    = null;
 		$insert_column_list = false;
+		$value_rows         = null;
+		$value_range_rows   = array();
+		$probe_safe_rows    = array();
+		$statement_end      = null;
 		if (
 			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
@@ -13446,6 +13450,23 @@ WHERE option_name IN (
 			if ( null === $columns ) {
 				return null;
 			}
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
+			$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+			if ( null === $statement_end ) {
+				return null;
+			}
+
+			++$position;
+			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $tokens, $position, $statement_end );
+			if ( null === $set_assignments ) {
+				return null;
+			}
+
+			$columns          = $set_assignments['columns'];
+			$value_rows       = array( $set_assignments['values'] );
+			$value_range_rows = array( $set_assignments['ranges'] );
+			$probe_safe_rows  = array( $set_assignments['probe_safe_values'] );
+			$position         = $statement_end;
 		} else {
 			return null;
 		}
@@ -13469,21 +13490,21 @@ WHERE option_name IN (
 			);
 		}
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
+		if ( null === $value_rows ) {
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
 
-		++$position;
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
-		if ( null === $statement_end ) {
-			return null;
-		}
+			++$position;
+			$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+			if ( null === $statement_end ) {
+				return null;
+			}
 
-		$probe_safe_rows  = array();
-		$value_range_rows = array();
-		$value_rows       = $this->parse_mysql_values_rows( $tokens, $position, $statement_end, count( $columns ), $probe_safe_rows, $value_range_rows );
-		if ( null === $value_rows || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return null;
+			$value_rows = $this->parse_mysql_values_rows( $tokens, $position, $statement_end, count( $columns ), $probe_safe_rows, $value_range_rows );
+			if ( null === $value_rows || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+				return null;
+			}
 		}
 
 		if ( null === $column_metadata ) {
