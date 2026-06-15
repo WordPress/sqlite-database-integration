@@ -172,6 +172,93 @@ PHP
 	}
 
 	/**
+	 * Tests set_charset() uses wpdb defaults and ignores invalid handles.
+	 */
+	public function test_set_charset_uses_defaults_and_ignores_invalid_handles(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $charset = 'utf8mb4';
+	public $collate = '';
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ),
+	'wptests'
+);
+
+function wp_postgresql_db_charset_state( WP_PostgreSQL_Driver $driver ) {
+	$collation = $driver->query( "SHOW VARIABLES WHERE Variable_name='collation_connection'" );
+	$charset   = $driver->query( "SHOW VARIABLES WHERE Variable_name='character_set_client'" );
+
+	return array(
+		'charset'   => $charset[0]->Value,
+		'collation' => $collation[0]->Value,
+	);
+}
+
+$initial = wp_postgresql_db_charset_state( $driver );
+
+$db->charset = 'latin1';
+$db->collate = '';
+$db->set_charset( $driver );
+$after_defaults = wp_postgresql_db_charset_state( $driver );
+
+$db->set_charset( $driver, '', 'utf8_general_ci' );
+$after_empty_charset = wp_postgresql_db_charset_state( $driver );
+
+$db->set_charset( new stdClass(), 'utf8mb4', 'utf8mb4_bin' );
+$after_non_driver = wp_postgresql_db_charset_state( $driver );
+
+$db->set_charset( $driver, 'utf8mb4', '' );
+$after_empty_collate = wp_postgresql_db_charset_state( $driver );
+
+wp_postgresql_db_test_respond(
+	array(
+		'initial'             => $initial,
+		'after_defaults'      => $after_defaults,
+		'after_empty_charset' => $after_empty_charset,
+		'after_non_driver'    => $after_non_driver,
+		'after_empty_collate' => $after_empty_collate,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'initial'             => array(
+					'charset'   => 'utf8mb4',
+					'collation' => 'utf8mb4_unicode_ci',
+				),
+				'after_defaults'      => array(
+					'charset'   => 'latin1',
+					'collation' => 'latin1_swedish_ci',
+				),
+				'after_empty_charset' => array(
+					'charset'   => 'latin1',
+					'collation' => 'latin1_swedish_ci',
+				),
+				'after_non_driver'    => array(
+					'charset'   => 'latin1',
+					'collation' => 'latin1_swedish_ci',
+				),
+				'after_empty_collate' => array(
+					'charset'   => 'utf8mb4',
+					'collation' => 'utf8mb4_unicode_ci',
+				),
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests the wpdb adapter applies WordPress charset upgrade rules.
 	 */
 	public function test_determine_charset_applies_wordpress_utf8mb4_upgrade_rules(): void {
