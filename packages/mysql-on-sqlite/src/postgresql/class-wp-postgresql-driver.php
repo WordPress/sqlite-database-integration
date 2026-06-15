@@ -9018,12 +9018,15 @@ class WP_PostgreSQL_Driver {
 				return null;
 		}
 
-		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id ) {
+		$position = 1;
+		$this->consume_mysql_table_administration_leading_option( $tokens, $position, $operation );
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
 			throw new InvalidArgumentException( 'Unsupported table administration statement.' );
 		}
 
 		$tables   = array();
-		$position = 2;
+		++$position;
 		while ( true ) {
 			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
 			if ( null === $table_reference ) {
@@ -9039,6 +9042,11 @@ class WP_PostgreSQL_Driver {
 			break;
 		}
 
+		$position = $this->consume_mysql_table_administration_trailing_options( $tokens, $position, $operation );
+		if ( null === $position ) {
+			throw new InvalidArgumentException( 'Unsupported table administration statement.' );
+		}
+
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			throw new InvalidArgumentException( 'Unsupported table administration statement.' );
 		}
@@ -9047,6 +9055,100 @@ class WP_PostgreSQL_Driver {
 			'operation' => $operation,
 			'tables'    => $tables,
 		);
+	}
+
+	/**
+	 * Consume a supported table-administration option before TABLE.
+	 *
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $position  Current token position, updated on success.
+	 * @param string           $operation Administration operation.
+	 */
+	private function consume_mysql_table_administration_leading_option( array $tokens, int &$position, string $operation ): void {
+		if ( ! in_array( $operation, array( 'analyze', 'optimize', 'repair' ), true ) ) {
+			return;
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::LOCAL_SYMBOL, WP_MySQL_Lexer::NO_WRITE_TO_BINLOG_SYMBOL ), true )
+		) {
+			++$position;
+		}
+	}
+
+	/**
+	 * Consume supported table-administration options after the table list.
+	 *
+	 * PostgreSQL has no direct equivalent for MySQL's storage-engine maintenance
+	 * modifiers, so they are accepted as compatibility no-ops.
+	 *
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $position  Current token position.
+	 * @param string           $operation Administration operation.
+	 * @return int|null Position after options, or null when unsupported.
+	 */
+	private function consume_mysql_table_administration_trailing_options( array $tokens, int $position, string $operation ): ?int {
+		if ( 'check' === $operation ) {
+			while ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+				if (
+					isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+					&& WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $position ]->id
+					&& WP_MySQL_Lexer::UPGRADE_SYMBOL === $tokens[ $position + 1 ]->id
+				) {
+					$position += 2;
+					continue;
+				}
+
+				if (
+					isset( $tokens[ $position ] )
+					&& in_array(
+						$tokens[ $position ]->id,
+						array(
+							WP_MySQL_Lexer::QUICK_SYMBOL,
+							WP_MySQL_Lexer::FAST_SYMBOL,
+							WP_MySQL_Lexer::MEDIUM_SYMBOL,
+							WP_MySQL_Lexer::EXTENDED_SYMBOL,
+							WP_MySQL_Lexer::CHANGED_SYMBOL,
+						),
+						true
+					)
+				) {
+					++$position;
+					continue;
+				}
+
+				return null;
+			}
+
+			return $position;
+		}
+
+		if ( 'repair' === $operation ) {
+			while ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+				if (
+					isset( $tokens[ $position ] )
+					&& in_array(
+						$tokens[ $position ]->id,
+						array(
+							WP_MySQL_Lexer::QUICK_SYMBOL,
+							WP_MySQL_Lexer::EXTENDED_SYMBOL,
+							WP_MySQL_Lexer::USE_FRM_SYMBOL,
+						),
+						true
+					)
+				) {
+					++$position;
+					continue;
+				}
+
+				return null;
+			}
+
+			return $position;
+		}
+
+		return $position;
 	}
 
 	/**

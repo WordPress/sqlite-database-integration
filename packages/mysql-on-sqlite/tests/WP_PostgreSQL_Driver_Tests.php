@@ -12598,6 +12598,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests supported MySQL table administration modifiers are accepted as compatibility no-ops.
+	 */
+	public function test_table_administration_accepts_supported_mysql_option_clauses(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE administration_existing (id INTEGER)' );
+
+		$cases = array(
+			'ANALYZE LOCAL TABLE administration_existing'                           => 'analyze',
+			'ANALYZE NO_WRITE_TO_BINLOG TABLE administration_existing'              => 'analyze',
+			'CHECK TABLE administration_existing FOR UPGRADE'                       => 'check',
+			'CHECK TABLE administration_existing QUICK FAST MEDIUM EXTENDED CHANGED' => 'check',
+			'OPTIMIZE LOCAL TABLE administration_existing'                          => 'optimize',
+			'OPTIMIZE NO_WRITE_TO_BINLOG TABLE administration_existing'             => 'optimize',
+			'REPAIR LOCAL TABLE administration_existing QUICK EXTENDED USE_FRM'      => 'repair',
+			'REPAIR NO_WRITE_TO_BINLOG TABLE administration_existing USE_FRM'        => 'repair',
+		);
+
+		foreach ( $cases as $query => $operation ) {
+			$rows = $driver->query( $query );
+
+			$this->assertEquals(
+				array(
+					(object) array(
+						'Table'    => 'wptests.administration_existing',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$rows,
+				$query
+			);
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
 	 * Tests unsupported table administration clauses fail before reaching the backend.
 	 */
 	public function test_table_administration_unsupported_clauses_fail_closed(): void {
@@ -12605,7 +12642,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'CREATE TABLE administration_existing (id INTEGER)' );
 
 		try {
-			$driver->query( 'CHECK TABLE administration_existing FOR UPGRADE' );
+			$driver->query( 'CHECK TABLE administration_existing UNKNOWN_OPTION' );
 			$this->fail( 'Expected unsupported table administration clause to throw.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported table administration statement.', $e->getMessage() );
