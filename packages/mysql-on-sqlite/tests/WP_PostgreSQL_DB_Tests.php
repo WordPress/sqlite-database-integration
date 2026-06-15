@@ -2746,6 +2746,78 @@ PHP
 	}
 
 	/**
+	 * Tests db_connect() short-circuits when a PostgreSQL driver already exists.
+	 */
+	public function test_db_connect_short_circuits_when_postgresql_driver_already_exists(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $ready              = false;
+	public $is_mysql           = false;
+	public $last_error         = 'previous error';
+	public $charset            = 'latin1';
+	public $init_charset_calls = 0;
+	public $bail_calls         = array();
+
+	public function init_charset() {
+		++$this->init_charset_calls;
+		$this->charset = 'utf8mb4';
+	}
+
+	public function bail( $message, $error_code = '500' ) {
+		$this->bail_calls[] = array( $message, $error_code );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Existing_Driver_Fake_Driver extends WP_PostgreSQL_Driver {
+	public function __construct() {}
+}
+
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$driver = new WP_PostgreSQL_DB_Existing_Driver_Fake_Driver();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$connect_result       = $db->db_connect( false );
+$driver_after_connect = $driver_property->getValue( $db );
+
+wp_postgresql_db_test_respond(
+	array(
+		'connect_result'     => $connect_result,
+		'ready'              => $db->ready,
+		'is_mysql'           => $db->is_mysql,
+		'driver_same'        => $driver_after_connect === $driver,
+		'init_charset_calls' => $db->init_charset_calls,
+		'bail_calls'         => $db->bail_calls,
+		'last_error'         => $db->last_error,
+		'charset'            => $db->charset,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'connect_result'     => true,
+				'ready'              => true,
+				'is_mysql'           => true,
+				'driver_same'        => true,
+				'init_charset_calls' => 0,
+				'bail_calls'         => array(),
+				'last_error'         => 'previous error',
+				'charset'            => 'latin1',
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests db_connect() with a reusable PostgreSQL PDO and connection lifecycle methods.
 	 */
 	public function test_db_connect_reuses_global_postgresql_pdo_and_exposes_connection_lifecycle(): void {
