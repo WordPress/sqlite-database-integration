@@ -2312,6 +2312,293 @@ PHP
 	}
 
 	/**
+	 * Tests DROP TABLE clears PostgreSQL charset metadata and cached wpdb metadata.
+	 */
+	public function test_drop_table_clears_postgresql_charset_metadata_and_cache(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+function __( $text ) {
+	return $text;
+}
+
+class WP_Error {
+	public $code;
+	public $message;
+
+	public function __construct( $code = '', $message = '' ) {
+		$this->code    = $code;
+		$this->message = $message;
+	}
+}
+
+function is_wp_error( $thing ) {
+	return $thing instanceof WP_Error;
+}
+
+class wpdb {
+	public $ready           = true;
+	public $charset         = 'utf8mb4';
+	public $is_mysql        = true;
+	public $table_charset   = array();
+	public $col_meta        = array();
+	public $insert_id       = 0;
+	public $last_query      = null;
+	public $func_call       = null;
+	public $last_error      = '';
+	public $queries         = array();
+	public $num_queries     = 0;
+	public $last_result     = array();
+	public $col_info        = null;
+	public $rows_affected   = 0;
+	public $num_rows        = 0;
+	public $result          = null;
+	public $suppress_errors = true;
+	public $show_errors     = false;
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Drop_Metadata_Fake_Connection extends WP_PostgreSQL_Connection {
+	private $pdo;
+	private $queries                    = array();
+	private $permanent_metadata_deleted = false;
+	private $temporary_table_exists     = true;
+
+	public function __construct() {
+		$this->pdo = new PDO( 'sqlite::memory:' );
+	}
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+			$table           = $params[0] ?? '';
+			$this->queries[] = 'temp_schema:' . $table;
+
+			if ( $this->temporary_table_exists && 'wptests_temp_drop_metadata_cache' === $table ) {
+				return $this->statement_from_rows(
+					array(
+						array(
+							'nspname' => 'pg_temp_42',
+						),
+					)
+				);
+			}
+
+			return $this->statement_from_rows( array() );
+		}
+
+		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
+			$this->queries[] = 'metadata_exists';
+			return $this->statement_from_rows(
+				array(
+					array(
+						'exists' => 1,
+					),
+				)
+			);
+		}
+
+		if ( false !== strpos( $sql, 'SELECT column_name, column_type, collation_name' ) ) {
+			$table           = $params[0] ?? '';
+			$this->queries[] = 'stored_columns:' . $table;
+
+			if ( ! $this->permanent_metadata_deleted && 'wptests_drop_metadata_cache' === $table ) {
+				return $this->statement_from_rows(
+					array(
+						array(
+							'column_name'    => 'name',
+							'column_type'    => 'varchar(191)',
+							'collation_name' => 'utf8mb4_unicode_ci',
+						),
+					)
+				);
+			}
+
+			return $this->statement_from_rows( array() );
+		}
+
+		if ( false !== strpos( $sql, 'DELETE FROM "__wp_postgresql_mysql_charset_metadata"' ) ) {
+			$table           = $params[0] ?? '';
+			$this->queries[] = 'delete_metadata:' . $table;
+
+			if ( 'wptests_drop_metadata_cache' === $table ) {
+				$this->permanent_metadata_deleted = true;
+			}
+
+			return $this->statement_from_rows( array() );
+		}
+
+		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
+			$table           = end( $params );
+			$this->queries[] = 'native_columns:' . $table;
+			return $this->statement_from_rows( array() );
+		}
+
+		$this->queries[] = 'unexpected:' . preg_replace( '/\s+/', ' ', trim( $sql ) );
+		return $this->statement_from_rows( array() );
+	}
+
+	public function get_pdo(): PDO {
+		return $this->pdo;
+	}
+
+	public function mark_temporary_table_dropped(): void {
+		$this->temporary_table_exists = false;
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+
+	private function statement_from_rows( array $rows ): PDOStatement {
+		if ( empty( $rows ) ) {
+			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		$columns = array_keys( $rows[0] );
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$fields = array();
+			foreach ( $columns as $column ) {
+				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
+				$params[] = $row[ $column ];
+			}
+			$selects[] = 'SELECT ' . implode( ', ', $fields );
+		}
+
+		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
+		$stmt->execute( $params );
+		return $stmt;
+	}
+}
+
+class WP_PostgreSQL_DB_Drop_Metadata_Fake_Driver extends WP_PostgreSQL_Driver {
+	private $fake_connection;
+	private $queries = array();
+
+	public function __construct( WP_PostgreSQL_DB_Drop_Metadata_Fake_Connection $connection ) {
+		$this->fake_connection = $connection;
+	}
+
+	public function get_connection(): WP_PostgreSQL_Connection {
+		return $this->fake_connection;
+	}
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+
+		if ( 0 === stripos( $query, 'DROP TEMPORARY TABLE' ) ) {
+			$this->fake_connection->mark_temporary_table_dropped();
+			return true;
+		}
+
+		if ( 0 === stripos( $query, 'DROP TABLE' ) ) {
+			return true;
+		}
+
+		if ( 0 === stripos( $query, 'SHOW FULL COLUMNS' ) ) {
+			return array();
+		}
+
+		return true;
+	}
+
+	public function get_last_return_value() {
+		return 0;
+	}
+
+	public function get_insert_id() {
+		return 0;
+	}
+
+	public function get_last_postgresql_queries(): array {
+		return array();
+	}
+
+	public function get_last_column_meta(): array {
+		return array();
+	}
+
+	public function get_queries(): array {
+		return $this->queries;
+	}
+}
+
+$connection = new WP_PostgreSQL_DB_Drop_Metadata_Fake_Connection();
+$driver     = new WP_PostgreSQL_DB_Drop_Metadata_Fake_Driver( $connection );
+$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
+$store_metadata->setAccessible( true );
+$store_metadata->invoke(
+	$db,
+	'CREATE TEMPORARY TABLE wptests_temp_drop_metadata_cache ( name VARCHAR(50) CHARACTER SET big5 )'
+);
+
+$permanent_before = $db->get_col_charset( 'wptests_drop_metadata_cache', 'name' );
+$temporary_before = $db->get_col_charset( 'wptests_temp_drop_metadata_cache', 'name' );
+
+$permanent_dropped = $db->query( 'DROP TABLE IF EXISTS wptests_drop_metadata_cache' );
+$permanent_after   = $db->get_col_charset( 'wptests_drop_metadata_cache', 'name' );
+
+$temporary_dropped = $db->query( 'DROP TEMPORARY TABLE wptests_temp_drop_metadata_cache' );
+$temporary_after   = $db->get_col_charset( 'wptests_temp_drop_metadata_cache', 'name' );
+
+wp_postgresql_db_test_respond(
+	array(
+		'permanent_before'       => $permanent_before,
+		'temporary_before'       => $temporary_before,
+		'permanent_dropped'      => $permanent_dropped,
+		'permanent_after_error'  => $permanent_after instanceof WP_Error,
+		'temporary_dropped'      => $temporary_dropped,
+		'temporary_after_error'  => $temporary_after instanceof WP_Error,
+		'connection_queries'     => $connection->get_queries(),
+		'driver_queries'         => $driver->get_queries(),
+	)
+);
+PHP
+		);
+
+		$this->assertSame( 'utf8mb4', $result['permanent_before'] );
+		$this->assertSame( 'big5', $result['temporary_before'] );
+		$this->assertTrue( $result['permanent_dropped'] );
+		$this->assertTrue( $result['permanent_after_error'] );
+		$this->assertTrue( $result['temporary_dropped'] );
+		$this->assertTrue( $result['temporary_after_error'] );
+		$this->assertSame(
+			array(
+				'temp_schema:wptests_drop_metadata_cache',
+				'metadata_exists',
+				'stored_columns:wptests_drop_metadata_cache',
+				'temp_schema:wptests_temp_drop_metadata_cache',
+				'delete_metadata:wptests_drop_metadata_cache',
+				'temp_schema:wptests_drop_metadata_cache',
+				'stored_columns:wptests_drop_metadata_cache',
+				'native_columns:wptests_drop_metadata_cache',
+				'temp_schema:wptests_temp_drop_metadata_cache',
+				'stored_columns:wptests_temp_drop_metadata_cache',
+				'native_columns:wptests_temp_drop_metadata_cache',
+			),
+			$result['connection_queries']
+		);
+		$this->assertSame(
+			array(
+				'DROP TABLE IF EXISTS wptests_drop_metadata_cache',
+				'SHOW FULL COLUMNS FROM `wptests_drop_metadata_cache`',
+				'DROP TEMPORARY TABLE wptests_temp_drop_metadata_cache',
+				'SHOW FULL COLUMNS FROM `wptests_temp_drop_metadata_cache`',
+			),
+			$result['driver_queries']
+		);
+	}
+
+	/**
 	 * Tests real wpdb identifier placeholders use PostgreSQL identifier quotes.
 	 */
 	public function test_real_wpdb_prepare_identifier_placeholders_use_postgresql_quotes(): void {
