@@ -276,6 +276,66 @@ PHP
 	}
 
 	/**
+	 * Tests suppressed print_error() calls record explicit and stored errors.
+	 */
+	public function test_print_error_records_explicit_and_stored_errors_when_suppressed(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	class wpdb {
+		public $last_error      = 'stored backend failure';
+		public $last_query      = 'SELECT * FROM probe';
+		public $suppress_errors = true;
+		public $show_errors     = false;
+
+		public function get_caller() {
+			return 'sentinel caller';
+		}
+	}
+}
+
+global $EZSQL_ERROR;
+$EZSQL_ERROR = array();
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$explicit_return = $db->print_error( 'explicit PostgreSQL error' );
+
+$db->last_query = 'UPDATE probe SET x = 1';
+$stored_return  = $db->print_error();
+
+wp_postgresql_db_test_respond(
+	array(
+		'explicit_return' => $explicit_return,
+		'stored_return'   => $stored_return,
+		'errors'          => $EZSQL_ERROR,
+	)
+);
+PHP
+		);
+
+		$this->assertFalse( $result['explicit_return'] );
+		$this->assertFalse( $result['stored_return'] );
+		$this->assertSame(
+			array(
+				array(
+					'query'     => 'SELECT * FROM probe',
+					'error_str' => 'explicit PostgreSQL error',
+				),
+				array(
+					'query'     => 'UPDATE probe SET x = 1',
+					'error_str' => 'stored backend failure',
+				),
+			),
+			$result['errors']
+		);
+	}
+
+	/**
 	 * Tests the PostgreSQL adapter strips legacy charset text without MySQL.
 	 */
 	public function test_strip_invalid_text_handles_legacy_charsets_in_php(): void {
