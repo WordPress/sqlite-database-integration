@@ -2822,8 +2822,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$unsupported_query_methods = array(
 			'UPDATE wptests_unsupported SET id = 1 ORDER BY id ASC' => 'translate_simple_mysql_update_query',
-			'UPDATE wptests_unsupported AS u JOIN wptests_other AS o ON u.id = o.id SET u.id = 1' => 'translate_simple_mysql_update_query',
-			'DELETE FROM wptests_unsupported ORDER BY id ASC' => 'translate_simple_mysql_delete_query',
+			'UPDATE wptests_unsupported AS u LEFT JOIN wptests_other AS o ON u.id = o.id SET u.id = 1' => 'translate_simple_mysql_update_query',
 		);
 
 		foreach ( $unsupported_query_methods as $query => $method_name ) {
@@ -3749,6 +3748,47 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL inner joined UPDATE statements translate through PostgreSQL UPDATE FROM.
+	 */
+	public function test_inner_join_update_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_joined (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_meta (
+				post_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_joined (id, status) VALUES (1, 'draft'), (2, 'draft')" );
+		$driver->query( "INSERT INTO wptests_update_joined_meta (post_id, meta_key, meta_value) VALUES (1, '_status', 'publish'), (2, '_other', 'private')" );
+
+		$update = "UPDATE wptests_update_joined AS p JOIN wptests_update_joined_meta AS pm ON p.id = pm.post_id SET p.status = pm.meta_value WHERE pm.meta_key = '_status'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 0, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_update_joined" AS "p" SET "status" = pm.meta_value FROM "wptests_update_joined_meta" AS "pm" WHERE (p.id = pm.post_id) AND (pm.meta_key = \'_status\') AND ("p"."status" IS DISTINCT FROM (pm.meta_value))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_joined ORDER BY id' );
+		$this->assertSame( 'publish', $rows[0]->status );
+		$this->assertSame( 'draft', $rows[1]->status );
+	}
+
+	/**
 	 * Tests bounded UPDATE ORDER BY/LIMIT forms translate through PostgreSQL ctid.
 	 */
 	public function test_simple_update_order_by_limit_translates_to_ctid_subquery(): void {
@@ -3989,6 +4029,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( 'SELECT id, value FROM wptests_delete_alias ORDER BY id' );
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '2', $rows[0]->id );
+	}
+
+	/**
+	 * Tests simple DELETE ORDER BY without LIMIT deletes the same matched row set.
+	 */
+	public function test_simple_delete_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_delete_ordered (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_delete_ordered (id, status) VALUES (1, 'stale'), (2, 'keep'), (3, 'stale')" );
+
+		$delete = "DELETE FROM `wptests_delete_ordered` WHERE `status` = 'stale' ORDER BY `id` DESC";
+
+		$this->assertSame( 2, $driver->query( $delete ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DELETE FROM "wptests_delete_ordered" WHERE "status" = \'stale\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_delete_ordered ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->id );
+		$this->assertSame( 'keep', $rows[0]->status );
 	}
 
 	/**
@@ -8395,28 +8468,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported ON DUPLICATE KEY INSERT shapes still reach PDO.
+	 * Tests ON DUPLICATE KEY UPDATE supports constant scalar subquery assignments.
 	 */
-	public function test_unsupported_options_upsert_still_reaches_backend(): void {
+	public function test_options_upsert_scalar_subquery_assignment_is_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
 		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('siteurl', 'old', 'yes')" );
 
-		$unsupported_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+		$upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('siteurl', 'http://example.org', 'yes')
 			ON DUPLICATE KEY UPDATE `option_value` = (SELECT 'http://example.net')";
 
-		$this->assertNull(
-			$this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$unsupported_upsert
-			)
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = (SELECT \'http://example.net\')',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
 		);
 
-		$this->expectException( PDOException::class );
+		$rows = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" );
 
-		$driver->query( $unsupported_upsert );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'http://example.net', $rows[0]->option_value );
 	}
 
 	/**

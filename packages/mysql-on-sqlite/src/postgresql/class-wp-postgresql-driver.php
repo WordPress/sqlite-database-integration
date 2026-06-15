@@ -11168,10 +11168,11 @@ WHERE option_name IN (
 	 * Translate simple single-table MySQL DELETE statements to PostgreSQL.
 	 *
 	 * WordPress option deletes emit a single target table and a plain WHERE
-	 * clause. Some plugins also use MySQL's single-table alias and bounded
-	 * ORDER/LIMIT forms; those are rewritten through PostgreSQL ctid subqueries.
-	 * Multi-table DELETE variants fall through unchanged so unsupported SQL still
-	 * fails visibly in the backend.
+		 * clause. Some plugins also use MySQL's single-table alias and ORDER BY
+		 * forms. Bounded ORDER/LIMIT deletes are rewritten through PostgreSQL ctid
+		 * subqueries; unbounded ORDER BY deletes omit the ordering because the same
+		 * matched row set is deleted. Multi-table DELETE variants fall through
+		 * unchanged so unsupported SQL still fails visibly in the backend.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -11206,12 +11207,11 @@ WHERE option_name IN (
 
 		if (
 			( null !== $where_position && $where_position !== $position )
-			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
-			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && null === $limit_position )
-			|| ( null === $where_position && null === $order_position && null !== $limit_position && $limit_position !== $position )
-		) {
+				|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+				|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
+				|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
+				|| ( null === $where_position && null === $order_position && null !== $limit_position && $limit_position !== $position )
+			) {
 			return null;
 		}
 
@@ -13236,8 +13236,8 @@ WHERE option_name IN (
 	 * WordPress CRUD updates emit a narrow MySQL shape with one table,
 	 * backticked identifiers, and plain SET/WHERE clauses. Some plugins use
 	 * single-table aliases and bounded ORDER/LIMIT forms; those are rewritten
-	 * through PostgreSQL ctid subqueries. Multi-table and joined UPDATE syntax
-	 * still falls through unchanged.
+	 * through PostgreSQL ctid subqueries. Inner joined UPDATE syntax is rewritten
+	 * separately to PostgreSQL UPDATE ... FROM.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -13253,8 +13253,13 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$position        = 1;
-		$table_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $statement_end );
+			$joined_update = $this->translate_mysql_inner_join_update_query( $tokens, $statement_end );
+		if ( null !== $joined_update ) {
+			return $joined_update;
+		}
+
+			$position        = 1;
+			$table_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $statement_end );
 		if ( null === $table_reference ) {
 			return null;
 		}
@@ -13375,11 +13380,212 @@ WHERE option_name IN (
 			$sql .= ' WHERE ' . $predicates[0];
 		}
 
-		return $sql;
+			return $sql;
 	}
 
-	/**
-	 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
+		/**
+		 * Translate supported MySQL inner joined UPDATE statements.
+		 *
+		 * PostgreSQL UPDATE ... FROM has the same semantics for bounded inner-join
+		 * update shapes when MySQL ON predicates are moved into the WHERE clause.
+		 * Outer joins, comma joins, USING joins, and ordered/limited joined updates
+		 * remain unsupported until they get dedicated rewrites.
+		 *
+		 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+		 * @param int              $statement_end Final statement token, exclusive.
+		 * @return string|null PostgreSQL query, or null when unsupported.
+		 */
+	private function translate_mysql_inner_join_update_query( array $tokens, int $statement_end ): ?string {
+		$set_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SET_SYMBOL, 1, $statement_end );
+		if ( null === $set_position ) {
+			return null;
+		}
+
+		$position         = 1;
+		$target_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
+		if (
+			null === $target_reference
+			|| $position >= $set_position
+			|| ! $this->is_mysql_supported_inner_join_separator_at( $tokens, $position, $set_position )
+		) {
+			return null;
+		}
+
+		$table_name             = $target_reference['table'];
+		$alias                  = $target_reference['alias'];
+		$target_reference_alias = null === $alias ? $table_name : $alias;
+		$scope                  = $this->get_mysql_single_table_scope( $table_name, $alias );
+		$from_parts             = array();
+		$join_predicates        = array();
+
+		while ( $position < $set_position ) {
+			if ( WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+				++$position;
+			}
+
+			if ( WP_MySQL_Lexer::JOIN_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+				return null;
+			}
+			++$position;
+
+			$joined_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
+			if ( null === $joined_reference ) {
+				return null;
+			}
+
+			$joined_alias = strtolower( null === $joined_reference['alias'] ? $joined_reference['table'] : $joined_reference['alias'] );
+			if ( isset( $scope['aliases'][ $joined_alias ] ) ) {
+				return null;
+			}
+
+			$joined_table = array(
+				'schema' => $this->resolve_mysql_table_schema_for_introspection( 'public', $joined_reference['table'] ),
+				'table'  => $joined_reference['table'],
+			);
+
+			$scope['tables'][]                 = $joined_table;
+			$scope['aliases'][ $joined_alias ] = $joined_table;
+
+			$from_parts[] = $this->get_postgresql_dml_table_reference_sql(
+				$joined_reference['table'],
+				$joined_reference['alias']
+			);
+
+			if ( WP_MySQL_Lexer::ON_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+				return null;
+			}
+
+			$predicate_start = $position + 1;
+			$predicate_end   = $this->find_mysql_join_separator( $tokens, $predicate_start, $set_position ) ?? $set_position;
+			if (
+				$predicate_start >= $predicate_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $predicate_start, $predicate_end )
+			) {
+				return null;
+			}
+
+			$predicate_sql     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$predicate_start,
+				$predicate_end,
+				$scope
+			);
+			$join_predicates[] = $predicate_sql['sql'];
+			$position          = $predicate_end;
+
+			if (
+				$position < $set_position
+				&& ! $this->is_mysql_supported_inner_join_separator_at( $tokens, $position, $set_position )
+			) {
+				return null;
+			}
+		}
+
+		if ( empty( $from_parts ) || empty( $join_predicates ) ) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
+		if ( null !== $order_position || null !== $limit_position ) {
+			return null;
+		}
+
+		$set_end = $where_position ?? $statement_end;
+		if ( $set_position + 1 >= $set_end ) {
+			return null;
+		}
+
+		$update_set_clause = $this->translate_simple_mysql_update_set_clause(
+			$table_name,
+			$target_reference_alias,
+			$tokens,
+			$set_position + 1,
+			$set_end,
+			$scope
+		);
+		if ( null === $update_set_clause ) {
+			return null;
+		}
+
+		$predicates = $join_predicates;
+		if ( null !== $where_position ) {
+			if (
+				$where_position + 1 >= $statement_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+			) {
+				return null;
+			}
+
+			$where_sql    = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$statement_end,
+				$scope
+			);
+			$predicates[] = $where_sql['sql'];
+		}
+		$predicates[] = $update_set_clause['changed_predicate_sql'];
+
+		return sprintf(
+			'UPDATE %s SET %s FROM %s WHERE (%s)',
+			$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
+			$update_set_clause['set_sql'],
+			implode( ', ', $from_parts ),
+			implode( ') AND (', $predicates )
+		);
+	}
+
+		/**
+		 * Find the next top-level MySQL join separator.
+		 *
+		 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+		 * @param int              $start  First token position.
+		 * @param int              $end    Final token position, exclusive.
+		 * @return int|null Join separator position, or null when none exists.
+		 */
+	private function find_mysql_join_separator( array $tokens, int $start, int $end ): ?int {
+		return $this->find_first_top_level_mysql_token(
+			$tokens,
+			array(
+				WP_MySQL_Lexer::CROSS_SYMBOL,
+				WP_MySQL_Lexer::INNER_SYMBOL,
+				WP_MySQL_Lexer::JOIN_SYMBOL,
+				WP_MySQL_Lexer::LEFT_SYMBOL,
+				WP_MySQL_Lexer::NATURAL_SYMBOL,
+				WP_MySQL_Lexer::RIGHT_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			),
+			$start,
+			$end
+		);
+	}
+
+		/**
+		 * Check whether a position starts a supported inner join separator.
+		 *
+		 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+		 * @param int              $position Candidate token position.
+		 * @param int              $end      Final token position, exclusive.
+		 * @return bool Whether the separator is JOIN or INNER JOIN.
+		 */
+	private function is_mysql_supported_inner_join_separator_at( array $tokens, int $position, int $end ): bool {
+		if ( $position >= $end ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			return true;
+		}
+
+		return $position + 1 < $end
+			&& WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			&& WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null );
+	}
+
+		/**
+		 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
 	 *
 	 * @param string     $table_name      Table name.
 	 * @param string[]   $columns         DML columns, mutated when defaults are appended.
@@ -13480,11 +13686,11 @@ WHERE option_name IN (
 	 * @param int              $end        Final SET-clause token position, exclusive.
 	 * @return array{set_sql: string, changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
 	 */
-	private function translate_simple_mysql_update_set_clause( string $table_name, ?string $alias, array $tokens, int $start, int $end ): ?array {
+	private function translate_simple_mysql_update_set_clause( string $table_name, ?string $alias, array $tokens, int $start, int $end, ?array $scope = null ): ?array {
 		$column_metadata    = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$assignments        = array();
 		$changed_predicates = array();
-		$scope              = $this->get_mysql_single_table_scope( $table_name, $alias );
+		$scope              = $scope ?? $this->get_mysql_single_table_scope( $table_name, $alias );
 
 		for ( $position = $start; $position < $end; ) {
 			$target = $this->parse_simple_mysql_update_assignment_target( $table_name, $alias, $tokens, $position, $end );
@@ -22114,24 +22320,35 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					$column_lookup
 				);
 				if (
-					null === $values_replacements
-					|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
+						null === $values_replacements
+						|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
+							$tokens,
+							$value_start,
+							$assignment_end,
+							$values_replacements
+						)
+					) {
+					$scalar_subquery_sql = $this->get_mysql_upsert_scalar_subquery_assignment_sql(
 						$tokens,
 						$value_start,
 						$assignment_end,
-						$values_replacements
-					)
-				) {
-					return null;
+						$scope
+					);
+					if ( null === $scalar_subquery_sql ) {
+						return null;
+					}
+					$values_replacements = array();
 				}
 
-				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+					$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
 
-				$value_sql = null;
+					$value_sql = $scalar_subquery_sql ?? null;
 				if (
-					! $this->is_mysql_strict_sql_mode_active()
-					&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
-				) {
+						null === $value_sql
+						&&
+						! $this->is_mysql_strict_sql_mode_active()
+						&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
+					) {
 					$value_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
 				}
 				if ( null === $value_sql ) {
@@ -22182,11 +22399,102 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			++$position;
 		}
 
-		return count( $assignments ) > 0 ? $assignments : null;
+			return count( $assignments ) > 0 ? $assignments : null;
 	}
 
-	/**
-	 * Get the source column from a supported VALUES(column) upsert assignment expression.
+		/**
+		 * Get PostgreSQL SQL for a supported scalar subquery upsert assignment.
+		 *
+		 * This intentionally supports only constant/no-table scalar SELECTs, with an
+		 * optional MySQL FROM DUAL clause. Correlated and table-backed subqueries stay
+		 * unsupported until they get broader statement-scope handling.
+		 *
+		 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+		 * @param int              $start  First expression token.
+		 * @param int              $end    Final expression token, exclusive.
+		 * @param array            $scope  Statement table scope.
+		 * @return string|null PostgreSQL scalar subquery SQL, or null when unsupported.
+		 */
+	private function get_mysql_upsert_scalar_subquery_assignment_sql( array $tokens, int $start, int $end, array $scope ): ?string {
+		$after_subquery = $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end );
+		if (
+			null === $after_subquery
+			|| $after_subquery !== $end
+			|| ! isset( $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return null;
+		}
+
+		$select_start     = $start + 1;
+		$projection_start = $select_start + 1;
+		$select_end       = $end - 1;
+		if ( $projection_start >= $select_end ) {
+			return null;
+		}
+
+		if (
+			$this->contains_top_level_mysql_token(
+				$tokens,
+				$projection_start,
+				$select_end,
+				array(
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+					WP_MySQL_Lexer::WHERE_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::FROM_SYMBOL,
+			$projection_start,
+			$select_end
+		);
+		if ( null !== $from_position ) {
+			if (
+				$from_position + 2 !== $select_end
+				|| WP_MySQL_Lexer::DUAL_SYMBOL !== ( $tokens[ $from_position + 1 ]->id ?? null )
+			) {
+				return null;
+			}
+		}
+
+		$projection_end = $from_position ?? $select_end;
+		$projection     = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $projection_end );
+		if ( null === $projection || 1 !== count( $projection ) ) {
+			return null;
+		}
+
+		if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $projection[0]['start'], $projection[0]['end'] ) ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+			$tokens,
+			$projection[0]['start'],
+			$projection[0]['end'],
+			$scope
+		);
+
+		return sprintf(
+			'(SELECT %s)',
+			$expression_sql['sql']
+		);
+	}
+
+		/**
+		 * Get the source column from a supported VALUES(column) upsert assignment expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $start         First expression token.
