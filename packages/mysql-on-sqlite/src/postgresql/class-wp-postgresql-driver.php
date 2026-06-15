@@ -6692,7 +6692,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW TABLE STATUS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
+	 * @return array{filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null, conditions?: array<int,array{column: string, operator: string, value: string}>}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
 	 */
 	private function get_show_table_status_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -6767,7 +6767,7 @@ class WP_PostgreSQL_Driver {
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int              $position WHERE token position.
-	 * @return array{filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null}|null Parsed filter, or null when unsupported.
+	 * @return array{filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null, conditions?: array<int,array{column: string, operator: string, value: string}>}|null Parsed filter, or null when unsupported.
 	 */
 	private function get_show_table_status_where_filter( array $tokens, int $position ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
@@ -6815,7 +6815,7 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$where_filter = $this->get_mysql_show_where_filter(
+		$where_filter = $this->get_mysql_show_where_filters(
 			$tokens,
 			$position,
 			array(
@@ -6855,10 +6855,11 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return array(
-			'filter_type'      => 'like' === $where_filter['operator'] ? 'like' : 'exact',
-			'filter_column'    => $where_filter['column'],
-			'filter_pattern'   => $where_filter['value'],
+			'filter_type'      => 'where',
+			'filter_column'    => null,
+			'filter_pattern'   => null,
 			'filter_threshold' => null,
+			'conditions'       => $where_filter,
 		);
 	}
 
@@ -7575,12 +7576,15 @@ class WP_PostgreSQL_Driver {
 				WP_MySQL_Lexer::COLLATION_SYMBOL,
 				WP_MySQL_Lexer::COLUMN_NAME_SYMBOL,
 				WP_MySQL_Lexer::COMMENT_SYMBOL,
+				WP_MySQL_Lexer::CHECKSUM_SYMBOL,
 				WP_MySQL_Lexer::DATABASE_SYMBOL,
 				WP_MySQL_Lexer::DEFAULT_SYMBOL,
+				WP_MySQL_Lexer::ENGINE_SYMBOL,
 				WP_MySQL_Lexer::KEY_SYMBOL,
 				WP_MySQL_Lexer::NAME_SYMBOL,
 				WP_MySQL_Lexer::NULL_SYMBOL,
 				WP_MySQL_Lexer::PRIVILEGES_SYMBOL,
+				WP_MySQL_Lexer::ROWS_SYMBOL,
 				WP_MySQL_Lexer::TABLE_SYMBOL,
 				WP_MySQL_Lexer::TYPE_SYMBOL,
 				WP_MySQL_Lexer::VALUE_SYMBOL,
@@ -9363,6 +9367,16 @@ ORDER BY table_name';
 	private function filter_show_table_status_rows( array $rows, array $show_table_status_query ): array {
 		if ( 'all' === $show_table_status_query['filter_type'] ) {
 			return $rows;
+		}
+
+		if ( 'where' === $show_table_status_query['filter_type'] ) {
+			return $this->filter_mysql_static_show_rows(
+				$rows,
+				array(
+					'type'       => 'where',
+					'conditions' => $show_table_status_query['conditions'] ?? array(),
+				)
+			);
 		}
 
 		return array_values(

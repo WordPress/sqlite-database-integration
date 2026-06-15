@@ -10502,6 +10502,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array( 'wptests_options', 'wptests_plain', 'wptests_posts' ),
 			array_map( array( $this, 'get_show_table_status_row_name' ), $tables )
 		);
+
+		$tables = $driver->query( "SHOW TABLE STATUS WHERE Name LIKE 'wptests_%' AND Engine = 'InnoDB'" );
+
+		$this->assertSame(
+			array( 'wptests_options', 'wptests_plain', 'wptests_posts' ),
+			array_map( array( $this, 'get_show_table_status_row_name' ), $tables )
+		);
 	}
 
 	/**
@@ -10510,7 +10517,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_show_table_status_where_clause_does_not_reach_backend(): void {
 		$unsupported_queries = array(
 			'SHOW TABLE STATUS WHERE Name LIKE wptests_%',
-			"SHOW TABLE STATUS WHERE Name LIKE 'wptests_%' AND Engine = 'InnoDB'",
 			'SHOW TABLE STATUS WHERE Name = wptests_options',
 			'SHOW TABLE STATUS WHERE `Auto_increment` >= 1',
 			'SHOW TABLE STATUS FROM other_db',
