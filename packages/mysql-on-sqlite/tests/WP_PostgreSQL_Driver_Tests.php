@@ -10694,8 +10694,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
+		$zero_values = $driver->query( "SHOW STATUS WHERE Value = '0'" );
+		$zero_names  = array_map(
+			static function ( $row ): string {
+				return $row->Variable_name;
+			},
+			$zero_values
+		);
+		$this->assertContains( 'Uptime', $zero_names );
+		$this->assertContains( 'Questions', $zero_names );
+		$this->assertNotContains( 'Threads_connected', $zero_names );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$running_threads = $driver->query( "SHOW STATUS WHERE Variable_name LIKE 'Threads_%' AND Value = '1'" );
+		$this->assertSame(
+			array(
+				'Threads_connected',
+				'Threads_created',
+				'Threads_running',
+			),
+			array_map(
+				static function ( $row ): string {
+					return $row->Variable_name;
+				},
+				$running_threads
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
 		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '6', $found_rows[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( '3', $found_rows[0]->{'FOUND_ROWS()'} );
 	}
 
 	/**
@@ -10703,8 +10731,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_unsupported_show_status_clauses_fail_closed(): void {
 		$queries = array(
-			"SHOW STATUS WHERE Value = '0'",
-			"SHOW STATUS WHERE Variable_name LIKE 'Threads_%' AND Value = '1'",
+			"SHOW STATUS WHERE Unknown = '0'",
+			"SHOW STATUS WHERE Value <> '0'",
+			"SHOW STATUS WHERE Variable_name LIKE 'Threads_%' OR Value = '1'",
 			'SHOW STATUS LIMIT 1',
 			'SHOW STATUS LIKE Threads_%',
 		);
@@ -13386,6 +13415,59 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'collation_connection', $session_where[0]->Variable_name );
 		$this->assertSame( 'utf8mb4_unicode_ci', $session_where[0]->Value );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$value_exact = $driver->query( "SHOW VARIABLES WHERE Value = 'utf8mb4'" );
+		$this->assertSame(
+			array(
+				'character_set_client',
+				'character_set_connection',
+				'character_set_results',
+				'character_set_database',
+				'character_set_server',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Variable_name;
+				},
+				$value_exact
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$value_like = $driver->query( "SHOW VARIABLES WHERE Value LIKE 'utf8mb4_%'" );
+		$this->assertSame(
+			array(
+				'default_collation_for_utf8mb4',
+				'collation_connection',
+				'collation_database',
+				'collation_server',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Variable_name;
+				},
+				$value_like
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$and_filter = $driver->query( "SHOW VARIABLES WHERE Variable_name LIKE 'character_set_%' AND Value = 'utf8mb4'" );
+		$this->assertSame(
+			array(
+				'character_set_client',
+				'character_set_connection',
+				'character_set_results',
+				'character_set_database',
+				'character_set_server',
+			),
+			array_map(
+				static function ( $row ) {
+					return $row->Variable_name;
+				},
+				$and_filter
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**
@@ -13396,9 +13478,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		foreach (
 			array(
-				"SHOW VARIABLES WHERE Value = 'utf8mb4'",
-				"SHOW VARIABLES WHERE Value LIKE 'utf8%'",
-				"SHOW VARIABLES WHERE Variable_name LIKE 'character_set_%' AND Value = 'utf8mb4'",
+				"SHOW VARIABLES WHERE Unknown = 'utf8mb4'",
+				"SHOW VARIABLES WHERE Value <> 'utf8mb4'",
+				"SHOW VARIABLES WHERE Variable_name LIKE 'character_set_%' OR Value = 'utf8mb4'",
 			) as $query
 		) {
 			try {

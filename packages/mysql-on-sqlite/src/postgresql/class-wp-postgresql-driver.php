@@ -6954,7 +6954,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW VARIABLES statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{type: string, pattern: string|null}|null SHOW VARIABLES options, or null when this is not SHOW VARIABLES.
+	 * @return array{type: string, pattern: string|null, column?: string, conditions?: array[]}|null SHOW VARIABLES options, or null when this is not SHOW VARIABLES.
 	 */
 	private function get_show_variables_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -6978,6 +6978,7 @@ class WP_PostgreSQL_Driver {
 		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return array(
 				'type'    => 'all',
+				'column'  => null,
 				'pattern' => null,
 			);
 		}
@@ -6990,19 +6991,25 @@ class WP_PostgreSQL_Driver {
 		) {
 			return array(
 				'type'    => 'like',
+				'column'  => 'Variable_name',
 				'pattern' => strtolower( $tokens[ $position + 1 ]->get_value() ),
 			);
 		}
 
-		$where_filter = $this->get_mysql_show_where_filter(
+		$where_filters = $this->get_mysql_show_where_filters(
 			$tokens,
 			$position,
-			array( 'variable_name' => 'Variable_name' )
+			array(
+				'variable_name' => 'Variable_name',
+				'value'         => 'Value',
+			)
 		);
-		if ( null !== $where_filter ) {
+		if ( null !== $where_filters ) {
 			return array(
-				'type'    => 'like' === $where_filter['operator'] ? 'like' : 'exact',
-				'pattern' => strtolower( $where_filter['value'] ),
+				'type'       => 'where',
+				'column'     => null,
+				'pattern'    => null,
+				'conditions' => $where_filters,
 			);
 		}
 
@@ -7122,7 +7129,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW STATUS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{type: string, column: string|null, pattern: string|null}|null SHOW STATUS options, or null when this is not SHOW STATUS.
+	 * @return array{type: string, column: string|null, pattern: string|null, conditions?: array[]}|null SHOW STATUS options, or null when this is not SHOW STATUS.
 	 */
 	private function get_show_status_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -7164,16 +7171,20 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$where_filter = $this->get_mysql_show_where_filter(
+		$where_filters = $this->get_mysql_show_where_filters(
 			$tokens,
 			$position,
-			array( 'variable_name' => 'Variable_name' )
+			array(
+				'variable_name' => 'Variable_name',
+				'value'         => 'Value',
+			)
 		);
-		if ( null !== $where_filter ) {
+		if ( null !== $where_filters ) {
 			return array(
-				'type'    => 'like' === $where_filter['operator'] ? 'like' : 'exact',
-				'column'  => $where_filter['column'],
-				'pattern' => $where_filter['value'],
+				'type'       => 'where',
+				'column'     => null,
+				'pattern'    => null,
+				'conditions' => $where_filters,
 			);
 		}
 
@@ -7454,6 +7465,79 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Parse simple AND-combined WHERE filters for static SHOW result sets.
+	 *
+	 * @param WP_MySQL_Token[]    $tokens          MySQL lexer token stream.
+	 * @param int                 $position        WHERE token position.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]            $numeric_columns Output columns that may compare against an unsigned integer literal.
+	 * @return array<int,array{column: string, operator: string, value: string}>|null Parsed filters, or null when unsupported.
+	 */
+	private function get_mysql_show_where_filters( array $tokens, int $position, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$filters  = array();
+		$position = $position + 1;
+		while ( $position < $statement_end ) {
+			if ( ! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] ) ) {
+				return null;
+			}
+
+			$column = $this->get_mysql_show_output_column_name( $tokens[ $position ], $allowed_columns );
+			if ( null === $column ) {
+				return null;
+			}
+
+			$operator_token = $tokens[ $position + 1 ];
+			$value_token    = $tokens[ $position + 2 ];
+			if ( WP_MySQL_Lexer::EQUAL_OPERATOR === $operator_token->id ) {
+				if ( $this->is_mysql_quoted_text_token( $value_token ) ) {
+					$value = $value_token->get_value();
+				} elseif (
+					in_array( $column, $numeric_columns, true )
+					&& $this->is_mysql_unsigned_integer_token( $value_token )
+				) {
+					$value = $value_token->get_value();
+				} else {
+					return null;
+				}
+
+				$operator = '=';
+			} elseif ( WP_MySQL_Lexer::LIKE_SYMBOL === $operator_token->id && $this->is_mysql_quoted_text_token( $value_token ) ) {
+				$operator = 'like';
+				$value    = $value_token->get_value();
+			} else {
+				return null;
+			}
+
+			$filters[] = array(
+				'column'   => $column,
+				'operator' => $operator,
+				'value'    => $value,
+			);
+
+			$position += 3;
+			if ( $position === $statement_end ) {
+				break;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+			++$position;
+		}
+
+		return empty( $filters ) ? null : $filters;
+	}
+
+	/**
 	 * Get the MySQL SHOW output column name represented by a token.
 	 *
 	 * @param WP_MySQL_Token      $token           MySQL token.
@@ -7496,6 +7580,7 @@ class WP_PostgreSQL_Driver {
 				WP_MySQL_Lexer::PRIVILEGES_SYMBOL,
 				WP_MySQL_Lexer::TABLE_SYMBOL,
 				WP_MySQL_Lexer::TYPE_SYMBOL,
+				WP_MySQL_Lexer::VALUE_SYMBOL,
 				WP_MySQL_Lexer::VISIBLE_SYMBOL,
 			),
 			true
@@ -9359,25 +9444,13 @@ ORDER BY table_name';
 		$rows      = array();
 
 		foreach ( $variables as $variable_name => $value ) {
-			if (
-				'exact' === $show_variables_query['type']
-				&& $variable_name !== $show_variables_query['pattern']
-			) {
-				continue;
-			}
-
-			if (
-				'like' === $show_variables_query['type']
-				&& ! $this->matches_mysql_like_pattern( $variable_name, $show_variables_query['pattern'] )
-			) {
-				continue;
-			}
-
 			$rows[] = array(
 				'Variable_name' => $variable_name,
 				'Value'         => $value,
 			);
 		}
+
+		$rows = $this->filter_mysql_static_show_rows( $rows, $show_variables_query );
 
 		$this->last_column_meta = array(
 			array(
@@ -9672,6 +9745,37 @@ ORDER BY table_name';
 	private function filter_mysql_static_show_rows( array $rows, array $show_filter ): array {
 		if ( 'all' === $show_filter['type'] ) {
 			return $rows;
+		}
+
+		if ( 'where' === $show_filter['type'] ) {
+			$conditions = $show_filter['conditions'] ?? array();
+			return array_values(
+				array_filter(
+					$rows,
+					function ( array $row ) use ( $conditions ): bool {
+						foreach ( $conditions as $condition ) {
+							$column = $condition['column'] ?? null;
+							$value  = $condition['value'] ?? null;
+							if ( null === $column || null === $value || ! array_key_exists( $column, $row ) ) {
+								return false;
+							}
+
+							if ( 'like' === ( $condition['operator'] ?? null ) ) {
+								if ( ! $this->matches_mysql_like_pattern( (string) $row[ $column ], (string) $value ) ) {
+									return false;
+								}
+								continue;
+							}
+
+							if ( 0 !== strcasecmp( (string) $row[ $column ], (string) $value ) ) {
+								return false;
+							}
+						}
+
+						return true;
+					}
+				)
+			);
 		}
 
 		$column  = $show_filter['column'];
