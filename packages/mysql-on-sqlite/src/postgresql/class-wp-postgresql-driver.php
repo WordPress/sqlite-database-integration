@@ -649,6 +649,9 @@ class WP_PostgreSQL_Driver {
 			}
 			return $result;
 		}
+		if ( $this->is_mysql_alter_table_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
 
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
@@ -1632,6 +1635,10 @@ class WP_PostgreSQL_Driver {
 	 * @return mixed Return value from the last executed statement.
 	 */
 	private function execute_postgresql_statements( array $statements ) {
+		if ( empty( $statements ) ) {
+			return 0;
+		}
+
 		foreach ( $statements as $statement ) {
 			$stmt                            = $this->connection->query( $statement );
 			$this->last_postgresql_queries[] = array(
@@ -2584,6 +2591,18 @@ class WP_PostgreSQL_Driver {
 		$table_schema = 'public';
 		$table_name   = $metadata['table'];
 
+		if ( 'operations' === $metadata['operation'] ) {
+			foreach ( $metadata['operations'] as $operation_metadata ) {
+				$operation_metadata['table'] = $table_name;
+				$this->apply_mysql_dbdelta_alter_metadata( $operation_metadata );
+			}
+			return;
+		}
+
+		if ( 'noop' === $metadata['operation'] ) {
+			return;
+		}
+
 		if ( 'add_column' === $metadata['operation'] ) {
 			$column            = $metadata['column'];
 			$column['ordinal'] = $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
@@ -2623,6 +2642,12 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
+		if ( 'drop_column' === $metadata['operation'] ) {
+			$this->delete_mysql_index_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
+			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['column'] );
+			return;
+		}
+
 		if ( 'add_index' === $metadata['operation'] ) {
 			$this->delete_mysql_index_metadata( $table_schema, $table_name, $metadata['index']['name'] );
 			$this->insert_mysql_index_metadata( $table_schema, $table_name, $metadata['index'] );
@@ -2641,6 +2666,18 @@ class WP_PostgreSQL_Driver {
 					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
 				),
 				array( $metadata['default'], $table_schema, $table_name, $metadata['column'] )
+			);
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			return;
+		}
+
+		if ( 'drop_default' === $metadata['operation'] ) {
+			$this->connection->query(
+				sprintf(
+					'UPDATE %s SET column_default = NULL WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name, $metadata['column'] )
 			);
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 		}
@@ -2788,6 +2825,32 @@ class WP_PostgreSQL_Driver {
 			),
 			array( $table_schema, $table_name, $index_name )
 		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Delete metadata for indexes that reference one column.
+	 *
+	 * PostgreSQL drops dependent indexes/constraints when a column is dropped.
+	 * Mirror that in the MySQL-facing side metadata.
+	 *
+	 * @param string $table_schema Table schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Dropped column name.
+	 */
+	private function delete_mysql_index_metadata_for_column( string $table_schema, string $table_name, string $column_name ): void {
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT DISTINCT key_name FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $column_name )
+		);
+
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
+			$this->delete_mysql_index_metadata( $table_schema, $table_name, (string) $index_name );
+		}
+
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
@@ -3703,145 +3766,382 @@ class WP_PostgreSQL_Driver {
 		$table_name = '' !== ( $matches['table_quoted'] ?? '' ) ? $matches['table_quoted'] : $matches['table'];
 		$clause     = $this->trim_mysql_statement_fragment( $matches['clause'] );
 
-		if ( preg_match( '/^CHANGE\s+(?:COLUMN\s+)?(?:`(?P<old_quoted>[^`]+)`|(?P<old>[A-Za-z0-9_]+))\s+(?P<definition>.+)$/is', $clause, $change_matches ) ) {
-			$old_column = '' !== ( $change_matches['old_quoted'] ?? '' ) ? $change_matches['old_quoted'] : $change_matches['old'];
-			$column     = $this->translate_mysql_column_definition_fragment( $change_matches['definition'] );
-			if ( null === $column ) {
-				return null;
-			}
+		$tokens        = $this->get_mysql_tokens( $clause );
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 0 );
+		if ( null === $statement_end ) {
+			return null;
+		}
 
-			$new_column = $column['metadata']['name'];
-			$statements = array();
-			if ( $old_column !== $new_column ) {
-				$statements[] = sprintf(
-					'ALTER TABLE %s RENAME COLUMN %s TO %s',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $old_column ),
-					$this->connection->quote_identifier( $new_column )
-				);
-			}
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, 0, $statement_end );
+		if ( null === $ranges || array() === $ranges ) {
+			return null;
+		}
 
-			$column_type                = $this->get_translated_column_type_from_definition_line( $column['sql'] );
-			$preserve_existing_identity = $this->should_preserve_existing_identity_integer_column_change(
-				'public',
+		$statements          = array();
+		$metadata_operations = array();
+		foreach ( $ranges as $range ) {
+			$translation = $this->translate_mysql_dbdelta_alter_table_action(
 				$table_name,
-				$old_column,
-				$column['metadata']
+				$clause,
+				$tokens,
+				$range['start'],
+				$range['end']
 			);
-			if ( '' !== $column_type && ! $preserve_existing_identity ) {
-				$statements[] = sprintf(
-					'ALTER TABLE %s ALTER COLUMN %s TYPE %s',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $new_column ),
-					$column_type
-				);
+			if ( null === $translation ) {
+				return null;
 			}
 
-			$statements[] = sprintf(
-				'ALTER TABLE %s ALTER COLUMN %s %s NOT NULL',
-				$this->connection->quote_identifier( $table_name ),
-				$this->connection->quote_identifier( $new_column ),
-				'NO' === ( $column['metadata']['nullable'] ?? 'YES' ) ? 'SET' : 'DROP'
-			);
+			$statements = array_merge( $statements, $translation['statements'] );
+			if ( 'noop' !== ( $translation['metadata']['operation'] ?? '' ) ) {
+				$metadata_operations[] = $translation['metadata'];
+			}
+		}
 
-			$default_sql = $this->get_translated_column_default_from_definition_line( $column['sql'] );
-			if ( ! $preserve_existing_identity ) {
-				if ( null !== $default_sql ) {
-					$statements[] = sprintf(
-						'ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s',
-						$this->connection->quote_identifier( $table_name ),
-						$this->connection->quote_identifier( $new_column ),
-						$default_sql
-					);
-				} else {
-					$statements[] = sprintf(
-						'ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT',
-						$this->connection->quote_identifier( $table_name ),
-						$this->connection->quote_identifier( $new_column )
-					);
+		if ( 1 === count( $metadata_operations ) ) {
+			$metadata          = $metadata_operations[0];
+			$metadata['table'] = $table_name;
+		} elseif ( count( $metadata_operations ) > 1 ) {
+			$metadata = array(
+				'operation'  => 'operations',
+				'table'      => $table_name,
+				'operations' => $metadata_operations,
+			);
+		} else {
+			$metadata = array(
+				'operation' => 'noop',
+				'table'     => $table_name,
+			);
+		}
+
+		return array(
+			'statements' => $statements,
+			'metadata'   => $metadata,
+		);
+	}
+
+	/**
+	 * Translate one ALTER TABLE action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string           $clause     Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_alter_table_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
+			return null;
+		}
+
+		switch ( $tokens[ $start ]->id ) {
+			case WP_MySQL_Lexer::CHANGE_SYMBOL:
+				return $this->translate_mysql_dbdelta_change_column_alter_action( $table_name, $clause, $tokens, $start, $end );
+
+			case WP_MySQL_Lexer::MODIFY_SYMBOL:
+				return $this->translate_mysql_dbdelta_modify_column_alter_action( $table_name, $clause, $tokens, $start, $end );
+
+			case WP_MySQL_Lexer::ADD_SYMBOL:
+				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
+					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_name, $clause, $tokens, $start, $end );
 				}
-			}
+				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_name, $clause, $tokens, $start, $end );
 
+			case WP_MySQL_Lexer::DROP_SYMBOL:
+				if (
+					isset( $tokens[ $start + 2 ] )
+					&& WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $start + 1 ]->id
+					&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $start + 2 ]->id
+					&& $start + 3 === $end
+				) {
+					throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+				}
+				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
+					return $this->translate_mysql_dbdelta_drop_index_alter_action( $table_name, $tokens, $start, $end );
+				}
+				return $this->translate_mysql_dbdelta_drop_column_alter_action( $table_name, $tokens, $start, $end );
+
+			case WP_MySQL_Lexer::ALTER_SYMBOL:
+				return $this->translate_mysql_dbdelta_alter_column_default_action( $table_name, $clause, $tokens, $start, $end );
+		}
+
+		if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
 			return array(
-				'statements' => $statements,
+				'statements' => array(),
 				'metadata'   => array(
-					'operation'  => 'change_column',
-					'table'      => $table_name,
-					'old_column' => $old_column,
-					'column'     => $column['metadata'],
+					'operation' => 'noop',
 				),
 			);
 		}
 
-		$modify_query = $this->translate_mysql_dbdelta_modify_column_alter_query( $table_name, $clause );
-		if ( null !== $modify_query ) {
-			return $modify_query;
+		return null;
+	}
+
+	/**
+	 * Translate an ALTER TABLE CHANGE COLUMN action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string           $clause     Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_change_column_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
 		}
 
-		if ( preg_match( '/^ADD\s+COLUMN\s+(?P<definition>.+)$/is', $clause, $add_column_matches ) ) {
-			$column = $this->translate_mysql_column_definition_fragment( $add_column_matches['definition'] );
-			if ( null === $column ) {
-				return null;
-			}
-
-			return array(
-				'statements' => array(
-					sprintf(
-						'ALTER TABLE %s ADD COLUMN %s',
-						$this->connection->quote_identifier( $table_name ),
-						$column['sql']
-					),
-				),
-				'metadata'   => array(
-					'operation' => 'add_column',
-					'table'     => $table_name,
-					'column'    => $column['metadata'],
-				),
-			);
+		$old_column = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $old_column ) {
+			return null;
 		}
 
-		if ( preg_match( '/^ADD\s+(?P<definition>(?:PRIMARY\s+KEY|(?:UNIQUE\s+)?(?:FULLTEXT\s+|SPATIAL\s+)?(?:KEY|INDEX))\b.+)$/is', $clause, $add_index_matches ) ) {
-			$index = $this->translate_mysql_index_definition_fragment( $table_name, $add_index_matches['definition'] );
-			if ( null === $index ) {
-				return null;
-			}
-
-			return array(
-				'statements' => $index['statements'],
-				'metadata'   => array(
-					'operation' => 'add_index',
-					'table'     => $table_name,
-					'index'     => $index['metadata'],
-				),
-			);
+		++$position;
+		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
+		if ( null === $definition_end || $position >= $definition_end ) {
+			return null;
 		}
 
-		if ( preg_match( '/^DROP\s+PRIMARY\s+KEY$/is', $clause ) ) {
+		$column = $this->translate_mysql_column_definition_fragment(
+			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
+		);
+		if ( null === $column ) {
+			return null;
+		}
+
+		return array(
+			'statements' => $this->get_mysql_dbdelta_change_column_statements( $table_name, $old_column, $column ),
+			'metadata'   => array(
+				'operation'  => 'change_column',
+				'old_column' => $old_column,
+				'column'     => $column['metadata'],
+			),
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE MODIFY COLUMN action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string           $clause     Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_modify_column_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
+		if ( null === $definition_end || $position >= $definition_end ) {
+			return null;
+		}
+
+		$column = $this->translate_mysql_column_definition_fragment(
+			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
+		);
+		if ( null === $column ) {
+			return null;
+		}
+
+		$column_name = $column['metadata']['name'];
+		return array(
+			'statements' => $this->get_mysql_dbdelta_change_column_statements( $table_name, $column_name, $column ),
+			'metadata'   => array(
+				'operation'  => 'change_column',
+				'old_column' => $column_name,
+				'column'     => $column['metadata'],
+			),
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE ADD COLUMN action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string           $clause     Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_add_column_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
+		if ( null === $definition_end || $position >= $definition_end ) {
+			return null;
+		}
+
+		$column = $this->translate_mysql_column_definition_fragment(
+			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
+		);
+		if ( null === $column ) {
+			return null;
+		}
+
+		return array(
+			'statements' => array(
+				sprintf(
+					'ALTER TABLE %s ADD COLUMN %s',
+					$this->connection->quote_identifier( $table_name ),
+					$column['sql']
+				),
+			),
+			'metadata'   => array(
+				'operation' => 'add_column',
+				'column'    => $column['metadata'],
+			),
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE ADD INDEX action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string           $clause     Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_add_index_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+		$definition_start = $start + 1;
+		if ( $definition_start >= $end ) {
+			return null;
+		}
+
+		$index = $this->translate_mysql_index_definition_fragment(
+			$table_name,
+			$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end )
+		);
+		if ( null === $index ) {
+			return null;
+		}
+
+		return array(
+			'statements' => $index['statements'],
+			'metadata'   => array(
+				'operation' => 'add_index',
+				'index'     => $index['metadata'],
+			),
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE DROP INDEX action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_drop_index_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+		if ( $start + 3 !== $end ) {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
-		if ( preg_match( '/^DROP\s+(?:INDEX|KEY)\s+(?:`(?P<index_quoted>[^`]+)`|(?P<index>[A-Za-z0-9_]+))$/is', $clause, $drop_index_matches ) ) {
-			$index_name       = '' !== ( $drop_index_matches['index_quoted'] ?? '' ) ? $drop_index_matches['index_quoted'] : $drop_index_matches['index'];
-			$drop_index_query = $this->get_mysql_drop_index_translation(
-				array(
-					'schema' => null,
-					'table'  => $table_name,
-				),
-				$index_name,
-				'ALTER TABLE'
-			);
-
-			$drop_index_query['metadata']['operation'] = 'drop_index';
-			return $drop_index_query;
-		}
-
-		if ( preg_match( '/^DROP\s+(?:INDEX|KEY)\b/is', $clause ) ) {
+		$index_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 2 ] ?? null );
+		if ( null === $index_name ) {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
-		if ( preg_match( '/^ALTER\s+COLUMN\s+(?:`(?P<column_quoted>[^`]+)`|(?P<column>[A-Za-z0-9_]+))\s+SET\s+DEFAULT\s+(?P<default>.+)$/is', $clause, $default_matches ) ) {
-			$column_name = '' !== ( $default_matches['column_quoted'] ?? '' ) ? $default_matches['column_quoted'] : $default_matches['column'];
-			$default     = $this->translate_mysql_default_fragment( $default_matches['default'] );
+		$drop_index_query = $this->get_mysql_drop_index_translation(
+			array(
+				'schema' => null,
+				'table'  => $table_name,
+			),
+			$index_name,
+			'ALTER TABLE'
+		);
+
+		$drop_index_query['metadata']['operation'] = 'drop_index';
+		return $drop_index_query;
+	}
+
+	/**
+	 * Translate an ALTER TABLE DROP COLUMN action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_drop_column_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( $position + 1 !== $end ) {
+			return null;
+		}
+
+		$column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $column_name ) {
+			return null;
+		}
+
+		return array(
+			'statements' => array(
+				sprintf(
+					'ALTER TABLE %s DROP COLUMN %s',
+					$this->connection->quote_identifier( $table_name ),
+					$this->connection->quote_identifier( $column_name )
+				),
+			),
+			'metadata'   => array(
+				'operation' => 'drop_column',
+				'column'    => $column_name,
+			),
+		);
+	}
+
+	/**
+	 * Translate ALTER TABLE ALTER COLUMN default actions.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string           $clause     Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_alter_column_default_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $column_name || ! isset( $tokens[ $position + 1 ] ) ) {
+			return null;
+		}
+
+		$position += 1;
+		if ( WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
+			if ( ! isset( $tokens[ $position + 1 ] ) || WP_MySQL_Lexer::DEFAULT_SYMBOL !== $tokens[ $position + 1 ]->id ) {
+				return null;
+			}
+
+			$default_start = $position + 2;
+			if ( $default_start >= $end ) {
+				return null;
+			}
+
+			$default = $this->translate_mysql_default_fragment(
+				$this->get_mysql_token_range_bytes( $clause, $tokens, $default_start, $end )
+			);
 			if ( null === $default ) {
 				return null;
 			}
@@ -3857,14 +4157,209 @@ class WP_PostgreSQL_Driver {
 				),
 				'metadata'   => array(
 					'operation' => 'set_default',
-					'table'     => $table_name,
 					'column'    => $column_name,
 					'default'   => $default['metadata'],
 				),
 			);
 		}
 
+		if (
+			isset( $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::DROP_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& $position + 2 === $end
+		) {
+			return array(
+				'statements' => array(
+					sprintf(
+						'ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT',
+						$this->connection->quote_identifier( $table_name ),
+						$this->connection->quote_identifier( $column_name )
+					),
+				),
+				'metadata'   => array(
+					'operation' => 'drop_default',
+					'column'    => $column_name,
+				),
+			);
+		}
+
 		return null;
+	}
+
+	/**
+	 * Build PostgreSQL statements for a CHANGE/MODIFY column operation.
+	 *
+	 * @param string $table_name Table name.
+	 * @param string $old_column Existing column name.
+	 * @param array  $column     Translated column definition data.
+	 * @return string[] PostgreSQL ALTER statements.
+	 */
+	private function get_mysql_dbdelta_change_column_statements( string $table_name, string $old_column, array $column ): array {
+		$new_column = $column['metadata']['name'];
+		$statements = array();
+		if ( $old_column !== $new_column ) {
+			$statements[] = sprintf(
+				'ALTER TABLE %s RENAME COLUMN %s TO %s',
+				$this->connection->quote_identifier( $table_name ),
+				$this->connection->quote_identifier( $old_column ),
+				$this->connection->quote_identifier( $new_column )
+			);
+		}
+
+		$column_type                = $this->get_translated_column_type_from_definition_line( $column['sql'] );
+		$preserve_existing_identity = $this->should_preserve_existing_identity_integer_column_change(
+			'public',
+			$table_name,
+			$old_column,
+			$column['metadata']
+		);
+		if ( '' !== $column_type && ! $preserve_existing_identity ) {
+			$statements[] = sprintf(
+				'ALTER TABLE %s ALTER COLUMN %s TYPE %s',
+				$this->connection->quote_identifier( $table_name ),
+				$this->connection->quote_identifier( $new_column ),
+				$column_type
+			);
+		}
+
+		$statements[] = sprintf(
+			'ALTER TABLE %s ALTER COLUMN %s %s NOT NULL',
+			$this->connection->quote_identifier( $table_name ),
+			$this->connection->quote_identifier( $new_column ),
+			'NO' === ( $column['metadata']['nullable'] ?? 'YES' ) ? 'SET' : 'DROP'
+		);
+
+		$default_sql = $this->get_translated_column_default_from_definition_line( $column['sql'] );
+		if ( ! $preserve_existing_identity ) {
+			if ( null !== $default_sql ) {
+				$statements[] = sprintf(
+					'ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s',
+					$this->connection->quote_identifier( $table_name ),
+					$this->connection->quote_identifier( $new_column ),
+					$default_sql
+				);
+			} else {
+				$statements[] = sprintf(
+					'ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT',
+					$this->connection->quote_identifier( $table_name ),
+					$this->connection->quote_identifier( $new_column )
+				);
+			}
+		}
+
+		return $statements;
+	}
+
+	/**
+	 * Check whether an ADD action adds an index rather than a column.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First action token.
+	 * @param int              $end    Final action token, exclusive.
+	 * @return bool Whether the action is an ADD INDEX form.
+	 */
+	private function is_mysql_dbdelta_add_index_action( array $tokens, int $start, int $end ): bool {
+		if ( $start + 1 >= $end || ! isset( $tokens[ $start + 1 ] ) ) {
+			return false;
+		}
+
+		return in_array(
+			$tokens[ $start + 1 ]->id,
+			array(
+				WP_MySQL_Lexer::FULLTEXT_SYMBOL,
+				WP_MySQL_Lexer::INDEX_SYMBOL,
+				WP_MySQL_Lexer::KEY_SYMBOL,
+				WP_MySQL_Lexer::PRIMARY_SYMBOL,
+				WP_MySQL_Lexer::SPATIAL_SYMBOL,
+				WP_MySQL_Lexer::UNIQUE_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Get the end of a column definition after removing MySQL placement syntax.
+	 *
+	 * PostgreSQL cannot preserve MySQL physical column placement. SQLite ignores
+	 * it too, so PostgreSQL translation strips FIRST/AFTER while preserving the
+	 * column definition and metadata.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First definition token.
+	 * @param int              $end    Final definition token, exclusive.
+	 * @return int|null Definition end, exclusive, or null when placement is malformed.
+	 */
+	private function get_mysql_alter_column_definition_end_without_placement( array $tokens, int $start, int $end ): ?int {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		if ( isset( $tokens[ $end - 1 ] ) && WP_MySQL_Lexer::FIRST_SYMBOL === $tokens[ $end - 1 ]->id ) {
+			return $end - 1;
+		}
+
+		if (
+			$end - 2 >= $start
+			&& isset( $tokens[ $end - 2 ], $tokens[ $end - 1 ] )
+			&& WP_MySQL_Lexer::AFTER_SYMBOL === $tokens[ $end - 2 ]->id
+			&& null !== $this->get_mysql_alter_identifier_token_value( $tokens[ $end - 1 ] )
+		) {
+			return $end - 2;
+		}
+
+		if (
+			$end - 1 >= $start
+			&& isset( $tokens[ $end - 1 ] )
+			&& WP_MySQL_Lexer::AFTER_SYMBOL === $tokens[ $end - 1 ]->id
+		) {
+			return null;
+		}
+
+		return $end;
+	}
+
+	/**
+	 * Get an identifier value in ALTER TABLE action contexts.
+	 *
+	 * MySQL permits unquoted keyword-like column names such as "status".
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return string|null Identifier value, or null when unsupported.
+	 */
+	private function get_mysql_alter_identifier_token_value( ?WP_MySQL_Token $token ): ?string {
+		return $this->get_mysql_index_identifier_token_value( $token );
+	}
+
+	/**
+	 * Check whether an ALTER action is a supported MySQL table option no-op.
+	 *
+	 * @param string           $clause Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First action token.
+	 * @param int              $end    Final action token, exclusive.
+	 * @return bool Whether this table option can be safely ignored.
+	 */
+	private function is_supported_mysql_dbdelta_table_option_alter_action( string $clause, array $tokens, int $start, int $end ): bool {
+		$fragment = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
+
+		return 1 === preg_match(
+			'/^(?:ENGINE|ROW_FORMAT|COMMENT)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET)\s*=|^COLLATE\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b/',
+			$fragment
+		);
+	}
+
+	/**
+	 * Check whether a query starts with ALTER TABLE.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether this is an ALTER TABLE statement.
+	 */
+	private function is_mysql_alter_table_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0], $tokens[1] )
+			&& WP_MySQL_Lexer::ALTER_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id;
 	}
 
 	/**
@@ -8871,6 +9366,11 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
 		$position = 1;
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::INTO_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
@@ -8950,7 +9450,7 @@ WHERE option_name IN (
 		$table_column_lookup = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$position            = $on_duplicate + 4;
 
-		$assignments = $this->parse_upsert_update_assignments( $tokens, $position, $column_lookup, $table_column_lookup );
+		$assignments = $this->parse_upsert_update_assignments( $table_name, $tokens, $position, $statement_end, $column_lookup, $table_column_lookup );
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
@@ -17099,17 +17599,20 @@ WHERE option_name IN (
 	/**
 	 * Parse ON DUPLICATE KEY UPDATE assignments for the supported upsert shape.
 	 *
+	 * @param string           $table_name           Target table name.
 	 * @param WP_MySQL_Token[] $tokens              MySQL lexer token stream.
 	 * @param int             $position            Current token position, updated on success.
+	 * @param int              $end                 Final assignment token position, exclusive.
 	 * @param array           $column_lookup       Insert-column lookup by lowercase name.
 	 * @param array           $table_column_lookup Table-column metadata lookup by lowercase name.
 	 * @return string[]|null PostgreSQL SET assignments, or null when unsupported.
 	 */
-	private function parse_upsert_update_assignments( array $tokens, int &$position, array $column_lookup, array $table_column_lookup ): ?array {
+	private function parse_upsert_update_assignments( string $table_name, array $tokens, int &$position, int $end, array $column_lookup, array $table_column_lookup ): ?array {
 		$assignments = array();
+		$scope       = $this->get_mysql_single_table_scope( $table_name );
 
-		while ( isset( $tokens[ $position ] ) ) {
-			$target_column = $this->get_mysql_identifier_token_value( $tokens[ $position ] );
+		while ( $position < $end ) {
+			$target_column = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
 			if (
 				null === $target_column
 				|| ! isset( $table_column_lookup[ strtolower( $target_column ) ] )
@@ -17123,9 +17626,152 @@ WHERE option_name IN (
 			}
 
 			++$position;
+			$value_start    = $position;
+			$assignment_end = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$value_start,
+				$end
+			) ?? $end;
+
+			if ( $value_start >= $assignment_end ) {
+				return null;
+			}
+
+			$target_metadata = $table_column_lookup[ strtolower( $target_column ) ];
+			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $column_lookup );
+			if ( null !== $source_column ) {
+				$value_sql = sprintf(
+					'excluded.%s',
+					$this->connection->quote_identifier( $source_column )
+				);
+			} else {
+				$values_replacements = $this->get_mysql_upsert_values_expression_replacements(
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$column_lookup
+				);
+				if (
+					null === $values_replacements
+					|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
+						$tokens,
+						$value_start,
+						$assignment_end,
+						$values_replacements
+					)
+				) {
+					return null;
+				}
+
+				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+
+				$value_sql = null;
+				if (
+					! $this->is_mysql_strict_sql_mode_active()
+					&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
+				) {
+					$value_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
+				}
+				if ( null === $value_sql ) {
+					$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+				}
+				if ( null === $value_sql ) {
+					$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+				}
+				if ( null === $value_sql ) {
+					if ( empty( $values_replacements ) ) {
+						$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+							$tokens,
+							$value_start,
+							$assignment_end,
+							$scope
+						);
+						$value_sql      = $expression_sql['sql'];
+						$changed        = $expression_sql['changed'];
+					} else {
+						$value_sql = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+							$tokens,
+							$value_start,
+							$assignment_end,
+							$values_replacements
+						);
+						$changed   = true;
+					}
+					if (
+						$changed
+						&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+					) {
+						$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+					}
+				}
+			}
+
+			$assignments[] = sprintf(
+				'%s = %s',
+				$this->connection->quote_identifier( $target_column ),
+				$value_sql
+			);
+			$position      = $assignment_end;
+
+			if ( $position === $end ) {
+				break;
+			}
+
+			++$position;
+		}
+
+		return count( $assignments ) > 0 ? $assignments : null;
+	}
+
+	/**
+	 * Get the source column from a supported VALUES(column) upsert assignment expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First expression token.
+	 * @param int              $end           Final expression token, exclusive.
+	 * @param array            $column_lookup Insert-column lookup by lowercase name.
+	 * @return string|null Source column name, or null when the expression is not VALUES(column).
+	 */
+	private function get_mysql_upsert_values_assignment_source_column( array $tokens, int $start, int $end, array $column_lookup ): ?string {
+		if (
+			$start + 4 !== $end
+			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
+			|| WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $start + 3 ]->id
+		) {
+			return null;
+		}
+
+		$source_column = $this->get_mysql_identifier_token_value( $tokens[ $start + 2 ] );
+		if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
+			return null;
+		}
+
+		return $source_column;
+	}
+
+	/**
+	 * Get replacements for supported VALUES(column) references in an upsert expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First expression token.
+	 * @param int              $end           Final expression token, exclusive.
+	 * @param array            $column_lookup Insert-column lookup by lowercase name.
+	 * @return array[]|null Replacement ranges, or null when VALUES() is malformed/unsupported.
+	 */
+	private function get_mysql_upsert_values_expression_replacements( array $tokens, int $start, int $end, array $column_lookup ): ?array {
+		$replacements = array();
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
 			if (
-				! isset( $tokens[ $position + 3 ] )
-				|| WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id
+				$position + 4 > $end
+				|| ! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
 				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
 				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position + 3 ]->id
 			) {
@@ -17133,29 +17779,70 @@ WHERE option_name IN (
 			}
 
 			$source_column = $this->get_mysql_identifier_token_value( $tokens[ $position + 2 ] );
-			if (
-				null === $source_column
-				|| ! isset( $column_lookup[ strtolower( $source_column ) ] )
-			) {
+			if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
 				return null;
 			}
 
-			$assignments[] = sprintf(
-				'%s = excluded.%s',
-				$this->connection->quote_identifier( $target_column ),
-				$this->connection->quote_identifier( $source_column )
+			$replacements[] = array(
+				'start' => $position,
+				'end'   => $position + 4,
+				'sql'   => sprintf(
+					'excluded.%s',
+					$this->connection->quote_identifier( $source_column )
+				),
 			);
-			$position     += 4;
+			$position      += 3;
+		}
 
-			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
-				++$position;
+		return $replacements;
+	}
+
+	/**
+	 * Check whether an upsert expression is simple after removing VALUES(column) ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First expression token.
+	 * @param int              $end          Final expression token, exclusive.
+	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @return bool Whether the expression is supported.
+	 */
+	private function is_supported_simple_mysql_upsert_expression_fragment( array $tokens, int $start, int $end, array $replacements ): bool {
+		$segment_start = $start;
+		foreach ( $replacements as $replacement ) {
+			if (
+				$segment_start < $replacement['start']
+				&& ! $this->is_supported_simple_mysql_upsert_expression_segment( $tokens, $segment_start, $replacement['start'] )
+			) {
+				return false;
+			}
+
+			$segment_start = $replacement['end'];
+		}
+
+		return $segment_start >= $end
+			|| $this->is_supported_simple_mysql_upsert_expression_segment( $tokens, $segment_start, $end );
+	}
+
+	/**
+	 * Check whether an upsert expression segment contains supported tokens.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First segment token.
+	 * @param int              $end    Final segment token, exclusive.
+	 * @return bool Whether the segment is supported.
+	 */
+	private function is_supported_simple_mysql_upsert_expression_segment( array $tokens, int $start, int $end ): bool {
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $position ]->id ) {
 				continue;
 			}
 
-			break;
+			if ( ! $this->is_supported_simple_mysql_expression_token( $tokens[ $position ] ) ) {
+				return false;
+			}
 		}
 
-		return count( $assignments ) > 0 ? $assignments : null;
+		return true;
 	}
 
 	/**

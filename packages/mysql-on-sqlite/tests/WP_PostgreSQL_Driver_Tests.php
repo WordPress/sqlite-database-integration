@@ -467,6 +467,69 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests strict INSERT accepts zero dates when NO_ZERO_DATE is disabled.
+	 */
+	public function test_strict_insert_accepts_zero_dates_when_no_zero_date_mode_is_disabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES (1, '0000-00-00 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT post_date FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->post_date );
+	}
+
+	/**
+	 * Tests non-strict INSERT accepts zero dates when NO_ZERO_DATE is enabled without strict mode.
+	 */
+	public function test_non_strict_insert_accepts_zero_dates_when_no_zero_date_mode_is_enabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'NO_ZERO_DATE' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES (1, '0000-00-00 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT post_date FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->post_date );
+	}
+
+	/**
+	 * Tests strict DATE columns accept zero dates when NO_ZERO_DATE is disabled.
+	 */
+	public function test_strict_insert_accepts_zero_dates_for_date_columns_when_no_zero_date_mode_is_disabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES' );
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query( "INSERT INTO `wptests_strict_values` (`id`, `date_value`) VALUES (1, '0000-00-00')" )
+		);
+
+		$rows = $driver->query( 'SELECT date_value FROM wptests_strict_values WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00', $rows[0]->date_value );
+	}
+
+	/**
 	 * Tests strict zero-date SQL modes reject INSERT ... SELECT date literals before backend execution.
 	 */
 	public function test_strict_insert_select_rejects_zero_date_literals_from_mysql_metadata(): void {
@@ -502,6 +565,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->assertSame( "Incorrect datetime value: '2020-00-15 14:15:27'", $e->getMessage() );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		}
+	}
+
+	/**
+	 * Tests strict INSERT accepts partial-zero dates when NO_ZERO_IN_DATE is disabled.
+	 */
+	public function test_strict_insert_accepts_zero_in_dates_when_no_zero_in_date_mode_is_disabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES,NO_ZERO_DATE' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES (1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-00-15 14:15:27', '2020-01-01 00:00:00')"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2020-00-15 14:15:27', $rows[0]->post_modified );
+	}
+
+	/**
+	 * Tests non-strict INSERT normalizes partial-zero dates when NO_ZERO_IN_DATE is enabled.
+	 */
+	public function test_non_strict_insert_normalizes_zero_in_dates_when_no_zero_in_date_mode_is_enabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'NO_ZERO_IN_DATE' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES (1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-00-15 14:15:27', '2020-01-01 00:00:00')"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->post_modified );
 	}
 
 	/**
@@ -2572,6 +2679,127 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( bin2hex( $payload ), $sql );
 		$this->assertStringContainsString( '"option_value" = excluded."option_value"', $sql );
 		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $sql );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports literal assignment expressions.
+	 */
+	public function test_options_upsert_literal_assignments_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('siteurl', 'old', 'yes')" );
+
+		$upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'inserted', 'ignored')
+			ON DUPLICATE KEY UPDATE `option_value` = 'http://example.net',
+			                        `autoload` = \"no\"";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'inserted\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = \'http://example.net\', "autoload" = \'no\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'http://example.net', $rows[0]->option_value );
+		$this->assertSame( 'no', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE assignment literals use strict target-column coercion.
+	 */
+	public function test_upsert_update_assignments_use_strict_target_column_coercion(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+		$driver->query( 'INSERT INTO wptests_strict_ints (id, int_value) VALUES (1, 1)' );
+
+		$upsert = "INSERT INTO `wptests_strict_ints` (`id`, `int_value`)
+			VALUES (1, 2)
+			ON DUPLICATE KEY UPDATE `int_value` = '4.0'";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+
+		$rows = $driver->query( 'SELECT int_value FROM wptests_strict_ints WHERE id = 1' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '4', $rows[0]->int_value );
+
+		try {
+			$driver->query(
+				"INSERT INTO `wptests_strict_ints` (`id`, `int_value`)
+				VALUES (1, 2)
+				ON DUPLICATE KEY UPDATE `int_value` = '12abc'"
+			);
+			$this->fail( 'Expected invalid upsert assignment value to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect integer value: '12abc'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports current-row assignment expressions.
+	 */
+	public function test_upsert_update_assignments_support_current_row_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+		$driver->query( 'INSERT INTO wptests_strict_ints (id, int_value) VALUES (1, 4)' );
+
+		$upsert = 'INSERT INTO `wptests_strict_ints` (`id`, `int_value`)
+			VALUES (1, 2)
+			ON DUPLICATE KEY UPDATE `int_value` = `int_value` + 1';
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 2) ON CONFLICT ("id") DO UPDATE SET "int_value" = "int_value" + 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT int_value FROM wptests_strict_ints WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '5', $rows[0]->int_value );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports VALUES(column) inside simple expressions.
+	 */
+	public function test_upsert_update_assignments_support_values_inside_simple_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+		$driver->query( 'INSERT INTO wptests_strict_ints (id, int_value) VALUES (1, 4)' );
+
+		$upsert = 'INSERT INTO `wptests_strict_ints` (`id`, `int_value`)
+			VALUES (1, 3)
+			ON DUPLICATE KEY UPDATE `int_value` = `int_value` + VALUES(`int_value`)';
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = "int_value" + excluded."int_value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT int_value FROM wptests_strict_ints WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->int_value );
 	}
 
 	/**
@@ -6979,7 +7207,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$unsupported_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('siteurl', 'http://example.org', 'yes')
-			ON DUPLICATE KEY UPDATE `option_value` = 'http://example.net'";
+			ON DUPLICATE KEY UPDATE `option_value` = (SELECT 'http://example.net')";
 
 		$this->assertNull(
 			$this->translate_driver_query_with_private_method(
@@ -7556,6 +7784,149 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'datetime', $describe[1]->Type );
 		$this->assertSame( 'YES', $describe[1]->Null );
 		$this->assertSame( '0000-00-00 00:00:00', $describe[1]->Default );
+	}
+
+	/**
+	 * Tests mixed ALTER TABLE batches add columns and indexes while ignoring MySQL placement.
+	 */
+	public function test_alter_table_add_batch_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_alter (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_plugin_alter
+				ADD flag tinyint(1) NOT NULL DEFAULT 0,
+				ADD COLUMN code varchar(20) DEFAULT "x" AFTER id,
+				ADD KEY flag_idx (flag)'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_alter" ADD COLUMN "flag" integer NOT NULL DEFAULT \'0\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_alter" ADD COLUMN "code" varchar(20) DEFAULT \'x\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_plugin_alter__flag_idx" ON "wptests_plugin_alter" ("flag")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_alter' );
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_plugin_alter' );
+
+		$this->assertSame( array( 'id', 'status', 'flag', 'code' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( array( 'PRIMARY', 'flag_idx' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP COLUMN removes column and dependent index metadata.
+	 */
+	public function test_alter_table_drop_column_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_drop (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				obsolete varchar(20) DEFAULT NULL,
+				PRIMARY KEY (id),
+				KEY obsolete_idx (obsolete)
+			)"
+		);
+
+		$driver->query( 'ALTER TABLE wptests_plugin_drop DROP obsolete' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_drop" DROP COLUMN "obsolete"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_drop' );
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_plugin_drop' );
+
+		$this->assertSame( array( 'id', 'status' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( array( 'PRIMARY' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+	}
+
+	/**
+	 * Tests ALTER COLUMN DROP DEFAULT updates backend and MySQL metadata.
+	 */
+	public function test_alter_table_drop_default_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_defaults (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$driver->query( 'ALTER TABLE wptests_plugin_defaults ALTER COLUMN status DROP DEFAULT' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_defaults" ALTER COLUMN "status" DROP DEFAULT',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_defaults' );
+
+		$this->assertNull( $columns[1]['column_default'] );
+	}
+
+	/**
+	 * Tests MySQL table-option ALTER clauses are supported no-ops.
+	 */
+	public function test_alter_table_storage_options_are_supported_noops(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_options (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_options' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE wptests_plugin_options
+					ENGINE=InnoDB,
+					DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci,
+					ROW_FORMAT=DYNAMIC'
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_options' ) );
 	}
 
 	/**

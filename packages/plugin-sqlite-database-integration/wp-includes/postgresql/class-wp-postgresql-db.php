@@ -1522,6 +1522,10 @@ class WP_PostgreSQL_DB extends wpdb {
 		if ( function_exists( 'apply_filters' ) ) {
 			$incompatible_modes = (array) apply_filters( 'incompatible_sql_modes', $incompatible_modes );
 		}
+		$incompatible_modes = array_diff(
+			array_map( 'strtoupper', $incompatible_modes ),
+			array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE' )
+		);
 
 		foreach ( $modes as $i => $mode ) {
 			if ( in_array( $mode, $incompatible_modes, true ) ) {

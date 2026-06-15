@@ -362,7 +362,7 @@ function apply_filters( $hook_name, $value ) {
 }
 
 class wpdb {
-	public $incompatible_modes = array( 'NO_ZERO_DATE' );
+	public $incompatible_modes = array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' );
 }
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
@@ -416,33 +416,33 @@ PHP
 			$result['initial_mode']
 		);
 		$this->assertSame(
-			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
 			$result['mode_after_empty_call']
 		);
 		$this->assertSame(
 			array(
 				array(
 					'hook_name' => 'incompatible_sql_modes',
-					'value'     => array( 'NO_ZERO_DATE' ),
+					'value'     => array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' ),
 				),
 			),
 			$result['filter_calls_after_empty']
 		);
-		$this->assertSame( 'STRICT_TRANS_TABLES,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
+		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ZERO_DATE,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
 		$this->assertSame(
 			array(
 				array(
 					'hook_name' => 'incompatible_sql_modes',
-					'value'     => array( 'NO_ZERO_DATE' ),
+					'value'     => array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' ),
 				),
 				array(
 					'hook_name' => 'incompatible_sql_modes',
-					'value'     => array( 'NO_ZERO_DATE' ),
+					'value'     => array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' ),
 				),
 			),
 			$result['filter_calls_after_modes']
 		);
-		$this->assertSame( 'STRICT_TRANS_TABLES,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
+		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ZERO_DATE,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
 	}
 
 	/**
