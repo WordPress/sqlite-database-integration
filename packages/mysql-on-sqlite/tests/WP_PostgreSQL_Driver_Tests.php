@@ -1161,6 +1161,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests columnless REPLACE ... SELECT infers target columns from MySQL metadata.
+	 */
+	public function test_columnless_replace_select_uses_mysql_metadata_columns(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_replace_select_columnless ("ID" INTEGER PRIMARY KEY, display_name TEXT NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_replace_select_columnless (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				display_name varchar(250) NOT NULL DEFAULT "",
+				PRIMARY KEY (ID)
+			)'
+		);
+		$driver->query( 'CREATE TABLE wptests_replace_select_columnless_source ("ID" INTEGER NOT NULL, display_name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_replace_select_columnless ("ID", display_name) VALUES (2, \'old\')' );
+		$driver->query( 'INSERT INTO wptests_replace_select_columnless_source ("ID", display_name) VALUES (2, \'updated\'), (3, \'new\')' );
+
+		$replace = 'REPLACE INTO wptests_replace_select_columnless
+			SELECT `ID`, display_name FROM wptests_replace_select_columnless_source WHERE 1 = 1';
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO wptests_replace_select_columnless ("ID", "display_name") SELECT ' . $this->get_expected_mysql_integer_cast_sql( '"ID"' ) . ' , CAST(display_name AS text) FROM wptests_replace_select_columnless_source WHERE 1 = 1 ON CONFLICT ("ID") DO UPDATE SET "ID" = excluded."ID", "display_name" = excluded."display_name"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT "ID", display_name FROM wptests_replace_select_columnless ORDER BY "ID"' );
+		$this->assertSame( 'updated', $rows[0]->display_name );
+		$this->assertSame( 'new', $rows[1]->display_name );
+	}
+
+	/**
 	 * Tests columnless multi-row REPLACE statements infer target columns from MySQL metadata.
 	 */
 	public function test_columnless_multi_row_replace_uses_mysql_metadata_columns(): void {

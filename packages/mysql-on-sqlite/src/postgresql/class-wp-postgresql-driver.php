@@ -12813,8 +12813,20 @@ WHERE option_name IN (
 		}
 		$table_reference_end = $position;
 
-		$column_metadata = null;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+		$column_metadata    = null;
+		$insert_column_list = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$column_metadata    = $this->get_mysql_dml_column_metadata( $table_name );
+			$columns            = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
+			$insert_column_list = true;
+			if ( null === $columns ) {
+				return null;
+			}
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 			if ( null === $columns ) {
 				return null;
@@ -12822,6 +12834,13 @@ WHERE option_name IN (
 		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $position ]->id ) {
 			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
 			$columns         = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
+			if ( null === $columns ) {
+				return null;
+			}
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
+			$column_metadata    = $this->get_mysql_dml_column_metadata( $table_name );
+			$columns            = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
+			$insert_column_list = true;
 			if ( null === $columns ) {
 				return null;
 			}
@@ -12843,7 +12862,8 @@ WHERE option_name IN (
 				$tokens,
 				$position,
 				$table_reference_start,
-				$table_reference_end
+				$table_reference_end,
+				$insert_column_list
 			);
 		}
 
@@ -12999,6 +13019,7 @@ WHERE option_name IN (
 	 * @param int              $position              Current token position at SELECT or parenthesized SELECT.
 	 * @param int              $table_reference_start First target table-reference token.
 	 * @param int              $table_reference_end   Final target table-reference token, exclusive.
+	 * @param bool             $insert_column_list    Whether to inject an inferred column list.
 	 * @return array|null PostgreSQL query data, or null when unsupported.
 	 */
 	private function translate_simple_mysql_replace_select_query(
@@ -13008,7 +13029,8 @@ WHERE option_name IN (
 		array $tokens,
 		int $position,
 		int $table_reference_start,
-		int $table_reference_end
+		int $table_reference_end,
+		bool $insert_column_list = false
 	): ?array {
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
 		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
@@ -13020,6 +13042,9 @@ WHERE option_name IN (
 			$table_reference_start,
 			$table_reference_end
 		);
+		if ( $insert_column_list ) {
+			$table_reference_sql .= ' (' . implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ) . ')';
+		}
 		$select_start        = $position;
 		$select_end          = $statement_end;
 		$outer_replacements  = array(
