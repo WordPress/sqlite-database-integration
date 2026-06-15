@@ -2887,6 +2887,109 @@ PHP
 	}
 
 	/**
+	 * Tests db_connect() maps connection option failures to wpdb state.
+	 */
+	public function test_db_connect_maps_connection_option_failures_to_wpdb_state(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $dbuser     = 'pg_user';
+	public $dbpassword = 'pg_password';
+	public $dbname     = 'wptests';
+	public $dbhost     = 'bad;host';
+	public $ready      = true;
+	public $is_mysql   = false;
+	public $last_error = 'previous error';
+	public $charset    = '';
+	public $bail_calls = array();
+
+	public function init_charset() {
+		$this->charset = 'utf8mb4';
+	}
+
+	public function parse_db_host( $host ) {
+		return false;
+	}
+
+	public function bail( $message, $error_code = '500' ) {
+		$this->bail_calls[] = array( $message, $error_code );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+unset( $GLOBALS['@pdo'] );
+
+$dbh_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$dbh_property->setAccessible( true );
+
+$non_bailing_db             = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$non_bailing_result         = $non_bailing_db->db_connect( false );
+$non_bailing_dbh_after      = $dbh_property->getValue( $non_bailing_db );
+$non_bailing_bail_calls     = $non_bailing_db->bail_calls;
+$non_bailing_last_error     = $non_bailing_db->last_error;
+$non_bailing_ready          = $non_bailing_db->ready;
+$non_bailing_is_mysql       = $non_bailing_db->is_mysql;
+$non_bailing_charset        = $non_bailing_db->charset;
+
+$bailing_db             = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$bailing_result         = $bailing_db->db_connect( true );
+$bailing_dbh_after      = $dbh_property->getValue( $bailing_db );
+$bailing_bail_calls     = $bailing_db->bail_calls;
+$bailing_last_error     = $bailing_db->last_error;
+$bailing_ready          = $bailing_db->ready;
+$bailing_is_mysql       = $bailing_db->is_mysql;
+$bailing_charset        = $bailing_db->charset;
+
+wp_postgresql_db_test_respond(
+	array(
+		'non_bailing_result'     => $non_bailing_result,
+		'non_bailing_dbh_null'   => null === $non_bailing_dbh_after,
+		'non_bailing_bail_calls' => $non_bailing_bail_calls,
+		'non_bailing_last_error' => $non_bailing_last_error,
+		'non_bailing_ready'      => $non_bailing_ready,
+		'non_bailing_is_mysql'   => $non_bailing_is_mysql,
+		'non_bailing_charset'    => $non_bailing_charset,
+		'bailing_result'         => $bailing_result,
+		'bailing_dbh_null'       => null === $bailing_dbh_after,
+		'bailing_bail_calls'     => $bailing_bail_calls,
+		'bailing_last_error'     => $bailing_last_error,
+		'bailing_ready'          => $bailing_ready,
+		'bailing_is_mysql'       => $bailing_is_mysql,
+		'bailing_charset'        => $bailing_charset,
+	)
+);
+PHP
+		);
+
+		$expected_error = 'PostgreSQL DSN parts cannot contain NUL bytes or semicolons.';
+
+		$this->assertSame(
+			array(
+				'non_bailing_result'     => false,
+				'non_bailing_dbh_null'   => true,
+				'non_bailing_bail_calls' => array(),
+				'non_bailing_last_error' => $expected_error,
+				'non_bailing_ready'      => false,
+				'non_bailing_is_mysql'   => true,
+				'non_bailing_charset'    => 'utf8mb4',
+				'bailing_result'         => false,
+				'bailing_dbh_null'       => true,
+				'bailing_bail_calls'     => array(
+					array( $expected_error, 'db_connect_fail' ),
+				),
+				'bailing_last_error'     => $expected_error,
+				'bailing_ready'          => false,
+				'bailing_is_mysql'       => true,
+				'bailing_charset'        => 'utf8mb4',
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests check_connection() probes an existing driver and reconnects after failure.
 	 */
 	public function test_check_connection_probes_existing_driver_and_reconnects_after_failure(): void {
