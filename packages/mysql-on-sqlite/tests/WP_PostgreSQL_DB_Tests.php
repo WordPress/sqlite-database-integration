@@ -336,6 +336,69 @@ PHP
 	}
 
 	/**
+	 * Tests flush() resets query state while preserving the connection handle.
+	 */
+	public function test_flush_resets_query_state_and_preserves_connection_handle(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	class wpdb {
+		public $last_result   = array( 'row' );
+		public $col_info      = array( 'column' );
+		public $last_query    = 'SELECT * FROM probe';
+		public $rows_affected = 7;
+		public $num_rows      = 3;
+		public $last_error    = 'stored backend failure';
+		public $result        = 'driver-result';
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db       = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$sentinel = new stdClass();
+
+$dbh_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+if ( PHP_VERSION_ID < 80100 ) {
+	$dbh_property->setAccessible( true );
+}
+$dbh_property->setValue( $db, $sentinel );
+
+$db->flush();
+
+wp_postgresql_db_test_respond(
+	array(
+		'last_result'    => $db->last_result,
+		'col_info'       => $db->col_info,
+		'last_query'     => $db->last_query,
+		'rows_affected'  => $db->rows_affected,
+		'num_rows'       => $db->num_rows,
+		'last_error'     => $db->last_error,
+		'result'         => $db->result,
+		'preserved_dbh'  => $sentinel === $dbh_property->getValue( $db ),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'last_result'   => array(),
+				'col_info'      => null,
+				'last_query'    => null,
+				'rows_affected' => 0,
+				'num_rows'      => 0,
+				'last_error'    => '',
+				'result'        => null,
+				'preserved_dbh' => true,
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests the PostgreSQL adapter strips legacy charset text without MySQL.
 	 */
 	public function test_strip_invalid_text_handles_legacy_charsets_in_php(): void {
