@@ -558,6 +558,11 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_show_variables_query( $show_variables_query, $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$show_character_set_query = $this->get_show_character_set_query( $query );
+		if ( null !== $show_character_set_query ) {
+			return $this->execute_show_character_set_query( $show_character_set_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
 		$show_collation_query = $this->get_show_collation_query( $query );
 		if ( null !== $show_collation_query ) {
 			return $this->execute_show_collation_query( $show_collation_query, $fetch_mode, ...$fetch_mode_args );
@@ -6407,7 +6412,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$position   = 2;
-		$index_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$index_name = $this->get_mysql_index_identifier_token_value( $tokens[ $position ] ?? null );
 		if ( null === $index_name ) {
 			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
 		}
@@ -6430,10 +6435,41 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
-			throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+			return $this->get_mysql_drop_primary_key_index_translation( $table_reference, 'DROP INDEX' );
 		}
 
 		return $this->get_mysql_drop_index_translation( $table_reference, $index_name, 'DROP INDEX' );
+	}
+
+	/**
+	 * Build PostgreSQL primary-key DROP SQL and metadata cleanup target.
+	 *
+	 * @param array{schema: string|null, table: string} $table_reference MySQL table reference.
+	 * @param string                                   $statement_type  Statement type for fail-closed error messages.
+	 * @return array{statements: string[], metadata: array} Drop primary-key translation.
+	 */
+	private function get_mysql_drop_primary_key_index_translation( array $table_reference, string $statement_type ): array {
+		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, $statement_type );
+		$table_name   = $table_reference['table'];
+
+		return array(
+			'statements' => array(
+				sprintf(
+					'ALTER TABLE %s DROP CONSTRAINT %s',
+					null === $table_reference['schema']
+						? $this->connection->quote_identifier( $table_name )
+						: $this->get_postgresql_schema_identifier( $table_schema, $table_name ),
+					$this->connection->quote_identifier(
+						$this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name )
+					)
+				),
+			),
+			'metadata'   => array(
+				'schema' => $table_schema,
+				'table'  => $table_name,
+				'index'  => 'PRIMARY',
+			),
+		);
 	}
 
 	/**
@@ -7312,6 +7348,45 @@ class WP_PostgreSQL_Driver {
 		}
 
 		throw new InvalidArgumentException( 'Unsupported SHOW VARIABLES statement.' );
+	}
+
+	/**
+	 * Parse a supported MySQL SHOW CHARACTER SET/SHOW CHARSET statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{type: string, column: string|null, pattern: string|null}|null SHOW CHARACTER SET options, or null when this is not SHOW CHARACTER SET.
+	 */
+	private function get_show_character_set_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		if ( WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		} elseif (
+			isset( $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::CHAR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$position += 2;
+		} else {
+			return null;
+		}
+
+		$allowed_columns = array(
+			'charset'           => 'Charset',
+			'description'       => 'Description',
+			'default collation' => 'Default collation',
+			'maxlen'            => 'Maxlen',
+		);
+		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Charset', $allowed_columns );
+		if ( null === $filter ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW CHARACTER SET statement.' );
+		}
+
+		return $filter;
 	}
 
 	/**
@@ -9944,6 +10019,46 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Get static MySQL-compatible SHOW CHARACTER SET rows.
+	 *
+	 * @return array[] SHOW CHARACTER SET rows.
+	 */
+	private function get_mysql_static_show_character_set_rows(): array {
+		$rows = array();
+		foreach ( $this->get_mysql_static_character_set_rows() as $row ) {
+			$rows[] = array(
+				'Charset'           => $row['CHARACTER_SET_NAME'],
+				'Description'       => $row['DESCRIPTION'],
+				'Default collation' => $row['DEFAULT_COLLATE_NAME'],
+				'Maxlen'            => $row['MAXLEN'],
+			);
+		}
+		return $rows;
+	}
+
+	/**
+	 * Execute a MySQL SHOW CHARACTER SET statement from static MySQL-compatible metadata.
+	 *
+	 * @param array $show_character_set_query SHOW CHARACTER SET options.
+	 * @param int   $fetch_mode               PDO fetch mode.
+	 * @param array ...$fetch_mode_args       Additional fetch mode arguments.
+	 * @return mixed SHOW CHARACTER SET result rows.
+	 */
+	private function execute_show_character_set_query( array $show_character_set_query, $fetch_mode, ...$fetch_mode_args ) {
+		$rows = $this->filter_mysql_static_show_rows(
+			$this->get_mysql_static_show_character_set_rows(),
+			$show_character_set_query
+		);
+
+		return $this->set_mysql_static_show_result(
+			array( 'Charset', 'Description', 'Default collation', 'Maxlen' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
 	 * Execute a MySQL SHOW COLLATION statement from static MySQL-compatible metadata.
 	 *
 	 * @param array $show_collation_query SHOW COLLATION options.
@@ -12484,7 +12599,12 @@ WHERE option_name IN (
 		}
 		unset( $values );
 
-		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
+		$conflict_target = $this->get_mysql_upsert_conflict_target(
+			$table_name,
+			$columns,
+			$value_rows,
+			$probe_safe_rows
+		);
 		if ( null === $conflict_target ) {
 			return null;
 		}
@@ -12914,11 +13034,18 @@ WHERE option_name IN (
 	/**
 	 * Resolve the PostgreSQL upsert conflict target from MySQL index metadata.
 	 *
-	 * @param string   $table_name Table name.
-	 * @param string[] $columns    Inserted column names.
+	 * @param string   $table_name      Table name.
+	 * @param string[] $columns         Inserted column names.
+	 * @param array[]  $value_rows      Optional translated VALUES rows for ambiguous target probing.
+	 * @param array[]  $probe_safe_rows Optional per-value conflict-probe safety flags.
 	 * @return array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>, sql: string[]}|null Conflict target, or null when unsupported.
 	 */
-	private function get_mysql_upsert_conflict_target( string $table_name, array $columns ): ?array {
+	private function get_mysql_upsert_conflict_target(
+		string $table_name,
+		array $columns,
+		?array $value_rows = null,
+		?array $probe_safe_rows = null
+	): ?array {
 		$insert_column_lookup = array();
 		$insert_columns       = array();
 		foreach ( $columns as $column ) {
@@ -13002,20 +13129,101 @@ WHERE option_name IN (
 		}
 
 		if ( 1 !== count( $candidates ) ) {
-			$this->mysql_upsert_conflict_target_cache[ $cache_key ] = null;
+			if ( null !== $value_rows && null !== $probe_safe_rows && count( $candidates ) > 1 ) {
+				return $this->get_mysql_upsert_conflict_target_for_value_rows(
+					$table_name,
+					$columns,
+					$candidates,
+					$value_rows,
+					$probe_safe_rows
+				);
+			}
+
 			return null;
 		}
 
+		$conflict_target = $this->get_mysql_upsert_conflict_target_from_candidate( $candidates[0] );
+
+		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_target;
+		return $conflict_target;
+	}
+
+	/**
+	 * Resolve an ambiguous upsert conflict target from deterministic VALUES rows.
+	 *
+	 * @param string   $table_name      Table name.
+	 * @param string[] $columns         Inserted column names.
+	 * @param array[]  $candidates      Candidate unique-key targets.
+	 * @param array[]  $value_rows      Translated PostgreSQL VALUES rows.
+	 * @param array[]  $probe_safe_rows Per-value conflict-probe safety flags.
+	 * @return array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>, sql: string[]}|null Conflict target, or null when unsupported.
+	 */
+	private function get_mysql_upsert_conflict_target_for_value_rows(
+		string $table_name,
+		array $columns,
+		array $candidates,
+		array $value_rows,
+		array $probe_safe_rows
+	): ?array {
+		$conflicting_candidates = array();
+
+		foreach ( $candidates as $candidate ) {
+			$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $candidate['parts'] );
+			if ( null === $conflict_indexes ) {
+				return null;
+			}
+
+			$candidate_conflicts = false;
+			foreach ( $value_rows as $row_index => $values ) {
+				$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
+				foreach ( $conflict_indexes as $conflict_index ) {
+					if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
+						return null;
+					}
+				}
+
+				$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
+				if ( null === $conflict_exists ) {
+					return null;
+				}
+
+				if ( $conflict_exists ) {
+					$candidate_conflicts = true;
+				}
+			}
+
+			if ( $candidate_conflicts ) {
+				$conflicting_candidates[] = $candidate;
+			}
+		}
+
+		if ( 1 === count( $conflicting_candidates ) ) {
+			return $this->get_mysql_upsert_conflict_target_from_candidate( $conflicting_candidates[0] );
+		}
+
+		if ( 0 === count( $conflicting_candidates ) ) {
+			return $this->get_mysql_upsert_conflict_target_from_candidate( $candidates[0] );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build a normalized conflict target from a unique-key candidate.
+	 *
+	 * @param array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>} $candidate Unique-key candidate.
+	 * @return array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>, sql: string[]} Conflict target.
+	 */
+	private function get_mysql_upsert_conflict_target_from_candidate( array $candidate ): array {
 		$conflict_target = array(
-			'columns' => array_values( $candidates[0]['columns'] ),
-			'parts'   => array_values( $candidates[0]['parts'] ),
+			'columns' => array_values( $candidate['columns'] ),
+			'parts'   => array_values( $candidate['parts'] ),
 			'sql'     => array(),
 		);
 		foreach ( $conflict_target['parts'] as $part ) {
 			$conflict_target['sql'][] = $this->get_mysql_index_key_part_sql( $part['column'], $part['sub_part'] );
 		}
 
-		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_target;
 		return $conflict_target;
 	}
 
@@ -13030,24 +13238,9 @@ WHERE option_name IN (
 	 * @return array[]|null Inserted VALUES rows, or null when unsupported.
 	 */
 	private function get_mysql_upsert_inserted_value_rows( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_parts ): ?array {
-		$column_indexes = array();
-		foreach ( $columns as $index => $column ) {
-			$column_indexes[ strtolower( $column ) ] = $index;
-		}
-
-		$conflict_indexes = array();
-		foreach ( $conflict_parts as $part ) {
-			$column     = (string) ( $part['column'] ?? '' );
-			$column_key = strtolower( $column );
-			if ( ! isset( $column_indexes[ $column_key ] ) ) {
-				return null;
-			}
-
-			$conflict_indexes[] = array(
-				'column'   => $column,
-				'index'    => $column_indexes[ $column_key ],
-				'sub_part' => $part['sub_part'] ?? null,
-			);
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_parts );
+		if ( null === $conflict_indexes ) {
+			return null;
 		}
 
 		$inserted_rows = array();
@@ -13072,6 +13265,37 @@ WHERE option_name IN (
 		}
 
 		return $inserted_rows;
+	}
+
+	/**
+	 * Resolve conflict key parts to value indexes in an INSERT column list.
+	 *
+	 * @param string[] $columns        Inserted column names.
+	 * @param array[]  $conflict_parts Conflict target key parts.
+	 * @return array<int,array{column: string, index: int, sub_part: mixed}>|null Conflict indexes, or null when unsupported.
+	 */
+	private function get_mysql_upsert_conflict_indexes( array $columns, array $conflict_parts ): ?array {
+		$column_indexes = array();
+		foreach ( $columns as $index => $column ) {
+			$column_indexes[ strtolower( $column ) ] = $index;
+		}
+
+		$conflict_indexes = array();
+		foreach ( $conflict_parts as $part ) {
+			$column     = (string) ( $part['column'] ?? '' );
+			$column_key = strtolower( $column );
+			if ( ! isset( $column_indexes[ $column_key ] ) ) {
+				return null;
+			}
+
+			$conflict_indexes[] = array(
+				'column'   => $column,
+				'index'    => $column_indexes[ $column_key ],
+				'sub_part' => $part['sub_part'] ?? null,
+			);
+		}
+
+		return $conflict_indexes;
 	}
 
 	/**

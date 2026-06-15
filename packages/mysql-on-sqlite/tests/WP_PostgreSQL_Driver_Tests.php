@@ -2050,6 +2050,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests standalone DROP INDEX PRIMARY removes the primary-key constraint metadata.
+	 */
+	public function test_standalone_drop_index_primary_updates_postgresql_and_mysql_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_standalone_drop_primary (
+				id int NOT NULL,
+				value varchar(255) NOT NULL,
+				PRIMARY KEY (id),
+				KEY value_idx (value)
+			)'
+		);
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX PRIMARY ON wptests_standalone_drop_primary' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_standalone_drop_primary" DROP CONSTRAINT "wptests_standalone_drop_primary_pkey"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_drop_primary' );
+		$this->assertSame( array( 'value_idx' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+	}
+
+	/**
 	 * Tests ALTER TABLE DROP INDEX removes PostgreSQL schema and MySQL metadata.
 	 */
 	public function test_alter_table_drop_index_updates_postgresql_and_mysql_metadata(): void {
@@ -2411,7 +2442,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'CREATE INDEX IF NOT EXISTS "wptests_index_fail__" ON "wptests_index_fail" ("value")',
 			'CREATE INDEX idx_value ON information_schema.tables (name)',
 			'CREATE INDEX idx_value ON other_db.wptests_index_fail (value)',
-			'DROP INDEX `PRIMARY` ON wptests_index_fail',
 			'DROP INDEX idx_value ON wptests_index_fail KEY_BLOCK_SIZE=8',
 			'DROP INDEX idx_value ON wptests_index_fail ALGORITHM=INSTANT',
 			'DROP INDEX idx_value ON wptests_index_fail LOCK=UNKNOWN',
@@ -3816,9 +3846,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests ambiguous duplicate-key arbiters fail closed.
+	 * Tests ambiguous duplicate-key arbiters use the key that actually conflicts.
 	 */
-	public function test_ambiguous_on_duplicate_key_update_returns_null(): void {
+	public function test_ambiguous_on_duplicate_key_update_uses_conflicting_unique_key(): void {
 		$driver = $this->create_driver();
 
 		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
@@ -3827,17 +3857,17 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`) VALUES (2, 'existing', 'new')
 			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
-		$this->assertNull(
-			$this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$upsert
-			)
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (2, \'existing\', \'new\') ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
 		);
 
-		$this->expectException( PDOException::class );
-
-		$driver->query( $upsert );
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'existing', $rows[0]->slug );
+		$this->assertSame( 'new', $rows[0]->value );
 	}
 
 	/**
@@ -3871,34 +3901,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests missing column-list upserts keep ambiguous conflict targets unsupported.
+	 * Tests missing column-list upserts infer columns before resolving ambiguous targets.
 	 */
-	public function test_missing_column_list_upsert_with_ambiguous_conflict_targets_returns_null(): void {
+	public function test_missing_column_list_upsert_with_ambiguous_conflict_targets_uses_conflicting_key(): void {
 		$driver = $this->create_driver();
 
 		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'existing', 'old')" );
 		$ambiguous_upsert = "INSERT INTO `ambiguous_upsert` VALUES (2, 'existing', 'new')
 			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
-		$this->assertNull(
-			$this->translate_driver_query_data_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$ambiguous_upsert
-			)
+		$this->assertSame( 1, $driver->query( $ambiguous_upsert ) );
+		$this->assertSame(
+			'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (2, \'existing\', \'new\') ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
 		);
 
 		$this->install_prefix_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO prefix_ambiguous (id, slug, value) VALUES (1, 'existing-slug-one', 'old')" );
 		$prefix_upsert = "INSERT INTO `prefix_ambiguous` VALUES (2, 'existing-slug', 'new')
 			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
-		$this->assertNull(
-			$this->translate_driver_query_data_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$prefix_upsert
-			)
+		$this->assertSame( 1, $driver->query( $prefix_upsert ) );
+		$this->assertSame(
+			'INSERT INTO "prefix_ambiguous" ("id", "slug", "value") VALUES (2, \'existing-slug\', \'new\') ON CONFLICT (SUBSTR(CAST("slug" AS text), 1, 10)) DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
 		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM prefix_ambiguous ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'existing-slug-one', $rows[0]->slug );
+		$this->assertSame( 'new', $rows[0]->value );
 	}
 
 	/**
@@ -11453,6 +11487,72 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW CHARACTER SET returns MySQL-shaped static character set rows.
+	 */
+	public function test_show_character_set_returns_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SHOW CHARACTER SET' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Charset'           => 'binary',
+					'Description'       => 'Binary pseudo charset',
+					'Default collation' => 'binary',
+					'Maxlen'            => '1',
+				),
+				(object) array(
+					'Charset'           => 'utf8',
+					'Description'       => 'UTF-8 Unicode',
+					'Default collation' => 'utf8_general_ci',
+					'Maxlen'            => '3',
+				),
+				(object) array(
+					'Charset'           => 'utf8mb4',
+					'Description'       => 'UTF-8 Unicode',
+					'Default collation' => 'utf8mb4_0900_ai_ci',
+					'Maxlen'            => '4',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame(
+			array( 'Charset', 'Description', 'Default collation', 'Maxlen' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		$charset_rows = $driver->query( 'SHOW CHARSET' );
+		$this->assertEquals( $rows, $charset_rows );
+
+		$like_rows = $driver->query( "SHOW CHARACTER SET LIKE 'utf8%'" );
+		$this->assertSame(
+			array( 'utf8', 'utf8mb4' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Charset;
+				},
+				$like_rows
+			)
+		);
+
+		$where_rows = $driver->query( "SHOW CHARACTER SET WHERE Charset = 'utf8mb4'" );
+		$this->assertSame( array( 'utf8mb4' ), array( $where_rows[0]->Charset ) );
+
+		$collation_rows = $driver->query( "SHOW CHARACTER SET WHERE `Default collation` = 'binary'" );
+		$this->assertSame( array( 'binary' ), array( $collation_rows[0]->Charset ) );
+
+		try {
+			$driver->query( "SHOW CHARACTER SET WHERE 'Charset' = 'utf8mb4'" );
+			$this->fail( 'Expected quoted SHOW CHARACTER SET WHERE left operand to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW CHARACTER SET statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SHOW COLLATION returns MySQL-shaped static collation rows.
 	 */
 	public function test_show_collation_returns_mysql_shaped_rows(): void {
@@ -14662,6 +14762,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				slug TEXT NOT NULL,
 				value TEXT NOT NULL
 			)'
+		);
+		$driver->get_connection()->query(
+			'CREATE UNIQUE INDEX prefix_ambiguous__slug ON prefix_ambiguous (SUBSTR(CAST(slug AS text), 1, 10))'
 		);
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE prefix_ambiguous (
