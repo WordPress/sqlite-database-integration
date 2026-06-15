@@ -1479,6 +1479,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'CREATE FULLTEXT INDEX idx_value ON wptests_index_fail (value)',
 			'CREATE INDEX idx_value USING HASH ON wptests_index_fail (value)',
 			'CREATE UNIQUE INDEX idx_value ON wptests_index_fail (value(16))',
+			'CREATE INDEX IF NOT EXISTS "wptests_index_fail__" ON "wptests_index_fail" ("value")',
 			'CREATE INDEX idx_value ON information_schema.tables (name)',
 			'CREATE INDEX idx_value ON other_db.wptests_index_fail (value)',
 			'DROP INDEX `PRIMARY` ON wptests_index_fail',

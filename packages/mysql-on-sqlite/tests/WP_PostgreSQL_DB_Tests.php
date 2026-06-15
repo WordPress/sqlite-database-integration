@@ -2570,6 +2570,92 @@ PHP
 	}
 
 	/**
+	 * Tests db_connect() rejects missing PostgreSQL database names before connecting.
+	 */
+	public function test_db_connect_rejects_missing_database_name_before_connecting(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $dbname     = null;
+	public $ready      = true;
+	public $is_mysql   = false;
+	public $last_error = 'previous error';
+	public $charset    = '';
+	public $bail_calls = array();
+
+	public function init_charset() {
+		$this->charset = 'utf8mb4';
+	}
+
+	public function bail( $message, $error_code = '500' ) {
+		$this->bail_calls[] = array( $message, $error_code );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$null_db              = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$null_result          = $null_db->db_connect( false );
+$null_db_bail_calls   = $null_db->bail_calls;
+$null_db_last_error   = $null_db->last_error;
+$null_db_ready        = $null_db->ready;
+$null_db_is_mysql     = $null_db->is_mysql;
+$null_db_charset      = $null_db->charset;
+
+$empty_db             = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$empty_db->dbname     = '';
+$empty_result         = $empty_db->db_connect( true );
+$empty_db_bail_calls  = $empty_db->bail_calls;
+$empty_db_last_error  = $empty_db->last_error;
+$empty_db_ready       = $empty_db->ready;
+$empty_db_is_mysql    = $empty_db->is_mysql;
+$empty_db_charset     = $empty_db->charset;
+
+wp_postgresql_db_test_respond(
+	array(
+		'null_result'          => $null_result,
+		'null_bail_calls'      => $null_db_bail_calls,
+		'null_last_error'      => $null_db_last_error,
+		'null_ready'           => $null_db_ready,
+		'null_is_mysql'        => $null_db_is_mysql,
+		'null_charset'         => $null_db_charset,
+		'empty_result'         => $empty_result,
+		'empty_bail_calls'     => $empty_db_bail_calls,
+		'empty_last_error'     => $empty_db_last_error,
+		'empty_ready'          => $empty_db_ready,
+		'empty_is_mysql'       => $empty_db_is_mysql,
+		'empty_charset'        => $empty_db_charset,
+	)
+);
+PHP
+		);
+
+		$expected_error = 'The database name was not set. The PostgreSQL backend requires DB_NAME.';
+
+		$this->assertSame(
+			array(
+				'null_result'      => false,
+				'null_bail_calls'  => array(),
+				'null_last_error'  => $expected_error,
+				'null_ready'       => false,
+				'null_is_mysql'    => true,
+				'null_charset'     => 'utf8mb4',
+				'empty_result'     => false,
+				'empty_bail_calls' => array(
+					array( $expected_error, 'db_connect_fail' ),
+				),
+				'empty_last_error' => $expected_error,
+				'empty_ready'      => false,
+				'empty_is_mysql'   => true,
+				'empty_charset'    => 'utf8mb4',
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests check_connection() probes an existing driver and reconnects after failure.
 	 */
 	public function test_check_connection_probes_existing_driver_and_reconnects_after_failure(): void {
