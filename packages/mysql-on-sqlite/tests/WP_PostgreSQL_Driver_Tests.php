@@ -1123,6 +1123,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests REPLACE ... SELECT statements use PostgreSQL upserts and MySQL row counts.
+	 */
+	public function test_replace_select_with_known_conflict_column_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_replace_select (id INTEGER PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_replace_select_source (id INTEGER NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_replace_select (id, name, color) VALUES (1, 'old', 'red')" );
+		$driver->query( "INSERT INTO wptests_replace_select_source (id, name, color) VALUES (1, 'updated', 'blue'), (2, 'new', 'green')" );
+
+		$replace = 'REPLACE INTO wptests_replace_select (`id`, `name`, `color`)
+			SELECT id, name, color FROM wptests_replace_select_source WHERE 1 = 1';
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO wptests_replace_select ("id", "name", "color") SELECT id, name, color FROM wptests_replace_select_source WHERE 1 = 1 ON CONFLICT ("id") DO UPDATE SET "id" = excluded."id", "name" = excluded."name", "color" = excluded."color"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, name, color FROM wptests_replace_select ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'name'  => 'updated',
+					'color' => 'blue',
+				),
+				(object) array(
+					'id'    => '2',
+					'name'  => 'new',
+					'color' => 'green',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests columnless multi-row REPLACE statements infer target columns from MySQL metadata.
 	 */
 	public function test_columnless_multi_row_replace_uses_mysql_metadata_columns(): void {

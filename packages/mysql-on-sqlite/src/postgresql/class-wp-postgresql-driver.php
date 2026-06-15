@@ -12806,10 +12806,12 @@ WHERE option_name IN (
 			++$position;
 		}
 
-		$table_name = $this->parse_mysql_main_database_table_name( $tokens, $position );
+		$table_reference_start = $position;
+		$table_name            = $this->parse_mysql_main_database_table_name( $tokens, $position );
 		if ( null === $table_name ) {
 			return null;
 		}
+		$table_reference_end = $position;
 
 		$column_metadata = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
@@ -12825,6 +12827,24 @@ WHERE option_name IN (
 			}
 		} else {
 			return null;
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			return $this->translate_simple_mysql_replace_select_query(
+				$query,
+				$table_name,
+				$columns,
+				$tokens,
+				$position,
+				$table_reference_start,
+				$table_reference_end
+			);
 		}
 
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
@@ -12970,6 +12990,276 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate explicit-column MySQL REPLACE ... SELECT statements.
+	 *
+	 * @param string           $query                 MySQL query.
+	 * @param string           $table_name            Target table name.
+	 * @param string[]         $columns               Target column names.
+	 * @param WP_MySQL_Token[] $tokens                MySQL lexer token stream.
+	 * @param int              $position              Current token position at SELECT or parenthesized SELECT.
+	 * @param int              $table_reference_start First target table-reference token.
+	 * @param int              $table_reference_end   Final target table-reference token, exclusive.
+	 * @return array|null PostgreSQL query data, or null when unsupported.
+	 */
+	private function translate_simple_mysql_replace_select_query(
+		string $query,
+		string $table_name,
+		array $columns,
+		array $tokens,
+		int $position,
+		int $table_reference_start,
+		int $table_reference_end
+	): ?array {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
+			return null;
+		}
+
+		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
+			$tokens,
+			$table_reference_start,
+			$table_reference_end
+		);
+		$select_start        = $position;
+		$select_end          = $statement_end;
+		$outer_replacements  = array(
+			array(
+				'start' => 0,
+				'end'   => $table_reference_end,
+				'sql'   => 'INSERT INTO ' . $table_reference_sql,
+			),
+		);
+		$closing_replacement = array();
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if (
+				null === $after_close
+				|| $after_close !== $statement_end
+				|| ! isset( $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+			) {
+				return null;
+			}
+
+			$select_start          = $position + 1;
+			$select_end            = $statement_end - 1;
+			$outer_replacements[]  = array(
+				'start' => $position,
+				'end'   => $position + 1,
+				'sql'   => '',
+			);
+			$closing_replacement[] = array(
+				'start' => $statement_end - 1,
+				'end'   => $statement_end,
+				'sql'   => '',
+			);
+		}
+
+		if ( ! isset( $tokens[ $select_start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $select_start ]->id ) {
+			return null;
+		}
+
+		$replacements = $this->get_mysql_insert_select_projection_replacements(
+			$table_name,
+			$columns,
+			$tokens,
+			$select_start,
+			$select_end
+		);
+		if ( null === $replacements ) {
+			return null;
+		}
+		$replacements = array_merge( $outer_replacements, $replacements, $closing_replacement );
+
+		$direct_information_schema_select_sql = $this->get_insert_select_direct_information_schema_select_sql(
+			$query,
+			$tokens,
+			$select_start,
+			$select_end
+		);
+		if ( null !== $direct_information_schema_select_sql ) {
+			if ( $this->mysql_replacements_overlap_range( $replacements, $select_start, $select_end ) ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $select_start,
+				'end'   => $select_end,
+				'sql'   => $direct_information_schema_select_sql,
+			);
+		} elseif ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+			return null;
+		}
+
+		usort(
+			$replacements,
+			static function ( array $left, array $right ): int {
+				return $left['start'] <=> $right['start'];
+			}
+		);
+
+		$sql = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			0,
+			$statement_end,
+			$replacements
+		);
+
+		$conflict_column         = $this->get_simple_replace_conflict_column( $table_name, $columns );
+		$affected_rows_count_sql = null;
+		if ( null !== $conflict_column ) {
+			$assignments = array();
+			foreach ( $columns as $column ) {
+				$assignments[] = sprintf(
+					'%s = excluded.%s',
+					$this->connection->quote_identifier( $column ),
+					$this->connection->quote_identifier( $column )
+				);
+			}
+
+			$sql .= sprintf(
+				' ON CONFLICT (%s) DO UPDATE SET %s',
+				$this->connection->quote_identifier( $conflict_column ),
+				implode( ', ', $assignments )
+			);
+
+			$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
+				$table_name,
+				$columns,
+				$conflict_column,
+				$tokens,
+				$select_start,
+				$select_end
+			);
+		}
+
+		return array(
+			'action'                           => 'replace',
+			'sql'                              => $sql,
+			'table_name'                       => $table_name,
+			'columns'                          => $columns,
+			'conflict_column'                  => $conflict_column,
+			'conflict_value'                   => null,
+			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
+			'inserted_new_row'                 => true,
+		);
+	}
+
+	/**
+	 * Get a preflight affected-row count query for REPLACE ... SELECT.
+	 *
+	 * @param string           $table_name      Target table name.
+	 * @param string[]         $columns         Target column names.
+	 * @param string           $conflict_column Conflict column name.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $select_start    SELECT token position.
+	 * @param int              $select_end      Final SELECT token position, exclusive.
+	 * @return string|null PostgreSQL count SQL, or null when unsupported.
+	 */
+	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, string $conflict_column, array $tokens, int $select_start, int $select_end ): ?string {
+		$conflict_index = null;
+		foreach ( $columns as $index => $column ) {
+			if ( strtolower( $column ) === strtolower( $conflict_column ) ) {
+				$conflict_index = $index;
+				break;
+			}
+		}
+
+		if ( null === $conflict_index ) {
+			return null;
+		}
+
+		if ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+			return null;
+		}
+
+		$from_position     = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $select_start + 1, $select_end );
+		$projection_end    = $from_position ?? $select_end;
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $select_start + 1, $projection_end );
+		if ( null === $projection_ranges || count( $projection_ranges ) !== count( $columns ) ) {
+			return null;
+		}
+
+		$target_metadata = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$scope           = null;
+		if ( null !== $from_position ) {
+			$first_clause_position = $this->find_first_top_level_mysql_token(
+				$tokens,
+				array(
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+					WP_MySQL_Lexer::WHERE_SYMBOL,
+				),
+				$from_position + 1,
+				$select_end
+			) ?? $select_end;
+			$scope                 = $this->get_mysql_select_scope( $tokens, $from_position + 1, $first_clause_position );
+		}
+
+		$alias_replacements = array();
+		foreach ( $projection_ranges as $index => $range ) {
+			$expression_bounds = $this->get_mysql_select_projection_expression_bounds( $tokens, $range['start'], $range['end'] );
+			if ( null === $expression_bounds ) {
+				return null;
+			}
+
+			$expression_start = $expression_bounds['start'];
+			$expression_end   = $expression_bounds['end'];
+			$projection_sql   = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $expression_start, $expression_end );
+			$column_metadata  = $target_metadata[ strtolower( $columns[ $index ] ) ] ?? null;
+			if ( null !== $column_metadata ) {
+				$coerced_sql = $this->get_mysql_insert_select_projection_sql_for_target_column(
+					$table_name,
+					$column_metadata,
+					$tokens,
+					$expression_start,
+					$expression_end,
+					$projection_sql,
+					$scope
+				);
+				if ( null !== $coerced_sql ) {
+					$projection_sql = $coerced_sql;
+				}
+			}
+
+			$alias_replacements[] = array(
+				'start' => $range['start'],
+				'end'   => $range['end'],
+				'sql'   => $projection_sql . ' AS ' . $this->connection->quote_identifier( $columns[ $index ] ),
+			);
+		}
+
+		$select_sql      = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			$select_start,
+			$select_end,
+			$alias_replacements
+		);
+		$rows_alias      = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
+		$conflict_exists = sprintf(
+			'EXISTS (SELECT 1 FROM %s WHERE %s = %s.%s)',
+			$this->connection->quote_identifier( $table_name ),
+			$this->connection->quote_identifier( $conflict_column ),
+			$rows_alias,
+			$this->connection->quote_identifier( $conflict_column )
+		);
+
+		return sprintf(
+			'SELECT COALESCE(SUM(CASE WHEN %1$s THEN 2 ELSE 1 END), 0) AS affected_rows, COALESCE(SUM(CASE WHEN %1$s THEN 0 ELSE 1 END), 0) AS inserted_rows FROM (%2$s) AS %3$s',
+			$conflict_exists,
+			$select_sql,
+			$rows_alias
+		);
+	}
+
+	/**
 	 * Get the MySQL-compatible affected-row count for a translated REPLACE query.
 	 *
 	 * @param array $replace_query Translated REPLACE query data.
@@ -12981,6 +13271,17 @@ WHERE option_name IN (
 			|| null === $replace_query['conflict_column']
 		) {
 			return null;
+		}
+
+		if ( isset( $replace_query['replace_select_affected_rows_sql'] ) && is_string( $replace_query['replace_select_affected_rows_sql'] ) ) {
+			$stmt = $this->connection->query( $replace_query['replace_select_affected_rows_sql'] );
+			$row  = $stmt->fetch( PDO::FETCH_ASSOC );
+			if ( ! is_array( $row ) || ! isset( $row['affected_rows'] ) ) {
+				return null;
+			}
+
+			$replace_query['inserted_new_row'] = isset( $row['inserted_rows'] ) && (int) $row['inserted_rows'] > 0;
+			return (int) $row['affected_rows'];
 		}
 
 		$conflict_values = array();
