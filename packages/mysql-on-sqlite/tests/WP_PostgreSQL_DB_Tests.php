@@ -114,6 +114,79 @@ PHP
 	}
 
 	/**
+	 * Tests the wpdb adapter applies WordPress charset upgrade rules.
+	 */
+	public function test_determine_charset_applies_wordpress_utf8mb4_upgrade_rules(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	class wpdb {}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$results = array(
+	'without_dbh' => $db->determine_charset( 'utf8', '' ),
+);
+
+$dbh_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+if ( PHP_VERSION_ID < 80100 ) {
+	$dbh_property->setAccessible( true );
+}
+$dbh_property->setValue( $db, new stdClass() );
+
+foreach (
+	array(
+		'utf8_empty'             => array( 'utf8', '' ),
+		'utf8_general_ci'        => array( 'utf8', 'utf8_general_ci' ),
+		'utf8_bin'               => array( 'utf8', 'utf8_bin' ),
+		'utf8mb4_unicode_ci'     => array( 'utf8mb4', 'utf8mb4_unicode_ci' ),
+		'latin1_swedish_ci'      => array( 'latin1', 'latin1_swedish_ci' ),
+	) as $name => $args
+) {
+	$results[ $name ] = $db->determine_charset( $args[0], $args[1] );
+}
+
+wp_postgresql_db_test_respond( $results );
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'without_dbh'        => array(
+					'charset' => 'utf8',
+					'collate' => '',
+				),
+				'utf8_empty'         => array(
+					'charset' => 'utf8mb4',
+					'collate' => 'utf8mb4_unicode_520_ci',
+				),
+				'utf8_general_ci'    => array(
+					'charset' => 'utf8mb4',
+					'collate' => 'utf8mb4_unicode_520_ci',
+				),
+				'utf8_bin'           => array(
+					'charset' => 'utf8mb4',
+					'collate' => 'utf8mb4_bin',
+				),
+				'utf8mb4_unicode_ci' => array(
+					'charset' => 'utf8mb4',
+					'collate' => 'utf8mb4_unicode_520_ci',
+				),
+				'latin1_swedish_ci'  => array(
+					'charset' => 'latin1',
+					'collate' => 'latin1_swedish_ci',
+				),
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests the wpdb adapter filters and forwards SQL mode state to the PostgreSQL driver.
 	 */
 	public function test_set_sql_mode_filters_incompatible_modes_and_updates_postgresql_driver(): void {
