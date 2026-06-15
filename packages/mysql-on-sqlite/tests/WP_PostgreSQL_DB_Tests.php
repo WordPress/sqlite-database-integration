@@ -2597,6 +2597,147 @@ PHP
 	}
 
 	/**
+	 * Tests PostgreSQL connection options normalize socket-style DB_HOST values.
+	 */
+	public function test_get_connection_options_normalizes_postgresql_socket_hosts(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $dbuser     = '';
+	public $dbpassword = '';
+	public $dbname     = '';
+	public $dbhost     = '';
+
+	public function parse_db_host( $host ) {
+		$socket  = null;
+		$is_ipv6 = false;
+
+		$socket_pos = strpos( $host, ':/' );
+		if ( false !== $socket_pos ) {
+			$socket = substr( $host, $socket_pos + 1 );
+			$host   = substr( $host, 0, $socket_pos );
+		}
+
+		if ( substr_count( $host, ':' ) > 1 ) {
+			$pattern = '#^(?:\[)?(?P<host>[0-9a-fA-F:]+)(?:\]:(?P<port>[\d]+))?#';
+			$is_ipv6 = true;
+		} else {
+			$pattern = '#^(?P<host>[^:/]*)(?::(?P<port>[\d]+))?#';
+		}
+
+		$matches = array();
+		$result  = preg_match( $pattern, $host, $matches );
+		if ( 1 !== $result ) {
+			return false;
+		}
+
+		$host = ! empty( $matches['host'] ) ? $matches['host'] : '';
+		$port = ! empty( $matches['port'] ) ? abs( (int) $matches['port'] ) : null;
+
+		return array( $host, $port, $socket, $is_ipv6 );
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Unparsed_Host extends WP_PostgreSQL_DB {
+	public function __construct() {}
+
+	public function parse_db_host( $host ) {
+		return false;
+	}
+}
+
+function wp_postgresql_db_get_connection_options( WP_PostgreSQL_DB $db ) {
+	$method = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_connection_options' );
+	if ( PHP_VERSION_ID < 80100 ) {
+		$method->setAccessible( true );
+	}
+	return $method->invoke( $db );
+}
+
+function wp_postgresql_db_options_for_host( $case, $dbhost ) {
+	$db             = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+	$db->dbuser     = 'user_' . $case;
+	$db->dbpassword = 'password_' . $case;
+	$db->dbname     = 'name_' . $case;
+	$db->dbhost     = $dbhost;
+
+	return wp_postgresql_db_get_connection_options( $db );
+}
+
+$options = array(
+	'host_only'                 => wp_postgresql_db_options_for_host( 'host_only', 'postgres' ),
+	'host_port'                 => wp_postgresql_db_options_for_host( 'host_port', 'postgres:6543' ),
+	'socket_file'               => wp_postgresql_db_options_for_host( 'socket_file', 'localhost:/tmp/.s.PGSQL.6544' ),
+	'explicit_port_socket_file' => wp_postgresql_db_options_for_host( 'explicit_port_socket_file', 'localhost:6545:/tmp/.s.PGSQL.6544' ),
+	'socket_directory'          => wp_postgresql_db_options_for_host( 'socket_directory', 'localhost:/var/run/postgresql' ),
+);
+
+$unparsed_db             = new WP_PostgreSQL_DB_Unparsed_Host();
+$unparsed_db->dbuser     = 'user_unparsed_fallback';
+$unparsed_db->dbpassword = 'password_unparsed_fallback';
+$unparsed_db->dbname     = 'name_unparsed_fallback';
+$unparsed_db->dbhost     = 'fallback-host';
+
+$options['unparsed_fallback'] = wp_postgresql_db_get_connection_options( $unparsed_db );
+
+wp_postgresql_db_test_respond( $options );
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'host_only'                 => array(
+					'host'     => 'postgres',
+					'port'     => null,
+					'dbname'   => 'name_host_only',
+					'user'     => 'user_host_only',
+					'password' => 'password_host_only',
+				),
+				'host_port'                 => array(
+					'host'     => 'postgres',
+					'port'     => 6543,
+					'dbname'   => 'name_host_port',
+					'user'     => 'user_host_port',
+					'password' => 'password_host_port',
+				),
+				'socket_file'               => array(
+					'host'     => '/tmp',
+					'port'     => 6544,
+					'dbname'   => 'name_socket_file',
+					'user'     => 'user_socket_file',
+					'password' => 'password_socket_file',
+				),
+				'explicit_port_socket_file' => array(
+					'host'     => '/tmp',
+					'port'     => 6545,
+					'dbname'   => 'name_explicit_port_socket_file',
+					'user'     => 'user_explicit_port_socket_file',
+					'password' => 'password_explicit_port_socket_file',
+				),
+				'socket_directory'          => array(
+					'host'     => '/var/run/postgresql',
+					'port'     => null,
+					'dbname'   => 'name_socket_directory',
+					'user'     => 'user_socket_directory',
+					'password' => 'password_socket_directory',
+				),
+				'unparsed_fallback'         => array(
+					'host'     => 'fallback-host',
+					'port'     => null,
+					'dbname'   => 'name_unparsed_fallback',
+					'user'     => 'user_unparsed_fallback',
+					'password' => 'password_unparsed_fallback',
+				),
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests select() uses the current PostgreSQL driver when no handle is passed.
 	 */
 	public function test_select_uses_current_postgresql_driver_when_handle_is_omitted(): void {
