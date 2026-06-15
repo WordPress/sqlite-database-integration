@@ -693,6 +693,9 @@ class WP_PostgreSQL_Driver {
 			$this->last_result = 0;
 			return $this->last_result;
 		}
+		if ( $this->is_mysql_rename_table_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
 
 		$describe_table_reference = $this->get_describe_table_reference( $query );
 		if ( null !== $describe_table_reference ) {
@@ -2768,6 +2771,28 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
+		if ( 'rename_column' === $metadata['operation'] ) {
+			$this->rename_mysql_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$metadata['new_column']
+			);
+			$this->rename_mysql_index_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$metadata['new_column']
+			);
+			$this->rename_mysql_foreign_key_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$metadata['new_column']
+			);
+			return;
+		}
+
 		if ( 'drop_column' === $metadata['operation'] ) {
 			$this->delete_mysql_index_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
 			$this->delete_mysql_foreign_key_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
@@ -2923,6 +2948,34 @@ class WP_PostgreSQL_Driver {
 				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
 			),
 			array( $table_schema, $table_name, $column_name )
+		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Rename stored MySQL column metadata.
+	 *
+	 * @param string $table_schema    Table schema.
+	 * @param string $table_name      Table name.
+	 * @param string $old_column_name Old column name.
+	 * @param string $new_column_name New column name.
+	 */
+	private function rename_mysql_column_metadata(
+		string $table_schema,
+		string $table_name,
+		string $old_column_name,
+		string $new_column_name
+	): void {
+		if ( $old_column_name === $new_column_name ) {
+			return;
+		}
+
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s SET column_name = ? WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $new_column_name, $table_schema, $table_name, $old_column_name )
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
@@ -4650,6 +4703,9 @@ class WP_PostgreSQL_Driver {
 
 			case WP_MySQL_Lexer::ALTER_SYMBOL:
 				return $this->translate_mysql_dbdelta_alter_column_default_action( $table_name, $clause, $tokens, $start, $end );
+
+			case WP_MySQL_Lexer::RENAME_SYMBOL:
+				return $this->translate_mysql_dbdelta_rename_column_alter_action( $table_name, $tokens, $start, $end );
 		}
 
 		$auto_increment_value = $this->get_mysql_dbdelta_auto_increment_alter_value( $tokens, $start, $end );
@@ -4667,6 +4723,48 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Translate an ALTER TABLE RENAME COLUMN action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_rename_column_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+		if (
+			! isset( $tokens[ $start + 4 ] )
+			|| WP_MySQL_Lexer::COLUMN_SYMBOL !== $tokens[ $start + 1 ]->id
+			|| WP_MySQL_Lexer::TO_SYMBOL !== $tokens[ $start + 3 ]->id
+			|| $start + 5 !== $end
+		) {
+			return null;
+		}
+
+		$old_column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 2 ] ?? null );
+		$new_column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 4 ] ?? null );
+		if ( null === $old_column_name || null === $new_column_name ) {
+			return null;
+		}
+
+		return array(
+			'statements' => array(
+				sprintf(
+					'ALTER TABLE %s RENAME COLUMN %s TO %s',
+					$this->connection->quote_identifier( $table_name ),
+					$this->connection->quote_identifier( $old_column_name ),
+					$this->connection->quote_identifier( $new_column_name )
+				),
+			),
+			'metadata'   => array(
+				'operation'  => 'rename_column',
+				'old_column' => $old_column_name,
+				'new_column' => $new_column_name,
+			),
+		);
 	}
 
 	/**
@@ -5777,6 +5875,19 @@ class WP_PostgreSQL_Driver {
 		$tokens = $this->get_mysql_tokens( $query );
 		return isset( $tokens[0], $tokens[1] )
 			&& WP_MySQL_Lexer::ALTER_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id;
+	}
+
+	/**
+	 * Check whether a query starts with RENAME TABLE.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether this is a RENAME TABLE statement.
+	 */
+	private function is_mysql_rename_table_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0], $tokens[1] )
+			&& WP_MySQL_Lexer::RENAME_SYMBOL === $tokens[0]->id
 			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id;
 	}
 
@@ -7794,7 +7905,7 @@ class WP_PostgreSQL_Driver {
 	 * family so unsupported forms fail before raw backend execution.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, where: array{column: string, operator: string, value: string}|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
+	 * @return array{schema: string, table: string, where: array<int,array{column: string, operator: string, value: string}>|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
 	 */
 	private function get_show_index_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -7855,7 +7966,7 @@ class WP_PostgreSQL_Driver {
 		$table_name  = $table_reference['table'];
 		$where       = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
-			$where = $this->get_mysql_show_where_filter(
+			$where = $this->get_mysql_show_where_filters(
 				$tokens,
 				$position,
 				array(
@@ -7886,7 +7997,10 @@ class WP_PostgreSQL_Driver {
 				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 			}
 
-			$position += 4;
+			$position = $this->get_mysql_statement_end_position( $tokens, $position );
+			if ( null === $position ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
+			}
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -10403,7 +10517,7 @@ ORDER BY table_name';
 	 * Execute a MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement through PostgreSQL catalogs.
 	 *
 	 * @param string      $table_name          Table name.
-	 * @param array|null  $where_filter        Optional simple MySQL WHERE filter.
+	 * @param array|null  $where_filter        Optional simple MySQL WHERE filters.
 	 * @param int         $fetch_mode          PDO fetch mode.
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW INDEX result rows.
@@ -10439,15 +10553,17 @@ ORDER BY table_name';
 		);
 
 		if ( null !== $where_filter ) {
-			$sql     .= sprintf(
-				'
-	WHERE %s',
-				$this->get_mysql_show_where_filter_condition_sql(
-					$this->connection->quote_identifier( $where_filter['column'] ),
-					$where_filter
-				)
-			);
-			$params[] = $where_filter['value'];
+			$where_conditions = array();
+			foreach ( $where_filter as $filter ) {
+				$where_conditions[] = $this->get_mysql_show_where_filter_condition_sql(
+					$this->connection->quote_identifier( $filter['column'] ),
+					$filter
+				);
+				$params[]           = $filter['value'];
+			}
+
+			$sql .= '
+	WHERE ' . implode( ' AND ', $where_conditions );
 		}
 
 		$sql .= '

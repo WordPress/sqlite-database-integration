@@ -10022,6 +10022,80 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE RENAME COLUMN updates backend and MySQL metadata.
+	 */
+	public function test_alter_table_rename_column_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_column_parent (
+				id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_column (
+				id int(11) NOT NULL,
+				old_parent int(11) NOT NULL,
+				status varchar(20) DEFAULT "draft",
+				PRIMARY KEY (id),
+				KEY old_parent_idx (old_parent)
+			)'
+		);
+		$driver->query( 'ALTER TABLE wptests_rename_column ADD CONSTRAINT fk_old_parent FOREIGN KEY (old_parent) REFERENCES wptests_rename_column_parent (id)' );
+
+		$driver->query( 'ALTER TABLE wptests_rename_column RENAME COLUMN `old_parent` TO `parent_id`' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_rename_column" RENAME COLUMN "old_parent" TO "parent_id"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns      = $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_column' );
+		$indexes      = $this->get_mysql_index_metadata_rows( $driver, 'wptests_rename_column' );
+		$foreign_keys = $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_rename_column' );
+		$renamed_key  = array_values(
+			array_filter(
+				$indexes,
+				static function ( array $index ): bool {
+					return 'old_parent_idx' === $index['key_name'];
+				}
+			)
+		);
+
+		$this->assertSame( array( 'id', 'parent_id', 'status' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( array( 'parent_id' ), array_column( $renamed_key, 'column_name' ) );
+		$this->assertSame( array( 'parent_id' ), array_values( array_unique( array_column( $foreign_keys, 'column_name' ) ) ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_rename_column' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `parent_id` int(11) NOT NULL,', $create_table );
+		$this->assertStringContainsString( '  KEY `old_parent_idx` (`parent_id`)', $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `fk_old_parent` FOREIGN KEY (`parent_id`) REFERENCES `wptests_rename_column_parent` (`id`)', $create_table );
+		$this->assertStringNotContainsString( '`old_parent`', $create_table );
+	}
+
+	/**
+	 * Tests unsupported RENAME TABLE statements fail before backend execution.
+	 */
+	public function test_unsupported_rename_table_statement_does_not_reach_backend(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'RENAME TABLE wptests_old_name TO wptests_new_name' );
+			$this->fail( 'Expected unsupported RENAME TABLE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported RENAME TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests ALTER COLUMN DROP DEFAULT updates backend and MySQL metadata.
 	 */
 	public function test_alter_table_drop_default_updates_backend_and_metadata(): void {
@@ -12659,6 +12733,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW INDEX-family WHERE filters support simple AND combinations.
+	 */
+	public function test_show_index_family_where_and_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_index_and (
+				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				option_name varchar(191) NOT NULL DEFAULT '',
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload)
+			)"
+		);
+
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_index_and WHERE Key_name LIKE 'auto%' AND Non_unique = 1" );
+
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'autoload', $indexes[0]->Key_name );
+		$this->assertSame( 'autoload', $indexes[0]->Column_name );
+		$this->assertSame( '1', $indexes[0]->Non_unique );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE "Key_name" LIKE ? ESCAPE \'\\\' AND "Non_unique" = ?', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'SHOW INDEX', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_index_and', 'auto%', '1' ), $queries[0]['params'] );
+	}
+
+	/**
 	 * Tests SHOW INDEX-family statements accept current database qualification forms.
 	 */
 	public function test_show_index_accepts_current_database_qualification_forms(): void {
@@ -12691,7 +12796,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SHOW KEYS IN wptests_options',
 			'SHOW KEYS FROM wptests_options WHERE Non_unique > 0',
 			'SHOW KEYS FROM wptests_options WHERE Key_name LIKE autoload',
-			"SHOW KEYS FROM wptests_options WHERE Key_name LIKE 'auto%' AND Column_name = 'autoload'",
 			'SHOW KEYS FROM wptests_options LIMIT 1',
 		);
 
