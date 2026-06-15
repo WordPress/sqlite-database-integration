@@ -10868,11 +10868,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW COLUMNS/FIELDS WHERE expression filters catalog rows after fetching.
+	 */
+	public function test_show_columns_where_expression_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field <> 'option_name'" );
+
+		$this->assertSame(
+			array( 'option_id', 'option_value', 'autoload' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+		$this->assertStringNotContainsString( 'field_name <>', $queries[0]['sql'] );
+
+		$result = $driver->query( "SHOW FIELDS FROM wptests_options WHERE Field = 'option_name' OR Type = 'text'" );
+
+		$this->assertSame(
+			array( 'option_name', 'option_value' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+	}
+
+	/**
 	 * Tests unsupported SHOW COLUMNS/FIELDS WHERE forms do not reach the backend.
 	 */
 	public function test_show_columns_where_unsupported_forms_do_not_reach_backend(): void {
 		$queries = array(
-			"SHOW COLUMNS FROM wptests_options WHERE Field <> 'option_name'",
 			'SHOW COLUMNS FROM wptests_options WHERE Field = option_name',
 			'SHOW COLUMNS FROM wptests_options WHERE Field LIKE option_%',
 			"SHOW COLUMNS FROM wptests_options WHERE Unknown = 'option_name'",
@@ -11066,6 +11103,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "table_name LIKE ? ESCAPE '\\'", $queries[0]['sql'] );
 		$this->assertStringContainsString( "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END = ?", $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_%', 'BASE TABLE' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW TABLES WHERE expression filters catalog rows after fetching.
+	 */
+	public function test_show_full_tables_where_expression_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$tables = $driver->query( "SHOW FULL TABLES WHERE Table_type <> 'VIEW'" );
+
+		$this->assertSame(
+			array( 'wptests_options', 'wptests_posts' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Tables_in_wptests;
+				},
+				$tables
+			)
+		);
+		$this->assertSame( array( 'BASE TABLE', 'BASE TABLE' ), array( $tables[0]->Table_type, $tables[1]->Table_type ) );
+		$this->assertSame( array( 'public' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$tables = $driver->query( "SHOW FULL TABLES WHERE LEFT(Tables_in_wptests, 8) = 'wptests_' AND Table_type = 'VIEW'" );
+
+		$this->assertSame( array( 'wptests_view' ), array( $tables[0]->Tables_in_wptests ) );
+		$this->assertSame( 'VIEW', $tables[0]->Table_type );
+		$this->assertSame( array( 'public' ), $driver->get_last_postgresql_queries()[0]['params'] );
 	}
 
 	/**
@@ -13617,6 +13682,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW INDEX-family WHERE expression filters catalog rows after fetching.
+	 */
+	public function test_show_index_family_where_expression_filters_catalog_rows(): void {
+		$driver = $this->create_show_index_driver();
+
+		$indexes = $driver->query( 'SHOW KEYS FROM wptests_options WHERE Non_unique > 0' );
+
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'autoload', $indexes[0]->Key_name );
+		$this->assertSame( '1', $indexes[0]->Non_unique );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+		$this->assertStringNotContainsString( 'WHERE "Non_unique"', $queries[0]['sql'] );
+
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_options WHERE Key_name = 'PRIMARY' OR Non_unique = 1" );
+
+		$this->assertSame( array( 'PRIMARY', 'autoload' ), array( $indexes[0]->Key_name, $indexes[1]->Key_name ) );
+		$this->assertSame( array( '0', '1' ), array( $indexes[0]->Non_unique, $indexes[1]->Non_unique ) );
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+	}
+
+	/**
 	 * Tests SHOW INDEX-family statements accept current database qualification forms.
 	 */
 	public function test_show_index_accepts_current_database_qualification_forms(): void {
@@ -13647,7 +13736,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_show_index_family_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
 			'SHOW KEYS IN wptests_options',
-			'SHOW KEYS FROM wptests_options WHERE Non_unique > 0',
 			'SHOW KEYS FROM wptests_options WHERE Key_name LIKE autoload',
 			'SHOW KEYS FROM wptests_options LIMIT 1',
 		);

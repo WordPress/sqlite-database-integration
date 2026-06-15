@@ -7186,7 +7186,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW TABLES statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{full: bool, schema: string, database: string, like: string|null, where: array<int,array{column: string, operator: string, value: string}>|null}|null SHOW TABLES options, or null when unsupported.
+	 * @return array{full: bool, schema: string, database: string, like: string|null, where: array|null}|null SHOW TABLES options, or null when unsupported.
 	 */
 	private function get_show_tables_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -7261,6 +7261,9 @@ class WP_PostgreSQL_Driver {
 			}
 
 			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
+			if ( null === $where ) {
+				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+			}
 			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
 			}
@@ -8085,6 +8088,16 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Check whether a parsed SHOW WHERE filter should be evaluated against materialized rows.
+	 *
+	 * @param array|null $where_filter Parsed SHOW WHERE filter.
+	 * @return bool Whether the filter is an expression filter.
+	 */
+	private function is_mysql_show_where_expression_filter( ?array $where_filter ): bool {
+		return is_array( $where_filter ) && 'where_expression' === ( $where_filter['type'] ?? null );
+	}
+
+	/**
 	 * Parse OR-combined SHOW WHERE predicates.
 	 *
 	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
@@ -8693,7 +8706,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW COLUMNS/FIELDS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, full: bool, like: string|null, where: array<int,array{column: string, operator: string, value: string}>|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
+	 * @return array{schema: string, table: string, full: bool, like: string|null, where: array|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
 	 */
 	private function get_show_columns_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -8797,6 +8810,9 @@ class WP_PostgreSQL_Driver {
 
 			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
 			if ( null === $where ) {
+				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+			}
+			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 			}
 
@@ -8860,7 +8876,7 @@ class WP_PostgreSQL_Driver {
 	 * family so unsupported forms fail before raw backend execution.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, where: array<int,array{column: string, operator: string, value: string}>|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
+	 * @return array{schema: string, table: string, where: array|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
 	 */
 	private function get_show_index_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -8921,26 +8937,27 @@ class WP_PostgreSQL_Driver {
 		$table_name  = $table_reference['table'];
 		$where       = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
-			$where = $this->get_mysql_show_where_filters(
+			$allowed_columns = array(
+				'table'         => 'Table',
+				'non_unique'    => 'Non_unique',
+				'key_name'      => 'Key_name',
+				'seq_in_index'  => 'Seq_in_index',
+				'column_name'   => 'Column_name',
+				'collation'     => 'Collation',
+				'cardinality'   => 'Cardinality',
+				'sub_part'      => 'Sub_part',
+				'packed'        => 'Packed',
+				'null'          => 'Null',
+				'index_type'    => 'Index_type',
+				'comment'       => 'Comment',
+				'index_comment' => 'Index_comment',
+				'visible'       => 'Visible',
+				'expression'    => 'Expression',
+			);
+			$where          = $this->get_mysql_show_where_filters(
 				$tokens,
 				$position,
-				array(
-					'table'         => 'Table',
-					'non_unique'    => 'Non_unique',
-					'key_name'      => 'Key_name',
-					'seq_in_index'  => 'Seq_in_index',
-					'column_name'   => 'Column_name',
-					'collation'     => 'Collation',
-					'cardinality'   => 'Cardinality',
-					'sub_part'      => 'Sub_part',
-					'packed'        => 'Packed',
-					'null'          => 'Null',
-					'index_type'    => 'Index_type',
-					'comment'       => 'Comment',
-					'index_comment' => 'Index_comment',
-					'visible'       => 'Visible',
-					'expression'    => 'Expression',
-				),
+				$allowed_columns,
 				array(
 					'Non_unique',
 					'Seq_in_index',
@@ -8948,6 +8965,9 @@ class WP_PostgreSQL_Driver {
 					'Sub_part',
 				)
 			);
+			if ( null === $where ) {
+				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+			}
 			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 			}
@@ -9461,7 +9481,7 @@ class WP_PostgreSQL_Driver {
 	 * @param string      $table_name          Table name.
 	 * @param bool        $is_full             Whether this is SHOW FULL COLUMNS.
 	 * @param string|null $like                Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter        Optional simple MySQL WHERE filters.
+	 * @param array|null  $where_filter        Optional MySQL WHERE filters.
 	 * @param int         $fetch_mode          PDO fetch mode.
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW COLUMNS result rows.
@@ -9501,7 +9521,8 @@ class WP_PostgreSQL_Driver {
 			$params[] = $like;
 		}
 
-		if ( null !== $where_filter ) {
+		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
+		if ( null !== $where_filter && null === $where_expression_filter ) {
 			foreach ( $where_filter as $filter ) {
 				$sql     .= sprintf(
 					' AND %s',
@@ -9524,7 +9545,13 @@ ORDER BY ordinal_position';
 			'params' => $params,
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+		if ( null !== $where_expression_filter ) {
+			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+		} else {
+			$this->last_result = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+		}
 
 		$this->store_mysql_introspection_result_in_cache( $cache_key );
 
@@ -9537,7 +9564,7 @@ ORDER BY ordinal_position';
 	 * @param string      $table_name         information_schema relation name.
 	 * @param bool        $is_full            Whether this is SHOW FULL COLUMNS.
 	 * @param string|null $like               Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter       Optional simple MySQL WHERE filters.
+	 * @param array|null  $where_filter       Optional MySQL WHERE filters.
 	 * @param int         $fetch_mode         PDO fetch mode.
 	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW COLUMNS result rows.
@@ -9595,10 +9622,12 @@ ORDER BY ordinal_position';
 		if ( null !== $where_filter ) {
 			$rows = $this->filter_mysql_static_show_rows(
 				$rows,
-				array(
-					'type'       => 'where',
-					'conditions' => $where_filter,
-				)
+				$this->is_mysql_show_where_expression_filter( $where_filter )
+					? $where_filter
+					: array(
+						'type'       => 'where',
+						'conditions' => $where_filter,
+					)
 			);
 		}
 
@@ -9715,7 +9744,7 @@ ORDER BY ordinal_position';
 	 * @param string      $schema_name     Backend schema name.
 	 * @param string      $database_name   MySQL-facing database name.
 	 * @param string|null $like            Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter    Optional simple MySQL WHERE filters.
+	 * @param array|null  $where_filter    Optional MySQL WHERE filters.
 	 * @param int         $fetch_mode      PDO fetch mode.
 	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW TABLES result rows.
@@ -9742,7 +9771,8 @@ ORDER BY ordinal_position';
 			$params[] = $like;
 		}
 
-		if ( null !== $where_filter ) {
+		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
+		if ( null !== $where_filter && null === $where_expression_filter ) {
 			foreach ( $where_filter as $filter ) {
 				$sql     .= sprintf(
 					' AND %s',
@@ -9765,7 +9795,13 @@ ORDER BY table_name';
 			'params' => $params,
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+		if ( null !== $where_expression_filter ) {
+			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+		} else {
+			$this->last_result = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+		}
 
 		return $this->last_result;
 	}
@@ -11262,6 +11298,35 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Store already-fetched associative SHOW rows using the requested fetch mode.
+	 *
+	 * @param array[] $rows            Rows keyed by result column names.
+	 * @param int     $fetch_mode      PDO fetch mode.
+	 * @param array   ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed Result rows formatted for the requested fetch mode.
+	 */
+	private function set_mysql_associative_result_rows( array $rows, $fetch_mode, ...$fetch_mode_args ) {
+		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
+			$this->last_result = $rows;
+			return $this->last_result;
+		}
+
+		if ( PDO::FETCH_NUM === $fetch_mode ) {
+			$this->last_result = array_map( 'array_values', $rows );
+			return $this->last_result;
+		}
+
+		$this->last_result = array_map(
+			static function ( array $row ) {
+				return (object) $row;
+			},
+			$rows
+		);
+
+		return $this->last_result;
+	}
+
+	/**
 	 * Match a string against a MySQL LIKE pattern.
 	 *
 	 * @param string $value   Value to check.
@@ -11776,7 +11841,7 @@ ORDER BY table_name';
 	 * Execute a MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement through PostgreSQL catalogs.
 	 *
 	 * @param string      $table_name          Table name.
-	 * @param array|null  $where_filter        Optional simple MySQL WHERE filters.
+	 * @param array|null  $where_filter        Optional MySQL WHERE filters.
 	 * @param int         $fetch_mode          PDO fetch mode.
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW INDEX result rows.
@@ -11811,7 +11876,8 @@ ORDER BY table_name';
 			$table_name,
 		);
 
-		if ( null !== $where_filter ) {
+		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
+		if ( null !== $where_filter && null === $where_expression_filter ) {
 			$where_conditions = array();
 			foreach ( $where_filter as $filter ) {
 				$where_conditions[] = $this->get_mysql_show_where_filter_condition_sql(
@@ -11842,7 +11908,13 @@ ORDER BY
 			'params' => $params,
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+		if ( null !== $where_expression_filter ) {
+			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+		} else {
+			$this->last_result = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+		}
 
 		$this->store_mysql_introspection_result_in_cache( $cache_key );
 
