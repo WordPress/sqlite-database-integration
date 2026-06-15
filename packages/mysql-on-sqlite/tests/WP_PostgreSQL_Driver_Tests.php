@@ -2892,7 +2892,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$unsupported_query_methods = array(
-			'UPDATE wptests_unsupported SET id = 1 ORDER BY id ASC'                                                                     => 'translate_simple_mysql_update_query',
 			'UPDATE wptests_unsupported AS u LEFT JOIN wptests_other AS o ON u.id = o.id SET u.id = 1'                                  => 'translate_simple_mysql_update_query',
 			'UPDATE wptests_unsupported, wptests_other SET wptests_other.id = wptests_unsupported.id WHERE wptests_other.id = 1' => 'translate_simple_mysql_update_query',
 		);
@@ -4000,6 +3999,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple UPDATE ORDER BY without LIMIT updates the same matched row set.
+	 */
+	public function test_simple_update_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_ordered (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_ordered (id, status) VALUES (1, 'draft'), (2, 'publish'), (3, 'draft')" );
+
+		$update = "UPDATE `wptests_update_ordered` SET `status` = 'archived' WHERE `status` = 'draft' ORDER BY `id` DESC";
+
+		$this->assertSame( 2, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_update_ordered" SET "status" = \'archived\' WHERE ("status" = \'draft\') AND ("status" IS DISTINCT FROM (\'archived\'))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_ordered ORDER BY id' );
+		$this->assertSame( 'archived', $rows[0]->status );
+		$this->assertSame( 'publish', $rows[1]->status );
+		$this->assertSame( 'archived', $rows[2]->status );
+	}
+
+	/**
 	 * Tests simple UPDATE preserves a MySQL literal ending in an escaped backslash.
 	 */
 	public function test_simple_update_preserves_trailing_escaped_backslash_literal(): void {
@@ -4332,6 +4364,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_multi_parent" AS "p"', $sql );
 		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_multi_child" AS "c"', $sql );
 		$this->assertStringContainsString( 'SELECT (SELECT COUNT(*) FROM mysql_delete_target_0) + (SELECT COUNT(*) FROM mysql_delete_target_1) AS affected_rows', $sql );
+	}
+
+	/**
+	 * Tests MySQL multi-target DELETE USING statements share the writable CTE path.
+	 */
+	public function test_mysql_multi_target_delete_using_is_translated_to_writable_ctes(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE FROM p, c
+			USING wptests_delete_using_parent AS p
+			JOIN wptests_delete_using_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "p".ctid AS "mysql_delete_target_0_ctid", "c".ctid AS "mysql_delete_target_1_ctid"', $sql );
+		$this->assertStringContainsString( 'FROM wptests_delete_using_parent AS p JOIN wptests_delete_using_child AS c ON c.parent_id = p.id', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_using_parent" AS "p"', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_using_child" AS "c"', $sql );
 	}
 
 	/**
@@ -9960,6 +10017,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW COLUMNS/FIELDS WHERE filters support AND-combined predicates.
+	 */
+	public function test_show_columns_where_and_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field LIKE 'option_%' AND Type = 'varchar(191)'" );
+
+		$this->assertSame(
+			array( 'option_name' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( "field_name LIKE ? ESCAPE '\\'", $queries[0]['sql'] );
+		$this->assertStringContainsString( 'column_type = ?', $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'option_%', 'varchar(191)' ), $queries[0]['params'] );
+	}
+
+	/**
 	 * Tests unsupported SHOW COLUMNS/FIELDS WHERE forms do not reach the backend.
 	 */
 	public function test_show_columns_where_unsupported_forms_do_not_reach_backend(): void {
@@ -9968,8 +10051,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SHOW COLUMNS FROM wptests_options WHERE Field = option_name',
 			'SHOW COLUMNS FROM wptests_options WHERE Field LIKE option_%',
 			"SHOW COLUMNS FROM wptests_options WHERE Unknown = 'option_name'",
-			"SHOW COLUMNS FROM wptests_options WHERE Field = 'option_name' AND Type = 'varchar(191)'",
-			"SHOW COLUMNS FROM wptests_options WHERE Field LIKE 'option_%' AND Type = 'varchar(191)'",
 			"SHOW FIELDS FROM wptests_options WHERE Privileges = 'select,insert,update,references'",
 			"SHOW COLUMNS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
 			"SHOW FIELDS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
@@ -10133,6 +10214,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END LIKE ?", $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'BASE%' ), $queries[0]['params'] );
+	}
+
+	/**
+	 * Tests SHOW FULL TABLES WHERE filters support AND-combined predicates.
+	 */
+	public function test_show_full_tables_where_and_filters_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$tables = $driver->query( "SHOW FULL TABLES WHERE Tables_in_wptests LIKE 'wptests_%' AND Table_type = 'BASE TABLE'" );
+
+		$this->assertSame(
+			array( 'wptests_options', 'wptests_posts' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Tables_in_wptests;
+				},
+				$tables
+			)
+		);
+		$this->assertSame( array( 'BASE TABLE', 'BASE TABLE' ), array( $tables[0]->Table_type, $tables[1]->Table_type ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( "table_name LIKE ? ESCAPE '\\'", $queries[0]['sql'] );
+		$this->assertStringContainsString( "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END = ?", $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_%', 'BASE TABLE' ), $queries[0]['params'] );
 	}
 
 	/**

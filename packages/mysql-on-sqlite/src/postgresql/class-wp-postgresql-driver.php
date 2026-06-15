@@ -6590,7 +6590,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW TABLES statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{full: bool, schema: string, database: string, like: string|null, where: array{column: string, operator: string, value: string}|null}|null SHOW TABLES options, or null when unsupported.
+	 * @return array{full: bool, schema: string, database: string, like: string|null, where: array<int,array{column: string, operator: string, value: string}>|null}|null SHOW TABLES options, or null when unsupported.
 	 */
 	private function get_show_tables_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -6664,12 +6664,15 @@ class WP_PostgreSQL_Driver {
 				$allowed_columns['table_type'] = 'Table_type';
 			}
 
-			$where = $this->get_mysql_show_where_filter( $tokens, $position, $allowed_columns );
+			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
 			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
 			}
 
-			$position += 4;
+			$position = $this->get_mysql_statement_end_position( $tokens, $position );
+			if ( null === $position ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
+			}
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -7602,7 +7605,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW COLUMNS/FIELDS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, table: string, full: bool, like: string|null, where: array{column: string, operator: string, value: string}|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
+	 * @return array{schema: string, table: string, full: bool, like: string|null, where: array<int,array{column: string, operator: string, value: string}>|null}|null SHOW COLUMNS options, or null when this is not a SHOW COLUMNS/FIELDS statement.
 	 */
 	private function get_show_columns_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -7704,12 +7707,15 @@ class WP_PostgreSQL_Driver {
 				$allowed_columns['comment']    = 'Comment';
 			}
 
-			$where = $this->get_mysql_show_where_filter( $tokens, $position, $allowed_columns );
+			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
 			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 			}
 
-			$position += 4;
+			$position = $this->get_mysql_statement_end_position( $tokens, $position );
+			if ( null === $position ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
+			}
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -8364,7 +8370,7 @@ class WP_PostgreSQL_Driver {
 	 * @param string      $table_name          Table name.
 	 * @param bool        $is_full             Whether this is SHOW FULL COLUMNS.
 	 * @param string|null $like                Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter        Optional simple MySQL WHERE filter.
+	 * @param array|null  $where_filter        Optional simple MySQL WHERE filters.
 	 * @param int         $fetch_mode          PDO fetch mode.
 	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
 	 * @return mixed SHOW COLUMNS result rows.
@@ -8405,14 +8411,16 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( null !== $where_filter ) {
-			$sql     .= sprintf(
-				' AND %s',
-				$this->get_mysql_show_where_filter_condition_sql(
-					$this->get_show_columns_filter_column_expression( $where_filter['column'] ),
-					$where_filter
-				)
-			);
-			$params[] = $where_filter['value'];
+			foreach ( $where_filter as $filter ) {
+				$sql     .= sprintf(
+					' AND %s',
+					$this->get_mysql_show_where_filter_condition_sql(
+						$this->get_show_columns_filter_column_expression( $filter['column'] ),
+						$filter
+					)
+				);
+				$params[] = $filter['value'];
+			}
 		}
 
 		$sql .= '
@@ -8438,7 +8446,7 @@ ORDER BY ordinal_position';
 	 * @param string      $table_name         information_schema relation name.
 	 * @param bool        $is_full            Whether this is SHOW FULL COLUMNS.
 	 * @param string|null $like               Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter       Optional simple MySQL WHERE filter.
+	 * @param array|null  $where_filter       Optional simple MySQL WHERE filters.
 	 * @param int         $fetch_mode         PDO fetch mode.
 	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW COLUMNS result rows.
@@ -8497,9 +8505,8 @@ ORDER BY ordinal_position';
 			$rows = $this->filter_mysql_static_show_rows(
 				$rows,
 				array(
-					'type'    => 'like' === ( $where_filter['operator'] ?? '=' ) ? 'like' : 'exact',
-					'column'  => $where_filter['column'],
-					'pattern' => $where_filter['value'],
+					'type'       => 'where',
+					'conditions' => $where_filter,
 				)
 			);
 		}
@@ -8617,7 +8624,7 @@ ORDER BY ordinal_position';
 	 * @param string      $schema_name     Backend schema name.
 	 * @param string      $database_name   MySQL-facing database name.
 	 * @param string|null $like            Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter    Optional simple MySQL WHERE filter.
+	 * @param array|null  $where_filter    Optional simple MySQL WHERE filters.
 	 * @param int         $fetch_mode      PDO fetch mode.
 	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW TABLES result rows.
@@ -8645,14 +8652,16 @@ ORDER BY ordinal_position';
 		}
 
 		if ( null !== $where_filter ) {
-			$sql     .= sprintf(
-				' AND %s',
-				$this->get_mysql_show_where_filter_condition_sql(
-					$this->get_show_tables_filter_column_expression( $where_filter['column'], $table_column ),
-					$where_filter
-				)
-			);
-			$params[] = $where_filter['value'];
+			foreach ( $where_filter as $filter ) {
+				$sql     .= sprintf(
+					' AND %s',
+					$this->get_mysql_show_where_filter_condition_sql(
+						$this->get_show_tables_filter_column_expression( $filter['column'], $table_column ),
+						$filter
+					)
+				);
+				$params[] = $filter['value'];
+			}
 		}
 
 		$sql .= '
@@ -11576,7 +11585,6 @@ WHERE option_name IN (
 		if (
 			! isset( $tokens[0], $tokens[1] )
 			|| WP_MySQL_Lexer::DELETE_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::FROM_SYMBOL === $tokens[1]->id
 		) {
 			return null;
 		}
@@ -11586,29 +11594,41 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
-		if ( null === $from_position || 1 >= $from_position || $from_position + 1 >= $statement_end ) {
-			return null;
+		if ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[1]->id ) {
+			$using_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::USING_SYMBOL, 2, $statement_end );
+			if ( null === $using_position || 2 >= $using_position || $using_position + 1 >= $statement_end ) {
+				return null;
+			}
+
+			$target_aliases         = $this->parse_mysql_delete_target_aliases( $tokens, 2, $using_position );
+			$table_references_start = $using_position + 1;
+		} else {
+			$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+			if ( null === $from_position || 1 >= $from_position || $from_position + 1 >= $statement_end ) {
+				return null;
+			}
+
+			$target_aliases         = $this->parse_mysql_delete_target_aliases( $tokens, 1, $from_position );
+			$table_references_start = $from_position + 1;
 		}
 
-		$target_aliases = $this->parse_mysql_delete_target_aliases( $tokens, 1, $from_position );
 		if ( null === $target_aliases ) {
 			return null;
 		}
 
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $from_position + 1, $statement_end );
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $from_position + 1, $statement_end );
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $table_references_start, $statement_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $table_references_start, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $table_references_start, $statement_end );
 		if ( null !== $order_position || null !== $limit_position ) {
 			return null;
 		}
 
 		$from_end = $where_position ?? $statement_end;
-		if ( $from_position + 1 >= $from_end ) {
+		if ( $table_references_start >= $from_end ) {
 			return null;
 		}
 
-		$scope = $this->get_mysql_select_scope( $tokens, $from_position + 1, $from_end );
+		$scope = $this->get_mysql_select_scope( $tokens, $table_references_start, $from_end );
 		if ( null === $scope || ! empty( $scope['unknown'] ) ) {
 			return null;
 		}
@@ -11679,7 +11699,7 @@ WHERE option_name IN (
 		return sprintf(
 			'WITH mysql_delete_rows AS MATERIALIZED (SELECT %s FROM %s%s), %s SELECT %s AS affected_rows',
 			implode( ', ', $select_columns ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position + 1, $from_end ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $table_references_start, $from_end ),
 			$where_sql,
 			implode( ', ', $delete_ctes ),
 			implode( ' + ', $count_parts )
@@ -14286,9 +14306,10 @@ WHERE option_name IN (
 	 *
 	 * WordPress CRUD updates emit a narrow MySQL shape with one table,
 	 * backticked identifiers, and plain SET/WHERE clauses. Some plugins use
-	 * single-table aliases and bounded ORDER/LIMIT forms; those are rewritten
-	 * through PostgreSQL ctid subqueries. Inner joined UPDATE syntax is rewritten
-	 * separately to PostgreSQL UPDATE ... FROM.
+	 * single-table aliases and ORDER BY forms. Bounded ORDER/LIMIT forms are
+	 * rewritten through PostgreSQL ctid subqueries; ORDER BY without LIMIT is
+	 * validated but omitted because the same matched row set is updated. Inner
+	 * joined UPDATE syntax is rewritten separately to PostgreSQL UPDATE ... FROM.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -14331,7 +14352,6 @@ WHERE option_name IN (
 			( null !== $order_position && null !== $where_position && $order_position < $where_position )
 			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
 			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && null === $limit_position )
 		) {
 			return null;
 		}
