@@ -14717,6 +14717,11 @@ WHERE option_name IN (
 			return $joined_update;
 		}
 
+			$joined_update = $this->translate_mysql_outer_join_update_query( $tokens, $statement_end );
+		if ( null !== $joined_update ) {
+			return $joined_update;
+		}
+
 			$position        = 1;
 			$table_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $statement_end );
 		if ( null === $table_reference ) {
@@ -14839,6 +14844,254 @@ WHERE option_name IN (
 		}
 
 			return $sql;
+	}
+
+		/**
+		 * Translate supported MySQL outer-joined UPDATE statements.
+		 *
+		 * PostgreSQL UPDATE ... FROM does not preserve unmatched LEFT JOIN rows.
+		 * Select the target row ctid and computed assignment values through the
+		 * original joined table reference, then update by ctid from that derived
+		 * row set.
+		 *
+		 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+		 * @param int              $statement_end Final statement token, exclusive.
+		 * @return string|null PostgreSQL query, or null when unsupported.
+		 */
+	private function translate_mysql_outer_join_update_query( array $tokens, int $statement_end ): ?string {
+		$set_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SET_SYMBOL, 1, $statement_end );
+		if ( null === $set_position ) {
+			return null;
+		}
+
+		if (
+			! $this->contains_top_level_mysql_token( $tokens, 1, $set_position, array( WP_MySQL_Lexer::LEFT_SYMBOL ) )
+			|| $this->contains_top_level_mysql_token(
+				$tokens,
+				1,
+				$set_position,
+				array(
+					WP_MySQL_Lexer::NATURAL_SYMBOL,
+					WP_MySQL_Lexer::RIGHT_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+					WP_MySQL_Lexer::USING_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$position         = 1;
+		$target_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
+		if (
+			null === $target_reference
+			|| $position >= $set_position
+		) {
+			return null;
+		}
+
+		$table_name             = $target_reference['table'];
+		$alias                  = $target_reference['alias'];
+		$target_reference_alias = null === $alias ? $table_name : $alias;
+
+		$scope = $this->get_mysql_select_scope( $tokens, 1, $set_position );
+		if ( null === $scope || ! empty( $scope['unknown'] ) ) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
+		if ( null !== $order_position || null !== $limit_position ) {
+			return null;
+		}
+
+		$set_end = $where_position ?? $statement_end;
+		if ( $set_position + 1 >= $set_end ) {
+			return null;
+		}
+
+		$update_set_clause = $this->translate_mysql_joined_update_set_clause_for_derived_source(
+			$table_name,
+			$target_reference_alias,
+			$tokens,
+			$set_position + 1,
+			$set_end,
+			$scope
+		);
+		if ( null === $update_set_clause ) {
+			return null;
+		}
+
+		$where_sql = '';
+		if ( null !== $where_position ) {
+			if (
+				$where_position + 1 >= $statement_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+			) {
+				return null;
+			}
+
+			$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$statement_end,
+				$scope
+			);
+			$where_sql = ' WHERE ' . $where['sql'];
+		}
+
+		$source_alias      = 'mysql_update_values';
+		$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
+		$target_ctid_alias = 'mysql_update_target_ctid';
+		$target_alias_sql  = $this->connection->quote_identifier( $target_reference_alias );
+		$select_values     = array_merge(
+			array(
+				sprintf(
+					'%s.ctid AS %s',
+					$target_alias_sql,
+					$this->connection->quote_identifier( $target_ctid_alias )
+				),
+			),
+			$update_set_clause['select_sql']
+		);
+		$source_sql        = sprintf(
+			'(SELECT %s FROM %s%s) AS %s',
+			implode( ', ', $select_values ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 1, $set_position ),
+			$where_sql,
+			$source_alias_sql
+		);
+
+		return sprintf(
+			'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
+			$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
+			$update_set_clause['set_sql'],
+			$source_sql,
+			$this->get_postgresql_dml_ctid_reference_sql( $alias ),
+			$source_alias_sql,
+			$this->connection->quote_identifier( $target_ctid_alias ),
+			$update_set_clause['changed_predicate_sql']
+		);
+	}
+
+		/**
+		 * Translate a joined UPDATE SET clause for a derived source rewrite.
+		 *
+		 * @param string           $table_name Table name.
+		 * @param string|null      $alias      Target alias.
+		 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+		 * @param int              $start      First SET-clause token position.
+		 * @param int              $end        Final SET-clause token position, exclusive.
+		 * @param array            $scope      Statement table scope.
+		 * @return array{set_sql: string, select_sql: string[], changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
+		 */
+	private function translate_mysql_joined_update_set_clause_for_derived_source( string $table_name, ?string $alias, array $tokens, int $start, int $end, array $scope ): ?array {
+		$column_metadata    = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$assignments        = array();
+		$select_expressions = array();
+		$changed_predicates = array();
+		$source_alias_sql   = $this->connection->quote_identifier( 'mysql_update_values' );
+		$value_index        = 0;
+
+		for ( $position = $start; $position < $end; ) {
+			$target = $this->parse_simple_mysql_update_assignment_target( $table_name, $alias, $tokens, $position, $end );
+			if ( null === $target ) {
+				return null;
+			}
+
+			$target_column = $target['column'];
+			if ( ! isset( $tokens[ $target['end'] ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $target['end'] ]->id ) {
+				return null;
+			}
+
+			$value_start    = $target['end'] + 1;
+			$assignment_end = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$value_start,
+				$end
+			) ?? $end;
+
+			if ( $value_start >= $assignment_end ) {
+				return null;
+			}
+
+			$target_column_key   = strtolower( $target_column );
+			$target_metadata     = $column_metadata[ $target_column_key ] ?? null;
+			$coerced_default_sql = null;
+
+			if ( null !== $target_metadata ) {
+				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+
+			if (
+				null !== $target_metadata
+				&& ! $this->is_mysql_strict_sql_mode_active()
+				&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
+			) {
+				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
+			}
+
+			$value_sql = $coerced_default_sql;
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql ) {
+				$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$scope
+				);
+				$value_sql      = $expression_sql['sql'];
+				if (
+					$expression_sql['changed']
+					&& null !== $target_metadata
+					&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+				) {
+					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+				}
+			}
+
+			$value_alias     = 'mysql_update_value_' . $value_index;
+			$value_alias_sql = $this->connection->quote_identifier( $value_alias );
+
+			$select_expressions[] = sprintf( '%s AS %s', $value_sql, $value_alias_sql );
+			$assignments[]        = sprintf(
+				'%s = %s.%s',
+				$this->connection->quote_identifier( $target_column ),
+				$source_alias_sql,
+				$value_alias_sql
+			);
+			$changed_predicates[] = sprintf(
+				'%s IS DISTINCT FROM (%s.%s)',
+				$this->get_postgresql_dml_column_reference_sql( $target_column, $alias ),
+				$source_alias_sql,
+				$value_alias_sql
+			);
+
+			++$value_index;
+			$position = $assignment_end;
+			if ( $position === $end ) {
+				break;
+			}
+
+			++$position;
+		}
+
+		if ( 0 === count( $assignments ) ) {
+			return null;
+		}
+
+		return array(
+			'set_sql'               => implode( ', ', $assignments ),
+			'select_sql'            => $select_expressions,
+			'changed_predicate_sql' => implode( ' OR ', $changed_predicates ),
+		);
 	}
 
 		/**
@@ -28997,6 +29250,21 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			);
 		}
 
+		if ( 'length' === $bounds['function'] && 1 === count( $arguments ) ) {
+			$binary_length_sql = $this->get_postgresql_mysql_unhex_length_sql(
+				$tokens,
+				$arguments[0]['start'],
+				$arguments[0]['end']
+			);
+			if ( null !== $binary_length_sql ) {
+				return array(
+					'sql'      => $binary_length_sql,
+					'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+					'position' => $bounds['close'],
+				);
+			}
+		}
+
 		$sql = $this->get_postgresql_mysql_common_function_sql( $bounds['function'], $argument_sql );
 		if ( null === $sql ) {
 			return null;
@@ -29007,6 +29275,34 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
 			'position' => $bounds['close'],
 		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL LENGTH(UNHEX(...)).
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First argument token.
+	 * @param int              $end    Final argument token, exclusive.
+	 * @return string|null PostgreSQL byte-length SQL, or null when unsupported.
+	 */
+	private function get_postgresql_mysql_unhex_length_sql( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->get_mysql_function_call_bounds( $tokens, $start, $end, 'unhex' );
+		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$hex_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+
+		return sprintf( "OCTET_LENGTH(DECODE(CAST(%s AS text), 'hex'))", $hex_sql );
 	}
 
 	/**

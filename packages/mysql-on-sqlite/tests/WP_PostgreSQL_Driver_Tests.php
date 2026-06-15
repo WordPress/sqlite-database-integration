@@ -3001,7 +3001,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$unsupported_query_methods = array(
-			'UPDATE wptests_unsupported AS u LEFT JOIN wptests_other AS o ON u.id = o.id SET u.id = 1'                                  => 'translate_simple_mysql_update_query',
 			'UPDATE wptests_unsupported, wptests_other SET wptests_other.id = wptests_unsupported.id WHERE wptests_other.id = 1' => 'translate_simple_mysql_update_query',
 		);
 
@@ -4097,6 +4096,47 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'publish', $rows[0]->status );
 		$this->assertSame( 'draft', $rows[1]->status );
 		$this->assertSame( 'draft', $rows[2]->status );
+	}
+
+	/**
+	 * Tests MySQL LEFT JOIN UPDATE statements preserve unmatched source rows.
+	 */
+	public function test_left_join_update_is_translated_through_derived_ctid_source(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_left_joined (
+				id INTEGER PRIMARY KEY,
+				author_id INTEGER NOT NULL,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_left_joined_meta (
+				post_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_left_joined (id, author_id, status) VALUES (1, 10, 'draft'), (2, 20, 'draft'), (3, 30, 'publish')" );
+		$driver->query( "INSERT INTO wptests_update_left_joined_meta (post_id, meta_key, meta_value) VALUES (10, '_status', 'scheduled'), (10, '_other', 'ignored')" );
+
+		$update = "UPDATE wptests_update_left_joined AS p
+			LEFT JOIN wptests_update_left_joined_meta AS pm
+				ON pm.post_id = p.author_id AND pm.meta_key = '_status'
+			SET p.status = IFNULL(pm.meta_value, 'orphan')
+			WHERE p.status = 'draft'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$update
+		);
+
+		$this->assertSame(
+			'UPDATE "wptests_update_left_joined" AS "p" SET "status" = "mysql_update_values"."mysql_update_value_0" FROM (SELECT "p".ctid AS "mysql_update_target_ctid", COALESCE(pm.meta_value, \'orphan\') AS "mysql_update_value_0" FROM wptests_update_left_joined AS p LEFT JOIN wptests_update_left_joined_meta AS pm ON pm.post_id = p.author_id AND pm.meta_key = \'_status\' WHERE p.status = \'draft\') AS "mysql_update_values" WHERE ("p".ctid = "mysql_update_values"."mysql_update_target_ctid") AND ("p"."status" IS DISTINCT FROM ("mysql_update_values"."mysql_update_value_0"))',
+			$sql
+		);
 	}
 
 	/**
@@ -5277,11 +5317,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
 			'translate_mysql_compatible_query',
-			"SELECT LENGTH(UNHEX('c3a9')) AS utf8_byte_length"
+			"SELECT LENGTH(UNHEX('c3a9')) AS utf8_byte_length, LENGTH(UNHEX('ff')) AS binary_byte_length"
 		);
 
 		$this->assertSame(
-			"SELECT OCTET_LENGTH(CONVERT_TO(CAST(CONVERT_FROM(DECODE(CAST('c3a9' AS text), 'hex'), 'UTF8') AS text), 'UTF8')) AS utf8_byte_length",
+			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS utf8_byte_length, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS binary_byte_length",
 			$sql
 		);
 	}
