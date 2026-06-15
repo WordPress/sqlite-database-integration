@@ -2897,6 +2897,143 @@ PHP
 	}
 
 	/**
+	 * Tests query() returns before the driver for not-ready and empty queries.
+	 */
+	public function test_query_returns_false_before_driver_for_not_ready_and_empty_queries(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+$GLOBALS['wp_postgresql_db_query_filter_inputs'] = array();
+
+function apply_filters( $hook_name, $value ) {
+	if ( 'query' !== $hook_name ) {
+		return $value;
+	}
+
+	$GLOBALS['wp_postgresql_db_query_filter_inputs'][] = $value;
+	if ( 'FILTER_TO_EMPTY' === $value ) {
+		return '';
+	}
+
+	return $value;
+}
+
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $ready         = true;
+	public $insert_id     = 0;
+	public $last_query    = null;
+	public $num_queries   = 0;
+	public $last_result   = array();
+	public $col_info      = null;
+	public $rows_affected = 0;
+	public $num_rows      = 0;
+	public $last_error    = '';
+	public $result        = null;
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Query_Early_Return_Fake_Driver extends WP_PostgreSQL_Driver {
+	public $queries = array();
+
+	public function __construct() {}
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+		return array();
+	}
+}
+
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$driver = new WP_PostgreSQL_DB_Query_Early_Return_Fake_Driver();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+if ( PHP_VERSION_ID < 80100 ) {
+	$driver_property->setAccessible( true );
+}
+$driver_property->setValue( $db, $driver );
+
+$db->ready     = false;
+$db->insert_id = 123;
+$not_ready     = array(
+	'return'             => $db->query( 'SELECT 1' ),
+	'insert_id'          => $db->insert_id,
+	'num_queries'        => $db->num_queries,
+	'last_query'         => $db->last_query,
+	'driver_query_count' => count( $driver->queries ),
+	'filter_input_count' => count( $GLOBALS['wp_postgresql_db_query_filter_inputs'] ),
+);
+
+$db->ready     = true;
+$db->insert_id = 456;
+$empty_query   = array(
+	'return'             => $db->query( '' ),
+	'insert_id'          => $db->insert_id,
+	'num_queries'        => $db->num_queries,
+	'last_query'         => $db->last_query,
+	'driver_query_count' => count( $driver->queries ),
+	'filter_inputs'      => $GLOBALS['wp_postgresql_db_query_filter_inputs'],
+);
+
+$db->insert_id    = 789;
+$filter_cancelled = array(
+	'return'             => $db->query( 'FILTER_TO_EMPTY' ),
+	'insert_id'          => $db->insert_id,
+	'num_queries'        => $db->num_queries,
+	'last_query'         => $db->last_query,
+	'driver_query_count' => count( $driver->queries ),
+	'filter_inputs'      => $GLOBALS['wp_postgresql_db_query_filter_inputs'],
+);
+
+wp_postgresql_db_test_respond(
+	array(
+		'not_ready'        => $not_ready,
+		'empty_query'      => $empty_query,
+		'filter_cancelled' => $filter_cancelled,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'return'             => false,
+				'insert_id'          => 123,
+				'num_queries'        => 0,
+				'last_query'         => null,
+				'driver_query_count' => 0,
+				'filter_input_count' => 0,
+			),
+			$result['not_ready']
+		);
+
+		$this->assertSame(
+			array(
+				'return'             => false,
+				'insert_id'          => 0,
+				'num_queries'        => 0,
+				'last_query'         => null,
+				'driver_query_count' => 0,
+				'filter_inputs'      => array( '' ),
+			),
+			$result['empty_query']
+		);
+
+		$this->assertSame(
+			array(
+				'return'             => false,
+				'insert_id'          => 0,
+				'num_queries'        => 0,
+				'last_query'         => null,
+				'driver_query_count' => 0,
+				'filter_inputs'      => array( '', 'FILTER_TO_EMPTY' ),
+			),
+			$result['filter_cancelled']
+		);
+	}
+
+	/**
 	 * Tests query state, metadata, and SAVEQUERIES mapping.
 	 */
 	public function test_query_maps_backend_state_to_wpdb_fields(): void {
