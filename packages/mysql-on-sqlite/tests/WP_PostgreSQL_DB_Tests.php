@@ -114,6 +114,95 @@ PHP
 	}
 
 	/**
+	 * Tests the wpdb adapter filters and forwards SQL mode state to the PostgreSQL driver.
+	 */
+	public function test_set_sql_mode_filters_incompatible_modes_and_updates_postgresql_driver(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+$GLOBALS['wp_postgresql_db_test_filter_calls'] = array();
+
+function apply_filters( $hook_name, $value ) {
+	$GLOBALS['wp_postgresql_db_test_filter_calls'][] = array(
+		'hook_name' => $hook_name,
+		'value'     => $value,
+	);
+
+	if ( 'incompatible_sql_modes' === $hook_name ) {
+		$value[] = 'ANSI_QUOTES';
+	}
+
+	return $value;
+}
+
+class wpdb {
+	public $incompatible_modes = array( 'NO_ZERO_DATE' );
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ),
+	'wptests'
+);
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$initial_mode = $driver->get_sql_mode();
+$db->set_sql_mode();
+$mode_after_empty_call   = $driver->get_sql_mode();
+$filter_calls_after_empty = $GLOBALS['wp_postgresql_db_test_filter_calls'];
+
+$db->set_sql_mode(
+	array(
+		'strict_trans_tables',
+		'NO_ZERO_DATE',
+		'ansi_quotes',
+		'no_engine_substitution',
+	)
+);
+$mode_after_filtered_call = $driver->get_sql_mode();
+$filter_calls_after_modes = $GLOBALS['wp_postgresql_db_test_filter_calls'];
+
+$driver_property->setValue( $db, null );
+$db->set_sql_mode( array( 'STRICT_ALL_TABLES' ) );
+$mode_after_detached_call = $driver->get_sql_mode();
+
+wp_postgresql_db_test_respond(
+	array(
+		'initial_mode'              => $initial_mode,
+		'mode_after_empty_call'     => $mode_after_empty_call,
+		'filter_calls_after_empty'  => $filter_calls_after_empty,
+		'mode_after_filtered_call'  => $mode_after_filtered_call,
+		'filter_calls_after_modes'  => $filter_calls_after_modes,
+		'mode_after_detached_call'  => $mode_after_detached_call,
+	)
+);
+PHP
+		);
+
+		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $result['initial_mode'] );
+		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $result['mode_after_empty_call'] );
+		$this->assertSame( array(), $result['filter_calls_after_empty'] );
+		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
+		$this->assertSame(
+			array(
+				array(
+					'hook_name' => 'incompatible_sql_modes',
+					'value'     => array( 'NO_ZERO_DATE' ),
+				),
+			),
+			$result['filter_calls_after_modes']
+		);
+		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
+	}
+
+	/**
 	 * Tests the PostgreSQL adapter strips legacy charset text without MySQL.
 	 */
 	public function test_strip_invalid_text_handles_legacy_charsets_in_php(): void {
