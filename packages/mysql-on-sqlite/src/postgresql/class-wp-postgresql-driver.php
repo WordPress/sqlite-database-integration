@@ -526,6 +526,18 @@ class WP_PostgreSQL_Driver {
 			return $this->last_result;
 		}
 
+		$create_table_select_query = $this->translate_mysql_create_table_select_query( $query );
+		if ( null !== $create_table_select_query ) {
+			$result = $this->execute_postgresql_statements( array( $create_table_select_query['sql'] ) );
+			$this->store_mysql_create_table_select_metadata(
+				$create_table_select_query['temporary']
+					? $this->get_temporary_schema_for_metadata_table( $create_table_select_query['table'] )
+					: $create_table_select_query['schema'],
+				$create_table_select_query['table']
+			);
+			return $result;
+		}
+
 		if ( $this->is_create_table_query( $query ) ) {
 			$this->validate_mysql_create_table_target_database( $query );
 
@@ -2909,6 +2921,312 @@ class WP_PostgreSQL_Driver {
 
 		$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
 		return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
+	}
+
+	/**
+	 * Translate supported MySQL CREATE TABLE ... [AS] SELECT statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL CREATE TABLE ... SELECT query.
+	 * @return array{sql: string, schema: string, table: string, temporary: bool}|null Translation, or null when this is not CTAS.
+	 */
+	private function translate_mysql_create_table_select_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$position     = 1;
+		$is_temporary = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			$is_temporary = true;
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$if_not_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$if_not_exists = true;
+			$position     += 3;
+		}
+
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if ( null === $table_reference ) {
+			return null;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				$definition_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+				if ( null !== $definition_end && isset( $tokens[ $definition_end ] ) ) {
+					$after_definition = $definition_end;
+					if ( WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $after_definition ]->id ) {
+						++$after_definition;
+					}
+
+					if ( isset( $tokens[ $after_definition ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $after_definition ]->id ) {
+						throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+					}
+				}
+			}
+
+			return null;
+		}
+
+		$schema_name = $this->get_mysql_create_table_select_backend_schema( $table_reference, $is_temporary );
+		$select_sql  = $this->get_mysql_token_range_bytes( $query, $tokens, $position, $statement_end );
+		if ( '' === trim( $select_sql ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$select_translation = $this->translate_mysql_select_query_for_postgresql( $select_sql );
+		$table_identifier  = $is_temporary
+			? $this->connection->quote_identifier( $table_reference['table'] )
+			: $this->get_postgresql_schema_identifier( $schema_name, $table_reference['table'] );
+
+		return array(
+			'sql'    => sprintf(
+				'CREATE %sTABLE %s%s AS %s',
+				$is_temporary ? 'TEMPORARY ' : '',
+				$if_not_exists ? 'IF NOT EXISTS ' : '',
+				$table_identifier,
+				$select_translation['sql']
+			),
+			'schema'    => $schema_name,
+			'table'     => $table_reference['table'],
+			'temporary' => $is_temporary,
+		);
+	}
+
+	/**
+	 * Resolve the backend schema for a CREATE TABLE ... SELECT target.
+	 *
+	 * @param array $table_reference Parsed table reference.
+	 * @param bool  $is_temporary    Whether the target table is temporary.
+	 * @return string Backend schema name for metadata.
+	 */
+	private function get_mysql_create_table_select_backend_schema( array $table_reference, bool $is_temporary ): string {
+		$requested_schema = $table_reference['schema'];
+		if ( null !== $requested_schema && 0 === strcasecmp( $requested_schema, 'information_schema' ) ) {
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+		}
+
+		if ( $is_temporary ) {
+			if (
+				null !== $requested_schema
+				&& 0 !== strcasecmp( $requested_schema, $this->main_db_name )
+				&& 0 !== strcasecmp( $requested_schema, 'public' )
+			) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+			}
+
+			return $this->get_temporary_drop_table_schema_name();
+		}
+
+		if ( null === $requested_schema ) {
+			if ( 0 === strcasecmp( $this->db_name, 'information_schema' ) ) {
+				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+			}
+
+			return 'public';
+		}
+
+		return $this->get_mysql_writable_table_backend_schema( $table_reference, 'CREATE TABLE' );
+	}
+
+	/**
+	 * Store MySQL-facing column metadata for a CREATE TABLE ... SELECT result.
+	 *
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Table name.
+	 */
+	private function store_mysql_create_table_select_metadata( string $table_schema, string $table_name ): void {
+		$this->ensure_mysql_schema_metadata_tables();
+		$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $table_schema );
+
+		foreach ( $this->get_mysql_create_table_select_column_metadata( $table_schema, $table_name ) as $column ) {
+			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+		}
+
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Get MySQL-facing column metadata for a backend CTAS table.
+	 *
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Table name.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_mysql_create_table_select_column_metadata( string $table_schema, string $table_name ): array {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if ( 'sqlite' === $driver_name ) {
+			return $this->get_sqlite_create_table_select_column_metadata( $table_schema, $table_name );
+		}
+
+		$stmt = $this->connection->query(
+			'SELECT column_name, ordinal_position, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable, column_default
+			FROM information_schema.columns
+			WHERE table_schema = ? AND table_name = ?
+			ORDER BY ordinal_position',
+			array( $table_schema, $table_name )
+		);
+
+		$columns = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
+			$column_type = $this->get_mysql_column_type_from_backend_metadata( $column );
+			$columns[]   = array(
+				'name'      => (string) $column['column_name'],
+				'ordinal'   => (int) $column['ordinal_position'],
+				'type'      => $column_type,
+				'charset'   => $this->mysql_column_type_uses_charset( $column_type ) ? $this->charset : null,
+				'collation' => $this->mysql_column_type_uses_charset( $column_type ) ? $this->collation : null,
+				'nullable'  => (string) $column['is_nullable'],
+				'default'   => null === $column['column_default'] ? null : (string) $column['column_default'],
+				'extra'     => '',
+			);
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Get MySQL-facing column metadata for a SQLite-backed CTAS table.
+	 *
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Table name.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_sqlite_create_table_select_column_metadata( string $table_schema, string $table_name ): array {
+		$schema_prefix = 'temp' === $table_schema ? 'temp.' : '';
+		$stmt          = $this->connection->query(
+			sprintf(
+				'PRAGMA %stable_info(%s)',
+				$schema_prefix,
+				$this->connection->quote_identifier( $table_name )
+			)
+		);
+
+		$columns = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
+			$column_type = $this->get_mysql_column_type_from_sqlite_type( (string) ( $column['type'] ?? '' ) );
+			$columns[]   = array(
+				'name'      => (string) $column['name'],
+				'ordinal'   => (int) $column['cid'] + 1,
+				'type'      => $column_type,
+				'charset'   => $this->mysql_column_type_uses_charset( $column_type ) ? $this->charset : null,
+				'collation' => $this->mysql_column_type_uses_charset( $column_type ) ? $this->collation : null,
+				'nullable'  => ! empty( $column['notnull'] ) ? 'NO' : 'YES',
+				'default'   => null === $column['dflt_value'] ? null : (string) $column['dflt_value'],
+				'extra'     => '',
+			);
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Convert backend information_schema type metadata into a MySQL-facing type.
+	 *
+	 * @param array $column Backend column metadata.
+	 * @return string MySQL-facing column type.
+	 */
+	private function get_mysql_column_type_from_backend_metadata( array $column ): string {
+		$data_type = strtolower( (string) $column['data_type'] );
+		switch ( $data_type ) {
+			case 'character varying':
+				return null === $column['character_maximum_length'] ? 'varchar' : 'varchar(' . (int) $column['character_maximum_length'] . ')';
+			case 'character':
+				return null === $column['character_maximum_length'] ? 'char' : 'char(' . (int) $column['character_maximum_length'] . ')';
+			case 'integer':
+				return 'int';
+			case 'boolean':
+				return 'tinyint(1)';
+			case 'timestamp without time zone':
+				return 'datetime';
+			case 'timestamp with time zone':
+				return 'timestamp';
+			case 'numeric':
+			case 'decimal':
+				if ( null !== $column['numeric_precision'] && null !== $column['numeric_scale'] ) {
+					return 'decimal(' . (int) $column['numeric_precision'] . ',' . (int) $column['numeric_scale'] . ')';
+				}
+				if ( null !== $column['numeric_precision'] ) {
+					return 'decimal(' . (int) $column['numeric_precision'] . ')';
+				}
+				return 'decimal';
+			case 'double precision':
+				return 'double';
+			case 'real':
+				return 'float';
+			default:
+				return '' === $data_type ? 'text' : $data_type;
+		}
+	}
+
+	/**
+	 * Convert a SQLite declared type into a MySQL-facing type.
+	 *
+	 * @param string $sqlite_type SQLite declared type.
+	 * @return string MySQL-facing column type.
+	 */
+	private function get_mysql_column_type_from_sqlite_type( string $sqlite_type ): string {
+		$type = strtoupper( $sqlite_type );
+		if ( '' === $type ) {
+			return 'text';
+		}
+
+		if ( false !== strpos( $type, 'INT' ) ) {
+			return 'int';
+		}
+
+		if ( false !== strpos( $type, 'CHAR' ) || false !== strpos( $type, 'CLOB' ) || false !== strpos( $type, 'TEXT' ) ) {
+			return 'text';
+		}
+
+		if ( false !== strpos( $type, 'BLOB' ) ) {
+			return 'blob';
+		}
+
+		if ( false !== strpos( $type, 'REAL' ) || false !== strpos( $type, 'FLOA' ) || false !== strpos( $type, 'DOUB' ) ) {
+			return 'double';
+		}
+
+		if ( false !== strpos( $type, 'NUM' ) || false !== strpos( $type, 'DEC' ) ) {
+			return 'decimal';
+		}
+
+		return strtolower( $sqlite_type );
+	}
+
+	/**
+	 * Check whether a MySQL-facing column type uses character metadata.
+	 *
+	 * @param string $column_type MySQL-facing column type.
+	 * @return bool Whether charset and collation metadata apply.
+	 */
+	private function mysql_column_type_uses_charset( string $column_type ): bool {
+		$column_type = strtolower( $column_type );
+		return 0 === strpos( $column_type, 'char' )
+			|| 0 === strpos( $column_type, 'varchar' )
+			|| false !== strpos( $column_type, 'text' );
 	}
 
 	/**
@@ -6760,6 +7078,7 @@ ORDER BY table_name';
 	 */
 	private function get_mysql_session_variables(): array {
 		return array_replace(
+			$this->get_default_mysql_system_variable_values(),
 			array(
 				'character_set_client'     => $this->charset,
 				'character_set_connection' => $this->charset,

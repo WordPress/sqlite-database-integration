@@ -9064,6 +9064,124 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE ... AS SELECT is translated and stores MySQL-facing metadata.
+	 */
+	public function test_create_table_as_select_translates_and_stores_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE ctas_source (`id` INTEGER, `name` TEXT)' );
+		$driver->query( "INSERT INTO ctas_source (`id`, `name`) VALUES (1, 'one'), (2, 'two')" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( 'CREATE TABLE ctas_copy AS SELECT `id`, `name` FROM `ctas_source` WHERE `id` > 1' )
+		);
+		$this->assertSame(
+			'CREATE TABLE "ctas_copy" AS SELECT "id", "name" FROM "ctas_source" WHERE "id" > 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT * FROM ctas_copy' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => '2',
+					'name' => 'two',
+				),
+			),
+			$rows
+		);
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM ctas_copy' );
+		$this->assertSame( 'id', $columns[0]->Field );
+		$this->assertSame( 'int', $columns[0]->Type );
+		$this->assertSame( 'name', $columns[1]->Field );
+		$this->assertSame( 'text', $columns[1]->Type );
+
+		$this->assertSame(
+			array(
+				array(
+					'column_name'        => 'id',
+					'column_type'        => 'int',
+					'character_set_name' => null,
+					'collation_name'     => null,
+					'is_nullable'        => 'YES',
+					'column_default'     => null,
+					'extra'              => '',
+				),
+				array(
+					'column_name'        => 'name',
+					'column_type'        => 'text',
+					'character_set_name' => 'utf8mb4',
+					'collation_name'     => 'utf8mb4_unicode_ci',
+					'is_nullable'        => 'YES',
+					'column_default'     => null,
+					'extra'              => '',
+				),
+			),
+			$this->get_mysql_column_metadata_rows( $driver, 'ctas_copy' )
+		);
+	}
+
+	/**
+	 * Tests CREATE TEMPORARY TABLE ... SELECT is translated and stores temporary metadata.
+	 */
+	public function test_create_temporary_table_select_translates_and_stores_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE ctas_temp_source (`id` INTEGER, `name` TEXT)' );
+		$driver->query( "INSERT INTO ctas_temp_source (`id`, `name`) VALUES (1, 'one'), (2, 'two')" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( 'CREATE TEMPORARY TABLE ctas_temp SELECT `name` FROM `ctas_temp_source` WHERE `id` = 2' )
+		);
+		$this->assertSame(
+			'CREATE TEMPORARY TABLE "ctas_temp" AS SELECT "name" FROM "ctas_temp_source" WHERE "id" = 2',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT * FROM ctas_temp' );
+		$this->assertEquals( array( (object) array( 'name' => 'two' ) ), $rows );
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM ctas_temp' );
+		$this->assertSame( 'name', $columns[0]->Field );
+		$this->assertSame( 'text', $columns[0]->Type );
+
+		$this->assertSame(
+			array(
+				array(
+					'column_name'        => 'name',
+					'column_type'        => 'text',
+					'character_set_name' => 'utf8mb4',
+					'collation_name'     => 'utf8mb4_unicode_ci',
+					'is_nullable'        => 'YES',
+					'column_default'     => null,
+					'extra'              => '',
+				),
+			),
+			$this->get_mysql_column_metadata_rows( $driver, 'ctas_temp', 'temp' )
+		);
+	}
+
+	/**
+	 * Tests unsupported CREATE TABLE ... SELECT variants fail without backend execution.
+	 */
+	public function test_create_table_as_select_with_column_definitions_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'CREATE TABLE ctas_with_definitions (`id` INTEGER) AS SELECT 1 AS `id`' );
+			$this->fail( 'Expected unsupported CREATE TABLE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported CREATE TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests main database-qualified table names work for a focused basic operation slice.
 	 */
 	public function test_main_database_qualified_table_names_work_for_basic_table_operations(): void {
@@ -9344,55 +9462,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$rows = $driver->query( 'SHOW VARIABLES' );
 
-		$this->assertSame(
-			array(
-				array(
-					'Variable_name' => 'character_set_client',
-					'Value'         => 'utf8',
-				),
-				array(
-					'Variable_name' => 'character_set_connection',
-					'Value'         => 'utf8',
-				),
-				array(
-					'Variable_name' => 'character_set_results',
-					'Value'         => 'utf8',
-				),
-				array(
-					'Variable_name' => 'character_set_database',
-					'Value'         => 'utf8',
-				),
-				array(
-					'Variable_name' => 'character_set_server',
-					'Value'         => 'utf8',
-				),
-				array(
-					'Variable_name' => 'collation_connection',
-					'Value'         => 'utf8_general_ci',
-				),
-				array(
-					'Variable_name' => 'collation_database',
-					'Value'         => 'utf8_general_ci',
-				),
-				array(
-					'Variable_name' => 'collation_server',
-					'Value'         => 'utf8_general_ci',
-				),
-				array(
-					'Variable_name' => 'sql_mode',
-					'Value'         => 'NO_ENGINE_SUBSTITUTION',
-				),
-			),
-			array_map(
-				static function ( $row ) {
-					return array(
-						'Variable_name' => $row->Variable_name,
-						'Value'         => $row->Value,
-					);
-				},
-				$rows
-			)
-		);
+		$variables = array();
+		foreach ( $rows as $row ) {
+			$variables[ $row->Variable_name ] = $row->Value;
+		}
+
+		$this->assertGreaterThan( 9, count( $variables ) );
+		$this->assertSame( 'utf8', $variables['character_set_client'] );
+		$this->assertSame( 'utf8', $variables['character_set_connection'] );
+		$this->assertSame( 'utf8', $variables['character_set_results'] );
+		$this->assertSame( 'utf8', $variables['character_set_database'] );
+		$this->assertSame( 'utf8', $variables['character_set_server'] );
+		$this->assertSame( 'utf8_general_ci', $variables['collation_connection'] );
+		$this->assertSame( 'utf8_general_ci', $variables['collation_database'] );
+		$this->assertSame( 'utf8_general_ci', $variables['collation_server'] );
+		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $variables['sql_mode'] );
+		$this->assertSame( '1', $variables['autocommit'] );
+		$this->assertSame( 'InnoDB', $variables['default_storage_engine'] );
+		$this->assertSame( '1', $variables['foreign_key_checks'] );
+		$this->assertSame( 'SYSTEM', $variables['time_zone'] );
 		$this->assertSame( 'SHOW VARIABLES', $driver->get_last_mysql_query() );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame( 2, $driver->get_last_column_count() );
@@ -9601,6 +9689,24 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 0, $driver->query( 'SET default_storage_engine = InnoDB' ) );
 		$rows = $driver->query( 'SELECT @@default_storage_engine' );
 		$this->assertSame( 'InnoDB', $rows[0]->{'@@default_storage_engine'} );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION time_zone = '+00:00'" ) );
+		$rows = $driver->query( 'SELECT @@time_zone' );
+		$this->assertSame( '+00:00', $rows[0]->{'@@time_zone'} );
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='time_zone'" );
+		$this->assertSame( '+00:00', $rows[0]->Value );
+
+		$this->assertSame( 0, $driver->query( 'SET GLOBAL foreign_key_checks = 0' ) );
+		$rows = $driver->query( 'SELECT @@foreign_key_checks' );
+		$this->assertSame( '0', $rows[0]->{'@@foreign_key_checks'} );
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='foreign_key_checks'" );
+		$this->assertSame( '0', $rows[0]->Value );
+
+		$this->assertSame( 0, $driver->query( "SET GLOBAL sql_mode = 'ANSI_QUOTES'" ) );
+		$rows = $driver->query( 'SELECT @@GLOBAL.sql_mode' );
+		$this->assertSame( 'ANSI_QUOTES', $rows[0]->{'@@GLOBAL.sql_mode'} );
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='sql_mode'" );
+		$this->assertSame( 'ANSI_QUOTES', $rows[0]->Value );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 

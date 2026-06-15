@@ -351,6 +351,7 @@ function ensurePostgreSqlWordPressTestEnvironment() {
 	writePostgreSqlWpConfig();
 	writePostgreSqlWpTestsConfig();
 	installPostgreSqlWpImporter();
+	runPostgreSqlWpCliSmoke();
 }
 
 function runWordPressDockerCompose( args ) {
@@ -365,6 +366,22 @@ function runWordPressDockerCompose( args ) {
 			cwd: path.join( repositoryRoot, 'wordpress' ),
 			env: getWordPressDockerComposeEnv(),
 			stdio: 'inherit',
+		}
+	);
+}
+
+function runWordPressDockerComposeOutput( args ) {
+	return execFileSync(
+		'docker',
+		[
+			'compose',
+			...getWordPressDockerComposeArgs(),
+			...args,
+		],
+		{
+			cwd: path.join( repositoryRoot, 'wordpress' ),
+			env: getWordPressDockerComposeEnv(),
+			encoding: 'utf8',
 		}
 	);
 }
@@ -448,6 +465,40 @@ function installPostgreSqlWpImporter() {
 			stdio: 'inherit',
 		}
 	);
+}
+
+function runPostgreSqlWpCliSmoke() {
+	console.log( 'Running PostgreSQL WP-CLI smoke checks...' );
+	runWordPressDockerCompose( [ 'run', '-T', '--rm', 'cli', 'wp', 'cli', 'version' ] );
+	for ( const constant of [ 'DB_ENGINE', 'DATABASE_ENGINE' ] ) {
+		const value = runWordPressDockerComposeOutput(
+			[ 'run', '-T', '--rm', 'cli', 'wp', '--path=/var/www/src', 'config', 'get', constant ]
+		).trim();
+		if ( 'postgresql' !== value ) {
+			throw new Error( `Expected WP-CLI config get ${ constant } to return postgresql; received ${ value }.` );
+		}
+	}
+
+	for ( const args of [
+		[
+			'php',
+			'-r',
+			'if ( ! extension_loaded( "pdo_pgsql" ) ) { fwrite( STDERR, "pdo_pgsql is not loaded\\n" ); exit( 1 ); } echo "pdo_pgsql\\n";',
+		],
+		[
+			'php',
+			'-r',
+			[
+				'define( "ABSPATH", "/var/www/src/" );',
+				'require_once ABSPATH . "wp-includes/class-wpdb.php";',
+				'require_once ABSPATH . "wp-content/plugins/sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php";',
+				'if ( ! class_exists( "WP_PostgreSQL_DB", false ) ) { fwrite( STDERR, "WP_PostgreSQL_DB is not loadable\\n" ); exit( 1 ); }',
+				'echo "WP_PostgreSQL_DB\\n";',
+			].join( ' ' ),
+		],
+	] ) {
+		runWordPressDockerCompose( [ 'run', '-T', '--rm', 'cli', ...args ] );
+	}
 }
 
 function getPostgreSqlEnvValue( name, defaultValue ) {

@@ -13,7 +13,6 @@ permissions: {}
 jobs:
   test:
     name: End-to-end Tests
-    if: github.event_name != 'pull_request' || github.head_ref != 'codex/postgresql-backend'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
