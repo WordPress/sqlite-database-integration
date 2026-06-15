@@ -2950,7 +2950,19 @@ class WP_PostgreSQL_Driver {
 		}
 
 		++$position;
-		$index_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$if_not_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$if_not_exists = true;
+			$position     += 3;
+		}
+
+		$index_name_token = $tokens[ $position ] ?? null;
+		$index_name       = $this->get_mysql_identifier_token_value( $index_name_token, true );
 		if ( null === $index_name ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
 		}
@@ -2965,7 +2977,8 @@ class WP_PostgreSQL_Driver {
 		}
 
 		++$position;
-		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		$table_reference_is_quoted = isset( $tokens[ $position ] ) && WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $position ]->id;
+		$table_reference           = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
 		if ( null === $table_reference ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
 		}
@@ -2995,15 +3008,30 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
 		}
 
-		$table_name       = $table_reference['table'];
-		$postgresql_index = $this->connection->quote_identifier( $table_name . '__' . $index_name );
+		$table_name            = $table_reference['table'];
+		$metadata_index_name   = $index_name;
+		$postgresql_index_name = $table_name . '__' . $index_name;
+		if (
+			WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $index_name_token->id
+			&& $table_reference_is_quoted
+			&& 0 === strpos( $index_name, $table_name . '__' )
+		) {
+			$metadata_index_name   = substr( $index_name, strlen( $table_name ) + 2 );
+			$postgresql_index_name = $index_name;
+			if ( '' === $metadata_index_name ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
+			}
+		}
+
+		$postgresql_index = $this->connection->quote_identifier( $postgresql_index_name );
 		$postgresql_table = $this->get_postgresql_schema_identifier( $table_schema, $table_name );
 
 		return array(
 			'statements' => array(
 				sprintf(
-					'CREATE %sINDEX %s ON %s (%s)',
+					'CREATE %sINDEX %s%s ON %s (%s)',
 					$is_unique ? 'UNIQUE ' : '',
+					$if_not_exists ? 'IF NOT EXISTS ' : '',
 					$postgresql_index,
 					$postgresql_table,
 					implode( ', ', $key_parts['sql'] )
@@ -3013,7 +3041,7 @@ class WP_PostgreSQL_Driver {
 				'schema' => $table_schema,
 				'table'  => $table_name,
 				'index'  => array(
-					'name'       => $index_name,
+					'name'       => $metadata_index_name,
 					'non_unique' => $is_unique ? '0' : '1',
 					'index_type' => 'BTREE',
 					'columns'    => $key_parts['metadata'],
@@ -3061,7 +3089,7 @@ class WP_PostgreSQL_Driver {
 		$metadata_parts = array();
 		foreach ( $key_part_ranges as $key_part_range ) {
 			$position    = $key_part_range['start'];
-			$column_name = $this->get_mysql_index_identifier_token_value( $tokens[ $position ] ?? null );
+			$column_name = $this->get_mysql_index_identifier_token_value( $tokens[ $position ] ?? null, true );
 			if ( null === $column_name ) {
 				return null;
 			}
@@ -3122,11 +3150,12 @@ class WP_PostgreSQL_Driver {
 	 * "name", in key parts. Keep this fallback local to index column parsing so
 	 * statement structure keywords are still handled explicitly by the parser.
 	 *
-	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @param WP_MySQL_Token|null $token               MySQL token.
+	 * @param bool                $allow_double_quoted Whether to accept double-quoted text as an identifier.
 	 * @return string|null Identifier value, or null when unsupported.
 	 */
-	private function get_mysql_index_identifier_token_value( ?WP_MySQL_Token $token ): ?string {
-		$identifier = $this->get_mysql_identifier_token_value( $token );
+	private function get_mysql_index_identifier_token_value( ?WP_MySQL_Token $token, bool $allow_double_quoted = false ): ?string {
+		$identifier = $this->get_mysql_identifier_token_value( $token, $allow_double_quoted );
 		if ( null !== $identifier ) {
 			return $identifier;
 		}
@@ -5189,12 +5218,13 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Parse one table reference from a MySQL table administration statement.
 	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position Current token position, updated on success.
+	 * @param WP_MySQL_Token[] $tokens              MySQL lexer token stream.
+	 * @param int              $position            Current token position, updated on success.
+	 * @param bool             $allow_double_quoted Whether to accept double-quoted text as an identifier.
 	 * @return array{schema: string|null, table: string}|null Parsed table reference, or null when unsupported.
 	 */
-	private function get_mysql_table_administration_table_reference( array $tokens, int &$position ): ?array {
-		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+	private function get_mysql_table_administration_table_reference( array $tokens, int &$position, bool $allow_double_quoted = false ): ?array {
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null, $allow_double_quoted );
 		if ( null === $first_identifier ) {
 			return null;
 		}
@@ -5207,7 +5237,7 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null, $allow_double_quoted );
 		if ( null === $table_name ) {
 			return null;
 		}
@@ -21334,15 +21364,20 @@ WHERE option_name IN (
 	/**
 	 * Get a MySQL identifier token value.
 	 *
-	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @param WP_MySQL_Token|null $token               MySQL token.
+	 * @param bool                $allow_double_quoted Whether to accept double-quoted text as an identifier.
 	 * @return string|null Identifier value, or null when the token is unsupported.
 	 */
-	private function get_mysql_identifier_token_value( ?WP_MySQL_Token $token ): ?string {
+	private function get_mysql_identifier_token_value( ?WP_MySQL_Token $token, bool $allow_double_quoted = false ): ?string {
 		if ( null === $token ) {
 			return null;
 		}
 
 		if ( WP_MySQL_Lexer::IDENTIFIER === $token->id || WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
+			return $token->get_value();
+		}
+
+		if ( $allow_double_quoted && WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
 			return $token->get_value();
 		}
 
