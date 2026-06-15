@@ -2597,6 +2597,52 @@ PHP
 	}
 
 	/**
+	 * Tests close() clears stale ready state even without a driver handle.
+	 */
+	public function test_close_clears_stale_ready_state_without_driver(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $ready = false;
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, null );
+
+$db->ready = true;
+
+$close_result      = $db->close();
+$ready_after_close = $db->ready;
+$dbh_after_close   = $driver_property->getValue( $db );
+
+wp_postgresql_db_test_respond(
+	array(
+		'close_result'      => $close_result,
+		'ready_after_close' => $ready_after_close,
+		'dbh_after_close'   => $dbh_after_close,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'close_result'      => false,
+				'ready_after_close' => false,
+				'dbh_after_close'   => null,
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests PostgreSQL connection options normalize socket-style DB_HOST values.
 	 */
 	public function test_get_connection_options_normalizes_postgresql_socket_hosts(): void {

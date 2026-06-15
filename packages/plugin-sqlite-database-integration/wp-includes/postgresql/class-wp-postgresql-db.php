@@ -1431,6 +1431,7 @@ class WP_PostgreSQL_DB extends wpdb {
 	 */
 	public function close() {
 		if ( ! $this->dbh ) {
+			$this->ready = false;
 			return false;
 		}
 
