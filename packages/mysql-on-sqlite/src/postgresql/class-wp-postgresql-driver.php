@@ -14809,7 +14809,7 @@ WHERE option_name IN (
 
 		$limit_sql = '';
 		if ( null !== $limit_position ) {
-			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
 			if ( null === $limit_sql ) {
 				return null;
 			}

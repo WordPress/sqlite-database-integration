@@ -4115,6 +4115,17 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'UPDATE "wptests_update_limited" SET "value" = 9 WHERE (ctid IN (SELECT ctid FROM "wptests_update_limited" WHERE id > 0 ORDER BY id DESC LIMIT 1)) AND ("value" IS DISTINCT FROM (9))',
 			$sql
 		);
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE wptests_update_limited SET `value` = 7 WHERE id > 0 ORDER BY id DESC LIMIT 1, 2'
+		);
+
+		$this->assertSame(
+			'UPDATE "wptests_update_limited" SET "value" = 7 WHERE (ctid IN (SELECT ctid FROM "wptests_update_limited" WHERE id > 0 ORDER BY id DESC LIMIT 2 OFFSET 1)) AND ("value" IS DISTINCT FROM (7))',
+			$sql
+		);
 	}
 
 	/**
