@@ -2759,6 +2759,12 @@ class WP_PostgreSQL_Driver {
 				$metadata['old_column'],
 				$column['name']
 			);
+			$this->rename_mysql_referenced_foreign_key_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$column['name']
+			);
 			return;
 		}
 
@@ -2790,6 +2796,12 @@ class WP_PostgreSQL_Driver {
 				$metadata['old_column'],
 				$metadata['new_column']
 			);
+			$this->rename_mysql_referenced_foreign_key_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$metadata['new_column']
+			);
 			return;
 		}
 
@@ -2808,6 +2820,16 @@ class WP_PostgreSQL_Driver {
 
 		if ( 'drop_index' === $metadata['operation'] ) {
 			$this->apply_mysql_drop_index_metadata( $metadata );
+			return;
+		}
+
+		if ( 'rename_index' === $metadata['operation'] ) {
+			$this->rename_mysql_index_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_index'],
+				$metadata['new_index']
+			);
 			return;
 		}
 
@@ -3044,6 +3066,34 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Rename stored MySQL index metadata.
+	 *
+	 * @param string $table_schema   Metadata schema.
+	 * @param string $table_name     Table name.
+	 * @param string $old_index_name Old index name.
+	 * @param string $new_index_name New index name.
+	 */
+	private function rename_mysql_index_metadata(
+		string $table_schema,
+		string $table_name,
+		string $old_index_name,
+		string $new_index_name
+	): void {
+		if ( $old_index_name === $new_index_name ) {
+			return;
+		}
+
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s SET key_name = ? WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $new_index_name, $table_schema, $table_name, $old_index_name )
+		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
 	 * Check whether stored MySQL metadata has an index with the given name.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -3193,6 +3243,49 @@ class WP_PostgreSQL_Driver {
 		);
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Rename referenced foreign key column metadata after a referenced column rename.
+	 *
+	 * @param string $table_schema    Referenced table schema.
+	 * @param string $table_name      Referenced table name.
+	 * @param string $old_column_name Old referenced column name.
+	 * @param string $new_column_name New referenced column name.
+	 */
+	private function rename_mysql_referenced_foreign_key_column_metadata(
+		string $table_schema,
+		string $table_name,
+		string $old_column_name,
+		string $new_column_name
+	): void {
+		if ( $old_column_name === $new_column_name ) {
+			return;
+		}
+
+		$stmt               = $this->connection->query(
+			sprintf(
+				'SELECT DISTINCT table_schema, table_name FROM %s WHERE referenced_table_schema = ? AND referenced_table_name = ? AND LOWER(referenced_column_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $old_column_name )
+		);
+		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s SET referenced_column_name = ? WHERE referenced_table_schema = ? AND referenced_table_name = ? AND LOWER(referenced_column_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $new_column_name, $table_schema, $table_name, $old_column_name )
+		);
+
+		foreach ( $referencing_tables as $referencing_table ) {
+			$this->clear_mysql_metadata_cache_for_table(
+				(string) $referencing_table['table_schema'],
+				(string) $referencing_table['table_name']
+			);
+		}
 	}
 
 	/**
@@ -4705,7 +4798,13 @@ class WP_PostgreSQL_Driver {
 				return $this->translate_mysql_dbdelta_alter_column_default_action( $table_name, $clause, $tokens, $start, $end );
 
 			case WP_MySQL_Lexer::RENAME_SYMBOL:
-				return $this->translate_mysql_dbdelta_rename_column_alter_action( $table_name, $tokens, $start, $end );
+				if ( isset( $tokens[ $start + 1 ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $start + 1 ]->id ) {
+					return $this->translate_mysql_dbdelta_rename_column_alter_action( $table_name, $tokens, $start, $end );
+				}
+				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
+					return $this->translate_mysql_dbdelta_rename_index_alter_action( $table_name, $tokens, $start, $end );
+				}
+				return null;
 		}
 
 		$auto_increment_value = $this->get_mysql_dbdelta_auto_increment_alter_value( $tokens, $start, $end );
@@ -4763,6 +4862,72 @@ class WP_PostgreSQL_Driver {
 				'operation'  => 'rename_column',
 				'old_column' => $old_column_name,
 				'new_column' => $new_column_name,
+			),
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE RENAME INDEX/KEY action.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_rename_index_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+		if (
+			! isset( $tokens[ $start + 4 ] )
+			|| ! in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true )
+			|| WP_MySQL_Lexer::TO_SYMBOL !== $tokens[ $start + 3 ]->id
+			|| $start + 5 !== $end
+		) {
+			return null;
+		}
+
+		$old_index_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 2 ] ?? null );
+		$new_index_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 4 ] ?? null );
+		if (
+			null === $old_index_name
+			|| null === $new_index_name
+			|| 'PRIMARY' === strtoupper( $old_index_name )
+			|| 'PRIMARY' === strtoupper( $new_index_name )
+		) {
+			return null;
+		}
+
+		$table_reference = array(
+			'schema' => null,
+			'table'  => $table_name,
+		);
+		$table_schema    = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
+
+		if ( $this->mysql_index_metadata_has_rows( $table_schema, $table_name ) ) {
+			if (
+				! $this->mysql_index_metadata_exists( $table_schema, $table_name, $old_index_name )
+				|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $new_index_name )
+			) {
+				return null;
+			}
+		}
+
+		$index_type = $this->get_stored_mysql_index_type( $table_schema, $table_name, $old_index_name );
+
+		$statements = array();
+		if ( null === $index_type || ! $this->is_mysql_metadata_only_index_type( $index_type ) ) {
+			$statements[] = sprintf(
+				'ALTER INDEX %s RENAME TO %s',
+				$this->get_postgresql_schema_identifier( $table_schema, $table_name . '__' . $old_index_name ),
+				$this->connection->quote_identifier( $table_name . '__' . $new_index_name )
+			);
+		}
+
+		return array(
+			'statements' => $statements,
+			'metadata'   => array(
+				'operation' => 'rename_index',
+				'old_index' => $old_index_name,
+				'new_index' => $new_index_name,
 			),
 		);
 	}

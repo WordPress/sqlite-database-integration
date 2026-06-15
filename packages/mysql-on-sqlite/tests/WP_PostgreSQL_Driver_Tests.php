@@ -10081,6 +10081,158 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE RENAME COLUMN updates foreign keys that reference the renamed column.
+	 */
+	public function test_alter_table_rename_referenced_column_updates_foreign_key_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_ref_parent (
+				id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_ref_child (
+				id int(11) NOT NULL,
+				parent_id int(11) NOT NULL,
+				PRIMARY KEY (id),
+				KEY parent_id (parent_id)
+			)'
+		);
+		$driver->query( 'ALTER TABLE wptests_rename_ref_child ADD CONSTRAINT fk_rename_ref_parent FOREIGN KEY (parent_id) REFERENCES wptests_rename_ref_parent (id)' );
+
+		$driver->query( 'ALTER TABLE wptests_rename_ref_parent RENAME COLUMN id TO parent_pk' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_rename_ref_parent" RENAME COLUMN "id" TO "parent_pk"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$foreign_keys = $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_rename_ref_child' );
+		$this->assertSame( array( 'parent_pk' ), array_values( array_unique( array_column( $foreign_keys, 'referenced_column_name' ) ) ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_rename_ref_child' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  CONSTRAINT `fk_rename_ref_parent` FOREIGN KEY (`parent_id`) REFERENCES `wptests_rename_ref_parent` (`parent_pk`)', $create_table );
+		$this->assertStringNotContainsString( 'REFERENCES `wptests_rename_ref_parent` (`id`)', $create_table );
+	}
+
+	/**
+	 * Tests ALTER TABLE RENAME INDEX updates backend and MySQL metadata.
+	 */
+	public function test_alter_table_rename_index_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_rename_index (
+				id int(11) NOT NULL,
+				slug varchar(191) NOT NULL DEFAULT '',
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id),
+				KEY old_slug_idx (slug)
+			)"
+		);
+
+		$driver->query( 'ALTER TABLE wptests_rename_index RENAME INDEX `old_slug_idx` TO `new_slug_idx`' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER INDEX "wptests_rename_index__old_slug_idx" RENAME TO "wptests_rename_index__new_slug_idx"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_rename_index' );
+		$this->assertSame( array( 'PRIMARY', 'new_slug_idx' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_rename_index' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  KEY `new_slug_idx` (`slug`)', $create_table );
+		$this->assertStringNotContainsString( 'old_slug_idx', $create_table );
+	}
+
+	/**
+	 * Tests ALTER TABLE RENAME INDEX validates stored MySQL metadata before backend execution.
+	 */
+	public function test_alter_table_rename_index_fails_closed_for_missing_or_duplicate_metadata(): void {
+		$queries = array(
+			'ALTER TABLE wptests_rename_index_guard RENAME INDEX missing_idx TO new_slug_idx',
+			'ALTER TABLE wptests_rename_index_guard RENAME INDEX old_slug_idx TO existing_slug_idx',
+			'ALTER TABLE wptests_rename_index_guard RENAME INDEX PRIMARY TO renamed_primary',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$this->install_information_schema_fixture( $driver );
+			$driver->store_mysql_schema_metadata(
+				"CREATE TABLE wptests_rename_index_guard (
+					id int(11) NOT NULL,
+					slug varchar(191) NOT NULL DEFAULT '',
+					status varchar(20) DEFAULT 'draft',
+					PRIMARY KEY (id),
+					KEY old_slug_idx (slug),
+					KEY existing_slug_idx (status)
+				)"
+			);
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported ALTER TABLE statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests ALTER TABLE RENAME KEY accepts KEY syntax and metadata-only index types.
+	 */
+	public function test_alter_table_rename_key_accepts_metadata_only_indexes(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_metadata_index (
+				id int(11) NOT NULL,
+				body text NOT NULL,
+				PRIMARY KEY (id),
+				FULLTEXT KEY old_body_idx (body)
+			)'
+		);
+
+		$driver->query( 'ALTER TABLE wptests_rename_metadata_index RENAME KEY old_body_idx TO new_body_idx' );
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$indexes     = $this->get_mysql_index_metadata_rows( $driver, 'wptests_rename_metadata_index' );
+		$renamed_key = array_values(
+			array_filter(
+				$indexes,
+				static function ( array $index ): bool {
+					return 'new_body_idx' === $index['key_name'];
+				}
+			)
+		);
+		$this->assertSame( array( 'new_body_idx' ), array_column( $renamed_key, 'key_name' ) );
+		$this->assertSame( array( 'FULLTEXT' ), array_column( $renamed_key, 'index_type' ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_rename_metadata_index' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  FULLTEXT KEY `new_body_idx` (`body`)', $create_table );
+		$this->assertStringNotContainsString( 'old_body_idx', $create_table );
+	}
+
+	/**
 	 * Tests unsupported RENAME TABLE statements fail before backend execution.
 	 */
 	public function test_unsupported_rename_table_statement_does_not_reach_backend(): void {

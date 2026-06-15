@@ -69,6 +69,10 @@ class WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection extends WP_PostgreSQL_
 			return parent::query( 'SELECT 1 WHERE 0 = 1' );
 		}
 
+		if ( 0 === strpos( $sql, 'ALTER INDEX ' ) ) {
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
 		if ( 0 === strpos( $sql, 'CREATE INDEX ' ) || 0 === strpos( $sql, 'CREATE UNIQUE INDEX ' ) ) {
 			return parent::query( 'SELECT 1 WHERE 0 = 1' );
 		}
