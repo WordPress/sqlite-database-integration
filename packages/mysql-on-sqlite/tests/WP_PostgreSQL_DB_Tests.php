@@ -85,12 +85,17 @@ foreach (
 		'group_concat',
 		'subqueries',
 		'identifier_placeholders',
+		'utf8mb4',
+		'utf8mb4_520',
 		'COLLATION',
 		'GROUP_CONCAT',
 		'SUBQUERIES',
 		'IDENTIFIER_PLACEHOLDERS',
+		'UTF8MB4',
+		'UTF8MB4_520',
 		'set_charset',
 		'SET_CHARSET',
+		'unsupported_postgresql_capability',
 	) as $capability
 ) {
 	$capabilities[ $capability ] = $db->has_cap( $capability );
@@ -105,18 +110,24 @@ wp_postgresql_db_test_respond(
 PHP
 		);
 
+		$this->assertSame( '8.0', $result['db_version'] );
 		$this->assertSame(
 			array(
-				'collation'               => true,
-				'group_concat'            => true,
-				'subqueries'              => true,
-				'identifier_placeholders' => true,
-				'COLLATION'               => true,
-				'GROUP_CONCAT'            => true,
-				'SUBQUERIES'              => true,
-				'IDENTIFIER_PLACEHOLDERS' => true,
-				'set_charset'             => version_compare( $result['db_version'], '5.0.7', '>=' ),
-				'SET_CHARSET'             => version_compare( $result['db_version'], '5.0.7', '>=' ),
+				'collation'                         => true,
+				'group_concat'                      => true,
+				'subqueries'                        => true,
+				'identifier_placeholders'           => true,
+				'utf8mb4'                           => true,
+				'utf8mb4_520'                       => true,
+				'COLLATION'                         => true,
+				'GROUP_CONCAT'                      => true,
+				'SUBQUERIES'                        => true,
+				'IDENTIFIER_PLACEHOLDERS'           => true,
+				'UTF8MB4'                           => true,
+				'UTF8MB4_520'                       => true,
+				'set_charset'                       => true,
+				'SET_CHARSET'                       => true,
+				'unsupported_postgresql_capability' => false,
 			),
 			$result['capabilities']
 		);
