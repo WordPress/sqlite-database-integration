@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - trunk
   pull_request:
 
 # Disable permissions for all available scopes by default.

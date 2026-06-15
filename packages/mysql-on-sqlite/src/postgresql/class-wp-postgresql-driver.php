@@ -19,6 +19,33 @@ class WP_PostgreSQL_Driver {
 	const DEFAULT_MYSQL_CHARSET        = 'utf8mb4';
 	const DEFAULT_MYSQL_COLLATION      = 'utf8mb4_unicode_ci';
 
+	private const DEFAULT_MYSQL_SQL_MODES = array(
+		'ERROR_FOR_DIVISION_BY_ZERO',
+		'NO_ENGINE_SUBSTITUTION',
+		'NO_ZERO_DATE',
+		'NO_ZERO_IN_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+	);
+
+	private const MYSQL_SQL_MODE_COMPOSITES = array(
+		'ANSI'        => array(
+			'REAL_AS_FLOAT',
+			'PIPES_AS_CONCAT',
+			'ANSI_QUOTES',
+			'IGNORE_SPACE',
+			'ONLY_FULL_GROUP_BY',
+		),
+		'TRADITIONAL' => array(
+			'STRICT_TRANS_TABLES',
+			'STRICT_ALL_TABLES',
+			'NO_ZERO_IN_DATE',
+			'NO_ZERO_DATE',
+			'ERROR_FOR_DIVISION_BY_ZERO',
+			'NO_ENGINE_SUBSTITUTION',
+		),
+	);
+
 	private const MYSQL_SHOW_GRANTS_COLUMN = 'Grants for root@%';
 
 	private const MYSQL_SHOW_GRANTS_VALUE = 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, ' .
@@ -230,6 +257,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_token_cache_query = null;
 
 	/**
+	 * SQL mode string for the most recently tokenized MySQL query.
+	 *
+	 * @var string|null
+	 */
+	private $mysql_token_cache_sql_mode = null;
+
+	/**
 	 * Token stream for the most recently tokenized MySQL query.
 	 *
 	 * @var WP_MySQL_Token[]
@@ -253,9 +287,9 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * MySQL-compatible session SQL mode state.
 	 *
-	 * @var string
+	 * @var string[]
 	 */
-	private $sql_mode = 'NO_ENGINE_SUBSTITUTION';
+	private $active_sql_modes = self::DEFAULT_MYSQL_SQL_MODES;
 
 	/**
 	 * MySQL-compatible session character set state.
@@ -364,8 +398,10 @@ class WP_PostgreSQL_Driver {
 	 * @param string $sql_mode Comma-separated SQL mode string.
 	 */
 	public function set_sql_mode( string $sql_mode ): void {
-		$this->sql_mode = $sql_mode;
+		$this->active_sql_modes = $this->normalize_mysql_sql_modes( $sql_mode );
 		unset( $this->mysql_session_variable_values['sql_mode'] );
+		$this->clear_mysql_token_cache();
+		$this->clear_mysql_query_translation_caches();
 	}
 
 	/**
@@ -374,7 +410,51 @@ class WP_PostgreSQL_Driver {
 	 * @return string Comma-separated SQL mode string.
 	 */
 	public function get_sql_mode(): string {
-		return $this->sql_mode;
+		return implode( ',', $this->active_sql_modes );
+	}
+
+	/**
+	 * Check if a specific SQL mode is active.
+	 *
+	 * @param string $mode SQL mode name.
+	 * @return bool Whether the mode is active.
+	 */
+	public function is_sql_mode_active( string $mode ): bool {
+		return in_array( strtoupper( $mode ), $this->active_sql_modes, true );
+	}
+
+	/**
+	 * Normalize a MySQL SQL mode assignment to a canonical mode list.
+	 *
+	 * @param string $sql_mode Comma-separated SQL mode assignment value.
+	 * @return string[] Normalized mode names.
+	 */
+	private function normalize_mysql_sql_modes( string $sql_mode ): array {
+		$sql_mode = trim( $sql_mode, "'\"` \t\n\r\0\x0B" );
+		if ( '' === $sql_mode || '0' === $sql_mode ) {
+			return array();
+		}
+
+		if ( 'DEFAULT' === strtoupper( $sql_mode ) ) {
+			return self::DEFAULT_MYSQL_SQL_MODES;
+		}
+
+		$normalized = array();
+		foreach ( explode( ',', $sql_mode ) as $mode ) {
+			$mode = strtoupper( trim( $mode, "'\"` \t\n\r\0\x0B" ) );
+			if ( '' === $mode ) {
+				continue;
+			}
+
+			$modes = self::MYSQL_SQL_MODE_COMPOSITES[ $mode ] ?? array( $mode );
+			foreach ( $modes as $expanded_mode ) {
+				if ( ! in_array( $expanded_mode, $normalized, true ) ) {
+					$normalized[] = $expanded_mode;
+				}
+			}
+		}
+
+		return $normalized;
 	}
 
 	/**
@@ -541,7 +621,7 @@ class WP_PostgreSQL_Driver {
 		if ( $this->is_create_table_query( $query ) ) {
 			$this->validate_mysql_create_table_target_database( $query );
 
-			$translator = new WP_PostgreSQL_Create_Table_Translator();
+			$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
 			$result     = $this->execute_postgresql_statements( $translator->translate_schema( $query ) );
 			if ( $this->is_temporary_create_table_query( $query ) ) {
 				$this->store_mysql_temporary_schema_metadata( $query );
@@ -2273,6 +2353,15 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Clear the mode-sensitive MySQL token cache.
+	 */
+	private function clear_mysql_token_cache(): void {
+		$this->mysql_token_cache_query    = null;
+		$this->mysql_token_cache_sql_mode = null;
+		$this->mysql_token_cache_tokens   = array();
+	}
+
+	/**
 	 * Reset metadata side-table state if a query drops the side tables directly.
 	 *
 	 * @param string[] $table_names Dropped table names.
@@ -2400,7 +2489,7 @@ class WP_PostgreSQL_Driver {
 	private function store_mysql_schema_metadata_for_schema( string $query, $table_schema ): void {
 		$this->ensure_mysql_schema_metadata_tables();
 
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query, true );
+		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
 		foreach ( $metadata_tables as $metadata ) {
 			$schema_name = is_callable( $table_schema )
 				? (string) call_user_func( $table_schema, $metadata['table_name'] )
@@ -2997,12 +3086,12 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$select_translation = $this->translate_mysql_select_query_for_postgresql( $select_sql );
-		$table_identifier  = $is_temporary
+		$table_identifier   = $is_temporary
 			? $this->connection->quote_identifier( $table_reference['table'] )
 			: $this->get_postgresql_schema_identifier( $schema_name, $table_reference['table'] );
 
 		return array(
-			'sql'    => sprintf(
+			'sql'       => sprintf(
 				'CREATE %sTABLE %s%s AS %s',
 				$is_temporary ? 'TEMPORARY ' : '',
 				$if_not_exists ? 'IF NOT EXISTS ' : '',
@@ -4263,7 +4352,7 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function translate_mysql_column_definition_fragment( string $definition ): ?array {
 		$definition = $this->trim_mysql_statement_fragment( $definition );
-		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
 		$wrapper    = 'CREATE TABLE __wp_dbdelta_column (' . $definition . ')';
 
 		$statements = $translator->translate_schema( $wrapper );
@@ -4287,7 +4376,7 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function translate_mysql_index_definition_fragment( string $table_name, string $definition ): ?array {
 		$definition = $this->trim_mysql_statement_fragment( $definition );
-		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
 		$wrapper    = 'CREATE TABLE __wp_dbdelta_index (__wp_dummy int, ' . $definition . ')';
 
 		$metadata = $translator->extract_schema_metadata( $wrapper, true );
@@ -4492,7 +4581,7 @@ class WP_PostgreSQL_Driver {
 			$this->last_result      = array(
 				(object) array(
 					'Procedure'        => $matches[1],
-					'sql_mode'         => $this->sql_mode,
+					'sql_mode'         => $this->get_sql_mode(),
 					'Create Procedure' => 'CREATE PROCEDURE `' . $matches[1] . '`() BEGIN ' . $this->procedures[ $name ] . '; END',
 				),
 			);
@@ -7088,7 +7177,7 @@ ORDER BY table_name';
 				'collation_connection'     => $this->collation,
 				'collation_database'       => $this->collation,
 				'collation_server'         => $this->collation,
-				'sql_mode'                 => $this->sql_mode,
+				'sql_mode'                 => $this->get_sql_mode(),
 			),
 			$this->mysql_session_variable_values
 		);
@@ -7150,7 +7239,7 @@ ORDER BY table_name';
 		}
 
 		if ( 'sql_mode' === $name ) {
-			return $this->sql_mode;
+			return $this->get_sql_mode();
 		}
 
 		$read_only_variables = $this->get_read_only_mysql_system_variable_values();
@@ -8808,11 +8897,45 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$probe_safe_rows = array();
-		$value_rows      = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ), $probe_safe_rows );
+		$probe_safe_rows  = array();
+		$value_range_rows = array();
+		$value_rows       = $this->parse_mysql_values_rows( $tokens, $position, $on_duplicate, count( $columns ), $probe_safe_rows, $value_range_rows );
 		if ( null === $value_rows ) {
 			return null;
 		}
+
+		$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		foreach ( $value_rows as $row_index => &$values ) {
+			$value_ranges = $value_range_rows[ $row_index ] ?? array();
+			$this->validate_strict_mysql_dml_values_for_columns(
+				$columns,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+			$this->normalize_mysql_auto_increment_zero_values_for_columns(
+				$columns,
+				$values,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+			$this->normalize_strict_mysql_dml_values_for_columns(
+				$columns,
+				$values,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+			$this->normalize_non_strict_mysql_dml_values_for_columns(
+				$columns,
+				$values,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+		}
+		unset( $values );
 
 		$conflict_columns = $this->get_mysql_upsert_conflict_target_columns( $table_name, $columns );
 		if ( null === $conflict_columns ) {
@@ -8875,22 +8998,25 @@ WHERE option_name IN (
 	 * @param int             $position       Current token position, updated on success.
 	 * @param int             $end            Final token position, exclusive.
 	 * @param int             $expected_count Expected number of row values.
-	 * @param array           $probe_safe_rows Updated with conflict-probe safety flags.
+	 * @param array           $probe_safe_rows  Updated with conflict-probe safety flags.
+	 * @param array           $value_range_rows Updated with original token ranges for each value.
 	 * @return array[]|null Translated PostgreSQL VALUES rows, or null when unsupported.
 	 */
-	private function parse_mysql_values_rows( array $tokens, int &$position, int $end, int $expected_count, array &$probe_safe_rows ): ?array {
-		$rows            = array();
-		$probe_safe_rows = array();
+	private function parse_mysql_values_rows( array $tokens, int &$position, int $end, int $expected_count, array &$probe_safe_rows, array &$value_range_rows ): ?array {
+		$rows             = array();
+		$probe_safe_rows  = array();
+		$value_range_rows = array();
 
 		while ( $position < $end ) {
 			$probe_safe_values = array();
-			$values            = $this->parse_mysql_value_list_with_probe_safety( $tokens, $position, $probe_safe_values );
-			if ( null === $values || count( $values ) !== $expected_count ) {
+			$parsed_values     = $this->parse_mysql_value_list_with_probe_safety( $tokens, $position, $probe_safe_values );
+			if ( null === $parsed_values || count( $parsed_values['values'] ) !== $expected_count ) {
 				return null;
 			}
 
-			$rows[]            = $values;
-			$probe_safe_rows[] = $probe_safe_values;
+			$rows[]             = $parsed_values['values'];
+			$probe_safe_rows[]  = $probe_safe_values;
+			$value_range_rows[] = $parsed_values['ranges'];
 
 			if ( $position === $end ) {
 				return $rows;
@@ -8912,7 +9038,7 @@ WHERE option_name IN (
 	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
 	 * @param int             $position     Current token position, updated on success.
 	 * @param bool[]          $probe_safety Updated with per-value conflict-probe safety.
-	 * @return string[]|null Translated SQL values, or null when unsupported.
+	 * @return array{values: string[], ranges: array[]}|null Translated SQL values and token ranges, or null when unsupported.
 	 */
 	private function parse_mysql_value_list_with_probe_safety( array $tokens, int &$position, array &$probe_safety ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
@@ -8921,6 +9047,7 @@ WHERE option_name IN (
 
 		++$position;
 		$values       = array();
+		$ranges       = array();
 		$probe_safety = array();
 		$value_start  = $position;
 		$depth        = 0;
@@ -8939,9 +9066,16 @@ WHERE option_name IN (
 					}
 
 					$values[]       = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
+					$ranges[]       = array(
+						'start' => $value_start,
+						'end'   => $position,
+					);
 					$probe_safety[] = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $value_start, $position );
 					++$position;
-					return $values;
+					return array(
+						'values' => $values,
+						'ranges' => $ranges,
+					);
 				}
 
 				--$depth;
@@ -8955,6 +9089,10 @@ WHERE option_name IN (
 				}
 
 				$values[]       = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
+				$ranges[]       = array(
+					'start' => $value_start,
+					'end'   => $position,
+				);
 				$probe_safety[] = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $value_start, $position );
 				$value_start    = $position + 1;
 			}
@@ -9159,7 +9297,7 @@ WHERE option_name IN (
 			}
 
 			$value = (string) $values[ $conflict_index['index'] ];
-			if ( 'NULL' === strtoupper( trim( $value ) ) ) {
+			if ( $this->is_mysql_generated_auto_increment_value_sql( $value ) ) {
 				return false;
 			}
 
@@ -9226,9 +9364,27 @@ WHERE option_name IN (
 		}
 
 		$values          = $parsed_values['values'];
-		$column_metadata = $this->is_mysql_strict_sql_mode_active()
-			? array()
-			: $this->get_mysql_dml_column_metadata( $table_name );
+		$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		$this->validate_strict_mysql_dml_values_for_columns(
+			$columns,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
+		$this->normalize_mysql_auto_increment_zero_values_for_columns(
+			$columns,
+			$values,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
+		$this->normalize_strict_mysql_dml_values_for_columns(
+			$columns,
+			$values,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
 		$this->normalize_non_strict_mysql_dml_values_for_columns(
 			$columns,
 			$values,
@@ -9306,7 +9462,7 @@ WHERE option_name IN (
 	 * @return bool Whether the row exists.
 	 */
 	private function replace_conflict_exists( string $table_name, string $conflict_column, string $conflict_value ): bool {
-		if ( 'NULL' === strtoupper( $conflict_value ) ) {
+		if ( $this->is_mysql_generated_auto_increment_value_sql( $conflict_value ) ) {
 			return false;
 		}
 
@@ -9418,9 +9574,27 @@ WHERE option_name IN (
 		}
 
 		$values          = $parsed_values['values'];
-		$column_metadata = $this->is_mysql_strict_sql_mode_active()
-			? array()
-			: $this->get_mysql_dml_column_metadata( $table_name );
+		$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		$this->validate_strict_mysql_dml_values_for_columns(
+			$columns,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
+		$this->normalize_mysql_auto_increment_zero_values_for_columns(
+			$columns,
+			$values,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
+		$this->normalize_strict_mysql_dml_values_for_columns(
+			$columns,
+			$values,
+			$parsed_values['ranges'],
+			$tokens,
+			$column_metadata
+		);
 		$this->normalize_non_strict_mysql_dml_values_for_columns(
 			$columns,
 			$values,
@@ -9655,6 +9829,7 @@ WHERE option_name IN (
 			}
 
 			$coerced_sql = $this->get_mysql_insert_select_projection_sql_for_target_column(
+				$table_name,
 				$column_metadata,
 				$tokens,
 				$expression_start,
@@ -9725,6 +9900,7 @@ WHERE option_name IN (
 	/**
 	 * Coerce an INSERT ... SELECT projection to the target column type when needed.
 	 *
+	 * @param string                   $table_name      Target table name.
 	 * @param array                    $column_metadata Target column metadata.
 	 * @param WP_MySQL_Token[]         $tokens          MySQL lexer token stream.
 	 * @param int                      $start           First projection token.
@@ -9733,7 +9909,27 @@ WHERE option_name IN (
 	 * @param array<string,mixed>|null $scope        Source SELECT table scope.
 	 * @return string|null Coerced projection SQL, or null when generic SQL is sufficient.
 	 */
-	private function get_mysql_insert_select_projection_sql_for_target_column( array $column_metadata, array $tokens, int $start, int $end, string $projection_sql, ?array $scope ): ?string {
+	private function get_mysql_insert_select_projection_sql_for_target_column( string $table_name, array $column_metadata, array $tokens, int $start, int $end, string $projection_sql, ?array $scope ): ?string {
+		$this->validate_strict_mysql_dml_value_for_column( $column_metadata, $tokens, $start, $end );
+
+		if (
+			! $this->is_mysql_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' )
+			&& $this->is_mysql_auto_increment_column_metadata( $column_metadata )
+			&& $this->is_mysql_zero_literal_range( $tokens, $start, $end )
+		) {
+			return $this->get_mysql_insert_select_auto_increment_generated_value_sql( $table_name, $column_metadata );
+		}
+
+		$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $column_metadata, $tokens, $start, $end );
+		if ( null !== $value_sql ) {
+			return $value_sql;
+		}
+
+		$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $column_metadata, $tokens, $start, $end );
+		if ( null !== $value_sql ) {
+			return $value_sql;
+		}
+
 		$target_type = (string) ( $column_metadata['column_type'] ?? '' );
 		if ( $this->is_mysql_integer_family_column_type( $target_type ) ) {
 			if ( null !== $scope ) {
@@ -10378,9 +10574,7 @@ WHERE option_name IN (
 	 * @return array{set_sql: string, changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
 	 */
 	private function translate_simple_mysql_update_set_clause( string $table_name, array $tokens, int $start, int $end ): ?array {
-		$column_metadata    = $this->is_mysql_strict_sql_mode_active()
-			? array()
-			: $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$column_metadata    = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$assignments        = array();
 		$changed_predicates = array();
 
@@ -10410,11 +10604,22 @@ WHERE option_name IN (
 			$target_metadata     = $column_metadata[ $target_column_key ] ?? null;
 			$coerced_default_sql = null;
 
-			if ( null !== $target_metadata && $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end ) ) {
+			if ( null !== $target_metadata ) {
+				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+
+			if (
+				null !== $target_metadata
+				&& ! $this->is_mysql_strict_sql_mode_active()
+				&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
+			) {
 				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
 			}
 
 			$value_sql = $coerced_default_sql;
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
 			if ( null === $value_sql && null !== $target_metadata ) {
 				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
 			}
@@ -10463,6 +10668,741 @@ WHERE option_name IN (
 			'set_sql'               => implode( ', ', $assignments ),
 			'changed_predicate_sql' => implode( ' OR ', $changed_predicates ),
 		);
+	}
+
+	/**
+	 * Rewrite MySQL AUTO_INCREMENT zero literals to generated values when the mode permits it.
+	 *
+	 * @param string[]         $columns      DML columns.
+	 * @param string[]         $values       Translated DML values, mutated when needed.
+	 * @param array[]          $value_ranges Original token ranges for each value.
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param array[]          $metadata     Ordered column metadata rows.
+	 */
+	private function normalize_mysql_auto_increment_zero_values_for_columns( array $columns, array &$values, array $value_ranges, array $tokens, array $metadata ): void {
+		if ( $this->is_mysql_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' ) ) {
+			return;
+		}
+
+		$column_metadata = $this->get_mysql_dml_column_metadata_lookup_from_rows( $metadata );
+		foreach ( $columns as $index => $column ) {
+			$column_key = strtolower( (string) $column );
+			if (
+				! isset( $column_metadata[ $column_key ], $value_ranges[ $index ] )
+				|| ! $this->is_mysql_auto_increment_column_metadata( $column_metadata[ $column_key ] )
+				|| ! isset( $value_ranges[ $index ]['start'], $value_ranges[ $index ]['end'] )
+				|| ! isset( $values[ $index ] )
+			) {
+				continue;
+			}
+
+			if ( ! $this->is_mysql_zero_literal_range( $tokens, (int) $value_ranges[ $index ]['start'], (int) $value_ranges[ $index ]['end'] ) ) {
+				continue;
+			}
+
+			$values[ $index ] = $this->get_mysql_auto_increment_generated_value_sql();
+		}
+	}
+
+	/**
+	 * Get the SQL value that asks the backend to generate an AUTO_INCREMENT value.
+	 *
+	 * @return string Backend-compatible generated value marker.
+	 */
+	private function get_mysql_auto_increment_generated_value_sql(): string {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		return 'sqlite' === $driver_name ? 'NULL' : 'DEFAULT';
+	}
+
+	/**
+	 * Get the SQL expression that generates an AUTO_INCREMENT value in INSERT ... SELECT.
+	 *
+	 * @param string $table_name      Target table name.
+	 * @param array  $column_metadata Target column metadata.
+	 * @return string Backend-compatible generated value expression.
+	 */
+	private function get_mysql_insert_select_auto_increment_generated_value_sql( string $table_name, array $column_metadata ): string {
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if ( 'sqlite' === $driver_name ) {
+			return 'NULL';
+		}
+
+		$column_name  = (string) ( $column_metadata['column_name'] ?? '' );
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+
+		return sprintf(
+			'nextval(pg_get_serial_sequence(%s, %s))',
+			$this->connection->quote( $table_schema . '.' . $table_name ),
+			$this->connection->quote( $column_name )
+		);
+	}
+
+	/**
+	 * Check whether SQL asks the backend to generate an AUTO_INCREMENT value.
+	 *
+	 * @param string $value_sql Translated value SQL.
+	 * @return bool Whether this value has no explicit conflict key.
+	 */
+	private function is_mysql_generated_auto_increment_value_sql( string $value_sql ): bool {
+		return in_array( strtoupper( trim( $value_sql ) ), array( 'DEFAULT', 'NULL' ), true );
+	}
+
+	/**
+	 * Validate strict-mode DML values using MySQL column metadata.
+	 *
+	 * @param string[]         $columns      DML columns.
+	 * @param array[]          $value_ranges Original token ranges for each value.
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param array[]          $metadata     Ordered column metadata rows.
+	 */
+	private function validate_strict_mysql_dml_values_for_columns( array $columns, array $value_ranges, array $tokens, array $metadata ): void {
+		if ( ! $this->is_mysql_strict_sql_mode_active() ) {
+			return;
+		}
+
+		$column_metadata = $this->get_mysql_dml_column_metadata_lookup_from_rows( $metadata );
+		foreach ( $columns as $index => $column ) {
+			$column_key = strtolower( (string) $column );
+			if (
+				! isset( $column_metadata[ $column_key ], $value_ranges[ $index ] )
+				|| ! isset( $value_ranges[ $index ]['start'], $value_ranges[ $index ]['end'] )
+			) {
+				continue;
+			}
+
+			$this->validate_strict_mysql_dml_value_for_column(
+				$column_metadata[ $column_key ],
+				$tokens,
+				(int) $value_ranges[ $index ]['start'],
+				(int) $value_ranges[ $index ]['end']
+			);
+		}
+	}
+
+	/**
+	 * Validate a strict-mode DML value for one column.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 */
+	private function validate_strict_mysql_dml_value_for_column( array $column_metadata, array $tokens, int $start, int $end ): void {
+		if ( ! $this->is_mysql_strict_sql_mode_active() ) {
+			return;
+		}
+
+		$this->get_strict_mysql_dml_value_sql_for_column( $column_metadata, $tokens, $start, $end );
+	}
+
+	/**
+	 * Get strict-mode SQL for a MySQL-compatible DML literal when normalization is needed.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when generic translation is sufficient.
+	 */
+	private function get_strict_mysql_dml_value_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
+		if ( ! $this->is_mysql_strict_sql_mode_active() ) {
+			return null;
+		}
+
+		$this->validate_strict_mysql_dml_text_length_for_column( $column_metadata, $tokens, $start, $end );
+		$base_type = $this->get_base_mysql_dml_column_type( (string) ( $column_metadata['column_type'] ?? '' ) );
+
+		if ( in_array( $base_type, array( 'date', 'datetime', 'timestamp' ), true ) ) {
+			return $this->get_strict_mysql_dml_date_time_literal_sql_for_column( $base_type, $tokens, $start, $end );
+		}
+
+		if ( 'year' === $base_type ) {
+			return $this->get_mysql_dml_year_literal_sql_for_column( $tokens, $start, $end );
+		}
+
+		return $this->get_strict_mysql_dml_integer_literal_sql_for_column( $column_metadata, $tokens, $start, $end );
+	}
+
+	/**
+	 * Get strict-mode SQL for DATE/DATETIME/TIMESTAMP literals.
+	 *
+	 * @param string           $base_type Base MySQL column type.
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First value token position.
+	 * @param int              $end       Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when the token range is not a simple literal.
+	 */
+	private function get_strict_mysql_dml_date_time_literal_sql_for_column( string $base_type, array $tokens, int $start, int $end ): ?string {
+		$literal = $this->get_mysql_dml_literal_value( $tokens, $start, $end );
+		if ( null === $literal || null === $literal['value'] ) {
+			return null;
+		}
+
+		$value = $literal['value'];
+		if ( 'string' !== $literal['type'] ) {
+			$this->throw_mysql_incorrect_temporal_value( $base_type, $value );
+		}
+
+		if ( 'date' === $base_type ) {
+			$storage_value = $this->get_strict_mysql_dml_date_storage_value( $value );
+		} else {
+			$storage_value = $this->get_strict_mysql_dml_datetime_storage_value( $base_type, $value );
+		}
+
+		if ( $storage_value === $value ) {
+			return null;
+		}
+
+		return $this->connection->quote( $storage_value );
+	}
+
+	/**
+	 * Get strict-mode storage value for a MySQL DATE literal.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return string Normalized storage value.
+	 */
+	private function get_strict_mysql_dml_date_storage_value( string $value ): string {
+		$date_value = $this->normalize_mysql_dml_date_literal_format( $value );
+		$parts      = $this->get_mysql_dml_date_parts( $date_value );
+		if ( null === $parts ) {
+			$this->throw_mysql_incorrect_temporal_value( 'date', $value );
+		}
+
+		$this->validate_strict_mysql_dml_date_parts( 'date', $value, $parts['year'], $parts['month'], $parts['day'] );
+		return $date_value;
+	}
+
+	/**
+	 * Validate a strict-mode MySQL DATE literal.
+	 *
+	 * @param string $value Unquoted literal value.
+	 */
+	private function validate_strict_mysql_dml_date_value( string $value ): void {
+		$this->get_strict_mysql_dml_date_storage_value( $value );
+	}
+
+	/**
+	 * Get strict-mode storage value for a MySQL DATETIME/TIMESTAMP literal.
+	 *
+	 * @param string $base_type Base MySQL column type.
+	 * @param string $value     Unquoted literal value.
+	 * @return string Normalized storage value.
+	 */
+	private function get_strict_mysql_dml_datetime_storage_value( string $base_type, string $value ): string {
+		$normalized_value = $this->normalize_mysql_dml_datetime_literal_format( $value );
+		$parts            = $this->get_mysql_dml_datetime_parts( $normalized_value );
+		if ( null === $parts ) {
+			$date_parts = $this->get_mysql_dml_date_parts( $normalized_value );
+			if ( null === $date_parts ) {
+				$this->throw_mysql_incorrect_temporal_value( $base_type, $value );
+			}
+
+			$this->validate_strict_mysql_dml_date_parts( $base_type, $value, $date_parts['year'], $date_parts['month'], $date_parts['day'] );
+			return $normalized_value . ' 00:00:00';
+		}
+
+		if ( ! $this->is_mysql_dml_time_value_valid( $parts['hour'], $parts['minute'], $parts['second'] ) ) {
+			$this->throw_mysql_incorrect_temporal_value( $base_type, $value );
+		}
+
+		$this->validate_strict_mysql_dml_date_parts( $base_type, $value, $parts['year'], $parts['month'], $parts['day'] );
+		return $normalized_value;
+	}
+
+	/**
+	 * Validate a strict-mode MySQL DATETIME/TIMESTAMP literal.
+	 *
+	 * @param string $base_type Base MySQL column type.
+	 * @param string $value     Unquoted literal value.
+	 */
+	private function validate_strict_mysql_dml_datetime_value( string $base_type, string $value ): void {
+		$this->get_strict_mysql_dml_datetime_storage_value( $base_type, $value );
+	}
+
+	/**
+	 * Validate strict-mode MySQL date parts for zero-date modes and calendar validity.
+	 *
+	 * @param string $type  MySQL temporal type label.
+	 * @param string $value Original unquoted literal value.
+	 * @param string $year  Four-digit year.
+	 * @param string $month Two-digit month.
+	 * @param string $day   Two-digit day.
+	 */
+	private function validate_strict_mysql_dml_date_parts( string $type, string $value, string $year, string $month, string $day ): void {
+		if ( '0000' === $year && '00' === $month && '00' === $day ) {
+			if ( $this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ) ) {
+				$this->throw_mysql_incorrect_temporal_value( $type, $value );
+			}
+
+			return;
+		}
+
+		if ( '0000' !== $year && ( '00' === $month || '00' === $day ) ) {
+			if ( $this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' ) ) {
+				$this->throw_mysql_incorrect_temporal_value( $type, $value );
+			}
+
+			return;
+		}
+
+		if ( ! checkdate( (int) $month, (int) $day, (int) $year ) ) {
+			$this->throw_mysql_incorrect_temporal_value( $type, $value );
+		}
+	}
+
+	/**
+	 * Throw a MySQL-compatible incorrect temporal value error.
+	 *
+	 * @param string $type  MySQL temporal type label.
+	 * @param string $value Original unquoted literal value.
+	 */
+	private function throw_mysql_incorrect_temporal_value( string $type, string $value ): void {
+		throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $type, $value ) );
+	}
+
+	/**
+	 * Throw a MySQL-compatible incorrect integer value error.
+	 *
+	 * @param string $value Original literal value.
+	 */
+	private function throw_mysql_incorrect_integer_value( string $value ): void {
+		throw new InvalidArgumentException( sprintf( "Incorrect integer value: '%s'", $value ) );
+	}
+
+	/**
+	 * Throw a MySQL-compatible out-of-range value error.
+	 *
+	 * @param string $value Original literal value.
+	 */
+	private function throw_mysql_out_of_range_value( string $value ): void {
+		throw new InvalidArgumentException( sprintf( "Out of range value: '%s'", $value ) );
+	}
+
+	/**
+	 * Throw a MySQL-compatible string truncation error.
+	 *
+	 * @param string $column_name Column name.
+	 */
+	private function throw_mysql_data_too_long_for_column( string $column_name ): void {
+		throw new InvalidArgumentException( sprintf( "Data too long for column '%s'", $column_name ) );
+	}
+
+	/**
+	 * Validate strict-mode text-family literal lengths.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 */
+	private function validate_strict_mysql_dml_text_length_for_column( array $column_metadata, array $tokens, int $start, int $end ): void {
+		$column_type = (string) ( $column_metadata['column_type'] ?? '' );
+		$max_length  = $this->get_mysql_text_column_max_length( $column_type );
+		if ( null === $max_length ) {
+			return;
+		}
+
+		$literal = $this->get_mysql_dml_literal_value( $tokens, $start, $end );
+		if ( null === $literal || null === $literal['value'] ) {
+			return;
+		}
+
+		$value  = $literal['value'];
+		$length = function_exists( 'mb_strlen' ) ? mb_strlen( $value, 'UTF-8' ) : strlen( $value );
+		if ( $length > $max_length ) {
+			$this->throw_mysql_data_too_long_for_column( (string) ( $column_metadata['column_name'] ?? '' ) );
+		}
+	}
+
+	/**
+	 * Get the maximum character length for a MySQL text-family type.
+	 *
+	 * @param string $column_type MySQL column type metadata.
+	 * @return int|null Maximum length, or null when the type is unbounded for this check.
+	 */
+	private function get_mysql_text_column_max_length( string $column_type ): ?int {
+		$base_type = $this->get_base_mysql_dml_column_type( $column_type );
+		if ( in_array( $base_type, array( 'char', 'varchar' ), true ) ) {
+			return $this->get_mysql_column_type_display_width( $column_type );
+		}
+
+		if ( 'tinytext' === $base_type ) {
+			return 255;
+		}
+
+		if ( 'text' === $base_type ) {
+			return 65535;
+		}
+
+		if ( 'mediumtext' === $base_type ) {
+			return 16777215;
+		}
+
+		if ( 'longtext' === $base_type ) {
+			return 4294967295;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get a literal value from a simple DML value token range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return array{type: string, value: string|null}|null Literal metadata, or null for expressions.
+	 */
+	private function get_mysql_dml_literal_value( array $tokens, int $start, int $end ): ?array {
+		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
+			return array(
+				'type'  => 'string',
+				'value' => $tokens[ $start ]->get_value(),
+			);
+		}
+
+		if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $start ]->id ) {
+				return array(
+					'type'  => 'null',
+					'value' => null,
+				);
+			}
+
+			if ( WP_MySQL_Lexer::FALSE_SYMBOL === $tokens[ $start ]->id ) {
+				return array(
+					'type'  => 'boolean',
+					'value' => '0',
+				);
+			}
+
+			if ( WP_MySQL_Lexer::TRUE_SYMBOL === $tokens[ $start ]->id ) {
+				return array(
+					'type'  => 'boolean',
+					'value' => '1',
+				);
+			}
+		}
+
+		$literal = $this->parse_mysql_numeric_literal( $tokens, $start, $end );
+		if ( null !== $literal && $literal['start'] === $start && $literal['end'] === $end ) {
+			return array(
+				'type'  => 'numeric',
+				'value' => $this->get_mysql_token_sequence_bytes( $tokens, $start, $end ),
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the original byte sequence for a token range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return string Token byte sequence.
+	 */
+	private function get_mysql_token_sequence_bytes( array $tokens, int $start, int $end ): string {
+		$bytes = '';
+		for ( $i = $start; $i < $end; $i++ ) {
+			$bytes .= $tokens[ $i ]->get_bytes();
+		}
+
+		return $bytes;
+	}
+
+	/**
+	 * Normalize strict-mode literals that MySQL accepts but PostgreSQL rejects.
+	 *
+	 * @param string[]         $columns      DML columns.
+	 * @param string[]         $values       Translated DML values, mutated when needed.
+	 * @param array[]          $value_ranges Original token ranges for each value.
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param array[]          $metadata     Ordered column metadata rows.
+	 */
+	private function normalize_strict_mysql_dml_values_for_columns( array $columns, array &$values, array $value_ranges, array $tokens, array $metadata ): void {
+		if ( ! $this->is_mysql_strict_sql_mode_active() ) {
+			return;
+		}
+
+		$column_metadata = $this->get_mysql_dml_column_metadata_lookup_from_rows( $metadata );
+		foreach ( $columns as $index => $column ) {
+			$column_key = strtolower( (string) $column );
+			if (
+				! isset( $column_metadata[ $column_key ], $value_ranges[ $index ] )
+				|| ! isset( $value_ranges[ $index ]['start'], $value_ranges[ $index ]['end'] )
+			) {
+				continue;
+			}
+
+			$value_sql = $this->get_strict_mysql_dml_value_sql_for_column(
+				$column_metadata[ $column_key ],
+				$tokens,
+				(int) $value_ranges[ $index ]['start'],
+				(int) $value_ranges[ $index ]['end']
+			);
+			if ( null !== $value_sql ) {
+				$values[ $index ] = $value_sql;
+			}
+		}
+	}
+
+	/**
+	 * Get strict-mode SQL for MySQL-compatible integer literals.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when generic translation is sufficient.
+	 */
+	private function get_strict_mysql_dml_integer_literal_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
+		if (
+			! $this->is_mysql_strict_sql_mode_active()
+			|| ! $this->is_mysql_integer_family_column_type( (string) ( $column_metadata['column_type'] ?? '' ) )
+		) {
+			return null;
+		}
+
+		$literal = $this->get_mysql_dml_literal_value( $tokens, $start, $end );
+		if ( null === $literal || null === $literal['value'] ) {
+			return null;
+		}
+
+		$value   = trim( $literal['value'] );
+		$integer = $this->get_strict_mysql_dml_integer_literal_value( $value );
+		if ( null === $integer ) {
+			$this->throw_mysql_incorrect_integer_value( $value );
+		}
+
+		if ( ! $this->is_mysql_integer_value_in_column_range( $integer, (string) ( $column_metadata['column_type'] ?? '' ) ) ) {
+			$this->throw_mysql_out_of_range_value( $value );
+		}
+
+		if (
+			'' === $value
+			|| 1 === preg_match( '/^[+-]?[0-9]+$/', $value )
+			|| 1 !== preg_match( '/^[+-]?(?:[0-9]+\.0+|[0-9]*\.0+)$/', $value )
+		) {
+			if ( 'boolean' === $literal['type'] ) {
+				return $integer;
+			}
+
+			return null;
+		}
+
+		return $this->get_postgresql_mysql_integer_cast_sql(
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end )
+		);
+	}
+
+	/**
+	 * Get a normalized strict integer literal value.
+	 *
+	 * @param string $value Literal value.
+	 * @return string|null Normalized integer value, or null when the value is not an integer literal.
+	 */
+	private function get_strict_mysql_dml_integer_literal_value( string $value ): ?string {
+		$value = trim( $value );
+		if ( '' === $value ) {
+			return null;
+		}
+
+		if ( 1 !== preg_match( '/^[+-]?(?:(?:[0-9]+)(?:\.0+)?|(?:[0-9]*\.0+))$/', $value ) ) {
+			return null;
+		}
+
+		$integer = $value;
+		$dot     = strpos( $integer, '.' );
+		if ( false !== $dot ) {
+			$integer = substr( $integer, 0, $dot );
+		}
+
+		if ( '' === $integer || '+' === $integer || '-' === $integer ) {
+			$integer .= '0';
+		}
+
+		return $this->normalize_mysql_integer_string( $integer );
+	}
+
+	/**
+	 * Normalize a signed integer string for comparisons.
+	 *
+	 * @param string $value Integer string.
+	 * @return string Normalized integer string.
+	 */
+	private function normalize_mysql_integer_string( string $value ): string {
+		$value    = trim( $value );
+		$negative = false;
+		if ( isset( $value[0] ) && ( '+' === $value[0] || '-' === $value[0] ) ) {
+			$negative = '-' === $value[0];
+			$value    = substr( $value, 1 );
+		}
+
+		$value = ltrim( $value, '0' );
+		if ( '' === $value ) {
+			return '0';
+		}
+
+		return $negative ? '-' . $value : $value;
+	}
+
+	/**
+	 * Check whether an integer value fits the MySQL column type range.
+	 *
+	 * @param string $value       Normalized integer string.
+	 * @param string $column_type MySQL column type metadata.
+	 * @return bool Whether the value is in range.
+	 */
+	private function is_mysql_integer_value_in_column_range( string $value, string $column_type ): bool {
+		$bounds = $this->get_mysql_integer_column_bounds( $column_type );
+		if ( null === $bounds ) {
+			return true;
+		}
+
+		return $this->compare_mysql_integer_strings( $value, $bounds['min'] ) >= 0
+			&& $this->compare_mysql_integer_strings( $value, $bounds['max'] ) <= 0;
+	}
+
+	/**
+	 * Get MySQL integer column bounds.
+	 *
+	 * @param string $column_type MySQL column type metadata.
+	 * @return array{min: string, max: string}|null Integer bounds, or null for unknown integer types.
+	 */
+	private function get_mysql_integer_column_bounds( string $column_type ): ?array {
+		$base_type = $this->get_base_mysql_dml_column_type( $column_type );
+		$unsigned  = false !== stripos( $column_type, 'unsigned' );
+
+		$signed_bounds = array(
+			'tinyint'   => array( '-128', '127' ),
+			'smallint'  => array( '-32768', '32767' ),
+			'mediumint' => array( '-8388608', '8388607' ),
+			'int'       => array( '-2147483648', '2147483647' ),
+			'integer'   => array( '-2147483648', '2147483647' ),
+			'bigint'    => array( '-9223372036854775808', '9223372036854775807' ),
+		);
+		$unsigned_max  = array(
+			'tinyint'   => '255',
+			'smallint'  => '65535',
+			'mediumint' => '16777215',
+			'int'       => '4294967295',
+			'integer'   => '4294967295',
+			'bigint'    => '18446744073709551615',
+		);
+
+		if ( ! isset( $signed_bounds[ $base_type ] ) ) {
+			return null;
+		}
+
+		if ( $unsigned ) {
+			return array(
+				'min' => '0',
+				'max' => $unsigned_max[ $base_type ],
+			);
+		}
+
+		return array(
+			'min' => $signed_bounds[ $base_type ][0],
+			'max' => $signed_bounds[ $base_type ][1],
+		);
+	}
+
+	/**
+	 * Compare two normalized integer strings.
+	 *
+	 * @param string $left  Left integer.
+	 * @param string $right Right integer.
+	 * @return int Less than zero, zero, or greater than zero.
+	 */
+	private function compare_mysql_integer_strings( string $left, string $right ): int {
+		$left  = $this->normalize_mysql_integer_string( $left );
+		$right = $this->normalize_mysql_integer_string( $right );
+
+		$left_negative  = isset( $left[0] ) && '-' === $left[0];
+		$right_negative = isset( $right[0] ) && '-' === $right[0];
+		if ( $left_negative !== $right_negative ) {
+			return $left_negative ? -1 : 1;
+		}
+
+		$left_digits  = $left_negative ? substr( $left, 1 ) : $left;
+		$right_digits = $right_negative ? substr( $right, 1 ) : $right;
+
+		if ( strlen( $left_digits ) !== strlen( $right_digits ) ) {
+			$result = strlen( $left_digits ) <=> strlen( $right_digits );
+			return $left_negative ? -$result : $result;
+		}
+
+		$result = strcmp( $left_digits, $right_digits );
+		return $left_negative ? -$result : $result;
+	}
+
+	/**
+	 * Get strict/non-strict SQL for a MySQL YEAR literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when the token range is not a simple literal.
+	 */
+	private function get_mysql_dml_year_literal_sql_for_column( array $tokens, int $start, int $end ): ?string {
+		$literal = $this->get_mysql_dml_literal_value( $tokens, $start, $end );
+		if ( null === $literal || null === $literal['value'] ) {
+			return null;
+		}
+
+		$value        = trim( $literal['value'] );
+		$storage_year = $this->get_mysql_dml_year_storage_value( $value );
+		if ( null === $storage_year ) {
+			$this->throw_mysql_incorrect_temporal_value( 'year', $value );
+		}
+
+		return $this->connection->quote( $storage_year );
+	}
+
+	/**
+	 * Get a normalized MySQL YEAR storage value.
+	 *
+	 * @param string $value Literal value.
+	 * @return string|null Four-digit YEAR value, or null when invalid.
+	 */
+	private function get_mysql_dml_year_storage_value( string $value ): ?string {
+		$value = trim( $value );
+		if ( '' === $value ) {
+			return null;
+		}
+
+		if ( 1 === preg_match( '/^([+-]?[0-9]+)(?:\.0+)?$/', $value, $matches ) ) {
+			$year = $this->normalize_mysql_integer_string( $matches[1] );
+		} elseif ( 1 === preg_match( '/^([0-9]{4})-(?:[0-9]{2})-(?:[0-9]{2})(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z?)?$/', $value, $matches ) ) {
+			$year = $this->normalize_mysql_integer_string( $matches[1] );
+		} else {
+			return null;
+		}
+
+		if ( $this->compare_mysql_integer_strings( $year, '0' ) < 0 ) {
+			$this->throw_mysql_out_of_range_value( $value );
+		}
+
+		if ( '0' === $year ) {
+			return '0000';
+		}
+
+		if ( $this->compare_mysql_integer_strings( $year, '1' ) >= 0 && $this->compare_mysql_integer_strings( $year, '69' ) <= 0 ) {
+			return sprintf( '%04d', 2000 + (int) $year );
+		}
+
+		if ( $this->compare_mysql_integer_strings( $year, '70' ) >= 0 && $this->compare_mysql_integer_strings( $year, '99' ) <= 0 ) {
+			return (string) ( 1900 + (int) $year );
+		}
+
+		if ( $this->compare_mysql_integer_strings( $year, '1901' ) < 0 || $this->compare_mysql_integer_strings( $year, '2155' ) > 0 ) {
+			$this->throw_mysql_out_of_range_value( $value );
+		}
+
+		return sprintf( '%04d', (int) $year );
 	}
 
 	/**
@@ -10610,17 +11550,18 @@ WHERE option_name IN (
 	 * @return string|null Storage value, or null when the literal is not date-shaped.
 	 */
 	private function get_non_strict_mysql_dml_date_storage_value( string $value ): ?string {
-		$parts = $this->get_mysql_dml_date_parts( $value );
+		$storage_value = $this->normalize_mysql_dml_date_literal_format( $value );
+		$parts         = $this->get_mysql_dml_date_parts( $storage_value );
 		if ( null === $parts ) {
 			return null;
 		}
 
 		if ( $this->is_non_strict_mysql_dml_zero_date_allowed( $parts['year'], $parts['month'], $parts['day'] ) ) {
-			return $value;
+			return $storage_value;
 		}
 
 		if ( checkdate( (int) $parts['month'], (int) $parts['day'], (int) $parts['year'] ) ) {
-			return $value;
+			return $storage_value;
 		}
 
 		return '0000-00-00';
@@ -10636,7 +11577,20 @@ WHERE option_name IN (
 		$normalized_value = $this->normalize_mysql_dml_datetime_literal_format( $value );
 		$parts            = $this->get_mysql_dml_datetime_parts( $normalized_value );
 		if ( null === $parts ) {
-			return null;
+			$date_parts = $this->get_mysql_dml_date_parts( $normalized_value );
+			if ( null === $date_parts ) {
+				return null;
+			}
+
+			if ( $this->is_non_strict_mysql_dml_zero_date_allowed( $date_parts['year'], $date_parts['month'], $date_parts['day'] ) ) {
+				return $normalized_value . ' 00:00:00';
+			}
+
+			if ( checkdate( (int) $date_parts['month'], (int) $date_parts['day'], (int) $date_parts['year'] ) ) {
+				return $normalized_value . ' 00:00:00';
+			}
+
+			return '0000-00-00 00:00:00';
 		}
 
 		$is_valid_time = $this->is_mysql_dml_time_value_valid( $parts['hour'], $parts['minute'], $parts['second'] );
@@ -10658,17 +11612,27 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Normalize MySQL-accepted date/datetime literals to the stored MySQL DATE shape.
+	 *
+	 * @param string $value Unquoted literal value.
+	 * @return string Normalized literal value.
+	 */
+	private function normalize_mysql_dml_date_literal_format( string $value ): string {
+		if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z?)?$/', $value, $matches ) ) {
+			return $matches[1];
+		}
+
+		return $value;
+	}
+
+	/**
 	 * Normalize MySQL-accepted ISO datetime literals to the stored MySQL text shape.
 	 *
 	 * @param string $value Unquoted literal value.
 	 * @return string Normalized literal value.
 	 */
 	private function normalize_mysql_dml_datetime_literal_format( string $value ): string {
-		if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})Z$/', $value, $matches ) ) {
-			return $matches[1] . ' ' . $matches[2];
-		}
-
-		if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})$/', $value, $matches ) ) {
+		if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})[ T]([0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]+)?Z?$/', $value, $matches ) ) {
 			return $matches[1] . ' ' . $matches[2];
 		}
 
@@ -10938,6 +11902,20 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Get a MySQL column type display width or length.
+	 *
+	 * @param string $column_type MySQL column type metadata.
+	 * @return int|null Width, or null when absent.
+	 */
+	private function get_mysql_column_type_display_width( string $column_type ): ?int {
+		if ( 1 !== preg_match( '/\(([0-9]+)\)/', $column_type, $matches ) ) {
+			return null;
+		}
+
+		return (int) $matches[1];
+	}
+
+	/**
 	 * Check whether a token sequence is exactly the NULL literal.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -10957,14 +11935,8 @@ WHERE option_name IN (
 	 * @return bool Whether strict DML behavior should be preserved.
 	 */
 	private function is_mysql_strict_sql_mode_active(): bool {
-		foreach ( explode( ',', $this->sql_mode ) as $mode ) {
-			$mode = strtoupper( trim( $mode ) );
-			if ( 'STRICT_TRANS_TABLES' === $mode || 'STRICT_ALL_TABLES' === $mode ) {
-				return true;
-			}
-		}
-
-		return false;
+		return $this->is_mysql_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_mysql_sql_mode_active( 'STRICT_ALL_TABLES' );
 	}
 
 	/**
@@ -10974,14 +11946,7 @@ WHERE option_name IN (
 	 * @return bool Whether the mode is active.
 	 */
 	private function is_mysql_sql_mode_active( string $mode ): bool {
-		$mode = strtoupper( $mode );
-		foreach ( explode( ',', $this->sql_mode ) as $active_mode ) {
-			if ( strtoupper( trim( $active_mode ) ) === $mode ) {
-				return true;
-			}
-		}
-
-		return false;
+		return $this->is_sql_mode_active( $mode );
 	}
 
 	/**
@@ -15960,15 +16925,17 @@ WHERE option_name IN (
 	 * @return WP_MySQL_Token[] MySQL lexer token stream.
 	 */
 	private function get_mysql_tokens( string $query ): array {
-		if ( $query === $this->mysql_token_cache_query ) {
+		$sql_mode = $this->get_sql_mode();
+		if ( $query === $this->mysql_token_cache_query && $sql_mode === $this->mysql_token_cache_sql_mode ) {
 			return $this->mysql_token_cache_tokens;
 		}
 
-		$lexer  = new WP_MySQL_Lexer( $query );
+		$lexer  = new WP_MySQL_Lexer( $query, $this->mysql_version, $this->active_sql_modes );
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
 
-		$this->mysql_token_cache_query  = $query;
-		$this->mysql_token_cache_tokens = $tokens;
+		$this->mysql_token_cache_query    = $query;
+		$this->mysql_token_cache_sql_mode = $sql_mode;
+		$this->mysql_token_cache_tokens   = $tokens;
 
 		return $tokens;
 	}
@@ -19166,6 +20133,26 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Check whether a token range is a literal zero value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First literal token.
+	 * @param int             $end    Final literal token, exclusive.
+	 * @return bool Whether the literal is zero.
+	 */
+	private function is_mysql_zero_literal_range( array $tokens, int $start, int $end ): bool {
+		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
+			return 1 === preg_match( '/^[[:space:]]*[+]?0+[[:space:]]*$/', $tokens[ $start ]->get_value() );
+		}
+
+		$literal = $this->parse_mysql_numeric_literal( $tokens, $start, $end );
+		return null !== $literal
+			&& $literal['start'] === $start
+			&& $literal['end'] === $end
+			&& $this->is_mysql_zero_numeric_literal_range( $tokens, $start, $end );
+	}
+
+	/**
 	 * Parse a numeric literal, including an optional unary sign.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -21636,6 +22623,14 @@ WHERE option_name IN (
 			return $this->connection->quote( $token->get_value() );
 		}
 
+		if ( WP_MySQL_Lexer::LOGICAL_OR_OPERATOR === $token->id ) {
+			return 'OR';
+		}
+
+		if ( WP_MySQL_Lexer::LOGICAL_AND_OPERATOR === $token->id ) {
+			return 'AND';
+		}
+
 		return $token->get_bytes();
 	}
 
@@ -21810,6 +22805,10 @@ WHERE option_name IN (
 				return true;
 			}
 
+			if ( WP_MySQL_Lexer::LOGICAL_OR_OPERATOR === $token->id || WP_MySQL_Lexer::LOGICAL_AND_OPERATOR === $token->id ) {
+				return true;
+			}
+
 			if ( null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
@@ -21910,8 +22909,7 @@ WHERE option_name IN (
 	 * @return bool Whether the query should be translated before execution.
 	 */
 	private function is_create_table_query( string $query ): bool {
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		$tokens = $this->get_mysql_tokens( $query );
 
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
 			return false;
@@ -21998,8 +22996,7 @@ WHERE option_name IN (
 	 * @return bool Whether the query is CREATE TEMPORARY TABLE.
 	 */
 	private function is_temporary_create_table_query( string $query ): bool {
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		$tokens = $this->get_mysql_tokens( $query );
 
 		return isset( $tokens[0], $tokens[1], $tokens[2] )
 			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[0]->id

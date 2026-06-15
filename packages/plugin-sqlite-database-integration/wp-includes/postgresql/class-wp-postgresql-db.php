@@ -781,6 +781,23 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
+	 * Tokenize MySQL-flavored SQL using the active PostgreSQL driver SQL modes.
+	 *
+	 * @param string $query MySQL-flavored SQL.
+	 * @return WP_MySQL_Token[] Token stream.
+	 */
+	private function get_postgresql_mysql_tokens( string $query ): array {
+		$sql_modes = array();
+		if ( $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			$sql_mode  = $this->dbh->get_sql_mode();
+			$sql_modes = '' === $sql_mode ? array() : explode( ',', $sql_mode );
+		}
+
+		$lexer = new WP_MySQL_Lexer( $query, 80038, $sql_modes );
+		return $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+	}
+
+	/**
 	 * Check whether a CREATE TABLE query creates a temporary table.
 	 *
 	 * @param string $query CREATE TABLE query.
@@ -791,8 +808,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			return false;
 		}
 
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		$tokens = $this->get_postgresql_mysql_tokens( $query );
 
 		return isset( $tokens[0], $tokens[1], $tokens[2] )
 			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[0]->id
@@ -811,8 +827,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			return null;
 		}
 
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		$tokens = $this->get_postgresql_mysql_tokens( $query );
 
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -870,8 +885,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			return false;
 		}
 
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		$tokens = $this->get_postgresql_mysql_tokens( $query );
 
 		return isset( $tokens[0], $tokens[1], $tokens[2] )
 			&& WP_MySQL_Lexer::DROP_SYMBOL === $tokens[0]->id
@@ -1341,8 +1355,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			return array();
 		}
 
-		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer ? $lexer->native_token_stream() : $lexer->remaining_tokens();
+		$tokens = $this->get_postgresql_mysql_tokens( $query );
 
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
 			return array();
@@ -1486,7 +1499,21 @@ class WP_PostgreSQL_DB extends wpdb {
 	 */
 	public function set_sql_mode( $modes = array() ) {
 		if ( empty( $modes ) ) {
-			return;
+			if ( ! $this->dbh instanceof WP_PostgreSQL_Driver ) {
+				return;
+			}
+
+			$result = $this->dbh->query( 'SELECT @@SESSION.sql_mode' );
+			if ( ! isset( $result[0] ) ) {
+				return;
+			}
+
+			$modes_str = $result[0]->{'@@SESSION.sql_mode'};
+			if ( empty( $modes_str ) ) {
+				return;
+			}
+
+			$modes = explode( ',', $modes_str );
 		}
 
 		$modes = array_map( 'strtoupper', (array) $modes );

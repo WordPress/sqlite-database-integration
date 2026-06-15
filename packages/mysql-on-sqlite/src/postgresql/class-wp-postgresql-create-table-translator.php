@@ -32,6 +32,22 @@ class WP_PostgreSQL_Create_Table_Translator {
 	private static $mysql_grammar = null;
 
 	/**
+	 * SQL modes active while tokenizing CREATE TABLE statements.
+	 *
+	 * @var string[]
+	 */
+	private $sql_modes;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param string[] $sql_modes Active SQL modes.
+	 */
+	public function __construct( array $sql_modes = array() ) {
+		$this->sql_modes = $sql_modes;
+	}
+
+	/**
 	 * Parse and translate all CREATE TABLE statements in a schema string.
 	 *
 	 * @param string $sql MySQL schema SQL.
@@ -148,7 +164,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return WP_MySQL_Parser Parser instance.
 	 */
 	private function create_parser( string $sql ): WP_MySQL_Parser {
-		$lexer  = new WP_MySQL_Lexer( $sql, 80038, array() );
+		$lexer  = new WP_MySQL_Lexer( $sql, 80038, $this->sql_modes );
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
 			? $lexer->native_token_stream()
 			: $lexer->remaining_tokens();
@@ -317,6 +333,13 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return string PostgreSQL CREATE INDEX statement.
 	 */
 	private function translate_secondary_index( WP_Parser_Node $table_constraint, string $table_name, bool $if_not_exists ): string {
+		if (
+			$table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL )
+			|| $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL )
+		) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
 		$index_name_node = $table_constraint->get_first_child_node( 'indexNameAndType' );
 		$index_name      = $index_name_node ? $this->get_identifier_value( $index_name_node->get_first_child_node( 'indexName' ) ) : null;
 		if ( null === $index_name || '' === $index_name ) {

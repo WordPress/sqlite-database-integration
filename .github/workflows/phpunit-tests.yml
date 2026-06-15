@@ -3,6 +3,7 @@ name: PHPUnit Tests
 on:
   push:
     branches:
+      - main
       - trunk
     paths:
       - '.github/workflows/phpunit-tests.yml'

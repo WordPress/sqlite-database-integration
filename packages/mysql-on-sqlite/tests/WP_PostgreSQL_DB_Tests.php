@@ -358,10 +358,6 @@ function apply_filters( $hook_name, $value ) {
 		'value'     => $value,
 	);
 
-	if ( 'incompatible_sql_modes' === $hook_name ) {
-		$value[] = 'ANSI_QUOTES';
-	}
-
 	return $value;
 }
 
@@ -415,10 +411,14 @@ wp_postgresql_db_test_respond(
 PHP
 		);
 
-		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $result['initial_mode'] );
-		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $result['mode_after_empty_call'] );
-		$this->assertSame( array(), $result['filter_calls_after_empty'] );
-		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
+		$this->assertSame(
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			$result['initial_mode']
+		);
+		$this->assertSame(
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			$result['mode_after_empty_call']
+		);
 		$this->assertSame(
 			array(
 				array(
@@ -426,9 +426,23 @@ PHP
 					'value'     => array( 'NO_ZERO_DATE' ),
 				),
 			),
+			$result['filter_calls_after_empty']
+		);
+		$this->assertSame( 'STRICT_TRANS_TABLES,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
+		$this->assertSame(
+			array(
+				array(
+					'hook_name' => 'incompatible_sql_modes',
+					'value'     => array( 'NO_ZERO_DATE' ),
+				),
+				array(
+					'hook_name' => 'incompatible_sql_modes',
+					'value'     => array( 'NO_ZERO_DATE' ),
+				),
+			),
 			$result['filter_calls_after_modes']
 		);
-		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
+		$this->assertSame( 'STRICT_TRANS_TABLES,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
 	}
 
 	/**

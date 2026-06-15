@@ -31,6 +31,9 @@
 		"check-cs": [
 			"@php ./vendor/bin/phpcs"
 		],
+		"verify-workflow-ci-gates": [
+			"node ./bin/verify-workflow-ci-gates.js"
+		],
 		"fix-cs": [
 			"@php ./vendor/bin/phpcbf"
 		],

@@ -325,6 +325,64 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	public function test_double_quoted_text_without_ansi_quotes_remains_string(): void {
+		$lexer = new WP_MySQL_Lexer( '"my_column"' );
+		$this->assertFalse( $lexer->is_sql_mode_active( WP_MySQL_Lexer::SQL_MODE_ANSI_QUOTES ) );
+
+		$this->assertTrue( $lexer->next_token() );
+		$token = $lexer->get_token();
+
+		$this->assertSame( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT, $token->id );
+		$this->assertSame( 'my_column', $token->get_value() );
+	}
+
+	public function test_double_quoted_text_with_ansi_quotes_is_identifier_like(): void {
+		$lexer = new WP_MySQL_Lexer( '"my_column"', 80038, array( 'ANSI_QUOTES' ) );
+		$this->assertTrue( $lexer->is_sql_mode_active( WP_MySQL_Lexer::SQL_MODE_ANSI_QUOTES ) );
+
+		$this->assertTrue( $lexer->next_token() );
+		$token = $lexer->get_token();
+
+		$this->assertSame( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, $token->id );
+		$this->assertSame( 'my_column', $token->get_value() );
+	}
+
+	public function test_no_backslash_escapes_sql_mode_preserves_backslash_sequences(): void {
+		$lexer = new WP_MySQL_Lexer( "'\\n'" );
+		$this->assertFalse( $lexer->is_sql_mode_active( WP_MySQL_Lexer::SQL_MODE_NO_BACKSLASH_ESCAPES ) );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame( "\n", $lexer->get_token()->get_value() );
+
+		$lexer = new WP_MySQL_Lexer( "'\\n'", 80038, array( 'NO_BACKSLASH_ESCAPES' ) );
+		$this->assertTrue( $lexer->is_sql_mode_active( WP_MySQL_Lexer::SQL_MODE_NO_BACKSLASH_ESCAPES ) );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame( '\\n', $lexer->get_token()->get_value() );
+	}
+
+	public function test_pipes_as_concat_sql_mode_changes_double_pipe_token(): void {
+		$tokens = ( new WP_MySQL_Lexer( '1 || 0' ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::LOGICAL_OR_OPERATOR, $tokens[1]->id );
+
+		$tokens = ( new WP_MySQL_Lexer( '1 || 0', 80038, array( 'PIPES_AS_CONCAT' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::CONCAT_PIPES_SYMBOL, $tokens[1]->id );
+	}
+
+	public function test_ignore_space_sql_mode_allows_whitespace_before_function_call_parentheses(): void {
+		$tokens = ( new WP_MySQL_Lexer( 'COUNT (*)' ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $tokens[0]->id );
+
+		$tokens = ( new WP_MySQL_Lexer( 'COUNT (*)', 80038, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::COUNT_SYMBOL, $tokens[0]->id );
+	}
+
+	public function test_high_not_precedence_sql_mode_emits_not2_token(): void {
+		$tokens = ( new WP_MySQL_Lexer( 'NOT 1' ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::NOT_SYMBOL, $tokens[0]->id );
+
+		$tokens = ( new WP_MySQL_Lexer( 'NOT 1', 80038, array( 'HIGH_NOT_PRECEDENCE' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::NOT2_SYMBOL, $tokens[0]->id );
+	}
+
 	/**
 	 * Test that a chunk boundary splitting a quoted string with a trailing
 	 * backslash does not cause an out-of-bounds string access.

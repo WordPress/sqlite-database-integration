@@ -212,6 +212,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_non_strict_insert_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
 		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
 
 		$driver->query(
 			'CREATE TABLE wptests_comments (
@@ -303,6 +304,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_dml_column_metadata_cache_reuses_rows_until_metadata_changes(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$driver->set_sql_mode( '' );
 
 		$driver->query(
 			'CREATE TABLE wptests_cache_dml (
@@ -410,6 +412,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( $first_tokens, $second_tokens );
 		$this->assertNotSame( $first_tokens, $third_tokens );
+
+		$driver->set_sql_mode( 'ANSI_QUOTES' );
+		$ansi_tokens = $get_tokens( 'SELECT "ID" FROM "wptests_posts"' );
+
+		$this->assertSame( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, $ansi_tokens[1]->id );
+		$this->assertNotSame( $first_tokens, $ansi_tokens );
 	}
 
 	/**
@@ -417,6 +425,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_non_strict_insert_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
 		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
 		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
 
 		$insert = "INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`) VALUES (1, '2020-12-41 14:15:27', '0000-00-00 00:00:00', '2020-00-15 14:15:27', '2020-06-01T12:13:14Z')";
@@ -439,6 +448,212 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '0000-00-00 00:00:00', $posts[0]->post_date_gmt );
 		$this->assertSame( '2020-00-15 14:15:27', $posts[0]->post_modified );
 		$this->assertSame( '2020-06-01 12:13:14', $posts[0]->post_modified_gmt );
+	}
+
+	/**
+	 * Tests strict zero-date SQL modes reject invalid date/time literals before backend execution.
+	 */
+	public function test_strict_insert_rejects_zero_date_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		try {
+			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) VALUES (1, '0000-00-00 00:00:00')" );
+			$this->fail( 'Expected zero date to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect datetime value: '0000-00-00 00:00:00'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests strict zero-date SQL modes reject INSERT ... SELECT date literals before backend execution.
+	 */
+	public function test_strict_insert_select_rejects_zero_date_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		try {
+			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) SELECT 1, '0000-00-00 00:00:00' FROM DUAL" );
+			$this->fail( 'Expected zero date projection to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect datetime value: '0000-00-00 00:00:00'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests strict zero-in-date SQL modes reject partial-zero date/time literals before backend execution.
+	 */
+	public function test_strict_update_rejects_zero_in_date_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_date_gmt, post_modified, post_modified_gmt)
+			VALUES (1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+		);
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE' );
+
+		try {
+			$driver->query( "UPDATE `wptests_posts` SET `post_modified` = '2020-00-15 14:15:27' WHERE `ID` = 1" );
+			$this->fail( 'Expected zero-in-date to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect datetime value: '2020-00-15 14:15:27'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests strict INSERT normalizes accepted temporal/YEAR values and rejects invalid scalar temporal values.
+	 */
+	public function test_strict_insert_normalizes_temporal_and_year_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		try {
+			$driver->query( 'INSERT INTO `wptests_strict_values` (`id`, `date_value`) VALUES (1, TRUE)' );
+			$this->fail( 'Expected invalid date scalar to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect date value: '1'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`, `year_value`)
+				VALUES (2, '2025-10-23 18:30:00.123456', '2025-10-23', '2025-10-23 18:30:00.123456', 50)"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT date_value, datetime_value, timestamp_value, year_value FROM wptests_strict_values WHERE id = 2' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2025-10-23', $rows[0]->date_value );
+		$this->assertSame( '2025-10-23 00:00:00', $rows[0]->datetime_value );
+		$this->assertSame( '2025-10-23 18:30:00', $rows[0]->timestamp_value );
+		$this->assertSame( '2050', $rows[0]->year_value );
+
+		foreach ( array( '-1', '1900', '2156' ) as $value ) {
+			try {
+				$driver->query( "INSERT INTO `wptests_strict_values` (`id`, `year_value`) VALUES (3, {$value})" );
+				$this->fail( 'Expected invalid YEAR value to be rejected in strict SQL mode.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( "Out of range value: '{$value}'", $e->getMessage(), $value );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $value );
+			}
+		}
+	}
+
+	/**
+	 * Tests strict UPDATE normalizes accepted temporal/YEAR values and rejects invalid scalar temporal values.
+	 */
+	public function test_strict_update_normalizes_temporal_and_year_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`, `year_value`)
+			VALUES (1, '2025-01-01', '2025-01-01 00:00:00', '2025-01-01 00:00:00', '2025')"
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"UPDATE `wptests_strict_values`
+				SET `date_value` = '2025-11-24 02:03:04.999999',
+					`datetime_value` = '2025-11-24',
+					`timestamp_value` = '2025-11-24 02:03:04.999999',
+					`year_value` = 70
+				WHERE `id` = 1"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT date_value, datetime_value, timestamp_value, year_value FROM wptests_strict_values WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2025-11-24', $rows[0]->date_value );
+		$this->assertSame( '2025-11-24 00:00:00', $rows[0]->datetime_value );
+		$this->assertSame( '2025-11-24 02:03:04', $rows[0]->timestamp_value );
+		$this->assertSame( '1970', $rows[0]->year_value );
+
+		try {
+			$driver->query( 'UPDATE `wptests_strict_values` SET `datetime_value` = FALSE WHERE `id` = 1' );
+			$this->fail( 'Expected invalid datetime scalar to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect datetime value: '0'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests strict integer DML rejects impossible coercions and MySQL range violations.
+	 */
+	public function test_strict_integer_literals_reject_invalid_values_and_out_of_range_values(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_strict_ints` (`id`, `int_value`, `tiny_unsigned`, `small_value`, `int_unsigned`)
+				VALUES (1, '3.0', TRUE, 32767, 4294967295)"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT int_value, tiny_unsigned, small_value, int_unsigned FROM wptests_strict_ints WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '3', $rows[0]->int_value );
+		$this->assertSame( '1', $rows[0]->tiny_unsigned );
+		$this->assertSame( '32767', $rows[0]->small_value );
+		$this->assertSame( '4294967295', $rows[0]->int_unsigned );
+
+		$cases = array(
+			"INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (2, 'abc')" => "Incorrect integer value: 'abc'",
+			"INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (2, '12abc')" => "Incorrect integer value: '12abc'",
+			'INSERT INTO `wptests_strict_ints` (`id`, `tiny_unsigned`) VALUES (2, -1)' => "Out of range value: '-1'",
+			'INSERT INTO `wptests_strict_ints` (`id`, `tiny_unsigned`) VALUES (2, 256)' => "Out of range value: '256'",
+			'UPDATE `wptests_strict_ints` SET `small_value` = 32768 WHERE `id` = 1' => "Out of range value: '32768'",
+			'UPDATE `wptests_strict_ints` SET `int_unsigned` = -1 WHERE `id` = 1' => "Out of range value: '-1'",
+		);
+
+		foreach ( $cases as $query => $message ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected invalid integer value to be rejected in strict SQL mode.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests strict text DML rejects truncation using MySQL metadata.
+	 */
+	public function test_strict_text_literals_reject_truncation_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_text_values_table_with_mysql_metadata( $driver );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_strict_texts` (`id`, `varchar_value`, `char_value`, `tinytext_value`) VALUES (1, 'abc', 'xyz', 'short')" ) );
+
+		$long_tinytext = str_repeat( 'x', 256 );
+		$cases         = array(
+			"INSERT INTO `wptests_strict_texts` (`id`, `varchar_value`) VALUES (2, 'abcd')" => "Data too long for column 'varchar_value'",
+			"UPDATE `wptests_strict_texts` SET `char_value` = 'abcd' WHERE `id` = 1" => "Data too long for column 'char_value'",
+			"INSERT INTO `wptests_strict_texts` (`id`, `tinytext_value`) VALUES (2, '{$long_tinytext}')" => "Data too long for column 'tinytext_value'",
+		);
+
+		foreach ( $cases as $query => $message ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected text truncation to be rejected in strict SQL mode.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
@@ -741,6 +956,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_non_strict_replace_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
 		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
 		$this->install_options_table_with_mysql_metadata( $driver );
 
 		$replace      = "REPLACE INTO `wptests_options` (`option_name`) VALUES ('siteurl')";
@@ -1477,6 +1693,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
 			'CREATE FULLTEXT INDEX idx_value ON wptests_index_fail (value)',
+			'CREATE SPATIAL INDEX idx_value ON wptests_index_fail (value)',
 			'CREATE INDEX idx_value USING HASH ON wptests_index_fail (value)',
 			'CREATE UNIQUE INDEX idx_value ON wptests_index_fail (value(16))',
 			'CREATE INDEX IF NOT EXISTS "wptests_index_fail__" ON "wptests_index_fail" ("value")',
@@ -1504,6 +1721,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					),
 					$query
 				);
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests unsupported CREATE TABLE index types fail before backend execution.
+	 */
+	public function test_create_table_fulltext_and_spatial_indexes_do_not_reach_backend(): void {
+		$queries = array(
+			'CREATE TABLE wptests_fulltext_fail (id int NOT NULL, value text, FULLTEXT KEY value_fulltext (value))',
+			'CREATE TABLE wptests_spatial_fail (id int NOT NULL, value text, SPATIAL KEY value_spatial (value))',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported CREATE TABLE index type to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported CREATE TABLE statement.', $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
 			}
 		}
@@ -1990,6 +2229,153 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests AUTO_INCREMENT zero values generate IDs unless NO_AUTO_VALUE_ON_ZERO is active.
+	 */
+	public function test_auto_increment_zero_respects_no_auto_value_on_zero_sql_mode(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				"ID" INTEGER PRIMARY KEY AUTOINCREMENT,
+				post_title TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_posts (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_title varchar(255) NOT NULL DEFAULT "",
+				PRIMARY KEY (ID)
+			)'
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO wptests_posts (`ID`, `post_title`) VALUES (0, 'zero')" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_posts" ("ID", "post_title") VALUES (NULL, \'zero\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO wptests_posts (`ID`, `post_title`) VALUES ('0', 'quoted zero')" ) );
+		$this->assertSame( 2, $driver->get_insert_id() );
+
+		$driver->set_sql_mode( 'NO_AUTO_VALUE_ON_ZERO' );
+		$this->assertSame( 1, $driver->query( "INSERT INTO wptests_posts (`ID`, `post_title`) VALUES (0, 'literal zero')" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_posts" ("ID", "post_title") VALUES (0, \'literal zero\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT ID, post_title FROM wptests_posts ORDER BY ID' );
+		$this->assertSame(
+			array(
+				array( '0', 'literal zero' ),
+				array( '1', 'zero' ),
+				array( '2', 'quoted zero' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->ID, $row->post_title );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests AUTO_INCREMENT zero handling applies to ON DUPLICATE KEY UPDATE VALUES rows.
+	 */
+	public function test_auto_increment_zero_respects_sql_mode_for_upsert_values(): void {
+		$driver = $this->create_driver();
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`) VALUES (0, 'generated')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") VALUES (NULL, \'generated\') ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$driver->set_sql_mode( 'NO_AUTO_VALUE_ON_ZERO' );
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`) VALUES (0, 'literal zero')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") VALUES (0, \'literal zero\') ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '0', 'literal zero' ),
+				array( '1', 'generated' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests AUTO_INCREMENT zero handling applies to INSERT ... SELECT projections.
+	 */
+	public function test_auto_increment_zero_respects_sql_mode_for_insert_select(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_insert_select_posts (
+				ID INTEGER PRIMARY KEY AUTOINCREMENT,
+				post_title TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_insert_select_posts (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_title varchar(255) NOT NULL DEFAULT "",
+				PRIMARY KEY (ID)
+			)'
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_insert_select_posts` (`ID`, `post_title`) SELECT 0, 'generated' FROM DUAL" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_select_posts" ("ID", "post_title") SELECT NULL , \'generated\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$driver->set_sql_mode( 'NO_AUTO_VALUE_ON_ZERO' );
+		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_insert_select_posts` (`ID`, `post_title`) SELECT 0, 'literal zero' FROM DUAL" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_select_posts" ("ID", "post_title") SELECT 0, \'literal zero\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT ID, post_title FROM wptests_insert_select_posts ORDER BY ID' );
+		$this->assertSame(
+			array(
+				array( '0', 'literal zero' ),
+				array( '1', 'generated' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->ID, $row->post_title );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
 	 * Tests upsert conflict updates expose explicit AUTO_INCREMENT values as the insert ID.
 	 */
 	public function test_get_insert_id_returns_explicit_auto_increment_value_for_upsert_conflict_update(): void {
@@ -2434,6 +2820,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_non_strict_update_null_coerces_not_null_columns_to_metadata_defaults(): void {
 		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
 		$this->install_options_table_with_mysql_metadata( $driver );
 
 		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('cron', 'serialized', 'no')" );
@@ -2463,6 +2850,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_non_strict_update_normalizes_invalid_date_time_literals_from_mysql_metadata(): void {
 		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
 		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
 
 		$driver->query(
@@ -9414,6 +9802,126 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests the PostgreSQL driver defaults to the same MySQL SQL modes as SQLite.
+	 */
+	public function test_default_sql_mode_matches_sqlite_backend_defaults(): void {
+		$driver = $this->create_driver();
+
+		$expected = 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES';
+
+		$this->assertSame( $expected, $driver->get_sql_mode() );
+
+		$rows = $driver->query( 'SELECT @@sql_mode' );
+		$this->assertSame( $expected, $rows[0]->{'@@sql_mode'} );
+
+		$rows = $driver->query( "SHOW VARIABLES LIKE 'sql_mode'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( $expected, $rows[0]->Value );
+	}
+
+	/**
+	 * Tests supported SQL mode SET syntaxes normalize and report emulated state.
+	 */
+	public function test_sql_mode_set_syntaxes_update_emulated_state(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'SET sql_mode = "ERROR_FOR_DIVISION_BY_ZERO"' ) );
+		$this->assertSame( 'ERROR_FOR_DIVISION_BY_ZERO', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( "SET @@sql_mode = 'NO_ENGINE_SUBSTITUTION'" ) );
+		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'NO_ZERO_DATE'" ) );
+		$this->assertSame( 'NO_ZERO_DATE', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( "SET @@SESSION.sql_mode = 'NO_ZERO_IN_DATE'" ) );
+		$rows = $driver->query( 'SELECT @@SESSION.sql_mode' );
+		$this->assertSame( 'NO_ZERO_IN_DATE', $rows[0]->{'@@SESSION.sql_mode'} );
+
+		$this->assertSame( 0, $driver->query( 'SET sql_mode = DEFAULT' ) );
+		$this->assertSame(
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			$driver->get_sql_mode()
+		);
+
+		$this->assertSame( 0, $driver->query( 'SET sql_mode = 0' ) );
+		$this->assertSame( '', $driver->get_sql_mode() );
+	}
+
+	/**
+	 * Tests SQL mode user-variable save/restore flows.
+	 */
+	public function test_sql_mode_can_be_saved_and_restored_through_user_variables(): void {
+		$driver       = $this->create_driver();
+		$initial_mode = $driver->get_sql_mode();
+
+		$this->assertSame( 0, $driver->query( 'SET @old_sql_mode = @@SESSION.sql_mode' ) );
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'ANSI_QUOTES'" ) );
+		$this->assertSame( 'ANSI_QUOTES', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( 'SET SESSION sql_mode = @old_sql_mode' ) );
+		$this->assertSame( $initial_mode, $driver->get_sql_mode() );
+	}
+
+	/**
+	 * Tests ANSI_QUOTES affects PostgreSQL query translation.
+	 */
+	public function test_ansi_quotes_sql_mode_treats_double_quoted_text_as_identifiers(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_title TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_posts ("ID", post_title) VALUES (1, \'Hello\')' );
+
+		$literal = $driver->query( 'SELECT "post_title" AS value' );
+		$this->assertSame( 'post_title', $literal[0]->value );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'ANSI_QUOTES'" ) );
+		$rows = $driver->query( 'SELECT "ID", "post_title" FROM "wptests_posts" WHERE "ID" = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->ID );
+		$this->assertSame( 'Hello', $rows[0]->post_title );
+		$this->assertSame(
+			'SELECT "ID", "post_title" FROM "wptests_posts" WHERE "ID" = 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests NO_BACKSLASH_ESCAPES changes PostgreSQL string literal translation.
+	 */
+	public function test_no_backslash_escapes_sql_mode_changes_postgresql_string_literals(): void {
+		$driver    = $this->create_driver();
+		$backslash = chr( 92 );
+		$query     = "SELECT '{$backslash}n' AS value";
+
+		$driver->set_sql_mode( '' );
+		$rows = $driver->query( $query );
+		$this->assertSame( "\n", $rows[0]->value );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" ) );
+		$rows = $driver->query( $query );
+		$this->assertSame( $backslash . 'n', $rows[0]->value );
+	}
+
+	/**
+	 * Tests PIPES_AS_CONCAT switches || from logical OR to concatenation.
+	 */
+	public function test_pipes_as_concat_sql_mode_changes_postgresql_double_pipe_translation(): void {
+		$driver = $this->create_driver();
+
+		$driver->set_sql_mode( '' );
+		$rows = $driver->query( 'SELECT 0 || 1 AS value' );
+		$this->assertSame( '1', (string) $rows[0]->value );
+		$this->assertSame( 'SELECT 0 OR 1 AS value', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'PIPES_AS_CONCAT'" ) );
+		$rows = $driver->query( "SELECT 'a' || 'b' AS value" );
+		$this->assertSame( 'ab', $rows[0]->value );
+		$this->assertSame( "SELECT 'a' || 'b' AS value", $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
 	 * Tests built-in MySQL version variables are selected from emulated state.
 	 */
 	public function test_select_builtin_version_variables_returns_mysql_compatible_values_without_backend_queries(): void {
@@ -9476,7 +9984,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'utf8_general_ci', $variables['collation_connection'] );
 		$this->assertSame( 'utf8_general_ci', $variables['collation_database'] );
 		$this->assertSame( 'utf8_general_ci', $variables['collation_server'] );
-		$this->assertSame( 'NO_ENGINE_SUBSTITUTION', $variables['sql_mode'] );
+		$this->assertSame(
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			$variables['sql_mode']
+		);
 		$this->assertSame( '1', $variables['autocommit'] );
 		$this->assertSame( 'InnoDB', $variables['default_storage_engine'] );
 		$this->assertSame( '1', $variables['foreign_key_checks'] );
@@ -9881,6 +10392,85 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				post_modified_gmt timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
 				PRIMARY KEY (ID)
 			)"
+		);
+	}
+
+	/**
+	 * Install a DML coercion table with temporal/YEAR MySQL metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_strict_dml_values_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_strict_values (
+				id INTEGER PRIMARY KEY,
+				date_value TEXT,
+				datetime_value TEXT,
+				timestamp_value TEXT,
+				year_value TEXT
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_strict_values (
+				id int(11) NOT NULL,
+				date_value date DEFAULT NULL,
+				datetime_value datetime DEFAULT NULL,
+				timestamp_value timestamp DEFAULT NULL,
+				year_value year DEFAULT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+	}
+
+	/**
+	 * Install a DML coercion table with integer-family MySQL metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_strict_integer_values_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_strict_ints (
+				id INTEGER PRIMARY KEY,
+				int_value INTEGER,
+				tiny_unsigned INTEGER,
+				small_value INTEGER,
+				int_unsigned TEXT
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_strict_ints (
+				id int(11) NOT NULL,
+				int_value int(11) DEFAULT NULL,
+				tiny_unsigned tinyint(3) unsigned DEFAULT NULL,
+				small_value smallint(6) DEFAULT NULL,
+				int_unsigned int(10) unsigned DEFAULT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+	}
+
+	/**
+	 * Install a DML coercion table with bounded text MySQL metadata.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_strict_text_values_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_strict_texts (
+				id INTEGER PRIMARY KEY,
+				varchar_value TEXT,
+				char_value TEXT,
+				tinytext_value TEXT
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_strict_texts (
+				id int(11) NOT NULL,
+				varchar_value varchar(3) DEFAULT NULL,
+				char_value char(3) DEFAULT NULL,
+				tinytext_value tinytext,
+				PRIMARY KEY (id)
+			)'
 		);
 	}
 

@@ -1,23 +1,25 @@
 name: CS
 
 on:
-  # Run on all relevant pushes (except to main) and on all relevant pull requests.
+  # Run on all relevant pushes and pull requests.
   push:
     paths:
       - '**.php'
+      - '.github/workflows/**'
+      - 'bin/verify-workflow-ci-gates.js'
       - 'composer.json'
       - 'composer.lock'
       - '.phpcs.xml.dist'
       - 'phpcs.xml.dist'
-      - '.github/workflows/cs.yml'
   pull_request:
     paths:
       - '**.php'
+      - '.github/workflows/**'
+      - 'bin/verify-workflow-ci-gates.js'
       - 'composer.json'
       - 'composer.lock'
       - '.phpcs.xml.dist'
       - 'phpcs.xml.dist'
-      - '.github/workflows/cs.yml'
   # Allow manually triggering the workflow.
   workflow_dispatch:
 
@@ -54,6 +56,11 @@ jobs:
       # @link https://getcomposer.org/doc/03-cli.md#validate
       - name: Validate Composer installation
         run: composer validate --no-check-all
+
+      - name: Verify workflow CI gates
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: composer run verify-workflow-ci-gates
 
       # Install dependencies and handle caching in one go.
       # @link https://github.com/marketplace/actions/install-composer-dependencies
