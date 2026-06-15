@@ -8759,6 +8759,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			) . ' AS shifted',
 			$sql
 		);
+
+		$select = 'SELECT DATE_ADD(post_date_gmt, INTERVAL 1.5 HOUR_MINUTE) AS shifted';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_with_interval_sql(
+				'+',
+				'post_date_gmt',
+				$this->get_expected_mysql_composite_interval_sql(
+					array(
+						array( '1', 'hour' ),
+						array( '5', 'minute' ),
+					)
+				)
+			) . ' AS shifted',
+			$sql
+		);
 	}
 
 	/**
@@ -8804,6 +8821,70 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests composite interval literals support MySQL's right-aligned short values.
+	 */
+	public function test_mysql_date_add_supports_short_composite_interval_literals_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = 'SELECT DATE_ADD(post_date_gmt, INTERVAL 2 HOUR_MINUTE) AS shifted';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_with_interval_sql(
+				'+',
+				'post_date_gmt',
+				$this->get_expected_mysql_composite_interval_sql(
+					array(
+						array( '2', 'minute' ),
+					)
+				)
+			) . ' AS shifted',
+			$sql
+		);
+
+		$select = "SELECT DATE_SUB(post_date_gmt, INTERVAL '1:2' DAY_SECOND) AS shifted";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_with_interval_sql(
+				'-',
+				'post_date_gmt',
+				$this->get_expected_mysql_composite_interval_sql(
+					array(
+						array( '1', 'minute' ),
+						array( '2', 'second' ),
+					)
+				)
+			) . ' AS shifted',
+			$sql
+		);
+	}
+
+	/**
+	 * Tests composite interval literals accept alternate MySQL delimiters.
+	 */
+	public function test_mysql_date_add_supports_alternate_composite_interval_delimiters_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT DATE_ADD(post_date_gmt, INTERVAL '6/4' HOUR_MINUTE) AS shifted";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_with_interval_sql(
+				'+',
+				'post_date_gmt',
+				$this->get_expected_mysql_composite_interval_sql(
+					array(
+						array( '6', 'hour' ),
+						array( '4', 'minute' ),
+					)
+				)
+			) . ' AS shifted',
+			$sql
+		);
+	}
+
+	/**
 	 * Tests DATE_ADD timestamp casts are guarded for MySQL zero-date values.
 	 */
 	public function test_mysql_date_add_guards_zero_date_timestamp_casts_for_postgresql(): void {
@@ -8828,8 +8909,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver  = $this->create_driver();
 		$queries = array(
 			'SELECT DATE_ADD(post_date_gmt, INTERVAL 1 fortnight) AS shifted',
-			'SELECT DATE_ADD(post_date_gmt, INTERVAL 2 HOUR_MINUTE) AS shifted',
-			"SELECT DATE_ADD(post_date_gmt, INTERVAL '1:2' DAY_SECOND) AS shifted",
+			'SELECT DATE_ADD(post_date_gmt, INTERVAL 6/4 HOUR_MINUTE) AS shifted',
 			"SELECT DATE_ADD(post_date_gmt, INTERVAL '1:2:3' MINUTE_SECOND) AS shifted",
 		);
 

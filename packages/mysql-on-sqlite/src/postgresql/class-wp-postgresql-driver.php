@@ -29529,19 +29529,20 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @return string|null PostgreSQL interval SQL, or null when unsupported.
 	 */
 	private function get_postgresql_mysql_composite_interval_literal_sql( array $tokens, int $start, int $end, array $part_units ): ?string {
-		if ( $start + 1 !== $end || ! isset( $tokens[ $start ] ) ) {
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
 			return null;
 		}
 
-		if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $start ]->id ) {
+		$value = $this->get_mysql_composite_interval_literal_value( $tokens, $start, $end );
+		if ( null === $value ) {
+			return null;
+		}
+
+		if ( $value['is_null'] ) {
 			return 'CAST(NULL AS interval)';
 		}
 
-		if ( ! $this->is_mysql_quoted_text_token( $tokens[ $start ] ) ) {
-			return null;
-		}
-
-		$components = $this->parse_mysql_composite_interval_literal_components( $tokens[ $start ]->get_value(), $part_units );
+		$components = $this->parse_mysql_composite_interval_literal_components( $value['value'], $part_units );
 		if ( null === $components ) {
 			return null;
 		}
@@ -29550,42 +29551,119 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
-	 * Parse a full, delimited MySQL composite interval literal.
+	 * Get a simple literal value for a MySQL composite interval.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First interval value token position.
+	 * @param int              $end    Final interval value token position, exclusive.
+	 * @return array{value: string, is_null: bool}|null Literal interval value, or null when unsupported.
+	 */
+	private function get_mysql_composite_interval_literal_value( array $tokens, int $start, int $end ): ?array {
+		if ( $start + 1 === $end ) {
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $start ]->id ) {
+				return array(
+					'value'   => '',
+					'is_null' => true,
+				);
+			}
+
+			if ( $this->is_mysql_quoted_text_token( $tokens[ $start ] ) ) {
+				return array(
+					'value'   => $tokens[ $start ]->get_value(),
+					'is_null' => false,
+				);
+			}
+
+			if ( $this->is_mysql_unsigned_numeric_token( $tokens[ $start ] ) ) {
+				return array(
+					'value'   => $tokens[ $start ]->get_value(),
+					'is_null' => false,
+				);
+			}
+		}
+
+		if (
+			$start + 2 === $end
+			&& isset( $tokens[ $start + 1 ] )
+			&& (
+				WP_MySQL_Lexer::MINUS_OPERATOR === $tokens[ $start ]->id
+				|| WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $start ]->id
+			)
+			&& $this->is_mysql_unsigned_numeric_token( $tokens[ $start + 1 ] )
+		) {
+			return array(
+				'value'   => $tokens[ $start ]->get_bytes() . $tokens[ $start + 1 ]->get_value(),
+				'is_null' => false,
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token is a simple unsigned numeric literal.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a simple numeric literal.
+	 */
+	private function is_mysql_unsigned_numeric_token( WP_MySQL_Token $token ): bool {
+		if ( $this->is_mysql_unsigned_integer_token( $token ) ) {
+			return true;
+		}
+
+		if (
+			in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::DECIMAL_NUMBER,
+				),
+				true
+			)
+		) {
+			return 1 === preg_match( '/^[0-9]+[.][0-9]+$/', $token->get_value() );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Parse a full or right-aligned MySQL composite interval literal.
 	 *
 	 * @param string   $value      MySQL interval literal value.
 	 * @param string[] $part_units Ordered PostgreSQL component units.
 	 * @return array<int,array{value: string, unit: string}>|null Parsed components, or null when unsupported.
 	 */
 	private function parse_mysql_composite_interval_literal_components( string $value, array $part_units ): ?array {
-		$part_count       = count( $part_units );
-		$has_microseconds = 'microsecond' === $part_units[ $part_count - 1 ];
-		$integer_parts    = $has_microseconds ? $part_count - 1 : $part_count;
-		$pattern          = '/^[[:space:]]*([+-]?)[[:space:]]*([0-9]+)';
-
-		for ( $i = 1; $i < $integer_parts; $i++ ) {
-			$pattern .= '[[:space:]:-]+([0-9]+)';
-		}
-
-		if ( $has_microseconds ) {
-			$pattern .= '[.]([0-9]{1,6})';
-		}
-
-		$pattern .= '[[:space:]]*$/';
-		if ( 1 !== preg_match( $pattern, $value, $matches ) ) {
+		$part_count = count( $part_units );
+		$value      = trim( $value );
+		if ( '' === $value ) {
 			return null;
 		}
 
-		$sign       = '-' === $matches[1] ? '-' : '';
+		$sign = '';
+		if ( '-' === $value[0] || '+' === $value[0] ) {
+			$sign  = '-' === $value[0] ? '-' : '';
+			$value = trim( substr( $value, 1 ) );
+		}
+
+		if ( '' === $value || 1 !== preg_match( '/^[0-9]+(?:[^0-9]+[0-9]+)*$/', $value ) ) {
+			return null;
+		}
+
+		$parts = preg_split( '/[^0-9]+/', $value );
+		if ( false === $parts || empty( $parts ) || count( $parts ) > $part_count ) {
+			return null;
+		}
+
+		$units      = array_slice( $part_units, $part_count - count( $parts ) );
 		$components = array();
-		for ( $i = 0; $i < $part_count; $i++ ) {
-			$component_value = $matches[ $i + 2 ];
-			if ( $has_microseconds && $i === $part_count - 1 ) {
-				$component_value = str_pad( $component_value, 6, '0' );
-			}
+		foreach ( $parts as $index => $part ) {
+			$unit            = $units[ $index ];
+			$component_value = 'microsecond' === $unit ? str_pad( $part, 6, '0' ) : $part;
 
 			$components[] = array(
 				'value' => $sign . $component_value,
-				'unit'  => $part_units[ $i ],
+				'unit'  => $unit,
 			);
 		}
 
