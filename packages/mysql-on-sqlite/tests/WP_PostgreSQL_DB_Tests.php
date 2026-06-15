@@ -2570,6 +2570,69 @@ PHP
 	}
 
 	/**
+	 * Tests select() uses the current PostgreSQL driver when no handle is passed.
+	 */
+	public function test_select_uses_current_postgresql_driver_when_handle_is_omitted(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {
+	public $dbname = '';
+	public $ready  = false;
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Select_Fake_Driver extends WP_PostgreSQL_Driver {
+	public function __construct() {}
+}
+
+$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$db->dbname = 'wptests';
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, new WP_PostgreSQL_DB_Select_Fake_Driver() );
+
+$select_other_default_result = $db->select( 'other' );
+$ready_after_other_default   = $db->ready;
+
+$select_current_default_result = $db->select( 'wptests' );
+$ready_after_current_default   = $db->ready;
+
+$driver_property->setValue( $db, null );
+$db->ready                    = true;
+$select_missing_driver_result = $db->select( 'wptests' );
+$ready_after_missing_driver   = $db->ready;
+
+wp_postgresql_db_test_respond(
+	array(
+		'select_other_default_result'   => $select_other_default_result,
+		'ready_after_other_default'     => $ready_after_other_default,
+		'select_current_default_result' => $select_current_default_result,
+		'ready_after_current_default'   => $ready_after_current_default,
+		'select_missing_driver_result'  => $select_missing_driver_result,
+		'ready_after_missing_driver'    => $ready_after_missing_driver,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'select_other_default_result'   => false,
+				'ready_after_other_default'     => false,
+				'select_current_default_result' => true,
+				'ready_after_current_default'   => true,
+				'select_missing_driver_result'  => false,
+				'ready_after_missing_driver'    => false,
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests db_connect() rejects missing PostgreSQL database names before connecting.
 	 */
 	public function test_db_connect_rejects_missing_database_name_before_connecting(): void {
