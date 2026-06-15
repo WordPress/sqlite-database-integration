@@ -12483,4 +12483,18 @@ END;
 		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, '+' || 1 || ' YEAR')", $result[2]['dflt_value'] );
 		$this->assertSame( "('a' || 'b')", $result[3]['dflt_value'] );
 	}
+
+	public function testReverseFunction(): void {
+		// Normal reverse.
+		$result = $this->assertQuery( "SELECT REVERSE('aoeuidhtns') AS reversed" );
+		$this->assertSame( 'snthdiueoa', $result[0]->reversed );
+
+		// Empty string.
+		$result = $this->assertQuery( "SELECT REVERSE('') AS reversed" );
+		$this->assertSame( '', $result[0]->reversed );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT REVERSE(NULL) AS reversed' );
+		$this->assertNull( $result[0]->reversed );
+	}
 }

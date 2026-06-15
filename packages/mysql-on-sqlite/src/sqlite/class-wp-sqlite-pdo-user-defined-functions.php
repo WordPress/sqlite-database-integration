@@ -90,6 +90,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_time'                     => 'utc_time',
 		'utc_timestamp'                => 'utc_timestamp',
 		'version'                      => 'version',
+		'reverse'                      => 'reverse',
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
@@ -927,6 +928,22 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function version() {
 		return '5.5';
+	}
+
+	/**
+	 * Method to emulate MySQL REVERSE() function.
+	 *
+	 * Takes a string and returns the reverse of it.
+	 *
+	* @param string|null $str The string to reverse.
+	*
+	* @return string|null reversed string, or NULL.
+	*/
+	public function reverse( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		return strrev( $str );
 	}
 
 	/**
