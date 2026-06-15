@@ -2435,6 +2435,40 @@ PHP
 	}
 
 	/**
+	 * Tests db_server_info() reports a pending PostgreSQL connection without a driver.
+	 */
+	public function test_db_server_info_reports_pending_connection_without_driver(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap.php';
+
+class wpdb {}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, null );
+
+wp_postgresql_db_test_respond(
+	array(
+		'server_info' => $db->db_server_info(),
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'server_info' => 'PostgreSQL backend pending connection',
+			),
+			$result
+		);
+	}
+
+	/**
 	 * Tests query state, metadata, and SAVEQUERIES mapping.
 	 */
 	public function test_query_maps_backend_state_to_wpdb_fields(): void {
