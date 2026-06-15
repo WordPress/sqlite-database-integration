@@ -16,6 +16,109 @@ WP_RELEASE_REPOSITORY_URL="${WP_RELEASE_REPOSITORY_URL:-https://github.com/WordP
 DIR="$(cd "$(dirname "$0")" && pwd)"
 WP_DIR="$DIR/wordpress"
 
+wp_setup_acquire_lock() {
+	if wp_setup_try_acquire_lock; then
+		return
+	fi
+
+	if wp_setup_try_acquire_recovery_lock || { wp_setup_recover_stale_recovery_lock && wp_setup_try_acquire_recovery_lock; }; then
+		if wp_setup_recover_stale_empty_lock && wp_setup_try_acquire_lock; then
+			wp_setup_release_recovery_lock
+			return
+		fi
+
+		wp_setup_release_recovery_lock
+	fi
+
+	wp_setup_report_active_or_ambiguous_lock
+}
+
+wp_setup_try_acquire_lock() {
+	if mkdir "$WP_SETUP_LOCK_DIR" 2>/dev/null; then
+		if ! printf '%s\n' "$WP_SETUP_LOCK_OWNER_TOKEN" > "$WP_SETUP_LOCK_OWNER_FILE"; then
+			echo "Error: Could not write wp-setup.sh lock owner to '$WP_SETUP_LOCK_OWNER_FILE'." >&2
+			exit 1
+		fi
+
+		trap wp_setup_release_locks EXIT
+		return 0
+	fi
+
+	return 1
+}
+
+wp_setup_try_acquire_recovery_lock() {
+	if mkdir "$WP_SETUP_LOCK_RECOVERY_DIR" 2>/dev/null; then
+		if ! printf '%s\n' "$WP_SETUP_LOCK_OWNER_TOKEN" > "$WP_SETUP_LOCK_RECOVERY_OWNER_FILE"; then
+			echo "Error: Could not write wp-setup.sh lock recovery owner to '$WP_SETUP_LOCK_RECOVERY_OWNER_FILE'." >&2
+			wp_setup_release_recovery_lock
+			exit 1
+		fi
+
+		trap wp_setup_release_locks EXIT
+		return 0
+	fi
+
+	return 1
+}
+
+wp_setup_recover_stale_recovery_lock() {
+	local stale_recovery_lock_dir
+	local unexpected_recovery_lock_entry
+
+	stale_recovery_lock_dir="$(find "$WP_SETUP_LOCK_RECOVERY_DIR" -maxdepth 0 -type d -mmin "$WP_SETUP_LOCK_STALE_AGE_MINUTES" -print -quit 2>/dev/null || true)"
+	if [ -z "$stale_recovery_lock_dir" ]; then
+		return 1
+	fi
+
+	unexpected_recovery_lock_entry="$(find "$WP_SETUP_LOCK_RECOVERY_DIR" -mindepth 1 -maxdepth 1 ! -name 'owner' -print -quit 2>/dev/null || true)"
+	if [ -n "$unexpected_recovery_lock_entry" ]; then
+		return 1
+	fi
+
+	if [ -f "$WP_SETUP_LOCK_RECOVERY_OWNER_FILE" ]; then
+		rm -f "$WP_SETUP_LOCK_RECOVERY_OWNER_FILE" || return 1
+	fi
+
+	rmdir "$WP_SETUP_LOCK_RECOVERY_DIR" 2>/dev/null
+}
+
+wp_setup_recover_stale_empty_lock() {
+	local stale_empty_lock_dir
+
+	stale_empty_lock_dir="$(find "$WP_SETUP_LOCK_DIR" -maxdepth 0 -type d -empty -mmin "$WP_SETUP_LOCK_STALE_AGE_MINUTES" -print -quit 2>/dev/null || true)"
+	if [ -z "$stale_empty_lock_dir" ]; then
+		return 1
+	fi
+
+	rmdir "$WP_SETUP_LOCK_DIR" 2>/dev/null
+}
+
+wp_setup_report_active_or_ambiguous_lock() {
+	echo 'Error: Another wp-setup.sh process is already running for this checkout.' >&2
+	echo "If no setup process is running, remove '$WP_SETUP_LOCK_DIR' and rerun this command." >&2
+	exit 1
+}
+
+wp_setup_release_locks() {
+	wp_setup_release_lock
+	wp_setup_release_recovery_lock
+}
+
+wp_setup_release_lock() {
+	if [ -f "$WP_SETUP_LOCK_OWNER_FILE" ] && [ "$(sed -n '1p' "$WP_SETUP_LOCK_OWNER_FILE" 2>/dev/null || true)" = "$WP_SETUP_LOCK_OWNER_TOKEN" ]; then
+		rm -f "$WP_SETUP_LOCK_OWNER_FILE"
+		rmdir "$WP_SETUP_LOCK_DIR" 2>/dev/null || true
+	fi
+}
+
+wp_setup_release_recovery_lock() {
+	if [ -f "$WP_SETUP_LOCK_RECOVERY_OWNER_FILE" ] && [ "$(sed -n '1p' "$WP_SETUP_LOCK_RECOVERY_OWNER_FILE" 2>/dev/null || true)" = "$WP_SETUP_LOCK_OWNER_TOKEN" ]; then
+		rm -f "$WP_SETUP_LOCK_RECOVERY_OWNER_FILE"
+		rmdir "$WP_SETUP_LOCK_RECOVERY_DIR" 2>/dev/null || true
+	fi
+}
+
 case "$WP_TEST_DB_BACKEND" in
 	mysql)
 		WP_TEST_DB_BACKEND="mysql"
@@ -33,12 +136,12 @@ case "$WP_TEST_DB_BACKEND" in
 esac
 
 WP_SETUP_LOCK_DIR="$DIR/.wp-setup.lock"
-if ! mkdir "$WP_SETUP_LOCK_DIR" 2>/dev/null; then
-	echo 'Error: Another wp-setup.sh process is already running for this checkout.' >&2
-	echo "If no setup process is running, remove '$WP_SETUP_LOCK_DIR' and rerun this command." >&2
-	exit 1
-fi
-trap 'rmdir "$WP_SETUP_LOCK_DIR" 2>/dev/null || true' EXIT
+WP_SETUP_LOCK_OWNER_FILE="$WP_SETUP_LOCK_DIR/owner"
+WP_SETUP_LOCK_RECOVERY_DIR="$DIR/.wp-setup.lock.recovery"
+WP_SETUP_LOCK_RECOVERY_OWNER_FILE="$WP_SETUP_LOCK_RECOVERY_DIR/owner"
+WP_SETUP_LOCK_OWNER_TOKEN="wp-setup.sh:$$:$(date +%s):$RANDOM:$RANDOM"
+WP_SETUP_LOCK_STALE_AGE_MINUTES="+5"
+wp_setup_acquire_lock
 
 # 1. Ensure that Git is installed.
 echo "Checking if Git is installed..."
