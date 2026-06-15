@@ -3792,6 +3792,60 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests columnless INSERT ... SELECT upserts infer target columns from MySQL metadata.
+	 */
+	public function test_columnless_insert_select_on_duplicate_key_update_uses_metadata_columns(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_columnless_plugin_lookup (
+				source TEXT NOT NULL,
+				external_id TEXT NOT NULL,
+				attempts INTEGER NOT NULL,
+				payload TEXT NOT NULL,
+				UNIQUE (source, external_id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_columnless_plugin_lookup (
+				source varchar(64) NOT NULL,
+				external_id varchar(64) NOT NULL,
+				attempts int(11) NOT NULL DEFAULT 0,
+				payload longtext NOT NULL,
+				UNIQUE KEY source_external_id (source, external_id)
+			)'
+		);
+
+		$insert = "INSERT INTO `wptests_columnless_plugin_lookup`
+			SELECT 'feed', 'abc', 1, 'first' FROM DUAL
+			ON DUPLICATE KEY UPDATE `attempts` = `attempts` + VALUES(`attempts`),
+			                        `payload` = VALUES(`payload`)";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_columnless_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 1, \'first\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$update = "INSERT INTO `wptests_columnless_plugin_lookup`
+			(SELECT 'feed', 'abc', 3, 'second' FROM DUAL)
+			ON DUPLICATE KEY UPDATE `attempts` = `attempts` + VALUES(`attempts`),
+			                        `payload` = VALUES(`payload`)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_columnless_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 3, \'second\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT attempts, payload FROM wptests_columnless_plugin_lookup WHERE source = 'feed' AND external_id = 'abc'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '4', $rows[0]->attempts );
+		$this->assertSame( 'second', $rows[0]->payload );
+	}
+
+	/**
 	 * Tests SELECT-sourced upserts with literal AUTO_INCREMENT targets preserve identity semantics.
 	 */
 	public function test_insert_select_on_duplicate_key_update_with_auto_increment_target_uses_metadata_conflict_target(): void {
@@ -3846,6 +3900,60 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests columnless SELECT-sourced upserts keep AUTO_INCREMENT metadata behavior.
+	 */
+	public function test_columnless_insert_select_on_duplicate_key_update_with_auto_increment_target_uses_metadata_columns(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert`
+			SELECT 7, 'selected' FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT 7, \'selected\' ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->id );
+		$this->assertSame( 'selected', $rows[0]->value );
+
+		$update = "INSERT INTO `wptests_identity_upsert`
+			SELECT 7, 'updated' FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT 7, \'updated\' ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->id );
+		$this->assertSame( 'updated', $rows[0]->value );
+	}
+
+	/**
 	 * Tests ambiguous duplicate-key arbiters use the key that actually conflicts.
 	 */
 	public function test_ambiguous_on_duplicate_key_update_uses_conflicting_unique_key(): void {
@@ -3860,6 +3968,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 1, $driver->query( $upsert ) );
 		$this->assertSame(
 			'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (2, \'existing\', \'new\') ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'existing', $rows[0]->slug );
+		$this->assertSame( 'new', $rows[0]->value );
+	}
+
+	/**
+	 * Tests SELECT-sourced upserts resolve ambiguous targets from literal source rows.
+	 */
+	public function test_insert_select_on_duplicate_key_update_uses_conflicting_unique_key_for_literal_select(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'existing', 'old')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert`
+			SELECT 2, 'existing', 'new' FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") SELECT 2, \'existing\', \'new\' ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 

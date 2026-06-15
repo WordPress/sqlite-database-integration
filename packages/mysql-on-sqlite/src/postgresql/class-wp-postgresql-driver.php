@@ -12493,6 +12493,7 @@ WHERE option_name IN (
 
 		$column_metadata             = null;
 		$infer_columns_from_metadata = false;
+		$insert_select_column_list   = false;
 		$value_rows                  = null;
 		$value_range_rows            = array();
 		$probe_safe_rows             = array();
@@ -12501,7 +12502,19 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$columns                     = array();
+			$infer_columns_from_metadata = true;
+			$insert_select_column_list   = true;
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
+			$columns                     = array();
+			$infer_columns_from_metadata = true;
+			$insert_select_column_list   = true;
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 			if ( null === $columns ) {
 				return null;
@@ -12548,7 +12561,8 @@ WHERE option_name IN (
 				$on_duplicate,
 				$statement_end,
 				$table_reference_start,
-				$table_reference_end
+				$table_reference_end,
+				$insert_select_column_list
 			);
 		}
 
@@ -12675,6 +12689,7 @@ WHERE option_name IN (
 	 * @param int              $statement_end         Final statement token position, exclusive.
 	 * @param int              $table_reference_start First target table-reference token.
 	 * @param int              $table_reference_end   Final target table-reference token, exclusive.
+	 * @param bool             $insert_column_list    Whether to inject an inferred column list.
 	 * @return array|null PostgreSQL query data, or null when unsupported.
 	 */
 	private function translate_mysql_insert_select_on_duplicate_key_update_query(
@@ -12685,7 +12700,8 @@ WHERE option_name IN (
 		int $on_duplicate,
 		int $statement_end,
 		int $table_reference_start,
-		int $table_reference_end
+		int $table_reference_end,
+		bool $insert_column_list = false
 	): ?array {
 		$select_start        = $position;
 		$select_end          = $on_duplicate;
@@ -12694,6 +12710,9 @@ WHERE option_name IN (
 			$table_reference_start,
 			$table_reference_end
 		);
+		if ( $insert_column_list ) {
+			$table_reference_sql .= ' (' . implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ) . ')';
+		}
 		$outer_replacements  = array(
 			array(
 				'start' => 0,
@@ -12734,10 +12753,28 @@ WHERE option_name IN (
 
 		$table_column_lookup   = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
+		$literal_value_row     = null;
 
 		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
 		if ( null === $conflict_target ) {
-			return null;
+			$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+				$table_name,
+				$columns,
+				$tokens,
+				$select_start,
+				$select_end
+			);
+			if ( null !== $literal_value_row ) {
+				$conflict_target = $this->get_mysql_upsert_conflict_target(
+					$table_name,
+					$columns,
+					array( $literal_value_row['values'] ),
+					array( $literal_value_row['probe_safe_values'] )
+				);
+			}
+			if ( null === $conflict_target ) {
+				return null;
+			}
 		}
 		$conflict_columns = $conflict_target['columns'];
 
@@ -12762,13 +12799,15 @@ WHERE option_name IN (
 		$inserted_value_rows  = null;
 		$insert_id_value_rows = null;
 		if ( null !== $auto_increment_column ) {
-			$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
-				$table_name,
-				$columns,
-				$tokens,
-				$select_start,
-				$select_end
-			);
+			if ( null === $literal_value_row ) {
+				$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+					$table_name,
+					$columns,
+					$tokens,
+					$select_start,
+					$select_end
+				);
+			}
 			if ( null === $literal_value_row ) {
 				return null;
 			}
