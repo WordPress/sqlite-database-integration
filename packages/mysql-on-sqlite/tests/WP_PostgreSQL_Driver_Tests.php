@@ -10481,17 +10481,118 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported RENAME TABLE statements fail before backend execution.
+	 * Tests ALTER TABLE RENAME TO updates backend and MySQL metadata.
 	 */
-	public function test_unsupported_rename_table_statement_does_not_reach_backend(): void {
+	public function test_alter_table_rename_to_updates_backend_and_metadata(): void {
 		$driver = $this->create_driver();
 
-		try {
-			$driver->query( 'RENAME TABLE wptests_old_name TO wptests_new_name' );
-			$this->fail( 'Expected unsupported RENAME TABLE statement to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported RENAME TABLE statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$driver->query( 'CREATE TABLE wptests_rename_table_old (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_table_old (
+				id int(11) NOT NULL,
+				name varchar(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_rename_table_old (id, name) VALUES (1, 'before')" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_rename_table_old RENAME TO wptests_rename_table_new' ) );
+
+		$rows = $driver->query( 'SELECT id, name FROM wptests_rename_table_new' );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'before', $rows[0]->name );
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_table_old' ) );
+		$this->assertSame( array( 'id', 'name' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_table_new' ), 'column_name' ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_rename_table_new' )[0]->{'Create Table'};
+		$this->assertStringStartsWith( "CREATE TABLE `wptests_rename_table_new` (\n", $create_table );
+		$this->assertStringNotContainsString( 'wptests_rename_table_old', $create_table );
+	}
+
+	/**
+	 * Tests RENAME TABLE updates table, index, and foreign-key metadata.
+	 */
+	public function test_rename_table_updates_indexes_and_foreign_key_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_parent (
+				id int(11) NOT NULL,
+				slug varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY slug_idx (slug)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_child (
+				id int(11) NOT NULL,
+				parent_id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query(
+			'ALTER TABLE wptests_rename_child
+				ADD CONSTRAINT parent_fk FOREIGN KEY (parent_id) REFERENCES wptests_rename_parent (id)'
+		);
+		$driver->query( 'CREATE INDEX standalone_slug ON wptests_rename_parent (slug)' );
+
+		$this->assertSame( 0, $driver->query( 'RENAME TABLE wptests_rename_parent TO wptests_renamed_parent' ) );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains( 'ALTER TABLE "wptests_rename_parent" RENAME TO "wptests_renamed_parent"', $sql );
+		$this->assertContains( 'ALTER INDEX "wptests_rename_parent__slug_idx" RENAME TO "wptests_renamed_parent__slug_idx"', $sql );
+		$this->assertContains( 'ALTER INDEX "wptests_rename_parent__standalone_slug" RENAME TO "wptests_renamed_parent__standalone_slug"', $sql );
+
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_parent' ) );
+		$this->assertSame( array( 'id', 'slug' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_renamed_parent' ), 'column_name' ) );
+		$this->assertSame( array( 'PRIMARY', 'slug_idx', 'standalone_slug' ), array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_renamed_parent' ), 'key_name' ) );
+
+		$child_foreign_keys = $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_rename_child' );
+		$this->assertSame( array( 'wptests_renamed_parent' ), array_values( array_unique( array_column( $child_foreign_keys, 'referenced_table_name' ) ) ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE RENAME AS and bare RENAME forms are accepted.
+	 */
+	public function test_alter_table_rename_as_and_bare_rename_forms_update_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_rename_as_old (id INTEGER NOT NULL PRIMARY KEY)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_rename_as_old (id int(11) NOT NULL, PRIMARY KEY (id))' );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_rename_as_old RENAME AS wptests_rename_as_new' ) );
+		$this->assertSame( array( 'id' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_as_new' ), 'column_name' ) );
+
+		$driver->query( 'CREATE TABLE wptests_rename_bare_old (id INTEGER NOT NULL PRIMARY KEY)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_rename_bare_old (id int(11) NOT NULL, PRIMARY KEY (id))' );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_rename_bare_old RENAME wptests_rename_bare_new' ) );
+		$this->assertSame( array( 'id' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_bare_new' ), 'column_name' ) );
+	}
+
+	/**
+	 * Tests unsupported RENAME TABLE variants fail before backend execution.
+	 */
+	public function test_unsupported_rename_table_variants_do_not_reach_backend(): void {
+		$queries = array(
+			'RENAME TABLE wptests_old_name TO wptests_new_name, wptests_old_two TO wptests_new_two',
+			'RENAME TABLE wptests_old_name TO other_db.wptests_new_name',
+			'RENAME TABLE information_schema.tables TO wptests_tables',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported RENAME TABLE statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertContains(
+					$e->getMessage(),
+					array( 'Unsupported RENAME TABLE statement.', 'Unsupported information_schema query.' ),
+					$query
+				);
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 
@@ -12790,6 +12891,59 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema JOIN ... USING rewrites merged MySQL columns.
+	 */
+	public function test_direct_information_schema_join_using_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$columns = $driver->query(
+			"SELECT table_name AS table_name, c.column_name AS column_name, c.ordinal_position AS ordinal_position
+			FROM information_schema.tables AS t
+			JOIN information_schema.columns AS c USING (table_schema, table_name)
+			WHERE table_name = 'wptests_options'
+			ORDER BY c.ordinal_position"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'wptests_options', 'option_id', '1' ),
+				array( 'wptests_options', 'option_name', '2' ),
+				array( 'wptests_options', 'option_value', '3' ),
+				array( 'wptests_options', 'autoload', '4' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->table_name, $row->column_name, $row->ordinal_position );
+				},
+				$columns
+			)
+		);
+
+		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'USING ("TABLE_SCHEMA", "TABLE_NAME")', $sql );
+		$this->assertStringContainsString( 'WHERE "TABLE_NAME" = \'wptests_options\'', $sql );
+
+		$key_usage = $driver->query(
+			"SELECT constraint_name AS constraint_name, kcu.column_name AS column_name
+			FROM information_schema.table_constraints AS tc
+			JOIN information_schema.key_column_usage AS kcu
+				USING (constraint_schema, constraint_name, table_schema, table_name)
+			WHERE table_name = 'wptests_options'
+				AND constraint_name = 'PRIMARY'"
+		);
+
+		$this->assertSame( 'PRIMARY', $key_usage[0]->constraint_name );
+		$this->assertSame( 'option_id', $key_usage[0]->column_name );
+
+		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'USING ("CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "TABLE_SCHEMA", "TABLE_NAME")', $sql );
+		$this->assertStringContainsString( 'WHERE "TABLE_NAME" = \'wptests_options\'', $sql );
+		$this->assertStringContainsString( '"CONSTRAINT_NAME" = \'PRIMARY\'', $sql );
+	}
+
+	/**
 	 * Tests INSERT ... SELECT can source supported direct information_schema relations.
 	 */
 	public function test_insert_select_from_information_schema_routes_mysql_shape(): void {
@@ -12857,6 +13011,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests INSERT ... SELECT routes supported information_schema JOIN ... USING.
+	 */
+	public function test_insert_select_from_information_schema_join_using_routes_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$driver->get_connection()->get_pdo()->exec(
+			'CREATE TABLE wptests_information_schema_using_insert (
+				id INTEGER NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+
+		$insert = "INSERT INTO wptests_information_schema_using_insert (id, value)
+			SELECT c.ordinal_position, table_name
+			FROM information_schema.tables AS t
+			JOIN information_schema.columns AS c USING (table_schema, table_name)
+			WHERE table_name = 'wptests_options'
+				AND c.column_name = 'option_name'";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$sql     = $this->get_logged_postgresql_sql_containing( $queries, 'INSERT INTO wptests_information_schema_using_insert' );
+		$this->assertStringContainsString( 'USING ("TABLE_SCHEMA", "TABLE_NAME")', $sql );
+		$this->assertStringContainsString( '"c"."ORDINAL_POSITION"', $sql );
+		$this->assertStringContainsString( '"TABLE_NAME"', $sql );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_information_schema_using_insert' );
+		$this->assertSame( '2', $rows[0]->id );
+		$this->assertSame( 'wptests_options', $rows[0]->value );
+	}
+
+	/**
 	 * Tests unsupported INSERT ... SELECT information_schema shapes fail closed.
 	 */
 	public function test_insert_select_unsupported_information_schema_shape_fails_closed(): void {
@@ -12909,6 +13098,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				JOIN information_schema.columns AS c
 					ON c.table_schema = t.table_schema
 					AND c.table_name = t.table_name',
+				'SELECT table_name
+				FROM information_schema.tables AS t
+				JOIN information_schema.columns AS c USING (engine)',
+				'SELECT table_name
+				FROM information_schema.tables AS t
+				JOIN information_schema.columns AS c USING (column_name)',
+				'SELECT table_name
+				FROM information_schema.tables AS t
+				JOIN information_schema.columns AS c USING (table_schema + table_name)',
 			) as $query
 		) {
 			try {

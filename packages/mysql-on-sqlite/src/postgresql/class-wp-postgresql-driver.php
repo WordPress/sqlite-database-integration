@@ -671,6 +671,7 @@ class WP_PostgreSQL_Driver {
 			$this->apply_mysql_dbdelta_alter_metadata( $alter_query['metadata'] );
 			if (
 				$this->mysql_dbdelta_alter_metadata_has_operation( $alter_query['metadata'], 'drop_index' )
+				|| $this->mysql_dbdelta_alter_metadata_has_operation( $alter_query['metadata'], 'rename_table' )
 				|| $this->mysql_dbdelta_alter_metadata_has_operation( $alter_query['metadata'], 'set_auto_increment' )
 			) {
 				$this->last_result = 0;
@@ -695,6 +696,13 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $drop_index_query ) {
 			$this->execute_postgresql_statements( $drop_index_query['statements'] );
 			$this->apply_mysql_drop_index_metadata( $drop_index_query['metadata'] );
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+		$rename_table_query = $this->translate_mysql_rename_table_query( $query );
+		if ( null !== $rename_table_query ) {
+			$this->execute_postgresql_statements( $rename_table_query['statements'] );
+			$this->apply_mysql_rename_table_metadata( $rename_table_query['metadata'] );
 			$this->last_result = 0;
 			return $this->last_result;
 		}
@@ -2712,11 +2720,12 @@ class WP_PostgreSQL_Driver {
 	private function apply_mysql_dbdelta_alter_metadata( array $metadata ): void {
 		$this->ensure_mysql_schema_metadata_tables();
 
-		$table_schema = 'public';
+		$table_schema = $metadata['schema'] ?? 'public';
 		$table_name   = $metadata['table'];
 
 		if ( 'operations' === $metadata['operation'] ) {
 			foreach ( $metadata['operations'] as $operation_metadata ) {
+				$operation_metadata['schema'] = $table_schema;
 				$operation_metadata['table'] = $table_name;
 				$this->apply_mysql_dbdelta_alter_metadata( $operation_metadata );
 			}
@@ -2728,6 +2737,17 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( 'set_auto_increment' === $metadata['operation'] ) {
+			return;
+		}
+
+		if ( 'rename_table' === $metadata['operation'] ) {
+			$this->apply_mysql_rename_table_metadata(
+				array(
+					'schema'    => $table_schema,
+					'old_table' => $table_name,
+					'new_table' => $metadata['new_table'],
+				)
+			);
 			return;
 		}
 
@@ -2869,6 +2889,58 @@ class WP_PostgreSQL_Driver {
 				array( $table_schema, $table_name, $metadata['column'] )
 			);
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		}
+	}
+
+	/**
+	 * Apply MySQL-facing metadata changes after a table rename.
+	 *
+	 * @param array{schema: string, old_table: string, new_table: string} $metadata Rename metadata.
+	 */
+	private function apply_mysql_rename_table_metadata( array $metadata ): void {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema   = $metadata['schema'];
+		$old_table_name = $metadata['old_table'];
+		$new_table_name = $metadata['new_table'];
+		if ( $old_table_name === $new_table_name ) {
+			return;
+		}
+
+		$stmt               = $this->connection->query(
+			sprintf(
+				'SELECT DISTINCT table_schema, table_name FROM %s WHERE referenced_table_schema = ? AND referenced_table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $table_schema, $old_table_name )
+		);
+		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
+
+		foreach ( array( self::MYSQL_COLUMN_METADATA_TABLE, self::MYSQL_INDEX_METADATA_TABLE, self::MYSQL_FOREIGN_KEY_METADATA_TABLE ) as $metadata_table ) {
+			$this->connection->query(
+				sprintf(
+					'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
+					$this->connection->quote_identifier( $metadata_table )
+				),
+				array( $new_table_name, $table_schema, $old_table_name )
+			);
+		}
+
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s SET referenced_table_name = ? WHERE referenced_table_schema = ? AND referenced_table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $new_table_name, $table_schema, $old_table_name )
+		);
+
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $old_table_name );
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $new_table_name );
+		foreach ( $referencing_tables as $referencing_table ) {
+			$this->clear_mysql_metadata_cache_for_table(
+				(string) $referencing_table['table_schema'],
+				(string) $referencing_table['table_name']
+			);
 		}
 	}
 
@@ -4624,7 +4696,8 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
-		$table_name = $this->get_mysql_dbdelta_alter_table_target_name( $table_reference );
+		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
+		$table_name   = $table_reference['table'];
 		$clause     = $this->trim_mysql_statement_fragment(
 			$this->get_mysql_token_range_bytes( $query, $query_tokens, $position, $statement_end )
 		);
@@ -4645,6 +4718,7 @@ class WP_PostgreSQL_Driver {
 		$check_names         = array();
 		foreach ( $ranges as $range ) {
 			$translation = $this->translate_mysql_dbdelta_alter_table_action(
+				$table_schema,
 				$table_name,
 				$clause,
 				$tokens,
@@ -4664,16 +4738,19 @@ class WP_PostgreSQL_Driver {
 
 		if ( 1 === count( $metadata_operations ) ) {
 			$metadata          = $metadata_operations[0];
+			$metadata['schema'] = $table_schema;
 			$metadata['table'] = $table_name;
 		} elseif ( count( $metadata_operations ) > 1 ) {
 			$metadata = array(
 				'operation'  => 'operations',
+				'schema'     => $table_schema,
 				'table'      => $table_name,
 				'operations' => $metadata_operations,
 			);
 		} else {
 			$metadata = array(
 				'operation' => 'noop',
+				'schema'    => $table_schema,
 				'table'     => $table_name,
 			);
 		}
@@ -4731,6 +4808,7 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Translate one ALTER TABLE action.
 	 *
+	 * @param string           $table_schema Backend schema name.
 	 * @param string           $table_name Table name.
 	 * @param string           $clause     Full ALTER clause string.
 	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
@@ -4739,7 +4817,7 @@ class WP_PostgreSQL_Driver {
 	 * @param string[]         $check_names CHECK names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_alter_table_action( string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names ): ?array {
+	private function translate_mysql_dbdelta_alter_table_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names ): ?array {
 		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
 			return null;
 		}
@@ -4803,6 +4881,10 @@ class WP_PostgreSQL_Driver {
 				return $this->translate_mysql_dbdelta_alter_column_default_action( $table_name, $clause, $tokens, $start, $end );
 
 			case WP_MySQL_Lexer::RENAME_SYMBOL:
+				$table_rename = $this->translate_mysql_dbdelta_rename_table_alter_action( $table_schema, $table_name, $tokens, $start, $end );
+				if ( null !== $table_rename ) {
+					return $table_rename;
+				}
 				if ( isset( $tokens[ $start + 1 ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $start + 1 ]->id ) {
 					return $this->translate_mysql_dbdelta_rename_column_alter_action( $table_name, $tokens, $start, $end );
 				}
@@ -4827,6 +4909,43 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Translate an ALTER TABLE RENAME [TO|AS] table action.
+	 *
+	 * @param string           $table_schema Backend schema name.
+	 * @param string           $table_name   Table name.
+	 * @param WP_MySQL_Token[] $tokens       Clause token stream.
+	 * @param int              $start        First action token.
+	 * @param int              $end          Final action token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_rename_table_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
+		$new_table_position = $start + 1;
+		if (
+			isset( $tokens[ $new_table_position ] )
+			&& in_array( $tokens[ $new_table_position ]->id, array( WP_MySQL_Lexer::TO_SYMBOL, WP_MySQL_Lexer::AS_SYMBOL ), true )
+		) {
+			++$new_table_position;
+		}
+
+		if ( $new_table_position + 1 !== $end ) {
+			return null;
+		}
+
+		$new_table_name = $this->get_mysql_table_reference_identifier_token_value( $tokens[ $new_table_position ] ?? null, true );
+		if ( null === $new_table_name ) {
+			return null;
+		}
+
+		return array(
+			'statements' => $this->get_mysql_rename_table_statements( $table_schema, $table_name, $new_table_name ),
+			'metadata'   => array(
+				'operation' => 'rename_table',
+				'new_table' => $new_table_name,
+			),
+		);
 	}
 
 	/**
@@ -6502,6 +6621,153 @@ class WP_PostgreSQL_Driver {
 				'index'  => $index_name,
 			),
 		);
+	}
+
+	/**
+	 * Translate supported MySQL RENAME TABLE statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{statements: string[], metadata: array{schema: string, old_table: string, new_table: string}}|null Translation, or null when this is not RENAME TABLE.
+	 */
+	private function translate_mysql_rename_table_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::RENAME_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
+
+		$position            = 2;
+		$old_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if ( null === $old_table_reference ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TO_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
+
+		++$position;
+		$new_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if ( null === $new_table_reference || $position !== $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
+
+		$table_schema     = $this->get_mysql_writable_table_backend_schema( $old_table_reference, 'RENAME TABLE' );
+		$new_table_schema = $this->get_mysql_rename_table_target_backend_schema( $new_table_reference, $table_schema, 'RENAME TABLE' );
+		if ( $new_table_schema !== $table_schema ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
+
+		$old_table_name = $old_table_reference['table'];
+		$new_table_name = $new_table_reference['table'];
+
+		return array(
+			'statements' => $this->get_mysql_rename_table_statements( $table_schema, $old_table_name, $new_table_name ),
+			'metadata'   => array(
+				'schema'    => $table_schema,
+				'old_table' => $old_table_name,
+				'new_table' => $new_table_name,
+			),
+		);
+	}
+
+	/**
+	 * Resolve the backend schema for the new side of a table rename.
+	 *
+	 * @param array  $table_reference Parsed target table reference.
+	 * @param string $default_schema  Schema of the source table.
+	 * @param string $statement_type  Statement type for error messages.
+	 * @return string Backend schema name.
+	 */
+	private function get_mysql_rename_table_target_backend_schema( array $table_reference, string $default_schema, string $statement_type ): string {
+		$requested_schema = $table_reference['schema'];
+		if ( null === $requested_schema ) {
+			return $default_schema;
+		}
+
+		if ( 0 === strcasecmp( $requested_schema, 'information_schema' ) ) {
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+		}
+
+		if (
+			0 === strcasecmp( $requested_schema, $this->main_db_name )
+			|| 0 === strcasecmp( $requested_schema, 'public' )
+		) {
+			return 'public';
+		}
+
+		throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+	}
+
+	/**
+	 * Build PostgreSQL statements for a MySQL table rename.
+	 *
+	 * @param string $table_schema   Backend schema name.
+	 * @param string $old_table_name Old table name.
+	 * @param string $new_table_name New table name.
+	 * @return string[] PostgreSQL statements.
+	 */
+	private function get_mysql_rename_table_statements( string $table_schema, string $old_table_name, string $new_table_name ): array {
+		$statements = array(
+			sprintf(
+				'ALTER TABLE %s RENAME TO %s',
+				$this->get_postgresql_schema_identifier( $table_schema, $old_table_name ),
+				$this->connection->quote_identifier( $new_table_name )
+			),
+		);
+
+		return array_merge(
+			$statements,
+			$this->get_mysql_rename_table_index_statements( $table_schema, $old_table_name, $new_table_name )
+		);
+	}
+
+	/**
+	 * Build PostgreSQL index rename statements for indexes whose physical names include the table name.
+	 *
+	 * @param string $table_schema   Backend schema name.
+	 * @param string $old_table_name Old table name.
+	 * @param string $new_table_name New table name.
+	 * @return string[] PostgreSQL ALTER INDEX statements.
+	 */
+	private function get_mysql_rename_table_index_statements( string $table_schema, string $old_table_name, string $new_table_name ): array {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT DISTINCT key_name, index_type
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? AND UPPER(key_name) <> \'PRIMARY\'
+				ORDER BY key_name',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $old_table_name )
+		);
+
+		$statements = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$index_type = (string) $row['index_type'];
+			if ( $this->is_mysql_metadata_only_index_type( $index_type ) ) {
+				continue;
+			}
+
+			$key_name     = (string) $row['key_name'];
+			$statements[] = sprintf(
+				'ALTER INDEX %s RENAME TO %s',
+				$this->get_postgresql_schema_identifier( $table_schema, $old_table_name . '__' . $key_name ),
+				$this->connection->quote_identifier( $new_table_name . '__' . $key_name )
+			);
+		}
+
+		return $statements;
 	}
 
 	/**
@@ -18327,6 +18593,10 @@ WHERE option_name IN (
 			}
 		}
 
+		foreach ( $context['join_predicate_replacements'] as $replacement ) {
+			$replacements[] = $replacement;
+		}
+
 		foreach ( array_merge( $context['join_predicate_ranges'], $context['clause_ranges'] ) as $range ) {
 			$column_replacements = $this->get_direct_information_schema_column_replacements(
 				$tokens,
@@ -18380,7 +18650,7 @@ WHERE option_name IN (
 	 *
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $statement_end Final statement token position, exclusive.
-	 * @return array{sources: array[], from_position: int, source_start: int, source_end: int, join_predicate_ranges: array[], clause_ranges: array[]}|null Context, or null.
+	 * @return array{sources: array[], from_position: int, source_start: int, source_end: int, join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[], clause_ranges: array[]}|null Context, or null.
 	 */
 	private function get_direct_information_schema_select_context( array $tokens, int $statement_end ): ?array {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
@@ -18420,12 +18690,14 @@ WHERE option_name IN (
 		}
 
 		return array(
-			'sources'               => $sources['sources'],
-			'from_position'         => $from_position,
-			'source_start'          => $source_start,
-			'source_end'            => $source_end,
-			'join_predicate_ranges' => $sources['join_predicate_ranges'],
-			'clause_ranges'         => $clause_ranges,
+			'sources'                     => $sources['sources'],
+			'from_position'               => $from_position,
+			'source_start'                => $source_start,
+			'source_end'                  => $source_end,
+			'join_predicate_ranges'       => $sources['join_predicate_ranges'],
+			'join_predicate_replacements' => $sources['join_predicate_replacements'],
+			'using_columns'               => $sources['using_columns'],
+			'clause_ranges'               => $clause_ranges,
 		);
 	}
 
@@ -18465,13 +18737,15 @@ WHERE option_name IN (
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int              $start  First source token position.
 	 * @param int              $end    Source end position, exclusive.
-	 * @return array{sources: array[], join_predicate_ranges: array[]}|null Parsed sources, or null.
+	 * @return array{sources: array[], join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[]}|null Parsed sources, or null.
 	 */
 	private function parse_direct_information_schema_select_sources( array $tokens, int $start, int $end ): ?array {
-		$sources               = array();
-		$aliases               = array();
-		$join_predicate_ranges = array();
-		$position              = $start;
+		$sources                     = array();
+		$aliases                     = array();
+		$join_predicate_ranges       = array();
+		$join_predicate_replacements = array();
+		$using_columns               = array();
+		$position                    = $start;
 
 		while ( $position < $end ) {
 			$source_start = $position;
@@ -18504,14 +18778,24 @@ WHERE option_name IN (
 
 			$separator = $this->find_next_direct_information_schema_source_separator( $tokens, $position, $end );
 			if ( null === $separator ) {
-				if ( ! $this->is_direct_information_schema_join_predicate_range_supported( $tokens, $position, $end ) ) {
+				$predicate = $this->get_direct_information_schema_join_predicate_range_data(
+					$tokens,
+					$position,
+					$end,
+					$sources,
+					$using_columns
+				);
+				if ( null === $predicate ) {
 					return null;
 				}
-				if ( $position < $end ) {
-					$join_predicate_ranges[] = array(
-						'start' => $position,
-						'end'   => $end,
-					);
+				if ( isset( $predicate['range'] ) ) {
+					$join_predicate_ranges[] = $predicate['range'];
+				}
+				if ( isset( $predicate['replacement'] ) ) {
+					$join_predicate_replacements[] = $predicate['replacement'];
+				}
+				if ( isset( $predicate['using_columns'] ) ) {
+					$using_columns = $this->merge_direct_information_schema_using_columns( $using_columns, $predicate['using_columns'] );
 				}
 				$position = $end;
 				break;
@@ -18526,14 +18810,24 @@ WHERE option_name IN (
 				continue;
 			}
 
-			if ( ! $this->is_direct_information_schema_join_predicate_range_supported( $tokens, $position, $separator['start'] ) ) {
+			$predicate = $this->get_direct_information_schema_join_predicate_range_data(
+				$tokens,
+				$position,
+				$separator['start'],
+				$sources,
+				$using_columns
+			);
+			if ( null === $predicate ) {
 				return null;
 			}
-			if ( $position < $separator['start'] ) {
-				$join_predicate_ranges[] = array(
-					'start' => $position,
-					'end'   => $separator['start'],
-				);
+			if ( isset( $predicate['range'] ) ) {
+				$join_predicate_ranges[] = $predicate['range'];
+			}
+			if ( isset( $predicate['replacement'] ) ) {
+				$join_predicate_replacements[] = $predicate['replacement'];
+			}
+			if ( isset( $predicate['using_columns'] ) ) {
+				$using_columns = $this->merge_direct_information_schema_using_columns( $using_columns, $predicate['using_columns'] );
 			}
 
 			$position = $separator['source_start'];
@@ -18552,8 +18846,10 @@ WHERE option_name IN (
 		}
 
 		return array(
-			'sources'               => $sources,
-			'join_predicate_ranges' => $join_predicate_ranges,
+			'sources'                     => $sources,
+			'join_predicate_ranges'       => $join_predicate_ranges,
+			'join_predicate_replacements' => $join_predicate_replacements,
+			'using_columns'               => $using_columns,
 		);
 	}
 
@@ -18718,18 +19014,44 @@ WHERE option_name IN (
 	 * @return bool Whether the range is supported.
 	 */
 	private function is_direct_information_schema_join_predicate_range_supported( array $tokens, int $start, int $end ): bool {
+		return null !== $this->get_direct_information_schema_join_predicate_range_data( $tokens, $start, $end, array(), array() );
+	}
+
+	/**
+	 * Get validation and replacement data for a supported information_schema JOIN predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First token position.
+	 * @param int              $end           Final token position, exclusive.
+	 * @param array[]          $sources       Parsed sources through the right-hand join source.
+	 * @param array            $using_columns Previously merged USING columns.
+	 * @return array{range?: array{start:int,end:int}, replacement?: array{start:int,end:int,sql:string}, using_columns?: array}|null Predicate data, or null when unsupported.
+	 */
+	private function get_direct_information_schema_join_predicate_range_data( array $tokens, int $start, int $end, array $sources, array $using_columns ): ?array {
 		if ( $start === $end ) {
-			return true;
+			return array();
+		}
+
+		if (
+			isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $start ]->id
+		) {
+			$using = $this->get_direct_information_schema_join_using_replacement( $tokens, $start, $end, $sources, $using_columns );
+			if ( null === $using ) {
+				return null;
+			}
+
+			return $using;
 		}
 
 		if (
 			! isset( $tokens[ $start ] )
 			|| WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $start ]->id
 		) {
-			return false;
+			return null;
 		}
 
-		return ! $this->contains_mysql_token(
+		if ( $this->contains_mysql_token(
 			$tokens,
 			$start + 1,
 			$end,
@@ -18737,7 +19059,135 @@ WHERE option_name IN (
 				WP_MySQL_Lexer::SELECT_SYMBOL,
 				WP_MySQL_Lexer::UNION_SYMBOL,
 			)
+		) ) {
+			return null;
+		}
+
+		return array(
+			'range' => array(
+				'start' => $start,
+				'end'   => $end,
+			),
 		);
+	}
+
+	/**
+	 * Get a PostgreSQL USING predicate replacement for an information_schema JOIN.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         USING token position.
+	 * @param int              $end           Final token position, exclusive.
+	 * @param array[]          $sources       Parsed sources through the right-hand join source.
+	 * @param array            $using_columns Previously merged USING columns.
+	 * @return array{replacement: array{start:int,end:int,sql:string}, using_columns: array}|null Replacement data, or null when unsupported.
+	 */
+	private function get_direct_information_schema_join_using_replacement( array $tokens, int $start, int $end, array $sources, array $using_columns ): ?array {
+		if (
+			count( $sources ) < 2
+			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::USING_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return null;
+		}
+
+		$current_source   = $sources[ count( $sources ) - 1 ];
+		$previous_sources = array_slice( $sources, 0, -1 );
+		$position         = $start + 2;
+		$columns          = array();
+		$seen_columns     = array();
+		$new_using        = array();
+
+		while ( $position < $end && isset( $tokens[ $position ] ) ) {
+			$current_column = $this->get_direct_information_schema_column_name_for_token( $tokens[ $position ], $current_source['column_map'] );
+			if ( null === $current_column ) {
+				return null;
+			}
+
+			$column_key = strtolower( $current_column );
+			if ( isset( $seen_columns[ $column_key ] ) ) {
+				return null;
+			}
+			$seen_columns[ $column_key ] = true;
+
+			$previous_matches = array();
+			foreach ( $previous_sources as $source ) {
+				if ( isset( $source['column_map'][ $column_key ] ) ) {
+					$previous_matches[] = $source;
+				}
+			}
+
+			if ( empty( $previous_matches ) ) {
+				return null;
+			}
+
+			$matched_aliases = array();
+			foreach ( $previous_matches as $source ) {
+				$matched_aliases[ strtolower( $source['alias'] ) ] = true;
+			}
+
+			if ( count( $previous_matches ) > 1 ) {
+				$merged_aliases = $using_columns[ $column_key ]['aliases'] ?? array();
+				foreach ( $matched_aliases as $alias => $_ ) {
+					if ( ! isset( $merged_aliases[ $alias ] ) ) {
+						return null;
+					}
+				}
+			}
+
+			$matched_aliases[ strtolower( $current_source['alias'] ) ] = true;
+			if ( isset( $using_columns[ $column_key ]['aliases'] ) ) {
+				$matched_aliases = array_merge( $using_columns[ $column_key ]['aliases'], $matched_aliases );
+			}
+
+			$new_using[ $column_key ] = array(
+				'column'  => $current_column,
+				'aliases' => $matched_aliases,
+			);
+			$columns[]               = $this->connection->quote_identifier( $current_column );
+			++$position;
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				return $position === $end && ! empty( $columns )
+					? array(
+						'replacement'   => array(
+							'start' => $start,
+							'end'   => $end,
+							'sql'   => 'USING (' . implode( ', ', $columns ) . ')',
+						),
+						'using_columns' => $new_using,
+					)
+					: null;
+			}
+
+			return null;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Merge newly parsed USING columns into the direct information_schema context.
+	 *
+	 * @param array $columns Existing USING column metadata.
+	 * @param array $new     New USING column metadata.
+	 * @return array Merged USING column metadata.
+	 */
+	private function merge_direct_information_schema_using_columns( array $columns, array $new ): array {
+		foreach ( $new as $key => $metadata ) {
+			if ( isset( $columns[ $key ] ) ) {
+				$metadata['aliases'] = array_merge( $columns[ $key ]['aliases'], $metadata['aliases'] );
+			}
+			$columns[ $key ] = $metadata;
+		}
+
+		return $columns;
 	}
 
 	/**
@@ -19304,6 +19754,17 @@ WHERE option_name IN (
 		}
 
 		if ( count( $matches ) > 1 ) {
+			$using_column = $context['using_columns'][ $key ] ?? null;
+			if ( is_array( $using_column ) && isset( $using_column['column'], $using_column['aliases'] ) ) {
+				foreach ( $matches as $match ) {
+					if ( ! isset( $using_column['aliases'][ strtolower( $match['source']['alias'] ) ] ) ) {
+						return false;
+					}
+				}
+
+				return $this->connection->quote_identifier( $using_column['column'] );
+			}
+
 			return false;
 		}
 
