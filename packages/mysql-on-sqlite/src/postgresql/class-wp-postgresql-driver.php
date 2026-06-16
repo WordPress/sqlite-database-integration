@@ -9765,6 +9765,50 @@ $wp_mysql_on_update$',
 			return $position;
 		}
 
+		if ( 'analyze' === $operation ) {
+			if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+				return $position;
+			}
+
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::HISTOGRAM_SYMBOL === $tokens[ $position + 1 ]->id
+				&& WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $position + 2 ]->id
+			) {
+				$position = $this->consume_mysql_table_administration_histogram_columns( $tokens, $position + 3 );
+				if ( null === $position ) {
+					return null;
+				}
+
+				if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+					return $position;
+				}
+
+				if (
+					isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+					&& WP_MySQL_Lexer::WITH_SYMBOL === $tokens[ $position ]->id
+					&& $this->is_mysql_unsigned_integer_token( $tokens[ $position + 1 ] )
+					&& WP_MySQL_Lexer::BUCKETS_SYMBOL === $tokens[ $position + 2 ]->id
+				) {
+					return $position + 3;
+				}
+
+				return null;
+			}
+
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+				&& WP_MySQL_Lexer::DROP_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::HISTOGRAM_SYMBOL === $tokens[ $position + 1 ]->id
+				&& WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $position + 2 ]->id
+			) {
+				return $this->consume_mysql_table_administration_histogram_columns( $tokens, $position + 3 );
+			}
+
+			return null;
+		}
+
 		if ( 'repair' === $operation ) {
 			while ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 				if (
@@ -9790,6 +9834,35 @@ $wp_mysql_on_update$',
 		}
 
 		return $position;
+	}
+
+	/**
+	 * Consume a comma-separated ANALYZE TABLE histogram column list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Current token position.
+	 * @return int|null Position after the list, or null when unsupported.
+	 */
+	private function consume_mysql_table_administration_histogram_columns( array $tokens, int $position ): ?int {
+		$matched = false;
+		while ( isset( $tokens[ $position ] ) ) {
+			$column = $this->get_mysql_identifier_token_value( $tokens[ $position ] );
+			if ( null === $column ) {
+				return null;
+			}
+
+			$matched = true;
+			++$position;
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			break;
+		}
+
+		return $matched ? $position : null;
 	}
 
 	/**

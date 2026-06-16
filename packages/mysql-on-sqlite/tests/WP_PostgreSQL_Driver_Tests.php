@@ -14684,6 +14684,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$cases = array(
 			'ANALYZE LOCAL TABLE administration_existing'                           => 'analyze',
 			'ANALYZE NO_WRITE_TO_BINLOG TABLE administration_existing'              => 'analyze',
+			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id WITH 10 BUCKETS' => 'analyze',
+			'ANALYZE TABLE administration_existing DROP HISTOGRAM ON `id`'          => 'analyze',
 			'CHECK TABLE administration_existing FOR UPGRADE'                       => 'check',
 			'CHECK TABLE administration_existing QUICK FAST MEDIUM EXTENDED CHANGED' => 'check',
 			'OPTIMIZE LOCAL TABLE administration_existing'                          => 'optimize',
@@ -14718,12 +14720,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 		$driver->query( 'CREATE TABLE administration_existing (id INTEGER)' );
 
-		try {
-			$driver->query( 'CHECK TABLE administration_existing UNKNOWN_OPTION' );
-			$this->fail( 'Expected unsupported table administration clause to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported table administration statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$queries = array(
+			'CHECK TABLE administration_existing UNKNOWN_OPTION',
+			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id WITH ten BUCKETS',
+		);
+
+		foreach ( $queries as $query ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported table administration clause to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported table administration statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 
