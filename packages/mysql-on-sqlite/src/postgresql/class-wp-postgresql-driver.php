@@ -1508,6 +1508,13 @@ class WP_PostgreSQL_Driver {
 		}
 
 		for ( $i = 1; $i < $statement_end; $i++ ) {
+			if (
+				WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $i ]->id
+				|| WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $tokens[ $i ]->id
+			) {
+				return true;
+			}
+
 			if ( null !== $this->get_mysql_group_concat_function_bounds( $tokens, $i, $statement_end ) ) {
 				return true;
 			}
@@ -3534,6 +3541,21 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$function = strtolower( $tokens[ $start ]->get_value() );
+		if ( in_array( $function, array( 'lcase', 'lower', 'ucase', 'upper' ), true ) ) {
+			if ( 1 !== count( $arguments ) ) {
+				return null;
+			}
+
+			$value = $this->evaluate_mysql_sql_mode_set_expression( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+			if ( null === $value ) {
+				return null;
+			}
+
+			return in_array( $function, array( 'lcase', 'lower' ), true )
+				? strtolower( $value )
+				: strtoupper( $value );
+		}
+
 		if ( 'concat' === $function ) {
 			$values = array();
 			foreach ( $arguments as $argument ) {
@@ -11241,7 +11263,7 @@ $wp_mysql_on_update$',
 	 */
 	private function translate_mysql_index_definition_fragment( string $table_name, string $definition, ?string $table_schema = null ): ?array {
 		$definition = $this->trim_mysql_statement_fragment( $definition );
-		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
+		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes, true );
 		$wrapper    = 'CREATE TABLE __wp_dbdelta_index (__wp_dummy int, ' . $definition . ')';
 
 		$metadata = $translator->extract_schema_metadata( $wrapper, true );
@@ -17380,6 +17402,64 @@ ORDER BY table_name';
 	 */
 	private function get_mysql_user_variable_value( string $name ): ?string {
 		return array_key_exists( $name, $this->mysql_user_variables ) ? $this->mysql_user_variables[ $name ] : null;
+	}
+
+	/**
+	 * Translate a MySQL variable reference to a PostgreSQL literal expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Variable token position.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when not a variable.
+	 */
+	private function translate_mysql_variable_reference_to_postgresql( array $tokens, int $position ): ?array {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
+			return array(
+				'sql'      => $this->get_mysql_variable_literal_sql(
+					$this->get_mysql_user_variable_value(
+						$this->normalize_mysql_user_variable_name( $tokens[ $position ]->get_value() )
+					)
+				),
+				'token_id' => $tokens[ $position ]->id,
+				'position' => $position,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$reference_position = $position;
+		$display            = null;
+		$scope              = null;
+		$name               = $this->parse_mysql_system_variable_reference( $tokens, $reference_position, $display, $scope );
+		if ( null === $name ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL system variable.' );
+		}
+
+		$value = $this->get_mysql_system_variable_value( $name, $scope );
+		if ( null === $value ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL system variable.' );
+		}
+
+		return array(
+			'sql'      => $this->get_mysql_variable_literal_sql( $value ),
+			'token_id' => $tokens[ $position ]->id,
+			'position' => $reference_position - 1,
+		);
+	}
+
+	/**
+	 * Render a MySQL variable value as a PostgreSQL literal.
+	 *
+	 * @param string|null $value Variable value.
+	 * @return string PostgreSQL literal SQL.
+	 */
+	private function get_mysql_variable_literal_sql( ?string $value ): string {
+		return null === $value ? 'NULL' : $this->connection->quote( $value );
 	}
 
 	/**
@@ -29040,17 +29120,39 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$source_end = $this->find_first_top_level_mysql_token(
+			$tokens,
+			array(
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+			),
+			$from_position + 1,
+			$select_end
+		) ?? $select_end;
+
 		$table_reference_start = $from_position + 1;
+		$table_name_end        = $table_reference_start;
+		$table_name_for_sql    = $this->parse_mysql_main_database_table_name( $tokens, $table_name_end );
 		$position              = $table_reference_start;
-		$table_name            = $this->parse_mysql_main_database_table_name( $tokens, $position );
-		if ( null === $table_name ) {
+		$table_reference       = $this->parse_mysql_main_database_table_reference( $tokens, $position, $source_end );
+		if (
+			null === $table_name_for_sql
+			|| null === $table_reference
+			|| $table_name_for_sql !== $table_reference['table']
+			|| $position !== $source_end
+		) {
 			return null;
 		}
 		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
 			$tokens,
 			$table_reference_start,
-			$position
+			$table_name_end
 		);
+		if ( null !== $table_reference['alias'] ) {
+			$table_reference_sql .= ' AS ' . $this->connection->quote_identifier( $table_reference['alias'] );
+		}
+		$table_name  = $table_reference['table'];
+		$table_alias = $table_reference['alias'];
 
 		$where_position = null;
 		$where_end      = null;
@@ -29090,7 +29192,7 @@ WHERE option_name IN (
 			$table_reference_sql
 		);
 
-		$scope = $this->get_mysql_single_table_scope( $table_name );
+		$scope = $this->get_mysql_single_table_scope( $table_name, $table_alias );
 		if ( null !== $where_position ) {
 			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
@@ -38867,14 +38969,14 @@ FROM (
 			$statement_end
 		) ?? $statement_end;
 
-		return $from_position + 4 === $source_end
-			&& isset( $tokens[ $from_position + 1 ], $tokens[ $from_position + 2 ], $tokens[ $from_position + 3 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $from_position + 2 ]->id
-			&& 0 === strcasecmp(
-				(string) $this->get_mysql_identifier_token_value( $tokens[ $from_position + 1 ] ),
-				$this->main_db_name
-			)
-			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $from_position + 3 ] );
+		$position        = $from_position + 1;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( ! $this->is_explicit_main_database_table_reference( $table_reference ) ) {
+			return false;
+		}
+
+		return $this->consume_optional_simple_table_alias( $tokens, $position, $source_end )
+			&& $position === $source_end;
 	}
 
 	/**
@@ -40417,6 +40519,48 @@ FROM (
 	 * @return bool Whether the expression is supported.
 	 */
 	private function is_supported_simple_mysql_upsert_expression_fragment( array $tokens, int $start, int $end, array $replacements ): bool {
+		if ( ! empty( $replacements ) ) {
+			usort(
+				$replacements,
+				static function ( array $a, array $b ): int {
+					return ( $a['start'] ?? 0 ) <=> ( $b['start'] ?? 0 );
+				}
+			);
+
+			for ( $position = $start; $position < $end; ) {
+				$replacement = $this->get_mysql_token_sequence_replacement_at_position( $replacements, $position );
+				if ( null !== $replacement ) {
+					$position = $replacement['end'];
+					continue;
+				}
+
+				$function = $this->translate_mysql_common_function_with_replacements_to_postgresql( $tokens, $position, $end, $replacements );
+				if ( false === $function ) {
+					return false;
+				}
+				if ( is_array( $function ) ) {
+					$position = $function['position'] + 1;
+					continue;
+				}
+
+				$segment_end = $end;
+				foreach ( $replacements as $candidate ) {
+					if ( $candidate['start'] > $position ) {
+						$segment_end = min( $segment_end, $candidate['start'] );
+						break;
+					}
+				}
+
+				if ( $segment_end <= $position || ! $this->is_supported_simple_mysql_upsert_expression_segment( $tokens, $position, $segment_end ) ) {
+					return false;
+				}
+
+				$position = $segment_end;
+			}
+
+			return true;
+		}
+
 		$segment_start = $start;
 		foreach ( $replacements as $replacement ) {
 			if (
@@ -40548,22 +40692,19 @@ FROM (
 			return true;
 		}
 
-		for ( $i = $start; $i < $end; $i++ ) {
-			if ( null === $this->get_mysql_identifier_token_value( $tokens[ $i ] ?? null ) ) {
-				return false;
-			}
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $ranges || array() === $ranges ) {
+			return false;
+		}
 
-			++$i;
-			if ( $i >= $end ) {
-				return true;
-			}
-
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $i ]->id ) {
+		foreach ( $ranges as $range ) {
+			$reference = $this->parse_mysql_column_reference( $tokens, $range['start'], $range['end'] );
+			if ( null === $reference || $reference['end'] !== $range['end'] ) {
 				return false;
 			}
 		}
 
-		return false;
+		return true;
 	}
 
 	/**
@@ -41025,12 +41166,27 @@ FROM (
 	): ?string {
 		if (
 			! $this->is_mysql_wordpress_table_name( $table_name, 'posts' )
-			|| $order_position + 4 !== $end
-			|| ! $this->is_mysql_identifier_like_token_value( $tokens[ $order_position + 2 ] ?? null, 'post_date' )
-			|| ! isset( $tokens[ $order_position + 3 ] )
-			|| WP_MySQL_Lexer::DESC_SYMBOL !== $tokens[ $order_position + 3 ]->id
+			|| ! isset( $tokens[ $end - 1 ] )
+			|| WP_MySQL_Lexer::DESC_SYMBOL !== $tokens[ $end - 1 ]->id
 		) {
 			return null;
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $order_position + 2, $end - 1 );
+		if (
+			null === $reference
+			|| $reference['end'] !== $end - 1
+			|| 'post_date' !== strtolower( $reference['column'] )
+		) {
+			return null;
+		}
+
+		if ( null !== $reference['qualifier'] ) {
+			return sprintf(
+				'%s.%s DESC',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['start'] + 1 ),
+				$this->connection->quote_identifier( 'ID' )
+			);
 		}
 
 		return $this->connection->quote_identifier( 'ID' ) . ' DESC';
@@ -43975,20 +44131,20 @@ FROM (
 			$start + 2 >= $end
 			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $start ]->id
 			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $start + 1 ]->id
-			|| null === $this->get_mysql_identifier_token_value( $tokens[ $start + 2 ] )
 		) {
 			return false;
 		}
 
-		if ( $start + 3 === $end ) {
-			return true;
+		$reference_end = $end;
+		if (
+			WP_MySQL_Lexer::ASC_SYMBOL === ( $tokens[ $end - 1 ]->id ?? null )
+			|| WP_MySQL_Lexer::DESC_SYMBOL === ( $tokens[ $end - 1 ]->id ?? null )
+		) {
+			--$reference_end;
 		}
 
-		return $start + 4 === $end
-			&& (
-				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $start + 3 ]->id
-				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $start + 3 ]->id
-			);
+		$reference = $this->parse_mysql_column_reference( $tokens, $start + 2, $reference_end );
+		return null !== $reference && $reference['end'] === $reference_end;
 	}
 
 	/**
@@ -44664,6 +44820,9 @@ FROM (
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_convert_using_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_variable_reference_to_postgresql( $tokens, $i );
 			}
 
 			$append_no_backslash_like_escape = false;
@@ -50372,6 +50531,13 @@ $wp_mysql_json_valid$'
 				return true;
 			}
 
+			if (
+				WP_MySQL_Lexer::AT_TEXT_SUFFIX === $token->id
+				|| WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $token->id
+			) {
+				return true;
+			}
+
 			if ( null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
@@ -50780,6 +50946,20 @@ $wp_mysql_json_valid$'
 
 			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
 				++$position;
+				if (
+					! isset( $tokens[ $position ] )
+					|| (
+						WP_MySQL_Lexer::AT_TEXT_SUFFIX !== $tokens[ $position ]->id
+						&& WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $position ]->id
+					)
+				) {
+					if ( isset( $tokens[ $position ] ) && ! $this->is_mysql_variable_select_fallback_boundary_token( $tokens[ $position ] ) ) {
+						return null;
+					}
+
+					throw new InvalidArgumentException( 'Unsupported MySQL variable SELECT statement.' );
+				}
+
 				continue;
 			}
 
@@ -50787,12 +50967,38 @@ $wp_mysql_json_valid$'
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			if ( isset( $tokens[ $position ] ) && $this->is_mysql_variable_select_fallback_boundary_token( $tokens[ $position ] ) ) {
+				return null;
+			}
+
 			throw new InvalidArgumentException( 'Unsupported MySQL variable SELECT statement.' );
 		}
 
 		return array(
 			'columns' => $columns,
 			'row'     => $row,
+		);
+	}
+
+	/**
+	 * Check whether a token can start a clause handled by the general SELECT translator.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the simple variable SELECT path should defer.
+	 */
+	private function is_mysql_variable_select_fallback_boundary_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::FROM_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::UNION_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+			),
+			true
 		);
 	}
 

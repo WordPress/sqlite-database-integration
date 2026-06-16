@@ -6403,6 +6403,24 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'incoming-8', $rows[0]->option_value );
 		$this->assertSame( 'new', $rows[0]->autoload );
+
+		$conditional_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('runtime_values', '', 'ignored')
+			ON DUPLICATE KEY UPDATE `option_value` = IF(VALUES(`option_value`) = '', `option_value`, VALUES(`option_value`)),
+			                        `autoload` = IF(VALUES(`autoload`) = 'ignored', `autoload`, VALUES(`autoload`))";
+
+		$this->assertSame( 1, $driver->query( $conditional_upsert ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringNotContainsString( 'IF(', $sql );
+		$this->assertStringContainsString( 'CASE WHEN (excluded."option_value" = \'\') THEN "option_value" ELSE excluded."option_value" END', $sql );
+		$this->assertStringContainsString( 'CASE WHEN (excluded."autoload" = \'ignored\') THEN "autoload" ELSE excluded."autoload" END', $sql );
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'runtime_values'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'incoming-8', $rows[0]->option_value );
+		$this->assertSame( 'new', $rows[0]->autoload );
 	}
 
 	/**
@@ -18587,6 +18605,69 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE metadata-only index options are accepted like SQLite.
+	 */
+	public function test_alter_table_add_metadata_only_index_options_update_show_create_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_alter_search_geo_options (
+				id int NOT NULL,
+				body longtext NOT NULL,
+				shape geometry NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_search_geo_options (
+				id int NOT NULL,
+				body longtext NOT NULL,
+				shape geometry NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE wptests_alter_search_geo_options
+					ADD FULLTEXT KEY body_fulltext (body) COMMENT "Search docs" INVISIBLE,
+					ADD FULLTEXT KEY parser_fulltext (body) WITH PARSER ngram,
+					ADD SPATIAL INDEX shape_spatial (shape) COMMENT "Shape lookup" KEY_BLOCK_SIZE=8'
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_search_geo_options' );
+		$this->assertSame( array( 'body_fulltext', 'parser_fulltext', 'shape_spatial' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( array( 'FULLTEXT', 'FULLTEXT', 'SPATIAL' ), array_column( $indexes, 'index_type' ) );
+		$this->assertSame( '32', $indexes[2]['sub_part'] );
+
+		$comments = $driver->get_connection()->query(
+			sprintf(
+				'SELECT key_name, index_comment
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY index_ordinal',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( 'public', 'wptests_alter_search_geo_options' )
+		)->fetchAll( PDO::FETCH_KEY_PAIR );
+		$this->assertSame(
+			array(
+				'body_fulltext'   => 'Search docs',
+				'parser_fulltext' => '',
+				'shape_spatial'   => 'Shape lookup',
+			),
+			$comments
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_alter_search_geo_options' )[0]->{'Create Table'};
+		$this->assertStringContainsString( "  SPATIAL KEY `shape_spatial` (`shape`(32)) COMMENT 'Shape lookup'", $create_table );
+		$this->assertStringContainsString( "  FULLTEXT KEY `body_fulltext` (`body`) COMMENT 'Search docs'", $create_table );
+		$this->assertStringContainsString( '  FULLTEXT KEY `parser_fulltext` (`body`)', $create_table );
+		$this->assertStringNotContainsString( 'WITH PARSER', $create_table );
+	}
+
+	/**
 	 * Tests standalone ALTER TABLE online-DDL options are compatibility no-ops.
 	 */
 	public function test_alter_table_online_ddl_options_are_standalone_noops(): void {
@@ -22553,6 +22634,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT label FROM use_info_main_read WHERE id = 1 ORDER BY label LIMIT 1',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
+
+		$rows = $driver->query(
+			"SELECT r.label
+			FROM wptests.use_info_main_read AS r
+			WHERE r.id = 2
+			ORDER BY r.label
+			LIMIT 1"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label' => 'two',
+				),
+			),
+			$rows
+		);
+		$this->assertSame(
+			'SELECT r.label FROM use_info_main_read AS "r" WHERE r.id = 2 ORDER BY r.label LIMIT 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query(
+			"SELECT r.label
+			FROM wptests.use_info_main_read r
+			WHERE r.id = 1
+			ORDER BY r.label
+			LIMIT 1"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label' => 'one',
+				),
+			),
+			$rows
+		);
+		$this->assertSame(
+			'SELECT r.label FROM use_info_main_read AS "r" WHERE r.id = 1 ORDER BY r.label LIMIT 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
 	}
 
 	/**
@@ -22560,7 +22683,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_use_statement_information_schema_broader_main_database_qualified_selects_fail_closed(): void {
 		$queries = array(
-			'SELECT r.label FROM wptests.use_info_main_read AS r',
 			'SELECT r.label FROM wptests.use_info_main_read AS r JOIN wptests.use_info_main_read_two AS r2 ON r2.id = r.id',
 			'SELECT label FROM (SELECT label FROM wptests.use_info_main_read) AS r',
 			'SELECT (SELECT label FROM wptests.use_info_main_read) AS label',
@@ -26365,6 +26487,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SQL-mode case conversion expressions mirror SQLite backend handling.
+	 */
+	public function test_sql_mode_case_conversion_expression_assignments_update_emulated_state(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'ANSI_QUOTES'" ) );
+		$this->assertSame( 'ANSI_QUOTES', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( 'SET sql_mode = LOWER("NO_ZERO_DATE")' ) );
+		$this->assertSame( 'NO_ZERO_DATE', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( "SET sql_mode = UCASE(REPLACE(@@sql_mode, 'NO_ZERO_DATE', 'ansi_quotes,no_backslash_escapes'))" ) );
+		$this->assertSame( 'ANSI_QUOTES,NO_BACKSLASH_ESCAPES', $driver->get_sql_mode() );
+
+		$this->assertSame( 0, $driver->query( "SET sql_mode = LCASE('PIPES_AS_CONCAT')" ) );
+		$this->assertSame( 'PIPES_AS_CONCAT', $driver->get_sql_mode() );
+	}
+
+	/**
 	 * Tests SQL-mode expressions supported by SQLite drive PostgreSQL zero-date behavior.
 	 */
 	public function test_sql_mode_expression_assignments_drive_zero_date_behavior(): void {
@@ -26430,7 +26571,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		try {
-			$driver->query( 'SET sql_mode = LOWER(@@sql_mode)' );
+			$driver->query( 'SET sql_mode = SUBSTRING(@@sql_mode, 1, 10)' );
 			$this->fail( 'Expected unsupported SQL-mode expression to throw.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported SET statement.', $e->getMessage() );
@@ -26620,6 +26761,74 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL variables inside otherwise ordinary SELECT projections are translated.
+	 */
+	public function test_mysql_variables_in_mixed_select_projection_are_translated(): void {
+		$driver = $this->create_driver();
+
+		$driver->set_sql_mode( 'IGNORE_SPACE' );
+		$this->assertSame( 0, $driver->query( "SET @label = 'first'" ) );
+
+		$query = 'SELECT 1 AS n, @@SESSION.sql_mode AS mode, @label AS label';
+		$rows  = $driver->query( $query );
+
+		$this->assertSame( '1', $rows[0]->n );
+		$this->assertSame( 'IGNORE_SPACE', $rows[0]->mode );
+		$this->assertSame( 'first', $rows[0]->label );
+		$this->assertSame(
+			"SELECT 1 AS n, 'IGNORE_SPACE' AS mode, 'first' AS label",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT @@SESSION.sql_mode AS mode, 1 AS n, @label AS label' );
+
+		$this->assertSame( 'IGNORE_SPACE', $rows[0]->mode );
+		$this->assertSame( '1', $rows[0]->n );
+		$this->assertSame( 'first', $rows[0]->label );
+		$this->assertSame(
+			"SELECT 'IGNORE_SPACE' AS mode, 1 AS n, 'first' AS label",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT @@SESSION.sql_mode AS mode FROM DUAL' );
+
+		$this->assertSame( 'IGNORE_SPACE', $rows[0]->mode );
+		$this->assertSame(
+			"SELECT 'IGNORE_SPACE' AS mode",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'ANSI_QUOTES'" ) );
+		$this->assertSame( 0, $driver->query( "SET @label = 'second'" ) );
+
+		$rows = $driver->query( $query );
+
+		$this->assertSame( 'ANSI_QUOTES', $rows[0]->mode );
+		$this->assertSame( 'second', $rows[0]->label );
+		$this->assertSame(
+			"SELECT 1 AS n, 'ANSI_QUOTES' AS mode, 'second' AS label",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests unsupported system variables inside mixed SELECT projections fail before PDO.
+	 */
+	public function test_unsupported_system_variable_in_mixed_select_projection_fails_before_backend(): void {
+		$connection = new WP_PostgreSQL_Query_Spy_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		try {
+			$driver->query( 'SELECT 1 AS n, @@definitely_unsupported_variable AS unsupported_value' );
+			$this->fail( 'Expected unsupported MySQL system variable to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported MySQL system variable.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+			$this->assertSame( 0, $connection->get_query_count() );
+		}
+	}
+
+	/**
 	 * Tests unsupported MySQL variable SELECT alias forms fail before backend execution.
 	 */
 	public function test_unsupported_mysql_variable_select_aliases_do_not_reach_backend(): void {
@@ -26630,7 +26839,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				'SELECT @@sql_mode AS',
 				'SELECT @@sql_mode AS 1',
 				'SELECT @@sql_mode 1',
-				'SELECT @@sql_mode AS mode FROM DUAL',
 			) as $query
 		) {
 			try {

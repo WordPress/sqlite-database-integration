@@ -39,12 +39,21 @@ class WP_PostgreSQL_Create_Table_Translator {
 	private $sql_modes;
 
 	/**
+	 * Whether metadata-only index options are allowed while parsing ALTER fragments.
+	 *
+	 * @var bool
+	 */
+	private $allow_metadata_only_index_options;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param string[] $sql_modes Active SQL modes.
+	 * @param string[] $sql_modes                         Active SQL modes.
+	 * @param bool     $allow_metadata_only_index_options Whether metadata-only index options are allowed.
 	 */
-	public function __construct( array $sql_modes = array() ) {
-		$this->sql_modes = $sql_modes;
+	public function __construct( array $sql_modes = array(), bool $allow_metadata_only_index_options = false ) {
+		$this->sql_modes                          = $sql_modes;
+		$this->allow_metadata_only_index_options = $allow_metadata_only_index_options;
 	}
 
 	/**
@@ -1654,7 +1663,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 				|| ! empty( $table_constraint->get_child_nodes( 'spatialIndexOption' ) )
 			)
 		) {
-			throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
+			if ( ! $this->allow_metadata_only_index_options || ! $this->has_only_supported_metadata_index_options( $table_constraint ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
+			}
 		}
 
 		if (
@@ -1679,6 +1690,42 @@ class WP_PostgreSQL_Create_Table_Translator {
 				throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
 			}
 		}
+	}
+
+	/**
+	 * Check whether metadata-only index options can be preserved or ignored safely.
+	 *
+	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @return bool Whether all metadata-only index options are supported.
+	 */
+	private function has_only_supported_metadata_index_options( WP_Parser_Node $table_constraint ): bool {
+		foreach ( array( 'indexOption', 'fulltextIndexOption', 'spatialIndexOption' ) as $rule_name ) {
+			foreach ( $table_constraint->get_child_nodes( $rule_name ) as $option ) {
+				if (
+					'fulltextIndexOption' === $rule_name
+					&& $option->has_child_token( WP_MySQL_Lexer::WITH_SYMBOL )
+					&& $option->has_child_token( WP_MySQL_Lexer::PARSER_SYMBOL )
+					&& $option->get_first_child_node( 'identifier' )
+				) {
+					continue;
+				}
+
+				$common_option = $option->get_first_child_node( 'commonIndexOption' );
+				if ( ! $common_option ) {
+					return false;
+				}
+
+				if (
+					! $common_option->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL )
+					&& ! $common_option->has_child_token( WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL )
+					&& ! $common_option->has_child_node( 'visibility' )
+				) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 
 	/**
