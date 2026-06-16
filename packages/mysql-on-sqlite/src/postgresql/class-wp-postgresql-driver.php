@@ -24338,6 +24338,7 @@ WHERE option_name IN (
 		$segments  = array();
 		$operators = array();
 		$position  = 0;
+		$tail_start = $statement_end;
 
 		while ( $position < $statement_end ) {
 			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
@@ -24345,7 +24346,10 @@ WHERE option_name IN (
 			}
 
 			$union_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UNION_SYMBOL, $position + 1, $statement_end );
-			$select_end     = $union_position ?? $statement_end;
+			$select_end     = $union_position ?? $this->get_direct_information_schema_union_tail_start( $tokens, $position + 1, $statement_end );
+			if ( null === $union_position ) {
+				$tail_start = $select_end;
+			}
 			if (
 				$this->contains_top_level_mysql_token(
 					$tokens,
@@ -24401,7 +24405,175 @@ WHERE option_name IN (
 			$sql .= ' ' . $operator . ' ' . $segments[ $index + 1 ];
 		}
 
+		if ( $tail_start < $statement_end ) {
+			$columns = $this->get_direct_information_schema_union_select_output_columns( $query, $tokens, $tail_start );
+			if ( null === $columns || array() === $columns ) {
+				return null;
+			}
+
+			$tail_sql = $this->translate_direct_information_schema_union_tail_to_postgresql(
+				$tokens,
+				$tail_start,
+				$statement_end,
+				$columns
+			);
+			if ( null === $tail_sql ) {
+				return null;
+			}
+
+			$sql .= $tail_sql;
+		}
+
 		return $sql;
+	}
+
+	/**
+	 * Get the start of a top-level ORDER BY/LIMIT tail for an information_schema UNION.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token to inspect.
+	 * @param int              $end    Final token, exclusive.
+	 * @return int Tail start, or $end when absent.
+	 */
+	private function get_direct_information_schema_union_tail_start( array $tokens, int $start, int $end ): int {
+		$tail_start = $end;
+		foreach ( array( WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL ) as $token_id ) {
+			$position = $this->find_top_level_mysql_token( $tokens, $token_id, $start, $end );
+			if ( null !== $position ) {
+				$tail_start = min( $tail_start, $position );
+			}
+		}
+
+		return $tail_start;
+	}
+
+	/**
+	 * Translate a top-level ORDER BY/LIMIT tail for an information_schema UNION.
+	 *
+	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
+	 * @param int              $start   First tail token.
+	 * @param int              $end     Final tail token, exclusive.
+	 * @param string[]         $columns UNION output column names.
+	 * @return string|null PostgreSQL tail SQL, or null when unsupported.
+	 */
+	private function translate_direct_information_schema_union_tail_to_postgresql( array $tokens, int $start, int $end, array $columns ): ?string {
+		$position = $start;
+		$sql      = '';
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position ]->id ) {
+			$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $position + 1, $end );
+			$order_end      = $limit_position ?? $end;
+			$order_sql      = $this->translate_direct_information_schema_union_order_by_clause_to_postgresql(
+				$tokens,
+				$position,
+				$order_end,
+				$columns
+			);
+			if ( null === $order_sql ) {
+				return null;
+			}
+
+			$sql     .= $order_sql;
+			$position = $order_end;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIMIT_SYMBOL === $tokens[ $position ]->id ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $position, $end, true );
+			if ( null === $limit_sql ) {
+				return null;
+			}
+
+			$sql     .= $limit_sql;
+			$position = $end;
+		}
+
+		return $position === $end && '' !== $sql ? $sql : null;
+	}
+
+	/**
+	 * Translate an information_schema UNION ORDER BY clause.
+	 *
+	 * PostgreSQL UNION ORDER BY can only reference output columns. Keep this
+	 * intentionally bounded to MySQL output aliases/ordinals and simple
+	 * directions so unsupported expressions still fail explicitly.
+	 *
+	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
+	 * @param int              $start   ORDER token position.
+	 * @param int              $end     Final ORDER BY token, exclusive.
+	 * @param string[]         $columns UNION output column names.
+	 * @return string|null PostgreSQL ORDER BY clause, or null when unsupported.
+	 */
+	private function translate_direct_information_schema_union_order_by_clause_to_postgresql( array $tokens, int $start, int $end, array $columns ): ?string {
+		if (
+			$start + 2 >= $end
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== ( $tokens[ $start ]->id ?? null )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== ( $tokens[ $start + 1 ]->id ?? null )
+		) {
+			return null;
+		}
+
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start + 2, $end );
+		if ( null === $ranges || array() === $ranges ) {
+			return null;
+		}
+
+		$column_lookup = array();
+		foreach ( $columns as $column ) {
+			$column_lookup[ strtolower( $column ) ] = $column;
+		}
+
+		$items = array();
+		foreach ( $ranges as $range ) {
+			$item_start = $range['start'];
+			$item_end   = $range['end'];
+			$direction  = '';
+			if (
+				$item_start < $item_end
+				&& (
+					WP_MySQL_Lexer::ASC_SYMBOL === ( $tokens[ $item_end - 1 ]->id ?? null )
+					|| WP_MySQL_Lexer::DESC_SYMBOL === ( $tokens[ $item_end - 1 ]->id ?? null )
+				)
+			) {
+				$direction = ' ' . strtoupper( $tokens[ $item_end - 1 ]->get_bytes() );
+				--$item_end;
+			}
+
+			if ( $item_start >= $item_end ) {
+				return null;
+			}
+
+			if (
+				$item_start + 1 === $item_end
+				&& isset( $tokens[ $item_start ] )
+				&& $this->is_mysql_unsigned_integer_token( $tokens[ $item_start ] )
+			) {
+				$ordinal = (int) $tokens[ $item_start ]->get_value();
+				if ( $ordinal < 1 || $ordinal > count( $columns ) ) {
+					return null;
+				}
+
+				$items[] = $tokens[ $item_start ]->get_bytes() . $direction;
+				continue;
+			}
+
+			if ( $item_start + 1 !== $item_end || ! isset( $tokens[ $item_start ] ) ) {
+				return null;
+			}
+
+			$column = $this->get_direct_information_schema_identifier_token_value( $tokens[ $item_start ] );
+			if ( null === $column ) {
+				return null;
+			}
+
+			$column_key = strtolower( $column );
+			if ( ! isset( $column_lookup[ $column_key ] ) ) {
+				return null;
+			}
+
+			$items[] = $this->connection->quote_identifier( $column_lookup[ $column_key ] ) . $direction;
+		}
+
+		return empty( $items ) ? null : ' ORDER BY ' . implode( ', ', $items );
 	}
 
 	/**

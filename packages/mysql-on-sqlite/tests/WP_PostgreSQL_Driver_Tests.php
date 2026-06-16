@@ -18020,25 +18020,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UNION SELECT' )
 		);
 
-		try {
-			$driver->query(
-				"SELECT table_name AS object_name
-				FROM information_schema.tables
-				WHERE table_name = 'wptests_options'
-				UNION ALL
-				SELECT schema_name AS object_name
-				FROM information_schema.schemata
-				WHERE schema_name = 'wptests'
-				ORDER BY object_name"
-			);
-			$this->fail( 'Expected unsupported ordered information_schema UNION to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
-			$this->assertStringNotContainsString(
-				'UNION ALL SELECT',
-				implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) )
-			);
-		}
+		$ordered = $driver->query(
+			"SELECT table_name AS object_name
+			FROM information_schema.tables
+			WHERE table_name = 'wptests_options'
+			UNION ALL
+			SELECT schema_name AS object_name
+			FROM information_schema.schemata
+			WHERE schema_name = 'wptests'
+			ORDER BY object_name DESC
+			LIMIT 1"
+		);
+
+		$this->assertSame( array( 'wptests_options' ), array_column( $ordered, 'object_name' ) );
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'ORDER BY "object_name" DESC LIMIT 1' );
+		$this->assertStringContainsString( 'UNION ALL SELECT', $sql );
+		$this->assertStringContainsString( 'ORDER BY "object_name" DESC LIMIT 1', $sql );
 	}
 
 	/**
@@ -18073,6 +18070,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'UNION ALL SELECT',
 			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UNION ALL SELECT' )
 		);
+
+		$limited = $driver->query(
+			"SELECT table_name AS object_name
+			FROM tables
+			WHERE table_name = 'wptests_options'
+			UNION ALL
+			SELECT schema_name AS object_name
+			FROM schemata
+			WHERE schema_name = 'wptests'
+			ORDER BY 1
+			LIMIT 1, 1"
+		);
+
+		$this->assertSame( array( 'wptests_options' ), array_column( $limited, 'object_name' ) );
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'ORDER BY 1 LIMIT 1 OFFSET 1' );
+		$this->assertStringContainsString( 'UNION ALL SELECT', $sql );
+		$this->assertStringContainsString( 'ORDER BY 1 LIMIT 1 OFFSET 1', $sql );
 	}
 
 	/**
