@@ -27827,6 +27827,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests GROUP_CONCAT(expr, expr, ...) concatenates row expressions before aggregation.
+	 */
+	public function test_group_concat_multi_expression_rows_are_concatenated_before_aggregation(): void {
+		$driver = $this->create_driver();
+		$this->create_group_concat_values_table(
+			$driver,
+			array(
+				2 => 'two',
+				1 => 'one',
+				3 => 'three',
+			)
+		);
+
+		$rows = $driver->query( "SELECT GROUP_CONCAT(id, ':', value ORDER BY id SEPARATOR '|') AS combined FROM group_concat_values" );
+
+		$this->assertSame( '1:one|2:two|3:three', $rows[0]->combined );
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "CAST(id AS text) || CAST(':' AS text) || CAST(value AS text)", $sql );
+		$this->assertStringContainsString( "STRING_AGG(CAST(CAST(id AS text) || CAST(':' AS text) || CAST(value AS text) AS text), CAST('|' AS text) ORDER BY id)", $sql );
+		$this->assertStringNotContainsString( 'GROUP_CONCAT', $sql );
+	}
+
+	/**
+	 * Tests GROUP_CONCAT multi-expression rows preserve NULL skip semantics.
+	 */
+	public function test_group_concat_multi_expression_rows_skip_null_composites(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE group_concat_multi_values (
+				id INTEGER PRIMARY KEY,
+				prefix TEXT NOT NULL,
+				suffix TEXT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO group_concat_multi_values (id, prefix, suffix) VALUES
+				(1, 'a', '1'),
+				(2, 'b', NULL),
+				(3, 'c', '3')"
+		);
+
+		$rows = $driver->query( "SELECT GROUP_CONCAT(prefix, suffix ORDER BY id SEPARATOR ',') AS combined FROM group_concat_multi_values" );
+
+		$this->assertSame( 'a1,c3', $rows[0]->combined );
+	}
+
+	/**
 	 * Tests GROUP_CONCAT(DISTINCT expr) deduplicates values and keeps group_concat_max_len behavior.
 	 */
 	public function test_group_concat_distinct_default_separator_deduplicates_values(): void {
@@ -27881,7 +27929,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT GROUP_CONCAT(DISTINCT id, value) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(DISTINCT value ORDER BY id) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(DISTINCT value SEPARATOR separator_value) AS combined FROM group_concat_values',
-			'SELECT GROUP_CONCAT(id, value) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value ORDER id) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value SEPARATOR) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value SEPARATOR "," SEPARATOR "|") AS combined FROM group_concat_values',

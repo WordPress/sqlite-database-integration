@@ -45839,11 +45839,11 @@ FROM (
 	}
 
 	/**
-	 * Translate MySQL GROUP_CONCAT([DISTINCT] expr [ORDER BY ...] [SEPARATOR ...]).
+	 * Translate MySQL GROUP_CONCAT([DISTINCT] expr [, expr ...] [ORDER BY ...] [SEPARATOR ...]).
 	 *
-	 * Keep this intentionally narrow. MySQL also accepts multiple expressions;
-	 * those shapes need separate semantic handling and are left unsupported by
-	 * this translator.
+	 * Multi-expression rows are concatenated before aggregation. DISTINCT stays
+	 * intentionally single-expression so PostgreSQL does not silently change
+	 * MySQL's de-duplication semantics for composite row values.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -45865,11 +45865,14 @@ FROM (
 			return null;
 		}
 
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+		$expression_sql = $this->get_mysql_group_concat_expression_sql(
 			$tokens,
-			$parsed['expression_start'],
-			$parsed['expression_end']
+			$parsed['expression_ranges']
 		);
+		if ( null === $expression_sql ) {
+			return null;
+		}
+
 		$separator_sql  = null === $parsed['separator_start']
 			? $this->connection->quote( ',' )
 			: $this->translate_mysql_token_sequence_to_postgresql(
@@ -45943,7 +45946,7 @@ FROM (
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First argument token position.
 	 * @param int             $end    Final argument token position, exclusive.
-	 * @return array{distinct: bool, expression_start: int, expression_end: int, order_start: int|null, order_end: int, separator_start: int|null, separator_end: int}|null Parsed bounds.
+	 * @return array{distinct: bool, expression_ranges: array[], order_start: int|null, order_end: int, separator_start: int|null, separator_end: int}|null Parsed bounds.
 	 */
 	private function parse_mysql_group_concat_arguments( array $tokens, int $start, int $end ): ?array {
 		if ( $start >= $end ) {
@@ -46008,7 +46011,11 @@ FROM (
 		}
 
 		$expression_arguments = $this->split_top_level_mysql_arguments( $tokens, $expression_start, $expression_end );
-		if ( null === $expression_arguments || 1 !== count( $expression_arguments ) ) {
+		if (
+			null === $expression_arguments
+			|| empty( $expression_arguments )
+			|| ( $distinct && 1 !== count( $expression_arguments ) )
+		) {
 			return null;
 		}
 		if (
@@ -46021,13 +46028,52 @@ FROM (
 
 		return array(
 			'distinct'         => $distinct,
-			'expression_start' => $expression_start,
-			'expression_end'   => $expression_end,
+			'expression_ranges' => $expression_arguments,
 			'order_start'      => null === $order_position ? null : $order_position + 2,
 			'order_end'        => $before_separator_end,
 			'separator_start'  => null === $separator_position ? null : $separator_position + 1,
 			'separator_end'    => $end,
 		);
+	}
+
+	/**
+	 * Render a GROUP_CONCAT row expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param array[]          $ranges Top-level expression ranges.
+	 * @return string|null PostgreSQL SQL, or null when unsupported.
+	 */
+	private function get_mysql_group_concat_expression_sql( array $tokens, array $ranges ): ?string {
+		if ( empty( $ranges ) ) {
+			return null;
+		}
+
+		if ( 1 === count( $ranges ) ) {
+			$range = $ranges[0];
+			return $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$range['start'],
+				$range['end']
+			);
+		}
+
+		$parts = array();
+		foreach ( $ranges as $range ) {
+			if ( $range['start'] >= $range['end'] ) {
+				return null;
+			}
+
+			$parts[] = sprintf(
+				'CAST(%s AS text)',
+				$this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$range['start'],
+					$range['end']
+				)
+			);
+		}
+
+		return implode( ' || ', $parts );
 	}
 
 	/**
