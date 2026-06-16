@@ -7385,11 +7385,12 @@ class WP_PostgreSQL_Driver {
 			if (
 				0 !== strcasecmp( $database_name, $this->main_db_name )
 				&& 0 !== strcasecmp( $database_name, 'public' )
+				&& 0 !== strcasecmp( $database_name, 'information_schema' )
 			) {
 				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
 			}
 
-			$schema_name = 'public';
+			$schema_name = 0 === strcasecmp( $database_name, 'information_schema' ) ? 'information_schema' : 'public';
 			$position   += 2;
 		}
 
@@ -7453,7 +7454,7 @@ class WP_PostgreSQL_Driver {
 	 * Parse a supported MySQL SHOW TABLE STATUS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null, conditions?: array<int,array{column: string, operator: string, value: string}>}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
+	 * @return array{database: string, filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null, conditions?: array<int,array{column: string, operator: string, value: string}>}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
 	 */
 	private function get_show_table_status_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -7483,12 +7484,16 @@ class WP_PostgreSQL_Driver {
 			$position += 2;
 		}
 
-		if ( 0 !== strcasecmp( $database_name, $this->main_db_name ) ) {
+		if (
+			0 !== strcasecmp( $database_name, $this->main_db_name )
+			&& 0 !== strcasecmp( $database_name, 'information_schema' )
+		) {
 			throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
 		}
 
 		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return array(
+				'database'         => $database_name,
 				'filter_type'      => 'all',
 				'filter_column'    => null,
 				'filter_pattern'   => null,
@@ -7503,6 +7508,7 @@ class WP_PostgreSQL_Driver {
 			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
 		) {
 			return array(
+				'database'         => $database_name,
 				'filter_type'      => 'like',
 				'filter_column'    => 'Name',
 				'filter_pattern'   => $tokens[ $position + 1 ]->get_value(),
@@ -7516,6 +7522,7 @@ class WP_PostgreSQL_Driver {
 		) {
 			$filter = $this->get_show_table_status_where_filter( $tokens, $position );
 			if ( null !== $filter ) {
+				$filter['database'] = $database_name;
 				return $filter;
 			}
 		}
@@ -10119,6 +10126,15 @@ ORDER BY ordinal_position';
 	 * @return mixed SHOW TABLES result rows.
 	 */
 	private function execute_show_tables_query( bool $is_full, string $schema_name, string $database_name, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
+		if ( 0 === strcasecmp( $database_name, 'information_schema' ) ) {
+			$columns = array( 'Tables_in_information_schema' );
+			if ( $is_full ) {
+				$columns[] = 'Table_type';
+			}
+
+			return $this->set_mysql_static_show_result( $columns, array(), $fetch_mode, ...$fetch_mode_args );
+		}
+
 		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $database_name );
 		$sql          = sprintf(
 			'SELECT table_name AS %s%s
@@ -10204,6 +10220,11 @@ ORDER BY table_name';
 	 * @return mixed SHOW TABLE STATUS result rows.
 	 */
 	private function execute_show_table_status_query( array $show_table_status_query, $fetch_mode, ...$fetch_mode_args ) {
+		$columns = $this->get_show_table_status_result_columns();
+		if ( 0 === strcasecmp( $show_table_status_query['database'], 'information_schema' ) ) {
+			return $this->set_mysql_static_show_result( $columns, array(), $fetch_mode, ...$fetch_mode_args );
+		}
+
 		$rows = array();
 		foreach ( $this->get_show_table_status_catalog_rows() as $catalog_row ) {
 			$table_name      = (string) $catalog_row['table_name'];
@@ -10223,29 +10244,38 @@ ORDER BY table_name';
 		$rows = $this->filter_show_table_status_rows( $rows, $show_table_status_query );
 
 		return $this->set_mysql_static_show_result(
-			array(
-				'Name',
-				'Engine',
-				'Version',
-				'Row_format',
-				'Rows',
-				'Avg_row_length',
-				'Data_length',
-				'Max_data_length',
-				'Index_length',
-				'Data_free',
-				'Auto_increment',
-				'Create_time',
-				'Update_time',
-				'Check_time',
-				'Collation',
-				'Checksum',
-				'Create_options',
-				'Comment',
-			),
+			$columns,
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Get MySQL SHOW TABLE STATUS result columns.
+	 *
+	 * @return string[] Column names.
+	 */
+	private function get_show_table_status_result_columns(): array {
+		return array(
+			'Name',
+			'Engine',
+			'Version',
+			'Row_format',
+			'Rows',
+			'Avg_row_length',
+			'Data_length',
+			'Max_data_length',
+			'Index_length',
+			'Data_free',
+			'Auto_increment',
+			'Create_time',
+			'Update_time',
+			'Check_time',
+			'Collation',
+			'Checksum',
+			'Create_options',
+			'Comment',
 		);
 	}
 

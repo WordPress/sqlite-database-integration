@@ -12846,10 +12846,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$tables = $driver->query( 'SHOW TABLES' );
 
-		$this->assertCount( 3, $tables );
+		$this->assertSame( array(), $tables );
 		$this->assertSame( 'Tables_in_information_schema', $driver->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'wptests_options', $tables[0]->Tables_in_information_schema );
-		$this->assertStringNotContainsString( 'SHOW TABLES', $driver->get_last_postgresql_queries()[0]['sql'] );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$full_tables = $driver->query( 'SHOW FULL TABLES' );
+
+		$this->assertSame( array(), $full_tables );
+		$this->assertSame( array( 'Tables_in_information_schema', 'Table_type' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$qualified_tables = $driver->query( 'SHOW TABLES FROM information_schema' );
+
+		$this->assertSame( array(), $qualified_tables );
+		$this->assertSame( 'Tables_in_information_schema', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$table_status = $driver->query( 'SHOW TABLE STATUS' );
+
+		$this->assertSame( array(), $table_status );
+		$this->assertSame( $this->get_show_table_status_column_names(), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$qualified_table_status = $driver->query( 'SHOW TABLE STATUS FROM information_schema' );
+
+		$this->assertSame( array(), $qualified_table_status );
+		$this->assertSame( $this->get_show_table_status_column_names(), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$databases = $driver->query( 'SHOW DATABASES' );
 
