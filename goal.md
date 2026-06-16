@@ -39,7 +39,7 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Enforce strict-mode behavior for invalid values, truncation cases, invalid dates, and impossible coercions where PostgreSQL differs from MySQL.
 - [x] Keep unsupported SQL explicit: translate/emulate supported MySQL constructs, and return clear unsupported-SQL errors for unsupported constructs.
 - [x] Do not silently swallow unsupported SQL.
-- [x] Continue treating `FULLTEXT` and `SPATIAL` as unsupported unless separate explicit support is added.
+- [x] Treat `FULLTEXT` and `SPATIAL` index declarations as metadata-only compatibility while keeping unsupported search/spatial query semantics explicit.
 - [x] Audit regex/string-based PostgreSQL SQL translation paths that may bypass mode-aware tokenization.
 - [x] Prefer tokenized translation paths where SQL mode affects parsing.
 
@@ -66,7 +66,7 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Store MySQL-facing metadata for translated `CREATE TABLE ... [AS] SELECT` result tables.
 - [x] Reject `CREATE TABLE ... [AS] SELECT` variants that mix unsupported table definitions, constraints, indexes, or MySQL-only options.
 - [x] Return explicit unsupported-SQL errors for unsupported MySQL DDL instead of swallowing or silently passing through incompatible SQL.
-- [x] Translate/emulate the supported constructs identified in this work except `FULLTEXT` and `SPATIAL`, which remain explicit unsupported cases.
+- [x] Translate/emulate the supported constructs identified in this work, including metadata-only `FULLTEXT` and `SPATIAL` index declarations, while unsupported search/spatial query semantics remain explicit errors.
 - [x] Tolerate MySQL `FIRST`/`AFTER <column>` placement suffixes inside parenthesized `ALTER TABLE ... ADD (...)` column batches while preserving explicit errors for malformed placement.
 - [x] Tolerate supported MySQL table/storage options in `ALTER TABLE` with either `OPTION=value` or `OPTION value` spelling as PostgreSQL no-ops.
 - [x] Emulate the common plugin upsert side effect `ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)` for deterministic single-row AUTO_INCREMENT self-assignments.
@@ -143,3 +143,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for `json_valid(...)` CHECK translation, MySQL metadata preservation, unsupported CHECK shapes, runtime `JSON_VALID(...)` emulation, and unsupported runtime arities.
 - [x] Add PostgreSQL regression tests for `DEFAULT(column)` assignments inside `ON DUPLICATE KEY UPDATE`.
 - [x] Add PostgreSQL regression tests for permanent and temporary `CREATE TABLE ... LIKE` metadata copying and missing-source fail-closed behavior.
+- [x] Add PostgreSQL regression tests for metadata-only `FULLTEXT`/`SPATIAL` index declarations and fail-closed `MATCH ... AGAINST` search syntax.

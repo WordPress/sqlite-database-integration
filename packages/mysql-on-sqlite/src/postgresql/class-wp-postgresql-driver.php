@@ -663,6 +663,10 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
+		if ( $this->contains_unsupported_mysql_fulltext_search_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
+		}
+
 		$direct_information_schema_cte_translated = false;
 		$direct_information_schema_cte_query      = $this->translate_direct_information_schema_cte_select_query( $query );
 		if ( null !== $direct_information_schema_cte_query ) {
@@ -1037,6 +1041,10 @@ class WP_PostgreSQL_Driver {
 
 		if ( $this->contains_unsupported_mysql_date_arithmetic_function_query( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL date arithmetic statement.' );
+		}
+
+		if ( $this->contains_unsupported_mysql_fulltext_search_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
 		}
 
 			if ( $this->contains_unsupported_mysql_common_function_query( $query ) ) {
@@ -10487,7 +10495,8 @@ $wp_mysql_on_update$',
 			'variable_name' => 'Variable_name',
 			'value'         => 'Value',
 		);
-		$where_filters   = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
+		$numeric_columns  = array( 'Value' );
+		$where_filters   = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns, $numeric_columns );
 		if ( null !== $where_filters ) {
 			return array(
 				'type'       => 'where',
@@ -10497,7 +10506,7 @@ $wp_mysql_on_update$',
 			);
 		}
 
-		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
 		if ( null !== $where_expression ) {
 			return $where_expression;
 		}
@@ -11291,6 +11300,14 @@ $wp_mysql_on_update$',
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 			if ( null !== $after_close ) {
+				if (
+					isset( $tokens[ $after_close ] )
+					&& $after_close < $end
+					&& $this->is_mysql_show_where_comparison_continuation_token( $tokens[ $after_close ] )
+				) {
+					return $this->parse_mysql_show_where_comparison_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+				}
+
 				$inner_position = $position + 1;
 				$predicate      = $this->parse_mysql_show_where_or_expression( $tokens, $inner_position, $after_close - 1, $allowed_columns, $numeric_columns );
 				if ( null !== $predicate && $inner_position === $after_close - 1 ) {
@@ -11301,6 +11318,27 @@ $wp_mysql_on_update$',
 		}
 
 		return $this->parse_mysql_show_where_comparison_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+	}
+
+	/**
+	 * Check whether a token can continue a SHOW WHERE comparison after a value expression.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token continues a comparison predicate.
+	 */
+	private function is_mysql_show_where_comparison_continuation_token( WP_MySQL_Token $token ): bool {
+		return null !== $this->get_mysql_show_where_comparison_operator( $token )
+			|| in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::BETWEEN_SYMBOL,
+					WP_MySQL_Lexer::IN_SYMBOL,
+					WP_MySQL_Lexer::IS_SYMBOL,
+					WP_MySQL_Lexer::LIKE_SYMBOL,
+					WP_MySQL_Lexer::NOT_SYMBOL,
+				),
+				true
+			);
 	}
 
 	/**
@@ -22020,12 +22058,33 @@ WHERE option_name IN (
 	 * @return array[]|null Replacement ranges, or null when unsupported.
 	 */
 	private function get_mysql_insert_select_projection_replacements( string $table_name, array $columns, array $tokens, int $select_start, int $select_end ): ?array {
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $select_start + 1, $select_end );
-		if ( null === $from_position || $select_start + 1 >= $from_position ) {
+		$select_clause_tokens = array(
+			WP_MySQL_Lexer::FOR_SYMBOL,
+			WP_MySQL_Lexer::GROUP_SYMBOL,
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			WP_MySQL_Lexer::LOCK_SYMBOL,
+			WP_MySQL_Lexer::ORDER_SYMBOL,
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+			WP_MySQL_Lexer::UNION_SYMBOL,
+			WP_MySQL_Lexer::WHERE_SYMBOL,
+		);
+		$from_position         = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $select_start + 1, $select_end );
+		$projection_end        = $from_position;
+		if ( null === $projection_end ) {
+			$projection_end = $this->find_first_top_level_mysql_token(
+				$tokens,
+				$select_clause_tokens,
+				$select_start + 1,
+				$select_end
+			) ?? $select_end;
+		}
+
+		if ( $select_start + 1 >= $projection_end ) {
 			return array();
 		}
 
-		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $select_start + 1, $from_position );
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $select_start + 1, $projection_end );
 		if ( null === $projection_ranges || count( $projection_ranges ) !== count( $columns ) ) {
 			return null;
 		}
@@ -22035,48 +22094,41 @@ WHERE option_name IN (
 			return array();
 		}
 
-		$first_clause_position = $this->find_first_top_level_mysql_token(
-			$tokens,
-			array(
-				WP_MySQL_Lexer::FOR_SYMBOL,
-				WP_MySQL_Lexer::GROUP_SYMBOL,
-				WP_MySQL_Lexer::HAVING_SYMBOL,
-				WP_MySQL_Lexer::LIMIT_SYMBOL,
-				WP_MySQL_Lexer::LOCK_SYMBOL,
-				WP_MySQL_Lexer::ORDER_SYMBOL,
-				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-				WP_MySQL_Lexer::UNION_SYMBOL,
-				WP_MySQL_Lexer::WHERE_SYMBOL,
-			),
-			$from_position + 1,
-			$select_end
-		) ?? $select_end;
-		$scope                 = $this->get_mysql_select_scope( $tokens, $from_position + 1, $first_clause_position );
-
-		$group_items    = null;
-		$group_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $from_position + 1, $select_end );
-		if (
-			null !== $group_position
-			&& isset( $tokens[ $group_position + 1 ] )
-			&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $group_position + 1 ]->id
-		) {
-			$group_end   = $this->find_first_top_level_mysql_token(
+		$scope       = null;
+		$group_items = null;
+		if ( null !== $from_position ) {
+			$first_clause_position = $this->find_first_top_level_mysql_token(
 				$tokens,
-				array(
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::ORDER_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				),
-				$group_position + 2,
+				$select_clause_tokens,
+				$from_position + 1,
 				$select_end
 			) ?? $select_end;
-			$group_items = $this->split_top_level_mysql_arguments( $tokens, $group_position + 2, $group_end );
-			if ( null === $group_items ) {
-				return null;
+			$scope                 = $this->get_mysql_select_scope( $tokens, $from_position + 1, $first_clause_position );
+
+			$group_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $from_position + 1, $select_end );
+			if (
+				null !== $group_position
+				&& isset( $tokens[ $group_position + 1 ] )
+				&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $group_position + 1 ]->id
+			) {
+				$group_end   = $this->find_first_top_level_mysql_token(
+					$tokens,
+					array(
+						WP_MySQL_Lexer::FOR_SYMBOL,
+						WP_MySQL_Lexer::HAVING_SYMBOL,
+						WP_MySQL_Lexer::LIMIT_SYMBOL,
+						WP_MySQL_Lexer::LOCK_SYMBOL,
+						WP_MySQL_Lexer::ORDER_SYMBOL,
+						WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+						WP_MySQL_Lexer::UNION_SYMBOL,
+					),
+					$group_position + 2,
+					$select_end
+				) ?? $select_end;
+				$group_items = $this->split_top_level_mysql_arguments( $tokens, $group_position + 2, $group_end );
+				if ( null === $group_items ) {
+					return null;
+				}
 			}
 		}
 
@@ -37185,12 +37237,15 @@ FROM (
 							$value_sql      = $expression_sql['sql'];
 							$changed        = $expression_sql['changed'];
 						} else {
-							$value_sql = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+							$value_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
 								$tokens,
 								$value_start,
 								$assignment_end,
 								$values_replacements
 							);
+							if ( null === $value_sql ) {
+								return null;
+							}
 							$changed   = true;
 						}
 						if (
@@ -37868,6 +37923,207 @@ FROM (
 		}
 
 		return $replacements;
+	}
+
+	/**
+	 * Translate an upsert assignment expression while replacing VALUES(column).
+	 *
+	 * Runtime functions that wrap VALUES(column) need to see the translated
+	 * replacement inside their arguments so they keep MySQL semantics.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First expression token.
+	 * @param int              $end          Final expression token, exclusive.
+	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @return string|null PostgreSQL SQL, or null when unsupported.
+	 */
+	private function translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql( array $tokens, int $start, int $end, array $replacements ): ?string {
+		if ( empty( $replacements ) ) {
+			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end );
+		}
+
+		usort(
+			$replacements,
+			static function ( array $a, array $b ): int {
+				return ( $a['start'] ?? 0 ) <=> ( $b['start'] ?? 0 );
+			}
+		);
+
+		$chunks   = array();
+		$position = $start;
+		while ( $position < $end ) {
+			$replacement = $this->get_mysql_token_sequence_replacement_at_position( $replacements, $position );
+			if ( null !== $replacement ) {
+				$chunks[] = $replacement['sql'];
+				$position = $replacement['end'];
+				continue;
+			}
+
+			$function = $this->translate_mysql_common_function_with_replacements_to_postgresql( $tokens, $position, $end, $replacements );
+			if ( false === $function ) {
+				return null;
+			}
+			if ( is_array( $function ) ) {
+				$chunks[] = $function['sql'];
+				$position = $function['position'] + 1;
+				continue;
+			}
+
+			$segment_end = $end;
+			foreach ( $replacements as $candidate ) {
+				if ( $candidate['start'] > $position ) {
+					$segment_end = min( $segment_end, $candidate['start'] );
+					break;
+				}
+			}
+
+			for ( $scan = $position; $scan < $segment_end; $scan++ ) {
+				$bounds = $this->get_mysql_common_function_bounds( $tokens, $scan, $end );
+				if (
+					null !== $bounds
+					&& $this->mysql_token_sequence_replacements_intersect_range( $replacements, $scan, $bounds['close'] + 1 )
+				) {
+					$segment_end = $scan;
+					break;
+				}
+			}
+
+			if ( $segment_end <= $position ) {
+				return null;
+			}
+
+			$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $position, $segment_end );
+			$position = $segment_end;
+		}
+
+		return implode( ' ', array_filter( $chunks, 'strlen' ) );
+	}
+
+	/**
+	 * Translate a supported MySQL runtime function containing replacement ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $position     Function token position.
+	 * @param int              $end          Final token position, exclusive.
+	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @return array{sql:string,position:int}|false|null Translation data, false when unsupported, or null when not a split function.
+	 */
+	private function translate_mysql_common_function_with_replacements_to_postgresql( array $tokens, int $position, int $end, array $replacements ) {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$function_end = $bounds['close'] + 1;
+		if ( ! $this->mysql_token_sequence_replacements_intersect_range( $replacements, $position, $function_end ) ) {
+			return null;
+		}
+
+		if ( in_array( $bounds['function'], array( 'last_insert_id', 'timestampadd' ), true ) ) {
+			return false;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments ) {
+			return false;
+		}
+
+		if ( 'substring' === $bounds['function'] ) {
+			$arguments = $this->get_mysql_substring_function_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if ( null === $arguments ) {
+				return false;
+			}
+		}
+
+		$argument_sql = array();
+		foreach ( $arguments as $argument ) {
+			$sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				$argument['start'],
+				$argument['end'],
+				$this->get_mysql_token_sequence_replacements_for_range( $replacements, $argument['start'], $argument['end'] )
+			);
+			if ( null === $sql ) {
+				return false;
+			}
+
+			$argument_sql[] = $sql;
+		}
+
+		if ( 'if' === $bounds['function'] && 3 === count( $argument_sql ) ) {
+			$condition_sql = $this->is_mysql_boolean_condition_expression(
+				$tokens,
+				$arguments[0]['start'],
+				$arguments[0]['end']
+			)
+				? '(' . $argument_sql[0] . ')'
+				: $this->get_postgresql_mysql_truthy_expression_sql( $argument_sql[0] );
+			$sql           = sprintf( 'CASE WHEN %s THEN %s ELSE %s END', $condition_sql, $argument_sql[1], $argument_sql[2] );
+		} else {
+			$sql = $this->get_postgresql_mysql_common_function_sql( $bounds['function'], $argument_sql );
+			if ( null === $sql ) {
+				return false;
+			}
+		}
+
+		return array(
+			'sql'      => $sql,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get a replacement that starts at the given token position.
+	 *
+	 * @param array[] $replacements Replacement ranges.
+	 * @param int     $position     Token position.
+	 * @return array|null Replacement range, or null when none starts here.
+	 */
+	private function get_mysql_token_sequence_replacement_at_position( array $replacements, int $position ): ?array {
+		foreach ( $replacements as $replacement ) {
+			if ( $replacement['start'] === $position ) {
+				return $replacement;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get replacement ranges fully contained by a token range.
+	 *
+	 * @param array[] $replacements Replacement ranges.
+	 * @param int     $start        Range start.
+	 * @param int     $end          Range end.
+	 * @return array[] Replacement ranges contained by the range.
+	 */
+	private function get_mysql_token_sequence_replacements_for_range( array $replacements, int $start, int $end ): array {
+		$ranged_replacements = array();
+		foreach ( $replacements as $replacement ) {
+			if ( $replacement['start'] >= $start && $replacement['end'] <= $end ) {
+				$ranged_replacements[] = $replacement;
+			}
+		}
+
+		return $ranged_replacements;
+	}
+
+	/**
+	 * Check whether replacement ranges overlap a token range.
+	 *
+	 * @param array[] $replacements Replacement ranges.
+	 * @param int     $start        Range start.
+	 * @param int     $end          Range end.
+	 * @return bool Whether any replacement overlaps the range.
+	 */
+	private function mysql_token_sequence_replacements_intersect_range( array $replacements, int $start, int $end ): bool {
+		foreach ( $replacements as $replacement ) {
+			if ( $replacement['start'] < $end && $replacement['end'] > $start ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -44119,6 +44375,49 @@ FROM (
 			0,
 			null === $statement_end ? count( $tokens ) : $statement_end
 			);
+	}
+
+	/**
+	 * Check whether a query contains unsupported MySQL FULLTEXT search syntax.
+	 *
+	 * Metadata-only FULLTEXT indexes are supported for dbDelta compatibility,
+	 * but MATCH (...) AGAINST (...) search semantics are not emulated.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether unsupported FULLTEXT search syntax is present.
+	 */
+	private function contains_unsupported_mysql_fulltext_search_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		for ( $i = 0; $i < $statement_end; $i++ ) {
+			if (
+				WP_MySQL_Lexer::MATCH_SYMBOL !== $tokens[ $i ]->id
+				|| ! isset( $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$after_match = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $statement_end );
+			if (
+				null !== $after_match
+				&& isset( $tokens[ $after_match ], $tokens[ $after_match + 1 ] )
+				&& WP_MySQL_Lexer::AGAINST_SYMBOL === $tokens[ $after_match ]->id
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $after_match + 1 ]->id
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

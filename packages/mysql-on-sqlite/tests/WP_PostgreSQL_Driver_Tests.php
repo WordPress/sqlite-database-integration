@@ -794,6 +794,49 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests strict zero-date SQL modes reject INSERT ... SELECT literals without FROM.
+	 */
+	public function test_strict_insert_select_without_from_rejects_zero_date_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		try {
+			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) SELECT 1, '0000-00-00 00:00:00'" );
+			$this->fail( 'Expected no-FROM zero date projection to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect datetime value: '0000-00-00 00:00:00'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests non-strict no-FROM INSERT ... SELECT normalizes partial-zero date/time literals.
+	 */
+	public function test_non_strict_insert_select_without_from_normalizes_zero_in_dates_when_no_zero_in_date_mode_is_enabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'NO_ZERO_IN_DATE' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				SELECT 1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-00-15 14:15:27', '2020-01-01 00:00:00'"
+			)
+		);
+		$insert_sql = $this->get_last_single_postgresql_sql( $driver );
+
+		$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->post_modified );
+		$this->assertSame(
+			'INSERT INTO "wptests_posts" ("ID", "post_date", "post_date_gmt", "post_modified", "post_modified_gmt") SELECT 1, \'2020-01-01 00:00:00\', \'2020-01-01 00:00:00\', \'0000-00-00 00:00:00\' , \'2020-01-01 00:00:00\'',
+			$insert_sql
+		);
+	}
+
+	/**
 	 * Tests strict zero-in-date SQL modes reject partial-zero date/time literals before backend execution.
 	 */
 	public function test_strict_update_rejects_zero_in_date_literals_from_mysql_metadata(): void {
@@ -2994,6 +3037,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_search_geo DROP KEY shape_spatial' ) );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_search_geo' ) );
+	}
+
+	/**
+	 * Tests FULLTEXT search syntax fails before reaching PostgreSQL.
+	 */
+	public function test_fulltext_search_syntax_fails_closed_before_backend_execution(): void {
+		$queries = array(
+			"SELECT MATCH(body) AGAINST ('needle') AS score FROM wptests_search_geo",
+			"SELECT * FROM wptests_search_geo WHERE MATCH(body) AGAINST ('needle' IN BOOLEAN MODE)",
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported FULLTEXT search syntax to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL full-text search syntax.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
 	}
 
 	/**
@@ -5728,6 +5796,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					ON DUPLICATE KEY UPDATE `updated_at` = NOW(6)"
 			)
 		);
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports runtime functions around VALUES(column).
+	 */
+	public function test_upsert_update_assignments_support_runtime_functions_around_values_references(): void {
+		$driver = $this->create_driver_with_postgresql_text_runtime_functions();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('runtime_values', 'old', 'old')" );
+
+		$upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('runtime_values', 'incoming', 'new')
+			ON DUPLICATE KEY UPDATE `option_value` = CONCAT(VALUES(`option_value`), '-', CHAR_LENGTH(VALUES(`option_value`))),
+			                        `autoload` = IFNULL(NULL, VALUES(`autoload`))";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringNotContainsString( 'CONCAT', $sql );
+		$this->assertStringNotContainsString( 'IFNULL', $sql );
+		$this->assertStringContainsString( 'CHAR_LENGTH(CAST(excluded."option_value" AS text))', $sql );
+		$this->assertStringContainsString( 'COALESCE(NULL, excluded."autoload")', $sql );
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'runtime_values'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'incoming-8', $rows[0]->option_value );
+		$this->assertSame( 'new', $rows[0]->autoload );
 	}
 
 	/**
@@ -15870,6 +15967,71 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE preserves ON UPDATE CURRENT_TIMESTAMP metadata and pgsql trigger side effects.
+	 */
+	public function test_alter_table_on_update_current_timestamp_updates_mysql_metadata_and_postgresql_triggers(): void {
+		$connection = new class() extends WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection {
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+					|| 0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'CREATE TRIGGER ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+				) {
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			public function get_driver_name(): string {
+				return 'pgsql';
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_on_update_alter (
+				id int NOT NULL,
+				updated timestamp NULL
+			)'
+		);
+
+		$driver->query( 'ALTER TABLE wptests_on_update_alter ADD COLUMN touched timestamp NULL ON UPDATE CURRENT_TIMESTAMP' );
+
+		$this->assertSame(
+			'ALTER TABLE "wptests_on_update_alter" ADD COLUMN "touched" text',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+		$this->assertStringContainsString( 'CREATE OR REPLACE FUNCTION "__wp_pg_on_update_fn_', $driver->get_last_postgresql_queries()[1]['sql'] );
+		$this->assertStringContainsString( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_', $driver->get_last_postgresql_queries()[2]['sql'] );
+		$this->assertStringContainsString( 'CREATE TRIGGER "__wp_pg_on_update_', $driver->get_last_postgresql_queries()[3]['sql'] );
+		$this->assertStringContainsString( 'BEFORE UPDATE ON "wptests_on_update_alter"', $driver->get_last_postgresql_queries()[3]['sql'] );
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_on_update_alter' );
+		$this->assertSame( array( 'id', 'updated', 'touched' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( 'on update CURRENT_TIMESTAMP', $columns[2]['extra'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_on_update_alter' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `touched` timestamp DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP', $create_table );
+
+		$driver->query( 'ALTER TABLE wptests_on_update_alter CHANGE COLUMN touched touched timestamp NULL' );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" TYPE text', $queries[0]['sql'] );
+		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" DROP NOT NULL', $queries[1]['sql'] );
+		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" DROP DEFAULT', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'DROP FUNCTION IF EXISTS "__wp_pg_on_update_fn_', $queries[4]['sql'] );
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_on_update_alter' );
+		$this->assertSame( '', $columns[2]['extra'] );
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_on_update_alter' )[0]->{'Create Table'};
+		$this->assertStringNotContainsString( '  `touched` timestamp DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP', $create_table );
+		$this->assertStringContainsString( '  `touched` timestamp DEFAULT NULL', $create_table );
+	}
+
+	/**
 	 * Tests generated timestamp defaults preserve MySQL metadata and SHOW CREATE shape.
 	 */
 	public function test_create_table_generated_timestamp_defaults_preserve_mysql_shape(): void {
@@ -24347,6 +24509,20 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW VARIABLES WHERE supports bounded numeric expressions on Value.
+	 */
+	public function test_show_variables_where_numeric_value_expressions_work(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( "SHOW VARIABLES WHERE (Value + 1) = 1025 AND Variable_name = 'group_concat_max_len'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'group_concat_max_len', $rows[0]->Variable_name );
+		$this->assertSame( '1024', $rows[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
 	 * Tests unsupported SHOW VARIABLES WHERE clauses fail before backend execution.
 	 */
 	public function test_unsupported_show_variables_where_clause_does_not_reach_backend(): void {
@@ -24355,6 +24531,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		foreach (
 			array(
 				"SHOW VARIABLES WHERE Unknown = 'utf8mb4'",
+				'SHOW VARIABLES WHERE Value + Variable_name > 1',
 			) as $query
 		) {
 			try {
