@@ -1073,6 +1073,14 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL date arithmetic statement.' );
 		}
 
+		if ( $this->contains_unsupported_mysql_date_format_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
+		}
+
+		if ( $this->contains_unsupported_mysql_rand_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
+		}
+
 		if ( $this->contains_unsupported_mysql_fulltext_search_query( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
 		}
@@ -2380,7 +2388,9 @@ class WP_PostgreSQL_Driver {
 		}
 
 		try {
-			if ( isset( $upsert_query['duplicate_conflict_rows_sql'] ) && is_string( $upsert_query['duplicate_conflict_rows_sql'] ) ) {
+			if ( ! empty( $upsert_query['upsert_select_ambiguous_conflict_targets'] ) ) {
+				$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_with_ambiguous_targets( $upsert_query );
+			} elseif ( isset( $upsert_query['duplicate_conflict_rows_sql'] ) && is_string( $upsert_query['duplicate_conflict_rows_sql'] ) ) {
 				$stmt          = $this->connection->query( $upsert_query['duplicate_conflict_rows_sql'] );
 				$has_duplicate = false !== $stmt->fetchColumn();
 				$stmt->closeCursor();
@@ -2388,18 +2398,20 @@ class WP_PostgreSQL_Driver {
 				$has_duplicate = false;
 			}
 
-			if ( $has_duplicate ) {
-				$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_sequentially( $upsert_query );
-			} else {
-				$affected_rows = 0;
-				foreach ( $mutation_statements as $statement ) {
-					$statement                       = (string) $statement;
-					$stmt                            = $this->connection->query( $statement );
-					$this->last_postgresql_queries[] = array(
-						'sql'    => $statement,
-						'params' => array(),
-					);
-					$affected_rows                  += $stmt->rowCount();
+			if ( empty( $upsert_query['upsert_select_ambiguous_conflict_targets'] ) ) {
+				if ( $has_duplicate ) {
+					$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_sequentially( $upsert_query );
+				} else {
+					$affected_rows = 0;
+					foreach ( $mutation_statements as $statement ) {
+						$statement                       = (string) $statement;
+						$stmt                            = $this->connection->query( $statement );
+						$this->last_postgresql_queries[] = array(
+							'sql'    => $statement,
+							'params' => array(),
+						);
+						$affected_rows                  += $stmt->rowCount();
+					}
 				}
 			}
 		} finally {
@@ -2420,6 +2432,218 @@ class WP_PostgreSQL_Driver {
 		$this->repair_dml_identity_sequences_after_success( $upsert_query, $affected_rows );
 
 		return (int) $this->last_result;
+	}
+
+	/**
+	 * Replay a materialized INSERT ... SELECT upsert with per-row conflict targets.
+	 *
+	 * @param array $upsert_query Translated INSERT ... SELECT upsert metadata.
+	 * @return int MySQL-compatible affected rows.
+	 */
+	private function execute_materialized_mysql_upsert_select_rows_with_ambiguous_targets( array $upsert_query ): int {
+		if (
+			! isset( $upsert_query['table_name'], $upsert_query['columns'], $upsert_query['source_table_sql'], $upsert_query['ordinal_source_table_sql'], $upsert_query['conflict_targets'], $upsert_query['assignments'] )
+			|| ! is_string( $upsert_query['table_name'] )
+			|| ! is_array( $upsert_query['columns'] )
+			|| ! is_string( $upsert_query['source_table_sql'] )
+			|| ! is_string( $upsert_query['ordinal_source_table_sql'] )
+			|| ! is_array( $upsert_query['conflict_targets'] )
+			|| ! is_array( $upsert_query['assignments'] )
+		) {
+			throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+		}
+
+		$ordinal_column       = '__wp_pg_upsert_ordinal';
+		$quoted_ordinal      = $this->connection->quote_identifier( $ordinal_column );
+		$source_alias        = $this->connection->quote_identifier( '__wp_pg_upsert_source' );
+		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
+		$quoted_target_table = $this->connection->quote_identifier( $upsert_query['table_name'] );
+		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $upsert_query['columns'] ) );
+
+		$insert_projection_sql = array();
+		foreach ( $upsert_query['columns'] as $column ) {
+			$insert_projection_sql[] = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( (string) $column )
+			);
+		}
+
+		$create_ordinal_table_sql = sprintf(
+			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
+			$upsert_query['ordinal_source_table_sql'],
+			$quoted_ordinal,
+			$source_alias,
+			$upsert_query['source_table_sql'],
+			$source_alias
+		);
+		$stmt                     = $this->connection->query( $create_ordinal_table_sql );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $create_ordinal_table_sql,
+			'params' => array(),
+		);
+		$stmt->closeCursor();
+
+		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $upsert_query['ordinal_source_table_sql'] );
+
+		try {
+			$stmt     = $this->connection->query(
+				sprintf(
+					'SELECT %1$s FROM %2$s ORDER BY %1$s',
+					$quoted_ordinal,
+					$upsert_query['ordinal_source_table_sql']
+				)
+			);
+			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			$stmt->closeCursor();
+
+			$affected_rows = 0;
+			foreach ( $ordinals as $ordinal ) {
+				$ordinal_value   = (int) $ordinal;
+				$conflict_target = $this->get_materialized_mysql_upsert_select_conflict_target_for_ordinal( $upsert_query, $ordinal_value );
+				if ( null === $conflict_target ) {
+					throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+				}
+
+				$conflict_sql = sprintf(
+					'ON CONFLICT (%s) DO UPDATE SET %s',
+					implode( ', ', $conflict_target['sql'] ),
+					implode( ', ', $upsert_query['assignments'] )
+				);
+				$row_filter   = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
+				$insert_sql   = sprintf(
+					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s %s',
+					$quoted_target_table,
+					$column_sql,
+					implode( ', ', $insert_projection_sql ),
+					$upsert_query['ordinal_source_table_sql'],
+					$rows_alias,
+					$row_filter,
+					$conflict_sql
+				);
+
+				$stmt                            = $this->connection->query( $insert_sql );
+				$this->last_postgresql_queries[] = array(
+					'sql'    => $insert_sql,
+					'params' => array(),
+				);
+				$affected_rows                  += $stmt->rowCount();
+			}
+
+			return $affected_rows;
+		} finally {
+			$stmt                            = $this->connection->query( $drop_ordinal_table_sql );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $drop_ordinal_table_sql,
+				'params' => array(),
+			);
+			$stmt->closeCursor();
+		}
+	}
+
+	/**
+	 * Resolve a materialized SELECT row's upsert conflict target.
+	 *
+	 * @param array $upsert_query Translated INSERT ... SELECT upsert metadata.
+	 * @param int   $ordinal      Source row ordinal.
+	 * @return array|null Conflict target, or null when ambiguous/unsupported.
+	 */
+	private function get_materialized_mysql_upsert_select_conflict_target_for_ordinal( array $upsert_query, int $ordinal ): ?array {
+		$conflict_targets = isset( $upsert_query['conflict_targets'] ) && is_array( $upsert_query['conflict_targets'] )
+			? $upsert_query['conflict_targets']
+			: array();
+		if ( empty( $conflict_targets ) ) {
+			return null;
+		}
+
+		$target_alias = $this->connection->quote_identifier( '__wp_pg_upsert_target' );
+		$rows_alias   = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
+		$ordinal_sql  = sprintf(
+			'%s.%s = %d',
+			$rows_alias,
+			$this->connection->quote_identifier( '__wp_pg_upsert_ordinal' ),
+			$ordinal
+		);
+
+		$matching_targets = array();
+		foreach ( $conflict_targets as $conflict_target ) {
+			$predicate_sql = $this->get_materialized_mysql_upsert_select_conflict_predicate_sql(
+				$target_alias,
+				$rows_alias,
+				$conflict_target['parts'] ?? array()
+			);
+			if ( null === $predicate_sql ) {
+				return null;
+			}
+
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT 1 FROM %s AS %s, %s AS %s WHERE %s AND %s LIMIT 1',
+					$this->connection->quote_identifier( (string) $upsert_query['table_name'] ),
+					$target_alias,
+					$upsert_query['ordinal_source_table_sql'],
+					$rows_alias,
+					$ordinal_sql,
+					$predicate_sql
+				)
+			);
+			$conflict_exists = false !== $stmt->fetchColumn();
+			$stmt->closeCursor();
+			if ( $conflict_exists ) {
+				$matching_targets[] = $conflict_target;
+			}
+
+			if ( count( $matching_targets ) > 1 ) {
+				return null;
+			}
+		}
+
+		return $matching_targets[0] ?? $conflict_targets[0];
+	}
+
+	/**
+	 * Build a target/source predicate for a materialized upsert conflict key.
+	 *
+	 * @param string $target_alias   Quoted target table alias.
+	 * @param string $rows_alias     Quoted source rows alias.
+	 * @param array  $conflict_parts Conflict target key parts.
+	 * @return string|null Predicate SQL, or null when unsupported.
+	 */
+	private function get_materialized_mysql_upsert_select_conflict_predicate_sql( string $target_alias, string $rows_alias, array $conflict_parts ): ?string {
+		$where = array();
+		foreach ( $conflict_parts as $conflict_part ) {
+			$column = (string) ( $conflict_part['column'] ?? '' );
+			if ( '' === $column ) {
+				return null;
+			}
+
+			$target_value = sprintf(
+				'%s.%s',
+				$target_alias,
+				$this->connection->quote_identifier( $column )
+			);
+			$incoming_value = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( $column )
+			);
+			if ( null !== ( $conflict_part['sub_part'] ?? null ) && '' !== (string) $conflict_part['sub_part'] ) {
+				$target_value = sprintf(
+					'SUBSTR(CAST(%s AS text), 1, %d)',
+					$target_value,
+					(int) $conflict_part['sub_part']
+				);
+				$incoming_value = sprintf(
+					'SUBSTR(CAST(%s AS text), 1, %d)',
+					$incoming_value,
+					(int) $conflict_part['sub_part']
+				);
+			}
+
+			$where[] = sprintf( '%s = %s', $target_value, $incoming_value );
+		}
+
+		return empty( $where ) ? null : implode( ' AND ', $where );
 	}
 
 	/**
@@ -19626,10 +19850,11 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$table_column_lookup   = $this->get_mysql_dml_column_metadata_lookup( $table_name );
-		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
-		$literal_value_row     = null;
-		$explicit_identity_columns = array();
+		$table_column_lookup            = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$auto_increment_column          = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
+		$literal_value_row              = null;
+		$explicit_identity_columns      = array();
+		$ambiguous_conflict_candidates  = array();
 
 		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
 		if ( null === $conflict_target ) {
@@ -19649,10 +19874,19 @@ WHERE option_name IN (
 				);
 			}
 			if ( null === $conflict_target ) {
-				return null;
+				if ( null !== $literal_value_row ) {
+					return null;
+				}
+
+				$ambiguous_conflict_candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns );
+				if ( count( $ambiguous_conflict_candidates ) < 2 ) {
+					return null;
+				}
 			}
 		}
-		$conflict_columns = $conflict_target['columns'];
+		$conflict_columns = null === $conflict_target
+			? $this->get_mysql_upsert_conflict_candidate_columns( $ambiguous_conflict_candidates )
+			: $conflict_target['columns'];
 
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
@@ -19673,6 +19907,74 @@ WHERE option_name IN (
 		);
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $assignment_position ) ) {
 			return null;
+		}
+
+		if ( null === $conflict_target ) {
+			if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
+				return null;
+			}
+
+			if (
+				null !== $auto_increment_column
+				&& ! $this->can_mysql_insert_select_upsert_skip_auto_increment_literal_probe(
+					$auto_increment_column,
+					$columns,
+					$conflict_columns
+				)
+			) {
+				if ( ! $this->mysql_dml_column_list_contains_column( $columns, $auto_increment_column ) ) {
+					return null;
+				}
+
+				$explicit_identity_columns[ strtolower( $auto_increment_column ) ] = true;
+			}
+
+			$replacements = $this->get_mysql_insert_select_projection_replacements(
+				$table_name,
+				$columns,
+				$tokens,
+				$select_start,
+				$select_end
+			);
+			if ( null === $replacements ) {
+				return null;
+			}
+			$replacements = array_merge( $outer_replacements, $replacements, $closing_replacement );
+
+			$materialized_flow = $this->get_mysql_insert_select_upsert_materialized_flow_for_ambiguous_targets(
+				$table_name,
+				$columns,
+				$tokens,
+				$select_start,
+				$select_end,
+				$ambiguous_conflict_candidates,
+				$assignments,
+				$assignment_effects['assigned_columns'] ?? array()
+			);
+			if ( null === $materialized_flow ) {
+				return null;
+			}
+
+			return array_merge(
+				array(
+					'action'                    => 'upsert',
+					'sql'                       => $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+						$tokens,
+						0,
+						$on_duplicate,
+						$replacements
+					),
+					'table_name'                => $table_name,
+					'columns'                   => $columns,
+					'conflict_columns'          => $conflict_columns,
+					'inserted_new_row'          => true,
+					'value_rows'                => null,
+					'insert_id_value_rows'      => null,
+					'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
+					'explicit_identity_columns' => $explicit_identity_columns,
+				),
+				$materialized_flow
+			);
 		}
 
 		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
@@ -19899,9 +20201,83 @@ WHERE option_name IN (
 				$drop_sql,
 			),
 			'duplicate_conflict_rows_sql' => $duplicate_conflict_rows_sql,
-			'source_table_sql'           => $quoted_temp_table,
-			'ordinal_source_table_sql'   => $quoted_ordinal_table,
-			'conflict_sql'               => $conflict_sql,
+			'source_table_sql'            => $quoted_temp_table,
+			'ordinal_source_table_sql'    => $quoted_ordinal_table,
+			'conflict_sql'                => $conflict_sql,
+		);
+	}
+
+	/**
+	 * Get a materialized execution flow for real SELECT-sourced upserts with multiple arbiters.
+	 *
+	 * @param string           $table_name       Table name.
+	 * @param string[]         $columns          Insert target columns.
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $select_start     SELECT token position.
+	 * @param int              $select_end       Final SELECT token position, exclusive.
+	 * @param array[]          $candidates       Metadata-backed unique-key candidates.
+	 * @param string[]         $assignments      PostgreSQL UPDATE assignments.
+	 * @param string[]         $assigned_columns Assignment target columns keyed by lowercase name.
+	 * @return array|null Materialized flow metadata, or null when unsupported.
+	 */
+	private function get_mysql_insert_select_upsert_materialized_flow_for_ambiguous_targets( string $table_name, array $columns, array $tokens, int $select_start, int $select_end, array $candidates, array $assignments, array $assigned_columns ): ?array {
+		if ( count( $candidates ) < 2 ) {
+			return null;
+		}
+
+		$conflict_targets      = array();
+		$conflict_index_groups = array();
+		foreach ( $candidates as $candidate ) {
+			foreach ( $candidate['parts'] as $part ) {
+				if ( isset( $assigned_columns[ strtolower( (string) ( $part['column'] ?? '' ) ) ] ) ) {
+					return null;
+				}
+			}
+
+			$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $candidate['parts'] );
+			if ( null === $conflict_indexes ) {
+				return null;
+			}
+
+			$conflict_targets[]      = $this->get_mysql_upsert_conflict_target_from_candidate( $candidate );
+			$conflict_index_groups[] = $conflict_indexes;
+		}
+
+		$select_sql = $this->get_mysql_replace_select_source_sql(
+			$table_name,
+			$columns,
+			array(),
+			$tokens,
+			$select_start,
+			$select_end
+		);
+		if ( null === $select_sql ) {
+			return null;
+		}
+
+		$temp_table_hash      = substr( md5( 'upsert-select-ambiguous' . "\0" . $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
+		$temp_table_name      = '__wp_pg_upsert_select_' . $temp_table_hash;
+		$ordinal_table_name   = '__wp_pg_upsert_select_ord_' . $temp_table_hash;
+		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
+		$quoted_ordinal_table = $this->connection->quote_identifier( $ordinal_table_name );
+		$drop_sql             = sprintf( 'DROP TABLE IF EXISTS %s', $quoted_temp_table );
+
+		return array(
+			'upsert_select_materialized'             => true,
+			'upsert_select_ambiguous_conflict_targets' => true,
+			'materialize_statements'                 => array(
+				$drop_sql,
+				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
+			),
+			'mutation_statements'                    => array(),
+			'cleanup_statements'                     => array(
+				$drop_sql,
+			),
+			'source_table_sql'                       => $quoted_temp_table,
+			'ordinal_source_table_sql'               => $quoted_ordinal_table,
+			'conflict_targets'                       => $conflict_targets,
+			'conflict_index_groups'                  => $conflict_index_groups,
+			'assignments'                            => $assignments,
 		);
 	}
 
@@ -20422,6 +20798,28 @@ WHERE option_name IN (
 		}
 
 		return $candidates;
+	}
+
+	/**
+	 * Get the unique set of columns used by a list of upsert conflict candidates.
+	 *
+	 * @param array[] $candidates Metadata-backed unique-key candidates.
+	 * @return string[] Candidate column names.
+	 */
+	private function get_mysql_upsert_conflict_candidate_columns( array $candidates ): array {
+		$columns = array();
+		foreach ( $candidates as $candidate ) {
+			foreach ( $candidate['columns'] ?? array() as $column ) {
+				$column_key = strtolower( (string) $column );
+				if ( isset( $columns[ $column_key ] ) ) {
+					continue;
+				}
+
+				$columns[ $column_key ] = (string) $column;
+			}
+		}
+
+		return array_values( $columns );
 	}
 
 	/**
@@ -23173,12 +23571,33 @@ WHERE option_name IN (
 		}
 
 		return 0 === strcasecmp( $this->db_name, 'information_schema' )
-			&& null !== $this->find_top_level_mysql_token(
-				$tokens,
-				WP_MySQL_Lexer::FROM_SYMBOL,
-				$select_start + 1,
-				$select_end
-			);
+			&& $this->mysql_select_range_has_non_dual_table_reference( $tokens, $select_start, $select_end );
+	}
+
+	/**
+	 * Check whether a SELECT range reads a real table source, ignoring exact DUAL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $select_start SELECT token position.
+	 * @param int              $select_end   Final SELECT token position, exclusive.
+	 * @return bool Whether the range contains a non-DUAL FROM reference.
+	 */
+	private function mysql_select_range_has_non_dual_table_reference( array $tokens, int $select_start, int $select_end ): bool {
+		for ( $position = $select_start + 1; $position < $select_end; $position++ ) {
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			$dual_translation = $this->translate_mysql_dual_table_reference_to_postgresql( $tokens, $position, $select_end );
+			if ( null !== $dual_translation ) {
+				$position = $dual_translation['position'];
+				continue;
+			}
+
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
@@ -29332,7 +29751,8 @@ WHERE option_name IN (
 	 * application-table subqueries fail closed rather than receiving a partial
 	 * rewrite.
 	 *
-	 * @param string $query MySQL query.
+	 * @param string $query       MySQL query.
+	 * @param array  $cte_sources Caller-provided CTE sources keyed by lowercase name.
 	 * @return string|null PostgreSQL query, or null when the shape is unsupported.
 	 */
 	private function translate_direct_information_schema_select_query( string $query, array $cte_sources = array() ): ?string {
@@ -29350,9 +29770,14 @@ WHERE option_name IN (
 			return $this->translate_direct_information_schema_union_select_query( $query, $tokens, $statement_end );
 		}
 
+		$projection_start = 1;
+		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
+			++$projection_start;
+		}
+
 		$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end, $cte_sources );
 		if ( null === $context ) {
-			return null;
+			return $this->translate_direct_information_schema_no_from_select_query( $query, $tokens, $statement_end );
 		}
 
 		$source_cover_ranges = array();
@@ -29363,10 +29788,20 @@ WHERE option_name IN (
 			);
 		}
 
+		$nested_select_ranges = array_merge(
+			array(
+				array(
+					'start' => $projection_start,
+					'end'   => $context['from_position'],
+				),
+			),
+			$context['clause_ranges']
+		);
+
 		$nested_select_replacements = $this->get_direct_information_schema_nested_select_replacements(
 			$query,
 			$tokens,
-			$context['clause_ranges']
+			$nested_select_ranges
 		);
 		if ( null === $nested_select_replacements ) {
 			return null;
@@ -29384,11 +29819,6 @@ WHERE option_name IN (
 		}
 
 		$replacements = array();
-
-		$projection_start = 1;
-		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
-			++$projection_start;
-		}
 
 		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $context['from_position'] );
 		if ( null === $projection_ranges || array() === $projection_ranges ) {
@@ -29432,7 +29862,8 @@ WHERE option_name IN (
 			$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
 				$tokens,
 				$expression_bounds['start'],
-				$expression_bounds['end']
+				$expression_bounds['end'],
+				$nested_select_replacements
 			);
 			if ( null === $current_database_function_replacements ) {
 				return null;
@@ -29443,7 +29874,7 @@ WHERE option_name IN (
 				$expression_bounds['start'],
 				$expression_bounds['end'],
 				$context,
-				$current_database_function_replacements
+				array_merge( $nested_select_replacements, $current_database_function_replacements )
 			);
 			if ( null === $column_replacements ) {
 				return null;
@@ -29525,6 +29956,53 @@ WHERE option_name IN (
 			1,
 			$statement_end,
 			$replacements
+		);
+	}
+
+	/**
+	 * Translate no-table SELECTs whose nested subqueries need information_schema routing.
+	 *
+	 * @param string           $query         MySQL query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return string|null PostgreSQL query, or null when no direct rewrite is needed or supported.
+	 */
+	private function translate_direct_information_schema_no_from_select_query( string $query, array $tokens, int $statement_end ): ?string {
+		if (
+			null !== $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::FROM_SYMBOL,
+				1,
+				$statement_end
+			)
+			|| ! $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, 0, $statement_end )
+		) {
+			return null;
+		}
+
+		$nested_select_replacements = $this->get_direct_information_schema_nested_select_replacements(
+			$query,
+			$tokens,
+			array(
+				array(
+					'start' => 1,
+					'end'   => $statement_end,
+				),
+			)
+		);
+		if ( null === $nested_select_replacements || array() === $nested_select_replacements ) {
+			return null;
+		}
+
+		if ( ! $this->direct_information_schema_nested_selects_are_covered( $tokens, 1, $statement_end, $nested_select_replacements ) ) {
+			return null;
+		}
+
+		return 'SELECT ' . $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			1,
+			$statement_end,
+			$nested_select_replacements
 		);
 	}
 
@@ -37408,6 +37886,14 @@ FROM (
 			return null;
 		}
 
+		if ( $this->contains_unsupported_mysql_date_format_function( $tokens, 0, $statement_end ) ) {
+			return null;
+		}
+
+		if ( $this->contains_unsupported_mysql_rand_function( $tokens, 0, $statement_end ) ) {
+			return null;
+		}
+
 		if ( $this->contains_unsupported_mysql_week_function( $tokens, 0, $statement_end ) ) {
 			return null;
 		}
@@ -37448,6 +37934,10 @@ FROM (
 
 				if ( $this->select_references_direct_information_schema_relation( $tokens, 1, $statement_end ) ) {
 					return true;
+				}
+
+				if ( $this->information_schema_select_query_targets_main_database_explicitly( $query, $tokens, $statement_end ) ) {
+					return false;
 				}
 			}
 
@@ -37996,8 +38486,57 @@ FROM (
 			return true;
 		}
 
+		if ( $this->information_schema_select_query_targets_main_database_explicitly( $query, $tokens, $statement_end ) ) {
+			return false;
+		}
+
 		return 0 === strcasecmp( $this->db_name, 'information_schema' )
 			&& $this->information_schema_select_has_table_reference( $tokens );
+	}
+
+	/**
+	 * Check whether a SELECT under USE information_schema explicitly reads one main database table.
+	 *
+	 * This mirrors the existing simple SELECT translator, which strips the current
+	 * MySQL database qualifier only for a single top-level table source.
+	 *
+	 * @param string           $query         MySQL query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether this SELECT can safely continue to the simple SELECT translator.
+	 */
+	private function information_schema_select_query_targets_main_database_explicitly( string $query, array $tokens, int $statement_end ): bool {
+		if (
+			0 !== strcasecmp( $this->db_name, 'information_schema' )
+			|| null === $this->translate_simple_mysql_select_query( $query )
+		) {
+			return false;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		if ( null === $from_position ) {
+			return false;
+		}
+
+		$source_end = $this->find_first_top_level_mysql_token(
+			$tokens,
+			array(
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+			),
+			$from_position + 1,
+			$statement_end
+		) ?? $statement_end;
+
+		return $from_position + 4 === $source_end
+			&& isset( $tokens[ $from_position + 1 ], $tokens[ $from_position + 2 ], $tokens[ $from_position + 3 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $from_position + 2 ]->id
+			&& 0 === strcasecmp(
+				(string) $this->get_mysql_identifier_token_value( $tokens[ $from_position + 1 ] ),
+				$this->main_db_name
+			)
+			&& null !== $this->get_mysql_identifier_token_value( $tokens[ $from_position + 3 ] );
 	}
 
 	/**
@@ -38012,12 +38551,7 @@ FROM (
 			return true;
 		}
 
-		return null !== $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::FROM_SYMBOL,
-			1,
-			$statement_end
-		);
+		return $this->mysql_select_range_has_non_dual_table_reference( $tokens, 0, $statement_end );
 	}
 
 	/**
@@ -45219,6 +45753,48 @@ FROM (
 	}
 
 	/**
+	 * Check whether a range contains an unsupported MySQL RAND() form.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported RAND() call is present.
+	 */
+	private function contains_unsupported_mysql_rand_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( null === $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'rand' ) ) {
+				continue;
+			}
+
+			if ( null === $this->translate_mysql_rand_function_to_postgresql( $tokens, $i, $end ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a query contains an unsupported MySQL RAND() form.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether an unsupported RAND() call is present.
+	 */
+	private function contains_unsupported_mysql_rand_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return $this->contains_unsupported_mysql_rand_function(
+			$tokens,
+			0,
+			null === $statement_end ? count( $tokens ) : $statement_end
+		);
+	}
+
+	/**
 	 * Get a literal MySQL RAND(seed) value using SQLite UDF seed coercion.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -47710,6 +48286,48 @@ $wp_mysql_json_valid$'
 	}
 
 	/**
+	 * Check whether a range contains an unsupported MySQL DATE_FORMAT() form.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported DATE_FORMAT() call is present.
+	 */
+	private function contains_unsupported_mysql_date_format_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( null === $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'date_format' ) ) {
+				continue;
+			}
+
+			if ( null === $this->get_mysql_date_format_call_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a query contains an unsupported MySQL DATE_FORMAT() form.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether an unsupported DATE_FORMAT() call is present.
+	 */
+	private function contains_unsupported_mysql_date_format_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return $this->contains_unsupported_mysql_date_format_function(
+			$tokens,
+			0,
+			null === $statement_end ? count( $tokens ) : $statement_end
+		);
+	}
+
+	/**
 	 * Get token bounds for supported MySQL DATE_FORMAT(expr, format) calls.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -49543,6 +50161,14 @@ $wp_mysql_json_valid$'
 				return true;
 			}
 
+			if ( $this->is_mysql_create_table_secondary_index_marker( $tokens, $position ) ) {
+				return true;
+			}
+
+			if ( $this->is_mysql_create_table_primary_key_index_option_marker( $tokens, $position ) ) {
+				return true;
+			}
+
 			if (
 				WP_MySQL_Lexer::ON_SYMBOL === $token->id
 				&& isset( $tokens[ $position + 1 ] )
@@ -49606,6 +50232,44 @@ $wp_mysql_json_valid$'
 		}
 
 		return false;
+	}
+
+	/**
+	 * Check whether a CREATE TABLE token introduces a MySQL secondary index definition.
+	 *
+	 * PostgreSQL-compatible PRIMARY KEY and FOREIGN KEY clauses can fall through
+	 * to the backend parser, but MySQL KEY/INDEX table elements must use the DDL
+	 * translator even when the statement has no other MySQL-only markers.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position.
+	 * @return bool Whether the token is a secondary KEY/INDEX marker.
+	 */
+	private function is_mysql_create_table_secondary_index_marker( array $tokens, int $position ): bool {
+		if (
+			! isset( $tokens[ $position ] )
+			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::KEY_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true )
+		) {
+			return false;
+		}
+
+		$previous_token = $tokens[ $position - 1 ] ?? null;
+		return null === $previous_token
+			|| ! in_array( $previous_token->id, array( WP_MySQL_Lexer::PRIMARY_SYMBOL, WP_MySQL_Lexer::FOREIGN_SYMBOL ), true );
+	}
+
+	/**
+	 * Check whether a CREATE TABLE PRIMARY KEY clause uses MySQL index options.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position.
+	 * @return bool Whether the token is a PRIMARY KEY option marker.
+	 */
+	private function is_mysql_create_table_primary_key_index_option_marker( array $tokens, int $position ): bool {
+		return isset( $tokens[ $position ], $tokens[ $position - 1 ], $tokens[ $position - 2 ] )
+			&& WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $position - 1 ]->id
+			&& WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $position - 2 ]->id;
 	}
 
 	/**

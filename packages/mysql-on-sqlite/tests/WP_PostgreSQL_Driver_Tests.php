@@ -427,9 +427,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertStringNotContainsString( 'DELAYED', $this->get_last_single_postgresql_sql( $driver ) );
 
+		$this->assertSame( 1, $driver->query( "INSERT LOW_PRIORITY INTO wptests_insert_priority SET id = 3, value = 'low-set'" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_priority" ("id", "value") VALUES (3, \'low-set\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
 		$rows = $driver->query( 'SELECT id, value FROM wptests_insert_priority ORDER BY id' );
-		$this->assertSame( array( '1', '2' ), array_column( $rows, 'id' ) );
-		$this->assertSame( array( 'low', 'delayed-select' ), array_column( $rows, 'value' ) );
+		$this->assertSame( array( '1', '2', '3' ), array_column( $rows, 'id' ) );
+		$this->assertSame( array( 'low', 'delayed-select', 'low-set' ), array_column( $rows, 'value' ) );
 	}
 
 	/**
@@ -1623,6 +1629,65 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '10', $rows[0]->option_id );
 		$this->assertSame( 'qualified', $rows[0]->option_value );
+	}
+
+	/**
+	 * Tests REPLACE priority modifiers are no-ops for SET and SELECT forms.
+	 */
+	public function test_replace_priority_modifiers_apply_to_set_and_select_forms(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_replace_priority (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_replace_priority_source (
+				id INTEGER NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_replace_priority (id, value) VALUES (1, 'old')" );
+		$driver->query( "INSERT INTO wptests_replace_priority_source (id, value) VALUES (1, 'selected'), (2, 'new')" );
+
+		$replace_set = "REPLACE LOW_PRIORITY INTO wptests_replace_priority SET id = 1, value = 'set'";
+
+		$this->assertSame( 2, $driver->query( $replace_set ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'DELETE FROM "wptests_replace_priority" WHERE ("id" = 1)',
+				'INSERT INTO "wptests_replace_priority" ("id", "value") VALUES (1, \'set\')',
+			)
+		);
+
+		$replace_select = 'REPLACE DELAYED INTO wptests_replace_priority (id, value)
+			SELECT id, value FROM wptests_replace_priority_source';
+
+		$this->assertSame( 3, $driver->query( $replace_select ) );
+		$sql = $this->assert_last_replace_select_materialized_sql( $driver, 'wptests_replace_priority' );
+		$this->assertStringContainsString(
+			' AS SELECT id AS "id" , value AS "value" FROM wptests_replace_priority_source',
+			$sql[1]
+		);
+		$this->assertStringNotContainsString( 'DELAYED', implode( "\n", $sql ) );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_replace_priority ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'selected',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
 	}
 
 	/**
@@ -4053,6 +4118,83 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
 			}
 		}
+	}
+
+	/**
+	 * Tests plain CREATE TABLE secondary KEY/INDEX definitions use the MySQL DDL translator.
+	 */
+	public function test_create_table_plain_secondary_indexes_use_mysql_translator(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_plain_secondary_indexes (
+					id INT NOT NULL,
+					slug VARCHAR(20) NOT NULL,
+					value INT,
+					KEY slug_lookup (slug),
+					INDEX value_lookup (value)
+				)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE TABLE "wptests_plain_secondary_indexes" (
+  "id" integer NOT NULL,
+  "slug" varchar(20) NOT NULL,
+  "value" integer
+)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_plain_secondary_indexes__slug_lookup" ON "wptests_plain_secondary_indexes" ("slug")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_plain_secondary_indexes__value_lookup" ON "wptests_plain_secondary_indexes" ("value")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$index_rows = $driver->query( 'SHOW INDEX FROM wptests_plain_secondary_indexes' );
+		$this->assertSame( array( 'slug_lookup', 'value_lookup' ), array_column( $index_rows, 'Key_name' ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plain_secondary_indexes' )[0]->{'Create Table'};
+		$this->assertStringContainsString( 'KEY `slug_lookup` (`slug`)', $create_table );
+		$this->assertStringContainsString( 'KEY `value_lookup` (`value`)', $create_table );
+	}
+
+	/**
+	 * Tests CREATE TABLE PRIMARY KEY USING BTREE uses the MySQL DDL translator.
+	 */
+	public function test_create_table_primary_key_using_btree_uses_mysql_translator(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE TABLE wptests_primary_key_using (id INT NOT NULL, PRIMARY KEY USING BTREE (id))' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE TABLE "wptests_primary_key_using" (
+  "id" integer NOT NULL,
+  PRIMARY KEY ("id")
+)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_primary_key_using' )[0]->{'Create Table'};
+		$this->assertStringContainsString( 'PRIMARY KEY (`id`)', $create_table );
 	}
 
 	/**
@@ -7223,6 +7365,387 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests real SELECT-sourced upserts replay rows that conflict on different unique keys.
+	 */
+	public function test_insert_select_on_duplicate_key_update_replays_distinct_ambiguous_conflict_targets(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq INTEGER NOT NULL,
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq int(11) NOT NULL,
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'one', 'old-id'), (2, 'two', 'old-slug')" );
+		$driver->query( "INSERT INTO ambiguous_upsert_source (seq, id, slug, value) VALUES (1, 1, 'fresh', 'updated-id'), (2, 3, 'two', 'updated-slug')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`)
+			SELECT `id`, `slug`, `value` FROM `ambiguous_upsert_source` ORDER BY `seq`
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
+		);
+		$this->assertIsArray( $translation );
+		$this->assertTrue( $translation['upsert_select_ambiguous_conflict_targets'] );
+		$this->assertSame( array( 'id', 'slug' ), $translation['conflict_columns'] );
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 7, $sql );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_upsert_select_[a-f0-9]{12}"$/', $sql[0] );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_upsert_select_[a-f0-9]{12}" AS SELECT /', $sql[1] );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_upsert_select_ord_[a-f0-9]{12}" AS SELECT ROW_NUMBER\(\) OVER \(\) AS "__wp_pg_upsert_ordinal"/', $sql[2] );
+		$this->assertStringContainsString( '"__wp_pg_upsert_rows"."__wp_pg_upsert_ordinal" = 1', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"', $sql[3] );
+		$this->assertStringContainsString( '"__wp_pg_upsert_rows"."__wp_pg_upsert_ordinal" = 2', $sql[4] );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"', $sql[4] );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_upsert_select_ord_[a-f0-9]{12}"$/', $sql[5] );
+		$this->assertSame( $sql[0], $sql[6] );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'slug'  => 'one',
+					'value' => 'updated-id',
+				),
+				(object) array(
+					'id'    => '2',
+					'slug'  => 'two',
+					'value' => 'updated-slug',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests columnless real SELECT-sourced upserts infer metadata columns for ambiguous arbiters.
+	 */
+	public function test_columnless_insert_select_on_duplicate_key_update_replays_ambiguous_conflict_targets(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq INTEGER NOT NULL,
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq int(11) NOT NULL,
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'one', 'old-id'), (2, 'two', 'old-slug')" );
+		$driver->query( "INSERT INTO ambiguous_upsert_source (seq, id, slug, value) VALUES (1, 1, 'fresh', 'updated-id'), (2, 3, 'two', 'updated-slug')" );
+
+		$upsert = 'INSERT INTO ambiguous_upsert
+			SELECT id, slug, value FROM ambiguous_upsert_source ORDER BY seq
+			ON DUPLICATE KEY UPDATE value = VALUES(value)';
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
+		);
+		$this->assertIsArray( $translation );
+		$this->assertTrue( $translation['upsert_select_ambiguous_conflict_targets'] );
+		$this->assertStringContainsString(
+			'INSERT INTO ambiguous_upsert ("id", "slug", "value") SELECT id, slug, value',
+			$translation['sql']
+		);
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"', $sql[4] );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertSame( array( 'updated-id', 'updated-slug' ), array_column( $rows, 'value' ) );
+	}
+
+	/**
+	 * Tests real SELECT-sourced ambiguous upserts repair explicit AUTO_INCREMENT targets.
+	 */
+	public function test_insert_select_on_duplicate_key_update_replays_ambiguous_auto_increment_conflict_targets(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_unique_upsert', 'id', 'wptests_identity_unique_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_identity_unique_upsert_source (
+				seq INTEGER NOT NULL,
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_unique_upsert_source (
+				seq int(11) NOT NULL,
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_identity_unique_upsert (id, slug, value) VALUES (7, 'one', 'old-id'), (8, 'two', 'old-slug')" );
+		$driver->query( "INSERT INTO wptests_identity_unique_upsert_source (seq, id, slug, value) VALUES (1, 7, 'fresh', 'updated-id'), (2, 9, 'two', 'updated-slug'), (3, 10, 'ten', 'created')" );
+
+		$upsert = "INSERT INTO `wptests_identity_unique_upsert` (`id`, `slug`, `value`)
+			SELECT `id`, `slug`, `value` FROM `wptests_identity_unique_upsert_source` ORDER BY `seq`
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
+		);
+		$this->assertIsArray( $translation );
+		$this->assertTrue( $translation['upsert_select_ambiguous_conflict_targets'] );
+		$this->assertSame( array( 'id', 'slug' ), $translation['conflict_columns'] );
+		$this->assertTrue( $translation['insert_id_unknown'] );
+		$this->assertSame( array( 'id' => true ), $translation['explicit_identity_columns'] );
+
+		$sequence_sync_count = $connection->get_sequence_sync_query_count();
+		$this->assertSame( 3, $driver->query( $upsert ) );
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$sql     = array_column( $queries, 'sql' );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"', $sql[4] );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"', $sql[5] );
+		$this->assert_sequence_repair_query( $queries[8], 'wptests_identity_unique_upsert', 'id', 'wptests_identity_unique_upsert_id_seq' );
+		$this->assertSame( $sequence_sync_count + 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '7',
+					'slug'  => 'one',
+					'value' => 'updated-id',
+				),
+				(object) array(
+					'id'    => '8',
+					'slug'  => 'two',
+					'value' => 'updated-slug',
+				),
+				(object) array(
+					'id'    => '10',
+					'slug'  => 'ten',
+					'value' => 'created',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests real SELECT-sourced ambiguous upserts support scalar subquery assignments.
+	 */
+	public function test_insert_select_on_duplicate_key_update_replays_ambiguous_conflict_targets_with_subquery_assignment(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq INTEGER NOT NULL,
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq int(11) NOT NULL,
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'one', 'old-id'), (2, 'two', 'old-slug')" );
+		$driver->query( "INSERT INTO ambiguous_upsert_source (seq, id, slug, value) VALUES (1, 1, 'fresh', 'incoming-id'), (2, 3, 'two', 'incoming-slug')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`)
+			SELECT `id`, `slug`, `value` FROM `ambiguous_upsert_source` ORDER BY `seq`
+			ON DUPLICATE KEY UPDATE `value` = (SELECT 'subquery' FROM DUAL)";
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = CAST((SELECT \'subquery\') AS text)', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "value" = CAST((SELECT \'subquery\') AS text)', $sql[4] );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertSame( array( 'subquery', 'subquery' ), array_column( $rows, 'value' ) );
+	}
+
+	/**
+	 * Tests real SELECT-sourced upserts replay incoming conflicts on secondary unique keys.
+	 */
+	public function test_insert_select_on_duplicate_key_update_replays_incoming_secondary_unique_conflicts(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq INTEGER NOT NULL,
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ambiguous_upsert_source (
+				seq int(11) NOT NULL,
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO ambiguous_upsert_source (seq, id, slug, value) VALUES (1, 1, 'shared', 'first'), (2, 2, 'shared', 'second')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`)
+			SELECT `id`, `slug`, `value` FROM `ambiguous_upsert_source` ORDER BY `seq`
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"', $sql[4] );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'slug'  => 'shared',
+					'value' => 'second',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests real SELECT-sourced upserts use prefix unique expression conflict targets.
+	 */
+	public function test_insert_select_prefix_unique_on_duplicate_key_update_replays_expression_conflict_target(): void {
+		$driver = $this->create_driver();
+
+		$this->install_prefix_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE prefix_ambiguous_source (
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE prefix_ambiguous_source (
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(255) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO prefix_ambiguous (id, slug, value) VALUES (1, 'existing-slug-one', 'old')" );
+		$driver->query( "INSERT INTO prefix_ambiguous_source (id, slug, value) VALUES (2, 'existing-slug-two', 'new')" );
+
+		$upsert = "INSERT INTO `prefix_ambiguous` (`id`, `slug`, `value`)
+			SELECT `id`, `slug`, `value` FROM `prefix_ambiguous_source`
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString(
+			'ON CONFLICT (SUBSTR(CAST("slug" AS text), 1, 10)) DO UPDATE SET "value" = excluded."value"',
+			$sql[3]
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM prefix_ambiguous' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'existing-slug-one', $rows[0]->slug );
+		$this->assertSame( 'new', $rows[0]->value );
+	}
+
+	/**
+	 * Tests real SELECT-sourced rows that match multiple unique keys fail closed.
+	 */
+	public function test_insert_select_on_duplicate_key_update_rejects_rows_matching_multiple_unique_keys(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE ambiguous_upsert_source (
+				id INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ambiguous_upsert_source (
+				id bigint(20) unsigned NOT NULL,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'one', 'old-id'), (2, 'two', 'old-slug')" );
+		$driver->query( "INSERT INTO ambiguous_upsert_source (id, slug, value) VALUES (1, 'two', 'unsupported')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`)
+			SELECT `id`, `slug`, `value` FROM `ambiguous_upsert_source`
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		try {
+			$driver->query( $upsert );
+			$this->fail( 'Expected multi-conflict SELECT-sourced upsert row to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.', $e->getMessage() );
+		}
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'slug'  => 'one',
+					'value' => 'old-id',
+				),
+				(object) array(
+					'id'    => '2',
+					'slug'  => 'two',
+					'value' => 'old-slug',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests prefix unique duplicate-key arbiters use PostgreSQL expression conflicts.
 	 */
 	public function test_prefix_unique_on_duplicate_key_update_uses_expression_conflict_target(): void {
@@ -7901,6 +8424,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests unsupported information_schema joined UPDATE predicates fail before backend execution.
+	 */
+	public function test_joined_update_rejects_unsupported_information_schema_predicates(): void {
+		$queries = array(
+			"UPDATE wptests_options AS o
+				JOIN information_schema.tables AS it ON o.option_name = it.table_name
+				SET o.option_value = it.table_type
+				WHERE it.table_schema IN (SELECT DATABASE())",
+			"UPDATE wptests_options AS o
+				JOIN information_schema.tables AS it ON o.option_name = it.table_name
+				SET o.option_value = it.table_type
+				WHERE it.table_schema IN (SELECT DATABASE() UNION SELECT DATABASE())",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$this->install_direct_information_schema_options_metadata( $driver );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported UPDATE statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 
@@ -8784,6 +9336,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple DELETE LIMIT without WHERE or ORDER BY uses a ctid subquery.
+	 */
+	public function test_simple_delete_limit_without_where_or_order_by_uses_ctid_subquery(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_delete_query',
+			'DELETE FROM wptests_delete_limit_only LIMIT 1, 2'
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_limit_only" WHERE ctid IN (SELECT ctid FROM "wptests_delete_limit_only" LIMIT 2 OFFSET 1)',
+			$sql
+		);
+
+		$driver->query(
+			'CREATE TABLE wptests_delete_limit_only (
+				ctid INTEGER PRIMARY KEY,
+				id INTEGER NOT NULL
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_delete_limit_only (ctid, id) VALUES (1, 1), (2, 2), (3, 3), (4, 4)' );
+
+		$this->assertSame( 2, $driver->query( 'DELETE FROM wptests_delete_limit_only LIMIT 1, 2' ) );
+
+		$rows = $driver->query( 'SELECT COUNT(*) AS remaining FROM wptests_delete_limit_only' );
+		$this->assertSame( '2', $rows[0]->remaining );
+	}
+
+	/**
 	 * Tests MySQL multi-target DELETE statements translate to PostgreSQL writable CTEs.
 	 */
 	public function test_mysql_multi_target_delete_is_translated_to_writable_ctes(): void {
@@ -8856,6 +9439,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertNotNull( $limit_only_sql );
 		$this->assertStringContainsString( "WHERE p.status = 'stale' LIMIT 2", $limit_only_sql );
 		$this->assertStringNotContainsString( 'ORDER BY', $limit_only_sql );
+	}
+
+	/**
+	 * Tests single-target joined DELETE without WHERE uses the target-list rewrite.
+	 */
+	public function test_mysql_single_target_join_delete_without_where_is_translated_to_writable_cte(): void {
+		$driver = $this->create_driver();
+
+		$delete = 'DELETE p
+			FROM wptests_delete_join_parent AS p
+			JOIN wptests_delete_join_child AS c ON c.parent_id = p.id';
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "p".ctid AS "mysql_delete_target_0_ctid"', $sql );
+		$this->assertStringContainsString( 'FROM wptests_delete_join_parent AS p JOIN wptests_delete_join_child AS c ON c.parent_id = p.id', $sql );
+		$this->assertStringNotContainsString( 'ON c.parent_id = p.id WHERE', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_join_parent" AS "p"', $sql );
+		$this->assertStringContainsString( 'SELECT (SELECT COUNT(*) FROM mysql_delete_target_0) AS affected_rows', $sql );
 	}
 
 	/**
@@ -9306,6 +9914,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_unsupported_delete_shapes_fail_closed_before_backend(): void {
 		$queries = array(
+			"DELETE FROM wptests_delete_order_bad
+				ORDER BY missing_alias.id",
+			"DELETE FROM wptests_delete_order_bad
+				ORDER BY id
+				LIMIT bad",
+			"DELETE FROM wptests_delete_order_bad
+				ORDER BY id
+				LIMIT 1, bad",
 			"DELETE d, r FROM wptests_delete d
 				JOIN wptests_related r ON r.id = d.related_id
 				WHERE d.status = 'old'
@@ -10811,6 +11427,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		foreach ( $queries as $query ) {
 			$connection = new WP_PostgreSQL_Query_Spy_Connection();
 			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported MySQL runtime function form to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
+	 * Tests unsupported DATE_FORMAT() and RAND() forms fail before backend execution.
+	 */
+	public function test_unsupported_date_format_and_rand_runtime_function_forms_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			'SELECT DATE_FORMAT() AS invalid_date_format',
+			"SELECT DATE_FORMAT('2024-01-01') AS invalid_date_format",
+			"SELECT DATE_FORMAT('2024-01-01', '%Y', 'extra') AS invalid_date_format",
+			'SELECT RAND(1, 2) AS invalid_rand',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					$query
+				),
+				$query
+			);
 
 			try {
 				$driver->query( $query );
@@ -21487,6 +22139,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple main database-qualified SELECT reads still route after USE information_schema.
+	 */
+	public function test_use_statement_information_schema_allows_simple_main_database_qualified_selects(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE use_info_main_read (id INTEGER PRIMARY KEY, label TEXT)' );
+		$driver->query( "INSERT INTO use_info_main_read (id, label) VALUES (1, 'one'), (2, 'two')" );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$rows = $driver->query(
+			"SELECT label
+			FROM wptests.use_info_main_read
+			WHERE id = 1
+			ORDER BY label
+			LIMIT 1"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label' => 'one',
+				),
+			),
+			$rows
+		);
+		$this->assertSame(
+			'SELECT label FROM use_info_main_read WHERE id = 1 ORDER BY label LIMIT 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests broader main database-qualified SELECT reads fail closed under USE information_schema.
+	 */
+	public function test_use_statement_information_schema_broader_main_database_qualified_selects_fail_closed(): void {
+		$queries = array(
+			'SELECT r.label FROM wptests.use_info_main_read AS r',
+			'SELECT r.label FROM wptests.use_info_main_read AS r JOIN wptests.use_info_main_read_two AS r2 ON r2.id = r.id',
+			'SELECT label FROM (SELECT label FROM wptests.use_info_main_read) AS r',
+			'SELECT (SELECT label FROM wptests.use_info_main_read) AS label',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$driver->query( 'CREATE TABLE use_info_main_read (id INTEGER PRIMARY KEY, label TEXT)' );
+			$driver->query( 'CREATE TABLE use_info_main_read_two (id INTEGER PRIMARY KEY, label TEXT)' );
+			$this->assertSame( 0, $driver->query( 'USE information_schema' ), $query );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected broader main database-qualified SELECT under USE information_schema to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests writes after USE information_schema fail before backend execution.
 	 */
 	public function test_use_statement_information_schema_writes_fail_closed(): void {
@@ -22758,6 +23470,78 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema scalar subqueries route without a top-level FROM.
+	 */
+	public function test_direct_information_schema_scalar_subqueries_route_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$rows = $driver->query(
+			"SELECT
+				(SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()) AS table_count,
+				(SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options') AS option_table"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '3', $rows[0]->table_count );
+		$this->assertSame( 'wptests_options', $rows[0]->option_table );
+
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "tables"' );
+		$this->assertStringContainsString( 'AS "tables"', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+		$this->assertSame( 0, preg_match( '/\bDATABASE\s*\(/i', $sql ) );
+
+		$projected = $driver->query(
+			"SELECT t.table_name,
+				(SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'wptests_options') AS column_count
+			FROM information_schema.tables AS t
+			WHERE t.table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $projected );
+		$this->assertSame( 'wptests_options', $projected[0]->TABLE_NAME );
+		$this->assertSame( '4', $projected[0]->column_count );
+
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "columns"' );
+		$this->assertStringContainsString( 'AS "columns"', $sql );
+		$this->assertStringContainsString( 'AS "t"', $sql );
+	}
+
+	/**
+	 * Tests USE information_schema routes nested SELECT reads and rejects unsupported sources.
+	 */
+	public function test_use_statement_information_schema_nested_selects_route_or_fail_closed(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$rows = $driver->query(
+			"SELECT
+				(SELECT table_name FROM tables WHERE table_name = 'wptests_options') AS option_table"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests_options', $rows[0]->option_table );
+		$this->assertStringContainsString(
+			'AS "tables"',
+			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "tables"' )
+		);
+
+		$dual = $driver->query( 'SELECT 1 AS output FROM DUAL' );
+		$this->assertSame( '1', $dual[0]->output );
+		$this->assertSame( 'SELECT 1 AS output', $this->get_last_single_postgresql_sql( $driver ) );
+
+		try {
+			$driver->query( 'SELECT (SELECT COUNT(*) FROM unsupported_relation) AS relation_count' );
+			$this->fail( 'Expected unsupported nested information_schema relation to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests INSERT ... SELECT can source supported direct information_schema relations.
 	 */
 	public function test_insert_select_from_information_schema_routes_mysql_shape(): void {
@@ -22917,6 +23701,78 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$rows
 			)
 		);
+	}
+
+	/**
+	 * Tests INSERT ... SELECT can source no-table SELECTs with information_schema scalar subqueries.
+	 */
+	public function test_insert_select_from_information_schema_scalar_subquery_routes_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->get_connection()->get_pdo()->exec(
+			'CREATE TABLE wptests_information_schema_scalar_insert (
+				id INTEGER NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO wptests_information_schema_scalar_insert (id, value)
+				SELECT 5, (
+					SELECT table_name
+					FROM information_schema.tables
+					WHERE table_name = 'wptests_options'
+				)"
+			)
+		);
+
+		$sql = $this->get_logged_postgresql_sql_containing(
+			$driver->get_last_postgresql_queries(),
+			'INSERT INTO wptests_information_schema_scalar_insert'
+		);
+		$this->assertStringContainsString( 'AS "tables"', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_information_schema_scalar_insert' );
+		$this->assertSame( '5', $rows[0]->id );
+		$this->assertSame( 'wptests_options', $rows[0]->value );
+	}
+
+	/**
+	 * Tests simple DML information_schema subquery predicates fail before backend execution.
+	 */
+	public function test_simple_dml_information_schema_subquery_predicates_fail_closed(): void {
+		$queries = array(
+			'UPDATE wptests_options SET option_value = "updated" WHERE option_name IN (
+				SELECT table_name FROM information_schema.tables WHERE table_name = "wptests_options"
+			)' => 'Unsupported UPDATE statement.',
+			'DELETE FROM wptests_options WHERE option_name IN (
+				SELECT table_name FROM information_schema.tables WHERE table_name = "wptests_options"
+			)' => 'Unsupported DELETE statement.',
+		);
+
+		foreach ( $queries as $query => $expected_message ) {
+			$driver = $this->create_driver();
+			$this->install_information_schema_fixture( $driver );
+			$driver->query(
+				'CREATE TABLE wptests_options (
+					option_name TEXT NOT NULL,
+					option_value TEXT NOT NULL
+				)'
+			);
+			$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('wptests_options', 'before')" );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported simple DML information_schema subquery to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $expected_message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
