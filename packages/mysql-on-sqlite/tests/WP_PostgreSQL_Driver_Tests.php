@@ -5836,6 +5836,51 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests bounded DELETE ORDER BY/LIMIT offset,count deletes the intended ordered row slice.
+	 */
+	public function test_simple_delete_order_by_limit_offset_executes_expected_row_slice(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_delete_order_exec (
+				ctid INTEGER PRIMARY KEY,
+				id INTEGER NOT NULL,
+				priority INTEGER NOT NULL,
+				state TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_delete_order_exec (ctid, id, priority, state) VALUES
+				(1, 1, 10, 'stale'),
+				(2, 2, 20, 'stale'),
+				(3, 3, 30, 'stale'),
+				(4, 4, 40, 'stale'),
+				(5, 5, 50, 'keep')"
+		);
+
+		$delete = "DELETE FROM wptests_delete_order_exec
+			WHERE state = 'stale'
+			ORDER BY priority ASC, id ASC
+			LIMIT 1, 2";
+
+		$this->assertSame( 2, $driver->query( $delete ) );
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_order_exec" WHERE ctid IN (SELECT ctid FROM "wptests_delete_order_exec" WHERE state = \'stale\' ORDER BY priority ASC, id ASC LIMIT 2 OFFSET 1)',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, state FROM wptests_delete_order_exec ORDER BY id' );
+
+		$this->assertCount( 3, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'stale', $rows[0]->state );
+		$this->assertSame( '4', $rows[1]->id );
+		$this->assertSame( 'stale', $rows[1]->state );
+		$this->assertSame( '5', $rows[2]->id );
+		$this->assertSame( 'keep', $rows[2]->state );
+	}
+
+	/**
 	 * Tests MySQL multi-target DELETE statements translate to PostgreSQL writable CTEs.
 	 */
 	public function test_mysql_multi_target_delete_is_translated_to_writable_ctes(): void {
