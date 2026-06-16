@@ -6973,6 +6973,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined DELETE ORDER BY without LIMIT omits ordering.
+	 */
+	public function test_mysql_join_delete_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE d FROM wptests_delete_ordered d
+			JOIN wptests_related r ON r.id = d.related_id
+			WHERE d.status = 'old'
+			ORDER BY d.id DESC";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_ordered" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM wptests_delete_ordered d JOIN wptests_related r ON r.id = d.related_id WHERE d.status = \'old\')',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'ORDER BY', $sql );
+	}
+
+	/**
+	 * Tests joined DELETE expression ORDER BY without LIMIT omits ordering.
+	 */
+	public function test_mysql_join_delete_expression_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE d FROM wptests_delete_order_expression d
+			JOIN wptests_related r ON r.id = d.related_id
+			WHERE d.status = 'old'
+			ORDER BY LENGTH(d.status), d.id + 0 DESC";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_order_expression" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM wptests_delete_order_expression d JOIN wptests_related r ON r.id = d.related_id WHERE d.status = \'old\')',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'ORDER BY', $sql );
+	}
+
+	/**
 	 * Tests joined DELETE supports MySQL LIMIT offset,count syntax.
 	 */
 	public function test_mysql_join_delete_limit_offsets_are_translated_to_postgresql(): void {

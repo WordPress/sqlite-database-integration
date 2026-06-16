@@ -15660,15 +15660,21 @@ WHERE option_name IN (
 		$order_sql = '';
 		if ( null !== $order_position ) {
 			$order_end = $limit_position ?? $statement_end;
-			$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
-				$tokens,
-				$order_position,
-				$order_end,
-				$target_ref['table'],
-				$target_alias
-			);
-			if ( null === $order_sql ) {
-				return null;
+			if ( null === $limit_position ) {
+				if ( ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) ) {
+					return null;
+				}
+			} else {
+				$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
+					$tokens,
+					$order_position,
+					$order_end,
+					$target_ref['table'],
+					$target_alias
+				);
+				if ( null === $order_sql ) {
+					return null;
+				}
 			}
 		}
 
