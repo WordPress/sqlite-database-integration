@@ -14490,15 +14490,15 @@ $wp_mysql_on_update$',
 				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
 			}
 
-			if ( WP_MySQL_Lexer::READ_SYMBOL === $tokens[ $position ]->id ) {
-				$mode = 'read';
-			} elseif ( WP_MySQL_Lexer::WRITE_SYMBOL === $tokens[ $position ]->id ) {
-				$mode = 'write';
-			} else {
+			if ( ! $this->consume_mysql_lock_tables_alias( $tokens, $position ) ) {
 				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
 			}
 
-			++$position;
+			$mode = $this->consume_mysql_lock_tables_mode( $tokens, $position );
+			if ( null === $mode ) {
+				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
+			}
+
 			$tables[] = array(
 				'schema' => $table_reference['schema'],
 				'table'  => $table_reference['table'],
@@ -14521,6 +14521,74 @@ $wp_mysql_on_update$',
 			'operation' => 'lock',
 			'tables'    => $tables,
 		);
+	}
+
+	/**
+	 * Consume an optional LOCK TABLES table alias.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @return bool Whether no alias was present or a supported alias was consumed.
+	 */
+	private function consume_mysql_lock_tables_alias( array $tokens, int &$position ): bool {
+		$alias_position = $position;
+		if ( isset( $tokens[ $alias_position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $alias_position ]->id ) {
+			++$alias_position;
+		}
+
+		$alias = $this->get_mysql_identifier_token_value( $tokens[ $alias_position ] ?? null );
+		if ( null === $alias ) {
+			return $alias_position === $position;
+		}
+
+		$after_alias = $alias_position + 1;
+		if (
+			! isset( $tokens[ $after_alias ] )
+			|| (
+				WP_MySQL_Lexer::READ_SYMBOL !== $tokens[ $after_alias ]->id
+				&& WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL !== $tokens[ $after_alias ]->id
+				&& WP_MySQL_Lexer::WRITE_SYMBOL !== $tokens[ $after_alias ]->id
+			)
+		) {
+			return false;
+		}
+
+		$position = $after_alias;
+		return true;
+	}
+
+	/**
+	 * Consume a supported LOCK TABLES lock type.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @return string|null Normalized lock mode, or null when unsupported.
+	 */
+	private function consume_mysql_lock_tables_mode( array $tokens, int &$position ): ?string {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::READ_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LOCAL_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+			}
+
+			return 'read';
+		}
+
+		if ( WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WRITE_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+		} elseif ( WP_MySQL_Lexer::WRITE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		return 'write';
 	}
 
 	/**
@@ -19798,9 +19866,16 @@ WHERE option_name IN (
 		$where_sql = null;
 		$scope     = $this->get_mysql_single_table_scope( $table_name, $alias );
 		if ( null !== $where_position ) {
+			$where_replacements = $this->get_simple_mysql_dml_predicate_nested_select_replacements(
+				$query,
+				$tokens,
+				$where_position + 1,
+				$where_end
+			);
 			if (
 				$where_position + 1 >= $where_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				|| null === $where_replacements
+				|| ! $this->is_supported_simple_mysql_expression_fragment_with_replacements( $tokens, $where_position + 1, $where_end, $where_replacements )
 			) {
 				return null;
 			}
@@ -19809,7 +19884,8 @@ WHERE option_name IN (
 				$tokens,
 				$where_position + 1,
 				$where_end,
-				$scope
+				$scope,
+				$where_replacements
 			);
 			$where_sql = $where['sql'];
 		}
@@ -19945,7 +20021,8 @@ WHERE option_name IN (
 			$infer_columns_from_metadata = true;
 		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $on_duplicate );
+			$set_end         = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $position, $on_duplicate ) ?? $on_duplicate;
+			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $set_end );
 			if ( null === $set_assignments ) {
 				return null;
 			}
@@ -19954,7 +20031,13 @@ WHERE option_name IN (
 			$value_rows       = array( $set_assignments['values'] );
 			$value_range_rows = array( $set_assignments['ranges'] );
 			$probe_safe_rows  = array( $set_assignments['probe_safe_values'] );
-			$position         = $on_duplicate;
+			$position         = $set_end;
+			if ( $position < $on_duplicate ) {
+				$upsert_source_aliases = $this->parse_mysql_upsert_values_alias_clause( $tokens, $position, $on_duplicate, $columns );
+				if ( null === $upsert_source_aliases ) {
+					return null;
+				}
+			}
 		} else {
 			return null;
 		}
@@ -25181,9 +25264,16 @@ WHERE option_name IN (
 		$where_end = $order_position ?? $limit_position ?? $statement_end;
 		$where_sql = null;
 		if ( null !== $where_position ) {
+			$where_replacements = $this->get_simple_mysql_dml_predicate_nested_select_replacements(
+				$query,
+				$tokens,
+				$where_position + 1,
+				$where_end
+			);
 			if (
 				$where_position + 1 >= $where_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				|| null === $where_replacements
+				|| ! $this->is_supported_simple_mysql_expression_fragment_with_replacements( $tokens, $where_position + 1, $where_end, $where_replacements )
 			) {
 				return null;
 			}
@@ -25192,7 +25282,8 @@ WHERE option_name IN (
 				$tokens,
 				$where_position + 1,
 				$where_end,
-				$scope
+				$scope,
+				$where_replacements
 			);
 			$where_sql = $where_sql['sql'];
 		}
@@ -33056,6 +33147,76 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Get direct information_schema nested SELECT replacements for simple DML predicates.
+	 *
+	 * Simple application-table UPDATE/DELETE predicates can safely read supported
+	 * information_schema subqueries, but ordinary application-table subqueries
+	 * should remain unsupported until they have a deliberate translation path.
+	 *
+	 * @param string           $query  Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First predicate token position.
+	 * @param int              $end    Final predicate token position, exclusive.
+	 * @return array[]|null Replacement ranges, empty when no nested SELECT is present, or null when unsupported.
+	 */
+	private function get_simple_mysql_dml_predicate_nested_select_replacements( string $query, array $tokens, int $start, int $end ): ?array {
+		$has_nested_select = false;
+		for ( $position = $start; $position < $end; $position++ ) {
+			if (
+				! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+			) {
+				continue;
+			}
+
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+			if ( null === $after_close ) {
+				return null;
+			}
+
+			$select_start = $position + 1;
+			$select_end   = $after_close - 1;
+			if ( ! $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+				return null;
+			}
+
+			$has_nested_select = true;
+			$position          = $after_close - 1;
+		}
+
+		if ( ! $has_nested_select ) {
+			return array();
+		}
+
+		$replacements = $this->get_direct_information_schema_nested_select_replacements(
+			$query,
+			$tokens,
+			array(
+				array(
+					'start' => $start,
+					'end'   => $end,
+				),
+			)
+		);
+		if (
+			null === $replacements
+			|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, $start, $end, $replacements )
+		) {
+			return null;
+		}
+
+		usort(
+			$replacements,
+			static function ( array $left, array $right ): int {
+				return $left['start'] <=> $right['start'];
+			}
+		);
+
+		return $replacements;
+	}
+
+	/**
 	 * Get a direct information_schema source for a qualifier.
 	 *
 	 * @param string $qualifier Qualifier token value.
@@ -38981,11 +39142,6 @@ FROM (
 		) {
 			return null;
 		}
-		for ( $position = 1; $position < $statement_end; $position++ ) {
-			if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
-				return null;
-			}
-		}
 
 		if (
 			$this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $statement_end )
@@ -38999,7 +39155,34 @@ FROM (
 		}
 
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
-		if ( null === $from_position || 1 === $from_position ) {
+		if ( null === $from_position ) {
+			$nested_select_replacements = $this->get_information_schema_main_database_nested_select_replacements(
+				$query,
+				$tokens,
+				array(
+					array(
+						'start' => 1,
+						'end'   => $statement_end,
+					),
+				)
+			);
+			if (
+				null === $nested_select_replacements
+				|| array() === $nested_select_replacements
+				|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, 1, $statement_end, $nested_select_replacements )
+			) {
+				return null;
+			}
+
+			return 'SELECT ' . $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				1,
+				$statement_end,
+				$nested_select_replacements
+			);
+		}
+
+		if ( 1 === $from_position ) {
 			return null;
 		}
 
@@ -39021,11 +39204,57 @@ FROM (
 		) ?? $statement_end;
 
 		$replacements = $this->get_information_schema_main_database_select_table_replacements(
+			$query,
 			$tokens,
 			$from_position + 1,
 			$from_end
 		);
 		if ( null === $replacements ) {
+			return null;
+		}
+
+		$nested_select_ranges = array(
+			array(
+				'start' => 1,
+				'end'   => $from_position,
+			),
+		);
+		$clause_starts         = array_filter(
+			array(
+				$this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_end, $statement_end ),
+				$this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $from_end, $statement_end ),
+				$this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::HAVING_SYMBOL, $from_end, $statement_end ),
+				$this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $from_end, $statement_end ),
+				$this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $from_end, $statement_end ),
+			),
+			'is_int'
+		);
+		sort( $clause_starts );
+		foreach ( $clause_starts as $index => $start ) {
+			$nested_select_ranges[] = array(
+				'start' => $start,
+				'end'   => $clause_starts[ $index + 1 ] ?? $statement_end,
+			);
+		}
+
+		$nested_select_replacements = $this->get_information_schema_main_database_nested_select_replacements(
+			$query,
+			$tokens,
+			$nested_select_ranges
+		);
+		if ( null === $nested_select_replacements ) {
+			return null;
+		}
+
+		$replacements = array_merge( $replacements, $nested_select_replacements );
+		usort(
+			$replacements,
+			static function ( array $left, array $right ): int {
+				return $left['start'] <=> $right['start'];
+			}
+		);
+
+		if ( ! $this->direct_information_schema_nested_selects_are_covered( $tokens, 1, $statement_end, $replacements ) ) {
 			return null;
 		}
 
@@ -39040,27 +39269,41 @@ FROM (
 	/**
 	 * Get replacement ranges for explicitly main-database-qualified SELECT table sources.
 	 *
+	 * @param string           $query  Original MySQL query.
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First FROM-clause token after FROM.
 	 * @param int             $end    Final FROM-clause token, exclusive.
 	 * @return array[]|null Replacement ranges, or null when the source list is unsupported.
 	 */
-	private function get_information_schema_main_database_select_table_replacements( array $tokens, int $start, int $end ): ?array {
+	private function get_information_schema_main_database_select_table_replacements( string $query, array $tokens, int $start, int $end ): ?array {
 		$position     = $start;
 		$expect_next  = true;
 		$replacements = array();
 
 		while ( $position < $end ) {
-			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-				return null;
-			}
-
 			if ( $expect_next ) {
+				if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+					$derived_replacement = $this->get_information_schema_main_database_derived_select_replacement(
+						$query,
+						$tokens,
+						$position,
+						$end
+					);
+					if ( null === $derived_replacement ) {
+						return null;
+					}
+
+					$replacements[] = $derived_replacement['replacement'];
+					$position       = $derived_replacement['position'];
+					$expect_next    = false;
+					continue;
+				}
+
 				$reference_start = $position;
 				$reference       = $this->parse_mysql_table_reference( $tokens, $position, $end );
 				if (
 					null === $reference
-					|| 0 !== strcasecmp( $reference['schema'], $this->main_db_name )
+					|| ! $this->is_information_schema_explicit_main_database_select_table_reference( $tokens, $reference_start )
 				) {
 					return null;
 				}
@@ -39086,6 +39329,120 @@ FROM (
 		}
 
 		return empty( $replacements ) || $expect_next ? null : $replacements;
+	}
+
+	/**
+	 * Check whether a SELECT source explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  Table reference start token.
+	 * @return bool Whether the source starts with a main-database-qualified table.
+	 */
+	private function is_information_schema_explicit_main_database_select_table_reference( array $tokens, int $start ): bool {
+		if (
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return false;
+		}
+
+		$schema = $this->get_mysql_identifier_token_value( $tokens[ $start ] );
+		if ( null === $schema ) {
+			return false;
+		}
+
+		return 0 === strcasecmp( $schema, $this->main_db_name )
+			|| 0 === strcasecmp( $schema, 'public' );
+	}
+
+	/**
+	 * Get a replacement for an explicitly main-database derived SELECT source.
+	 *
+	 * @param string           $query    Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Opening parenthesis position.
+	 * @param int              $end      Final FROM-clause token, exclusive.
+	 * @return array{replacement: array, position: int}|null Replacement and next token position.
+	 */
+	private function get_information_schema_main_database_derived_select_replacement( string $query, array $tokens, int $position, int $end ): ?array {
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if (
+			null === $after_close
+			|| ! isset( $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$select_start = $position + 1;
+		$select_end   = $after_close - 1;
+		$select_query = $this->get_mysql_token_range_sql( $query, $tokens, $select_start, $select_end );
+		if ( null === $select_query ) {
+			return null;
+		}
+
+		$translated_select = $this->translate_information_schema_main_database_select_query( $select_query );
+		if ( null === $translated_select ) {
+			return null;
+		}
+
+		return array(
+			'replacement' => array(
+				'start' => $select_start,
+				'end'   => $select_end,
+				'sql'   => $translated_select,
+			),
+			'position'    => $this->skip_mysql_table_alias( $tokens, $after_close, $end ),
+		);
+	}
+
+	/**
+	 * Get replacements for nested explicitly main-database SELECTs.
+	 *
+	 * @param string           $query  Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param array[]          $ranges Token ranges to scan.
+	 * @return array[]|null Replacement ranges, or null when a nested SELECT is unsupported.
+	 */
+	private function get_information_schema_main_database_nested_select_replacements( string $query, array $tokens, array $ranges ): ?array {
+		$replacements = array();
+		foreach ( $ranges as $range ) {
+			for ( $position = $range['start']; $position < $range['end']; $position++ ) {
+				if (
+					! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+					|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+				) {
+					continue;
+				}
+
+				$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $range['end'] );
+				if ( null === $after_close ) {
+					return null;
+				}
+
+				$select_start = $position + 1;
+				$select_end   = $after_close - 1;
+				$select_query = $this->get_mysql_token_range_sql( $query, $tokens, $select_start, $select_end );
+				if ( null === $select_query ) {
+					return null;
+				}
+
+				$translated_select = $this->translate_information_schema_main_database_select_query( $select_query );
+				if ( null === $translated_select ) {
+					return null;
+				}
+
+				$replacements[] = array(
+					'start' => $select_start,
+					'end'   => $select_end,
+					'sql'   => $translated_select,
+				);
+				$position       = $after_close - 1;
+			}
+		}
+
+		return $replacements;
 	}
 
 	/**
@@ -39545,28 +39902,40 @@ FROM (
 					$value_sql                                    = $last_insert_id_assignment['sql'];
 					$assignment_effects['last_insert_id_column'] = $last_insert_id_assignment['column'];
 				} else {
-					$scalar_subquery_sql = null;
-					$values_replacements = $this->get_mysql_upsert_values_expression_replacements(
+					$scalar_subquery_sql  = null;
+					$value_replacements   = $this->get_mysql_upsert_values_expression_replacements(
 						$tokens,
 						$value_start,
 						$assignment_end,
 						$values_column_lookup,
 						$source_aliases
 					);
+					$default_replacements = null;
+					if ( null !== $value_replacements ) {
+						$default_replacements = $this->get_mysql_upsert_default_expression_replacements(
+							$tokens,
+							$value_start,
+							$assignment_end,
+							$table_column_lookup
+						);
+					}
+					$expression_replacements = null !== $value_replacements && null !== $default_replacements
+						? array_merge( $value_replacements, $default_replacements )
+						: null;
 					if (
-						null === $values_replacements
+						null === $expression_replacements
 						|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
 							$tokens,
 							$value_start,
 							$assignment_end,
-							$values_replacements
+							$expression_replacements
 						)
 						|| $this->contains_unsupported_mysql_common_function( $tokens, $value_start, $assignment_end )
 						|| ! $this->mysql_upsert_expression_column_references_resolve_to_scope(
 							$tokens,
 							$value_start,
 							$assignment_end,
-							$values_replacements,
+							$expression_replacements,
 							$scope
 						)
 					) {
@@ -39579,7 +39948,7 @@ FROM (
 						if ( null === $scalar_subquery_sql ) {
 							return null;
 						}
-						$values_replacements = array();
+						$expression_replacements = array();
 					}
 
 					$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
@@ -39604,7 +39973,7 @@ FROM (
 						$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
 					}
 					if ( null === $value_sql ) {
-						if ( empty( $values_replacements ) ) {
+						if ( empty( $expression_replacements ) ) {
 							$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
 								$tokens,
 								$value_start,
@@ -39618,12 +39987,12 @@ FROM (
 								$tokens,
 								$value_start,
 								$assignment_end,
-								$values_replacements
+								$expression_replacements
 							);
 							if ( null === $value_sql ) {
 								return null;
 							}
-							$changed   = true;
+							$changed = true;
 						}
 						if (
 							$changed
@@ -40390,15 +40759,58 @@ FROM (
 	}
 
 	/**
-	 * Translate an upsert assignment expression while replacing VALUES(column).
+	 * Get replacements for supported DEFAULT(column) references in an upsert expression.
 	 *
-	 * Runtime functions that wrap VALUES(column) need to see the translated
+	 * @param WP_MySQL_Token[] $tokens              MySQL lexer token stream.
+	 * @param int              $start               First expression token.
+	 * @param int              $end                 Final expression token, exclusive.
+	 * @param array            $table_column_lookup Table-column metadata lookup by lowercase name.
+	 * @return array[]|null Replacement ranges, or null when DEFAULT() is malformed/unsupported.
+	 */
+	private function get_mysql_upsert_default_expression_replacements( array $tokens, int $start, int $end, array $table_column_lookup ): ?array {
+		$replacements = array();
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			if (
+				$position + 4 > $end
+				|| ! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position + 3 ]->id
+			) {
+				return null;
+			}
+
+			$column_name = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] );
+			$column_key  = null === $column_name ? null : strtolower( $column_name );
+			if ( null === $column_key || ! isset( $table_column_lookup[ $column_key ] ) ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $position,
+				'end'   => $position + 4,
+				'sql'   => $this->get_mysql_dml_default_assignment_sql_for_column( $table_column_lookup[ $column_key ] ),
+			);
+			$position      += 3;
+		}
+
+		return $replacements;
+	}
+
+	/**
+	 * Translate an upsert assignment expression while replacing VALUES()/DEFAULT() references.
+	 *
+	 * Runtime functions that wrap replacement expressions need to see the translated
 	 * replacement inside their arguments so they keep MySQL semantics.
 	 *
 	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
 	 * @param int              $start        First expression token.
 	 * @param int              $end          Final expression token, exclusive.
-	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @param array[]          $replacements Replacement ranges.
 	 * @return string|null PostgreSQL SQL, or null when unsupported.
 	 */
 	private function translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql( array $tokens, int $start, int $end, array $replacements ): ?string {
@@ -40469,7 +40881,7 @@ FROM (
 	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
 	 * @param int              $position     Function token position.
 	 * @param int              $end          Final token position, exclusive.
-	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @param array[]          $replacements Replacement ranges.
 	 * @return array{sql:string,position:int}|false|null Translation data, false when unsupported, or null when not a split function.
 	 */
 	private function translate_mysql_common_function_with_replacements_to_postgresql( array $tokens, int $position, int $end, array $replacements ) {
@@ -40669,12 +41081,12 @@ FROM (
 	}
 
 	/**
-	 * Check whether an upsert expression is simple after removing VALUES(column) ranges.
+	 * Check whether an upsert expression is simple after removing replacement ranges.
 	 *
 	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
 	 * @param int              $start        First expression token.
 	 * @param int              $end          Final expression token, exclusive.
-	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @param array[]          $replacements Replacement ranges.
 	 * @return bool Whether the expression is supported.
 	 */
 	private function is_supported_simple_mysql_upsert_expression_fragment( array $tokens, int $start, int $end, array $replacements ): bool {
@@ -40737,12 +41149,12 @@ FROM (
 	}
 
 	/**
-	 * Check upsert expression column references after removing VALUES(column) ranges.
+	 * Check upsert expression column references after removing replacement ranges.
 	 *
 	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
 	 * @param int              $start        First expression token.
 	 * @param int              $end          Final expression token, exclusive.
-	 * @param array[]          $replacements VALUES(column) replacement ranges.
+	 * @param array[]          $replacements Replacement ranges.
 	 * @param array            $scope        Statement table scope.
 	 * @return bool Whether all column-like references resolve to the supplied scope.
 	 */
@@ -41223,6 +41635,48 @@ FROM (
 		}
 
 		return implode( ' ', array_filter( $chunks, 'strlen' ) );
+	}
+
+	/**
+	 * Translate tokens while applying replacement ranges bounded to the requested range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int             $start        First token position.
+	 * @param int             $end          Final token position, exclusive.
+	 * @param array[]         $replacements Replacement ranges with translated SQL.
+	 * @return string PostgreSQL SQL fragment.
+	 */
+	private function translate_mysql_token_sequence_with_optional_replacements_to_postgresql(
+		array $tokens,
+		int $start,
+		int $end,
+		array $replacements
+	): string {
+		$range_replacements = $this->get_mysql_replacements_for_token_range( $replacements, $start, $end );
+		if ( empty( $range_replacements ) ) {
+			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end );
+		}
+
+		return $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $start, $end, $range_replacements );
+	}
+
+	/**
+	 * Get replacement ranges fully contained in a token range.
+	 *
+	 * @param array[] $replacements Replacement ranges with translated SQL.
+	 * @param int     $start        First token position.
+	 * @param int     $end          Final token position, exclusive.
+	 * @return array[] Replacement ranges in the requested range.
+	 */
+	private function get_mysql_replacements_for_token_range( array $replacements, int $start, int $end ): array {
+		$range_replacements = array();
+		foreach ( $replacements as $replacement ) {
+			if ( $replacement['start'] >= $start && $replacement['end'] <= $end ) {
+				$range_replacements[] = $replacement;
+			}
+		}
+
+		return $range_replacements;
 	}
 
 	/**
@@ -41895,13 +42349,15 @@ FROM (
 	 * @param int             $start  First predicate token position.
 	 * @param int             $end    Final predicate token position, exclusive.
 	 * @param array           $scope  Statement table scope.
+	 * @param array[]         $replacements Replacement ranges with translated SQL.
 	 * @return array{sql: string, changed: bool} Translated predicate SQL and change flag.
 	 */
 	private function translate_mysql_predicate_token_sequence_to_postgresql(
 		array $tokens,
 		int $start,
 		int $end,
-		array $scope
+		array $scope,
+		array $replacements = array()
 	): array {
 		$chunks        = array();
 		$segment_start = $start;
@@ -41927,7 +42383,7 @@ FROM (
 					);
 					if ( null !== $translated_subquery ) {
 						if ( $segment_start < $position ) {
-							$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $position );
+							$chunks[] = $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $segment_start, $position, $replacements );
 						}
 
 						$chunks[]      = $translated_subquery['sql'];
@@ -41953,7 +42409,7 @@ FROM (
 			}
 
 			if ( $segment_start < $position ) {
-				$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $position );
+				$chunks[] = $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $segment_start, $position, $replacements );
 			}
 
 			$chunks[]      = $translated_predicate['sql'];
@@ -41964,13 +42420,13 @@ FROM (
 
 		if ( ! $changed ) {
 			return array(
-				'sql'     => $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end ),
-				'changed' => false,
+				'sql'     => $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $start, $end, $replacements ),
+				'changed' => ! empty( $replacements ),
 			);
 		}
 
 		if ( $segment_start < $end ) {
-			$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $end );
+			$chunks[] = $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $segment_start, $end, $replacements );
 		}
 
 		return array(
@@ -44132,6 +44588,35 @@ FROM (
 	}
 
 	/**
+	 * Validate a simple expression fragment while skipping handled replacement ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First fragment token position.
+	 * @param int              $end          Final fragment token position, exclusive.
+	 * @param array[]          $replacements Replacement ranges with translated SQL.
+	 * @return bool Whether the expression fragment is supported.
+	 */
+	private function is_supported_simple_mysql_expression_fragment_with_replacements( array $tokens, int $start, int $end, array $replacements ): bool {
+		if ( empty( $replacements ) ) {
+			return $this->is_supported_simple_mysql_expression_fragment( $tokens, $start, $end );
+		}
+
+		for ( $i = $start; $i < $end; $i++ ) {
+			$replacement_end = $this->get_covering_mysql_replacement_range_end( $i, $replacements );
+			if ( null !== $replacement_end ) {
+				$i = $replacement_end - 1;
+				continue;
+			}
+
+			if ( ! $this->is_supported_simple_mysql_expression_token( $tokens[ $i ] ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * Check that identifier references in a simple expression resolve to scope columns.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -45354,11 +45839,11 @@ FROM (
 	}
 
 	/**
-	 * Translate MySQL GROUP_CONCAT(expr [ORDER BY ...] [SEPARATOR ...]).
+	 * Translate MySQL GROUP_CONCAT([DISTINCT] expr [ORDER BY ...] [SEPARATOR ...]).
 	 *
-	 * Keep this intentionally narrow. MySQL also accepts DISTINCT and multiple
-	 * expressions; those shapes need separate semantic handling and are left
-	 * unsupported by this translator.
+	 * Keep this intentionally narrow. MySQL also accepts multiple expressions;
+	 * those shapes need separate semantic handling and are left unsupported by
+	 * this translator.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -45405,12 +45890,16 @@ FROM (
 			}
 		}
 
-		$aggregate_sql = sprintf(
-			'STRING_AGG(CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
+		$aggregate_sql = $this->get_postgresql_mysql_group_concat_aggregate_sql(
 			$expression_sql,
 			$separator_sql,
-			$order_sql
+			$order_sql,
+			$parsed['distinct'],
+			null === $parsed['separator_start']
 		);
+		if ( null === $aggregate_sql ) {
+			return null;
+		}
 
 		return array(
 			'sql'      => $this->get_mysql_group_concat_max_len_truncation_sql( $aggregate_sql ),
@@ -45454,17 +45943,27 @@ FROM (
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First argument token position.
 	 * @param int             $end    Final argument token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, order_start: int|null, order_end: int, separator_start: int|null, separator_end: int}|null Parsed bounds.
+	 * @return array{distinct: bool, expression_start: int, expression_end: int, order_start: int|null, order_end: int, separator_start: int|null, separator_end: int}|null Parsed bounds.
 	 */
 	private function parse_mysql_group_concat_arguments( array $tokens, int $start, int $end ): ?array {
-		if ( $start >= $end || WP_MySQL_Lexer::DISTINCT_SYMBOL === ( $tokens[ $start ]->id ?? null ) ) {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$distinct         = false;
+		$expression_start = $start;
+		if ( WP_MySQL_Lexer::DISTINCT_SYMBOL === ( $tokens[ $expression_start ]->id ?? null ) ) {
+			$distinct = true;
+			++$expression_start;
+		}
+		if ( $expression_start >= $end ) {
 			return null;
 		}
 
 		$separator_position = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::SEPARATOR_SYMBOL,
-			$start,
+			$expression_start,
 			$end
 		);
 		if (
@@ -45486,7 +45985,7 @@ FROM (
 		$order_position       = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::ORDER_SYMBOL,
-			$start,
+			$expression_start,
 			$before_separator_end
 		);
 		if (
@@ -45499,24 +45998,68 @@ FROM (
 		) {
 			return null;
 		}
-
-		$expression_end = $order_position ?? $before_separator_end;
-		if ( $start >= $expression_end ) {
+		if ( $distinct && null !== $order_position ) {
 			return null;
 		}
 
-		$expression_arguments = $this->split_top_level_mysql_arguments( $tokens, $start, $expression_end );
+		$expression_end = $order_position ?? $before_separator_end;
+		if ( $expression_start >= $expression_end ) {
+			return null;
+		}
+
+		$expression_arguments = $this->split_top_level_mysql_arguments( $tokens, $expression_start, $expression_end );
 		if ( null === $expression_arguments || 1 !== count( $expression_arguments ) ) {
+			return null;
+		}
+		if (
+			$distinct
+			&& null !== $separator_position
+			&& ! $this->is_mysql_string_literal_range( $tokens, $separator_position + 1, $end )
+		) {
 			return null;
 		}
 
 		return array(
-			'expression_start' => $start,
+			'distinct'         => $distinct,
+			'expression_start' => $expression_start,
 			'expression_end'   => $expression_end,
 			'order_start'      => null === $order_position ? null : $order_position + 2,
 			'order_end'        => $before_separator_end,
 			'separator_start'  => null === $separator_position ? null : $separator_position + 1,
 			'separator_end'    => $end,
+		);
+	}
+
+	/**
+	 * Render a supported GROUP_CONCAT aggregate expression.
+	 *
+	 * @param string $expression_sql         Translated expression SQL.
+	 * @param string $separator_sql          Translated separator SQL.
+	 * @param string $order_sql              Aggregate ORDER BY SQL.
+	 * @param bool   $distinct               Whether DISTINCT is present.
+	 * @param bool   $uses_default_separator Whether the separator is the implicit comma.
+	 * @return string|null Aggregate SQL, or null when unsupported by the active backend.
+	 */
+	private function get_postgresql_mysql_group_concat_aggregate_sql( string $expression_sql, string $separator_sql, string $order_sql, bool $distinct, bool $uses_default_separator ): ?string {
+		if ( ! $distinct ) {
+			return sprintf(
+				'STRING_AGG(CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
+				$expression_sql,
+				$separator_sql,
+				$order_sql
+			);
+		}
+
+		if ( 'sqlite' === $this->connection->get_driver_name() ) {
+			return $uses_default_separator
+				? sprintf( 'GROUP_CONCAT(DISTINCT CAST(%s AS text))', $expression_sql )
+				: null;
+		}
+
+		return sprintf(
+			'STRING_AGG(DISTINCT CAST(%1$s AS text), CAST(%2$s AS text))',
+			$expression_sql,
+			$separator_sql
 		);
 	}
 

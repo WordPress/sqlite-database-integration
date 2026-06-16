@@ -5864,6 +5864,61 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports MySQL DEFAULT(column) inside expressions.
+	 */
+	public function test_upsert_update_assignments_support_default_column_inside_expressions(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_upsert_default_expr (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL,
+				counter INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_upsert_default_expr (
+				id bigint(20) unsigned NOT NULL,
+				label varchar(20) NOT NULL DEFAULT 'untitled',
+				counter int(11) NOT NULL DEFAULT 3,
+				PRIMARY KEY (id)
+			)"
+		);
+		$driver->query( "INSERT INTO wptests_upsert_default_expr (id, label, counter) VALUES (1, 'old', 9)" );
+
+		$upsert = "INSERT INTO `wptests_upsert_default_expr` (`id`, `label`, `counter`)
+			VALUES (1, 'incoming', 4)
+			ON DUPLICATE KEY UPDATE `counter` = DEFAULT(`counter`) + VALUES(`counter`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_default_expr" ("id", "label", "counter") VALUES (1, \'incoming\', 4) ON CONFLICT ("id") DO UPDATE SET "counter" = \'3\' + excluded."counter"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT label, counter FROM wptests_upsert_default_expr WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'old', $rows[0]->label );
+		$this->assertSame( '7', $rows[0]->counter );
+
+		foreach (
+			array(
+				"INSERT INTO `wptests_upsert_default_expr` (`id`, `label`, `counter`) VALUES (1, 'incoming', 4) ON DUPLICATE KEY UPDATE `counter` = DEFAULT(`missing`) + 1",
+				"INSERT INTO `wptests_upsert_default_expr` (`id`, `label`, `counter`) VALUES (1, 'incoming', 4) ON DUPLICATE KEY UPDATE `counter` = DEFAULT + 1",
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported DEFAULT(column) expression to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE translates CURRENT_TIMESTAMP metadata defaults as expressions.
 	 */
 	public function test_upsert_default_assignments_translate_current_timestamp_defaults_from_mysql_metadata(): void {
@@ -5945,6 +6000,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'from-set', $rows[0]->option_value );
 		$this->assertSame( 'no', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests INSERT ... SET upserts support MySQL VALUES-row aliases.
+	 */
+	public function test_insert_set_upsert_supports_values_row_alias_expressions(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('siteurl', 'old', 'no')" );
+
+		$upsert = "INSERT INTO `wptests_options`
+			SET `option_name` = 'siteurl',
+			    `option_value` = 'from-set-alias',
+			    `autoload` = 'off'
+			AS incoming(name_alias, value_alias, autoload_alias)
+			ON DUPLICATE KEY UPDATE `option_value` = incoming.`value_alias`,
+			                        `autoload` = autoload_alias";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'from-set-alias\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'from-set-alias', $rows[0]->option_value );
+		$this->assertSame( 'off', $rows[0]->autoload );
 	}
 
 	/**
@@ -6700,6 +6785,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				'INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (1, 2) AS incoming(row_id) ON DUPLICATE KEY UPDATE `int_value` = row_id',
 				'INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (1, 2) AS incoming ON DUPLICATE KEY UPDATE `int_value` = incoming.missing',
 				'INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (1, 2) AS incoming ON DUPLICATE KEY UPDATE `int_value` = incoming',
+				'INSERT INTO `wptests_strict_ints` SET `id` = 1, `int_value` = 2 AS incoming(row_id) ON DUPLICATE KEY UPDATE `int_value` = row_id',
 			) as $query
 		) {
 			try {
@@ -22703,23 +22789,99 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests broader main database-qualified SELECT reads fail closed under USE information_schema.
+	 * Tests nested main database-qualified SELECT reads still route after USE information_schema.
 	 */
-	public function test_use_statement_information_schema_broader_main_database_qualified_selects_fail_closed(): void {
+	public function test_use_statement_information_schema_allows_nested_main_database_qualified_selects(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE use_info_main_read (id INTEGER PRIMARY KEY, label TEXT)' );
+		$driver->query( 'CREATE TABLE use_info_main_read_two (id INTEGER PRIMARY KEY, label TEXT)' );
+		$driver->query( "INSERT INTO use_info_main_read (id, label) VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( "INSERT INTO use_info_main_read_two (id, label) VALUES (1, 'first'), (2, 'second')" );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$derived_rows = $driver->query(
+			"SELECT r.label
+			FROM (
+				SELECT label
+				FROM wptests.use_info_main_read
+				WHERE id = 1
+			) AS r"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label' => 'one',
+				),
+			),
+			$derived_rows
+		);
+		$derived_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'SELECT label FROM use_info_main_read WHERE id = 1', $derived_sql );
+		$this->assertStringNotContainsString( 'wptests.use_info_main_read', $derived_sql );
+
+		$scalar_rows = $driver->query(
+			"SELECT (
+				SELECT label
+				FROM public.use_info_main_read
+				WHERE id = 2
+			) AS label"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label' => 'two',
+				),
+			),
+			$scalar_rows
+		);
+		$scalar_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'SELECT label FROM use_info_main_read WHERE id = 2', $scalar_sql );
+		$this->assertStringNotContainsString( 'public.use_info_main_read', $scalar_sql );
+
+		$predicate_rows = $driver->query(
+			"SELECT label
+			FROM wptests.use_info_main_read
+			WHERE id IN (
+				SELECT id
+				FROM wptests.use_info_main_read_two
+				WHERE label = 'second'
+			)"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label' => 'two',
+				),
+			),
+			$predicate_rows
+		);
+		$predicate_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'SELECT id FROM use_info_main_read_two WHERE label = \'second\'', $predicate_sql );
+		$this->assertStringNotContainsString( 'wptests.use_info_main_read_two', $predicate_sql );
+	}
+
+	/**
+	 * Tests nested unqualified application SELECT reads fail closed under USE information_schema.
+	 */
+	public function test_use_statement_information_schema_rejects_unqualified_nested_application_selects(): void {
 		$queries = array(
-			'SELECT label FROM (SELECT label FROM wptests.use_info_main_read) AS r',
-			'SELECT (SELECT label FROM wptests.use_info_main_read) AS label',
+			'SELECT label FROM (SELECT label FROM use_info_main_read) AS r',
+			'SELECT (SELECT label FROM use_info_main_read) AS label',
 		);
 
 		foreach ( $queries as $query ) {
 			$driver = $this->create_driver();
 			$driver->query( 'CREATE TABLE use_info_main_read (id INTEGER PRIMARY KEY, label TEXT)' );
-			$driver->query( 'CREATE TABLE use_info_main_read_two (id INTEGER PRIMARY KEY, label TEXT)' );
 			$this->assertSame( 0, $driver->query( 'USE information_schema' ), $query );
 
 			try {
 				$driver->query( $query );
-				$this->fail( 'Expected broader main database-qualified SELECT under USE information_schema to throw.' );
+				$this->fail( 'Expected unqualified nested application SELECT under USE information_schema to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
@@ -24271,21 +24433,89 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests simple DML information_schema subquery predicates fail before backend execution.
+	 * Tests simple DML can read supported information_schema subqueries in predicates.
 	 */
-	public function test_simple_dml_information_schema_subquery_predicates_fail_closed(): void {
+	public function test_simple_dml_information_schema_subquery_predicates_route_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$driver->query(
+			'CREATE TABLE wptests_options (
+				option_name TEXT NOT NULL,
+				option_value TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_options (option_name, option_value)
+			VALUES ('wptests_options', 'before'), ('other', 'before')"
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"UPDATE wptests_options
+				SET option_value = 'updated'
+				WHERE option_name IN (
+					SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options'
+				)"
+			)
+		);
+
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UPDATE "wptests_options"' );
+		$this->assertStringContainsString( 'AS "tables"', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+
+		$rows = $driver->query( 'SELECT option_name, option_value FROM wptests_options ORDER BY option_name' );
+		$this->assertSame(
+			array(
+				array( 'option_name' => 'other', 'option_value' => 'before' ),
+				array( 'option_name' => 'wptests_options', 'option_value' => 'updated' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array(
+						'option_name'  => $row->option_name,
+						'option_value' => $row->option_value,
+					);
+				},
+				$rows
+			)
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"DELETE FROM wptests_options
+				WHERE option_name IN (
+					SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options'
+				)"
+			)
+		);
+
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'DELETE FROM "wptests_options"' );
+		$this->assertStringContainsString( 'AS "tables"', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+
+		$rows = $driver->query( 'SELECT option_name, option_value FROM wptests_options' );
+		$this->assertSame( 1, count( $rows ) );
+		$this->assertSame( 'other', $rows[0]->option_name );
+		$this->assertSame( 'before', $rows[0]->option_value );
+	}
+
+	/**
+	 * Tests unsupported simple DML subquery predicates fail before backend execution.
+	 */
+	public function test_simple_dml_subquery_predicates_fail_closed(): void {
 		$queries = array(
 			'UPDATE wptests_options SET option_value = "updated" WHERE option_name IN (
-				SELECT table_name FROM information_schema.tables WHERE table_name = "wptests_options"
+				SELECT option_name FROM wptests_options
 			)' => 'Unsupported UPDATE statement.',
 			'DELETE FROM wptests_options WHERE option_name IN (
-				SELECT table_name FROM information_schema.tables WHERE table_name = "wptests_options"
+				SELECT option_name FROM wptests_options
 			)' => 'Unsupported DELETE statement.',
 		);
 
 		foreach ( $queries as $query => $expected_message ) {
 			$driver = $this->create_driver();
-			$this->install_information_schema_fixture( $driver );
 			$driver->query(
 				'CREATE TABLE wptests_options (
 					option_name TEXT NOT NULL,
@@ -24296,7 +24526,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 			try {
 				$driver->query( $query );
-				$this->fail( 'Expected unsupported simple DML information_schema subquery to throw.' );
+				$this->fail( 'Expected unsupported simple DML subquery to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( $expected_message, $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
@@ -26334,12 +26564,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported LOCK TABLES modes fail before raw backend execution.
+	 * Tests LOCK TABLES accepts SQLite-compatible lock modes and aliases.
+	 */
+	public function test_mysql_lock_tables_accepts_read_local_low_priority_write_and_aliases(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE lock_mode_table (id INTEGER)' );
+
+		$queries = array(
+			'LOCK TABLES lock_mode_table READ LOCAL',
+			'LOCK TABLES lock_mode_table LOW_PRIORITY WRITE',
+			'LOCK TABLES lock_mode_table AS lock_alias READ',
+			'LOCK TABLES lock_mode_table implicit_alias READ LOCAL, lock_mode_table LOW_PRIORITY WRITE',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver->query( 'SELECT 1 AS previous_value' );
+
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( array(), $driver->get_last_column_meta(), $query );
+			$this->assertSame( 0, $driver->get_last_column_count(), $query );
+			$this->assertSame( 0, $driver->get_last_return_value(), $query );
+		}
+	}
+
+	/**
+	 * Tests malformed LOCK TABLES modes fail before raw backend execution.
 	 */
 	public function test_mysql_lock_tables_unsupported_modes_fail_before_backend_execution(): void {
 		$queries = array(
-			'LOCK TABLES lock_mode_table LOW_PRIORITY WRITE',
-			'LOCK TABLES lock_mode_table READ LOCAL',
+			'LOCK TABLES lock_mode_table LOW_PRIORITY READ',
+			'LOCK TABLES lock_mode_table READ LOCAL LOCAL',
+			'LOCK TABLES lock_mode_table WRITE LOCAL',
+			'LOCK TABLES lock_mode_table AS READ',
 		);
 
 		foreach ( $queries as $query ) {
@@ -27569,11 +27827,60 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests GROUP_CONCAT(DISTINCT expr) deduplicates values and keeps group_concat_max_len behavior.
+	 */
+	public function test_group_concat_distinct_default_separator_deduplicates_values(): void {
+		$driver = $this->create_driver();
+		$this->create_group_concat_values_table(
+			$driver,
+			array(
+				1 => 'alpha',
+				2 => 'beta',
+				3 => 'alpha',
+				4 => 'beta',
+			)
+		);
+
+		$rows  = $driver->query( 'SELECT GROUP_CONCAT(DISTINCT value) AS combined FROM group_concat_values' );
+		$parts = explode( ',', $rows[0]->combined );
+		sort( $parts );
+
+		$this->assertSame( array( 'alpha', 'beta' ), $parts );
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'GROUP_CONCAT(DISTINCT CAST(value AS text))', $sql );
+		$this->assertStringContainsString( ', 1024', $sql );
+	}
+
+	/**
+	 * Tests GROUP_CONCAT(DISTINCT expr SEPARATOR literal) translates for PostgreSQL.
+	 */
+	public function test_group_concat_distinct_literal_separator_translates_for_postgresql(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection {
+			public function get_driver_name(): string {
+				return 'pgsql';
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT GROUP_CONCAT(DISTINCT value SEPARATOR '|') AS combined FROM group_concat_values"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "STRING_AGG(DISTINCT CAST(value AS text), CAST('|' AS text))", $sql );
+		$this->assertStringNotContainsString( 'GROUP_CONCAT', $sql );
+	}
+
+	/**
 	 * Tests unsupported GROUP_CONCAT() forms fail before backend execution.
 	 */
 	public function test_unsupported_group_concat_forms_fail_closed_before_backend_execution(): void {
 		$queries = array(
-			'SELECT GROUP_CONCAT(DISTINCT value) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(DISTINCT id, value) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(DISTINCT value ORDER BY id) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(DISTINCT value SEPARATOR separator_value) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(id, value) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value ORDER id) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value SEPARATOR) AS combined FROM group_concat_values',
