@@ -5521,6 +5521,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests generic multi-target DELETE predicates support common MySQL expressions.
+	 */
+	public function test_mysql_multi_target_delete_supports_complex_predicates(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE p, c
+			FROM wptests_delete_complex_parent AS p
+			JOIN wptests_delete_complex_child AS c ON c.parent_id = p.id
+			WHERE (p.status LIKE 'stale%' OR c.reason = CONCAT('old_', SUBSTRING(p.status, 1, 5)))
+			AND c.note NOT LIKE 'keep%'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( "p.status LIKE 'stale%'", $sql );
+		$this->assertStringContainsString( "CAST('old_' AS text) || CAST(", $sql );
+		$this->assertStringContainsString( 'SUBSTRING(CAST(p.status AS text)', $sql );
+		$this->assertStringContainsString( "c.note NOT LIKE 'keep%'", $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_complex_parent" AS "p"', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_complex_child" AS "c"', $sql );
+	}
+
+	/**
 	 * Tests bare uppercase ID in simple DELETE WHERE clauses is quoted.
 	 */
 	public function test_simple_delete_with_bare_uppercase_id_where_is_translated_to_postgresql(): void {
