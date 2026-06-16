@@ -19786,6 +19786,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests main database-qualified application table writes still route after USE information_schema.
+	 */
+	public function test_use_statement_information_schema_allows_main_database_qualified_writes(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+		$this->assertSame( 0, $driver->query( 'CREATE TABLE wptests.use_info_main_write (id INTEGER PRIMARY KEY, value TEXT)' ) );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO wptests.use_info_main_write (id, value) VALUES (1, 'inserted')" ) );
+		$this->assertSame( 1, $driver->query( "REPLACE INTO wptests.use_info_main_write (id, value) VALUES (2, 'replaced')" ) );
+		$this->assertSame( 1, $driver->query( "UPDATE wptests.use_info_main_write SET value = 'updated' WHERE id = 1" ) );
+		$this->assertSame( 1, $driver->query( 'DELETE FROM wptests.use_info_main_write WHERE id = 2' ) );
+
+		$this->assertSame( 1, $driver->query( 'ALTER TABLE wptests.use_info_main_write ADD COLUMN extra VARCHAR(20)' ) );
+		$this->assertSame( 0, $driver->query( 'CREATE INDEX idx_use_info_main_write_value ON wptests.use_info_main_write (value)' ) );
+
+		$check = $driver->query( 'CHECK TABLE wptests.use_info_main_write' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wptests.use_info_main_write',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$check
+		);
+
+		$this->assertSame( 0, $driver->query( 'LOCK TABLES wptests.use_info_main_write READ' ) );
+		$this->assertSame( 0, $driver->query( 'UNLOCK TABLES' ) );
+		$this->assertSame( 0, $driver->query( 'DROP INDEX idx_use_info_main_write_value ON wptests.use_info_main_write' ) );
+
+		$driver->query( 'USE wptests' );
+		$rows = $driver->query( 'SELECT id, value, extra FROM use_info_main_write' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'updated',
+					'extra' => null,
+				),
+			),
+			$rows
+		);
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+		$this->assertSame( 0, $driver->query( 'TRUNCATE TABLE wptests.use_info_main_write' ) );
+
+		$driver->query( 'USE wptests' );
+		$this->assertSame( array(), $driver->query( 'SELECT * FROM use_info_main_write' ) );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+		$this->assertSame( 0, $driver->query( 'DROP TABLE wptests.use_info_main_write' ) );
+	}
+
+	/**
 	 * Tests writes after USE information_schema fail before backend execution.
 	 */
 	public function test_use_statement_information_schema_writes_fail_closed(): void {

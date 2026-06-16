@@ -12572,7 +12572,12 @@ $wp_mysql_on_update$',
 	 * @return string Backend schema name.
 	 */
 	private function get_mysql_table_administration_backend_schema( ?string $requested_schema, string $table_name ): string {
-		if ( null === $requested_schema || 0 === strcasecmp( $requested_schema, $this->db_name ) ) {
+		if (
+			null === $requested_schema
+			|| 0 === strcasecmp( $requested_schema, $this->db_name )
+			|| 0 === strcasecmp( $requested_schema, $this->main_db_name )
+			|| 0 === strcasecmp( $requested_schema, 'public' )
+		) {
 			return $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
 		}
 
@@ -35676,6 +35681,10 @@ FROM (
 			return true;
 		}
 
+		if ( $this->information_schema_write_query_targets_main_database_explicitly( $query, $tokens ) ) {
+			return false;
+		}
+
 		return in_array(
 			$tokens[0]->id,
 			array(
@@ -35697,6 +35706,397 @@ FROM (
 			),
 			true
 		);
+	}
+
+	/**
+	 * Check whether a write/admin query under USE information_schema explicitly targets the main database.
+	 *
+	 * Unqualified write targets should continue to resolve as information_schema
+	 * while that database is selected. Explicit main-database or public targets
+	 * can safely continue into the existing PostgreSQL translators.
+	 *
+	 * @param string           $query  MySQL query.
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the guarded query targets only the main database explicitly.
+	 */
+	private function information_schema_write_query_targets_main_database_explicitly( string $query, array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		switch ( $tokens[0]->id ) {
+			case WP_MySQL_Lexer::INSERT_SYMBOL:
+				return $this->insert_or_replace_query_targets_main_database_explicitly( $tokens, true );
+
+			case WP_MySQL_Lexer::REPLACE_SYMBOL:
+				return $this->insert_or_replace_query_targets_main_database_explicitly( $tokens, false );
+
+			case WP_MySQL_Lexer::UPDATE_SYMBOL:
+				return $this->simple_update_query_targets_main_database_explicitly( $tokens );
+
+			case WP_MySQL_Lexer::DELETE_SYMBOL:
+				return $this->simple_delete_query_targets_main_database_explicitly( $tokens );
+
+			case WP_MySQL_Lexer::TRUNCATE_SYMBOL:
+				return $this->truncate_query_targets_main_database_explicitly( $tokens );
+
+			case WP_MySQL_Lexer::CREATE_SYMBOL:
+				return $this->create_query_targets_main_database_explicitly( $tokens );
+
+			case WP_MySQL_Lexer::ALTER_SYMBOL:
+				return $this->alter_table_query_targets_main_database_explicitly( $tokens );
+
+			case WP_MySQL_Lexer::DROP_SYMBOL:
+				return $this->drop_query_targets_main_database_explicitly( $tokens );
+
+			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
+			case WP_MySQL_Lexer::CHECK_SYMBOL:
+			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
+			case WP_MySQL_Lexer::REPAIR_SYMBOL:
+				return $this->table_administration_query_targets_main_database_explicitly( $query );
+
+			case WP_MySQL_Lexer::LOCK_SYMBOL:
+				return $this->lock_tables_query_targets_main_database_explicitly( $query );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a parsed table reference explicitly names the main database.
+	 *
+	 * @param array{schema: string|null, table: string}|null $table_reference Parsed table reference.
+	 * @return bool Whether the reference is explicitly main-database qualified.
+	 */
+	private function is_explicit_main_database_table_reference( ?array $table_reference ): bool {
+		if ( null === $table_reference || null === $table_reference['schema'] ) {
+			return false;
+		}
+
+		return 0 === strcasecmp( $table_reference['schema'], $this->main_db_name )
+			|| 0 === strcasecmp( $table_reference['schema'], 'public' );
+	}
+
+	/**
+	 * Check whether an INSERT/REPLACE query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param bool             $is_insert Whether the query is INSERT.
+	 * @return bool Whether the target table is explicitly main-database qualified.
+	 */
+	private function insert_or_replace_query_targets_main_database_explicitly( array $tokens, bool $is_insert ): bool {
+		$position = 1;
+		if ( $is_insert ) {
+			$this->consume_mysql_insert_priority_modifier( $tokens, $position );
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+			}
+		} else {
+			$this->consume_mysql_replace_priority_modifier( $tokens, $position );
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		return $this->is_explicit_main_database_table_reference( $table_reference );
+	}
+
+	/**
+	 * Check whether a simple UPDATE query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the target table is explicitly main-database qualified.
+	 */
+	private function simple_update_query_targets_main_database_explicitly( array $tokens ): bool {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		$position = 1;
+		$this->consume_mysql_update_modifiers( $tokens, $position, $statement_end );
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( ! $this->is_explicit_main_database_table_reference( $table_reference ) ) {
+			return false;
+		}
+
+		return $this->consume_optional_simple_table_alias( $tokens, $position, $statement_end )
+			&& isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id;
+	}
+
+	/**
+	 * Check whether a simple DELETE query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the target table is explicitly main-database qualified.
+	 */
+	private function simple_delete_query_targets_main_database_explicitly( array $tokens ): bool {
+		$position = 1;
+		$this->consume_mysql_delete_modifiers( $tokens, $position );
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		return $this->is_explicit_main_database_table_reference( $table_reference )
+			&& $this->consume_optional_simple_table_alias( $tokens, $position, $statement_end );
+	}
+
+	/**
+	 * Consume a simple table alias when present.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated when an alias is consumed.
+	 * @param int              $statement_end Final statement token, exclusive.
+	 * @return bool Whether the alias shape is valid.
+	 */
+	private function consume_optional_simple_table_alias( array $tokens, int &$position, int $statement_end ): bool {
+		if ( $position + 1 < $statement_end && WP_MySQL_Lexer::AS_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			if ( null === $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null ) ) {
+				return false;
+			}
+
+			$position += 2;
+			return true;
+		}
+
+		$implicit_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null !== $implicit_alias ) {
+			++$position;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a TRUNCATE query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the target table is explicitly main-database qualified.
+	 */
+	private function truncate_query_targets_main_database_explicitly( array $tokens ): bool {
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		return $this->is_explicit_main_database_table_reference( $table_reference );
+	}
+
+	/**
+	 * Check whether a CREATE query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the target table is explicitly main-database qualified.
+	 */
+	private function create_query_targets_main_database_explicitly( array $tokens ): bool {
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+				&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+				&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+			) {
+				$position += 3;
+			}
+
+			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			return $this->is_explicit_main_database_table_reference( $table_reference );
+		}
+
+		while (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::UNIQUE_SYMBOL,
+					WP_MySQL_Lexer::FULLTEXT_SYMBOL,
+					WP_MySQL_Lexer::SPATIAL_SYMBOL,
+				),
+				true
+			)
+		) {
+			++$position;
+		}
+
+		if (
+			! isset( $tokens[ $position ] )
+			|| WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[ $position ]->id
+		) {
+			return false;
+		}
+
+		++$position;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$position += 3;
+		}
+
+		if ( null === $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null, true ) ) {
+			return false;
+		}
+		++$position;
+
+		while (
+			isset( $tokens[ $position ] )
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::USING_SYMBOL, WP_MySQL_Lexer::TYPE_SYMBOL ), true )
+		) {
+			$position += 2;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		return $this->is_explicit_main_database_table_reference( $table_reference );
+	}
+
+	/**
+	 * Check whether an ALTER TABLE query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether the target table is explicitly main-database qualified.
+	 */
+	private function alter_table_query_targets_main_database_explicitly( array $tokens ): bool {
+		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id ) {
+			return false;
+		}
+
+		$position        = 2;
+		$table_reference = $this->get_mysql_dbdelta_alter_table_target_reference( $tokens, $position );
+		return $this->is_explicit_main_database_table_reference( $table_reference );
+	}
+
+	/**
+	 * Check whether a DROP query explicitly targets the main database.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether all target tables are explicitly main-database qualified.
+	 */
+	private function drop_query_targets_main_database_explicitly( array $tokens ): bool {
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id ) {
+			$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+			if ( null === $statement_end ) {
+				return false;
+			}
+
+			$position = 2;
+			if (
+				isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$position += 2;
+			}
+
+			$matched = false;
+			while ( $position < $statement_end ) {
+				$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+				if ( ! $this->is_explicit_main_database_table_reference( $table_reference ) ) {
+					return false;
+				}
+
+				$matched = true;
+				if ( $position === $statement_end ) {
+					break;
+				}
+
+				if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+					return false;
+				}
+				++$position;
+			}
+
+			return $matched;
+		}
+
+		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[1]->id ) {
+			return false;
+		}
+
+		$position = 2;
+		if ( null === $this->get_mysql_index_identifier_token_value( $tokens[ $position ] ?? null ) ) {
+			return false;
+		}
+		++$position;
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		return $this->is_explicit_main_database_table_reference( $table_reference );
+	}
+
+	/**
+	 * Check whether table administration targets explicitly name the main database.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether all target tables are explicitly main-database qualified.
+	 */
+	private function table_administration_query_targets_main_database_explicitly( string $query ): bool {
+		try {
+			$table_administration_query = $this->get_mysql_table_administration_query( $query );
+		} catch ( InvalidArgumentException $e ) {
+			return false;
+		}
+
+		foreach ( $table_administration_query['tables'] ?? array() as $table_reference ) {
+			if ( ! $this->is_explicit_main_database_table_reference( $table_reference ) ) {
+				return false;
+			}
+		}
+
+		return ! empty( $table_administration_query['tables'] );
+	}
+
+	/**
+	 * Check whether LOCK TABLE targets explicitly name the main database.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether all lock targets are explicitly main-database qualified.
+	 */
+	private function lock_tables_query_targets_main_database_explicitly( string $query ): bool {
+		try {
+			$lock_tables_query = $this->get_mysql_lock_tables_query( $query );
+		} catch ( InvalidArgumentException $e ) {
+			return false;
+		}
+
+		if ( null === $lock_tables_query || 'lock' !== ( $lock_tables_query['operation'] ?? null ) ) {
+			return false;
+		}
+
+		foreach ( $lock_tables_query['tables'] ?? array() as $table_reference ) {
+			if ( ! $this->is_explicit_main_database_table_reference( $table_reference ) ) {
+				return false;
+			}
+		}
+
+		return ! empty( $lock_tables_query['tables'] );
 	}
 
 	/**

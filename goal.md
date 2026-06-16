@@ -92,6 +92,7 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Decide whether to expose further MySQL `information_schema` role grant tables beyond the currently supported relations and empty routine/view/trigger/parameter/privilege/security shims; unsupported relations continue to fail explicitly.
 - [x] Preserve derivable numeric and time `DATE_FORMAT()` parts for zero or partial-zero literal dates while keeping calendar-dependent specifiers conservative.
 - [x] Support bounded `SHOW ... WHERE` predicates using `BINARY` string comparison and `LIKE ... ESCAPE`.
+- [x] Route explicit main database-qualified application-table writes and table administration after `USE information_schema` while keeping unqualified `information_schema` writes blocked.
 
 ## Tests
 
@@ -114,3 +115,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for empty privilege/security `information_schema` relation reads, metadata columns, `USE information_schema` routing, and joins.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` after backend failures and explicit unsupported-SQL failures.
 - [x] Add PostgreSQL tests for deterministic multi-row ambiguous upsert replay, unsupported bounded `UPDATE` fail-closed behavior, role grant `information_schema` shims, zero-date `DATE_FORMAT()` literal masks, and `SHOW WHERE` `BINARY`/`ESCAPE` filters.
+- [x] Add PostgreSQL tests for main database-qualified writes and administration after `USE information_schema`.
