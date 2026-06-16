@@ -94,10 +94,16 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Emulate `ROW_COUNT()` after failed backend statements and explicit unsupported-SQL errors.
 - [x] Decide whether to expose further MySQL `information_schema` role grant tables beyond the currently supported relations and empty routine/view/trigger/parameter/privilege/security shims; unsupported relations continue to fail explicitly.
 - [x] Preserve derivable numeric and time `DATE_FORMAT()` parts for zero or partial-zero literal dates while keeping calendar-dependent specifiers conservative.
+- [x] Preserve derivable numeric and time `DATE_FORMAT()` parts for zero or partial-zero dates when the format mask is a runtime expression.
 - [x] Support bounded `SHOW ... WHERE` predicates using `BINARY` string comparison and `LIKE ... ESCAPE`.
+- [x] Emulate `SHOW PLUGINS` as an empty MySQL-shaped metadata result with supported `LIKE` and bounded `WHERE` filters.
+- [x] Keep `FOUND_ROWS()` state accurate after empty static metadata result sets such as `SHOW PLUGINS`.
 - [x] Route explicit main database-qualified application-table writes and table administration after `USE information_schema` while keeping unqualified `information_schema` writes blocked.
 - [x] Support PostgreSQL `TIMESTAMPADD()` composite MySQL interval literal units with the same safe interval-component translation used by `DATE_ADD()`/`DATE_SUB()`, while keeping dynamic or malformed composite values explicit unsupported errors.
 - [x] Support exact-match `BINARY` predicates in direct PostgreSQL `information_schema` SELECT rewrites without sending raw MySQL `BINARY` syntax to the backend.
+- [x] Fail closed for `ALTER TABLE ... DROP CHECK` and `DROP FOREIGN KEY` when MySQL metadata has no matching constraint, and resolve `DROP CONSTRAINT` metadata with the table's schema.
+- [x] Support renderable MySQL timestamp runtime functions such as `NOW()` and `CURRENT_TIMESTAMP()` in `ON DUPLICATE KEY UPDATE` assignments while keeping unsupported forms explicit errors.
+- [x] Translate MySQL `CHECK (json_valid(...))` constraints to PostgreSQL JSON validation for backend DDL while preserving MySQL-facing metadata, and fail closed for runtime `JSON_VALID(...)` until it can be safely emulated.
 
 ## Tests
 
@@ -122,7 +128,13 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for empty privilege/security `information_schema` relation reads, metadata columns, `USE information_schema` routing, and joins.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` after backend failures and explicit unsupported-SQL failures.
 - [x] Add PostgreSQL tests for deterministic multi-row ambiguous upsert replay, unsupported bounded `UPDATE` fail-closed behavior, role grant `information_schema` shims, zero-date `DATE_FORMAT()` literal masks, and `SHOW WHERE` `BINARY`/`ESCAPE` filters.
+- [x] Add PostgreSQL tests for empty `SHOW PLUGINS` results, stale `FOUND_ROWS()` reset behavior, and unsupported `SHOW PLUGINS` clauses.
 - [x] Add PostgreSQL tests for main database-qualified writes and administration after `USE information_schema`.
 - [x] Add PostgreSQL tests for `TIMESTAMPADD()` composite interval translation and dynamic/malformed composite interval fail-closed behavior before backend execution.
 - [x] Add PostgreSQL regressions for generic `ALTER TABLE ... DROP CONSTRAINT` missing, ambiguous, and non-unique-index metadata cases.
 - [x] Add PostgreSQL regression coverage for direct `information_schema.TABLES` `BINARY` exact-match predicates.
+- [x] Add PostgreSQL regressions for missing `ALTER TABLE ... DROP CHECK` and `DROP FOREIGN KEY` metadata.
+- [x] Add PostgreSQL tests for SQLite-UDF-style runtime compatibility functions (`CURDATE()`, `UTC_DATE()`, `UTC_TIME()`, `NOW()`, `DATABASE()`, `GET_LOCK()`, and related forms).
+- [x] Add PostgreSQL tests for runtime `DATE_FORMAT()` masks over zero/partial-zero dates.
+- [x] Add PostgreSQL tests for timestamp runtime functions inside `ON DUPLICATE KEY UPDATE` assignments.
+- [x] Add PostgreSQL tests for `json_valid(...)` CHECK translation, MySQL metadata preservation, unsupported CHECK shapes, and runtime `JSON_VALID(...)` fail-closed behavior.

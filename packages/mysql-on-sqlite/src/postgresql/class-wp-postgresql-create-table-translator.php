@@ -492,26 +492,50 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function translate_check_constraint_expression( WP_Parser_Node $check_constraint ): string {
+		return $this->render_check_constraint_expression( $check_constraint, true );
+	}
+
+	/**
+	 * Render a MySQL CHECK expression.
+	 *
+	 * @param WP_Parser_Node $check_constraint CHECK constraint node.
+	 * @param bool           $for_postgresql   Whether to translate MySQL-only functions for backend execution.
+	 * @return string CHECK expression SQL.
+	 */
+	private function render_check_constraint_expression( WP_Parser_Node $check_constraint, bool $for_postgresql ): string {
 		$expression = $check_constraint->get_first_descendant_node( 'expr' );
 		if ( ! $expression ) {
 			throw new InvalidArgumentException( 'CHECK constraint is missing an expression.' );
 		}
 
-		return $this->translate_check_constraint_tokens( $expression->get_descendant_tokens() );
+		return $this->translate_check_constraint_tokens( $expression->get_descendant_tokens(), $for_postgresql );
 	}
 
 	/**
 	 * Translate CHECK expression tokens.
 	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL tokens.
+	 * @param WP_MySQL_Token[] $tokens         MySQL tokens.
+	 * @param bool             $for_postgresql Whether to translate MySQL-only functions for backend execution.
 	 * @return string PostgreSQL SQL.
 	 */
-	private function translate_check_constraint_tokens( array $tokens ): string {
+	private function translate_check_constraint_tokens( array $tokens, bool $for_postgresql ): string {
 		$sql            = '';
 		$previous_token = null;
 
-		foreach ( $tokens as $token ) {
-			$fragment = $this->translate_check_constraint_token( $token );
+		for ( $position = 0; $position < count( $tokens ); ++$position ) {
+			$token    = $tokens[ $position ];
+			$fragment = null;
+			if ( $for_postgresql ) {
+				$json_valid = $this->translate_json_valid_check_constraint_function( $tokens, $position );
+				if ( null !== $json_valid ) {
+					$fragment = $json_valid['sql'];
+					$position = $json_valid['position'];
+				}
+			}
+
+			if ( null === $fragment ) {
+				$fragment = $this->translate_check_constraint_token( $token );
+			}
 			if ( '' === $fragment ) {
 				continue;
 			}
@@ -521,10 +545,134 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 
 			$sql           .= $fragment;
-			$previous_token = $token;
+			$previous_token = $tokens[ $position ];
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Translate MySQL json_valid(expr) CHECK calls to PostgreSQL JSON validation.
+	 *
+	 * PostgreSQL has JSON casts but no MySQL/SQLite json_valid() function. Casting
+	 * invalid JSON fails the statement, which keeps invalid data out instead of
+	 * emitting unsupported raw function SQL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL tokens.
+	 * @param int              $position Current token position.
+	 * @return array{sql: string, position: int}|null Translation data, or null when this is not json_valid().
+	 */
+	private function translate_json_valid_check_constraint_function( array $tokens, int $position ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! $this->is_json_valid_identifier_token( $tokens[ $position ] )
+		) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id ) {
+			return null;
+		}
+
+		$close_position = $this->get_check_constraint_parenthesized_end( $tokens, $position + 1 );
+		if ( null === $close_position ) {
+			throw new InvalidArgumentException( 'Unsupported CHECK constraint expression.' );
+		}
+
+		$arguments = $this->split_check_constraint_function_arguments( $tokens, $position + 2, $close_position );
+		if ( 1 !== count( $arguments ) || $arguments[0]['start'] >= $arguments[0]['end'] ) {
+			throw new InvalidArgumentException( 'Unsupported CHECK constraint expression.' );
+		}
+
+		$argument_sql = $this->translate_check_constraint_tokens(
+			array_slice( $tokens, $arguments[0]['start'], $arguments[0]['end'] - $arguments[0]['start'] ),
+			true
+		);
+
+		return array(
+			'sql'      => sprintf( '(CAST(%s AS jsonb) IS NOT NULL)', $argument_sql ),
+			'position' => $close_position,
+		);
+	}
+
+	/**
+	 * Check whether a token names json_valid.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a json_valid identifier.
+	 */
+	private function is_json_valid_identifier_token( WP_MySQL_Token $token ): bool {
+		return in_array( $token->id, array( WP_MySQL_Lexer::IDENTIFIER, WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ), true )
+			&& 'json_valid' === strtolower( $token->get_value() );
+	}
+
+	/**
+	 * Find the closing parenthesis for a CHECK function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL tokens.
+	 * @param int              $open_position Opening parenthesis position.
+	 * @return int|null Closing parenthesis position, or null when malformed.
+	 */
+	private function get_check_constraint_parenthesized_end( array $tokens, int $open_position ): ?int {
+		$depth = 0;
+		for ( $position = $open_position; $position < count( $tokens ); ++$position ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			--$depth;
+			if ( 0 === $depth ) {
+				return $position;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Split top-level CHECK function arguments.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL tokens.
+	 * @param int              $start  First argument token position.
+	 * @param int              $end    Closing parenthesis position, exclusive.
+	 * @return array<int, array{start: int, end: int}> Argument token ranges.
+	 */
+	private function split_check_constraint_function_arguments( array $tokens, int $start, int $end ): array {
+		$arguments      = array();
+		$argument_start = $start;
+		$depth          = 0;
+
+		for ( $position = $start; $position < $end; ++$position ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				--$depth;
+				continue;
+			}
+
+			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				$arguments[]    = array(
+					'start' => $argument_start,
+					'end'   => $position,
+				);
+				$argument_start = $position + 1;
+			}
+		}
+
+		$arguments[] = array(
+			'start' => $argument_start,
+			'end'   => $end,
+		);
+
+		return $arguments;
 	}
 
 	/**
@@ -1826,7 +1974,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		return array(
 			'name'         => $this->get_check_constraint_name( $node, $table_name, $check_ordinal ),
-			'check_clause' => $this->translate_check_constraint_expression( $check_constraint ),
+			'check_clause' => $this->render_check_constraint_expression( $check_constraint, false ),
 			'enforced'     => ( $not_enforced || $this->is_check_constraint_not_enforced( $node ) ) ? 'NO' : 'YES',
 		);
 	}

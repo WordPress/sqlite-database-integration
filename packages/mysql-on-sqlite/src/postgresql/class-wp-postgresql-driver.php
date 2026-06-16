@@ -617,6 +617,11 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_show_engines_query( $show_engines_query, $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$show_plugins_query = $this->get_show_plugins_query( $query );
+		if ( null !== $show_plugins_query ) {
+			return $this->execute_show_plugins_query( $show_plugins_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
 		$show_grants_query = $this->get_show_grants_query( $query );
 		if ( null !== $show_grants_query ) {
 			return $this->execute_show_grants_query( $fetch_mode, ...$fetch_mode_args );
@@ -6638,7 +6643,7 @@ $wp_mysql_on_update$',
 					&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $start + 2 ]->id
 					&& $start + 3 === $end
 				) {
-					return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_name );
+					return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_schema, $table_name );
 				}
 				if (
 					isset( $tokens[ $start + 2 ] )
@@ -6646,24 +6651,24 @@ $wp_mysql_on_update$',
 					&& 'PRIMARY' === strtoupper( (string) $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 2 ] ?? null ) )
 					&& $start + 3 === $end
 				) {
-					return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_name );
+					return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_schema, $table_name );
 				}
 				if (
 					isset( $tokens[ $start + 2 ] )
 					&& WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[ $start + 1 ]->id
 					&& $start + 3 === $end
 				) {
-					return $this->translate_mysql_dbdelta_drop_constraint_alter_action( $table_name, $tokens, $start, $end );
+					return $this->translate_mysql_dbdelta_drop_constraint_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 				}
 				if (
-						isset( $tokens[ $start + 2 ] )
-						&& WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[ $start + 1 ]->id
-						&& $start + 3 === $end
-					) {
-					return $this->translate_mysql_dbdelta_drop_check_alter_action( $table_name, $tokens, $start, $end );
+					isset( $tokens[ $start + 2 ] )
+					&& WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[ $start + 1 ]->id
+					&& $start + 3 === $end
+				) {
+					return $this->translate_mysql_dbdelta_drop_check_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 				}
 				if ( $this->is_mysql_dbdelta_drop_foreign_key_action( $tokens, $start, $end ) ) {
-					return $this->translate_mysql_dbdelta_drop_foreign_key_alter_action( $table_name, $tokens, $start, $end );
+					return $this->translate_mysql_dbdelta_drop_foreign_key_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 				}
 				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
 					return $this->translate_mysql_dbdelta_drop_index_alter_action( $table_name, $tokens, $start, $end );
@@ -7724,23 +7729,24 @@ $wp_mysql_on_update$',
 	/**
 	 * Translate an ALTER TABLE DROP PRIMARY KEY action.
 	 *
-	 * @param string $table_name Table name.
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Table name.
 	 * @return array{statements: string[], metadata: array} Drop primary key translation.
 	 */
-	private function translate_mysql_dbdelta_drop_primary_key_alter_action( string $table_name ): array {
+	private function translate_mysql_dbdelta_drop_primary_key_alter_action( string $table_schema, string $table_name ): array {
 		return array(
 			'statements' => array(
 				sprintf(
 					'ALTER TABLE %s DROP CONSTRAINT %s',
 					$this->connection->quote_identifier( $table_name ),
 					$this->connection->quote_identifier(
-						$this->get_postgresql_primary_key_constraint_name( 'public', $table_name )
+						$this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name )
 					)
 				),
 			),
 			'metadata'   => array(
 				'operation' => 'drop_index',
-				'schema'    => 'public',
+				'schema'    => $table_schema,
 				'table'     => $table_name,
 				'index'     => 'PRIMARY',
 			),
@@ -7750,30 +7756,31 @@ $wp_mysql_on_update$',
 	/**
 	 * Translate an ALTER TABLE DROP CONSTRAINT action.
 	 *
+	 * @param string           $table_schema Backend schema name.
 	 * @param string           $table_name Table name.
 	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
 	 * @param int              $start      First action token.
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_drop_constraint_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_drop_constraint_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		$constraint_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 2 ] ?? null );
 		if ( null === $constraint_name ) {
 			return null;
 		}
 
 		if ( 'PRIMARY' === strtoupper( $constraint_name ) ) {
-			return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_name );
+			return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_schema, $table_name );
 		}
 
 		$matching_constraint_types = array();
-		if ( $this->mysql_unique_index_metadata_exists( 'public', $table_name, $constraint_name ) ) {
+		if ( $this->mysql_unique_index_metadata_exists( $table_schema, $table_name, $constraint_name ) ) {
 			$matching_constraint_types[] = 'unique';
 		}
-		if ( $this->mysql_foreign_key_metadata_exists( 'public', $table_name, $constraint_name ) ) {
+		if ( $this->mysql_foreign_key_metadata_exists( $table_schema, $table_name, $constraint_name ) ) {
 			$matching_constraint_types[] = 'foreign_key';
 		}
-		$check_metadata = $this->get_mysql_check_metadata( 'public', $table_name, $constraint_name );
+		$check_metadata = $this->get_mysql_check_metadata( $table_schema, $table_name, $constraint_name );
 		if ( null !== $check_metadata ) {
 			$matching_constraint_types[] = 'check';
 		}
@@ -7783,17 +7790,17 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'unique' === $matching_constraint_types[0] ) {
-			$drop_index_query = $this->get_mysql_drop_index_translation(
-				array(
-					'schema' => null,
-					'table'  => $table_name,
+			return array(
+				'statements' => array(
+					'DROP INDEX ' . $this->get_postgresql_schema_identifier( $table_schema, $table_name . '__' . $constraint_name ),
 				),
-				$constraint_name,
-				'ALTER TABLE'
+				'metadata'   => array(
+					'operation' => 'drop_index',
+					'schema'    => $table_schema,
+					'table'     => $table_name,
+					'index'     => $constraint_name,
+				),
 			);
-
-			$drop_index_query['metadata']['operation'] = 'drop_index';
-			return $drop_index_query;
 		}
 
 		if ( 'foreign_key' === $matching_constraint_types[0] ) {
@@ -7810,13 +7817,14 @@ $wp_mysql_on_update$',
 	/**
 	 * Translate an ALTER TABLE DROP FOREIGN KEY action.
 	 *
+	 * @param string           $table_schema Backend schema name.
 	 * @param string           $table_name Table name.
 	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
 	 * @param int              $start      First action token.
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_drop_foreign_key_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_drop_foreign_key_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		if ( $start + 4 !== $end ) {
 			return null;
 		}
@@ -7824,6 +7832,10 @@ $wp_mysql_on_update$',
 		$constraint_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 3 ] ?? null );
 		if ( null === $constraint_name ) {
 			return null;
+		}
+
+		if ( ! $this->mysql_foreign_key_metadata_exists( $table_schema, $table_name, $constraint_name ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
 		return $this->get_mysql_dbdelta_drop_foreign_key_translation( $table_name, $constraint_name );
@@ -7855,23 +7867,28 @@ $wp_mysql_on_update$',
 	/**
 	 * Translate an ALTER TABLE DROP CHECK action.
 	 *
+	 * @param string           $table_schema Backend schema name.
 	 * @param string           $table_name Table name.
 	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
 	 * @param int              $start      First action token.
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_drop_check_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_drop_check_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		$constraint_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $start + 2 ] ?? null );
 		if ( null === $constraint_name ) {
 			return null;
 		}
 
-		$check_metadata = $this->get_mysql_check_metadata( 'public', $table_name, $constraint_name );
+		$check_metadata = $this->get_mysql_check_metadata( $table_schema, $table_name, $constraint_name );
+		if ( null === $check_metadata ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
+
 		return $this->get_mysql_dbdelta_drop_check_translation(
 			$table_name,
 			$constraint_name,
-			null === $check_metadata || 'NO' !== strtoupper( (string) $check_metadata['enforced'] )
+			'NO' !== strtoupper( (string) $check_metadata['enforced'] )
 		);
 	}
 
@@ -10330,6 +10347,37 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW PLUGINS statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{type: string, column: string|null, pattern: string|null}|null SHOW PLUGINS options, or null when this is not SHOW PLUGINS.
+	 */
+	private function get_show_plugins_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::PLUGINS_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$allowed_columns = array(
+			'name'    => 'Name',
+			'status'  => 'Status',
+			'type'    => 'Type',
+			'library' => 'Library',
+			'license' => 'License',
+		);
+		$filter          = $this->get_show_static_result_filter( $tokens, 2, 'Name', $allowed_columns );
+		if ( null === $filter ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW PLUGINS statement.' );
+		}
+
+		return $filter;
+	}
+
+	/**
 	 * Parse a supported MySQL SHOW GRANTS statement.
 	 *
 	 * @param string $query MySQL query.
@@ -11685,6 +11733,7 @@ $wp_mysql_on_update$',
 				WP_MySQL_Lexer::NULL_SYMBOL,
 				WP_MySQL_Lexer::PRIVILEGES_SYMBOL,
 				WP_MySQL_Lexer::ROWS_SYMBOL,
+				WP_MySQL_Lexer::STATUS_SYMBOL,
 				WP_MySQL_Lexer::TABLE_SYMBOL,
 				WP_MySQL_Lexer::TYPE_SYMBOL,
 				WP_MySQL_Lexer::VALUE_SYMBOL,
@@ -14441,6 +14490,29 @@ ORDER BY table_name';
 
 		return $this->set_mysql_static_show_result(
 			array( 'Engine', 'Support', 'Comment', 'Transactions', 'XA', 'Savepoints' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Execute a MySQL SHOW PLUGINS statement from static MySQL-compatible metadata.
+	 *
+	 * The PostgreSQL adapter does not load MySQL plugins. Return the compatible
+	 * empty result shape, matching the empty information_schema.plugins shim.
+	 *
+	 * @param array $show_plugins_query SHOW PLUGINS options.
+	 * @param int   $fetch_mode         PDO fetch mode.
+	 * @param array ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed SHOW PLUGINS result rows.
+	 */
+	private function execute_show_plugins_query( array $show_plugins_query, $fetch_mode, ...$fetch_mode_args ) {
+		$rows = $this->filter_mysql_static_show_rows( array(), $show_plugins_query );
+
+		$this->last_found_rows = 0;
+		return $this->set_mysql_static_show_result(
+			array( 'Name', 'Status', 'Type', 'Library', 'License' ),
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
@@ -36717,6 +36789,7 @@ FROM (
 							$assignment_end,
 							$values_replacements
 						)
+						|| $this->contains_unsupported_mysql_common_function( $tokens, $value_start, $assignment_end )
 						|| ! $this->mysql_upsert_expression_column_references_resolve_to_scope(
 							$tokens,
 							$value_start,
@@ -37557,6 +37630,12 @@ FROM (
 	 */
 	private function is_supported_simple_mysql_upsert_expression_segment( array $tokens, int $start, int $end ): bool {
 		for ( $position = $start; $position < $end; $position++ ) {
+			$common_function = $this->translate_mysql_common_function_to_postgresql( $tokens, $position, $end );
+			if ( null !== $common_function ) {
+				$position = $common_function['position'];
+				continue;
+			}
+
 			if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $position ]->id ) {
 				continue;
 			}
@@ -40999,6 +41078,7 @@ FROM (
 				WP_MySQL_Lexer::PLUS_OPERATOR,
 				WP_MySQL_Lexer::REGEXP_SYMBOL,
 				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT,
+				WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL,
 				WP_MySQL_Lexer::SUBSTR_SYMBOL,
 				WP_MySQL_Lexer::SUBSTRING_SYMBOL,
 				WP_MySQL_Lexer::TRUE_SYMBOL,
@@ -43580,6 +43660,7 @@ FROM (
 			'inet_aton',
 			'inet_ntoa',
 			'isnull',
+			'json_valid',
 			'lcase',
 			'last_insert_id',
 			'left',
@@ -43808,6 +43889,9 @@ FROM (
 
 			case 'isnull':
 				return 1 === $count ? sprintf( 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END', $argument_sql[0] ) : null;
+
+			case 'json_valid':
+				return null;
 
 			case 'last_insert_id':
 				return 0 === $count ? $this->get_postgresql_mysql_last_insert_id_sql() : null;
@@ -45736,19 +45820,76 @@ FROM (
 			$format_text_sql,
 			$this->get_postgresql_mysql_dynamic_date_format_specifier_case_sql( $specifier_sql, $timestamp_sql )
 		);
+		$zero_date_fragment_sql = sprintf(
+			'CASE WHEN %1$s <> %2$s THEN %1$s WHEN "__wp_pg_mysql_date_format"."position" >= CHAR_LENGTH(%3$s) THEN %2$s ELSE %4$s END',
+			$character_sql,
+			$percent_sql,
+			$format_text_sql,
+			$this->get_postgresql_mysql_dynamic_zero_date_format_specifier_case_sql( $specifier_sql, $expression_text_sql )
+		);
 		$formatter_sql     = sprintf(
 			'(WITH RECURSIVE "__wp_pg_mysql_date_format"("position", "formatted") AS (SELECT 1, CAST(\'\' AS text) UNION ALL SELECT %1$s, "formatted" || %2$s FROM "__wp_pg_mysql_date_format" WHERE "position" <= CHAR_LENGTH(%3$s)) SELECT "formatted" FROM "__wp_pg_mysql_date_format" ORDER BY "position" DESC LIMIT 1)',
 			$next_position_sql,
 			$fragment_sql,
 			$format_text_sql
 		);
+		$zero_date_formatter_sql = sprintf(
+			'(WITH RECURSIVE "__wp_pg_mysql_date_format"("position", "formatted") AS (SELECT 1, CAST(\'\' AS text) UNION ALL SELECT %1$s, "formatted" || %2$s FROM "__wp_pg_mysql_date_format" WHERE "position" <= CHAR_LENGTH(%3$s)) SELECT "formatted" FROM "__wp_pg_mysql_date_format" ORDER BY "position" DESC LIMIT 1)',
+			$next_position_sql,
+			$zero_date_fragment_sql,
+			$format_text_sql
+		);
 
 		return sprintf(
-			'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %3$s THEN NULL ELSE %4$s END',
+			'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %3$s THEN %4$s ELSE %5$s END',
 			$expression_text_sql,
 			$format_text_sql,
 			$zero_date_condition,
+			$zero_date_formatter_sql,
 			$formatter_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL CASE SQL for a runtime MySQL DATE_FORMAT() specifier on a zero-ish date.
+	 *
+	 * @param string $specifier_sql        PostgreSQL SQL for the format specifier character.
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL CASE expression SQL.
+	 */
+	private function get_postgresql_mysql_dynamic_zero_date_format_specifier_case_sql( string $specifier_sql, string $expression_text_sql ): string {
+		$cases                    = array();
+		$zero_date_part_specifiers = array( '%', 'Y', 'y', 'm', 'c', 'd', 'e', 'D', 'H', 'k', 'h', 'I', 'l', 'i', 'S', 's', 'T', 'r', 'p', 'f' );
+		foreach ( $zero_date_part_specifiers as $specifier ) {
+			$cases[] = sprintf(
+				'WHEN %s THEN %s',
+				$this->connection->quote( $specifier ),
+				$this->get_postgresql_mysql_zero_date_format_specifier_sql( $specifier, $expression_text_sql )
+			);
+		}
+
+		$null_specifiers = array_unique(
+			array_merge(
+				array_keys( $this->get_postgresql_mysql_date_format_to_char_formats() ),
+				array( 'w', 'U', 'u', 'V', 'v', 'X', 'x' )
+			)
+		);
+		foreach ( $null_specifiers as $specifier ) {
+			if ( null !== $this->get_postgresql_mysql_zero_date_format_specifier_sql( $specifier, $expression_text_sql ) ) {
+				continue;
+			}
+
+			$cases[] = sprintf(
+				'WHEN %s THEN NULL',
+				$this->connection->quote( $specifier )
+			);
+		}
+
+		return sprintf(
+			'CASE %1$s %2$s ELSE %3$s || %1$s END',
+			$specifier_sql,
+			implode( ' ', $cases ),
+			$this->connection->quote( '%' )
 		);
 	}
 
