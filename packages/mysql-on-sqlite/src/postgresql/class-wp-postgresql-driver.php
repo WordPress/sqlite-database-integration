@@ -2420,6 +2420,7 @@ class WP_PostgreSQL_Driver {
 					column_name TEXT NOT NULL,
 					non_unique TEXT NOT NULL,
 					index_type TEXT NOT NULL,
+					collation TEXT,
 					sub_part TEXT,
 					nullable TEXT NOT NULL,
 					index_comment TEXT NOT NULL DEFAULT \'\',
@@ -2429,6 +2430,7 @@ class WP_PostgreSQL_Driver {
 			)
 		);
 		$this->ensure_mysql_index_metadata_column( 'index_comment', 'TEXT NOT NULL DEFAULT \'\'' );
+		$this->ensure_mysql_index_metadata_column( 'collation', 'TEXT' );
 
 		$this->connection->query(
 			sprintf(
@@ -3202,8 +3204,8 @@ class WP_PostgreSQL_Driver {
 			$this->connection->query(
 				sprintf(
 					'INSERT INTO %s
-						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part, nullable, index_comment)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, collation, sub_part, nullable, index_comment)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 				),
 				array(
@@ -3215,6 +3217,7 @@ class WP_PostgreSQL_Driver {
 					$column['column_name'],
 					$index['non_unique'],
 					$index['index_type'],
+					'FULLTEXT' === strtoupper( (string) $index['index_type'] ) ? null : ( $column['collation'] ?? 'A' ),
 					null === $column['sub_part'] ? null : (string) $column['sub_part'],
 					'NO' === $is_nullable ? '' : 'YES',
 					$index['comment'] ?? '',
@@ -4515,6 +4518,7 @@ class WP_PostgreSQL_Driver {
 			$metadata_parts[] = array(
 				'column_name'  => $column_name,
 				'seq_in_index' => count( $metadata_parts ) + 1,
+				'collation'    => ' DESC' === $direction ? 'D' : 'A',
 				'sub_part'     => $sub_part,
 			);
 		}
@@ -7146,10 +7150,15 @@ class WP_PostgreSQL_Driver {
 		$index   = $metadata[0]['indexes'][0];
 		$columns = array();
 		foreach ( $index['columns'] as $column ) {
-			$columns[] = $this->get_mysql_index_key_part_sql(
+			$column_sql = $this->get_mysql_index_key_part_sql(
 				(string) $column['column_name'],
 				'0' === (string) $index['non_unique'] ? $column['sub_part'] : null
 			);
+			if ( 'D' === strtoupper( (string) ( $column['collation'] ?? '' ) ) ) {
+				$column_sql .= ' DESC';
+			}
+
+			$columns[] = $column_sql;
 		}
 
 		if ( 'PRIMARY' === strtoupper( $index['name'] ) ) {
@@ -10471,7 +10480,7 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_index_metadata_rows( string $schema_name, string $table_name ): array {
 		$sql    = sprintf(
-			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part, index_comment
+			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, collation, sub_part, index_comment
 			FROM %s
 			WHERE table_schema = ? AND table_name = ?
 			ORDER BY
@@ -10740,6 +10749,9 @@ ORDER BY table_name';
 			$definition = $this->quote_mysql_identifier( (string) $column['column_name'] );
 			if ( null !== $column['sub_part'] ) {
 				$definition .= sprintf( '(%d)', (int) $column['sub_part'] );
+			}
+			if ( 'D' === strtoupper( (string) ( $column['collation'] ?? '' ) ) ) {
+				$definition .= ' DESC';
 			}
 
 			$columns[] = $definition;
@@ -13185,7 +13197,7 @@ metadata_index_rows AS (
 		im.key_name AS "Key_name",
 		CAST(im.seq_in_index AS text) AS "Seq_in_index",
 		im.column_name AS "Column_name",
-		CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE \'A\' END AS "Collation",
+		CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im.collation, \'A\') END AS "Collation",
 		\'0\' AS "Cardinality",
 		im.sub_part AS "Sub_part",
 		NULL AS "Packed",
@@ -13323,7 +13335,7 @@ FROM (
 		im.key_name AS "Key_name",
 		CAST(im.seq_in_index AS text) AS "Seq_in_index",
 		im.column_name AS "Column_name",
-		CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE \'A\' END AS "Collation",
+		CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im.collation, \'A\') END AS "Collation",
 		\'0\' AS "Cardinality",
 		im.sub_part AS "Sub_part",
 		NULL AS "Packed",

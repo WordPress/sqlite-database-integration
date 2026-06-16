@@ -723,7 +723,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$if_not_exists ? 'IF NOT EXISTS ' : '',
 			$this->quote_identifier( $table_name . '__' . $index_name ),
 			$this->quote_identifier( $table_name ),
-			implode( ', ', $this->quote_key_parts( $table_constraint, $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) )
+			implode( ', ', $this->quote_key_parts( $table_constraint, $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ), true ) )
 		);
 	}
 
@@ -810,19 +810,26 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 *
 	 * @param WP_Parser_Node $table_constraint       Table constraint node.
 	 * @param bool           $use_prefix_expressions Whether explicit key-part prefix lengths should become expressions.
+	 * @param bool           $include_direction      Whether ASC/DESC key-part direction should be included.
 	 * @return string[] Quoted PostgreSQL column names.
 	 */
-	private function quote_key_parts( WP_Parser_Node $table_constraint, bool $use_prefix_expressions = false ): array {
+	private function quote_key_parts( WP_Parser_Node $table_constraint, bool $use_prefix_expressions = false, bool $include_direction = false ): array {
 		$quoted_parts = array();
 
 		foreach ( $table_constraint->get_descendant_nodes( 'keyPart' ) as $key_part ) {
 			$column_name = $this->get_identifier_value( $key_part->get_first_child_node( 'identifier' ) );
 			$sub_part    = $this->get_field_length( $key_part );
 			if ( $use_prefix_expressions && null !== $sub_part ) {
-				$quoted_parts[] = $this->get_prefix_key_part_expression_sql( $column_name, $sub_part );
+				$quoted_part = $this->get_prefix_key_part_expression_sql( $column_name, $sub_part );
 			} else {
-				$quoted_parts[] = $this->quote_identifier( $column_name );
+				$quoted_part = $this->quote_identifier( $column_name );
 			}
+
+			if ( $include_direction ) {
+				$quoted_part .= $this->get_key_part_direction_sql( $key_part );
+			}
+
+			$quoted_parts[] = $quoted_part;
 		}
 
 		if ( empty( $quoted_parts ) ) {
@@ -830,6 +837,26 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return $quoted_parts;
+	}
+
+	/**
+	 * Get PostgreSQL ASC/DESC SQL for a MySQL key part.
+	 *
+	 * @param WP_Parser_Node $key_part Key part node.
+	 * @return string Direction SQL, including leading space, or empty string.
+	 */
+	private function get_key_part_direction_sql( WP_Parser_Node $key_part ): string {
+		$direction = $key_part->get_first_child_node( 'direction' );
+		if ( ! $direction ) {
+			return '';
+		}
+
+		$value = strtoupper( $this->get_node_value( $direction ) );
+		if ( 'ASC' === $value || 'DESC' === $value ) {
+			return ' ' . $value;
+		}
+
+		return '';
 	}
 
 	/**
@@ -1323,6 +1350,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$key_parts[] = array(
 				'column_name'  => $column_name,
 				'seq_in_index' => count( $key_parts ) + 1,
+				'collation'    => $table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL ) ? null : $this->get_key_part_collation_metadata( $key_part ),
 				'sub_part'     => $sub_part,
 			);
 		}
@@ -1332,6 +1360,21 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return $key_parts;
+	}
+
+	/**
+	 * Get MySQL SHOW INDEX Collation metadata for a key part.
+	 *
+	 * @param WP_Parser_Node $key_part Key part node.
+	 * @return string MySQL collation metadata.
+	 */
+	private function get_key_part_collation_metadata( WP_Parser_Node $key_part ): string {
+		$direction = $key_part->get_first_child_node( 'direction' );
+		if ( ! $direction ) {
+			return 'A';
+		}
+
+		return 'DESC' === strtoupper( $this->get_node_value( $direction ) ) ? 'D' : 'A';
 	}
 
 	/**

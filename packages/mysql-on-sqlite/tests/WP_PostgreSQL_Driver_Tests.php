@@ -1745,6 +1745,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'value', $indexes[1]['column_name'] );
 		$this->assertSame( '1', $indexes[1]['non_unique'] );
 		$this->assertSame( 'BTREE', $indexes[1]['index_type'] );
+		$this->assertSame( 'D', $indexes[1]['collation'] );
 		$this->assertSame( '16', $indexes[1]['sub_part'] );
 		$this->assertSame( '', $indexes[1]['nullable'] );
 
@@ -1752,10 +1753,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $show_indexes );
 		$this->assertSame( 'idx_value', $show_indexes[0]->Key_name );
+		$this->assertSame( 'D', $show_indexes[0]->Collation );
 		$this->assertSame( 'Lookup', $show_indexes[0]->Index_comment );
 
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_standalone_index' )[0]->{'Create Table'};
-		$this->assertStringContainsString( "KEY `idx_value` (`value`(16)) COMMENT 'Lookup'", $create_table );
+		$this->assertStringContainsString( "KEY `idx_value` (`value`(16) DESC) COMMENT 'Lookup'", $create_table );
 	}
 
 	/**
@@ -10660,7 +10662,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'ALTER TABLE wptests_plugin_alter
 				ADD flag tinyint(1) NOT NULL DEFAULT 0,
 				ADD COLUMN code varchar(20) DEFAULT "x" AFTER id,
-				ADD KEY flag_idx (flag)'
+				ADD KEY flag_idx (flag DESC)'
 		);
 
 		$this->assertSame(
@@ -10674,7 +10676,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'CREATE INDEX "wptests_plugin_alter__flag_idx" ON "wptests_plugin_alter" ("flag")',
+					'sql'    => 'CREATE INDEX "wptests_plugin_alter__flag_idx" ON "wptests_plugin_alter" ("flag" DESC)',
 					'params' => array(),
 				),
 			),
@@ -10686,6 +10688,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( array( 'id', 'status', 'flag', 'code' ), array_column( $columns, 'column_name' ) );
 		$this->assertSame( array( 'PRIMARY', 'flag_idx' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+		$this->assertSame( 'D', $indexes[1]['collation'] );
+
+		$show_index = $driver->query( "SHOW INDEX FROM wptests_plugin_alter WHERE Key_name = 'flag_idx'" );
+		$this->assertSame( 'D', $show_index[0]->Collation );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plugin_alter' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  KEY `flag_idx` (`flag` DESC)', $create_table );
 	}
 
 	/**
@@ -10996,6 +11005,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'column_name'  => 'id',
 					'non_unique'   => '0',
 					'index_type'   => 'BTREE',
+					'collation'    => 'A',
 					'sub_part'     => null,
 					'nullable'     => '',
 				),
@@ -11005,6 +11015,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'column_name'  => 'slug',
 					'non_unique'   => '0',
 					'index_type'   => 'BTREE',
+					'collation'    => 'A',
 					'sub_part'     => null,
 					'nullable'     => 'YES',
 				),
@@ -11087,6 +11098,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'column_name'  => 'id',
 					'non_unique'   => '0',
 					'index_type'   => 'BTREE',
+					'collation'    => 'A',
 					'sub_part'     => null,
 					'nullable'     => '',
 				),
@@ -11096,6 +11108,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'column_name'  => 'slug',
 					'non_unique'   => '0',
 					'index_type'   => 'BTREE',
+					'collation'    => 'A',
 					'sub_part'     => null,
 					'nullable'     => 'YES',
 				),
@@ -15050,7 +15063,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertNull( $indexes[1]->Collation );
 		$this->assertNull( $indexes[1]->Sub_part );
 		$this->assertStringContainsString(
-			'CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE \'A\' END AS "Collation"',
+			'CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im.collation, \'A\') END AS "Collation"',
 			$driver->get_last_postgresql_queries()[0]['sql']
 		);
 	}
@@ -17701,7 +17714,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function get_mysql_index_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
 		$stmt = $driver->get_connection()->query(
 			sprintf(
-				'SELECT key_name, seq_in_index, column_name, non_unique, index_type, sub_part, nullable
+				'SELECT key_name, seq_in_index, column_name, non_unique, index_type, collation, sub_part, nullable
 				FROM %s
 				WHERE table_schema = ? AND table_name = ?
 				ORDER BY index_ordinal, seq_in_index',
