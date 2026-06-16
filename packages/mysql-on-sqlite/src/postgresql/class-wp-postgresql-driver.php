@@ -5769,7 +5769,7 @@ $wp_mysql_on_update$',
 				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
 					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_name, $clause, $tokens, $start, $end );
 				}
-				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $foreign_key_names );
+				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
 
 			case WP_MySQL_Lexer::DROP_SYMBOL:
 				if (
@@ -6163,10 +6163,11 @@ $wp_mysql_on_update$',
 	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
 	 * @param int              $start             First action token.
 	 * @param int              $end               Final action token, exclusive.
+	 * @param string[]         $check_names       CHECK names generated for this ALTER TABLE statement.
 	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$foreign_key_names ): ?array {
+	private function translate_mysql_dbdelta_add_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names, array &$foreign_key_names ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
@@ -6180,6 +6181,7 @@ $wp_mysql_on_update$',
 				$tokens,
 				$position,
 				$end,
+				$check_names,
 				$foreign_key_names
 			);
 		}
@@ -6198,7 +6200,7 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Translate an ALTER TABLE ADD (column, column) action.
+	 * Translate an ALTER TABLE ADD (definition, definition) action.
 	 *
 	 * @param string           $table_schema      Backend schema name.
 	 * @param string           $table_name        Table name.
@@ -6206,10 +6208,11 @@ $wp_mysql_on_update$',
 	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
 	 * @param int              $position          Opening parenthesis token.
 	 * @param int              $end               Final action token, exclusive.
+	 * @param string[]         $check_names       CHECK names generated for this ALTER TABLE statement.
 	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_parenthesized_columns_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $position, int $end, array &$foreign_key_names ): ?array {
+	private function translate_mysql_dbdelta_add_parenthesized_columns_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $position, int $end, array &$check_names, array &$foreign_key_names ): ?array {
 		$parenthesized_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 		if ( $parenthesized_end !== $end ) {
 			return null;
@@ -6223,17 +6226,39 @@ $wp_mysql_on_update$',
 		$statements          = array();
 		$metadata_operations = array();
 		foreach ( $ranges as $range ) {
-			$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $range['start'], $range['end'] );
-			if ( null === $definition_end || $range['start'] >= $definition_end || $definition_end !== $range['end'] ) {
-				return null;
+			if ( $this->is_mysql_dbdelta_add_index_definition_action( $tokens, $range['start'], $range['end'] ) ) {
+				$translation = $this->translate_mysql_dbdelta_add_index_definition_alter_action(
+					$table_name,
+					$clause,
+					$tokens,
+					$range['start'],
+					$range['end']
+				);
+			} elseif ( $this->is_mysql_dbdelta_add_constraint_definition_action( $tokens, $range['start'], $range['end'] ) ) {
+				$translation = $this->translate_mysql_dbdelta_add_constraint_definition_alter_action(
+					$table_schema,
+					$table_name,
+					$clause,
+					$tokens,
+					$range['start'],
+					$range['end'],
+					$check_names,
+					$foreign_key_names
+				);
+			} else {
+				$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $range['start'], $range['end'] );
+				if ( null === $definition_end || $range['start'] >= $definition_end || $definition_end !== $range['end'] ) {
+					return null;
+				}
+
+				$translation = $this->translate_mysql_dbdelta_add_column_definition_alter_action(
+					$table_schema,
+					$table_name,
+					$this->get_mysql_token_range_bytes( $clause, $tokens, $range['start'], $definition_end ),
+					$foreign_key_names
+				);
 			}
 
-			$translation = $this->translate_mysql_dbdelta_add_column_definition_alter_action(
-				$table_schema,
-				$table_name,
-				$this->get_mysql_token_range_bytes( $clause, $tokens, $range['start'], $definition_end ),
-				$foreign_key_names
-			);
 			if ( null === $translation ) {
 				return null;
 			}
@@ -6321,6 +6346,26 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
+		return $this->translate_mysql_dbdelta_add_index_definition_alter_action(
+			$table_name,
+			$clause,
+			$tokens,
+			$definition_start,
+			$end
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE ADD index definition without the ADD keyword.
+	 *
+	 * @param string           $table_name       Table name.
+	 * @param string           $clause           Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens           Clause token stream.
+	 * @param int              $definition_start First index-definition token.
+	 * @param int              $end              Final index-definition token, exclusive.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_add_index_definition_alter_action( string $table_name, string $clause, array $tokens, int $definition_start, int $end ): ?array {
 		$index = $this->translate_mysql_index_definition_fragment(
 			$table_name,
 			$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end )
@@ -6352,8 +6397,34 @@ $wp_mysql_on_update$',
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
 	private function translate_mysql_dbdelta_add_constraint_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names, array &$foreign_key_names ): ?array {
-		$position        = $start + 1;
+		return $this->translate_mysql_dbdelta_add_constraint_definition_alter_action(
+			$table_schema,
+			$table_name,
+			$clause,
+			$tokens,
+			$start + 1,
+			$end,
+			$check_names,
+			$foreign_key_names
+		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE ADD constraint definition without the ADD keyword.
+	 *
+	 * @param string           $table_schema      Backend schema name.
+	 * @param string           $table_name        Table name.
+	 * @param string           $clause            Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
+	 * @param int              $position          First constraint-definition token.
+	 * @param int              $end               Final constraint-definition token, exclusive.
+	 * @param string[]         $check_names       CHECK names generated for this ALTER TABLE statement.
+	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_add_constraint_definition_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $position, int $end, array &$check_names, array &$foreign_key_names ): ?array {
 		$constraint_name = null;
+		$definition_start = $position;
 
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[ $position ]->id ) {
 			$constraint_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $position + 1 ] ?? null );
@@ -6374,7 +6445,7 @@ $wp_mysql_on_update$',
 			$is_unique_constraint = WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[ $position ]->id;
 			$index                = $this->translate_mysql_index_definition_fragment(
 				$table_name,
-				$this->get_mysql_token_range_bytes( $clause, $tokens, $start + 1, $end )
+				$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end )
 			);
 			if ( null === $index ) {
 				return null;
@@ -7174,8 +7245,24 @@ $wp_mysql_on_update$',
 			return false;
 		}
 
+		return $this->is_mysql_dbdelta_add_index_definition_action( $tokens, $start + 1, $end );
+	}
+
+	/**
+	 * Check whether a token range is an ADD index definition without the ADD keyword.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First definition token.
+	 * @param int              $end    Final definition token, exclusive.
+	 * @return bool Whether the range is an index definition.
+	 */
+	private function is_mysql_dbdelta_add_index_definition_action( array $tokens, int $start, int $end ): bool {
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
+			return false;
+		}
+
 		return in_array(
-			$tokens[ $start + 1 ]->id,
+			$tokens[ $start ]->id,
 			array(
 				WP_MySQL_Lexer::FULLTEXT_SYMBOL,
 				WP_MySQL_Lexer::INDEX_SYMBOL,
@@ -7201,8 +7288,24 @@ $wp_mysql_on_update$',
 			return false;
 		}
 
+		return $this->is_mysql_dbdelta_add_constraint_definition_action( $tokens, $start + 1, $end );
+	}
+
+	/**
+	 * Check whether a token range is an ADD constraint definition without the ADD keyword.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First definition token.
+	 * @param int              $end    Final definition token, exclusive.
+	 * @return bool Whether the range is an ADD CONSTRAINT or ADD CHECK definition.
+	 */
+	private function is_mysql_dbdelta_add_constraint_definition_action( array $tokens, int $start, int $end ): bool {
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
+			return false;
+		}
+
 		return in_array(
-			$tokens[ $start + 1 ]->id,
+			$tokens[ $start ]->id,
 			array(
 				WP_MySQL_Lexer::CHECK_SYMBOL,
 				WP_MySQL_Lexer::CONSTRAINT_SYMBOL,

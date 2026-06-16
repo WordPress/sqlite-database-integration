@@ -13230,26 +13230,129 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported parenthesized ALTER TABLE ADD entries fail explicitly.
+	 * Tests parenthesized ALTER TABLE ADD batches support index and constraint entries.
 	 */
-	public function test_alter_table_add_parenthesized_index_entry_fails_explicitly(): void {
-		$driver = $this->create_driver();
-		$driver->query( 'CREATE TABLE wptests_parenthesized_unsupported_alter (id INTEGER)' );
+	public function test_alter_table_add_parenthesized_index_and_constraint_entries_update_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE wptests_parenthesized_parent (id int NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_parenthesized_supported_alter (id int NOT NULL, parent_id int NOT NULL, code int NOT NULL)' );
 		$driver->store_mysql_schema_metadata(
-			'CREATE TABLE wptests_parenthesized_unsupported_alter (
-				id int NOT NULL
+			'CREATE TABLE wptests_parenthesized_supported_alter (
+				id int NOT NULL,
+				parent_id int NOT NULL,
+				code int NOT NULL
 			)'
 		);
 
-		try {
-			$driver->query( 'ALTER TABLE wptests_parenthesized_unsupported_alter ADD (KEY idx_id (id))' );
-			$this->fail( 'Expected unsupported parenthesized ALTER TABLE ADD entry to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+		$driver->query(
+			'ALTER TABLE wptests_parenthesized_supported_alter
+			ADD CHECK (code < 100),
+			ADD (
+				slug varchar(50) NOT NULL DEFAULT "draft",
+				PRIMARY KEY (id),
+				KEY slug_idx (slug DESC),
+				UNIQUE KEY code_unique (code),
+				CHECK (code > 0),
+				CONSTRAINT child_parent FOREIGN KEY (parent_id) REFERENCES wptests_parenthesized_parent (id) ON DELETE CASCADE
+			)'
+		);
 
-		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_parenthesized_unsupported_alter' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_supported_alter" ADD CONSTRAINT "wptests_parenthesized_supported_alter_chk_1" CHECK (code < 100)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_supported_alter" ADD COLUMN "slug" varchar(50) NOT NULL DEFAULT \'draft\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_supported_alter" ADD PRIMARY KEY ("id")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_parenthesized_supported_alter__slug_idx" ON "wptests_parenthesized_supported_alter" ("slug" DESC)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE UNIQUE INDEX "wptests_parenthesized_supported_alter__code_unique" ON "wptests_parenthesized_supported_alter" ("code")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_supported_alter" ADD CONSTRAINT "wptests_parenthesized_supported_alter_chk_2" CHECK (code > 0)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_supported_alter" ADD CONSTRAINT "child_parent" FOREIGN KEY ("parent_id") REFERENCES "wptests_parenthesized_parent" ("id") ON DELETE CASCADE',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_parenthesized_supported_alter' );
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_parenthesized_supported_alter' );
+
+		$this->assertSame( array( 'id', 'parent_id', 'code', 'slug' ), array_column( $columns, 'column_name' ) );
+		$index_names = array_values( array_unique( array_column( $indexes, 'key_name' ) ) );
+		sort( $index_names );
+		$this->assertSame( array( 'PRIMARY', 'code_unique', 'slug_idx' ), $index_names );
+
+		$slug_index_rows = array_values(
+			array_filter(
+				$indexes,
+				static function ( array $index ): bool {
+					return 'slug_idx' === $index['key_name'];
+				}
+			)
+		);
+		$this->assertSame( 'D', $slug_index_rows[0]['collation'] );
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name' => 'wptests_parenthesized_supported_alter_chk_1',
+					'check_clause'    => 'code < 100',
+					'enforced'        => 'YES',
+				),
+				array(
+					'constraint_name' => 'wptests_parenthesized_supported_alter_chk_2',
+					'check_clause'    => 'code > 0',
+					'enforced'        => 'YES',
+				),
+			),
+			$this->get_mysql_check_metadata_rows( $driver, 'wptests_parenthesized_supported_alter' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name'        => 'child_parent',
+					'seq_in_index'           => '1',
+					'column_name'            => 'parent_id',
+					'referenced_table_name'  => 'wptests_parenthesized_parent',
+					'referenced_column_name' => 'id',
+					'update_rule'            => 'NO ACTION',
+					'delete_rule'            => 'CASCADE',
+				),
+			),
+			$this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_parenthesized_supported_alter' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_parenthesized_supported_alter' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
+		$this->assertStringContainsString( '  KEY `slug_idx` (`slug` DESC)', $create_table );
+		$this->assertStringContainsString( '  UNIQUE KEY `code_unique` (`code`)', $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `wptests_parenthesized_supported_alter_chk_1` CHECK (code < 100)', $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `wptests_parenthesized_supported_alter_chk_2` CHECK (code > 0)', $create_table );
+		$this->assertStringContainsString(
+			'  CONSTRAINT `child_parent` FOREIGN KEY (`parent_id`) REFERENCES `wptests_parenthesized_parent` (`id`) ON DELETE CASCADE',
+			$create_table
+		);
 	}
 
 	/**
