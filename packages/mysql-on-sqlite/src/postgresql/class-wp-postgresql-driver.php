@@ -17957,11 +17957,11 @@ WHERE option_name IN (
 	 * Translate simple single-table MySQL DELETE statements to PostgreSQL.
 	 *
 	 * WordPress option deletes emit a single target table and a plain WHERE
-		 * clause. Some plugins also use MySQL's single-table alias and ORDER BY
-		 * forms. Bounded ORDER/LIMIT deletes are rewritten through PostgreSQL ctid
-		 * subqueries; unbounded ORDER BY deletes omit the ordering because the same
-		 * matched row set is deleted. Multi-table DELETE variants fall through
-		 * unchanged so unsupported SQL still fails visibly in the backend.
+	 * clause. Some plugins also use MySQL's single-table alias and ORDER BY
+	 * forms. Ordered deletes are rewritten through PostgreSQL ctid subqueries so
+	 * ORDER BY expressions are translated and unsupported expressions fail closed.
+	 * Multi-table DELETE variants fall through unchanged so unsupported SQL still
+	 * fails visibly in the backend.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -18042,20 +18042,17 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position && null !== $limit_position ) {
+		if ( null !== $order_position ) {
 			$order_end = $limit_position ?? $statement_end;
-			$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
 				$tokens,
 				$order_position,
 				$order_end,
-				$table_name,
-				$alias
+				$scope
 			);
 			if ( null === $order_sql ) {
 				return null;
 			}
-		} elseif ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) ) {
-			return null;
 		}
 
 		$limit_sql = '';
@@ -18067,7 +18064,7 @@ WHERE option_name IN (
 		}
 
 		$table_sql = $this->get_postgresql_dml_table_reference_sql( $table_name, $alias );
-		if ( '' !== $limit_sql ) {
+		if ( '' !== $order_sql || '' !== $limit_sql ) {
 			$subquery_where_sql = null === $where_sql ? '' : ' WHERE ' . $where_sql;
 			return sprintf(
 				'DELETE FROM %s WHERE %s IN (SELECT %s FROM %s%s%s%s)',
@@ -23126,10 +23123,10 @@ WHERE option_name IN (
 	 *
 	 * WordPress CRUD updates emit a narrow MySQL shape with one table,
 	 * backticked identifiers, and plain SET/WHERE clauses. Some plugins use
-	 * single-table aliases and ORDER BY forms. Bounded ORDER/LIMIT forms are
-	 * rewritten through PostgreSQL ctid subqueries; ORDER BY without LIMIT is
-	 * validated but omitted because the same matched row set is updated. Inner
-	 * joined UPDATE syntax is rewritten separately to PostgreSQL UPDATE ... FROM.
+	 * single-table aliases and ORDER BY forms. Ordered updates are rewritten
+	 * through PostgreSQL ctid subqueries so ORDER BY expressions are translated
+	 * and unsupported expressions fail closed. Inner joined UPDATE syntax is
+	 * rewritten separately to PostgreSQL UPDATE ... FROM.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
@@ -23233,20 +23230,17 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position && null !== $limit_position ) {
+		if ( null !== $order_position ) {
 			$order_end = $limit_position ?? $statement_end;
-			$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
 				$tokens,
 				$order_position,
 				$order_end,
-				$table_name,
-				$alias
+				$scope
 			);
 			if ( null === $order_sql ) {
 				return null;
 			}
-		} elseif ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) ) {
-			return null;
 		}
 
 		$limit_sql = '';
@@ -23258,7 +23252,7 @@ WHERE option_name IN (
 		}
 
 		$predicates = array();
-		if ( '' !== $limit_sql ) {
+		if ( '' !== $order_sql || '' !== $limit_sql ) {
 			$subquery_where_sql = null === $where_sql ? '' : ' WHERE ' . $where_sql;
 			$predicates[]       = sprintf(
 				'%s IN (SELECT %s FROM %s%s%s%s)',

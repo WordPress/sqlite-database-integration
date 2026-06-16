@@ -7918,7 +7918,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		foreach (
 			array(
-				"UPDATE wptests_update_unsupported_limit SET status = 'x' ORDER BY LENGTH(status) LIMIT 1",
 				"UPDATE wptests_update_unsupported_limit SET status = 'x' LIMIT bad",
 				"UPDATE wptests_update_unsupported_limit SET status = 'x' ORDER BY id LIMIT bad",
 				"UPDATE wptests_update_unsupported_limit SET status = 'x' ORDER BY id LIMIT 1, bad",
@@ -7976,18 +7975,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests simple UPDATE ORDER BY without LIMIT updates the same matched row set.
+	 * Tests simple UPDATE ORDER BY without LIMIT uses a ctid subquery.
 	 */
-	public function test_simple_update_order_by_without_limit_omits_ordering(): void {
+	public function test_simple_update_order_by_without_limit_uses_ctid_subquery(): void {
 		$driver = $this->create_driver();
 
 		$driver->query(
 			'CREATE TABLE wptests_update_ordered (
+				ctid INTEGER UNIQUE NOT NULL,
 				id INTEGER PRIMARY KEY,
 				status TEXT NOT NULL
 			)'
 		);
-		$driver->query( "INSERT INTO wptests_update_ordered (id, status) VALUES (1, 'draft'), (2, 'publish'), (3, 'draft')" );
+		$driver->query( "INSERT INTO wptests_update_ordered (ctid, id, status) VALUES (1, 1, 'draft'), (2, 2, 'publish'), (3, 3, 'draft')" );
 
 		$update = "UPDATE `wptests_update_ordered` SET `status` = 'archived' WHERE `status` = 'draft' ORDER BY `id` DESC";
 
@@ -7995,7 +7995,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'UPDATE "wptests_update_ordered" SET "status" = \'archived\' WHERE ("status" = \'draft\') AND ("status" IS DISTINCT FROM (\'archived\'))',
+					'sql'    => 'UPDATE "wptests_update_ordered" SET "status" = \'archived\' WHERE (ctid IN (SELECT ctid FROM "wptests_update_ordered" WHERE "status" = \'draft\' ORDER BY "id" DESC)) AND ("status" IS DISTINCT FROM (\'archived\'))',
 					'params' => array(),
 				),
 			),
@@ -8009,36 +8009,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests simple UPDATE ignores unsupported ORDER BY expressions without LIMIT.
+	 * Tests simple UPDATE translates expression ORDER BY clauses without LIMIT.
 	 */
-	public function test_simple_update_expression_order_by_without_limit_omits_ordering(): void {
+	public function test_simple_update_expression_order_by_without_limit_uses_ctid_subquery(): void {
 		$driver = $this->create_driver();
-
-		$driver->query(
-			'CREATE TABLE wptests_update_order_expression (
-				id INTEGER PRIMARY KEY,
-				status TEXT NOT NULL
-			)'
-		);
-		$driver->query( "INSERT INTO wptests_update_order_expression (id, status) VALUES (1, 'draft'), (2, 'publish'), (3, 'draft')" );
 
 		$update = "UPDATE wptests_update_order_expression SET `status` = 'archived' WHERE `status` = 'draft' ORDER BY LENGTH(`status`), `id` + 0 DESC";
 
-		$this->assertSame( 2, $driver->query( $update ) );
-		$this->assertSame(
-			array(
-				array(
-					'sql'    => 'UPDATE "wptests_update_order_expression" SET "status" = \'archived\' WHERE ("status" = \'draft\') AND ("status" IS DISTINCT FROM (\'archived\'))',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$update
 		);
 
-		$rows = $driver->query( 'SELECT id, status FROM wptests_update_order_expression ORDER BY id' );
-		$this->assertSame( 'archived', $rows[0]->status );
-		$this->assertSame( 'publish', $rows[1]->status );
-		$this->assertSame( 'archived', $rows[2]->status );
+		$this->assertStringStartsWith( 'UPDATE "wptests_update_order_expression" SET "status" = \'archived\' WHERE (ctid IN (SELECT ctid FROM "wptests_update_order_expression" WHERE "status" = \'draft\' ORDER BY ', $sql );
+		$this->assertStringContainsString( 'OCTET_LENGTH(CONVERT_TO(CAST("status" AS text), \'UTF8\'))', $sql );
+		$this->assertStringContainsString( ', "id" + 0 DESC)) AND ("status" IS DISTINCT FROM (\'archived\'))', $sql );
 	}
 
 	/**
@@ -8292,18 +8278,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests simple DELETE ORDER BY without LIMIT deletes the same matched row set.
+	 * Tests simple DELETE ORDER BY without LIMIT uses a ctid subquery.
 	 */
-	public function test_simple_delete_order_by_without_limit_omits_ordering(): void {
+	public function test_simple_delete_order_by_without_limit_uses_ctid_subquery(): void {
 		$driver = $this->create_driver();
 
 		$driver->query(
 			'CREATE TABLE wptests_delete_ordered (
+				ctid INTEGER UNIQUE NOT NULL,
 				id INTEGER PRIMARY KEY,
 				status TEXT NOT NULL
 			)'
 		);
-		$driver->query( "INSERT INTO wptests_delete_ordered (id, status) VALUES (1, 'stale'), (2, 'keep'), (3, 'stale')" );
+		$driver->query( "INSERT INTO wptests_delete_ordered (ctid, id, status) VALUES (1, 1, 'stale'), (2, 2, 'keep'), (3, 3, 'stale')" );
 
 		$delete = "DELETE FROM `wptests_delete_ordered` WHERE `status` = 'stale' ORDER BY `id` DESC";
 
@@ -8311,7 +8298,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'DELETE FROM "wptests_delete_ordered" WHERE "status" = \'stale\'',
+					'sql'    => 'DELETE FROM "wptests_delete_ordered" WHERE ctid IN (SELECT ctid FROM "wptests_delete_ordered" WHERE "status" = \'stale\' ORDER BY "id" DESC)',
 					'params' => array(),
 				),
 			),
@@ -8325,36 +8312,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests simple DELETE ignores unsupported ORDER BY expressions without LIMIT.
+	 * Tests simple DELETE translates expression ORDER BY clauses without LIMIT.
 	 */
-	public function test_simple_delete_expression_order_by_without_limit_omits_ordering(): void {
+	public function test_simple_delete_expression_order_by_without_limit_uses_ctid_subquery(): void {
 		$driver = $this->create_driver();
-
-		$driver->query(
-			'CREATE TABLE wptests_delete_order_expression (
-				id INTEGER PRIMARY KEY,
-				status TEXT NOT NULL
-			)'
-		);
-		$driver->query( "INSERT INTO wptests_delete_order_expression (id, status) VALUES (1, 'stale'), (2, 'keep'), (3, 'stale')" );
 
 		$delete = "DELETE FROM wptests_delete_order_expression WHERE `status` = 'stale' ORDER BY LENGTH(`status`), `id` + 0 DESC";
 
-		$this->assertSame( 2, $driver->query( $delete ) );
-		$this->assertSame(
-			array(
-				array(
-					'sql'    => 'DELETE FROM "wptests_delete_order_expression" WHERE "status" = \'stale\'',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_delete_query',
+			$delete
 		);
 
-		$rows = $driver->query( 'SELECT id, status FROM wptests_delete_order_expression ORDER BY id' );
-		$this->assertCount( 1, $rows );
-		$this->assertSame( '2', $rows[0]->id );
-		$this->assertSame( 'keep', $rows[0]->status );
+		$this->assertStringStartsWith( 'DELETE FROM "wptests_delete_order_expression" WHERE ctid IN (SELECT ctid FROM "wptests_delete_order_expression" WHERE "status" = \'stale\' ORDER BY ', $sql );
+		$this->assertStringContainsString( 'OCTET_LENGTH(CONVERT_TO(CAST("status" AS text), \'UTF8\'))', $sql );
+		$this->assertStringContainsString( ', "id" + 0 DESC)', $sql );
 	}
 
 	/**
