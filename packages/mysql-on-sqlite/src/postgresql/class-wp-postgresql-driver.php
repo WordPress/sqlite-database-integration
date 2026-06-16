@@ -20025,9 +20025,10 @@ WHERE option_name IN (
 	 *
 	 * PostgreSQL UPDATE ... FROM can represent MySQL single-target UPDATE
 	 * statements whose extra table references only qualify the target rows.
-	 * Assignments to any non-target table, NATURAL/RIGHT joins, and limited
-	 * joined updates remain unsupported. ORDER BY without LIMIT is validated and
-	 * omitted because it does not change the affected row set.
+	 * Assignments to any non-target table and NATURAL/RIGHT joins remain
+	 * unsupported. Bounded single-target joined updates select target ctids
+	 * through a derived source before updating; ORDER BY without LIMIT is
+	 * validated and omitted because it does not change the affected row set.
 	 *
 	 * @param string           $query         MySQL query.
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
@@ -20125,14 +20126,15 @@ WHERE option_name IN (
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
 		if (
-			null !== $limit_position
-			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
+			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
 			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
 		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $order_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -20161,21 +20163,9 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$update_set_clause = $this->translate_simple_mysql_update_set_clause(
-			$table_name,
-			$target_reference_alias,
-			$tokens,
-			$set_position + 1,
-			$set_end,
-			$scope
-		);
-		if ( null === $update_set_clause ) {
-			return null;
-		}
-
 		$predicates = $join_predicates;
 		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $statement_end;
+			$where_end = $order_position ?? $limit_position ?? $statement_end;
 			if (
 				$where_position + 1 >= $where_end
 				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
@@ -20191,6 +20181,87 @@ WHERE option_name IN (
 			);
 			$predicates[] = $where_sql['sql'];
 		}
+
+		if ( null !== $limit_position ) {
+			$update_set_clause = $this->translate_mysql_joined_update_set_clause_for_derived_source(
+				$table_name,
+				$target_reference_alias,
+				$tokens,
+				$set_position + 1,
+				$set_end,
+				$scope
+			);
+			if ( null === $update_set_clause ) {
+				return null;
+			}
+
+			$order_sql = '';
+			if ( null !== $order_position ) {
+				$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
+					$tokens,
+					$order_position,
+					$limit_position,
+					$scope
+				);
+				if ( null === $order_sql ) {
+					return null;
+				}
+			}
+
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+			if ( null === $limit_sql ) {
+				return null;
+			}
+
+			$source_alias      = 'mysql_update_values';
+			$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
+			$target_ctid_alias = 'mysql_update_target_ctid';
+			$target_alias_sql  = $this->connection->quote_identifier( $target_reference_alias );
+			$select_values     = array_merge(
+				array(
+					sprintf(
+						'%s.ctid AS %s',
+						$target_alias_sql,
+						$this->connection->quote_identifier( $target_ctid_alias )
+					),
+				),
+				$update_set_clause['select_sql']
+			);
+			$source_where_sql  = empty( $predicates ) ? '' : ' WHERE (' . implode( ') AND (', $predicates ) . ')';
+			$source_sql        = sprintf(
+				'(SELECT %s FROM %s%s%s%s) AS %s',
+				implode( ', ', $select_values ),
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $source_start, $set_position ),
+				$source_where_sql,
+				$order_sql,
+				$limit_sql,
+				$source_alias_sql
+			);
+
+			return sprintf(
+				'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
+				$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
+				$update_set_clause['set_sql'],
+				$source_sql,
+				$this->get_postgresql_dml_ctid_reference_sql( $alias ),
+				$source_alias_sql,
+				$this->connection->quote_identifier( $target_ctid_alias ),
+				$update_set_clause['changed_predicate_sql']
+			);
+		}
+
+		$update_set_clause = $this->translate_simple_mysql_update_set_clause(
+			$table_name,
+			$target_reference_alias,
+			$tokens,
+			$set_position + 1,
+			$set_end,
+			$scope
+		);
+		if ( null === $update_set_clause ) {
+			return null;
+		}
+
 		$predicates[] = $update_set_clause['changed_predicate_sql'];
 
 		return sprintf(
@@ -35890,6 +35961,47 @@ FROM (
 	}
 
 	/**
+	 * Check that qualified references in a simple expression use statement aliases.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @param array            $scope  Statement table scope.
+	 * @return bool Whether all qualified references use the supplied scope.
+	 */
+	private function mysql_expression_qualified_references_resolve_to_scope( array $tokens, int $start, int $end, array $scope ): bool {
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( $this->is_mysql_qualified_reference_suffix_position( $tokens, $position, $start ) ) {
+				continue;
+			}
+
+			if ( null === $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null ) ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null ) ) {
+				continue;
+			}
+
+			$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+			if ( null === $reference ) {
+				continue;
+			}
+
+			if (
+				null !== $reference['qualifier']
+				&& ! isset( $scope['aliases'][ strtolower( $reference['qualifier'] ) ] )
+			) {
+				return false;
+			}
+
+			$position = $reference['end'] - 1;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Validate a token for a simple expression fragment.
 	 *
 	 * @param WP_MySQL_Token $token MySQL token.
@@ -36095,6 +36207,65 @@ FROM (
 		}
 
 		return empty( $items ) ? null : ' ORDER BY ' . implode( ', ', $items );
+	}
+
+	/**
+	 * Translate a joined DML ORDER BY clause against the statement table scope.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  ORDER token position.
+	 * @param int              $end    Final clause token position, exclusive.
+	 * @param array            $scope  Statement table scope.
+	 * @return string|null PostgreSQL ORDER BY clause SQL, or null when unsupported.
+	 */
+	private function translate_mysql_joined_dml_order_by_clause_to_postgresql( array $tokens, int $start, int $end, array $scope ): ?string {
+		if (
+			$start + 2 >= $end
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== ( $tokens[ $start ]->id ?? null )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== ( $tokens[ $start + 1 ]->id ?? null )
+		) {
+			return null;
+		}
+
+		$item_ranges = $this->split_top_level_mysql_arguments( $tokens, $start + 2, $end );
+		if ( null === $item_ranges || empty( $item_ranges ) ) {
+			return null;
+		}
+
+		$items = array();
+		foreach ( $item_ranges as $item_range ) {
+			$item_start = $item_range['start'];
+			$item_end   = $item_range['end'];
+			$direction  = '';
+			if (
+				$item_start < $item_end
+				&& (
+					WP_MySQL_Lexer::ASC_SYMBOL === ( $tokens[ $item_end - 1 ]->id ?? null )
+					|| WP_MySQL_Lexer::DESC_SYMBOL === ( $tokens[ $item_end - 1 ]->id ?? null )
+				)
+			) {
+				$direction = ' ' . strtoupper( $tokens[ $item_end - 1 ]->get_bytes() );
+				--$item_end;
+			}
+
+			if (
+				$item_start >= $item_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $item_start, $item_end )
+				|| ! $this->mysql_expression_qualified_references_resolve_to_scope( $tokens, $item_start, $item_end, $scope )
+			) {
+				return null;
+			}
+
+			$expression = $this->translate_mysql_expression_token_sequence_to_postgresql(
+				$tokens,
+				$item_start,
+				$item_end,
+				$scope
+			);
+			$items[]    = $expression['sql'] . $direction;
+		}
+
+		return ' ORDER BY ' . implode( ', ', $items );
 	}
 
 	/**

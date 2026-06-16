@@ -5648,6 +5648,69 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests bounded joined UPDATE ORDER BY/LIMIT forms update the intended matched row slice.
+	 */
+	public function test_joined_update_order_by_limit_updates_ordered_slice(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_limit (
+				ctid INTEGER UNIQUE NOT NULL,
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_limit_meta (
+				post_id INTEGER NOT NULL,
+				priority INTEGER NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_update_joined_limit (ctid, id, status) VALUES
+				(1, 1, 'queued'),
+				(2, 2, 'queued'),
+				(3, 3, 'queued'),
+				(4, 4, 'done')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_update_joined_limit_meta (post_id, priority, meta_value) VALUES
+				(1, 30, 'third'),
+				(2, 10, 'first'),
+				(3, 20, 'second'),
+				(4, 1, 'skip')"
+		);
+
+		$update = "UPDATE wptests_update_joined_limit AS p
+			JOIN wptests_update_joined_limit_meta AS pm ON pm.post_id = p.id
+			SET p.status = pm.meta_value
+			WHERE p.status = 'queued'
+			ORDER BY pm.priority ASC, p.id DESC
+			LIMIT 1, 2";
+
+		$this->assertSame( 2, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM (SELECT "p".ctid AS "mysql_update_target_ctid", pm.meta_value AS "mysql_update_value_0"', $sql );
+		$this->assertStringContainsString( "WHERE (pm.post_id = p.id) AND (p.status = 'queued') ORDER BY pm.priority ASC, p.id DESC LIMIT 2 OFFSET 1", $sql );
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_joined_limit ORDER BY id' );
+		$this->assertSame( 'third', $rows[0]->status );
+		$this->assertSame( 'queued', $rows[1]->status );
+		$this->assertSame( 'second', $rows[2]->status );
+		$this->assertSame( 'done', $rows[3]->status );
+
+		$comma_update = "UPDATE wptests_update_joined_limit AS p, wptests_update_joined_limit_meta AS pm
+			SET p.status = 'limited'
+			WHERE pm.post_id = p.id AND p.status = 'queued'
+			LIMIT 1";
+
+		$this->assertSame( 1, $driver->query( $comma_update ) );
+		$this->assertStringContainsString( 'LIMIT 1', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
 	 * Tests MySQL inner joined UPDATE statements support derived-table sources.
 	 */
 	public function test_inner_join_update_with_derived_source_is_translated_to_postgresql(): void {
@@ -5998,15 +6061,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$updates = array(
-			'inner_join_order_limit' => 'UPDATE wptests_update_joined_order AS p
-				JOIN wptests_update_joined_order_meta AS pm ON pm.post_id = p.id
-				SET p.status = pm.meta_value
-				ORDER BY p.id ASC
-				LIMIT 1',
-			'comma_join_limit'      => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
-				SET p.status = pm.meta_value
-				WHERE pm.post_id = p.id
-				LIMIT 1',
 			'multi_target_limit'    => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
 				SET p.status = pm.meta_value, pm.meta_value = p.status
 				WHERE pm.post_id = p.id
