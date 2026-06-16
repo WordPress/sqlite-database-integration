@@ -1077,17 +1077,17 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
 		}
 
-			if ( $this->contains_unsupported_mysql_common_function_query( $query ) ) {
-				throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-			}
+		if ( $this->contains_unsupported_mysql_common_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
+		}
 
-			if ( $this->contains_unsupported_mysql_group_concat_function_query( $query ) ) {
-				throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-			}
+		if ( $this->contains_unsupported_mysql_group_concat_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
+		}
 
-			if ( $this->contains_unsupported_mysql_week_function_query( $query ) ) {
-				throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
-			}
+		if ( $this->contains_unsupported_mysql_week_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
+		}
 
 		$unsupported_mysql_administration_statement = $this->get_unsupported_mysql_administration_statement_message( $query );
 		if ( null !== $unsupported_mysql_administration_statement ) {
@@ -2843,8 +2843,8 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( $this->apply_mysql_set_names_tokens( $tokens ) || $this->apply_mysql_set_charset_tokens( $tokens ) ) {
-			$this->last_result      = 0;
-			$this->last_column_meta = array();
+			$this->last_result = 0;
+			$this->clear_last_column_meta();
 			return $this->last_result;
 		}
 
@@ -7160,6 +7160,8 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
+		$ranges = $this->merge_mysql_dbdelta_order_by_alter_ranges( $tokens, $ranges );
+
 		if ( $this->contains_unsupported_mysql_column_attribute_alter_actions( $tokens, $ranges ) ) {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
@@ -7736,6 +7738,17 @@ $wp_mysql_on_update$',
 				}
 				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
 					return $this->translate_mysql_dbdelta_rename_index_alter_action( $table_name, $tokens, $start, $end );
+				}
+				return null;
+
+			case WP_MySQL_Lexer::ORDER_SYMBOL:
+				if ( $this->is_supported_mysql_dbdelta_order_by_alter_action( $table_name, $tokens, $start, $end ) ) {
+					return array(
+						'statements' => array(),
+						'metadata'   => array(
+							'operation' => 'noop',
+						),
+					);
 				}
 				return null;
 		}
@@ -9647,6 +9660,122 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Merge ALTER TABLE ORDER BY ranges split at order-list commas.
+	 *
+	 * ORDER BY is a MySQL physical row-ordering hint. PostgreSQL and SQLite do
+	 * not preserve it, but the SQLite backend accepts it as a schema no-op. The
+	 * generic top-level comma splitter cannot know that ORDER BY owns following
+	 * comma-separated order terms, so merge it to the end of the ALTER action
+	 * list and let the ORDER BY validator decide whether the full range is valid.
+	 *
+	 * @param WP_MySQL_Token[]                 $tokens Clause token stream.
+	 * @param array<int,array{start:int,end:int}> $ranges Top-level action ranges.
+	 * @return array<int,array{start:int,end:int}> Normalized ranges.
+	 */
+	private function merge_mysql_dbdelta_order_by_alter_ranges( array $tokens, array $ranges ): array {
+		$normalized_ranges = array();
+		$range_count       = count( $ranges );
+
+		for ( $i = 0; $i < $range_count; ++$i ) {
+			$range = $ranges[ $i ];
+			if ( ! isset( $tokens[ $range['start'] ] ) || WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $range['start'] ]->id ) {
+				$normalized_ranges[] = $range;
+				continue;
+			}
+
+			for ( $j = $i + 1; $j < $range_count; ++$j ) {
+				$range['end'] = $ranges[ $j ]['end'];
+			}
+
+			$normalized_ranges[] = $range;
+			return $normalized_ranges;
+		}
+
+		return $normalized_ranges;
+	}
+
+	/**
+	 * Check whether an ALTER TABLE ORDER BY clause can be accepted as a no-op.
+	 *
+	 * @param string           $table_name Target table name.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $start      First action token.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return bool Whether this ORDER BY clause is syntactically supported.
+	 */
+	private function is_supported_mysql_dbdelta_order_by_alter_action( string $table_name, array $tokens, int $start, int $end ): bool {
+		if (
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return false;
+		}
+
+		$position = $start + 2;
+		if ( $position >= $end ) {
+			return false;
+		}
+
+		while ( $position < $end ) {
+			if ( ! $this->consume_mysql_dbdelta_order_by_alter_key_part( $table_name, $tokens, $position, $end ) ) {
+				return false;
+			}
+
+			if ( $position === $end ) {
+				return true;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				return false;
+			}
+
+			++$position;
+			if ( $position >= $end ) {
+				return false;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Consume one ALTER TABLE ORDER BY key part.
+	 *
+	 * @param string           $table_name Target table name.
+	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
+	 * @param int              $position   Current token position, updated on success.
+	 * @param int              $end        Final action token, exclusive.
+	 * @return bool Whether a valid key part was consumed.
+	 */
+	private function consume_mysql_dbdelta_order_by_alter_key_part( string $table_name, array $tokens, int &$position, int $end ): bool {
+		$identifier = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $identifier ) {
+			return false;
+		}
+
+		++$position;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) {
+			$column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $column_name || 0 !== strcasecmp( $identifier, $table_name ) ) {
+				return false;
+			}
+
+			$position += 2;
+		}
+
+		if (
+			$position < $end
+			&& isset( $tokens[ $position ] )
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::ASC_SYMBOL, WP_MySQL_Lexer::DESC_SYMBOL ), true )
+		) {
+			++$position;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Check whether a query starts with ALTER TABLE.
 	 *
 	 * @param string $query SQL query.
@@ -10911,8 +11040,8 @@ $wp_mysql_on_update$',
 	private function handle_mysql_procedure_query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 		if ( preg_match( '/^\s*DROP\s+PROCEDURE\s+IF\s+EXISTS\s+`?([A-Za-z0-9_]+)`?\s*;?\s*$/i', $query, $matches ) ) {
 			unset( $this->procedures[ strtolower( $matches[1] ) ] );
-			$this->last_result      = 0;
-			$this->last_column_meta = array();
+			$this->last_result = 0;
+			$this->clear_last_column_meta();
 			return $this->last_result;
 		}
 
@@ -11130,7 +11259,7 @@ $wp_mysql_on_update$',
 	 * Parse a supported MySQL SHOW TABLE STATUS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{database: string, filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null, conditions?: array<int,array{column: string, operator: string, value: string}>}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
+	 * @return array{database: string, schema: string, filter_type: string, filter_column: string|null, filter_pattern: string|null, filter_threshold: string|null, conditions?: array<int,array{column: string, operator: string, value: string}>}|null SHOW TABLE STATUS options, or null when this is not SHOW TABLE STATUS.
 	 */
 	private function get_show_table_status_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -11162,14 +11291,18 @@ $wp_mysql_on_update$',
 
 		if (
 			0 !== strcasecmp( $database_name, $this->main_db_name )
+			&& 0 !== strcasecmp( $database_name, 'public' )
 			&& 0 !== strcasecmp( $database_name, 'information_schema' )
 		) {
 			throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
 		}
 
+		$schema_name = 0 === strcasecmp( $database_name, 'information_schema' ) ? 'information_schema' : 'public';
+
 		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return array(
 				'database'         => $database_name,
+				'schema'           => $schema_name,
 				'filter_type'      => 'all',
 				'filter_column'    => null,
 				'filter_pattern'   => null,
@@ -11185,6 +11318,7 @@ $wp_mysql_on_update$',
 		) {
 			return array(
 				'database'         => $database_name,
+				'schema'           => $schema_name,
 				'filter_type'      => 'like',
 				'filter_column'    => 'Name',
 				'filter_pattern'   => $tokens[ $position + 1 ]->get_value(),
@@ -11199,6 +11333,7 @@ $wp_mysql_on_update$',
 			$filter = $this->get_show_table_status_where_filter( $tokens, $position );
 			if ( null !== $filter ) {
 				$filter['database'] = $database_name;
+				$filter['schema']   = $schema_name;
 				return $filter;
 			}
 		}
@@ -14526,7 +14661,7 @@ ORDER BY table_name';
 		}
 
 		$rows = array();
-		foreach ( $this->get_show_table_status_catalog_rows() as $catalog_row ) {
+		foreach ( $this->get_show_table_status_catalog_rows( $show_table_status_query['schema'] ) as $catalog_row ) {
 			$table_name      = (string) $catalog_row['table_name'];
 			$identity_column = isset( $catalog_row['identity_column'] ) && null !== $catalog_row['identity_column']
 				? (string) $catalog_row['identity_column']
@@ -14536,7 +14671,7 @@ ORDER BY table_name';
 				$table_name,
 				null === $identity_column
 					? null
-					: $this->get_show_table_status_auto_increment_value( $table_name, $identity_column ),
+					: $this->get_show_table_status_auto_increment_value( $table_name, $identity_column, $show_table_status_query['schema'] ),
 				(string) ( $catalog_row['table_comment'] ?? '' )
 			);
 		}
@@ -15167,9 +15302,10 @@ ORDER BY table_name';
 	/**
 	 * Get base table rows used by SHOW TABLE STATUS.
 	 *
+	 * @param string $schema_name Backend schema name.
 	 * @return array[] Catalog rows.
 	 */
-	private function get_show_table_status_catalog_rows(): array {
+	private function get_show_table_status_catalog_rows( string $schema_name ): array {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$sql        = sprintf(
@@ -15199,7 +15335,7 @@ ORDER BY table_name';
 			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
 		);
 		$params = array(
-			'public',
+			$schema_name,
 			'BASE TABLE',
 			self::MYSQL_COLUMN_METADATA_TABLE,
 			self::MYSQL_INDEX_METADATA_TABLE,
@@ -27428,11 +27564,37 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if ( null !== ( $column_metadata['column_default'] ?? null ) ) {
-			return $this->connection->quote( (string) $column_metadata['column_default'] );
+		$default_sql = $this->get_mysql_dml_default_sql_from_metadata( $column_metadata );
+		if ( null !== $default_sql ) {
+			return $default_sql;
 		}
 
 		return $this->get_mysql_implicit_dml_default_sql( (string) ( $column_metadata['column_type'] ?? '' ) );
+	}
+
+	/**
+	 * Get SQL for a stored MySQL metadata default in DML contexts.
+	 *
+	 * @param array $column_metadata Column metadata row.
+	 * @return string|null PostgreSQL SQL expression, or null when no explicit default exists.
+	 */
+	private function get_mysql_dml_default_sql_from_metadata( array $column_metadata ): ?string {
+		if ( null === ( $column_metadata['column_default'] ?? null ) ) {
+			return null;
+		}
+
+		$default = (string) $column_metadata['column_default'];
+		if (
+			$this->is_mysql_current_timestamp_default_metadata( $default )
+			|| $this->mysql_column_extra_has_default_generated( (string) ( $column_metadata['extra'] ?? '' ) )
+		) {
+			$translated_default = $this->translate_mysql_default_fragment( $default );
+			if ( null !== $translated_default ) {
+				return $translated_default['sql'];
+			}
+		}
+
+		return $this->connection->quote( $default );
 	}
 
 	/**
@@ -37250,6 +37412,10 @@ FROM (
 			return null;
 		}
 
+		if ( $this->contains_unsupported_mysql_common_function( $tokens, 0, $statement_end ) ) {
+			return null;
+		}
+
 		if ( ! $this->needs_mysql_compatible_rewrite( $tokens, 0, $statement_end ) ) {
 			return null;
 		}
@@ -38541,8 +38707,9 @@ FROM (
 	 * @return string PostgreSQL SQL expression.
 	 */
 	private function get_mysql_dml_default_assignment_sql_for_column( array $column_metadata ): string {
-		if ( null !== ( $column_metadata['column_default'] ?? null ) ) {
-			return $this->connection->quote( (string) $column_metadata['column_default'] );
+		$default_sql = $this->get_mysql_dml_default_sql_from_metadata( $column_metadata );
+		if ( null !== $default_sql ) {
+			return $default_sql;
 		}
 
 		return 'NULL';
@@ -40977,6 +41144,8 @@ FROM (
 
 			$escape_sql   = ' ESCAPE ' . $this->translate_mysql_token_to_postgresql( $tokens[ $pattern_end + 1 ] );
 			$pattern_end += 2;
+		} else {
+			$escape_sql = $this->get_mysql_no_backslash_like_escape_sql();
 		}
 
 		return array(
@@ -40984,6 +41153,19 @@ FROM (
 			'escape_sql'  => $escape_sql,
 			'end'         => $pattern_end,
 		);
+	}
+
+	/**
+	 * Get the PostgreSQL LIKE escape clause needed for NO_BACKSLASH_ESCAPES.
+	 *
+	 * PostgreSQL treats backslash as the default LIKE escape character. MySQL's
+	 * NO_BACKSLASH_ESCAPES mode removes that default unless an explicit ESCAPE
+	 * clause is present.
+	 *
+	 * @return string PostgreSQL ESCAPE clause, or an empty string.
+	 */
+	private function get_mysql_no_backslash_like_escape_sql(): string {
+		return $this->is_mysql_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ? " ESCAPE ''" : '';
 	}
 
 	/**
@@ -41494,12 +41676,16 @@ FROM (
 			return null;
 		}
 
+		$has_explicit_escape = isset( $tokens[ $operator_position + 2 ] )
+			&& WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $operator_position + 2 ]->id;
+
 		return array(
 			'sql'      => sprintf(
-				'CAST(%s AS text)%s LIKE %s',
+				'CAST(%s AS text)%s LIKE %s%s',
 				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $position, $cast_bounds['close'] + 1 ),
 				$not_sql,
-				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $operator_position + 1, $pattern_end )
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $operator_position + 1, $pattern_end ),
+				$has_explicit_escape ? '' : $this->get_mysql_no_backslash_like_escape_sql()
 			),
 			'position' => $pattern_end - 1,
 		);
@@ -43603,16 +43789,25 @@ FROM (
 				$translated_fragment = $this->translate_mysql_convert_using_to_postgresql( $tokens, $i, $end );
 			}
 
+			$append_no_backslash_like_escape = false;
 			if ( null !== $translated_fragment ) {
 				$fragment          = $translated_fragment['sql'];
 				$fragment_token_id = $translated_fragment['token_id'];
 				$i                 = $translated_fragment['position'];
 			} else {
-				$fragment = $this->translate_mysql_token_to_postgresql( $token, $tokens[ $i + 1 ] ?? null );
+				$fragment = $this->translate_mysql_token_to_postgresql(
+					$token,
+					$tokens[ $i + 1 ] ?? null
+				);
+				$append_no_backslash_like_escape = true;
 			}
 
 			if ( '' === $fragment ) {
 				continue;
+			}
+
+			if ( $append_no_backslash_like_escape && $this->should_append_mysql_no_backslash_like_escape_sql( $tokens, $i, $end ) ) {
+				$fragment .= $this->get_mysql_no_backslash_like_escape_sql();
 			}
 
 			if ( '' === $sql ) {
@@ -43627,6 +43822,27 @@ FROM (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Check whether a translated string literal is a LIKE pattern needing ESCAPE ''.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $position Current token position.
+	 * @param int              $end Final token position, exclusive.
+	 * @return bool Whether to append an implicit NO_BACKSLASH_ESCAPES clause.
+	 */
+	private function should_append_mysql_no_backslash_like_escape_sql( array $tokens, int $position, int $end ): bool {
+		return '' !== $this->get_mysql_no_backslash_like_escape_sql()
+			&& isset( $tokens[ $position - 1 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position - 1 ]->id
+			&& isset( $tokens[ $position ] )
+			&& $this->is_mysql_string_literal_token( $tokens[ $position ] )
+			&& (
+				! isset( $tokens[ $position + 1 ] )
+				|| $position + 1 >= $end
+				|| WP_MySQL_Lexer::ESCAPE_SYMBOL !== $tokens[ $position + 1 ]->id
+			);
 	}
 
 	/**
@@ -45511,6 +45727,7 @@ FROM (
 			'char_length',
 			'character_length',
 			'concat',
+			'concat_ws',
 			'connection_id',
 			'curdate',
 			'current_user',
@@ -45540,6 +45757,7 @@ FROM (
 			'md5',
 			'monthnum',
 			'now',
+			'nullif',
 			'release_lock',
 			'replace',
 			'regexp',
@@ -45604,7 +45822,7 @@ FROM (
 			$tokens,
 			0,
 			null === $statement_end ? count( $tokens ) : $statement_end
-			);
+		);
 	}
 
 	/**
@@ -45756,6 +45974,9 @@ FROM (
 					)
 				) . ')';
 
+			case 'concat_ws':
+				return $count >= 2 ? $this->get_postgresql_mysql_concat_ws_sql( $argument_sql ) : null;
+
 			case 'connection_id':
 				return 0 === $count ? self::MYSQL_CONNECTION_ID : null;
 
@@ -45818,6 +46039,9 @@ FROM (
 
 			case 'if':
 				return null;
+
+			case 'nullif':
+				return 2 === $count ? sprintf( 'NULLIF(%s, %s)', $argument_sql[0], $argument_sql[1] ) : null;
 
 			case 'least':
 			case 'greatest':
@@ -46202,6 +46426,42 @@ $wp_mysql_json_valid$'
 			$prefix_sql,
 			$separator_sql,
 			$length_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL CONCAT_WS(separator, value, ...).
+	 *
+	 * MySQL skips NULL values after the separator, keeps empty strings, and
+	 * returns NULL only when the separator itself is NULL.
+	 *
+	 * @param string[] $argument_sql Translated PostgreSQL arguments.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_concat_ws_sql( array $argument_sql ): string {
+		$separator_sql  = $argument_sql[0];
+		$value_sql      = array_slice( $argument_sql, 1 );
+		$fragments      = array();
+		$seen_value_sql = array();
+
+		foreach ( $value_sql as $index => $sql ) {
+			if ( $index > 0 ) {
+				$fragments[] = sprintf(
+					'CASE WHEN (%1$s) AND %2$s IS NOT NULL THEN CAST(%3$s AS text) ELSE \'\' END',
+					implode( ' OR ', $seen_value_sql ),
+					$sql,
+					$separator_sql
+				);
+			}
+
+			$fragments[]      = sprintf( 'COALESCE(CAST(%s AS text), \'\')', $sql );
+			$seen_value_sql[] = sprintf( '%s IS NOT NULL', $sql );
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE (%2$s) END',
+			$separator_sql,
+			implode( ' || ', $fragments )
 		);
 	}
 

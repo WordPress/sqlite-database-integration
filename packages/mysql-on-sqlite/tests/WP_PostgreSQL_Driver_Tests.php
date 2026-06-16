@@ -569,6 +569,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict INSERT translates CURRENT_TIMESTAMP metadata defaults as expressions.
+	 */
+	public function test_non_strict_insert_translates_current_timestamp_defaults_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+
+		$driver->query(
+			'CREATE TABLE wptests_insert_current_timestamp_defaults (
+				id INTEGER PRIMARY KEY,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_insert_current_timestamp_defaults (
+				id bigint(20) unsigned NOT NULL,
+				created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at timestamp NOT NULL DEFAULT (now()),
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_simple_mysql_insert_query',
+			'INSERT INTO `wptests_insert_current_timestamp_defaults` (`id`) VALUES (1)'
+		);
+
+		$this->assertIsArray( $translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_current_timestamp_defaults" ("id", "created_at", "updated_at") VALUES (1, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\'), TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\'))',
+			$translation['sql']
+		);
+	}
+
+	/**
 	 * Tests DML column metadata is cached and invalidated after metadata changes.
 	 */
 	public function test_dml_column_metadata_cache_reuses_rows_until_metadata_changes(): void {
@@ -5643,6 +5679,62 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE translates CURRENT_TIMESTAMP metadata defaults as expressions.
+	 */
+	public function test_upsert_default_assignments_translate_current_timestamp_defaults_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_upsert_current_timestamp_defaults (
+				id INTEGER PRIMARY KEY,
+				updated_at TEXT NOT NULL,
+				touched_at TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_current_timestamp_defaults (
+				id bigint(20) unsigned NOT NULL,
+				updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				touched_at timestamp NOT NULL DEFAULT (now()),
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$default_column_upsert = "INSERT INTO `wptests_upsert_current_timestamp_defaults` (`id`, `updated_at`, `touched_at`)
+			VALUES (1, '2001-01-01 00:00:00', '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = DEFAULT(`updated_at`),
+			                        `touched_at` = DEFAULT(`touched_at`)";
+
+		$default_column_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$default_column_upsert
+		);
+
+		$this->assertIsArray( $default_column_translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_current_timestamp_defaults" ("id", "updated_at", "touched_at") VALUES (1, \'2001-01-01 00:00:00\', \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\'), "touched_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			$default_column_translation['sql']
+		);
+
+		$default_keyword_upsert = "INSERT INTO `wptests_upsert_current_timestamp_defaults` (`id`, `updated_at`, `touched_at`)
+			VALUES (1, '2001-01-01 00:00:00', '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = DEFAULT";
+
+		$default_keyword_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$default_keyword_upsert
+		);
+
+		$this->assertIsArray( $default_keyword_translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_current_timestamp_defaults" ("id", "updated_at", "touched_at") VALUES (1, \'2001-01-01 00:00:00\', \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			$default_keyword_translation['sql']
+		);
+	}
+
+	/**
 	 * Tests INSERT ... SET upserts support qualified insert assignment targets.
 	 */
 	public function test_insert_set_upsert_supports_qualified_insert_assignment_targets(): void {
@@ -9978,7 +10070,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			IF(1, 'yes', 'no') AS if_numeric,
 			IF(1 = 0, 'yes', 'no') AS if_predicate,
 			IFNULL(NULL, 'fallback') AS ifnull_value,
+			NULLIF('same', 'same') AS nullif_value,
+			COALESCE(NULL, 'first', 'second') AS coalesce_value,
 			CONCAT('wp', '_', 'db') AS concat_value,
+			CONCAT_WS('-', 'wp', NULL, 'db') AS concat_ws_value,
 			CHAR_LENGTH('hello') AS char_length_value,
 			CHARACTER_LENGTH('hello') AS character_length_value,
 			SUBSTRING('abcdef', 2, 3) AS substring_value,
@@ -10018,7 +10113,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "THEN 'yes' ELSE 'no' END AS if_numeric", $sql );
 		$this->assertStringContainsString( "CASE WHEN (1 = 0) THEN 'yes' ELSE 'no' END AS if_predicate", $sql );
 		$this->assertStringContainsString( "COALESCE(NULL, 'fallback') AS ifnull_value", $sql );
+		$this->assertStringContainsString( "NULLIF('same', 'same') AS nullif_value", $sql );
+		$this->assertStringContainsString( "COALESCE(NULL, 'first', 'second') AS coalesce_value", $sql );
 		$this->assertStringContainsString( "(CAST('wp' AS text) || CAST('_' AS text) || CAST('db' AS text)) AS concat_value", $sql );
+		$this->assertStringContainsString( "CASE WHEN '-' IS NULL THEN NULL ELSE", $sql );
+		$this->assertStringContainsString( "COALESCE(CAST('wp' AS text), '')", $sql );
+		$this->assertStringContainsString( "THEN CAST('-' AS text) ELSE '' END", $sql );
+		$this->assertStringContainsString( "COALESCE(CAST('db' AS text), '')", $sql );
+		$this->assertStringContainsString( 'END AS concat_ws_value', $sql );
 		$this->assertStringContainsString( "CHAR_LENGTH(CAST('hello' AS text)) AS char_length_value", $sql );
 		$this->assertStringContainsString( "CHAR_LENGTH(CAST('hello' AS text)) AS character_length_value", $sql );
 		$this->assertStringContainsString( "SUBSTRING(CAST('abcdef' AS text) FROM CASE WHEN CAST(2 AS integer) > 0 THEN CAST(2 AS integer) WHEN CAST(2 AS integer) < 0 THEN CHAR_LENGTH(CAST('abcdef' AS text)) + CAST(2 AS integer) + 1 ELSE 0 END FOR CAST(3 AS integer)) END AS substring_value", $sql );
@@ -10053,6 +10155,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
 		$this->assertStringNotContainsString( 'IFNULL', $sql );
 		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+		$this->assertStringNotContainsString( 'CONCAT_WS', $sql );
 	}
 
 	/**
@@ -10321,16 +10424,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
 			'translate_mysql_compatible_query',
-			'SELECT IFNULL(primary_value, fallback_value) AS selected_value, CONCAT(prefix, suffix) AS joined_value, CHAR_LENGTH(display_name) AS name_length, LENGTH(display_name) AS byte_length FROM runtime_names'
+			"SELECT IFNULL(primary_value, fallback_value) AS selected_value, NULLIF(primary_value, fallback_value) AS nullif_value, CONCAT(prefix, suffix) AS joined_value, CONCAT_WS('-', prefix, NULL, suffix) AS joined_ws_value, CHAR_LENGTH(display_name) AS name_length, LENGTH(display_name) AS byte_length FROM runtime_names"
 		);
 
 		$this->assertNotNull( $sql );
 		$this->assertStringContainsString( 'COALESCE(primary_value, fallback_value) AS selected_value', $sql );
+		$this->assertStringContainsString( 'NULLIF(primary_value, fallback_value) AS nullif_value', $sql );
 		$this->assertStringContainsString( '(CAST(prefix AS text) || CAST(suffix AS text)) AS joined_value', $sql );
+		$this->assertStringContainsString( "CASE WHEN '-' IS NULL THEN NULL ELSE", $sql );
+		$this->assertStringContainsString( "COALESCE(CAST(prefix AS text), '')", $sql );
+		$this->assertStringContainsString( "COALESCE(CAST(suffix AS text), '')", $sql );
+		$this->assertStringContainsString( 'END AS joined_ws_value', $sql );
 		$this->assertStringContainsString( 'CHAR_LENGTH(CAST(display_name AS text)) AS name_length', $sql );
 		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST(display_name AS text), 'UTF8')) END AS byte_length", $sql );
 		$this->assertStringNotContainsString( 'IFNULL', $sql );
 		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+		$this->assertStringNotContainsString( 'CONCAT_WS', $sql );
+	}
+
+	/**
+	 * Tests MySQL CONCAT_WS() skips NULL values while preserving empty strings.
+	 */
+	public function test_concat_ws_runtime_function_executes_mysql_null_semantics(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query(
+			"SELECT
+				CONCAT_WS('-', 'wp', NULL, 'db') AS skipped_null,
+				CONCAT_WS(',', '', NULL, 'tail') AS empty_string_kept,
+				CONCAT_WS(NULL, 'a', 'b') AS null_separator,
+				CONCAT_WS('|', NULL, NULL) AS all_values_null"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wp-db', $rows[0]->skipped_null );
+		$this->assertSame( ',tail', $rows[0]->empty_string_kept );
+		$this->assertNull( $rows[0]->null_separator );
+		$this->assertSame( '', $rows[0]->all_values_null );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringNotContainsString( 'CONCAT_WS', $sql );
 	}
 
 	/**
@@ -10628,7 +10761,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver  = $this->create_driver();
 		$queries = array(
 			'SELECT CONCAT() AS empty_concat',
+			"SELECT CONCAT_WS('-') AS invalid_concat_ws",
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
+			'SELECT NULLIF(primary_value) AS invalid_nullif FROM runtime_names',
+			'SELECT NULLIF(primary_value, fallback_value, third_value) AS invalid_nullif FROM runtime_names',
 			'SELECT JSON_VALID() AS invalid_json',
 			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
@@ -10656,7 +10792,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_common_mysql_runtime_function_forms_fail_closed_before_backend_execution(): void {
 		$queries = array(
 			'SELECT CONCAT() AS empty_concat',
+			"SELECT CONCAT_WS('-') AS invalid_concat_ws",
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
+			'SELECT NULLIF(primary_value) AS invalid_nullif FROM runtime_names',
+			'SELECT NULLIF(primary_value, fallback_value, third_value) AS invalid_nullif FROM runtime_names',
 			'SELECT JSON_VALID() AS invalid_json',
 			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
@@ -18370,6 +18509,80 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL ALTER TABLE ORDER BY clauses are supported schema no-ops.
+	 */
+	public function test_alter_table_order_by_clauses_are_supported_noops(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_order_by (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_order_by' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_plugin_order_by ORDER BY id DESC' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_order_by' ) );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_plugin_order_by ORDER BY wptests_plugin_order_by.id, status ASC' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_order_by' ) );
+
+		$this->assertSame( 1, $driver->query( 'ALTER TABLE wptests_plugin_order_by ADD COLUMN note varchar(20), ORDER BY id DESC, status ASC' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_order_by" ADD COLUMN "note" varchar(20)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array( 'id', 'status', 'note' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_order_by' ), 'column_name' )
+		);
+	}
+
+	/**
+	 * Tests malformed ALTER TABLE ORDER BY clauses fail before backend execution.
+	 */
+	public function test_alter_table_order_by_clauses_fail_closed_for_unsupported_forms(): void {
+		$queries = array(
+			'ALTER TABLE wptests_bad_order_by ORDER BY',
+			'ALTER TABLE wptests_bad_order_by ORDER BY id,',
+			'ALTER TABLE wptests_bad_order_by ORDER BY other_table.id',
+			'ALTER TABLE wptests_bad_order_by ORDER BY RAND()',
+			'ALTER TABLE wptests_bad_order_by ORDER BY id, ADD COLUMN note varchar(20)',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$driver->query( 'CREATE TABLE wptests_bad_order_by (id INTEGER, status TEXT)' );
+			$driver->store_mysql_schema_metadata(
+				'CREATE TABLE wptests_bad_order_by (
+					id int(11) DEFAULT NULL,
+					status varchar(20) DEFAULT NULL
+				)'
+			);
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported ALTER TABLE ORDER BY clause to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests ALTER TABLE AUTO_INCREMENT adjusts the SQLite-backed test sequence.
 	 */
 	public function test_alter_table_auto_increment_updates_sqlite_sequence(): void {
@@ -19095,11 +19308,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_show_table_status_accepts_current_database_qualification_forms(): void {
 		$cases = array(
-			'SHOW TABLE STATUS FROM wptests',
-			'SHOW TABLE STATUS IN `wptests`',
+			'SHOW TABLE STATUS FROM wptests'  => 'public',
+			'SHOW TABLE STATUS IN `wptests`'  => 'public',
+			'SHOW TABLE STATUS FROM public'   => 'public',
+			'SHOW TABLE STATUS IN `public`'   => 'public',
 		);
 
-		foreach ( $cases as $query ) {
+		foreach ( $cases as $query => $expected_schema ) {
 			$driver = $this->create_driver();
 			$this->install_information_schema_fixture( $driver );
 
@@ -19107,6 +19322,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 			$this->assertSame( array( 'wptests_options', 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ), $query );
 			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( $expected_schema, $driver->get_last_postgresql_queries()[0]['params'][0], $query );
 			foreach ( $driver->get_last_postgresql_queries() as $postgresql_query ) {
 				$this->assertStringNotContainsString( 'SHOW TABLE STATUS', $postgresql_query['sql'], $query );
 			}
@@ -24992,6 +25208,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" ) );
 		$rows = $driver->query( $query );
 		$this->assertSame( $backslash . 'n', $rows[0]->value );
+	}
+
+	/**
+	 * Tests NO_BACKSLASH_ESCAPES disables PostgreSQL's default LIKE backslash escape.
+	 */
+	public function test_no_backslash_escapes_sql_mode_changes_postgresql_like_patterns(): void {
+		$driver    = $this->create_driver();
+		$backslash = chr( 92 );
+		$query     = "SELECT value FROM wptests_like_escape WHERE value LIKE 'abc{$backslash}_' OR value NOT LIKE 'def{$backslash}%'";
+
+		$driver->set_sql_mode( '' );
+		$this->assertSame(
+			"SELECT value FROM wptests_like_escape WHERE value LIKE 'abc{$backslash}_' OR value NOT LIKE 'def{$backslash}%'",
+			$this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $query )
+		);
+
+		$driver->set_sql_mode( 'NO_BACKSLASH_ESCAPES' );
+		$this->assertSame(
+			"SELECT value FROM wptests_like_escape WHERE value LIKE 'abc{$backslash}_' ESCAPE '' OR value NOT LIKE 'def{$backslash}%' ESCAPE ''",
+			$this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $query )
+		);
+
+		$cast_like_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT CAST(meta_value AS DECIMAL(10,2)) LIKE '12{$backslash}_' AS matched FROM wptests_postmeta"
+		);
+		$this->assertStringContainsString( "LIKE '12{$backslash}_' ESCAPE '' AS matched", $cast_like_sql );
+		$this->assertStringNotContainsString( "ESCAPE '' ESCAPE ''", $cast_like_sql );
+
+		$this->assertSame(
+			"SELECT value FROM wptests_like_escape WHERE value LIKE 'abc{$backslash}_' ESCAPE '!'",
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT value FROM wptests_like_escape WHERE value LIKE 'abc{$backslash}_' ESCAPE '!'"
+			)
+		);
 	}
 
 	/**
