@@ -15281,8 +15281,13 @@ WHERE option_name IN (
 			implode( ', ', $value_sql_rows )
 		);
 
-		$conflict_column = $this->get_simple_replace_conflict_column( $table_name, $columns );
-		if ( null === $conflict_column ) {
+		$conflict_target = $this->get_mysql_replace_conflict_target(
+			$table_name,
+			$columns,
+			$value_rows,
+			$probe_safe_rows
+		);
+		if ( null === $conflict_target ) {
 			return array(
 				'action'           => 'replace',
 				'sql'              => $sql,
@@ -15295,23 +15300,9 @@ WHERE option_name IN (
 			);
 		}
 
-		$conflict_index = null;
-		foreach ( $columns as $index => $column ) {
-			if ( strtolower( $column ) === strtolower( $conflict_column ) ) {
-				$conflict_index = $index;
-				break;
-			}
-		}
-
-		if ( null === $conflict_index ) {
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
+		if ( null === $conflict_indexes ) {
 			return null;
-		}
-
-		$conflict_values            = array();
-		$conflict_probe_safe_values = array();
-		foreach ( $value_rows as $row_index => $values ) {
-			$conflict_values[]            = $values[ $conflict_index ];
-			$conflict_probe_safe_values[] = $probe_safe_rows[ $row_index ][ $conflict_index ] ?? false;
 		}
 
 		$assignments = array();
@@ -15325,23 +15316,24 @@ WHERE option_name IN (
 
 		$conflict_sql  = sprintf(
 			'ON CONFLICT (%s) DO UPDATE SET %s',
-			$this->connection->quote_identifier( $conflict_column ),
+			implode( ', ', $conflict_target['sql'] ),
 			implode( ', ', $assignments )
 		);
+		$conflict_column = $conflict_target['columns'][0] ?? null;
 		$replace_query = array(
-			'action'                     => 'replace',
-			'sql'                        => $sql . ' ' . $conflict_sql,
-			'table_name'                 => $table_name,
-			'columns'                    => $columns,
-			'value_rows'                 => $value_rows,
-			'conflict_column'            => $conflict_column,
-			'conflict_value'             => $conflict_values[0] ?? null,
-			'conflict_values'            => $conflict_values,
-			'conflict_probe_safe_values' => $conflict_probe_safe_values,
-			'inserted_new_row'           => true,
+			'action'                   => 'replace',
+			'sql'                      => $sql . ' ' . $conflict_sql,
+			'table_name'               => $table_name,
+			'columns'                  => $columns,
+			'value_rows'               => $value_rows,
+			'conflict_column'          => $conflict_column,
+			'conflict_target'          => $conflict_target,
+			'conflict_indexes'         => $conflict_indexes,
+			'conflict_probe_safe_rows' => $probe_safe_rows,
+			'inserted_new_row'         => true,
 		);
 
-		if ( $this->has_duplicate_mysql_replace_conflict_values( $conflict_values, $conflict_probe_safe_values ) ) {
+		if ( $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
 			$statements = array();
 			foreach ( $value_rows as $values ) {
 				$statements[] = sprintf(
@@ -15480,9 +15472,11 @@ WHERE option_name IN (
 			$replacements
 		);
 
-		$conflict_column         = $this->get_simple_replace_conflict_column( $table_name, $columns );
+		$conflict_target         = $this->get_mysql_replace_conflict_target( $table_name, $columns );
+		$conflict_column         = null;
 		$affected_rows_count_sql = null;
-		if ( null !== $conflict_column ) {
+		if ( null !== $conflict_target ) {
+			$conflict_column = $conflict_target['columns'][0] ?? null;
 			$assignments = array();
 			foreach ( $columns as $column ) {
 				$assignments[] = sprintf(
@@ -15494,14 +15488,14 @@ WHERE option_name IN (
 
 			$sql .= sprintf(
 				' ON CONFLICT (%s) DO UPDATE SET %s',
-				$this->connection->quote_identifier( $conflict_column ),
+				implode( ', ', $conflict_target['sql'] ),
 				implode( ', ', $assignments )
 			);
 
 			$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
 				$table_name,
 				$columns,
-				$conflict_column,
+				$conflict_target,
 				$tokens,
 				$select_start,
 				$select_end
@@ -15514,6 +15508,7 @@ WHERE option_name IN (
 			'table_name'                       => $table_name,
 			'columns'                          => $columns,
 			'conflict_column'                  => $conflict_column,
+			'conflict_target'                  => $conflict_target,
 			'conflict_value'                   => null,
 			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
 			'inserted_new_row'                 => true,
@@ -15525,22 +15520,15 @@ WHERE option_name IN (
 	 *
 	 * @param string           $table_name      Target table name.
 	 * @param string[]         $columns         Target column names.
-	 * @param string           $conflict_column Conflict column name.
+	 * @param array            $conflict_target Conflict target.
 	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
 	 * @param int              $select_start    SELECT token position.
 	 * @param int              $select_end      Final SELECT token position, exclusive.
 	 * @return string|null PostgreSQL count SQL, or null when unsupported.
 	 */
-	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, string $conflict_column, array $tokens, int $select_start, int $select_end ): ?string {
-		$conflict_index = null;
-		foreach ( $columns as $index => $column ) {
-			if ( strtolower( $column ) === strtolower( $conflict_column ) ) {
-				$conflict_index = $index;
-				break;
-			}
-		}
-
-		if ( null === $conflict_index ) {
+	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, array $conflict_target, array $tokens, int $select_start, int $select_end ): ?string {
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
+		if ( null === $conflict_indexes ) {
 			return null;
 		}
 
@@ -15617,19 +15605,67 @@ WHERE option_name IN (
 			$alias_replacements
 		);
 		$rows_alias      = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
-		$conflict_exists = sprintf(
-			'EXISTS (SELECT 1 FROM %s WHERE %s = %s.%s)',
-			$this->connection->quote_identifier( $table_name ),
-			$this->connection->quote_identifier( $conflict_column ),
+		$conflict_exists = $this->get_mysql_replace_select_conflict_exists_sql(
+			$table_name,
 			$rows_alias,
-			$this->connection->quote_identifier( $conflict_column )
+			$conflict_indexes
 		);
+		if ( null === $conflict_exists ) {
+			return null;
+		}
 
 		return sprintf(
 			'SELECT COALESCE(SUM(CASE WHEN %1$s THEN 2 ELSE 1 END), 0) AS affected_rows, COALESCE(SUM(CASE WHEN %1$s THEN 0 ELSE 1 END), 0) AS inserted_rows FROM (%2$s) AS %3$s',
 			$conflict_exists,
 			$select_sql,
 			$rows_alias
+		);
+	}
+
+	/**
+	 * Get a REPLACE ... SELECT preflight conflict predicate.
+	 *
+	 * @param string $table_name       Target table name.
+	 * @param string $rows_alias       Quoted derived-table alias for incoming rows.
+	 * @param array  $conflict_indexes Conflict target column/index tuples.
+	 * @return string|null EXISTS predicate SQL, or null when unsupported.
+	 */
+	private function get_mysql_replace_select_conflict_exists_sql( string $table_name, string $rows_alias, array $conflict_indexes ): ?string {
+		$where = array();
+		foreach ( $conflict_indexes as $conflict_index ) {
+			$column = (string) ( $conflict_index['column'] ?? '' );
+			if ( '' === $column ) {
+				return null;
+			}
+
+			$incoming_value = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( $column )
+			);
+			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+				$incoming_value = sprintf(
+					'SUBSTR(CAST(%s AS text), 1, %d)',
+					$incoming_value,
+					(int) $conflict_index['sub_part']
+				);
+			}
+
+			$where[] = sprintf(
+				'%s = %s',
+				$this->get_mysql_index_key_part_sql( $column, $conflict_index['sub_part'] ?? null ),
+				$incoming_value
+			);
+		}
+
+		if ( empty( $where ) ) {
+			return null;
+		}
+
+		return sprintf(
+			'EXISTS (SELECT 1 FROM %s WHERE %s)',
+			$this->connection->quote_identifier( $table_name ),
+			implode( ' AND ', $where )
 		);
 	}
 
@@ -15658,40 +15694,44 @@ WHERE option_name IN (
 			return (int) $row['affected_rows'];
 		}
 
-		$conflict_values = array();
-		if ( isset( $replace_query['conflict_values'] ) && is_array( $replace_query['conflict_values'] ) ) {
-			$conflict_values = $replace_query['conflict_values'];
-		} elseif ( isset( $replace_query['conflict_value'] ) ) {
-			$conflict_values = array( $replace_query['conflict_value'] );
-		}
-
-		if ( empty( $conflict_values ) ) {
+		if (
+			! isset( $replace_query['value_rows'], $replace_query['conflict_indexes'] )
+			|| ! is_array( $replace_query['value_rows'] )
+			|| ! is_array( $replace_query['conflict_indexes'] )
+		) {
 			return null;
 		}
 
-		$probe_safe_values = isset( $replace_query['conflict_probe_safe_values'] ) && is_array( $replace_query['conflict_probe_safe_values'] )
-			? $replace_query['conflict_probe_safe_values']
+		$probe_safe_rows = isset( $replace_query['conflict_probe_safe_rows'] ) && is_array( $replace_query['conflict_probe_safe_rows'] )
+			? $replace_query['conflict_probe_safe_rows']
 			: array();
 
 		$return_value     = 0;
 		$inserted_new_row = false;
 		$seen_values      = array();
-		foreach ( $conflict_values as $index => $conflict_value ) {
-			if ( false === ( $probe_safe_values[ $index ] ?? true ) ) {
+		foreach ( $replace_query['value_rows'] as $row_index => $values ) {
+			if ( ! is_array( $values ) ) {
 				return null;
 			}
 
-			$conflict_value = (string) $conflict_value;
-			$generated      = $this->is_mysql_generated_auto_increment_value_sql( $conflict_value );
-			$seen_key       = $generated ? null : $this->get_mysql_replace_conflict_seen_key( $conflict_value );
+			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
+			foreach ( $replace_query['conflict_indexes'] as $conflict_index ) {
+				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
+					return null;
+				}
+			}
 
+			$seen_key                = $this->get_mysql_replace_conflict_seen_key_for_row( $values, $replace_query['conflict_indexes'] );
 			$replace_conflict_exists = null !== $seen_key && isset( $seen_values[ $seen_key ] );
 			if ( ! $replace_conflict_exists ) {
-				$replace_conflict_exists = $this->replace_conflict_exists(
+				$replace_conflict_exists = $this->mysql_upsert_conflict_exists(
 					(string) $replace_query['table_name'],
-					(string) $replace_query['conflict_column'],
-					$conflict_value
+					$values,
+					$replace_query['conflict_indexes']
 				);
+				if ( null === $replace_conflict_exists ) {
+					return null;
+				}
 			}
 
 			$return_value += $replace_conflict_exists ? 2 : 1;
@@ -15708,25 +15748,199 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether a REPLACE batch contains duplicate deterministic conflict values.
+	 * Resolve the conflict target for a REPLACE statement.
 	 *
-	 * @param string[] $conflict_values            Conflict values.
-	 * @param bool[]   $conflict_probe_safe_values Per-value probe safety.
-	 * @return bool Whether PostgreSQL needs per-row statements.
+	 * @param string       $table_name      Table name.
+	 * @param string[]     $columns         Inserted column names.
+	 * @param array[]|null $value_rows      Optional translated VALUES rows.
+	 * @param array[]|null $probe_safe_rows Optional per-value conflict-probe safety flags.
+	 * @return array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>, sql: string[]}|null Conflict target.
 	 */
-	private function has_duplicate_mysql_replace_conflict_values( array $conflict_values, array $conflict_probe_safe_values ): bool {
-		$seen_values = array();
-		foreach ( $conflict_values as $index => $conflict_value ) {
-			if ( false === ( $conflict_probe_safe_values[ $index ] ?? true ) ) {
-				return false;
-			}
+	private function get_mysql_replace_conflict_target( string $table_name, array $columns, ?array $value_rows = null, ?array $probe_safe_rows = null ): ?array {
+		$metadata_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns, $value_rows, $probe_safe_rows );
+		$heuristic_target = $this->get_simple_replace_conflict_target( $table_name, $columns );
+		if ( null === $heuristic_target ) {
+			return $metadata_target;
+		}
 
-			$conflict_value = (string) $conflict_value;
-			if ( $this->is_mysql_generated_auto_increment_value_sql( $conflict_value ) ) {
+		if ( null === $metadata_target ) {
+			return $heuristic_target;
+		}
+
+		if (
+			$this->is_mysql_replace_conflict_target_backed_by_unique_metadata( $table_name, $heuristic_target )
+			&&
+			null !== $value_rows
+			&& null !== $probe_safe_rows
+			&& ! $this->mysql_replace_conflict_target_has_existing_conflict(
+				$table_name,
+				$columns,
+				$value_rows,
+				$probe_safe_rows,
+				$metadata_target
+			)
+		) {
+			return $heuristic_target;
+		}
+
+		return $metadata_target;
+	}
+
+	/**
+	 * Check whether a REPLACE conflict target corresponds to MySQL unique metadata.
+	 *
+	 * @param string $table_name      Table name.
+	 * @param array  $conflict_target Conflict target.
+	 * @return bool Whether the target has a matching unique metadata entry.
+	 */
+	private function is_mysql_replace_conflict_target_backed_by_unique_metadata( string $table_name, array $conflict_target ): bool {
+		$target_parts = $conflict_target['parts'] ?? array();
+		if ( empty( $target_parts ) ) {
+			return false;
+		}
+
+		$this->ensure_mysql_schema_metadata_tables();
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT key_name, column_name, index_type, sub_part
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? AND non_unique = \'0\'
+				ORDER BY
+					key_name,
+					index_ordinal,
+					seq_in_index',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		$indexes = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$key_name = (string) ( $row['key_name'] ?? '' );
+			if ( '' === $key_name ) {
 				continue;
 			}
 
-			$seen_key = $this->get_mysql_replace_conflict_seen_key( $conflict_value );
+			if ( ! isset( $indexes[ $key_name ] ) ) {
+				$indexes[ $key_name ] = array(
+					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
+					'parts'      => array(),
+				);
+			}
+
+			$indexes[ $key_name ]['parts'][] = array(
+				'column'   => (string) ( $row['column_name'] ?? '' ),
+				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
+			);
+		}
+
+		foreach ( $indexes as $index ) {
+			if ( in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
+				continue;
+			}
+
+			if ( count( $index['parts'] ) !== count( $target_parts ) ) {
+				continue;
+			}
+
+			foreach ( $target_parts as $part_index => $part ) {
+				$index_part = $index['parts'][ $part_index ];
+				if (
+					0 !== strcasecmp( (string) ( $index_part['column'] ?? '' ), (string) ( $part['column'] ?? '' ) )
+					|| (string) ( $index_part['sub_part'] ?? '' ) !== (string) ( $part['sub_part'] ?? '' )
+				) {
+					continue 2;
+				}
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Build a one-column fallback REPLACE conflict target.
+	 *
+	 * @param string   $table_name Table name.
+	 * @param string[] $columns    Inserted column names.
+	 * @return array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>, sql: string[]}|null Conflict target.
+	 */
+	private function get_simple_replace_conflict_target( string $table_name, array $columns ): ?array {
+		$conflict_column = $this->get_simple_replace_conflict_column( $table_name, $columns );
+		if ( null === $conflict_column ) {
+			return null;
+		}
+
+		return array(
+			'columns' => array( $conflict_column ),
+			'parts'   => array(
+				array(
+					'column'   => $conflict_column,
+					'sub_part' => null,
+				),
+			),
+			'sql'     => array( $this->connection->quote_identifier( $conflict_column ) ),
+		);
+	}
+
+	/**
+	 * Check whether a resolved metadata conflict target currently matches any incoming row.
+	 *
+	 * @param string   $table_name      Table name.
+	 * @param string[] $columns         Inserted column names.
+	 * @param array[]  $value_rows      Translated VALUES rows.
+	 * @param array[]  $probe_safe_rows Per-value conflict-probe safety flags.
+	 * @param array    $conflict_target Conflict target.
+	 * @return bool Whether an existing row matches the target.
+	 */
+	private function mysql_replace_conflict_target_has_existing_conflict( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_target ): bool {
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
+		if ( null === $conflict_indexes ) {
+			return true;
+		}
+
+		foreach ( $value_rows as $row_index => $values ) {
+			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
+					return true;
+				}
+			}
+
+			$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
+			if ( null === $conflict_exists || $conflict_exists ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a REPLACE batch contains duplicate deterministic conflict rows.
+	 *
+	 * @param array[] $value_rows       Translated VALUES rows.
+	 * @param array[] $probe_safe_rows  Per-value probe safety.
+	 * @param array   $conflict_indexes Conflict target column/index tuples.
+	 * @return bool Whether PostgreSQL needs per-row statements.
+	 */
+	private function has_duplicate_mysql_replace_conflict_value_rows( array $value_rows, array $probe_safe_rows, array $conflict_indexes ): bool {
+		$seen_values = array();
+		foreach ( $value_rows as $row_index => $values ) {
+			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
+					return false;
+				}
+			}
+
+			$seen_key = $this->get_mysql_replace_conflict_seen_key_for_row( $values, $conflict_indexes );
+			if ( null === $seen_key ) {
+				continue;
+			}
+
 			if ( isset( $seen_values[ $seen_key ] ) ) {
 				return true;
 			}
@@ -15738,38 +15952,59 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Normalize a deterministic REPLACE conflict SQL value for in-statement tracking.
+	 * Normalize deterministic REPLACE conflict SQL values for in-statement tracking.
 	 *
-	 * @param string $conflict_value Conflict value SQL.
-	 * @return string Stable lookup key.
+	 * @param array $values           Translated VALUES row.
+	 * @param array $conflict_indexes Conflict target column/index tuples.
+	 * @return string|null Stable lookup key, or null when the row should not conflict.
 	 */
-	private function get_mysql_replace_conflict_seen_key( string $conflict_value ): string {
-		return trim( $conflict_value );
+	private function get_mysql_replace_conflict_seen_key_for_row( array $values, array $conflict_indexes ): ?string {
+		$parts = array();
+		foreach ( $conflict_indexes as $conflict_index ) {
+			if ( ! array_key_exists( $conflict_index['index'], $values ) ) {
+				return null;
+			}
+
+			$value = trim( (string) $values[ $conflict_index['index'] ] );
+			if (
+				'' === $value
+				|| 'NULL' === strtoupper( $value )
+				|| $this->is_mysql_generated_auto_increment_value_sql( $value )
+			) {
+				return null;
+			}
+
+			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+				$value = $this->get_mysql_replace_conflict_prefix_seen_value( $value, (int) $conflict_index['sub_part'] );
+			}
+
+			$parts[] = $value;
+		}
+
+		return implode( "\0", $parts );
 	}
 
 	/**
-	 * Check whether a simple REPLACE conflict target currently exists.
+	 * Apply a prefix key length to a deterministic SQL literal when possible.
 	 *
-	 * @param string $table_name      Table name.
-	 * @param string $conflict_column Conflict column name.
-	 * @param string $conflict_value  Already translated SQL value.
-	 * @return bool Whether the row exists.
+	 * @param string $value_sql SQL value.
+	 * @param int    $length    Prefix character length.
+	 * @return string Prefix lookup value.
 	 */
-	private function replace_conflict_exists( string $table_name, string $conflict_column, string $conflict_value ): bool {
-		if ( $this->is_mysql_generated_auto_increment_value_sql( $conflict_value ) ) {
-			return false;
+	private function get_mysql_replace_conflict_prefix_seen_value( string $value_sql, int $length ): string {
+		if ( $length <= 0 || strlen( $value_sql ) < 2 || "'" !== $value_sql[0] || "'" !== $value_sql[ strlen( $value_sql ) - 1 ] ) {
+			return $value_sql;
 		}
 
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT 1 FROM %s WHERE %s = %s LIMIT 1',
-				$this->connection->quote_identifier( $table_name ),
-				$this->connection->quote_identifier( $conflict_column ),
-				$conflict_value
-			)
-		);
+		$value = str_replace( "''", "'", substr( $value_sql, 1, -1 ) );
+		$count = preg_match_all( '/./us', $value, $matches );
+		if ( false !== $count ) {
+			$value = implode( '', array_slice( $matches[0], 0, $length ) );
+		} else {
+			$value = substr( $value, 0, $length );
+		}
 
-		return false !== $stmt->fetchColumn();
+		return "'" . str_replace( "'", "''", $value ) . "'";
 	}
 
 	/**
@@ -20466,6 +20701,10 @@ WHERE option_name IN (
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id
 		) {
 			if ( 0 !== strcasecmp( $first, 'information_schema' ) ) {
+				if ( 0 === strcasecmp( $first, $this->main_db_name ) ) {
+					return $this->parse_direct_information_schema_main_table_source( $tokens, $source_start, $end );
+				}
+
 				return null;
 			}
 
@@ -33142,7 +33381,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 1 === $count ? sprintf( 'CHAR_LENGTH(CAST(%s AS text))', $argument_sql[0] ) : null;
 
 			case 'length':
-				return 1 === $count ? sprintf( "OCTET_LENGTH(CONVERT_TO(CAST(%s AS text), 'UTF8'))", $argument_sql[0] ) : null;
+				return 1 === $count ? $this->get_postgresql_mysql_text_byte_length_sql( $argument_sql[0] ) : null;
 
 			case 'concat':
 				if ( 0 === $count ) {
@@ -33377,6 +33616,34 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				'start' => $for_position + 1,
 				'end'   => $end,
 			),
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL byte-oriented LENGTH(text).
+	 *
+	 * PostgreSQL-safe text envelopes carry the original MySQL byte length in
+	 * their prefix. Use that length before falling back to UTF-8 byte counting.
+	 *
+	 * @param string $argument_sql Translated argument SQL.
+	 * @return string PostgreSQL byte-length SQL.
+	 */
+	private function get_postgresql_mysql_text_byte_length_sql( string $argument_sql ): string {
+		$text_sql      = sprintf( 'CAST(%s AS text)', $argument_sql );
+		$prefix_chars  = preg_match_all( '/./us', self::MYSQL_TEXT_ENCODING_PREFIX );
+		$prefix_length = false === $prefix_chars ? strlen( self::MYSQL_TEXT_ENCODING_PREFIX ) : $prefix_chars;
+		$prefix_sql    = $this->connection->get_pdo()->quote( self::MYSQL_TEXT_ENCODING_PREFIX );
+		$payload_sql   = sprintf( 'SUBSTR(%s, %d)', $text_sql, $prefix_length + 1 );
+		$separator_sql = sprintf( "STRPOS(%s, ':')", $payload_sql );
+		$length_sql    = sprintf( 'SUBSTR(%s, 1, %s - 1)', $payload_sql, $separator_sql );
+
+		return sprintf(
+			"CASE WHEN SUBSTR(%1\$s, 1, %2\$d) = %3\$s AND %4\$s > 1 AND TRANSLATE(%5\$s, '0123456789', '') = '' AND (%5\$s = '0' OR SUBSTR(%5\$s, 1, 1) <> '0') THEN CAST(%5\$s AS bigint) ELSE OCTET_LENGTH(CONVERT_TO(%1\$s, 'UTF8')) END",
+			$text_sql,
+			$prefix_length,
+			$prefix_sql,
+			$separator_sql,
+			$length_sql
 		);
 	}
 

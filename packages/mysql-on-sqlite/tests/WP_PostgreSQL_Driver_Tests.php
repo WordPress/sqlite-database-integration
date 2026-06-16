@@ -1168,6 +1168,120 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests REPLACE uses MySQL unique-key metadata beyond WordPress heuristics.
+	 */
+	public function test_replace_uses_metadata_unique_key_conflict_target(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_replace_unique_slug (
+				id int(11) NOT NULL,
+				slug varchar(191) NOT NULL,
+				value text NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_key (slug)
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+		$driver->query( "INSERT INTO wptests_replace_unique_slug (id, slug, value) VALUES (1, 'same', 'old')" );
+
+		$replace = "REPLACE INTO wptests_replace_unique_slug (id, slug, value) VALUES (2, 'same', 'new'), (3, 'other', 'created')";
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assertStringContainsString(
+			'ON CONFLICT ("slug") DO UPDATE SET',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_replace_unique_slug ORDER BY slug' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '3',
+					'slug'  => 'other',
+					'value' => 'created',
+				),
+				(object) array(
+					'id'    => '2',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests REPLACE uses composite unique-key metadata.
+	 */
+	public function test_replace_uses_metadata_composite_unique_key_conflict_target(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_replace_composite_unique (
+				site_id int(11) NOT NULL,
+				slug varchar(191) NOT NULL,
+				value text NOT NULL,
+				UNIQUE KEY site_slug (site_id, slug)
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+		$driver->query( "INSERT INTO wptests_replace_composite_unique (site_id, slug, value) VALUES (1, 'same', 'old')" );
+
+		$replace = "REPLACE INTO wptests_replace_composite_unique (site_id, slug, value) VALUES (1, 'same', 'new'), (2, 'same', 'created')";
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assertStringContainsString(
+			'ON CONFLICT ("site_id", "slug") DO UPDATE SET',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT site_id, slug, value FROM wptests_replace_composite_unique ORDER BY site_id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'site_id' => '1',
+					'slug'    => 'same',
+					'value'   => 'new',
+				),
+				(object) array(
+					'site_id' => '2',
+					'slug'    => 'same',
+					'value'   => 'created',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests REPLACE uses prefix unique-key metadata.
+	 */
+	public function test_replace_uses_metadata_prefix_unique_key_conflict_target(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_replace_prefix_unique (
+				slug varchar(255) NOT NULL,
+				value text NOT NULL,
+				UNIQUE KEY slug_prefix (slug(10))
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+		$driver->query( "INSERT INTO wptests_replace_prefix_unique (slug, value) VALUES ('existing-slug-one', 'old')" );
+
+		$replace = "REPLACE INTO wptests_replace_prefix_unique (slug, value) VALUES ('existing-slug-two', 'new')";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertStringContainsString(
+			'ON CONFLICT (SUBSTR(CAST("slug" AS text), 1, 10)) DO UPDATE SET',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT slug, value FROM wptests_replace_prefix_unique' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'existing-slug-two', $rows[0]->slug );
+		$this->assertSame( 'new', $rows[0]->value );
+	}
+
+	/**
 	 * Tests REPLACE ... SELECT statements use PostgreSQL upserts and MySQL row counts.
 	 */
 	public function test_replace_select_with_known_conflict_column_is_translated_to_postgresql(): void {
@@ -5965,7 +6079,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'CASE WHEN CAST(8 AS double precision) IS NULL OR CAST(8 AS double precision) <= 0 THEN NULL ELSE LN(CAST(8 AS double precision)) END AS natural_log_value', $sql );
 		$this->assertStringContainsString( 'CASE WHEN CAST(2 AS double precision) IS NULL OR CAST(8 AS double precision) IS NULL OR CAST(2 AS double precision) <= 1 OR CAST(8 AS double precision) <= 0 THEN NULL ELSE LN(CAST(8 AS double precision)) / LN(CAST(2 AS double precision)) END AS based_log_value', $sql );
 		$this->assertStringContainsString( "CAST((CAST('2024-01-05' AS date) - CAST('2024-01-02' AS date)) AS integer) AS day_diff", $sql );
-		$this->assertStringContainsString( "OCTET_LENGTH(CONVERT_TO(CAST('hello' AS text), 'UTF8')) AS byte_length", $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST('hello' AS text), 'UTF8')) END AS byte_length", $sql );
 		$this->assertStringContainsString( "STRPOS(CAST('WordPress' AS text), CAST('or' AS text)) AS locate_value", $sql );
 		$this->assertStringContainsString( "STRPOS(SUBSTRING(CAST('WordPress' AS text) FROM CAST(4 AS integer)), CAST('r' AS text)) + CAST(4 AS integer) - 1 END AS locate_with_position", $sql );
 		$this->assertStringContainsString( "UPPER(ENCODE(CONVERT_TO(CAST('Az' AS text), 'UTF8'), 'hex')) AS hex_value", $sql );
@@ -6092,7 +6206,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'COALESCE(primary_value, fallback_value) AS selected_value', $sql );
 		$this->assertStringContainsString( '(CAST(prefix AS text) || CAST(suffix AS text)) AS joined_value', $sql );
 		$this->assertStringContainsString( 'CHAR_LENGTH(CAST(display_name AS text)) AS name_length', $sql );
-		$this->assertStringContainsString( "OCTET_LENGTH(CONVERT_TO(CAST(display_name AS text), 'UTF8')) AS byte_length", $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST(display_name AS text), 'UTF8')) END AS byte_length", $sql );
 		$this->assertStringNotContainsString( 'IFNULL', $sql );
 		$this->assertStringNotContainsString( 'CONCAT(', $sql );
 	}
@@ -6113,6 +6227,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS utf8_byte_length, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS binary_byte_length",
 			$sql
 		);
+	}
+
+	/**
+	 * Tests MySQL LENGTH() counts text bytes while CHAR_LENGTH() counts characters.
+	 */
+	public function test_length_runtime_function_counts_text_utf8_bytes_when_executed(): void {
+		$driver  = $this->create_driver_with_postgresql_text_runtime_functions();
+		$literal = $this->quote_mysql_string_literal_for_test( "\xC3\xA9" );
+
+		$result = $driver->query(
+			sprintf(
+				'SELECT LENGTH(%1$s) AS byte_length, CHAR_LENGTH(%1$s) AS char_length, CHARACTER_LENGTH(%1$s) AS character_length',
+				$literal
+			)
+		);
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( '2', $result[0]->byte_length );
+		$this->assertSame( '1', $result[0]->char_length );
+		$this->assertSame( '1', $result[0]->character_length );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST($literal AS text), 'UTF8')) END AS byte_length", $sql );
+		$this->assertStringContainsString( "CHAR_LENGTH(CAST($literal AS text)) AS char_length", $sql );
+		$this->assertStringContainsString( "CHAR_LENGTH(CAST($literal AS text)) AS character_length", $sql );
+	}
+
+	/**
+	 * Tests MySQL LENGTH() counts decoded PostgreSQL-safe text envelope bytes.
+	 */
+	public function test_length_runtime_function_counts_postgresql_text_envelope_bytes_when_executed(): void {
+		$driver     = $this->create_driver_with_postgresql_quote_translation_and_text_runtime_functions();
+		$connection = $driver->get_connection();
+
+		$driver->query( 'CREATE TABLE wptests_length_text_envelope (value TEXT NOT NULL)' );
+		$connection->query( 'INSERT INTO wptests_length_text_envelope (value) VALUES (' . $connection->quote( "a\0\xC3\xA9" ) . ')' );
+
+		$stored_rows = $connection->query( 'SELECT value FROM wptests_length_text_envelope' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertCount( 1, $stored_rows );
+		$this->assertStringContainsString( 'WP_MYSQL_TEXT_V1:', $stored_rows[0]->value );
+
+		$result = $driver->query( 'SELECT LENGTH(value) AS byte_length FROM wptests_length_text_envelope' );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( '4', (string) $result[0]->byte_length );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'STRPOS(SUBSTR(CAST(value AS text),', $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST(value AS text), 'UTF8')) END AS byte_length", $sql );
 	}
 
 	/**
@@ -14962,6 +15125,60 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema joins accept main database-qualified application tables.
+	 */
+	public function test_direct_information_schema_mixed_join_accepts_main_database_qualified_application_table(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_schema_names (
+				id INTEGER NOT NULL,
+				db_name TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_schema_names (
+				id int(11) NOT NULL,
+				db_name varchar(191) NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_schema_names (id, db_name)
+			VALUES (1, 'other'), (2, 'wptests')"
+		);
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$result = $driver->query(
+			"SELECT app.id, c.table_schema, c.table_name, c.column_name
+			FROM columns AS c
+			JOIN wptests.wptests_schema_names AS app
+				ON app.db_name = c.table_schema
+			WHERE c.table_name = 'wptests_schema_names'
+			ORDER BY c.ordinal_position"
+		);
+
+		$this->assertSame(
+			array(
+				array( '2', 'wptests', 'wptests_schema_names', 'id' ),
+				array( '2', 'wptests', 'wptests_schema_names', 'db_name' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->TABLE_SCHEMA, $row->TABLE_NAME, $row->COLUMN_NAME );
+				},
+				$result
+			)
+		);
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( '"wptests_schema_names" AS "app"', $sql );
+		$this->assertStringContainsString( '"app"."db_name" = "c"."TABLE_SCHEMA"', $sql );
+		$this->assertStringNotContainsString( 'wptests.wptests_schema_names', $sql );
+	}
+
+	/**
 	 * Tests unsupported mixed information_schema joins fail before backend execution.
 	 */
 	public function test_direct_information_schema_mixed_join_shape_fails_closed(): void {
@@ -17473,6 +17690,105 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) );
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Creates a PostgreSQL driver with SQLite shims for text runtime functions.
+	 *
+	 * @return WP_PostgreSQL_Driver
+	 */
+	private function create_driver_with_postgresql_text_runtime_functions(): WP_PostgreSQL_Driver {
+		$connection = new WP_PostgreSQL_Connection(
+			array(
+				'pdo' => $this->create_pdo_with_postgresql_text_runtime_functions(),
+			)
+		);
+		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Creates a PostgreSQL quote-translation driver with SQLite shims for text runtime functions.
+	 *
+	 * @return WP_PostgreSQL_Driver
+	 */
+	private function create_driver_with_postgresql_quote_translation_and_text_runtime_functions(): WP_PostgreSQL_Driver {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pdo_with_postgresql_text_runtime_functions(),
+			)
+		);
+		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+	}
+
+	/**
+	 * Creates a SQLite PDO with shims for PostgreSQL text runtime functions.
+	 *
+	 * @return PDO
+	 */
+	private function create_pdo_with_postgresql_text_runtime_functions(): PDO {
+		$pdo_class = class_exists( 'Pdo\Sqlite' ) ? 'Pdo\Sqlite' : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+
+		$octet_length = static function ( $value ): ?int {
+			return null === $value ? null : strlen( (string) $value );
+		};
+		$char_length  = static function ( $value ): ?int {
+			if ( null === $value ) {
+				return null;
+			}
+
+			$count = preg_match_all( '/./us', (string) $value );
+			return false === $count ? strlen( (string) $value ) : $count;
+		};
+		$convert_to   = static function ( $value, $encoding ): ?string {
+			if ( null === $value ) {
+				return null;
+			}
+
+			return 'UTF8' === strtoupper( (string) $encoding ) ? (string) $value : null;
+		};
+		$strpos       = static function ( $value, $needle ): ?int {
+			if ( null === $value || null === $needle ) {
+				return null;
+			}
+
+			$position = strpos( (string) $value, (string) $needle );
+			return false === $position ? 0 : $position + 1;
+		};
+		$translate    = static function ( $value, $from, $to ): ?string {
+			if ( null === $value || null === $from || null === $to ) {
+				return null;
+			}
+
+			$map         = array();
+			$from        = (string) $from;
+			$to          = (string) $to;
+			$from_length = strlen( $from );
+			$to_length   = strlen( $to );
+			for ( $i = 0; $i < $from_length; $i++ ) {
+				$map[ $from[ $i ] ] = $i < $to_length ? $to[ $i ] : '';
+			}
+
+			return strtr( (string) $value, $map );
+		};
+
+		if ( method_exists( $pdo, 'createFunction' ) ) {
+			$pdo->createFunction( 'OCTET_LENGTH', $octet_length, 1 );
+			$pdo->createFunction( 'CHAR_LENGTH', $char_length, 1 );
+			$pdo->createFunction( 'CHARACTER_LENGTH', $char_length, 1 );
+			$pdo->createFunction( 'CONVERT_TO', $convert_to, 2 );
+			$pdo->createFunction( 'STRPOS', $strpos, 2 );
+			$pdo->createFunction( 'TRANSLATE', $translate, 3 );
+		} else {
+			$pdo->sqliteCreateFunction( 'OCTET_LENGTH', $octet_length, 1 );
+			$pdo->sqliteCreateFunction( 'CHAR_LENGTH', $char_length, 1 );
+			$pdo->sqliteCreateFunction( 'CHARACTER_LENGTH', $char_length, 1 );
+			$pdo->sqliteCreateFunction( 'CONVERT_TO', $convert_to, 2 );
+			$pdo->sqliteCreateFunction( 'STRPOS', $strpos, 2 );
+			$pdo->sqliteCreateFunction( 'TRANSLATE', $translate, 3 );
+		}
+
+		return $pdo;
 	}
 
 	/**
