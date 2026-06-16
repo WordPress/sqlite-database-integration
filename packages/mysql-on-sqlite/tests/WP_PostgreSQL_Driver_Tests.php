@@ -3679,6 +3679,61 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict ON DUPLICATE KEY UPDATE NULL assignments still fail for NOT NULL columns.
+	 */
+	public function test_non_strict_upsert_null_assignment_does_not_coerce_not_null_columns(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+
+		$driver->query(
+			'CREATE TABLE wptests_upsert_not_null (
+				id INTEGER PRIMARY KEY,
+				name TEXT NOT NULL,
+				size INTEGER DEFAULT 123,
+				color TEXT
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_not_null (
+				id int(11) NOT NULL,
+				name text NOT NULL,
+				size int(11) DEFAULT 123,
+				color text DEFAULT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_upsert_not_null (id, name, size, color) VALUES (1, 'A', 10, 'red')" );
+
+		$upsert = "INSERT INTO `wptests_upsert_not_null` (`id`, `name`, `size`, `color`)
+			VALUES (1, 'B', 20, 'blue')
+			ON DUPLICATE KEY UPDATE `name` = NULL";
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
+		);
+
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_not_null" ("id", "name", "size", "color") VALUES (1, \'B\', 20, \'blue\') ON CONFLICT ("id") DO UPDATE SET "name" = NULL',
+			$translation['sql']
+		);
+
+		try {
+			$driver->query( $upsert );
+			$this->fail( 'Expected NOT NULL upsert assignment to fail.' );
+		} catch ( PDOException $e ) {
+			$this->assertStringContainsString( 'NOT NULL', $e->getMessage() );
+		}
+
+		$rows = $driver->query( 'SELECT name, size, color FROM wptests_upsert_not_null WHERE id = 1' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'A', $rows[0]->name );
+		$this->assertSame( '10', $rows[0]->size );
+		$this->assertSame( 'red', $rows[0]->color );
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE supports current-row assignment expressions.
 	 */
 	public function test_upsert_update_assignments_support_current_row_expressions(): void {
@@ -5723,6 +5778,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
 		$this->assertStringNotContainsString( 'IFNULL', $sql );
 		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+	}
+
+	/**
+	 * Tests SQLite UDF-style REGEXP(pattern, value) runtime calls are translated.
+	 */
+	public function test_regexp_runtime_function_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT
+				REGEXP('^rss_.+$', 'RSS_123') AS case_insensitive_match,
+				REGEXP('^rss_.+$', 'feed_123') AS no_match,
+				REGEXP(NULL, 'RSS_123') AS null_pattern,
+				REGEXP('^rss', NULL) AS null_value"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString(
+			"CASE WHEN CAST('^rss_.+$' AS text) IS NULL OR CAST('RSS_123' AS text) IS NULL THEN NULL WHEN CAST('RSS_123' AS text) ~* CAST('^rss_.+$' AS text) THEN 1 ELSE 0 END AS case_insensitive_match",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"CASE WHEN CAST('^rss_.+$' AS text) IS NULL OR CAST('feed_123' AS text) IS NULL THEN NULL WHEN CAST('feed_123' AS text) ~* CAST('^rss_.+$' AS text) THEN 1 ELSE 0 END AS no_match",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"CASE WHEN CAST(NULL AS text) IS NULL OR CAST('RSS_123' AS text) IS NULL THEN NULL WHEN CAST('RSS_123' AS text) ~* CAST(NULL AS text) THEN 1 ELSE 0 END AS null_pattern",
+			$sql
+		);
+		$this->assertStringContainsString(
+			"CASE WHEN CAST('^rss' AS text) IS NULL OR CAST(NULL AS text) IS NULL THEN NULL WHEN CAST(NULL AS text) ~* CAST('^rss' AS text) THEN 1 ELSE 0 END AS null_value",
+			$sql
+		);
+		$this->assertStringNotContainsString( 'REGEXP(', $sql );
 	}
 
 	/**
@@ -10621,6 +10712,184 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE inline constraints update PostgreSQL and MySQL-facing metadata.
+	 */
+	public function test_create_table_inline_constraints_update_postgresql_and_show_create_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_inline_parent (id int(11) PRIMARY KEY) DEFAULT CHARACTER SET utf8mb4' );
+		$driver->query(
+			'CREATE TABLE wptests_inline_child (
+				id int(11) PRIMARY KEY,
+				slug varchar(100) UNIQUE,
+				parent_id int(11) REFERENCES wptests_inline_parent(id) ON DELETE CASCADE ON UPDATE SET NULL
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'key_name'     => 'PRIMARY',
+					'seq_in_index' => '1',
+					'column_name'  => 'id',
+					'non_unique'   => '0',
+					'index_type'   => 'BTREE',
+					'sub_part'     => null,
+					'nullable'     => '',
+				),
+				array(
+					'key_name'     => 'slug',
+					'seq_in_index' => '1',
+					'column_name'  => 'slug',
+					'non_unique'   => '0',
+					'index_type'   => 'BTREE',
+					'sub_part'     => null,
+					'nullable'     => 'YES',
+				),
+			),
+			$this->get_mysql_index_metadata_rows( $driver, 'wptests_inline_child' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name'        => 'wptests_inline_child_ibfk_1',
+					'seq_in_index'           => '1',
+					'column_name'            => 'parent_id',
+					'referenced_table_name'  => 'wptests_inline_parent',
+					'referenced_column_name' => 'id',
+					'update_rule'            => 'SET NULL',
+					'delete_rule'            => 'CASCADE',
+				),
+			),
+			$this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_inline_child' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_inline_child' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
+		$this->assertStringContainsString( '  UNIQUE KEY `slug` (`slug`)', $create_table );
+		$this->assertStringContainsString(
+			'  CONSTRAINT `wptests_inline_child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `wptests_inline_parent` (`id`) ON DELETE CASCADE ON UPDATE SET NULL',
+			$create_table
+		);
+	}
+
+	/**
+	 * Tests ALTER TABLE ADD COLUMN inline constraints update PostgreSQL and MySQL-facing metadata.
+	 */
+	public function test_alter_table_add_column_inline_constraints_update_postgresql_and_show_create_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_inline_child (
+				existing_parent_id int(11)
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alter_inline_child
+				ADD FOREIGN KEY (existing_parent_id) REFERENCES wptests_inline_parent(id),
+				ADD COLUMN id int(11) PRIMARY KEY,
+				ADD COLUMN slug varchar(100) UNIQUE,
+				ADD COLUMN parent_id int(11) REFERENCES wptests_inline_parent(id) ON DELETE CASCADE ON UPDATE SET NULL'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD CONSTRAINT "wptests_alter_inline_child_ibfk_1" FOREIGN KEY ("existing_parent_id") REFERENCES "wptests_inline_parent" ("id")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "id" integer PRIMARY KEY',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "slug" varchar(100) UNIQUE',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "parent_id" integer CONSTRAINT "wptests_alter_inline_child_ibfk_2" REFERENCES "wptests_inline_parent" ("id") ON DELETE CASCADE ON UPDATE SET NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'key_name'     => 'PRIMARY',
+					'seq_in_index' => '1',
+					'column_name'  => 'id',
+					'non_unique'   => '0',
+					'index_type'   => 'BTREE',
+					'sub_part'     => null,
+					'nullable'     => '',
+				),
+				array(
+					'key_name'     => 'slug',
+					'seq_in_index' => '1',
+					'column_name'  => 'slug',
+					'non_unique'   => '0',
+					'index_type'   => 'BTREE',
+					'sub_part'     => null,
+					'nullable'     => 'YES',
+				),
+			),
+			$this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_inline_child' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name'        => 'wptests_alter_inline_child_ibfk_1',
+					'seq_in_index'           => '1',
+					'column_name'            => 'existing_parent_id',
+					'referenced_table_name'  => 'wptests_inline_parent',
+					'referenced_column_name' => 'id',
+					'update_rule'            => 'NO ACTION',
+					'delete_rule'            => 'NO ACTION',
+				),
+				array(
+					'constraint_name'        => 'wptests_alter_inline_child_ibfk_2',
+					'seq_in_index'           => '1',
+					'column_name'            => 'parent_id',
+					'referenced_table_name'  => 'wptests_inline_parent',
+					'referenced_column_name' => 'id',
+					'update_rule'            => 'SET NULL',
+					'delete_rule'            => 'CASCADE',
+				),
+			),
+			$this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_alter_inline_child' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_alter_inline_child' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
+		$this->assertStringContainsString( '  UNIQUE KEY `slug` (`slug`)', $create_table );
+		$this->assertStringContainsString(
+			'  CONSTRAINT `wptests_alter_inline_child_ibfk_2` FOREIGN KEY (`parent_id`) REFERENCES `wptests_inline_parent` (`id`) ON DELETE CASCADE ON UPDATE SET NULL',
+			$create_table
+		);
+	}
+
+	/**
+	 * Tests ALTER TABLE ADD COLUMN inline CHECK constraints fail explicitly.
+	 */
+	public function test_alter_table_add_column_rejects_inline_check_constraint(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_alter_inline_check (id int(11))' );
+
+		$this->expectException( InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Unsupported inline CHECK constraint.' );
+
+		$driver->query( 'ALTER TABLE wptests_alter_inline_check ADD COLUMN score int CHECK (score > 0)' );
+	}
+
+	/**
 	 * Tests ALTER TABLE ADD FOREIGN KEY forms update PostgreSQL and SHOW CREATE metadata.
 	 */
 	public function test_alter_table_add_foreign_key_updates_postgresql_and_show_create_metadata(): void {
@@ -13628,6 +13897,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema schema predicates accept DATABASE() and SCHEMA().
+	 */
+	public function test_direct_information_schema_current_database_function_predicates_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$cases = array(
+			'SELECT schema_name AS name FROM information_schema.schemata WHERE schema_name = DATABASE()' => 'wptests',
+			"SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'wptests_options'" => 'wptests_options',
+			"SELECT column_name AS name FROM information_schema.columns AS c WHERE SCHEMA() = c.table_schema AND c.table_name = 'wptests_options' AND c.column_name = 'option_name'" => 'option_name',
+			"SELECT index_name AS name FROM information_schema.statistics WHERE index_schema = SCHEMA() AND table_name = 'wptests_options' AND index_name = 'option_name'" => 'option_name',
+			"SELECT constraint_name AS name FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() AND table_name = 'wptests_options' AND constraint_name = 'PRIMARY'" => 'PRIMARY',
+			"SELECT referenced_table_schema AS name FROM information_schema.key_column_usage WHERE referenced_table_schema = SCHEMA() AND table_name = 'wptests_posts'" => 'wptests',
+			"SELECT unique_constraint_schema AS name FROM information_schema.referential_constraints WHERE unique_constraint_schema = DATABASE() AND table_name = 'wptests_posts'" => 'wptests',
+			"SELECT constraint_schema AS name FROM information_schema.check_constraints WHERE constraint_schema = SCHEMA() AND constraint_name = 'wptests_posts_status_chk'" => 'wptests',
+		);
+
+		foreach ( $cases as $query => $expected_name ) {
+			$rows = $driver->query( $query );
+
+			$this->assertCount( 1, $rows, $query );
+			$this->assertSame( $expected_name, $rows[0]->name, $query );
+
+			$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+			$this->assertSame( 0, preg_match( '/\b(?:DATABASE|SCHEMA)\s*\(/i', $sql ), $query );
+			$this->assertStringContainsString( "'wptests'", $sql, $query );
+		}
+
+		try {
+			$driver->query( "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE('wptests')" );
+			$this->fail( 'Expected unsupported information_schema query.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests direct information_schema.SCHEMATA SELECTs return MySQL-shaped rows.
 	 */
 	public function test_direct_information_schema_schemata_selects_return_mysql_shape(): void {
@@ -15685,6 +15993,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '1', $variables['autocommit'] );
 		$this->assertSame( 'InnoDB', $variables['default_storage_engine'] );
 		$this->assertSame( '1', $variables['foreign_key_checks'] );
+		$this->assertSame( '67108864', $variables['max_allowed_packet'] );
 		$this->assertSame( 'SYSTEM', $variables['time_zone'] );
 		$this->assertSame( 'SHOW VARIABLES', $driver->get_last_mysql_query() );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
@@ -15996,6 +16305,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 0, $driver->query( 'SET default_storage_engine = InnoDB' ) );
 		$rows = $driver->query( 'SELECT @@default_storage_engine' );
 		$this->assertSame( 'InnoDB', $rows[0]->{'@@default_storage_engine'} );
+
+		$rows = $driver->query( 'SELECT @@SESSION.max_allowed_packet' );
+		$this->assertSame( '67108864', $rows[0]->{'@@SESSION.max_allowed_packet'} );
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='max_allowed_packet'" );
+		$this->assertSame( '67108864', $rows[0]->Value );
 
 		$this->assertSame( 0, $driver->query( "SET SESSION time_zone = '+00:00'" ) );
 		$rows = $driver->query( 'SELECT @@time_zone' );

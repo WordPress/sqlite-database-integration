@@ -2693,6 +2693,11 @@ class WP_PostgreSQL_Driver {
 			foreach ( $metadata['indexes'] ?? array() as $index ) {
 				$this->insert_mysql_index_metadata( $schema_name, $table_name, $index, $column_nullable );
 			}
+
+			foreach ( $metadata['foreign_keys'] ?? array() as $foreign_key ) {
+				$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $schema_name;
+				$this->insert_mysql_foreign_key_metadata( $schema_name, $table_name, $foreign_key );
+			}
 		}
 	}
 
@@ -2816,8 +2821,15 @@ class WP_PostgreSQL_Driver {
 			$column['ordinal'] = $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
 			$column_nullable   = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
 			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+			$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
 			foreach ( $metadata['indexes'] ?? array() as $index ) {
+				$index['ordinal'] = $index_ordinal;
 				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
+				++$index_ordinal;
+			}
+			foreach ( $metadata['foreign_keys'] ?? array() as $foreign_key ) {
+				$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $table_schema;
+				$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key );
 			}
 			return;
 		}
@@ -3473,11 +3485,12 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Generate the next MySQL-style unnamed foreign key constraint name.
 	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
+	 * @param string   $table_schema Metadata schema.
+	 * @param string   $table_name   Table name.
+	 * @param string[] $reserved     Names already generated for this statement.
 	 * @return string Constraint name.
 	 */
-	private function get_next_mysql_foreign_key_constraint_name( string $table_schema, string $table_name ): string {
+	private function get_next_mysql_foreign_key_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$stmt = $this->connection->query(
@@ -3490,7 +3503,7 @@ class WP_PostgreSQL_Driver {
 
 		$max_suffix = 0;
 		$pattern    = '/^' . preg_quote( $table_name, '/' ) . '_ibfk_(\d+)$/i';
-		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $constraint_name ) {
+		foreach ( array_merge( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ), $reserved ) as $constraint_name ) {
 			if ( 1 === preg_match( $pattern, (string) $constraint_name, $matches ) ) {
 				$max_suffix = max( $max_suffix, (int) $matches[1] );
 			}
@@ -4850,6 +4863,7 @@ class WP_PostgreSQL_Driver {
 		$statements          = array();
 		$metadata_operations = array();
 		$check_names         = array();
+		$foreign_key_names   = array();
 		foreach ( $ranges as $range ) {
 			$translation = $this->translate_mysql_dbdelta_alter_table_action(
 				$table_schema,
@@ -4858,7 +4872,8 @@ class WP_PostgreSQL_Driver {
 				$tokens,
 				$range['start'],
 				$range['end'],
-				$check_names
+				$check_names,
+				$foreign_key_names
 			);
 			if ( null === $translation ) {
 				return null;
@@ -4949,9 +4964,10 @@ class WP_PostgreSQL_Driver {
 	 * @param int              $start      First action token.
 	 * @param int              $end        Final action token, exclusive.
 	 * @param string[]         $check_names CHECK names generated for this ALTER TABLE statement.
+	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_alter_table_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names ): ?array {
+	private function translate_mysql_dbdelta_alter_table_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names, array &$foreign_key_names ): ?array {
 		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
 			return null;
 		}
@@ -4965,12 +4981,12 @@ class WP_PostgreSQL_Driver {
 
 			case WP_MySQL_Lexer::ADD_SYMBOL:
 				if ( $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end ) ) {
-					return $this->translate_mysql_dbdelta_add_constraint_alter_action( $table_name, $clause, $tokens, $start, $end, $check_names );
+					return $this->translate_mysql_dbdelta_add_constraint_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
 				}
 				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
 					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_name, $clause, $tokens, $start, $end );
 				}
-				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_name, $clause, $tokens, $start, $end );
+				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $foreign_key_names );
 
 			case WP_MySQL_Lexer::DROP_SYMBOL:
 				if (
@@ -5355,14 +5371,16 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Translate an ALTER TABLE ADD COLUMN action.
 	 *
-	 * @param string           $table_name Table name.
-	 * @param string           $clause     Full ALTER clause string.
-	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
-	 * @param int              $start      First action token.
-	 * @param int              $end        Final action token, exclusive.
+	 * @param string           $table_schema      Backend schema name.
+	 * @param string           $table_name        Table name.
+	 * @param string           $clause            Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
+	 * @param int              $start             First action token.
+	 * @param int              $end               Final action token, exclusive.
+	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_column_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_add_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$foreign_key_names ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
@@ -5374,11 +5392,26 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$column = $this->translate_mysql_column_definition_fragment(
-			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
+			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end ),
+			$table_name
 		);
 		if ( null === $column ) {
 			return null;
 		}
+
+		foreach ( $column['foreign_keys'] as &$foreign_key ) {
+			$constraint_name = $this->get_next_mysql_foreign_key_constraint_name( $table_schema, $table_name, $foreign_key_names );
+			$column['sql']   = $this->replace_mysql_column_fragment_constraint_name(
+				$column['sql'],
+				$foreign_key['name'],
+				$constraint_name
+			);
+
+			$foreign_key['name']              = $constraint_name;
+			$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $table_schema;
+			$foreign_key_names[]              = $constraint_name;
+		}
+		unset( $foreign_key );
 
 		return array(
 			'statements' => array(
@@ -5389,8 +5422,10 @@ class WP_PostgreSQL_Driver {
 				),
 			),
 			'metadata'   => array(
-				'operation' => 'add_column',
-				'column'    => $column['metadata'],
+				'operation'    => 'add_column',
+				'column'       => $column['metadata'],
+				'indexes'      => $column['indexes'],
+				'foreign_keys' => $column['foreign_keys'],
 			),
 		);
 	}
@@ -5431,15 +5466,17 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Translate an ALTER TABLE ADD CONSTRAINT or ADD CHECK action.
 	 *
-	 * @param string           $table_name Table name.
-	 * @param string           $clause     Full ALTER clause string.
-	 * @param WP_MySQL_Token[] $tokens     Clause token stream.
-	 * @param int              $start      First action token.
-	 * @param int              $end        Final action token, exclusive.
-	 * @param string[]         $check_names CHECK names generated for this ALTER TABLE statement.
+	 * @param string           $table_schema      Backend schema name.
+	 * @param string           $table_name        Table name.
+	 * @param string           $clause            Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
+	 * @param int              $start             First action token.
+	 * @param int              $end               Final action token, exclusive.
+	 * @param string[]         $check_names       CHECK names generated for this ALTER TABLE statement.
+	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_constraint_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names ): ?array {
+	private function translate_mysql_dbdelta_add_constraint_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names, array &$foreign_key_names ): ?array {
 		$position        = $start + 1;
 		$constraint_name = null;
 
@@ -5512,15 +5549,17 @@ class WP_PostgreSQL_Driver {
 
 		if ( WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[ $position ]->id ) {
 			return $this->translate_mysql_dbdelta_add_foreign_key_alter_action(
+				$table_schema,
 				$table_name,
 				$tokens,
 				$position,
 				$end,
-				$constraint_name
+				$constraint_name,
+				$foreign_key_names
 			);
 		}
 
-			return null;
+		return null;
 	}
 
 	/**
@@ -5583,14 +5622,16 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Translate an ALTER TABLE ADD FOREIGN KEY action.
 	 *
+	 * @param string           $table_schema     Backend schema name.
 	 * @param string           $table_name       Table name.
 	 * @param WP_MySQL_Token[] $tokens           Clause token stream.
 	 * @param int              $foreign_position FOREIGN token position.
 	 * @param int              $end              Final action token, exclusive.
 	 * @param string|null      $constraint_name  Optional MySQL constraint name.
+	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_foreign_key_alter_action( string $table_name, array $tokens, int $foreign_position, int $end, ?string $constraint_name ): ?array {
+	private function translate_mysql_dbdelta_add_foreign_key_alter_action( string $table_schema, string $table_name, array $tokens, int $foreign_position, int $end, ?string $constraint_name, array &$foreign_key_names ): ?array {
 		if ( ! isset( $tokens[ $foreign_position + 1 ] ) || WP_MySQL_Lexer::KEY_SYMBOL !== $tokens[ $foreign_position + 1 ]->id ) {
 			return null;
 		}
@@ -5630,7 +5671,13 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$constraint_name = $constraint_name ?? $this->get_next_mysql_foreign_key_constraint_name( 'public', $table_name );
+		if ( null === $constraint_name ) {
+			$constraint_name     = $this->get_next_mysql_foreign_key_constraint_name( $table_schema, $table_name, $foreign_key_names );
+			$foreign_key_names[] = $constraint_name;
+		} else {
+			$foreign_key_names[] = $constraint_name;
+		}
+
 		$foreign_key_sql = sprintf(
 			'ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)%s%s',
 			$this->connection->quote_identifier( $table_name ),
@@ -7033,13 +7080,15 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Translate a MySQL column definition fragment via the CREATE TABLE translator.
 	 *
-	 * @param string $definition MySQL column definition.
-	 * @return array{sql: string, metadata: array}|null Translated column, or null when unsupported.
+	 * @param string      $definition MySQL column definition.
+	 * @param string|null $table_name  Table name for inline foreign key names.
+	 * @return array{sql: string, metadata: array, indexes: array, foreign_keys: array}|null Translated column, or null when unsupported.
 	 */
-	private function translate_mysql_column_definition_fragment( string $definition ): ?array {
+	private function translate_mysql_column_definition_fragment( string $definition, ?string $table_name = null ): ?array {
 		$definition = $this->trim_mysql_statement_fragment( $definition );
 		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
-		$wrapper    = 'CREATE TABLE __wp_dbdelta_column (' . $definition . ')';
+		$wrapper_table = $table_name ?? '__wp_dbdelta_column';
+		$wrapper       = sprintf( 'CREATE TABLE %s (%s)', $this->quote_mysql_identifier( $wrapper_table ), $definition );
 
 		$statements = $translator->translate_schema( $wrapper );
 		$metadata   = $translator->extract_schema_metadata( $wrapper, true );
@@ -7048,9 +7097,30 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return array(
-			'sql'      => $this->get_first_translated_create_table_definition( $statements[0] ),
-			'metadata' => $metadata[0]['columns'][0],
+			'sql'          => $this->get_first_translated_create_table_definition( $statements[0] ),
+			'metadata'     => $metadata[0]['columns'][0],
+			'indexes'      => $metadata[0]['indexes'] ?? array(),
+			'foreign_keys' => $metadata[0]['foreign_keys'] ?? array(),
 		);
+	}
+
+	/**
+	 * Replace a translated column fragment constraint name.
+	 *
+	 * @param string $sql      Column definition SQL.
+	 * @param string $old_name Existing constraint name.
+	 * @param string $new_name Replacement constraint name.
+	 * @return string Updated column definition SQL.
+	 */
+	private function replace_mysql_column_fragment_constraint_name( string $sql, string $old_name, string $new_name ): string {
+		$old_sql = 'CONSTRAINT ' . $this->connection->quote_identifier( $old_name );
+		$new_sql = 'CONSTRAINT ' . $this->connection->quote_identifier( $new_name );
+
+		if ( false === strpos( $sql, $old_sql ) ) {
+			throw new InvalidArgumentException( 'Translated column definition has an unexpected constraint name.' );
+		}
+
+		return str_replace( $old_sql, $new_sql, $sql );
 	}
 
 	/**
@@ -12245,6 +12315,7 @@ ORDER BY table_name';
 			'explicit_defaults_for_timestamp'         => '1',
 			'foreign_key_checks'                      => '1',
 			'keep_files_on_create'                    => '0',
+			'max_allowed_packet'                      => '67108864',
 			'old_alter_table'                         => '0',
 			'print_identified_with_as_hex'            => '0',
 			'require_row_format'                      => '0',
@@ -20041,15 +20112,29 @@ WHERE option_name IN (
 		}
 
 		foreach ( array_merge( $context['join_predicate_ranges'], $context['clause_ranges'] ) as $range ) {
+			$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
+				$tokens,
+				$range['start'],
+				$range['end'],
+				$nested_select_replacements
+			);
+			if ( null === $current_database_function_replacements ) {
+				return null;
+			}
+
 			$column_replacements = $this->get_direct_information_schema_column_replacements(
 				$tokens,
 				$range['start'],
 				$range['end'],
 				$context,
-				$nested_select_replacements
+				array_merge( $nested_select_replacements, $current_database_function_replacements )
 			);
 			if ( null === $column_replacements ) {
 				return null;
+			}
+
+			foreach ( $current_database_function_replacements as $replacement ) {
+				$replacements[] = $replacement;
 			}
 
 			foreach ( $column_replacements as $replacement ) {
@@ -21469,6 +21554,45 @@ WHERE option_name IN (
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start + 1 ]->id
 			&& '*' === $tokens[ $start + 2 ]->get_bytes()
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $start + 3 ]->id;
+	}
+
+	/**
+	 * Get DATABASE()/SCHEMA() replacements for a direct information_schema range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $start            First token.
+	 * @param int              $end              Final token, exclusive.
+	 * @param array[]          $protected_ranges Ranges already handled by larger replacements.
+	 * @return array[]|null Replacement ranges, or null when a current-database function has unsupported arguments.
+	 */
+	private function get_direct_information_schema_current_database_function_replacements( array $tokens, int $start, int $end, array $protected_ranges = array() ): ?array {
+		$replacements = array();
+		for ( $position = $start; $position < $end; $position++ ) {
+			$protected_end = $this->get_covering_mysql_replacement_range_end( $position, $protected_ranges );
+			if ( null !== $protected_end ) {
+				$position = $protected_end - 1;
+				continue;
+			}
+
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
+			if ( null === $bounds || ! in_array( $bounds['function'], array( 'database', 'schema' ), true ) ) {
+				continue;
+			}
+
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if ( null === $arguments || array() !== $arguments ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $position,
+				'end'   => $bounds['close'] + 1,
+				'sql'   => $this->connection->quote( $this->db_name ),
+			);
+			$position       = $bounds['close'];
+		}
+
+		return $replacements;
 	}
 
 	/**
@@ -27302,14 +27426,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				) {
 					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
 				}
-				if (
-					null === $value_sql
-					&&
-					! $this->is_mysql_strict_sql_mode_active()
-					&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
-				) {
-					$value_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
-				}
 				if ( null === $value_sql ) {
 					$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
 				}
@@ -32529,6 +32645,13 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		if (
 			WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position ]->id
 		) {
+			if (
+				isset( $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				return null;
+			}
+
 			$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $position + 1, $end );
 
 			return array(
@@ -32543,6 +32666,13 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position ]->id
 			&& WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position + 1 ]->id
 		) {
+			if (
+				isset( $tokens[ $position + 2 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 2 ]->id
+			) {
+				return null;
+			}
+
 			$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $position + 2, $end );
 
 			return array(
@@ -32767,6 +32897,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			WP_MySQL_Lexer::MID_SYMBOL               => 'substring',
 			WP_MySQL_Lexer::NOW_SYMBOL               => 'now',
 			WP_MySQL_Lexer::REPLACE_SYMBOL           => 'replace',
+			WP_MySQL_Lexer::REGEXP_SYMBOL            => 'regexp',
 			WP_MySQL_Lexer::SCHEMA_SYMBOL            => 'database',
 			WP_MySQL_Lexer::SUBSTR_SYMBOL            => 'substring',
 			WP_MySQL_Lexer::SUBSTRING_SYMBOL         => 'substring',
@@ -32815,6 +32946,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'now',
 			'release_lock',
 			'replace',
+			'regexp',
 			'schema',
 			'substr',
 			'substring',
@@ -32966,6 +33098,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'replace':
 				return 3 === $count ? sprintf( 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))', $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
 
+			case 'regexp':
+				return 2 === $count ? $this->get_postgresql_mysql_regexp_function_sql( $argument_sql[0], $argument_sql[1] ) : null;
+
 			case 'substring':
 			case 'substr':
 				return $this->get_postgresql_mysql_substring_sql( $argument_sql );
@@ -33010,6 +33145,24 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for SQLite UDF-style MySQL REGEXP(pattern, value).
+	 *
+	 * @param string $pattern_sql Regular expression pattern SQL.
+	 * @param string $value_sql   Value SQL.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_regexp_function_sql( string $pattern_sql, string $value_sql ): string {
+		$pattern = sprintf( 'CAST(%s AS text)', $pattern_sql );
+		$value   = sprintf( 'CAST(%s AS text)', $value_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s ~* %1$s THEN 1 ELSE 0 END',
+			$pattern,
+			$value
+		);
 	}
 
 	/**

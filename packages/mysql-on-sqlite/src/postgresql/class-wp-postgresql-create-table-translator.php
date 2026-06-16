@@ -93,11 +93,12 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$columns       = array();
 		$constraints   = array();
 		$indexes       = array();
+		$foreign_key_ordinal = 1;
 
 		foreach ( $element_list->get_child_nodes( 'tableElement' ) as $table_element ) {
 			$column_definition = $table_element->get_first_child_node( 'columnDefinition' );
 			if ( $column_definition ) {
-				$columns[] = $this->translate_column_definition( $column_definition );
+				$columns[] = $this->translate_column_definition( $column_definition, $table_name, $foreign_key_ordinal );
 				continue;
 			}
 
@@ -217,10 +218,12 @@ class WP_PostgreSQL_Create_Table_Translator {
 	/**
 	 * Translate a MySQL column definition.
 	 *
-	 * @param WP_Parser_Node $column_definition Column definition node.
+	 * @param WP_Parser_Node $column_definition   Column definition node.
+	 * @param string         $table_name          Table name.
+	 * @param int            $foreign_key_ordinal Next inline foreign key ordinal.
 	 * @return string PostgreSQL column definition.
 	 */
-	private function translate_column_definition( WP_Parser_Node $column_definition ): string {
+	private function translate_column_definition( WP_Parser_Node $column_definition, string $table_name, int &$foreign_key_ordinal ): string {
 		$name             = $this->get_identifier_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
 		$field_definition = $column_definition->get_first_child_node( 'fieldDefinition' );
 		if ( ! $field_definition ) {
@@ -243,12 +246,295 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
+			if ( $attribute->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+				$parts[] = 'PRIMARY KEY';
+				continue;
+			}
+
+			if ( $attribute->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+				$parts[] = 'UNIQUE';
+				continue;
+			}
+
+			if ( $attribute->get_first_child_node( 'checkConstraint' ) ) {
+				throw new InvalidArgumentException( 'Unsupported inline CHECK constraint.' );
+			}
+
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
 				$parts[] = $this->translate_default_attribute( $attribute );
 			}
 		}
 
+		$references = $this->get_inline_references_node( $column_definition );
+		if ( $references ) {
+			$constraint_name = $this->get_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal );
+			$parts[]         = 'CONSTRAINT ' . $this->quote_identifier( $constraint_name ) . ' ' . $this->translate_inline_references( $references );
+			++$foreign_key_ordinal;
+		}
+
+		if ( $this->has_inline_check_constraint( $field_definition, $column_definition ) ) {
+			throw new InvalidArgumentException( 'Unsupported inline CHECK constraint.' );
+		}
+
 		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Get a MySQL inline REFERENCES node from a field definition.
+	 *
+	 * @param WP_Parser_Node $column_definition Column definition node.
+	 * @return WP_Parser_Node|null REFERENCES node.
+	 */
+	private function get_inline_references_node( WP_Parser_Node $column_definition ): ?WP_Parser_Node {
+		$check_or_references = $column_definition->get_first_child_node( 'checkOrReferences' );
+		return $check_or_references ? $check_or_references->get_first_child_node( 'references' ) : null;
+	}
+
+	/**
+	 * Check whether a field definition has an inline CHECK constraint.
+	 *
+	 * @param WP_Parser_Node      $field_definition  Field definition node.
+	 * @param WP_Parser_Node|null $column_definition Column definition node.
+	 * @return bool Whether inline CHECK is present.
+	 */
+	private function has_inline_check_constraint( WP_Parser_Node $field_definition, ?WP_Parser_Node $column_definition = null ): bool {
+		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+			if ( $attribute->get_first_child_node( 'checkConstraint' ) ) {
+				return true;
+			}
+		}
+
+		$check_or_references = $column_definition ? $column_definition->get_first_child_node( 'checkOrReferences' ) : null;
+		return $check_or_references && null !== $check_or_references->get_first_child_node( 'checkConstraint' );
+	}
+
+	/**
+	 * Translate inline MySQL REFERENCES syntax.
+	 *
+	 * @param WP_Parser_Node $references REFERENCES node.
+	 * @return string PostgreSQL REFERENCES clause.
+	 */
+	private function translate_inline_references( WP_Parser_Node $references ): string {
+		$reference = $this->extract_inline_reference_metadata( $references );
+		$table_sql = $this->quote_table_reference(
+			$reference['referenced_schema'],
+			$reference['referenced_table']
+		);
+		$columns = array_map( array( $this, 'quote_identifier' ), $reference['referenced_columns'] );
+
+		$sql = sprintf(
+			'REFERENCES %s (%s)',
+			$table_sql,
+			implode( ', ', $columns )
+		);
+
+		if ( 'NO ACTION' !== $reference['delete_rule'] ) {
+			$sql .= ' ON DELETE ' . $reference['delete_rule'];
+		}
+
+		if ( 'NO ACTION' !== $reference['update_rule'] ) {
+			$sql .= ' ON UPDATE ' . $reference['update_rule'];
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Extract the referenced table, columns, and rules from inline REFERENCES.
+	 *
+	 * @param WP_Parser_Node $references REFERENCES node.
+	 * @return array{referenced_schema: string|null, referenced_table: string, referenced_columns: string[], update_rule: string, delete_rule: string}
+	 */
+	private function extract_inline_reference_metadata( WP_Parser_Node $references ): array {
+		if ( $references->has_child_token( WP_MySQL_Lexer::MATCH_SYMBOL ) ) {
+			throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+		}
+
+		$table_reference = $this->get_table_reference_parts( $references->get_first_child_node( 'tableRef' ) );
+		$columns         = $this->get_identifier_list_values( $references->get_first_child_node( 'identifierListWithParentheses' ) );
+		if ( empty( $columns ) ) {
+			throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+		}
+
+		$rules = $this->get_inline_reference_rules( $references );
+
+		return array(
+			'referenced_schema'  => $table_reference['schema'],
+			'referenced_table'   => $table_reference['table'],
+			'referenced_columns' => $columns,
+			'update_rule'        => $rules['update_rule'],
+			'delete_rule'        => $rules['delete_rule'],
+		);
+	}
+
+	/**
+	 * Get table reference parts from a tableRef node.
+	 *
+	 * @param WP_Parser_Node|null $table_ref Table reference node.
+	 * @return array{schema: string|null, table: string}
+	 */
+	private function get_table_reference_parts( ?WP_Parser_Node $table_ref ): array {
+		if ( ! $table_ref ) {
+			throw new InvalidArgumentException( 'Expected table reference node.' );
+		}
+
+		$identifiers = array();
+		foreach ( $table_ref->get_descendant_nodes( 'identifier' ) as $identifier ) {
+			$identifiers[] = $this->get_identifier_value( $identifier );
+		}
+
+		if ( 1 === count( $identifiers ) ) {
+			return array(
+				'schema' => null,
+				'table'  => $identifiers[0],
+			);
+		}
+
+		if ( 2 === count( $identifiers ) ) {
+			return array(
+				'schema' => $identifiers[0],
+				'table'  => $identifiers[1],
+			);
+		}
+
+		throw new InvalidArgumentException( 'Unsupported table reference.' );
+	}
+
+	/**
+	 * Quote a possibly schema-qualified table reference.
+	 *
+	 * @param string|null $schema_name Schema name, or null.
+	 * @param string      $table_name  Table name.
+	 * @return string Quoted table reference.
+	 */
+	private function quote_table_reference( ?string $schema_name, string $table_name ): string {
+		if ( null === $schema_name ) {
+			return $this->quote_identifier( $table_name );
+		}
+
+		return $this->quote_identifier( $schema_name ) . '.' . $this->quote_identifier( $table_name );
+	}
+
+	/**
+	 * Get identifier values from an identifierListWithParentheses node.
+	 *
+	 * @param WP_Parser_Node|null $identifier_list Identifier list node.
+	 * @return string[] Identifier values.
+	 */
+	private function get_identifier_list_values( ?WP_Parser_Node $identifier_list ): array {
+		if ( ! $identifier_list ) {
+			return array();
+		}
+
+		$identifiers = array();
+		foreach ( $identifier_list->get_descendant_nodes( 'identifier' ) as $identifier ) {
+			$identifiers[] = $this->get_identifier_value( $identifier );
+		}
+
+		return $identifiers;
+	}
+
+	/**
+	 * Parse inline foreign key ON UPDATE/ON DELETE rules.
+	 *
+	 * @param WP_Parser_Node $references REFERENCES node.
+	 * @return array{update_rule: string, delete_rule: string}
+	 */
+	private function get_inline_reference_rules( WP_Parser_Node $references ): array {
+		$rules = array(
+			'update_rule' => 'NO ACTION',
+			'delete_rule' => 'NO ACTION',
+		);
+		$seen   = array();
+		$tokens = $references->get_descendant_tokens();
+
+		for ( $position = 0; $position < count( $tokens ); ++$position ) {
+			if ( WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $position ]->id ) {
+				continue;
+			}
+
+			if ( ! isset( $tokens[ $position + 1 ] ) ) {
+				throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+			}
+
+			if ( WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $position + 1 ]->id ) {
+				$rule_key = 'update_rule';
+			} elseif ( WP_MySQL_Lexer::DELETE_SYMBOL === $tokens[ $position + 1 ]->id ) {
+				$rule_key = 'delete_rule';
+			} else {
+				throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+			}
+
+			if ( isset( $seen[ $rule_key ] ) ) {
+				throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+			}
+
+			$option_position    = $position + 2;
+			$rules[ $rule_key ] = $this->get_inline_reference_option( $tokens, $option_position );
+			$seen[ $rule_key ]  = true;
+			$position           = $option_position - 1;
+		}
+
+		return $rules;
+	}
+
+	/**
+	 * Parse one inline foreign key reference option.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   REFERENCES token stream.
+	 * @param int             $position Current token position, updated on success.
+	 * @return string Reference option.
+	 */
+	private function get_inline_reference_option( array $tokens, int &$position ): string {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+		}
+
+		if ( in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::CASCADE_SYMBOL, WP_MySQL_Lexer::RESTRICT_SYMBOL ), true ) ) {
+			$rule = strtoupper( $tokens[ $position ]->get_value() );
+			++$position;
+			return $rule;
+		}
+
+		if ( WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
+			if ( ! isset( $tokens[ $position + 1 ] ) ) {
+				throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+			}
+
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $position + 1 ]->id ) {
+				$position += 2;
+				return 'SET NULL';
+			}
+
+			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $position + 1 ]->id ) {
+				$position += 2;
+				return 'SET DEFAULT';
+			}
+
+			throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+		}
+
+		if (
+			isset( $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::NO_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::ACTION_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$position += 2;
+			return 'NO ACTION';
+		}
+
+		throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+	}
+
+	/**
+	 * Get the MySQL-style implicit foreign key constraint name.
+	 *
+	 * @param string $table_name Table name.
+	 * @param int    $ordinal    Constraint ordinal.
+	 * @return string Constraint name.
+	 */
+	private function get_implicit_foreign_key_constraint_name( string $table_name, int $ordinal ): string {
+		return $table_name . '_ibfk_' . $ordinal;
 	}
 
 	/**
@@ -280,6 +566,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 			in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
 			|| $this->is_mysql_spatial_column_type( $type )
 		) {
+			$postgresql_type = 'text';
+		} elseif ( in_array( $type, array( 'enum', 'set' ), true ) ) {
 			$postgresql_type = 'text';
 		} elseif ( in_array( $type, array( 'binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob' ), true ) ) {
 			$postgresql_type = 'bytea';
@@ -590,8 +878,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$columns       = array();
 		$column_types  = array();
 		$indexes       = array();
+		$foreign_keys  = array();
 		$ordinal       = 1;
 		$index_ordinal = 1;
+		$foreign_key_ordinal = 1;
 
 		list ( $table_charset, $table_collation ) = $charset;
 
@@ -611,6 +901,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				$field_definition = $column_definition->get_first_child_node( 'fieldDefinition' );
 				$data_type        = $field_definition ? $field_definition->get_first_child_node( 'dataType' ) : null;
 				$column_type      = $this->get_mysql_column_type( $data_type, $field_definition );
+				$is_inline_primary = $field_definition && $this->has_inline_primary_key( $field_definition );
 
 				list ( $charset, $collation ) = $this->get_column_charset_and_collation(
 					$field_definition,
@@ -629,13 +920,27 @@ class WP_PostgreSQL_Create_Table_Translator {
 				);
 
 				if ( $include_indexes ) {
-					$column_metadata['nullable'] = $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL ) ? 'NO' : 'YES';
+					$column_metadata['nullable'] = $is_inline_primary || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) ? 'NO' : 'YES';
 					$column_metadata['default']  = $field_definition ? $this->get_column_default_metadata( $field_definition ) : null;
 					$column_metadata['extra']    = $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ? 'auto_increment' : '';
 				}
 
 				$columns[]                           = $column_metadata;
 				$column_types[ strtolower( $name ) ] = $column_type;
+
+				if ( $include_indexes && $field_definition ) {
+					foreach ( $this->extract_inline_index_metadata( $name, $field_definition, $column_type, $index_ordinal ) as $index ) {
+						$indexes[] = $index;
+						++$index_ordinal;
+					}
+
+					$foreign_key = $this->extract_inline_foreign_key_metadata( $table_name, $name, $field_definition, $column_definition, $foreign_key_ordinal );
+					if ( null !== $foreign_key ) {
+						$foreign_keys[] = $foreign_key;
+						++$foreign_key_ordinal;
+					}
+				}
+
 				++$ordinal;
 				continue;
 			}
@@ -657,10 +962,124 @@ class WP_PostgreSQL_Create_Table_Translator {
 		);
 
 		if ( $include_indexes ) {
-			$metadata['indexes'] = $indexes;
+			$metadata['indexes']      = $indexes;
+			$metadata['foreign_keys'] = $foreign_keys;
 		}
 
 		return $metadata;
+	}
+
+	/**
+	 * Check whether a field definition has an inline PRIMARY KEY attribute.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @return bool Whether inline PRIMARY KEY is present.
+	 */
+	private function has_inline_primary_key( WP_Parser_Node $field_definition ): bool {
+		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+			if ( $attribute->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a field definition has an inline UNIQUE attribute.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @return bool Whether inline UNIQUE is present.
+	 */
+	private function has_inline_unique_key( WP_Parser_Node $field_definition ): bool {
+		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+			if ( $attribute->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Extract metadata for inline PRIMARY KEY and UNIQUE attributes.
+	 *
+	 * @param string         $column_name      Column name.
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @param string         $column_type      MySQL column type.
+	 * @param int            $index_ordinal    Current index ordinal.
+	 * @return array[] Index metadata rows.
+	 */
+	private function extract_inline_index_metadata( string $column_name, WP_Parser_Node $field_definition, string $column_type, int $index_ordinal ): array {
+		$indexes      = array();
+		$column_types = array( strtolower( $column_name ) => $column_type );
+		$sub_part     = $this->get_implicit_index_sub_part( $column_name, $column_types );
+		$column       = array(
+			'column_name'  => $column_name,
+			'seq_in_index' => 1,
+			'sub_part'     => $sub_part,
+		);
+
+		if ( $this->has_inline_primary_key( $field_definition ) ) {
+			$indexes[] = array(
+				'name'       => 'PRIMARY',
+				'ordinal'    => $index_ordinal,
+				'non_unique' => '0',
+				'index_type' => 'BTREE',
+				'comment'    => '',
+				'columns'    => array( $column ),
+			);
+			++$index_ordinal;
+		}
+
+		if ( $this->has_inline_unique_key( $field_definition ) ) {
+			$indexes[] = array(
+				'name'       => $column_name,
+				'ordinal'    => $index_ordinal,
+				'non_unique' => '0',
+				'index_type' => 'BTREE',
+				'comment'    => '',
+				'columns'    => array( $column ),
+			);
+		}
+
+		return $indexes;
+	}
+
+	/**
+	 * Extract metadata for an inline foreign key reference.
+	 *
+	 * @param string         $table_name          Table name.
+	 * @param string         $column_name         Local column name.
+	 * @param WP_Parser_Node $field_definition   Field definition node.
+	 * @param WP_Parser_Node $column_definition  Column definition node.
+	 * @param int            $foreign_key_ordinal Current foreign key ordinal.
+	 * @return array|null Foreign key metadata, or null.
+	 */
+	private function extract_inline_foreign_key_metadata( string $table_name, string $column_name, WP_Parser_Node $field_definition, WP_Parser_Node $column_definition, int $foreign_key_ordinal ): ?array {
+		$references = $this->get_inline_references_node( $column_definition );
+		if ( ! $references ) {
+			if ( $this->has_inline_check_constraint( $field_definition, $column_definition ) ) {
+				throw new InvalidArgumentException( 'Unsupported inline CHECK constraint.' );
+			}
+
+			return null;
+		}
+
+		$reference = $this->extract_inline_reference_metadata( $references );
+		if ( 1 !== count( $reference['referenced_columns'] ) ) {
+			throw new InvalidArgumentException( 'Unsupported inline REFERENCES option.' );
+		}
+
+		return array(
+			'name'               => $this->get_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal ),
+			'columns'            => array( $column_name ),
+			'referenced_schema'  => $reference['referenced_schema'],
+			'referenced_table'   => $reference['referenced_table'],
+			'referenced_columns' => $reference['referenced_columns'],
+			'update_rule'        => $reference['update_rule'],
+			'delete_rule'        => $reference['delete_rule'],
+		);
 	}
 
 	/**
@@ -1012,6 +1431,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$type = 'int';
 		}
 
+		if ( in_array( $type, array( 'enum', 'set' ), true ) ) {
+			return $this->get_enum_or_set_column_type( $type, $data_type );
+		}
+
 		$numeric_precision = $this->get_numeric_precision_fragment( $data_type );
 		if ( '' !== $numeric_precision && in_array( $type, array( 'dec', 'decimal', 'double', 'fixed', 'float', 'numeric' ), true ) ) {
 			$type .= $numeric_precision;
@@ -1027,6 +1450,31 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return $type;
+	}
+
+	/**
+	 * Get the MySQL COLUMN_TYPE metadata for ENUM and SET columns.
+	 *
+	 * @param string         $type      Base MySQL data type.
+	 * @param WP_Parser_Node $data_type Data type node.
+	 * @return string MySQL column type.
+	 */
+	private function get_enum_or_set_column_type( string $type, WP_Parser_Node $data_type ): string {
+		$values = array();
+		foreach ( $data_type->get_descendant_tokens() as $token ) {
+			if (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id
+				|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id
+			) {
+				$values[] = $this->quote_string_literal( $token->get_value() );
+			}
+		}
+
+		if ( empty( $values ) ) {
+			throw new InvalidArgumentException( sprintf( 'Unsupported MySQL column type for PostgreSQL install DDL: %s.', $type ) );
+		}
+
+		return sprintf( '%s(%s)', $type, implode( ',', $values ) );
 	}
 
 	/**
