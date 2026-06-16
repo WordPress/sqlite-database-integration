@@ -3461,6 +3461,108 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE DROP CONSTRAINT fails before backend execution when metadata has no matching constraint.
+	 */
+	public function test_alter_table_drop_constraint_fails_for_missing_constraint_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_missing_constraint (
+				id int NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_alter_drop_missing_constraint DROP CONSTRAINT missing_constraint' );
+			$this->fail( 'Expected unsupported ALTER TABLE exception.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage() );
+		}
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP CONSTRAINT fails closed when metadata has multiple matching constraint classes.
+	 */
+	public function test_alter_table_drop_constraint_fails_for_ambiguous_constraint_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_constraint_parent (
+				id int NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_ambiguous_constraint (
+				id int NOT NULL,
+				UNIQUE KEY cnst (id)
+			)'
+		);
+		$driver->get_connection()->query(
+			sprintf(
+				'INSERT INTO %s
+					(table_schema, table_name, constraint_name, constraint_ordinal, seq_in_index, column_name, referenced_table_schema, referenced_table_name, referenced_column_name, update_rule, delete_rule)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array(
+				'public',
+				'wptests_alter_drop_ambiguous_constraint',
+				'cnst',
+				1,
+				1,
+				'id',
+				'public',
+				'wptests_alter_drop_constraint_parent',
+				'id',
+				'NO ACTION',
+				'NO ACTION',
+			)
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_alter_drop_ambiguous_constraint DROP CONSTRAINT cnst' );
+			$this->fail( 'Expected unsupported ALTER TABLE exception.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage() );
+		}
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array( 'cnst' ), array_values( array_unique( array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_ambiguous_constraint' ), 'key_name' ) ) ) );
+		$this->assertSame( array( 'cnst' ), array_values( array_unique( array_column( $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_alter_drop_ambiguous_constraint' ), 'constraint_name' ) ) ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE DROP CONSTRAINT does not treat ordinary non-unique keys as constraints.
+	 */
+	public function test_alter_table_drop_constraint_fails_for_non_unique_index_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_drop_non_unique_constraint (
+				id int NOT NULL,
+				name varchar(191) NOT NULL,
+				KEY name_lookup (name)
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_alter_drop_non_unique_constraint DROP CONSTRAINT name_lookup' );
+			$this->fail( 'Expected unsupported ALTER TABLE exception.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage() );
+		}
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array( 'name_lookup' ), array_values( array_unique( array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_drop_non_unique_constraint' ), 'key_name' ) ) ) );
+	}
+
+	/**
 	 * Tests ALTER TABLE ADD/DROP CHECK forms translate to PostgreSQL constraints.
 	 */
 	public function test_alter_table_check_constraint_forms_translate_to_postgresql(): void {
@@ -13496,6 +13598,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests TIMESTAMPADD supports composite MySQL interval literal units for PostgreSQL.
+	 */
+	public function test_mysql_timestampadd_supports_composite_interval_literals_for_postgresql(): void {
+		$driver = $this->create_driver();
+		$cases  = array(
+			array( 'SECOND_MICROSECOND', "'10.09'", array( array( '10', 'second' ), array( '090000', 'microsecond' ) ) ),
+			array( 'MINUTE_SECOND', "'1:02'", array( array( '1', 'minute' ), array( '02', 'second' ) ) ),
+			array( 'MINUTE_MICROSECOND', "'3:04.005006'", array( array( '3', 'minute' ), array( '04', 'second' ), array( '005006', 'microsecond' ) ) ),
+			array( 'HOUR_MINUTE', "'5:30'", array( array( '5', 'hour' ), array( '30', 'minute' ) ) ),
+			array( 'HOUR_SECOND', "'6:07:08'", array( array( '6', 'hour' ), array( '07', 'minute' ), array( '08', 'second' ) ) ),
+			array( 'HOUR_MICROSECOND', "'9:10:11.000012'", array( array( '9', 'hour' ), array( '10', 'minute' ), array( '11', 'second' ), array( '000012', 'microsecond' ) ) ),
+			array( 'DAY_HOUR', "'13 14'", array( array( '13', 'day' ), array( '14', 'hour' ) ) ),
+			array( 'DAY_MINUTE', "'15 16:17'", array( array( '15', 'day' ), array( '16', 'hour' ), array( '17', 'minute' ) ) ),
+			array( 'DAY_SECOND', "'18 19:20:21'", array( array( '18', 'day' ), array( '19', 'hour' ), array( '20', 'minute' ), array( '21', 'second' ) ) ),
+			array( 'DAY_MICROSECOND', "'22 23:24:25.123456'", array( array( '22', 'day' ), array( '23', 'hour' ), array( '24', 'minute' ), array( '25', 'second' ), array( '123456', 'microsecond' ) ) ),
+			array( 'YEAR_MONTH', "'2-03'", array( array( '2', 'year' ), array( '03', 'month' ) ) ),
+			array( 'HOUR_MINUTE', '-1.5', array( array( '-1', 'hour' ), array( '-5', 'minute' ) ) ),
+		);
+
+		foreach ( $cases as $case ) {
+			list( $mysql_unit, $value_sql, $components ) = $case;
+
+			$select = 'SELECT TIMESTAMPADD(' . $mysql_unit . ', ' . $value_sql . ', post_date_gmt) AS shifted';
+			$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+			$this->assertSame(
+				'SELECT ' . $this->get_expected_date_arithmetic_with_interval_sql( '+', 'post_date_gmt', $this->get_expected_mysql_composite_interval_sql( $components ) ) . ' AS shifted',
+				$sql,
+				$mysql_unit . ' ' . $value_sql
+			);
+			$this->assertStringNotContainsString( 'TIMESTAMPADD', $sql, $mysql_unit . ' ' . $value_sql );
+		}
+	}
+
+	/**
 	 * Tests fractional SECOND interval values preserve MySQL numeric coercion.
 	 */
 	public function test_mysql_date_arithmetic_preserves_fractional_second_intervals_for_postgresql(): void {
@@ -13792,7 +13929,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT DATE_ADD(post_date_gmt, INTERVAL 6/4 HOUR_MINUTE) AS shifted',
 			"SELECT DATE_ADD(post_date_gmt, INTERVAL '1:2:3' MINUTE_SECOND) AS shifted",
 			'SELECT TIMESTAMPADD(FORTNIGHT, 1, post_date_gmt) AS shifted',
-			'SELECT TIMESTAMPADD(DAY_SECOND, 1, post_date_gmt) AS shifted',
+			'SELECT TIMESTAMPADD(DAY_SECOND, interval_value, post_date_gmt) AS shifted',
+			'SELECT TIMESTAMPADD(DAY_SECOND, 6/4, post_date_gmt) AS shifted',
+			"SELECT TIMESTAMPADD(MINUTE_SECOND, '1:2:3', post_date_gmt) AS shifted",
 			'SELECT TIMESTAMPADD(DAY, 1) AS shifted',
 		);
 
@@ -13887,6 +14026,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '2', $rows[0]->option_value );
 		$this->assertSame( 'two', $rows[0]->autoload );
 
+		$count_literal_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('source_counts', 'ignored', 'ignored')
+			ON DUPLICATE KEY UPDATE `option_value` = (SELECT COUNT(1) FROM `wptests_upsert_source` WHERE `id` > 0),
+			                        `autoload` = (SELECT COUNT(NULL) FROM `wptests_upsert_source`)";
+
+		$this->assertSame( 1, $driver->query( $count_literal_upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT COUNT(1) FROM "wptests_upsert_source" WHERE "id" > 0) AS text), "autoload" = CAST((SELECT COUNT(NULL) FROM "wptests_upsert_source") AS text)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'source_counts'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '3', $rows[0]->option_value );
+		$this->assertSame( '0', $rows[0]->autoload );
+
 		$ordered_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 			VALUES ('source_counts', 'ignored', 'ignored')
 			ON DUPLICATE KEY UPDATE `option_value` = (SELECT `label` FROM `wptests_upsert_source` ORDER BY `id` DESC LIMIT 1),
@@ -13942,6 +14103,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 				VALUES ('source_counts', 'ignored', 'ignored')
 				ON DUPLICATE KEY UPDATE `option_value` = (SELECT label FROM `wptests_upsert_source` ORDER BY missing LIMIT 1)",
+			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+				VALUES ('source_counts', 'ignored', 'ignored')
+				ON DUPLICATE KEY UPDATE `option_value` = (SELECT COUNT(missing) FROM `wptests_upsert_source`)",
 		);
 
 		foreach ( $queries as $query ) {
@@ -20446,6 +20610,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'analytics', $schema_qualified_auto_increment[0]->TABLE_SCHEMA );
 		$this->assertSame( 'analytics_posts', $schema_qualified_auto_increment[0]->TABLE_NAME );
 		$this->assertSame( '3', $schema_qualified_auto_increment[0]->AUTO_INCREMENT );
+	}
+
+	/**
+	 * Tests direct information_schema.TABLES BINARY predicates use exact matching.
+	 */
+	public function test_direct_information_schema_tables_binary_predicates_use_exact_matching(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$exact = $driver->query(
+			"SELECT table_name
+			FROM information_schema.tables
+			WHERE table_name = BINARY 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $exact );
+		$this->assertSame( 'wptests_options', $exact[0]->TABLE_NAME );
+		$sql = $this->get_logged_postgresql_sql_containing(
+			$driver->get_last_postgresql_queries(),
+			'"TABLE_NAME" = \'wptests_options\''
+		);
+		$this->assertStringContainsString( '"TABLE_NAME" = \'wptests_options\'', $sql );
+		$this->assertStringNotContainsString( 'BINARY', strtoupper( $sql ) );
+
+		$case_mismatch = $driver->query(
+			"SELECT table_name
+			FROM information_schema.tables
+			WHERE table_name = BINARY 'WPTESTS_OPTIONS'"
+		);
+
+		$this->assertSame( array(), $case_mismatch );
+		$sql = $this->get_logged_postgresql_sql_containing(
+			$driver->get_last_postgresql_queries(),
+			'"TABLE_NAME" = \'WPTESTS_OPTIONS\''
+		);
+		$this->assertStringNotContainsString( 'BINARY', strtoupper( $sql ) );
 	}
 
 	/**

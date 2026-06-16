@@ -32,6 +32,7 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
   - `IGNORE_SPACE`
   - `HIGH_NOT_PRECEDENCE`
 - [x] Update the PostgreSQL wpdb adapter so `set_sql_mode()` mirrors SQLite/core behavior when called without explicit modes.
+- [x] Ensure PostgreSQL wpdb no-argument `set_sql_mode()` applies core incompatible-mode filtering to zero-date and strict modes instead of preserving backend defaults.
 - [x] Stop treating `ANSI_QUOTES` as inherently incompatible for PostgreSQL once lexer/parser support exists.
 - [x] Emulate `NO_AUTO_VALUE_ON_ZERO` for PostgreSQL INSERT translation against auto-increment columns.
 - [x] Enforce `NO_ZERO_DATE` and `NO_ZERO_IN_DATE` before PostgreSQL receives invalid MySQL date values.
@@ -70,8 +71,10 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Tolerate supported MySQL table/storage options in `ALTER TABLE` with either `OPTION=value` or `OPTION value` spelling as PostgreSQL no-ops.
 - [x] Emulate the common plugin upsert side effect `ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)` for deterministic single-row AUTO_INCREMENT self-assignments.
 - [x] Harden `ON DUPLICATE KEY UPDATE` expression assignments so resolved current-row columns and `VALUES(column)` work, while unknown column references fail before backend execution.
+- [x] Support safe literal-argument `COUNT(...)` scalar subqueries inside PostgreSQL `ON DUPLICATE KEY UPDATE` assignments.
 - [x] Replay deterministic multi-row `ON DUPLICATE KEY UPDATE` batches per row when each row needs a different unique-key arbiter.
 - [x] Fail closed for unsupported bounded single-table `UPDATE ... ORDER BY/LIMIT` shapes before backend execution.
+- [x] Fail closed for PostgreSQL `ALTER TABLE ... DROP CONSTRAINT` when the generic name is missing, ambiguous across constraint metadata, or only names a non-unique index.
 
 ## Runtime And Metadata Parity
 
@@ -93,6 +96,8 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Preserve derivable numeric and time `DATE_FORMAT()` parts for zero or partial-zero literal dates while keeping calendar-dependent specifiers conservative.
 - [x] Support bounded `SHOW ... WHERE` predicates using `BINARY` string comparison and `LIKE ... ESCAPE`.
 - [x] Route explicit main database-qualified application-table writes and table administration after `USE information_schema` while keeping unqualified `information_schema` writes blocked.
+- [x] Support PostgreSQL `TIMESTAMPADD()` composite MySQL interval literal units with the same safe interval-component translation used by `DATE_ADD()`/`DATE_SUB()`, while keeping dynamic or malformed composite values explicit unsupported errors.
+- [x] Support exact-match `BINARY` predicates in direct PostgreSQL `information_schema` SELECT rewrites without sending raw MySQL `BINARY` syntax to the backend.
 
 ## Tests
 
@@ -106,13 +111,18 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for `NO_AUTO_VALUE_ON_ZERO` insert behavior.
 - [x] Add PostgreSQL tests for zero-date and zero-in-date behavior in strict and non-strict modes.
 - [x] Add wpdb adapter tests for no-argument `set_sql_mode()` parity with SQLite/core.
+- [x] Add wpdb adapter regression coverage proving no-argument `set_sql_mode()` permits WordPress zero datetime inserts after filtering core-incompatible modes.
 - [x] Add CI assertions or workflow checks proving PostgreSQL/e2e jobs are not best-effort and not skipped on default-branch pushes.
 - [x] Add/keep WP-CLI smoke tests for PostgreSQL config loading without using WP-CLI for MySQL-specific install/reset steps.
 - [x] Add PostgreSQL tests for supported `CREATE TABLE ... [AS] SELECT` translations and unsupported variant errors.
 - [x] Add PostgreSQL runtime-function tests for emulated session identity, `CONNECTION_ID()`, `LAST_INSERT_ID()`, and fail-closed unsupported forms.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` mutable state, `group_concat_max_len`, parenthesized `ALTER TABLE ... ADD (...)` placement, direct `information_schema.TABLES.AUTO_INCREMENT`, and `LAST_INSERT_ID(id)` upsert side effects.
 - [x] Add PostgreSQL tests for standalone `LAST_INSERT_ID(expr)` assignment behavior, `GROUP_CONCAT` truncation and fail-closed forms, `information_schema.plugins`, optional-equals `ALTER TABLE` options, and upsert expression column validation.
+- [x] Add PostgreSQL regression tests for literal-argument `COUNT(...)` upsert scalar subquery assignments and unresolved `COUNT(column)` failures.
 - [x] Add PostgreSQL tests for empty privilege/security `information_schema` relation reads, metadata columns, `USE information_schema` routing, and joins.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` after backend failures and explicit unsupported-SQL failures.
 - [x] Add PostgreSQL tests for deterministic multi-row ambiguous upsert replay, unsupported bounded `UPDATE` fail-closed behavior, role grant `information_schema` shims, zero-date `DATE_FORMAT()` literal masks, and `SHOW WHERE` `BINARY`/`ESCAPE` filters.
 - [x] Add PostgreSQL tests for main database-qualified writes and administration after `USE information_schema`.
+- [x] Add PostgreSQL tests for `TIMESTAMPADD()` composite interval translation and dynamic/malformed composite interval fail-closed behavior before backend execution.
+- [x] Add PostgreSQL regressions for generic `ALTER TABLE ... DROP CONSTRAINT` missing, ambiguous, and non-unique-index metadata cases.
+- [x] Add PostgreSQL regression coverage for direct `information_schema.TABLES` `BINARY` exact-match predicates.

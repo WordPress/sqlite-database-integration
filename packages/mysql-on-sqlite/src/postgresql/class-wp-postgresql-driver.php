@@ -4479,6 +4479,28 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Check whether stored MySQL metadata has a unique index with the given name.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @param string $index_name   Index name.
+	 * @return bool Whether the unique index metadata exists.
+	 */
+	private function mysql_unique_index_metadata_exists( string $table_schema, string $table_name, string $index_name ): bool {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?) AND non_unique = \'0\' LIMIT 1',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $index_name )
+		);
+
+		return false !== $stmt->fetchColumn();
+	}
+
+	/**
 	 * Check whether stored MySQL metadata has any indexes for the given table.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -7744,7 +7766,23 @@ $wp_mysql_on_update$',
 			return $this->translate_mysql_dbdelta_drop_primary_key_alter_action( $table_name );
 		}
 
-		if ( $this->mysql_index_metadata_exists( 'public', $table_name, $constraint_name ) ) {
+		$matching_constraint_types = array();
+		if ( $this->mysql_unique_index_metadata_exists( 'public', $table_name, $constraint_name ) ) {
+			$matching_constraint_types[] = 'unique';
+		}
+		if ( $this->mysql_foreign_key_metadata_exists( 'public', $table_name, $constraint_name ) ) {
+			$matching_constraint_types[] = 'foreign_key';
+		}
+		$check_metadata = $this->get_mysql_check_metadata( 'public', $table_name, $constraint_name );
+		if ( null !== $check_metadata ) {
+			$matching_constraint_types[] = 'check';
+		}
+
+		if ( 1 !== count( $matching_constraint_types ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
+
+		if ( 'unique' === $matching_constraint_types[0] ) {
 			$drop_index_query = $this->get_mysql_drop_index_translation(
 				array(
 					'schema' => null,
@@ -7758,15 +7796,14 @@ $wp_mysql_on_update$',
 			return $drop_index_query;
 		}
 
-		if ( $this->mysql_foreign_key_metadata_exists( 'public', $table_name, $constraint_name ) ) {
+		if ( 'foreign_key' === $matching_constraint_types[0] ) {
 			return $this->get_mysql_dbdelta_drop_foreign_key_translation( $table_name, $constraint_name );
 		}
 
-		$check_metadata = $this->get_mysql_check_metadata( 'public', $table_name, $constraint_name );
 		return $this->get_mysql_dbdelta_drop_check_translation(
 			$table_name,
 			$constraint_name,
-			null === $check_metadata || 'NO' !== strtoupper( (string) $check_metadata['enforced'] )
+			'NO' !== strtoupper( (string) $check_metadata['enforced'] )
 		);
 	}
 
@@ -27795,11 +27832,22 @@ WHERE option_name IN (
 				return null;
 			}
 
+			$binary_operator_replacements = $this->get_direct_information_schema_binary_operator_replacements(
+				$tokens,
+				$range['start'],
+				$range['end'],
+				array_merge( $nested_select_replacements, $current_database_function_replacements, $column_replacements )
+			);
+
 			foreach ( $current_database_function_replacements as $replacement ) {
 				$replacements[] = $replacement;
 			}
 
 			foreach ( $column_replacements as $replacement ) {
+				$replacements[] = $replacement;
+			}
+
+			foreach ( $binary_operator_replacements as $replacement ) {
 				$replacements[] = $replacement;
 			}
 		}
@@ -30215,6 +30263,125 @@ WHERE option_name IN (
 		}
 
 		return $replacements;
+	}
+
+	/**
+	 * Get safe unary BINARY operator replacements for direct information_schema ranges.
+	 *
+	 * PostgreSQL text comparisons are already byte-sensitive in these rewritten
+	 * catalog relations. Strip only the standalone MySQL unary operator while
+	 * leaving CAST(... AS BINARY) and CONVERT(..., BINARY) intact for their
+	 * dedicated translators.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $start            First token.
+	 * @param int              $end              Final token, exclusive.
+	 * @param array[]          $protected_ranges Ranges already handled by larger replacements.
+	 * @return array[] Replacement ranges.
+	 */
+	private function get_direct_information_schema_binary_operator_replacements( array $tokens, int $start, int $end, array $protected_ranges = array() ): array {
+		$replacements = array();
+		for ( $position = $start; $position < $end; $position++ ) {
+			$protected_end = $this->get_covering_mysql_replacement_range_end( $position, $protected_ranges );
+			if ( null !== $protected_end ) {
+				$position = $protected_end - 1;
+				continue;
+			}
+
+			if (
+				! isset( $tokens[ $position ] )
+				|| WP_MySQL_Lexer::BINARY_SYMBOL !== $tokens[ $position ]->id
+				|| ! $this->is_direct_information_schema_unary_binary_operator_position( $tokens, $position, $start, $end )
+			) {
+				continue;
+			}
+
+			$replacements[] = array(
+				'start' => $position,
+				'end'   => $position + 1,
+				'sql'   => '',
+			);
+		}
+
+		return $replacements;
+	}
+
+	/**
+	 * Check whether BINARY is being used as a standalone unary operator.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position BINARY token position.
+	 * @param int              $start    First token in the range.
+	 * @param int              $end      Final token, exclusive.
+	 * @return bool Whether the token can be stripped safely.
+	 */
+	private function is_direct_information_schema_unary_binary_operator_position( array $tokens, int $position, int $start, int $end ): bool {
+		if ( $position + 1 >= $end || ! isset( $tokens[ $position + 1 ] ) ) {
+			return false;
+		}
+
+		$next_token_id = $tokens[ $position + 1 ]->id;
+		if (
+			in_array(
+				$next_token_id,
+				array(
+					WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::EOF,
+					WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+				),
+				true
+			)
+		) {
+			return false;
+		}
+
+		if ( $position > $start && isset( $tokens[ $position - 1 ] ) ) {
+			$previous_token_id = $tokens[ $position - 1 ]->id;
+			if (
+				in_array(
+					$previous_token_id,
+					array(
+						WP_MySQL_Lexer::AS_SYMBOL,
+						WP_MySQL_Lexer::COMMA_SYMBOL,
+						WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
+						WP_MySQL_Lexer::USING_SYMBOL,
+					),
+					true
+				)
+			) {
+				return false;
+			}
+
+			if (
+				! in_array(
+					$previous_token_id,
+					array(
+						WP_MySQL_Lexer::AND_SYMBOL,
+						WP_MySQL_Lexer::BETWEEN_SYMBOL,
+						WP_MySQL_Lexer::BY_SYMBOL,
+						WP_MySQL_Lexer::EQUAL_OPERATOR,
+						WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+						WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+						WP_MySQL_Lexer::HAVING_SYMBOL,
+						WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+						WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+						WP_MySQL_Lexer::LIKE_SYMBOL,
+						WP_MySQL_Lexer::NOT_SYMBOL,
+						WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
+						WP_MySQL_Lexer::OR_SYMBOL,
+						WP_MySQL_Lexer::REGEXP_SYMBOL,
+						WP_MySQL_Lexer::WHERE_SYMBOL,
+						WP_MySQL_Lexer::XOR_SYMBOL,
+					),
+					true
+				)
+			) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -37073,6 +37240,17 @@ FROM (
 			&& WP_MySQL_Lexer::MULT_OPERATOR === ( $tokens[ $argument_start ]->id ?? null )
 		) {
 			return 'COUNT(*)';
+		}
+
+		if ( $this->is_supported_mysql_upsert_literal_select_expression( $tokens, $argument_start, $argument_end ) ) {
+			$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+				$tokens,
+				$argument_start,
+				$argument_end,
+				array()
+			);
+
+			return sprintf( 'COUNT(%s)', $expression_sql['sql'] );
 		}
 
 		$reference = $this->parse_mysql_column_reference( $tokens, $argument_start, $argument_end );
@@ -44714,16 +44892,27 @@ FROM (
 			return null;
 		}
 
-		$unit = $this->get_mysql_timestampadd_interval_unit( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
-		if ( null === $unit ) {
-			return null;
-		}
-
-		$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
+		$interval = $this->get_mysql_timestampadd_interval(
 			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end'],
 			$arguments[1]['start'],
 			$arguments[1]['end']
 		);
+		if ( null === $interval ) {
+			return null;
+		}
+
+		$interval_sql = $interval['sql'] ?? null;
+		if ( null === $interval_sql ) {
+			$value_sql    = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$arguments[1]['start'],
+				$arguments[1]['end']
+			);
+			$interval_sql = $this->get_postgresql_mysql_interval_sql( $value_sql, $interval['unit'] );
+		}
+
 		$datetime_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$arguments[2]['start'],
@@ -44734,11 +44923,11 @@ FROM (
 			'sql'      => sprintf(
 				'(%1$s + %2$s)',
 				$this->get_postgresql_zero_date_safe_timestamp_sql( $datetime_sql ),
-				$this->get_postgresql_mysql_interval_sql( $value_sql, $unit )
+				$interval_sql
 			),
 			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
 			'position' => $close,
-			);
+		);
 	}
 
 	/**
@@ -44777,19 +44966,41 @@ FROM (
 	}
 
 	/**
-	 * Get a supported TIMESTAMPADD interval unit from the first function argument.
+	 * Get supported TIMESTAMPADD interval data from the unit and value arguments.
 	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First unit token.
-	 * @param int              $end    Final unit token, exclusive.
-	 * @return string|null PostgreSQL interval unit, or null when unsupported.
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $unit_start  First unit token.
+	 * @param int              $unit_end    Final unit token, exclusive.
+	 * @param int              $value_start First interval value token.
+	 * @param int              $value_end   Final interval value token, exclusive.
+	 * @return array{unit: string, sql?: string}|null Interval data, or null when unsupported.
 	 */
-	private function get_mysql_timestampadd_interval_unit( array $tokens, int $start, int $end ): ?string {
-		if ( $start + 1 !== $end || ! isset( $tokens[ $start ] ) ) {
+	private function get_mysql_timestampadd_interval( array $tokens, int $unit_start, int $unit_end, int $value_start, int $value_end ): ?array {
+		if ( $unit_start + 1 !== $unit_end || ! isset( $tokens[ $unit_start ] ) ) {
 			return null;
 		}
 
-		return $this->get_postgresql_simple_interval_unit( $tokens[ $start ] );
+		$unit = $this->get_postgresql_simple_interval_unit( $tokens[ $unit_start ] );
+		if ( null !== $unit ) {
+			return array(
+				'unit' => $unit,
+			);
+		}
+
+		$part_units = $this->get_mysql_composite_interval_part_units( $tokens[ $unit_start ] );
+		if ( null === $part_units ) {
+			return null;
+		}
+
+		$sql = $this->get_postgresql_mysql_composite_interval_literal_sql( $tokens, $value_start, $value_end, $part_units );
+		if ( null === $sql ) {
+			return null;
+		}
+
+		return array(
+			'unit' => 'composite',
+			'sql'  => $sql,
+		);
 	}
 
 	/**

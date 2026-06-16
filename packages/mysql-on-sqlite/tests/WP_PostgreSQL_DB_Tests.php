@@ -362,7 +362,14 @@ function apply_filters( $hook_name, $value ) {
 }
 
 class wpdb {
-	public $incompatible_modes = array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' );
+	protected $incompatible_modes = array(
+		'NO_ZERO_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+		'STRICT_ALL_TABLES',
+		'TRADITIONAL',
+		'ANSI',
+	);
 }
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
@@ -382,6 +389,25 @@ $initial_mode = $driver->get_sql_mode();
 $db->set_sql_mode();
 $mode_after_empty_call   = $driver->get_sql_mode();
 $filter_calls_after_empty = $GLOBALS['wp_postgresql_db_test_filter_calls'];
+
+$zero_date_insert_result = null;
+$zero_date_value         = null;
+try {
+	$driver->query(
+		'CREATE TABLE wptests_zero_dates (
+			id bigint(20) NOT NULL,
+			logged_at datetime NOT NULL,
+			PRIMARY KEY (id)
+		)'
+	);
+	$zero_date_insert_result = $driver->query(
+		"INSERT INTO `wptests_zero_dates` (`id`, `logged_at`) VALUES (1, '0000-00-00 00:00:00')"
+	);
+	$zero_date_rows = $driver->query( 'SELECT logged_at FROM wptests_zero_dates WHERE id = 1' );
+	$zero_date_value = $zero_date_rows[0]->logged_at ?? null;
+} catch ( Throwable $e ) {
+	$zero_date_insert_result = get_class( $e ) . ': ' . $e->getMessage();
+}
 
 $db->set_sql_mode(
 	array(
@@ -403,6 +429,8 @@ wp_postgresql_db_test_respond(
 		'initial_mode'              => $initial_mode,
 		'mode_after_empty_call'     => $mode_after_empty_call,
 		'filter_calls_after_empty'  => $filter_calls_after_empty,
+		'zero_date_insert_result'   => $zero_date_insert_result,
+		'zero_date_value'           => $zero_date_value,
 		'mode_after_filtered_call'  => $mode_after_filtered_call,
 		'filter_calls_after_modes'  => $filter_calls_after_modes,
 		'mode_after_detached_call'  => $mode_after_detached_call,
@@ -416,33 +444,56 @@ PHP
 			$result['initial_mode']
 		);
 		$this->assertSame(
-			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_IN_DATE',
 			$result['mode_after_empty_call']
 		);
 		$this->assertSame(
 			array(
 				array(
 					'hook_name' => 'incompatible_sql_modes',
-					'value'     => array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' ),
+					'value'     => array(
+						'NO_ZERO_DATE',
+						'ONLY_FULL_GROUP_BY',
+						'STRICT_TRANS_TABLES',
+						'STRICT_ALL_TABLES',
+						'TRADITIONAL',
+						'ANSI',
+					),
 				),
 			),
 			$result['filter_calls_after_empty']
 		);
-		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ZERO_DATE,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
+		$this->assertSame( 1, $result['zero_date_insert_result'] );
+		$this->assertSame( '0000-00-00 00:00:00', $result['zero_date_value'] );
+		$this->assertSame( 'ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_filtered_call'] );
 		$this->assertSame(
 			array(
 				array(
 					'hook_name' => 'incompatible_sql_modes',
-					'value'     => array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' ),
+					'value'     => array(
+						'NO_ZERO_DATE',
+						'ONLY_FULL_GROUP_BY',
+						'STRICT_TRANS_TABLES',
+						'STRICT_ALL_TABLES',
+						'TRADITIONAL',
+						'ANSI',
+					),
 				),
 				array(
 					'hook_name' => 'incompatible_sql_modes',
-					'value'     => array( 'NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'REAL_AS_FLOAT' ),
+					'value'     => array(
+						'NO_ZERO_DATE',
+						'ONLY_FULL_GROUP_BY',
+						'STRICT_TRANS_TABLES',
+						'STRICT_ALL_TABLES',
+						'TRADITIONAL',
+						'ANSI',
+					),
 				),
 			),
 			$result['filter_calls_after_modes']
 		);
-		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ZERO_DATE,ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
+		$this->assertSame( 'ANSI_QUOTES,NO_ENGINE_SUBSTITUTION', $result['mode_after_detached_call'] );
 	}
 
 	/**
