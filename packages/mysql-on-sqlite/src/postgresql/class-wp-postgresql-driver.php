@@ -91,6 +91,11 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT = 2147483647;
 
 	/**
+	 * Private helper used to emulate MySQL JSON_VALID().
+	 */
+	private const MYSQL_JSON_VALID_FUNCTION = '__wp_pg_mysql_json_valid';
+
+	/**
 	 * PostgreSQL server version string.
 	 *
 	 * @var string
@@ -260,6 +265,13 @@ class WP_PostgreSQL_Driver {
 	 * @var array<string, array{query: string, sql: string}>
 	 */
 	private $mysql_sql_calc_found_rows_count_query_cache = array();
+
+	/**
+	 * Whether the MySQL JSON_VALID() helper function is available on this connection.
+	 *
+	 * @var bool
+	 */
+	private $postgresql_mysql_json_valid_function_ensured = false;
 
 	/**
 	 * Most recently tokenized MySQL query.
@@ -1026,6 +1038,7 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( $unsupported_mysql_administration_statement );
 		}
 
+		$this->ensure_postgresql_runtime_helpers_for_query( $query );
 		$stmt                            = $this->connection->query( $query );
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $query,
@@ -2223,6 +2236,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		foreach ( $statements as $statement ) {
+			$this->ensure_postgresql_runtime_helpers_for_query( $statement );
 			$stmt                            = $this->connection->query( $statement );
 			$this->last_postgresql_queries[] = array(
 				'sql'    => $statement,
@@ -2265,6 +2279,7 @@ class WP_PostgreSQL_Driver {
 		$affected_rows = 0;
 		foreach ( $dml_query['statements'] as $statement ) {
 			$statement                       = (string) $statement;
+			$this->ensure_postgresql_runtime_helpers_for_query( $statement );
 			$stmt                            = $this->connection->query( $statement );
 			$this->last_postgresql_queries[] = array(
 				'sql'    => $statement,
@@ -7443,7 +7458,12 @@ $wp_mysql_on_update$',
 			$check_names[]   = $constraint_name;
 		}
 
-		$expression = $this->translate_mysql_token_sequence_to_postgresql(
+		$postgresql_expression = $this->translate_mysql_check_constraint_expression_to_postgresql(
+			$tokens,
+			$check_position + 2,
+			$check_end - 1
+		);
+		$mysql_expression = $this->render_mysql_check_constraint_metadata_expression(
 			$tokens,
 			$check_position + 2,
 			$check_end - 1
@@ -7455,7 +7475,7 @@ $wp_mysql_on_update$',
 				'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				$this->connection->quote_identifier( $table_name ),
 				$this->connection->quote_identifier( $constraint_name ),
-				$expression
+				$postgresql_expression
 			);
 		}
 
@@ -7465,11 +7485,191 @@ $wp_mysql_on_update$',
 				'operation' => 'add_check',
 				'check'     => array(
 					'name'         => $constraint_name,
-					'check_clause' => $expression,
+					'check_clause' => $mysql_expression,
 					'enforced'     => $enforced,
 				),
 			),
 		);
+	}
+
+	/**
+	 * Translate a MySQL CHECK expression to backend PostgreSQL SQL.
+	 *
+	 * Most CHECK expressions can use the shared expression renderer. JSON_VALID()
+	 * is special because the runtime-compatible translation returns 1/0/NULL,
+	 * while PostgreSQL CHECK constraints require a boolean expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @return string PostgreSQL CHECK expression SQL.
+	 */
+	private function translate_mysql_check_constraint_expression_to_postgresql( array $tokens, int $start, int $end ): string {
+		$sql           = '';
+		$segment_start = $start;
+
+		for ( $position = $start; $position < $end; ++$position ) {
+			$json_valid = $this->translate_mysql_json_valid_check_constraint_function( $tokens, $position, $end );
+			if ( null === $json_valid ) {
+				continue;
+			}
+
+			$sql = $this->append_mysql_check_constraint_sql_fragment(
+				$sql,
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $position )
+			);
+			$sql = $this->append_mysql_check_constraint_sql_fragment( $sql, $json_valid['sql'] );
+
+			$position      = $json_valid['position'];
+			$segment_start = $position + 1;
+		}
+
+		$sql = $this->append_mysql_check_constraint_sql_fragment(
+			$sql,
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $segment_start, $end )
+		);
+
+		if ( '' === $sql ) {
+			throw new InvalidArgumentException( 'Unsupported CHECK constraint expression.' );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Render a MySQL-facing CHECK expression for metadata.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @return string MySQL-facing CHECK expression SQL.
+	 */
+	private function render_mysql_check_constraint_metadata_expression( array $tokens, int $start, int $end ): string {
+		$sql            = '';
+		$previous_token = null;
+
+		for ( $position = $start; $position < $end; ++$position ) {
+			$token    = $tokens[ $position ];
+			$fragment = $this->translate_mysql_token_to_postgresql( $token, $tokens[ $position + 1 ] ?? null );
+			if ( '' === $fragment ) {
+				continue;
+			}
+
+			if ( '' === $sql ) {
+				$sql = $fragment;
+			} elseif ( $this->should_join_mysql_check_constraint_metadata_tokens_without_space( $previous_token, $token ) ) {
+				$sql .= $fragment;
+			} else {
+				$sql .= ' ' . $fragment;
+			}
+
+			$previous_token = $token;
+		}
+
+		if ( '' === $sql ) {
+			throw new InvalidArgumentException( 'Unsupported CHECK constraint expression.' );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Decide whether two CHECK metadata tokens should be joined without whitespace.
+	 *
+	 * @param WP_MySQL_Token|null $previous Previous token, or null.
+	 * @param WP_MySQL_Token      $current  Current token.
+	 * @return bool Whether no separator should be added.
+	 */
+	private function should_join_mysql_check_constraint_metadata_tokens_without_space( ?WP_MySQL_Token $previous, WP_MySQL_Token $current ): bool {
+		if ( null === $previous ) {
+			return false;
+		}
+
+		if ( $this->should_join_mysql_tokens_without_space( $previous->id, $current->id ) ) {
+			return true;
+		}
+
+		return WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $current->id
+			&& null !== $this->get_mysql_identifier_token_value( $previous );
+	}
+
+	/**
+	 * Translate one JSON_VALID() call in a CHECK expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position.
+	 * @param int              $end      Final expression token, exclusive.
+	 * @return array{sql: string, position: int}|null Translation data, or null when not JSON_VALID().
+	 */
+	private function translate_mysql_json_valid_check_constraint_function( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! $this->is_mysql_json_valid_identifier_token( $tokens[ $position ] )
+		) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id ) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			throw new InvalidArgumentException( 'Unsupported CHECK constraint expression.' );
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
+		if ( null === $arguments || 1 !== count( $arguments ) || $arguments[0]['start'] >= $arguments[0]['end'] ) {
+			throw new InvalidArgumentException( 'Unsupported CHECK constraint expression.' );
+		}
+
+		$argument_sql = $this->translate_mysql_check_constraint_expression_to_postgresql(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+
+		return array(
+			'sql'      => sprintf( '(CASE WHEN %1$s IS NULL THEN NULL ELSE (CAST(%1$s AS jsonb) IS NOT NULL) END)', $argument_sql ),
+			'position' => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Check whether a token names JSON_VALID.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether this token is a JSON_VALID identifier.
+	 */
+	private function is_mysql_json_valid_identifier_token( WP_MySQL_Token $token ): bool {
+		$identifier = $this->get_mysql_identifier_token_value( $token );
+		return null !== $identifier && 'json_valid' === strtolower( $identifier );
+	}
+
+	/**
+	 * Append one CHECK expression fragment with bounded spacing.
+	 *
+	 * @param string $sql      SQL accumulated so far.
+	 * @param string $fragment Fragment to append.
+	 * @return string Combined SQL.
+	 */
+	private function append_mysql_check_constraint_sql_fragment( string $sql, string $fragment ): string {
+		$fragment = trim( $fragment );
+		if ( '' === $fragment ) {
+			return $sql;
+		}
+
+		if ( '' === $sql ) {
+			return $fragment;
+		}
+
+		$last_character  = substr( $sql, -1 );
+		$first_character = $fragment[0];
+		if ( '(' === $last_character || ')' === $first_character || ',' === $first_character || '.' === $last_character || '.' === $first_character ) {
+			return $sql . $fragment;
+		}
+
+		return $sql . ' ' . $fragment;
 	}
 
 	/**
@@ -36744,6 +36944,8 @@ FROM (
 			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $values_column_lookup, $source_aliases );
 			if ( $this->is_mysql_default_keyword_expression( $tokens, $value_start, $assignment_end ) ) {
 				$value_sql = $this->get_mysql_dml_default_assignment_sql_for_column( $target_metadata );
+			} elseif ( null !== ( $default_function_sql = $this->get_mysql_dml_default_function_assignment_sql( $tokens, $value_start, $assignment_end, $table_column_lookup ) ) ) {
+				$value_sql = $default_function_sql;
 			} elseif ( null !== $source_column ) {
 				$value_sql = sprintf(
 					'excluded.%s',
@@ -37018,6 +37220,38 @@ FROM (
 		return $start + 1 === $end
 			&& isset( $tokens[ $start ] )
 			&& WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
+	 * Get SQL for a MySQL DEFAULT(column) assignment expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens              MySQL lexer token stream.
+	 * @param int              $start               First expression token.
+	 * @param int              $end                 Final expression token, exclusive.
+	 * @param array            $table_column_lookup Table-column metadata lookup by lowercase name.
+	 * @return string|null PostgreSQL SQL expression, or null when not supported.
+	 */
+	private function get_mysql_dml_default_function_assignment_sql( array $tokens, int $start, int $end, array $table_column_lookup ): ?string {
+		if (
+			$start + 4 !== $end
+			|| WP_MySQL_Lexer::DEFAULT_SYMBOL !== ( $tokens[ $start ]->id ?? null )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== ( $tokens[ $start + 1 ]->id ?? null )
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== ( $tokens[ $start + 3 ]->id ?? null )
+		) {
+			return null;
+		}
+
+		$column_name = $this->get_mysql_dml_identifier_token_value( $tokens[ $start + 2 ] ?? null );
+		if ( null === $column_name ) {
+			return null;
+		}
+
+		$column_metadata = $table_column_lookup[ strtolower( $column_name ) ] ?? null;
+		if ( null === $column_metadata ) {
+			return null;
+		}
+
+		return $this->get_mysql_dml_default_assignment_sql_for_column( $column_metadata );
 	}
 
 	/**
@@ -43891,7 +44125,7 @@ FROM (
 				return 1 === $count ? sprintf( 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END', $argument_sql[0] ) : null;
 
 			case 'json_valid':
-				return null;
+				return 1 === $count ? $this->get_postgresql_mysql_json_valid_sql( $argument_sql[0] ) : null;
 
 			case 'last_insert_id':
 				return 0 === $count ? $this->get_postgresql_mysql_last_insert_id_sql() : null;
@@ -44018,6 +44252,115 @@ FROM (
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL JSON_VALID().
+	 *
+	 * PostgreSQL needs a small PL/pgSQL helper so invalid JSON returns 0
+	 * instead of raising a cast error.
+	 *
+	 * @param string $argument_sql PostgreSQL argument SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_json_valid_sql( string $argument_sql ): string {
+		return sprintf(
+			'%s(CAST(%s AS text))',
+			$this->get_postgresql_mysql_json_valid_function_name(),
+			$argument_sql
+		);
+	}
+
+	/**
+	 * Get the backend helper function name used for MySQL JSON_VALID().
+	 *
+	 * @return string Function name SQL.
+	 */
+	private function get_postgresql_mysql_json_valid_function_name(): string {
+		return 'pgsql' === $this->connection->get_driver_name()
+			? 'pg_temp.' . self::MYSQL_JSON_VALID_FUNCTION
+			: self::MYSQL_JSON_VALID_FUNCTION;
+	}
+
+	/**
+	 * Ensure runtime helper functions referenced by a translated query exist.
+	 *
+	 * @param string $query PostgreSQL query.
+	 */
+	private function ensure_postgresql_runtime_helpers_for_query( string $query ): void {
+		if ( 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::MYSQL_JSON_VALID_FUNCTION, '/' ) . '\s*\(/i', $query ) ) {
+			$this->ensure_postgresql_mysql_json_valid_function();
+		}
+	}
+
+	/**
+	 * Ensure the MySQL JSON_VALID() helper exists for the current backing driver.
+	 */
+	private function ensure_postgresql_mysql_json_valid_function(): void {
+		if ( $this->postgresql_mysql_json_valid_function_ensured ) {
+			return;
+		}
+
+		$driver_name = $this->connection->get_driver_name();
+		if ( 'pgsql' === $driver_name ) {
+			$this->connection->query(
+				'CREATE OR REPLACE FUNCTION pg_temp.' . self::MYSQL_JSON_VALID_FUNCTION . '(value text)
+RETURNS integer
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $wp_mysql_json_valid$
+BEGIN
+  PERFORM $1::json;
+  RETURN 1;
+EXCEPTION WHEN others THEN
+  RETURN 0;
+END;
+$wp_mysql_json_valid$'
+			);
+		} elseif ( 'sqlite' === $driver_name ) {
+			$this->register_sqlite_mysql_json_valid_function();
+		}
+
+		$this->postgresql_mysql_json_valid_function_ensured = true;
+	}
+
+	/**
+	 * Register a SQLite test-harness shim for the MySQL JSON_VALID() helper.
+	 */
+	private function register_sqlite_mysql_json_valid_function(): void {
+		$pdo      = $this->connection->get_pdo();
+		$callback = static function ( $value ): ?int {
+			return self::get_mysql_json_valid_runtime_result( $value );
+		};
+
+		if ( method_exists( $pdo, 'createFunction' ) ) {
+			$pdo->createFunction( self::MYSQL_JSON_VALID_FUNCTION, $callback, 1 );
+			return;
+		}
+
+		if ( method_exists( $pdo, 'sqliteCreateFunction' ) ) {
+			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Base PDO SQLite exposes only the deprecated fallback on PHP 8.5.
+			@$pdo->sqliteCreateFunction( self::MYSQL_JSON_VALID_FUNCTION, $callback, 1 );
+			return;
+		}
+
+		throw new RuntimeException( 'SQLite JSON_VALID() helper registration is unavailable.' );
+	}
+
+	/**
+	 * Get the MySQL-compatible JSON_VALID() result for a runtime value.
+	 *
+	 * @param mixed $value Runtime value.
+	 * @return int|null MySQL-compatible JSON_VALID() result.
+	 */
+	private static function get_mysql_json_valid_runtime_result( $value ): ?int {
+		if ( null === $value ) {
+			return null;
+		}
+
+		json_decode( (string) $value );
+		return JSON_ERROR_NONE === json_last_error() ? 1 : 0;
 	}
 
 	/**

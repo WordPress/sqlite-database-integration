@@ -103,7 +103,9 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Support exact-match `BINARY` predicates in direct PostgreSQL `information_schema` SELECT rewrites without sending raw MySQL `BINARY` syntax to the backend.
 - [x] Fail closed for `ALTER TABLE ... DROP CHECK` and `DROP FOREIGN KEY` when MySQL metadata has no matching constraint, and resolve `DROP CONSTRAINT` metadata with the table's schema.
 - [x] Support renderable MySQL timestamp runtime functions such as `NOW()` and `CURRENT_TIMESTAMP()` in `ON DUPLICATE KEY UPDATE` assignments while keeping unsupported forms explicit errors.
-- [x] Translate MySQL `CHECK (json_valid(...))` constraints to PostgreSQL JSON validation for backend DDL while preserving MySQL-facing metadata, and fail closed for runtime `JSON_VALID(...)` until it can be safely emulated.
+- [x] Translate MySQL `CHECK (json_valid(...))` constraints to PostgreSQL JSON validation for backend DDL while preserving MySQL-facing metadata and SQL `NULL` CHECK semantics.
+- [x] Emulate runtime `JSON_VALID(...)` for PostgreSQL queries with MySQL-compatible `NULL`/`0`/`1` results while keeping unsupported arities explicit errors.
+- [x] Support MySQL `DEFAULT(column)` assignments in `ON DUPLICATE KEY UPDATE` using stored MySQL column metadata while keeping unknown columns explicit errors.
 
 ## Tests
 
@@ -137,4 +139,5 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for SQLite-UDF-style runtime compatibility functions (`CURDATE()`, `UTC_DATE()`, `UTC_TIME()`, `NOW()`, `DATABASE()`, `GET_LOCK()`, and related forms).
 - [x] Add PostgreSQL tests for runtime `DATE_FORMAT()` masks over zero/partial-zero dates.
 - [x] Add PostgreSQL tests for timestamp runtime functions inside `ON DUPLICATE KEY UPDATE` assignments.
-- [x] Add PostgreSQL tests for `json_valid(...)` CHECK translation, MySQL metadata preservation, unsupported CHECK shapes, and runtime `JSON_VALID(...)` fail-closed behavior.
+- [x] Add PostgreSQL tests for `json_valid(...)` CHECK translation, MySQL metadata preservation, unsupported CHECK shapes, runtime `JSON_VALID(...)` emulation, and unsupported runtime arities.
+- [x] Add PostgreSQL regression tests for `DEFAULT(column)` assignments inside `ON DUPLICATE KEY UPDATE`.

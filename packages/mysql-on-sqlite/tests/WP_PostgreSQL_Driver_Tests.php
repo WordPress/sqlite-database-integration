@@ -3653,6 +3653,68 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE ADD CHECK translates JSON_VALID() for PostgreSQL while preserving MySQL metadata.
+	 */
+	public function test_alter_table_json_valid_check_translates_for_postgresql_and_preserves_mysql_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_json_check (
+				id int NOT NULL,
+				data JSON
+			)'
+		);
+
+		$driver->query( 'ALTER TABLE wptests_alter_json_check ADD CONSTRAINT valid_json CHECK (json_valid(data))' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_json_check" ADD CONSTRAINT "valid_json" CHECK ((CASE WHEN data IS NULL THEN NULL ELSE (CAST(data AS jsonb) IS NOT NULL) END))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name' => 'valid_json',
+					'check_clause'    => 'json_valid(data)',
+					'enforced'        => 'YES',
+				),
+			),
+			$this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_json_check' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_alter_json_check' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  CONSTRAINT `valid_json` CHECK (json_valid(data))', $create_table );
+	}
+
+	/**
+	 * Tests unsupported ALTER TABLE ADD CHECK JSON_VALID() forms fail before backend execution.
+	 */
+	public function test_alter_table_unsupported_json_valid_check_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_json_check_unsupported (
+				data JSON
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_alter_json_check_unsupported ADD CHECK (json_valid(data, data))' );
+			$this->fail( 'Expected unsupported CHECK constraint expression to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported CHECK constraint expression.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame( array(), $this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_json_check_unsupported' ) );
+	}
+
+	/**
 	 * Tests ALTER TABLE DROP CHECK fails before backend execution when metadata has no matching constraint.
 	 */
 	public function test_alter_table_drop_check_fails_for_missing_constraint_metadata(): void {
@@ -3973,7 +4035,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_json_check\" (\n  \"id\" integer NOT NULL,\n  \"data\" text CONSTRAINT \"wptests_json_check_chk_1\" CHECK ((CAST(data AS jsonb) IS NOT NULL))\n)",
+					'sql'    => "CREATE TABLE \"wptests_json_check\" (\n  \"id\" integer NOT NULL,\n  \"data\" text CONSTRAINT \"wptests_json_check_chk_1\" CHECK ((CASE WHEN data IS NULL THEN NULL ELSE (CAST(data AS jsonb) IS NOT NULL) END))\n)",
 					'params' => array(),
 				),
 			),
@@ -5283,6 +5345,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'inserted', $rows[0]->option_value );
 		$this->assertSame( 'yes', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports MySQL DEFAULT(column) assignments.
+	 */
+	public function test_upsert_update_assignments_support_default_column_function(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_upsert_defaults (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL,
+				note TEXT,
+				counter INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_upsert_defaults (
+				id bigint(20) unsigned NOT NULL,
+				label varchar(20) NOT NULL DEFAULT 'untitled',
+				note longtext DEFAULT NULL,
+				counter int(11) NOT NULL DEFAULT 3,
+				PRIMARY KEY (id)
+			)"
+		);
+		$driver->query( "INSERT INTO wptests_upsert_defaults (id, label, note, counter) VALUES (1, 'old', 'old-note', 9)" );
+
+		$upsert = "INSERT INTO `wptests_upsert_defaults` (`id`, `label`, `note`, `counter`)
+			VALUES (1, 'incoming', 'incoming-note', 99)
+			ON DUPLICATE KEY UPDATE `label` = DEFAULT(`label`),
+			                        `note` = DEFAULT(`note`),
+			                        `counter` = DEFAULT(`counter`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_defaults" ("id", "label", "note", "counter") VALUES (1, \'incoming\', \'incoming-note\', 99) ON CONFLICT ("id") DO UPDATE SET "label" = \'untitled\', "note" = NULL, "counter" = \'3\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT label, note, counter FROM wptests_upsert_defaults WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'untitled', $rows[0]->label );
+		$this->assertNull( $rows[0]->note );
+		$this->assertSame( '3', $rows[0]->counter );
+
+		try {
+			$driver->query(
+				"INSERT INTO `wptests_upsert_defaults` (`id`, `label`, `note`, `counter`)
+				VALUES (1, 'incoming', 'incoming-note', 99)
+				ON DUPLICATE KEY UPDATE `label` = DEFAULT(`missing`)"
+			);
+			$this->fail( 'Expected unsupported DEFAULT(column) upsert assignment to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -9643,6 +9762,76 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests JSON_VALID() runtime calls are translated to the driver helper.
+	 */
+	public function test_json_valid_runtime_function_is_translated_to_postgresql_helper(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT JSON_VALID(\'{"ok":true}\') AS object_valid, JSON_VALID(NULL) AS null_valid, JSON_VALID(payload) AS payload_valid FROM runtime_names'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(\'{"ok":true}\' AS text)) AS object_valid', $sql );
+		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(NULL AS text)) AS null_valid', $sql );
+		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(payload AS text)) AS payload_valid', $sql );
+		$this->assertStringNotContainsString( 'JSON_VALID', $sql );
+		$this->assertStringNotContainsString( 'pg_input_is_valid', $sql );
+	}
+
+	/**
+	 * Tests JSON_VALID() runtime execution preserves MySQL NULL/0/1 semantics.
+	 */
+	public function test_json_valid_runtime_function_executes_with_mysql_semantics(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_json_valid_runtime (id INTEGER PRIMARY KEY, payload TEXT)' );
+		$driver->query( "INSERT INTO wptests_json_valid_runtime (id, payload) VALUES (1, '{\"ok\":true}'), (2, 'not json'), (3, NULL), (4, 'null')" );
+
+		$rows = $driver->query( 'SELECT id, JSON_VALID(payload) AS payload_valid FROM wptests_json_valid_runtime ORDER BY id' );
+
+		$this->assertSame(
+			array(
+				array( '1', '1' ),
+				array( '2', '0' ),
+				array( '3', null ),
+				array( '4', '1' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->payload_valid );
+				},
+				$rows
+			)
+		);
+
+		$literal_result = $driver->query(
+			'SELECT JSON_VALID(\'{"ok":true}\') AS object_valid,
+				JSON_VALID(\'[1,2]\') AS array_valid,
+				JSON_VALID(\'not json\') AS invalid_json,
+				JSON_VALID(NULL) AS null_json,
+				JSON_VALID(\'null\') AS null_literal_valid,
+				JSON_VALID(123) AS number_valid'
+		);
+
+		$this->assertCount( 1, $literal_result );
+		$this->assertSame( '1', $literal_result[0]->object_valid );
+		$this->assertSame( '1', $literal_result[0]->array_valid );
+		$this->assertSame( '0', $literal_result[0]->invalid_json );
+		$this->assertNull( $literal_result[0]->null_json );
+		$this->assertSame( '1', $literal_result[0]->null_literal_valid );
+		$this->assertSame( '1', $literal_result[0]->number_valid );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(\'{"ok":true}\' AS text)) AS object_valid', $sql );
+		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(NULL AS text)) AS null_json', $sql );
+		$this->assertStringNotContainsString( 'JSON_VALID', $sql );
+		$this->assertStringNotContainsString( 'pg_input_is_valid', $sql );
+	}
+
+	/**
 	 * Tests common MySQL runtime functions trigger rewrite without literal arguments.
 	 */
 	public function test_common_mysql_runtime_functions_with_column_arguments_trigger_postgresql_rewrite(): void {
@@ -9959,7 +10148,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'SELECT CONCAT() AS empty_concat',
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
-			'SELECT JSON_VALID(payload) AS valid_json FROM runtime_names',
+			'SELECT JSON_VALID() AS invalid_json',
+			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
 			'SELECT ROW_COUNT(123) AS rows_changed',
@@ -9985,7 +10175,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'SELECT CONCAT() AS empty_concat',
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
-			'SELECT JSON_VALID(payload) AS valid_json FROM runtime_names',
+			'SELECT JSON_VALID() AS invalid_json',
+			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
 			"SELECT FROM_UNIXTIME(0, '%Y', 'extra') AS invalid_from_unixtime",
 			"SELECT LAST_INSERT_ID('123') AS invalid_last_insert_id",

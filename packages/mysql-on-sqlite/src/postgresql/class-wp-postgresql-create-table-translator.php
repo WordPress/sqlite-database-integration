@@ -590,7 +590,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		);
 
 		return array(
-			'sql'      => sprintf( '(CAST(%s AS jsonb) IS NOT NULL)', $argument_sql ),
+			'sql'      => sprintf( '(CASE WHEN %1$s IS NULL THEN NULL ELSE (CAST(%1$s AS jsonb) IS NOT NULL) END)', $argument_sql ),
 			'position' => $close_position,
 		);
 	}
