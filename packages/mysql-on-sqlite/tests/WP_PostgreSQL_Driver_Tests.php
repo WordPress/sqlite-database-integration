@@ -250,6 +250,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests columnless INSERT VALUES statements infer target columns from MySQL metadata.
+	 */
+	public function test_columnless_insert_values_uses_mysql_metadata_columns(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_columnless_insert (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_columnless_insert (
+				id bigint(20) unsigned NOT NULL,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$insert = "INSERT INTO `wptests_columnless_insert` VALUES (1, 'one'), (2, 'two')";
+
+		$this->assertSame( 2, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_columnless_insert" ("id", "value") VALUES (1, \'one\'), (2, \'two\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_columnless_insert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'one',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'two',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests INSERT IGNORE ... SELECT without INTO keeps SQLite plugin-corpus parity.
 	 */
 	public function test_insert_ignore_select_without_into_translates_to_postgresql(): void {
@@ -1430,6 +1469,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'id'    => '2',
 					'name'  => 'new',
 					'color' => 'green',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests literal REPLACE ... SELECT statements resolve ambiguous targets from source rows.
+	 */
+	public function test_replace_select_uses_conflicting_unique_key_for_literal_select(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'existing', 'old')" );
+
+		$replace = "REPLACE INTO `ambiguous_upsert`
+			SELECT 2, 'existing', 'new' FROM DUAL";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") SELECT 2, \'existing\', \'new\' ON CONFLICT ("slug") DO UPDATE SET "id" = excluded."id", "slug" = excluded."slug", "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '2',
+					'slug'  => 'existing',
+					'value' => 'new',
 				),
 			),
 			$rows
@@ -3638,6 +3708,58 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( 'SELECT id, value FROM wptests_insert_select_without_into' );
 		$this->assertSame( '1', $rows[0]->id );
 		$this->assertSame( 'one', $rows[0]->value );
+	}
+
+	/**
+	 * Tests columnless INSERT ... SELECT infers target columns from MySQL metadata.
+	 */
+	public function test_columnless_insert_select_uses_mysql_metadata_columns(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_insert_select_columnless (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_insert_select_columnless (
+				id bigint(20) unsigned NOT NULL,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_insert_select_columnless_source (
+				id INTEGER NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_insert_select_columnless_source (id, value) VALUES (1, 'one'), (2, 'two')" );
+
+		$insert = 'INSERT INTO wptests_insert_select_columnless
+			SELECT id, value FROM wptests_insert_select_columnless_source WHERE 1 = 1';
+
+		$this->assertSame( 2, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO wptests_insert_select_columnless ("id", "value") SELECT ' . $this->get_expected_mysql_integer_cast_sql( 'id' ) . ' , CAST(value AS text) FROM wptests_insert_select_columnless_source WHERE 1 = 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_insert_select_columnless ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'one',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'two',
+				),
+			),
+			$rows
+		);
 	}
 
 	/**

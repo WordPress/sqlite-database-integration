@@ -17385,7 +17385,26 @@ WHERE option_name IN (
 			$replacements
 		);
 
-		$conflict_target         = $this->get_mysql_replace_conflict_target( $table_name, $columns );
+		$replace_select_value_rows      = null;
+		$replace_select_probe_safe_rows = null;
+		$replace_select_literal_row     = $this->get_mysql_insert_select_upsert_literal_value_row(
+			$table_name,
+			$select_columns,
+			$tokens,
+			$select_start,
+			$select_end
+		);
+		if ( null !== $replace_select_literal_row && empty( $default_columns ) ) {
+			$replace_select_value_rows      = array( $replace_select_literal_row['values'] );
+			$replace_select_probe_safe_rows = array( $replace_select_literal_row['probe_safe_values'] );
+		}
+
+		$conflict_target         = $this->get_mysql_replace_conflict_target(
+			$table_name,
+			$columns,
+			$replace_select_value_rows,
+			$replace_select_probe_safe_rows
+		);
 		$conflict_column         = null;
 		$affected_rows_count_sql = null;
 		if ( null !== $conflict_target ) {
@@ -18014,8 +18033,8 @@ WHERE option_name IN (
 	 * (...) shape. INSERT IGNORE uses PostgreSQL's conflict no-op syntax for
 	 * the same VALUES shape. Simple single-row INSERT ... SET assignments are
 	 * normalized into that same PostgreSQL INSERT form. Other MySQL-specific
-	 * modifiers, missing column lists, and trailing clauses fall through
-	 * unchanged.
+	 * modifiers and trailing clauses fall through unchanged. Columnless VALUES
+	 * rows are supported when stored MySQL metadata can infer target columns.
 	 *
 	 * @param string $query MySQL query.
 	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
@@ -18047,6 +18066,9 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$column_metadata  = null;
+		$value_rows       = null;
+		$value_range_rows = array();
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
 			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $tokens, $position, $statement_end );
@@ -18057,12 +18079,22 @@ WHERE option_name IN (
 			$columns          = $set_assignments['columns'];
 			$value_rows       = array( $set_assignments['values'] );
 			$value_range_rows = array( $set_assignments['ranges'] );
-		} else {
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
 			if ( null === $columns ) {
 				return null;
 			}
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $position ]->id ) {
+			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+			$columns         = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
+			if ( null === $columns ) {
+				return null;
+			}
+		} else {
+			return null;
+		}
 
+		if ( null === $value_rows ) {
 			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
 				return null;
 			}
@@ -18076,7 +18108,9 @@ WHERE option_name IN (
 			}
 		}
 
-		$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		if ( null === $column_metadata ) {
+			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		}
 		foreach ( $value_rows as $row_index => &$values ) {
 			$value_ranges = $value_range_rows[ $row_index ] ?? array();
 			$this->validate_strict_mysql_dml_values_for_columns(
@@ -18237,7 +18271,8 @@ WHERE option_name IN (
 	 * Action Scheduler uses INSERT ... SELECT FROM DUAL and then reads
 	 * insert_id. The generic compatibility rewrite can produce executable SQL,
 	 * but it does not mark the statement as insert-like. Keep this parser narrow:
-	 * explicit table, explicit column list, then a SELECT body.
+	 * explicit table, optional explicit or metadata-inferred column list, then
+	 * a SELECT body.
 	 *
 	 * @param string $query MySQL query.
 	 * @return array|null PostgreSQL query data, or null when unsupported.
@@ -18271,9 +18306,33 @@ WHERE option_name IN (
 			$table_reference_end
 		);
 
-		$columns = $this->parse_mysql_identifier_list( $tokens, $position );
-		if ( null === $columns ) {
-			return null;
+		$insert_column_list = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$column_metadata    = $this->get_mysql_dml_column_metadata( $table_name );
+			$columns            = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
+			$insert_column_list = true;
+			if ( null === $columns ) {
+				return null;
+			}
+		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
+			$column_metadata    = $this->get_mysql_dml_column_metadata( $table_name );
+			$columns            = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
+			$insert_column_list = true;
+			if ( null === $columns ) {
+				return null;
+			}
+		} else {
+			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
+			if ( null === $columns ) {
+				return null;
+			}
+		}
+		if ( $insert_column_list ) {
+			$table_reference_sql .= ' (' . implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ) . ')';
 		}
 
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
