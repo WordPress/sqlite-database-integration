@@ -106,6 +106,7 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Translate MySQL `CHECK (json_valid(...))` constraints to PostgreSQL JSON validation for backend DDL while preserving MySQL-facing metadata and SQL `NULL` CHECK semantics.
 - [x] Emulate runtime `JSON_VALID(...)` for PostgreSQL queries with MySQL-compatible `NULL`/`0`/`1` results while keeping unsupported arities explicit errors.
 - [x] Support MySQL `DEFAULT(column)` assignments in `ON DUPLICATE KEY UPDATE` using stored MySQL column metadata while keeping unknown columns explicit errors.
+- [x] Support `CREATE TABLE ... LIKE` for PostgreSQL by copying stored MySQL-facing columns, indexes, checks, defaults, comments, and temporary-table metadata while keeping missing sources explicit errors.
 
 ## Tests
 
@@ -141,3 +142,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for timestamp runtime functions inside `ON DUPLICATE KEY UPDATE` assignments.
 - [x] Add PostgreSQL tests for `json_valid(...)` CHECK translation, MySQL metadata preservation, unsupported CHECK shapes, runtime `JSON_VALID(...)` emulation, and unsupported runtime arities.
 - [x] Add PostgreSQL regression tests for `DEFAULT(column)` assignments inside `ON DUPLICATE KEY UPDATE`.
+- [x] Add PostgreSQL regression tests for permanent and temporary `CREATE TABLE ... LIKE` metadata copying and missing-source fail-closed behavior.

@@ -721,6 +721,24 @@ class WP_PostgreSQL_Driver {
 			return $result;
 		}
 
+		$create_table_like_query = $this->translate_mysql_create_table_like_query( $query );
+		if ( null !== $create_table_like_query ) {
+			$result = $this->execute_postgresql_statements( $create_table_like_query['statements'] );
+			if ( $create_table_like_query['temporary'] ) {
+				$this->store_mysql_schema_metadata_for_schema(
+					$create_table_like_query['metadata_query'],
+					array( $this, 'get_temporary_schema_for_metadata_table' )
+				);
+			} else {
+				$this->store_mysql_schema_metadata_for_schema(
+					$create_table_like_query['metadata_query'],
+					$create_table_like_query['schema']
+				);
+				$this->sync_mysql_on_update_current_timestamp_triggers_for_create_query( $create_table_like_query['metadata_query'] );
+			}
+			return $result;
+		}
+
 		if ( $this->contains_unsupported_mysql_create_table_column_attribute_query( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE TABLE column attribute.' );
 		}
@@ -5424,6 +5442,135 @@ $wp_mysql_on_update$',
 		}
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Translate supported MySQL CREATE TABLE ... LIKE statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL CREATE TABLE ... LIKE query.
+	 * @return array{statements: string[], metadata_query: string, schema: string, table: string, temporary: bool}|null Translation, or null when this is not CREATE TABLE ... LIKE.
+	 */
+	private function translate_mysql_create_table_like_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$position     = 1;
+		$is_temporary = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			$is_temporary = true;
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$if_not_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$if_not_exists = true;
+			$position     += 3;
+		}
+
+		$target_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if ( null === $target_reference ) {
+			return null;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$source_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if ( null === $source_reference || $position !== $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$target_schema  = $this->get_mysql_create_table_select_backend_schema( $target_reference, $is_temporary );
+		$metadata_query = $this->get_mysql_create_table_like_metadata_query(
+			$target_reference['table'],
+			$source_reference,
+			$is_temporary,
+			$if_not_exists
+		);
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
+		return array(
+			'statements'      => $translator->translate_schema( $metadata_query ),
+			'metadata_query'  => $metadata_query,
+			'schema'          => $target_schema,
+			'table'           => $target_reference['table'],
+			'temporary'       => $is_temporary,
+		);
+	}
+
+	/**
+	 * Build a MySQL CREATE TABLE definition for a CREATE TABLE ... LIKE target.
+	 *
+	 * @param string $target_table     Destination table name.
+	 * @param array  $source_reference Source table reference.
+	 * @param bool   $is_temporary     Whether the destination table is temporary.
+	 * @param bool   $if_not_exists    Whether IF NOT EXISTS was present.
+	 * @return string MySQL CREATE TABLE statement used for translation and metadata.
+	 */
+	private function get_mysql_create_table_like_metadata_query( string $target_table, array $source_reference, bool $is_temporary, bool $if_not_exists ): string {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$source_schema = $this->get_mysql_read_table_backend_schema( $source_reference['schema'] );
+		if ( 0 === strcasecmp( $source_schema, 'information_schema' ) ) {
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+		}
+
+		$source_schema = $this->resolve_mysql_table_schema_for_introspection( $source_schema, $source_reference['table'] );
+
+		$logged_queries = $this->last_postgresql_queries;
+		try {
+			$columns       = $this->get_show_create_table_column_metadata_rows( $source_schema, $source_reference['table'] );
+			$indexes       = $this->get_show_create_table_index_metadata_rows( $source_schema, $source_reference['table'] );
+			$checks        = $this->get_show_create_table_check_constraint_metadata_rows( $source_schema, $source_reference['table'] );
+			$table_comment = $this->get_show_create_table_table_comment_metadata( $source_schema, $source_reference['table'] );
+		} finally {
+			$this->last_postgresql_queries = $logged_queries;
+		}
+
+		if ( empty( $columns ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$metadata_query = $this->get_mysql_create_table_statement_from_metadata(
+			$target_table,
+			$columns,
+			$indexes,
+			array(),
+			$checks,
+			$table_comment,
+			$is_temporary
+		);
+
+		if ( ! $if_not_exists ) {
+			return $metadata_query;
+		}
+
+		$prefix      = $is_temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
+		$replacement = $is_temporary ? 'CREATE TEMPORARY TABLE IF NOT EXISTS ' : 'CREATE TABLE IF NOT EXISTS ';
+		if ( 0 === strpos( $metadata_query, $prefix ) ) {
+			return $replacement . substr( $metadata_query, strlen( $prefix ) );
+		}
+
+		return $metadata_query;
 	}
 
 	/**

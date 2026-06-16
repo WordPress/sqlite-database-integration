@@ -23279,6 +23279,106 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE ... LIKE copies source structure and MySQL-facing metadata.
+	 */
+	public function test_create_table_like_translates_and_copies_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			"CREATE TABLE like_source (
+				id int NOT NULL,
+				slug varchar(20) NOT NULL DEFAULT 'untitled',
+				score int NOT NULL DEFAULT 3,
+				note longtext DEFAULT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_unique (slug),
+				KEY score_key (score),
+				CONSTRAINT score_positive CHECK (score >= 0)
+			) COMMENT='template'"
+		);
+		$driver->query( "INSERT INTO like_source (id, slug, score, note) VALUES (1, 'existing', 4, 'source row')" );
+
+		$this->assertGreaterThanOrEqual( 0, $driver->query( 'CREATE TABLE like_copy LIKE like_source' ) );
+		$logged_sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'CREATE TABLE "like_copy"', $logged_sql );
+		$this->assertStringNotContainsString( ' LIKE ', strtoupper( $logged_sql ) );
+
+		$count = $driver->query( 'SELECT COUNT(*) AS row_count FROM like_copy' );
+		$this->assertSame( '0', $count[0]->row_count );
+
+		$this->assertSame(
+			$this->get_mysql_column_metadata_rows( $driver, 'like_source' ),
+			$this->get_mysql_column_metadata_rows( $driver, 'like_copy' )
+		);
+		$this->assertSame(
+			$this->get_mysql_index_metadata_rows( $driver, 'like_source' ),
+			$this->get_mysql_index_metadata_rows( $driver, 'like_copy' )
+		);
+		$this->assertSame(
+			$this->get_mysql_check_metadata_rows( $driver, 'like_source' ),
+			$this->get_mysql_check_metadata_rows( $driver, 'like_copy' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE like_copy' )[0]->{'Create Table'};
+		$this->assertStringContainsString( 'UNIQUE KEY `slug_unique` (`slug`)', $create_table );
+		$this->assertStringContainsString( 'KEY `score_key` (`score`)', $create_table );
+		$this->assertStringContainsString( 'CONSTRAINT `score_positive` CHECK (score >= 0)', $create_table );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO like_copy (id, slug, score) VALUES (1, 'copy', 5)" ) );
+
+		try {
+			$driver->query( "INSERT INTO like_copy (id, slug, score) VALUES (2, 'copy', 6)" );
+			$this->fail( 'Expected copied UNIQUE KEY to be enforced.' );
+		} catch ( PDOException $e ) {
+			$this->assertNotSame( '', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( "INSERT INTO like_copy (id, slug, score) VALUES (3, 'negative', -1)" );
+			$this->fail( 'Expected copied CHECK constraint to be enforced.' );
+		} catch ( PDOException $e ) {
+			$this->assertNotSame( '', $e->getMessage() );
+		}
+	}
+
+	/**
+	 * Tests CREATE TEMPORARY TABLE ... LIKE stores isolated temporary metadata.
+	 */
+	public function test_create_temporary_table_like_copies_metadata_to_temporary_schema(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			"CREATE TABLE like_temp_source (
+				id int NOT NULL,
+				`value` varchar(20) NOT NULL DEFAULT 'source',
+				PRIMARY KEY (id),
+				KEY value_key (`value`)
+			)"
+		);
+
+		$this->assertGreaterThanOrEqual( 0, $driver->query( 'CREATE TEMPORARY TABLE like_temp_copy LIKE like_temp_source' ) );
+		$logged_sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'CREATE TEMPORARY TABLE "like_temp_copy"', $logged_sql );
+
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'like_temp_copy' ) );
+		$this->assertSame(
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'like_temp_source' ), 'column_name' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'like_temp_copy', 'temp' ), 'column_name' )
+		);
+		$this->assertSame(
+			array_column( $this->get_mysql_index_metadata_rows( $driver, 'like_temp_source' ), 'key_name' ),
+			array_column( $this->get_mysql_index_metadata_rows( $driver, 'like_temp_copy', 'temp' ), 'key_name' )
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO like_temp_copy (id) VALUES (1)" ) );
+		$rows = $driver->query( 'SELECT id, value FROM like_temp_copy' );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'source', $rows[0]->value );
+	}
+
+	/**
 	 * Tests CREATE TABLE accepts MySQL storage-only table options as no-ops.
 	 */
 	public function test_create_table_storage_options_are_supported_noops(): void {
@@ -23341,7 +23441,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'column definitions plus select' => 'CREATE TABLE ctas_with_definitions (`id` INTEGER) AS SELECT 1 AS `id`',
 			'table option before select'     => 'CREATE TABLE ctas_with_options ENGINE=InnoDB AS SELECT 1 AS id',
-			'create table like'              => 'CREATE TABLE ctas_like LIKE ctas_source',
 		);
 
 		foreach ( $queries as $label => $query ) {
@@ -23352,6 +23451,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$this->assertSame( 'Unsupported CREATE TABLE statement.', $e->getMessage(), $label );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $label );
 			}
+		}
+	}
+
+	/**
+	 * Tests CREATE TABLE ... LIKE fails closed when the source table has no metadata.
+	 */
+	public function test_create_table_like_missing_source_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		try {
+			$driver->query( 'CREATE TABLE like_missing_copy LIKE like_missing_source' );
+			$this->fail( 'Expected unsupported CREATE TABLE LIKE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported CREATE TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		}
 	}
 
