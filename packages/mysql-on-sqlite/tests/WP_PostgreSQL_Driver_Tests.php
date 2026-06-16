@@ -17347,6 +17347,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertSame( array(), $routines );
+
+		$parameters = $driver->query(
+			'SELECT COUNT(*) AS parameter_count
+			FROM information_schema.parameters
+			WHERE specific_schema = DATABASE()'
+		);
+
+		$this->assertCount( 1, $parameters );
+		$this->assertSame( '0', $parameters[0]->parameter_count );
+
+		$parameter_rows = $driver->query(
+			"SELECT DTD_IDENTIFIER
+			FROM INFORMATION_SCHEMA.PARAMETERS
+			WHERE SPECIFIC_NAME = 'f1'"
+		);
+
+		$this->assertSame( array(), $parameter_rows );
+		$this->assertSame( array( 'DTD_IDENTIFIER' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$parameter_columns = $driver->query( "SHOW COLUMNS FROM information_schema.parameters LIKE 'PARAMETER_%'" );
+		$this->assertSame(
+			array( 'PARAMETER_MODE', 'PARAMETER_NAME' ),
+			array_column( $parameter_columns, 'Field' )
+		);
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE INFORMATION_SCHEMA.PARAMETERS' );
+
+		$this->assertCount( 1, $show_create );
+		$this->assertSame( 'PARAMETERS', $show_create[0]->Table );
+		$this->assertStringContainsString( '  `SPECIFIC_NAME` varchar(512) DEFAULT NULL', $show_create[0]->{'Create Table'} );
+		$this->assertStringContainsString( '  `DTD_IDENTIFIER` varchar(512) DEFAULT NULL', $show_create[0]->{'Create Table'} );
+
+		$routine_parameters = $driver->query(
+			'SELECT r.routine_name, p.parameter_name
+			FROM information_schema.routines AS r
+			LEFT JOIN information_schema.parameters AS p
+				ON p.specific_schema = r.routine_schema
+				AND p.specific_name = r.specific_name
+			WHERE r.routine_schema = DATABASE()'
+		);
+
+		$this->assertSame( array(), $routine_parameters );
 	}
 
 	/**

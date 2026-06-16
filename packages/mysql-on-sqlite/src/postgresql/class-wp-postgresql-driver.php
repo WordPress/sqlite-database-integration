@@ -26009,6 +26009,7 @@ WHERE option_name IN (
 				'views',
 				'triggers',
 				'routines',
+				'parameters',
 			),
 			true
 		);
@@ -26317,6 +26318,26 @@ WHERE option_name IN (
 					'COLLATION_CONNECTION',
 					'DATABASE_COLLATION',
 				);
+
+			case 'parameters':
+				return array(
+					'SPECIFIC_CATALOG',
+					'SPECIFIC_SCHEMA',
+					'SPECIFIC_NAME',
+					'ORDINAL_POSITION',
+					'PARAMETER_MODE',
+					'PARAMETER_NAME',
+					'DATA_TYPE',
+					'CHARACTER_MAXIMUM_LENGTH',
+					'CHARACTER_OCTET_LENGTH',
+					'NUMERIC_PRECISION',
+					'NUMERIC_SCALE',
+					'DATETIME_PRECISION',
+					'CHARACTER_SET_NAME',
+					'COLLATION_NAME',
+					'DTD_IDENTIFIER',
+					'ROUTINE_TYPE',
+				);
 		}
 
 		return null;
@@ -26461,6 +26482,7 @@ WHERE option_name IN (
 			case 'views':
 			case 'triggers':
 			case 'routines':
+			case 'parameters':
 				return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
