@@ -67,19 +67,25 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Return explicit unsupported-SQL errors for unsupported MySQL DDL instead of swallowing or silently passing through incompatible SQL.
 - [x] Translate/emulate the supported constructs identified in this work except `FULLTEXT` and `SPATIAL`, which remain explicit unsupported cases.
 - [x] Tolerate MySQL `FIRST`/`AFTER <column>` placement suffixes inside parenthesized `ALTER TABLE ... ADD (...)` column batches while preserving explicit errors for malformed placement.
+- [x] Tolerate supported MySQL table/storage options in `ALTER TABLE` with either `OPTION=value` or `OPTION value` spelling as PostgreSQL no-ops.
 - [x] Emulate the common plugin upsert side effect `ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)` for deterministic single-row AUTO_INCREMENT self-assignments.
+- [x] Harden `ON DUPLICATE KEY UPDATE` expression assignments so resolved current-row columns and `VALUES(column)` work, while unknown column references fail before backend execution.
 
 ## Runtime And Metadata Parity
 
 - [x] Emulate MySQL session identity runtime functions for PostgreSQL: `CURRENT_USER`, `CURRENT_USER()`, `USER()`, `SESSION_USER()`, and `SYSTEM_USER()`.
 - [x] Emulate zero-argument `CONNECTION_ID()` using the same synthetic session ID exposed by `SHOW PROCESSLIST` and `information_schema.processlist`.
 - [x] Emulate zero-argument `LAST_INSERT_ID()` without exact-query caching, so repeated calls reflect mutable insert state.
+- [x] Emulate narrow standalone `LAST_INSERT_ID(expr)` scalar `SELECT` assignments for non-negative integer literals, and fail closed for table-backed, embedded, nonliteral, negative, and overflow forms.
 - [x] Emulate zero-argument `ROW_COUNT()` without exact-query caching, including DML affected-row values and result-set `-1` semantics.
-- [x] Fail closed for unsupported MySQL runtime function forms such as standalone `LAST_INSERT_ID(expr)`, `CURRENT_USER(expr)`, `USER(expr)`, `ROW_COUNT(expr)`, and `UUID()`.
+- [x] Translate MySQL `COALESCE()` as a common runtime function for PostgreSQL expression paths.
+- [x] Fail closed for unsupported MySQL runtime function forms such as unsupported `LAST_INSERT_ID(expr)` shapes, `CURRENT_USER(expr)`, `USER(expr)`, `ROW_COUNT(expr)`, and `UUID()`.
 - [x] Emulate `group_concat_max_len` as MySQL session state for `SET`, `SELECT @@...`, and `SHOW VARIABLES`, while keeping global and expression forms explicit errors.
+- [x] Enforce `group_concat_max_len` for supported `GROUP_CONCAT(expr [ORDER BY ...] [SEPARATOR ...])` translations and fail closed for unsupported `GROUP_CONCAT` shapes.
 - [x] Synthesize direct `information_schema.TABLES.AUTO_INCREMENT` values with schema-aware lookup instead of assuming only `public`.
-- [ ] Decide whether to emulate standalone mutable `LAST_INSERT_ID(expr)` and exact `ROW_COUNT()` behavior after failed statements; unsupported or undefined forms remain explicit.
-- [ ] Decide whether to expose additional MySQL `information_schema` privilege/plugin/security tables beyond the currently supported relations and empty routine/view/trigger/parameter shims; unsupported relations continue to fail explicitly.
+- [x] Expose direct `information_schema.plugins` as an empty queryable relation with MySQL-compatible columns.
+- [ ] Decide whether to emulate exact `ROW_COUNT()` behavior after failed statements; unsupported or undefined forms remain explicit.
+- [ ] Decide whether to expose additional MySQL `information_schema` privilege/security tables beyond plugins and the currently supported relations and empty routine/view/trigger/parameter shims; unsupported relations continue to fail explicitly.
 
 ## Tests
 
@@ -98,3 +104,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for supported `CREATE TABLE ... [AS] SELECT` translations and unsupported variant errors.
 - [x] Add PostgreSQL runtime-function tests for emulated session identity, `CONNECTION_ID()`, `LAST_INSERT_ID()`, and fail-closed unsupported forms.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` mutable state, `group_concat_max_len`, parenthesized `ALTER TABLE ... ADD (...)` placement, direct `information_schema.TABLES.AUTO_INCREMENT`, and `LAST_INSERT_ID(id)` upsert side effects.
+- [x] Add PostgreSQL tests for standalone `LAST_INSERT_ID(expr)` assignment behavior, `GROUP_CONCAT` truncation and fail-closed forms, `information_schema.plugins`, optional-equals `ALTER TABLE` options, and upsert expression column validation.

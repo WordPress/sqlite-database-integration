@@ -5397,6 +5397,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE validates current-row columns inside simple expressions.
+	 */
+	public function test_upsert_update_assignments_support_resolved_column_references_inside_simple_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+		$driver->query( 'INSERT INTO wptests_strict_ints (id, int_value) VALUES (1, 4)' );
+
+		$upsert = 'INSERT INTO `wptests_strict_ints` (`id`, `int_value`)
+			VALUES (1, 3)
+			ON DUPLICATE KEY UPDATE `int_value` = COALESCE(`int_value`, 0) + VALUES(`int_value`)';
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = COALESCE("int_value", 0) + excluded."int_value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT int_value FROM wptests_strict_ints WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->int_value );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE rejects unknown current-row expression columns.
+	 */
+	public function test_upsert_update_assignments_reject_unknown_current_row_expression_columns(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+		$driver->query( 'INSERT INTO wptests_strict_ints (id, int_value) VALUES (1, 4)' );
+
+		foreach (
+			array(
+				'INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (1, 3) ON DUPLICATE KEY UPDATE `int_value` = COALESCE(`missing_column`, 0) + VALUES(`int_value`)',
+				'INSERT INTO `wptests_strict_ints` (`id`, `int_value`) VALUES (1, 3) ON DUPLICATE KEY UPDATE `int_value` = `other`.`int_value` + VALUES(`int_value`)',
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unknown upsert expression column to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests singular VALUE row-list upsert syntax is translated like VALUES.
 	 */
 	public function test_value_keyword_upsert_is_translated_to_postgresql_on_conflict(): void {
@@ -8790,6 +8838,123 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests LAST_INSERT_ID(expr) sets mutable session state for safe standalone integer literals.
+	 */
+	public function test_last_insert_id_assignment_runtime_function_sets_and_reads_back(): void {
+		$driver = $this->create_driver();
+
+		$assigned = $driver->query( 'SELECT LAST_INSERT_ID(123) AS assigned_id' );
+
+		$this->assertSame( '123', $assigned[0]->assigned_id );
+		$this->assertSame( 123, $driver->get_insert_id() );
+		$this->assertSame( 'SELECT 123 AS assigned_id', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$readback = $driver->query( 'SELECT LAST_INSERT_ID() AS last_insert_id' );
+
+		$this->assertSame( '123', $readback[0]->last_insert_id );
+		$this->assertSame( 'SELECT 123 AS last_insert_id', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
+	 * Tests LAST_INSERT_ID() readbacks are not cached across LAST_INSERT_ID(expr) assignments.
+	 */
+	public function test_last_insert_id_assignment_runtime_function_invalidates_readback_cache(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'SELECT LAST_INSERT_ID(10) AS assigned_id' );
+		$first = $driver->query( 'SELECT LAST_INSERT_ID() AS last_insert_id' );
+
+		$driver->query( 'SELECT LAST_INSERT_ID(20) AS assigned_id' );
+		$second = $driver->query( 'SELECT LAST_INSERT_ID() AS last_insert_id' );
+
+		$this->assertSame( '10', $first[0]->last_insert_id );
+		$this->assertSame( '20', $second[0]->last_insert_id );
+		$this->assertSame( 20, $driver->get_insert_id() );
+		$this->assertSame( 'SELECT 20 AS last_insert_id', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
+	 * Tests LAST_INSERT_ID(expr) projections preserve aliases and left-to-right session reads.
+	 */
+	public function test_last_insert_id_assignment_runtime_function_preserves_projection_order_and_aliases(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'SELECT LAST_INSERT_ID(7) AS seed_id' );
+
+		$rows = $driver->query(
+			'SELECT LAST_INSERT_ID() AS before_id,
+				LAST_INSERT_ID(456) AS assigned_id,
+				LAST_INSERT_ID() AS after_id,
+				9 AS literal_value'
+		);
+
+		$this->assertSame( '7', $rows[0]->before_id );
+		$this->assertSame( '456', $rows[0]->assigned_id );
+		$this->assertSame( '456', $rows[0]->after_id );
+		$this->assertSame( '9', $rows[0]->literal_value );
+		$this->assertSame( 456, $driver->get_insert_id() );
+		$this->assertSame(
+			array( 'before_id', 'assigned_id', 'after_id', 'literal_value' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+		$this->assertSame(
+			'SELECT 7 AS before_id, 456 AS assigned_id, 456 AS after_id, 9 AS literal_value',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests unsupported LAST_INSERT_ID(expr) SELECT forms fail before backend execution.
+	 */
+	public function test_last_insert_id_assignment_runtime_function_unsupported_forms_fail_closed(): void {
+		$queries = array(
+			"SELECT LAST_INSERT_ID('123') AS invalid_last_insert_id",
+			'SELECT LAST_INSERT_ID(123 + 1) AS invalid_last_insert_id',
+			'SELECT LAST_INSERT_ID(id) AS invalid_last_insert_id',
+			'SELECT LAST_INSERT_ID(-1) AS invalid_last_insert_id',
+			'SELECT LAST_INSERT_ID(18446744073709551615) AS invalid_last_insert_id',
+			'SELECT LAST_INSERT_ID(123) + 1 AS invalid_last_insert_id',
+			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id FROM runtime_names',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported LAST_INSERT_ID(expr) runtime form to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
+	 * Tests unsupported LAST_INSERT_ID(expr) SELECT forms do not mutate session state.
+	 */
+	public function test_last_insert_id_assignment_runtime_function_unsupported_forms_do_not_mutate_state(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'SELECT LAST_INSERT_ID(321) AS assigned_id' );
+
+		try {
+			$driver->query( "SELECT LAST_INSERT_ID('123') AS invalid_last_insert_id" );
+			$this->fail( 'Expected unsupported LAST_INSERT_ID(expr) runtime form to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage() );
+		}
+
+		$this->assertSame( 321, $driver->get_insert_id() );
+
+		$readback = $driver->query( 'SELECT LAST_INSERT_ID() AS last_insert_id' );
+		$this->assertSame( '321', $readback[0]->last_insert_id );
+	}
+
+	/**
 	 * Tests ROW_COUNT() reflects mutable last-result state instead of cached SQL.
 	 */
 	public function test_row_count_runtime_function_tracks_last_result_and_is_not_cached(): void {
@@ -9000,7 +9165,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "ELSE CONVERT_FROM(DECODE(CAST('dGVzdA==' AS text), 'base64'), 'UTF8') END AS text), 'UTF8'), 'base64') AS encoded_round_trip", $sql );
 		$this->assertStringContainsString( "CASE WHEN CAST(ENCODE(CONVERT_TO(CAST('binary' AS text), 'UTF8'), 'base64') AS text) IS NULL OR CAST(ENCODE(CONVERT_TO(CAST('binary' AS text), 'UTF8'), 'base64') AS text) !~", $sql );
 		$this->assertStringContainsString( "ELSE CONVERT_FROM(DECODE(CAST(ENCODE(CONVERT_TO(CAST('binary' AS text), 'UTF8'), 'base64') AS text), 'base64'), 'UTF8') END AS decoded_round_trip", $sql );
-		$this->assertStringContainsString( "COALESCE (CASE WHEN CAST('' AS text) IS NULL OR CAST('' AS text) !~", $sql );
+		$this->assertStringContainsString( "COALESCE(CASE WHEN CAST('' AS text) IS NULL OR CAST('' AS text) !~", $sql );
 		$this->assertStringContainsString( "ELSE CONVERT_FROM(DECODE(CAST('' AS text), 'base64'), 'UTF8') END, 'fallback') AS empty_decoded", $sql );
 		$this->assertStringNotContainsString( 'FROM_BASE64', $sql );
 		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
@@ -9331,7 +9496,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT CONCAT() AS empty_concat',
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
-			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id',
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
 			'SELECT ROW_COUNT(123) AS rows_changed',
 			'SELECT UUID() AS uuid_value',
@@ -9358,7 +9522,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
 			"SELECT FROM_UNIXTIME(0, '%Y', 'extra') AS invalid_from_unixtime",
-			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id',
+			"SELECT LAST_INSERT_ID('123') AS invalid_last_insert_id",
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
 			'SELECT USER(1) AS invalid_user',
 			'SELECT ROW_COUNT(123) AS rows_changed',
@@ -13063,7 +13227,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertSame(
-			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'COALESCE (post_date_gmt, post_date)', '1 + 1', 'day' ) . ' AS shifted',
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'COALESCE(post_date_gmt, post_date)', '1 + 1', 'day' ) . ' AS shifted',
 			$sql
 		);
 		$this->assertStringNotContainsString( 'ADDDATE', $sql );
@@ -13286,7 +13450,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertSame(
-			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'COALESCE (post_date_gmt, post_date)', '(1 + 1)', 'day' ) . ' AS shifted',
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'COALESCE(post_date_gmt, post_date)', '(1 + 1)', 'day' ) . ' AS shifted',
 			$sql
 		);
 	}
@@ -16431,6 +16595,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL table-option ALTER clauses accept optional-equals forms as no-ops.
+	 */
+	public function test_alter_table_storage_options_accept_optional_equals_forms_as_noops(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_option_spacing (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_option_spacing' );
+		$queries        = array(
+			'ALTER TABLE wptests_plugin_option_spacing ENGINE InnoDB',
+			'ALTER TABLE wptests_plugin_option_spacing ROW_FORMAT DYNAMIC',
+			'ALTER TABLE wptests_plugin_option_spacing DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+			'ALTER TABLE wptests_plugin_option_spacing DEFAULT CHARSET utf8mb4',
+			'ALTER TABLE wptests_plugin_option_spacing COLLATE utf8mb4_unicode_ci',
+			'ALTER TABLE wptests_plugin_option_spacing STATS_PERSISTENT DEFAULT',
+			'ALTER TABLE wptests_plugin_option_spacing ENGINE_ATTRIBUTE "{}"',
+		);
+
+		foreach ( $queries as $query ) {
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_option_spacing' ) );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'ALTER TABLE wptests_plugin_option_spacing
+					ENGINE InnoDB,
+					ADD COLUMN note varchar(20),
+					DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_option_spacing" ADD COLUMN "note" varchar(20)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame(
+			array( 'id', 'status', 'note' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_option_spacing' ), 'column_name' )
+		);
+	}
+
+	/**
 	 * Tests ALTER TABLE comment clauses update MySQL-facing metadata.
 	 */
 	public function test_alter_table_comment_clauses_update_introspection_metadata(): void {
@@ -19044,6 +19265,93 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$engine_columns
 		);
+	}
+
+	/**
+	 * Tests information_schema.PLUGINS is exposed as an empty plugin metadata relation.
+	 */
+	public function test_direct_information_schema_plugins_relation_is_empty_and_queryable(): void {
+		$driver = $this->create_driver();
+
+		$plugins = $driver->query(
+			'SELECT PLUGIN_NAME, PLUGIN_STATUS
+			FROM information_schema.plugins'
+		);
+
+		$this->assertSame( array(), $plugins );
+		$this->assertSame( array( 'PLUGIN_NAME', 'PLUGIN_STATUS' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$filtered = $driver->query(
+			"SELECT PLUGIN_NAME
+			FROM information_schema.plugins
+			WHERE PLUGIN_TYPE = 'STORAGE ENGINE'
+				AND LOAD_OPTION = 'ON'"
+		);
+
+		$this->assertSame( array(), $filtered );
+
+		$count = $driver->query(
+			"SELECT COUNT(*) AS plugin_count
+			FROM information_schema.plugins
+			WHERE PLUGIN_NAME = 'InnoDB'"
+		);
+
+		$this->assertCount( 1, $count );
+		$this->assertSame( '0', $count[0]->plugin_count );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$routed = $driver->query(
+			"SELECT PLUGIN_NAME
+			FROM plugins
+			WHERE PLUGIN_STATUS = 'ACTIVE'"
+		);
+
+		$this->assertSame( array(), $routed );
+
+		$columns = $driver->query( "SHOW COLUMNS FROM plugins LIKE 'PLUGIN_%'" );
+		$this->assertSame(
+			array(
+				'PLUGIN_NAME',
+				'PLUGIN_VERSION',
+				'PLUGIN_STATUS',
+				'PLUGIN_TYPE',
+				'PLUGIN_TYPE_VERSION',
+				'PLUGIN_LIBRARY',
+				'PLUGIN_LIBRARY_VERSION',
+				'PLUGIN_AUTHOR',
+				'PLUGIN_DESCRIPTION',
+				'PLUGIN_LICENSE',
+			),
+			array_column( $columns, 'Field' )
+		);
+	}
+
+	/**
+	 * Tests unsupported privilege/security information_schema relations still fail closed.
+	 */
+	public function test_direct_information_schema_privilege_security_relations_remain_unsupported(): void {
+		$relations = array(
+			'user_privileges',
+			'schema_privileges',
+			'table_privileges',
+			'column_privileges',
+			'applicable_roles',
+			'administrable_role_authorizations',
+			'enabled_roles',
+		);
+
+		foreach ( $relations as $relation ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( "SELECT * FROM information_schema.$relation" );
+				$this->fail( 'Expected unsupported information_schema relation to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $relation );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $relation );
+			}
+		}
 	}
 
 	/**
@@ -23041,6 +23349,136 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests the default GROUP_CONCAT length limit is enforced for supported translations.
+	 */
+	public function test_group_concat_uses_default_group_concat_max_len(): void {
+		$driver = $this->create_driver();
+		$this->create_group_concat_values_table(
+			$driver,
+			array(
+				1 => str_repeat( 'a', 600 ),
+				2 => str_repeat( 'b', 600 ),
+			)
+		);
+
+		$rows = $driver->query( "SELECT GROUP_CONCAT(value ORDER BY id SEPARATOR '') AS combined FROM group_concat_values" );
+
+		$this->assertSame( str_repeat( 'a', 600 ) . str_repeat( 'b', 424 ), $rows[0]->combined );
+		$this->assertSame( 1024, strlen( $rows[0]->combined ) );
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'STRING_AGG', $sql );
+		$this->assertStringContainsString( ', 1024', $sql );
+	}
+
+	/**
+	 * Tests small GROUP_CONCAT length limits truncate standard ORDER/SEPARATOR forms.
+	 */
+	public function test_group_concat_max_len_truncates_supported_group_concat_shapes(): void {
+		$driver = $this->create_driver();
+		$this->create_group_concat_values_table(
+			$driver,
+			array(
+				2 => 'two',
+				1 => 'one',
+				3 => 'three',
+			)
+		);
+
+		$this->assertSame( 0, $driver->query( 'SET SESSION group_concat_max_len = 5' ) );
+		$rows = $driver->query( "SELECT GROUP_CONCAT(value ORDER BY id SEPARATOR '|') AS combined FROM group_concat_values" );
+
+		$this->assertSame( 'one|t', $rows[0]->combined );
+		$this->assertStringContainsString( ', 5', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT GROUP_CONCAT(value ORDER BY id) AS combined FROM group_concat_values' );
+		$this->assertSame( 'one,t', $rows[0]->combined );
+
+		$rows = $driver->query( 'SELECT GROUP_CONCAT(value) AS combined FROM group_concat_values WHERE id = 1' );
+		$this->assertSame( 'one', $rows[0]->combined );
+	}
+
+	/**
+	 * Tests SET group_concat_max_len = DEFAULT restores the default runtime behavior.
+	 */
+	public function test_group_concat_max_len_default_restore_updates_group_concat_output(): void {
+		$driver = $this->create_driver();
+		$this->create_group_concat_values_table(
+			$driver,
+			array(
+				1 => 'alpha',
+				2 => 'beta',
+			)
+		);
+
+		$query = "SELECT GROUP_CONCAT(value ORDER BY id SEPARATOR '|') AS combined FROM group_concat_values";
+
+		$this->assertSame( 0, $driver->query( 'SET SESSION group_concat_max_len = 5' ) );
+		$rows = $driver->query( $query );
+		$this->assertSame( 'alpha', $rows[0]->combined );
+
+		$this->assertSame( 0, $driver->query( 'SET SESSION group_concat_max_len = DEFAULT' ) );
+		$rows = $driver->query( $query );
+		$this->assertSame( 'alpha|beta', $rows[0]->combined );
+
+		$variable = $driver->query( 'SELECT @@group_concat_max_len' );
+		$this->assertSame( '1024', $variable[0]->{'@@group_concat_max_len'} );
+	}
+
+	/**
+	 * Tests GROUP_CONCAT translations do not reuse stale group_concat_max_len state.
+	 */
+	public function test_group_concat_max_len_translation_does_not_use_stale_cached_state(): void {
+		$driver = $this->create_driver();
+		$this->create_group_concat_values_table(
+			$driver,
+			array(
+				1 => 'alpha',
+				2 => 'beta',
+			)
+		);
+
+		$query = "SELECT GROUP_CONCAT(value ORDER BY id SEPARATOR '|') AS combined FROM group_concat_values";
+
+		$this->assertSame( 0, $driver->query( 'SET SESSION group_concat_max_len = 5' ) );
+		$rows = $driver->query( $query );
+		$this->assertSame( 'alpha', $rows[0]->combined );
+		$this->assertStringContainsString( ', 5', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$this->assertSame( 0, $driver->query( 'SET SESSION group_concat_max_len = 9' ) );
+		$rows = $driver->query( $query );
+		$this->assertSame( 'alpha|bet', $rows[0]->combined );
+		$this->assertStringContainsString( ', 9', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
+	 * Tests unsupported GROUP_CONCAT() forms fail before backend execution.
+	 */
+	public function test_unsupported_group_concat_forms_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			'SELECT GROUP_CONCAT(DISTINCT value) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(id, value) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(value ORDER id) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(value SEPARATOR) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(value SEPARATOR "," SEPARATOR "|") AS combined FROM group_concat_values',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported GROUP_CONCAT() form to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
 	 * Tests unsafe GROUP_CONCAT length SET forms fail before reaching PDO.
 	 */
 	public function test_unsupported_group_concat_max_len_set_forms_fail_closed(): void {
@@ -23443,6 +23881,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function create_driver( string $db_name = 'wptests' ): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
 		return new WP_PostgreSQL_Driver( $connection, $db_name );
+	}
+
+	/**
+	 * Creates a small table for GROUP_CONCAT behavior tests.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @param array<int, string>   $rows   Values keyed by integer ID.
+	 */
+	private function create_group_concat_values_table( WP_PostgreSQL_Driver $driver, array $rows ): void {
+		$driver->query( 'CREATE TABLE group_concat_values (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+
+		foreach ( $rows as $id => $value ) {
+			$driver->query(
+				sprintf(
+					'INSERT INTO group_concat_values (id, value) VALUES (%d, %s)',
+					$id,
+					$driver->get_connection()->quote( $value )
+				)
+			);
+		}
 	}
 
 	/**
