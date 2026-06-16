@@ -230,10 +230,15 @@ class WP_PostgreSQL_Create_Table_Translator {
 			throw new InvalidArgumentException( 'Column definition is missing a field definition.' );
 		}
 
-		$is_auto_increment = null !== $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL );
+		$data_type         = $field_definition->get_first_child_node( 'dataType' );
+		$is_serial         = $this->is_serial_data_type( $data_type );
+		$is_auto_increment = $is_serial || null !== $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL );
+		$has_not_null      = false;
+		$has_primary_key   = false;
+		$has_unique_key    = false;
 		$parts             = array(
 			$this->quote_identifier( $name ),
-			$this->translate_data_type( $field_definition->get_first_child_node( 'dataType' ), $is_auto_increment ),
+			$this->translate_data_type( $data_type, $is_auto_increment ),
 		);
 
 		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
@@ -242,17 +247,20 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) {
-				$parts[] = 'NOT NULL';
+				$has_not_null = true;
+				$parts[]      = 'NOT NULL';
 				continue;
 			}
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
-				$parts[] = 'PRIMARY KEY';
+				$has_primary_key = true;
+				$parts[]         = 'PRIMARY KEY';
 				continue;
 			}
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
-				$parts[] = 'UNIQUE';
+				$has_unique_key = true;
+				$parts[]        = 'UNIQUE';
 				continue;
 			}
 
@@ -262,6 +270,16 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
 				$parts[] = $this->translate_default_attribute( $attribute );
+			}
+		}
+
+		if ( $is_serial ) {
+			if ( ! $has_not_null && ! $has_primary_key ) {
+				$parts[] = 'NOT NULL';
+			}
+
+			if ( ! $has_primary_key && ! $has_unique_key ) {
+				$parts[] = 'UNIQUE';
 			}
 		}
 
@@ -549,18 +567,18 @@ class WP_PostgreSQL_Create_Table_Translator {
 			throw new InvalidArgumentException( 'Column definition is missing a data type.' );
 		}
 
-		$type_token = $data_type->get_first_child_token();
-		if ( ! $type_token ) {
-			throw new InvalidArgumentException( 'Column data type is empty.' );
-		}
-
-		$type = strtolower( $type_token->get_value() );
+		$type = $this->get_normalized_mysql_data_type( $data_type );
 		if ( 'bigint' === $type ) {
+			$postgresql_type = 'bigint';
+		} elseif ( 'serial' === $type ) {
 			$postgresql_type = 'bigint';
 		} elseif ( in_array( $type, array( 'bit', 'bool', 'boolean', 'int', 'integer', 'mediumint', 'smallint', 'tinyint' ), true ) ) {
 			$postgresql_type = 'integer';
 		} elseif ( in_array( $type, array( 'varchar', 'char' ), true ) ) {
 			$length          = $this->get_field_length( $data_type );
+			if ( 'char' === $type && null === $length ) {
+				$length = 1;
+			}
 			$postgresql_type = $length ? sprintf( '%s(%d)', $type, $length ) : $type;
 		} elseif (
 			in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
@@ -897,10 +915,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 		foreach ( $element_list->get_child_nodes( 'tableElement' ) as $table_element ) {
 			$column_definition = $table_element->get_first_child_node( 'columnDefinition' );
 			if ( $column_definition ) {
-				$name             = $this->get_identifier_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
-				$field_definition = $column_definition->get_first_child_node( 'fieldDefinition' );
-				$data_type        = $field_definition ? $field_definition->get_first_child_node( 'dataType' ) : null;
-				$column_type      = $this->get_mysql_column_type( $data_type, $field_definition );
+				$name              = $this->get_identifier_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
+				$field_definition  = $column_definition->get_first_child_node( 'fieldDefinition' );
+				$data_type         = $field_definition ? $field_definition->get_first_child_node( 'dataType' ) : null;
+				$column_type       = $this->get_mysql_column_type( $data_type, $field_definition );
+				$is_serial         = $this->is_serial_data_type( $data_type );
 				$is_inline_primary = $field_definition && $this->has_inline_primary_key( $field_definition );
 
 				list ( $charset, $collation ) = $this->get_column_charset_and_collation(
@@ -920,9 +939,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 				);
 
 				if ( $include_indexes ) {
-					$column_metadata['nullable'] = $is_inline_primary || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) ? 'NO' : 'YES';
+					$column_metadata['nullable'] = $is_serial || $is_inline_primary || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) ? 'NO' : 'YES';
 					$column_metadata['default']  = $field_definition ? $this->get_column_default_metadata( $field_definition ) : null;
-					$column_metadata['extra']    = $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ? 'auto_increment' : '';
+					$column_metadata['extra']    = $is_serial || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) ? 'auto_increment' : '';
 				}
 
 				$columns[]                           = $column_metadata;
@@ -1032,7 +1051,13 @@ class WP_PostgreSQL_Create_Table_Translator {
 			++$index_ordinal;
 		}
 
-		if ( $this->has_inline_unique_key( $field_definition ) ) {
+		if (
+			! $this->has_inline_primary_key( $field_definition )
+			&& (
+				$this->has_inline_unique_key( $field_definition )
+				|| $this->is_serial_data_type( $field_definition->get_first_child_node( 'dataType' ) )
+			)
+		) {
 			$indexes[] = array(
 				'name'       => $column_name,
 				'ordinal'    => $index_ordinal,
@@ -1374,7 +1399,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$charset   = null;
 		$collation = null;
-		$is_binary = false;
+		$is_binary   = false;
+		$is_national = $this->is_national_character_data_type( $field_definition->get_first_child_node( 'dataType' ) );
 
 		$charset_node = $field_definition->get_first_descendant_node( 'charsetWithOptBinary' );
 		if ( $charset_node ) {
@@ -1397,7 +1423,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$collation = $this->normalize_collation( $this->get_node_value( $collation_node ) );
 		}
 
-		if ( null === $charset && null === $collation ) {
+		if ( null === $charset && null === $collation && $is_national ) {
+			$charset   = 'utf8';
+			$collation = $this->get_default_collation_for_charset( $charset );
+		} elseif ( null === $charset && null === $collation ) {
 			$charset   = $table_charset;
 			$collation = $table_collation;
 		} elseif ( null === $collation ) {
@@ -1421,14 +1450,13 @@ class WP_PostgreSQL_Create_Table_Translator {
 			throw new InvalidArgumentException( 'Column definition is missing a data type.' );
 		}
 
-		$type_token = $data_type->get_first_child_token();
-		if ( ! $type_token ) {
-			throw new InvalidArgumentException( 'Column data type is empty.' );
-		}
-
-		$type = strtolower( $type_token->get_value() );
+		$type = $this->get_normalized_mysql_data_type( $data_type );
 		if ( 'integer' === $type ) {
 			$type = 'int';
+		}
+
+		if ( 'serial' === $type ) {
+			return 'bigint unsigned';
 		}
 
 		if ( in_array( $type, array( 'enum', 'set' ), true ) ) {
@@ -1441,6 +1469,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		$length = $this->get_field_length( $data_type );
+		if ( null === $length && in_array( $type, array( 'binary', 'bit', 'char' ), true ) ) {
+			$length = 1;
+		}
 		if ( null !== $length && in_array( $type, array( 'bigint', 'binary', 'bit', 'char', 'int', 'mediumint', 'smallint', 'tinyint', 'varbinary', 'varchar' ), true ) ) {
 			$type = sprintf( '%s(%d)', $type, $length );
 		}
@@ -1450,6 +1481,93 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return $type;
+	}
+
+	/**
+	 * Get a normalized MySQL data type name from a dataType node.
+	 *
+	 * @param WP_Parser_Node $data_type Data type node.
+	 * @return string Normalized type name.
+	 */
+	private function get_normalized_mysql_data_type( WP_Parser_Node $data_type ): string {
+		if ( $this->is_serial_data_type( $data_type ) ) {
+			return 'serial';
+		}
+
+		$character_alias = $this->get_normalized_mysql_character_data_type( $data_type );
+		if ( null !== $character_alias ) {
+			return $character_alias;
+		}
+
+		$type_token = $data_type->get_first_child_token();
+		if ( ! $type_token ) {
+			throw new InvalidArgumentException( 'Column data type is empty.' );
+		}
+
+		return strtolower( $type_token->get_value() );
+	}
+
+	/**
+	 * Normalize MySQL character data type aliases.
+	 *
+	 * @param WP_Parser_Node $data_type Data type node.
+	 * @return string|null Normalized character type, or null for non-character types.
+	 */
+	private function get_normalized_mysql_character_data_type( WP_Parser_Node $data_type ): ?string {
+		$tokens = $data_type->get_descendant_tokens();
+		if ( empty( $tokens ) ) {
+			return null;
+		}
+
+		$first_id    = $tokens[0]->id;
+		$has_varchar = false;
+		$has_varying = false;
+		foreach ( $tokens as $token ) {
+			if ( in_array( $token->id, array( WP_MySQL_Lexer::VARCHAR_SYMBOL, WP_MySQL_Lexer::VARCHARACTER_SYMBOL, WP_MySQL_Lexer::NVARCHAR_SYMBOL ), true ) ) {
+				$has_varchar = true;
+			}
+			if ( WP_MySQL_Lexer::VARYING_SYMBOL === $token->id ) {
+				$has_varying = true;
+			}
+		}
+
+		if (
+			$has_varchar
+			|| $has_varying
+			|| in_array( $first_id, array( WP_MySQL_Lexer::VARCHAR_SYMBOL, WP_MySQL_Lexer::VARCHARACTER_SYMBOL, WP_MySQL_Lexer::NVARCHAR_SYMBOL ), true )
+		) {
+			return 'varchar';
+		}
+
+		if ( in_array( $first_id, array( WP_MySQL_Lexer::CHAR_SYMBOL, WP_MySQL_Lexer::NCHAR_SYMBOL, WP_MySQL_Lexer::NATIONAL_SYMBOL ), true ) ) {
+			return 'char';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a data type is SERIAL.
+	 *
+	 * @param WP_Parser_Node|null $data_type Data type node.
+	 * @return bool Whether SERIAL is present.
+	 */
+	private function is_serial_data_type( ?WP_Parser_Node $data_type ): bool {
+		return $data_type && null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL );
+	}
+
+	/**
+	 * Check whether a data type uses MySQL's national character set aliases.
+	 *
+	 * @param WP_Parser_Node|null $data_type Data type node.
+	 * @return bool Whether the data type is national character based.
+	 */
+	private function is_national_character_data_type( ?WP_Parser_Node $data_type ): bool {
+		return $data_type && (
+			null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::NATIONAL_SYMBOL )
+			|| null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::NCHAR_SYMBOL )
+			|| null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::NVARCHAR_SYMBOL )
+		);
 	}
 
 	/**
