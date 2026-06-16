@@ -12422,6 +12422,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '2', $rows[0]->option_value );
 		$this->assertSame( 'two', $rows[0]->autoload );
+
+		$ordered_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('source_counts', 'ignored', 'ignored')
+			ON DUPLICATE KEY UPDATE `option_value` = (SELECT `label` FROM `wptests_upsert_source` ORDER BY `id` DESC LIMIT 1),
+			                        `autoload` = (SELECT `s`.`label` FROM `wptests_upsert_source` AS `s` WHERE `s`.`id` > 0 ORDER BY `s`.`id` ASC LIMIT 1, 1)";
+
+		$this->assertSame( 1, $driver->query( $ordered_upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT "label" FROM "wptests_upsert_source" ORDER BY "id" DESC LIMIT 1) AS text), "autoload" = CAST((SELECT "s"."label" FROM "wptests_upsert_source" AS "s" WHERE "s"."id" > 0 ORDER BY "s"."id" ASC LIMIT 1 OFFSET 1) AS text)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'source_counts'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'three', $rows[0]->option_value );
+		$this->assertSame( 'two', $rows[0]->autoload );
 	}
 
 	/**
@@ -12455,7 +12477,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				ON DUPLICATE KEY UPDATE `option_value` = (SELECT label FROM `wptests_upsert_source` WHERE missing > 0)",
 			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 				VALUES ('source_counts', 'ignored', 'ignored')
-				ON DUPLICATE KEY UPDATE `option_value` = (SELECT label FROM `wptests_upsert_source` ORDER BY id LIMIT 1)",
+				ON DUPLICATE KEY UPDATE `option_value` = (SELECT label FROM `wptests_upsert_source` ORDER BY missing LIMIT 1)",
 		);
 
 		foreach ( $queries as $query ) {

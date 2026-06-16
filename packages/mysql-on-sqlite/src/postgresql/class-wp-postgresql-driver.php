@@ -32674,9 +32674,7 @@ FROM (
 					WP_MySQL_Lexer::FOR_SYMBOL,
 					WP_MySQL_Lexer::GROUP_SYMBOL,
 					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
 					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::ORDER_SYMBOL,
 					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
 					WP_MySQL_Lexer::SELECT_SYMBOL,
 					WP_MySQL_Lexer::UNION_SYMBOL,
@@ -32693,13 +32691,38 @@ FROM (
 			$select_end
 		);
 		if ( null !== $from_position ) {
+			$limit_position = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				$from_position + 1,
+				$select_end
+			);
+			$order_position = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				$from_position + 1,
+				null === $limit_position ? $select_end : $limit_position
+			);
+			if (
+				null !== $limit_position
+				&& null !== $this->find_top_level_mysql_token(
+					$tokens,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					$limit_position + 1,
+					$select_end
+				)
+			) {
+				return null;
+			}
+
+			$tail_start = $order_position ?? $limit_position ?? $select_end;
 			$where_position = $this->find_top_level_mysql_token(
 				$tokens,
 				WP_MySQL_Lexer::WHERE_SYMBOL,
 				$from_position + 1,
-				$select_end
+				$tail_start
 			);
-			$source_end     = $where_position ?? $select_end;
+			$source_end     = $where_position ?? $tail_start;
 			if ( $from_position + 2 === $source_end && WP_MySQL_Lexer::DUAL_SYMBOL === ( $tokens[ $from_position + 1 ]->id ?? null ) ) {
 				if ( null !== $where_position ) {
 					return null;
@@ -32732,10 +32755,11 @@ FROM (
 
 				$where_sql = '';
 				if ( null !== $where_position ) {
+					$where_end = $order_position ?? $limit_position ?? $select_end;
 					if (
-						$where_position + 1 >= $select_end
-						|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $select_end )
-						|| ! $this->mysql_expression_column_references_resolve_to_scope( $tokens, $where_position + 1, $select_end, $subquery_scope )
+						$where_position + 1 >= $where_end
+						|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+						|| ! $this->mysql_expression_column_references_resolve_to_scope( $tokens, $where_position + 1, $where_end, $subquery_scope )
 					) {
 						return null;
 					}
@@ -32743,17 +32767,65 @@ FROM (
 					$translated_where = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 						$tokens,
 						$where_position + 1,
-						$select_end,
+						$where_end,
 						$subquery_scope
 					);
 					$where_sql        = ' WHERE ' . $translated_where['sql'];
 				}
 
+				$order_sql = '';
+				if ( null !== $order_position ) {
+					$order_end   = $limit_position ?? $select_end;
+					$order_items = $this->split_top_level_mysql_arguments( $tokens, $order_position + 2, $order_end );
+					if ( null === $order_items || empty( $order_items ) ) {
+						return null;
+					}
+					foreach ( $order_items as $order_item ) {
+						$order_item_end = $order_item['end'];
+						if (
+							$order_item['start'] < $order_item_end
+							&& (
+								WP_MySQL_Lexer::ASC_SYMBOL === ( $tokens[ $order_item_end - 1 ]->id ?? null )
+								|| WP_MySQL_Lexer::DESC_SYMBOL === ( $tokens[ $order_item_end - 1 ]->id ?? null )
+							)
+						) {
+							--$order_item_end;
+						}
+						if (
+							$order_item['start'] >= $order_item_end
+							|| ! $this->mysql_expression_column_references_resolve_to_scope( $tokens, $order_item['start'], $order_item_end, $subquery_scope )
+						) {
+							return null;
+						}
+					}
+
+					$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
+						$tokens,
+						$order_position,
+						$order_end,
+						$subquery_scope
+					);
+					if ( null === $order_sql ) {
+						return null;
+					}
+				}
+
+				$limit_sql = '';
+				if ( null !== $limit_position ) {
+					if ( ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $select_end ) ) {
+						return null;
+					}
+
+					$limit_sql = $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $select_end );
+				}
+
 				return sprintf(
-					'(SELECT %s FROM %s%s)',
+					'(SELECT %s FROM %s%s%s%s)',
 					$projection_sql,
 					$this->get_postgresql_dml_table_reference_sql( $reference['table'], $reference['alias'] ),
-					$where_sql
+					$where_sql,
+					$order_sql,
+					$limit_sql
 				);
 			}
 		} else {
