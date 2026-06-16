@@ -2481,7 +2481,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'ALTER TABLE wptests_alter_check
 				ADD CONSTRAINT positive_id CHECK (id > 0),
 				ADD CHECK (id < 10),
-				ADD CHECK (id > 1)'
+				ADD CHECK (id > 1),
+				ADD CONSTRAINT max_id CHECK (id < 100) NOT ENFORCED'
 		);
 		$this->assertSame(
 			array(
@@ -2500,12 +2501,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name' => 'positive_id',
+					'check_clause'    => 'id > 0',
+					'enforced'        => 'YES',
+				),
+				array(
+					'constraint_name' => 'wptests_alter_check_chk_1',
+					'check_clause'    => 'id < 10',
+					'enforced'        => 'YES',
+				),
+				array(
+					'constraint_name' => 'wptests_alter_check_chk_2',
+					'check_clause'    => 'id > 1',
+					'enforced'        => 'YES',
+				),
+				array(
+					'constraint_name' => 'max_id',
+					'check_clause'    => 'id < 100',
+					'enforced'        => 'NO',
+				),
+			),
+			$this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_check' )
+		);
 
 		$driver->query(
 			'ALTER TABLE wptests_alter_check
 				DROP CONSTRAINT positive_id,
 				DROP CHECK wptests_alter_check_chk_1,
-				DROP CHECK wptests_alter_check_chk_2'
+				DROP CHECK wptests_alter_check_chk_2,
+				DROP CHECK max_id'
 		);
 		$this->assertSame(
 			array(
@@ -2524,6 +2551,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
+		$this->assertSame( array(), $this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_check' ) );
 	}
 
 	/**
@@ -2774,7 +2802,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests plain CHAR columns do not route through the MySQL DDL translator.
+	 * Tests CREATE TABLE CHECK constraints route through the MySQL DDL translator.
 	 */
 	public function test_create_table_with_plain_char_and_check_preserves_constraint(): void {
 		$driver = $this->create_driver();
@@ -2784,11 +2812,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => $query,
+					'sql'    => "CREATE TABLE \"plain_char_check\" (\n  \"a\" char(10) CONSTRAINT \"plain_char_check_chk_1\" CHECK (length(a) > 0)\n)",
 					'params' => array(),
 				),
 			),
 			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name' => 'plain_char_check_chk_1',
+					'check_clause'    => 'length(a) > 0',
+					'enforced'        => 'YES',
+				),
+			),
+			$this->get_mysql_check_metadata_rows( $driver, 'plain_char_check' )
 		);
 
 		$this->expectException( PDOException::class );
@@ -11922,18 +11960,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests ALTER TABLE ADD COLUMN NOT ENFORCED CHECK constraints fail explicitly.
+	 * Tests ALTER TABLE ADD COLUMN NOT ENFORCED CHECK constraints are metadata-only.
 	 */
-	public function test_alter_table_add_column_rejects_not_enforced_inline_check_constraint(): void {
+	public function test_alter_table_add_column_supports_not_enforced_inline_check_constraint(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 
 		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_alter_inline_check (id int(11))' );
 
-		$this->expectException( InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'Unsupported NOT ENFORCED CHECK constraint.' );
-
 		$driver->query( 'ALTER TABLE wptests_alter_inline_check ADD COLUMN score int CHECK (score > 0) NOT ENFORCED' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_check" ADD COLUMN "score" integer',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name' => 'wptests_alter_inline_check_chk_1',
+					'check_clause'    => 'score > 0',
+					'enforced'        => 'NO',
+				),
+			),
+			$this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_inline_check' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_alter_inline_check' )[0]->{'Create Table'};
+		$this->assertStringContainsString(
+			'  CONSTRAINT `wptests_alter_inline_check_chk_1` CHECK (score > 0) /*!80016 NOT ENFORCED */',
+			$create_table
+		);
 	}
 
 	/**
@@ -13432,11 +13494,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
 
 		$queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 4, $queries );
+		$this->assertCount( 5, $queries );
 		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
 		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $queries[1]['sql'] );
 		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $queries[2]['sql'] );
-		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $queries[3]['sql'] );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $queries[3]['sql'] );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $queries[4]['sql'] );
 		foreach ( $queries as $query ) {
 			$this->assertStringNotContainsString( 'SHOW CREATE TABLE', $query['sql'] );
 		}
@@ -13472,8 +13535,88 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 5, $queries );
-		$this->assertStringContainsString( 'information_schema.check_constraints', $queries[3]['sql'] );
+		$this->assertCount( 6, $queries );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $queries[3]['sql'] );
+		$this->assertStringContainsString( 'information_schema.check_constraints', $queries[4]['sql'] );
+	}
+
+	/**
+	 * Tests NOT ENFORCED CHECK constraints are metadata-only and visible to MySQL introspection.
+	 */
+	public function test_create_table_not_enforced_check_constraints_are_metadata_only(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_not_enforced_check (
+				id int CHECK (id > 0) NOT ENFORCED,
+				score int CHECK (score > 0) ENFORCED,
+				CONSTRAINT score_ceiling CHECK (score < 100) NOT ENFORCED
+			)'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_not_enforced_check\" (\n  \"id\" integer,\n  \"score\" integer CONSTRAINT \"wptests_not_enforced_check_chk_2\" CHECK (score > 0)\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'constraint_name' => 'wptests_not_enforced_check_chk_1',
+					'check_clause'    => 'id > 0',
+					'enforced'        => 'NO',
+				),
+				array(
+					'constraint_name' => 'wptests_not_enforced_check_chk_2',
+					'check_clause'    => 'score > 0',
+					'enforced'        => 'YES',
+				),
+				array(
+					'constraint_name' => 'score_ceiling',
+					'check_clause'    => 'score < 100',
+					'enforced'        => 'NO',
+				),
+			),
+			$this->get_mysql_check_metadata_rows( $driver, 'wptests_not_enforced_check' )
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_not_enforced_check' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  CONSTRAINT `wptests_not_enforced_check_chk_1` CHECK (id > 0) /*!80016 NOT ENFORCED */', $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `wptests_not_enforced_check_chk_2` CHECK (score > 0)', $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `score_ceiling` CHECK (score < 100) /*!80016 NOT ENFORCED */', $create_table );
+
+		$table_constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_name = 'wptests_not_enforced_check'
+			ORDER BY CONSTRAINT_NAME"
+		);
+		$this->assertSame(
+			array(
+				array( 'score_ceiling', 'NO' ),
+				array( 'wptests_not_enforced_check_chk_1', 'NO' ),
+				array( 'wptests_not_enforced_check_chk_2', 'YES' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->CONSTRAINT_NAME, $row->ENFORCED );
+				},
+				$table_constraints
+			)
+		);
+
+		$check_constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_name = 'score_ceiling'"
+		);
+		$this->assertSame( 'score < 100', $check_constraints[0]->CHECK_CLAUSE );
 	}
 
 	/**
@@ -18723,6 +18866,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				WHERE table_schema = ? AND table_name = ?
 				ORDER BY constraint_name, seq_in_index',
 				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $schema, $table_name )
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get stored MySQL CHECK constraint metadata rows for a table.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Table name.
+	 * @param string               $schema     Metadata schema name.
+	 * @return array Stored metadata rows.
+	 */
+	private function get_mysql_check_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
+		$stmt = $driver->get_connection()->query(
+			sprintf(
+				'SELECT constraint_name, check_clause, enforced
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY constraint_ordinal, constraint_name',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE )
 			),
 			array( $schema, $table_name )
 		);

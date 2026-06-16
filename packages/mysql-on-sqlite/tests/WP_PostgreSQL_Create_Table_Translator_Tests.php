@@ -678,16 +678,73 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 		$this->assertSame( array( 'id', 'score' ), array_column( $metadata[0]['columns'], 'name' ) );
 		$this->assertSame( array(), $metadata[0]['indexes'] );
 		$this->assertSame( array(), $metadata[0]['foreign_keys'] );
+		$this->assertSame(
+			array(
+				array(
+					'name'         => 'wp_inline_check_chk_1',
+					'check_clause' => 'id > 0',
+					'enforced'     => 'YES',
+				),
+				array(
+					'name'         => 'wp_inline_check_chk_2',
+					'check_clause' => '"score" < 10',
+					'enforced'     => 'YES',
+				),
+				array(
+					'name'         => 'c',
+					'check_clause' => 'id < 100',
+					'enforced'     => 'YES',
+				),
+				array(
+					'name'         => 'wp_inline_check_chk_3',
+					'check_clause' => 'score >= 0',
+					'enforced'     => 'YES',
+				),
+			),
+			$metadata[0]['checks']
+		);
 	}
 
 	/**
-	 * Tests NOT ENFORCED CHECK constraints fail explicitly.
+	 * Tests NOT ENFORCED CHECK constraints are metadata-only.
 	 */
-	public function test_translate_rejects_not_enforced_check_constraint(): void {
-		$this->expectException( InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'Unsupported NOT ENFORCED CHECK constraint.' );
+	public function test_translate_not_enforced_check_constraints_as_metadata_only(): void {
+		$sql = 'CREATE TABLE wp_inline_check (
+			id int CHECK (id > 0) NOT ENFORCED,
+			score int CHECK (score > 0) ENFORCED,
+			CONSTRAINT c CHECK (id < 100) NOT ENFORCED
+		)';
 
-		$this->translate( 'CREATE TABLE wp_inline_check (id int CHECK (id > 0) NOT ENFORCED)' );
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_inline_check\" (\n  \"id\" integer,\n  \"score\" integer CONSTRAINT \"wp_inline_check_chk_2\" CHECK (score > 0)\n)",
+			),
+			$this->translate( $sql )
+		);
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$metadata   = $translator->extract_schema_metadata( $sql, true );
+
+		$this->assertSame(
+			array(
+				array(
+					'name'         => 'wp_inline_check_chk_1',
+					'check_clause' => 'id > 0',
+					'enforced'     => 'NO',
+				),
+				array(
+					'name'         => 'wp_inline_check_chk_2',
+					'check_clause' => 'score > 0',
+					'enforced'     => 'YES',
+				),
+				array(
+					'name'         => 'c',
+					'check_clause' => 'id < 100',
+					'enforced'     => 'NO',
+				),
+			),
+			$metadata[0]['checks']
+		);
 	}
 
 	/**

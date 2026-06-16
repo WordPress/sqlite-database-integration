@@ -109,7 +109,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 
 			if ( $table_constraint->get_first_child_node( 'checkConstraint' ) ) {
-				$constraints[] = $this->translate_check_constraint_definition( $table_constraint, $table_name, $check_ordinal );
+				$check_sql = $this->translate_check_constraint_definition( $table_constraint, $table_name, $check_ordinal );
+				if ( null !== $check_sql ) {
+					$constraints[] = $check_sql;
+				}
 				continue;
 			}
 
@@ -300,7 +303,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$this->translate_data_type( $data_type, $is_auto_increment ),
 		);
 
-		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+		$column_attributes = $field_definition->get_child_nodes( 'columnAttribute' );
+		foreach ( $column_attributes as $attribute_index => $attribute ) {
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
 				continue;
 			}
@@ -325,12 +329,19 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 			$check_constraint = $attribute->get_first_child_node( 'checkConstraint' );
 			if ( $check_constraint ) {
-				$parts[] = $this->translate_check_constraint_definition( $attribute, $table_name, $check_ordinal );
+				$check_sql = $this->translate_check_constraint_definition(
+					$attribute,
+					$table_name,
+					$check_ordinal,
+					$this->is_followed_by_not_enforced_column_attribute( $column_attributes, $attribute_index )
+				);
+				if ( null !== $check_sql ) {
+					$parts[] = $check_sql;
+				}
 				continue;
 			}
 
 			if ( $attribute->get_first_child_node( 'constraintEnforcement' ) ) {
-				$this->validate_check_constraint_enforcement( $attribute );
 				continue;
 			}
 
@@ -358,7 +369,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$check_constraint = $this->get_inline_check_constraint_node( $column_definition );
 		if ( $check_constraint ) {
-			$parts[] = $this->translate_check_constraint_definition( $check_constraint, $table_name, $check_ordinal );
+			$check_sql = $this->translate_check_constraint_definition( $check_constraint, $table_name, $check_ordinal );
+			if ( null !== $check_sql ) {
+				$parts[] = $check_sql;
+			}
 		}
 
 		return implode( ' ', $parts );
@@ -392,11 +406,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $node          Node containing a checkConstraint child.
 	 * @param string         $table_name    Table name used for implicit constraint names.
 	 * @param int            $check_ordinal Next implicit CHECK ordinal.
-	 * @return string PostgreSQL CHECK constraint SQL.
+	 * @param bool           $not_enforced  Whether enforcement was represented by a following sibling node.
+	 * @return string|null PostgreSQL CHECK constraint SQL, or null for metadata-only checks.
 	 */
-	private function translate_check_constraint_definition( WP_Parser_Node $node, string $table_name, int &$check_ordinal ): string {
-		$this->validate_check_constraint_enforcement( $node );
-
+	private function translate_check_constraint_definition( WP_Parser_Node $node, string $table_name, int &$check_ordinal, bool $not_enforced = false ): ?string {
 		$check_constraint = 'checkConstraint' === $node->rule_name ? $node : $node->get_first_child_node( 'checkConstraint' );
 		if ( ! $check_constraint ) {
 			throw new InvalidArgumentException( 'Expected CHECK constraint node.' );
@@ -404,6 +417,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$constraint_name = $this->get_check_constraint_name( $node, $table_name, $check_ordinal );
 		$expression      = $this->translate_check_constraint_expression( $check_constraint );
+		if ( $not_enforced || $this->is_check_constraint_not_enforced( $node ) ) {
+			return null;
+		}
 
 		return sprintf(
 			'CONSTRAINT %s CHECK (%s)',
@@ -430,18 +446,26 @@ class WP_PostgreSQL_Create_Table_Translator {
 	}
 
 	/**
-	 * Validate MySQL CHECK constraint enforcement clauses.
-	 *
-	 * PostgreSQL enforces CHECK constraints immediately. MySQL's explicit
-	 * ENFORCED clause is equivalent here, but NOT ENFORCED cannot be preserved.
+	 * Check whether a CHECK constraint is explicitly NOT ENFORCED.
 	 *
 	 * @param WP_Parser_Node $node Node to inspect.
+	 * @return bool Whether the node contains NOT ENFORCED.
 	 */
-	private function validate_check_constraint_enforcement( WP_Parser_Node $node ): void {
+	private function is_check_constraint_not_enforced( WP_Parser_Node $node ): bool {
 		$enforcement = $node->get_first_child_node( 'constraintEnforcement' );
-		if ( $enforcement && $enforcement->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) {
-			throw new InvalidArgumentException( 'Unsupported NOT ENFORCED CHECK constraint.' );
-		}
+		return $enforcement && $enforcement->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL );
+	}
+
+	/**
+	 * Check whether a column CHECK attribute is followed by NOT ENFORCED.
+	 *
+	 * @param WP_Parser_Node[] $attributes      Column attribute nodes.
+	 * @param int              $attribute_index Current CHECK attribute index.
+	 * @return bool Whether the following attribute is NOT ENFORCED.
+	 */
+	private function is_followed_by_not_enforced_column_attribute( array $attributes, int $attribute_index ): bool {
+		$next_attribute = $attributes[ $attribute_index + 1 ] ?? null;
+		return $next_attribute instanceof WP_Parser_Node && $this->is_check_constraint_not_enforced( $next_attribute );
 	}
 
 	/**
@@ -1151,9 +1175,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$column_types  = array();
 		$indexes       = array();
 		$foreign_keys  = array();
+		$checks        = array();
 		$ordinal       = 1;
 		$index_ordinal = 1;
 		$foreign_key_ordinal = 1;
+		$check_ordinal       = 1;
 
 		list ( $table_charset, $table_collation ) = $charset;
 
@@ -1212,6 +1238,25 @@ class WP_PostgreSQL_Create_Table_Translator {
 						$foreign_keys[] = $foreign_key;
 						++$foreign_key_ordinal;
 					}
+
+					$column_attributes = $field_definition->get_child_nodes( 'columnAttribute' );
+					foreach ( $column_attributes as $attribute_index => $attribute ) {
+						if ( ! $attribute->get_first_child_node( 'checkConstraint' ) ) {
+							continue;
+						}
+
+						$checks[] = $this->extract_check_constraint_metadata(
+							$attribute,
+							$table_name,
+							$check_ordinal,
+							$this->is_followed_by_not_enforced_column_attribute( $column_attributes, $attribute_index )
+						);
+					}
+
+					$inline_check = $this->get_inline_check_constraint_node( $column_definition );
+					if ( $inline_check ) {
+						$checks[] = $this->extract_check_constraint_metadata( $inline_check, $table_name, $check_ordinal );
+					}
 				}
 
 				++$ordinal;
@@ -1222,6 +1267,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				$table_constraint = $table_element->get_first_child_node( 'tableConstraintDef' );
 				if ( $table_constraint ) {
 					if ( $table_constraint->get_first_child_node( 'checkConstraint' ) ) {
+						$checks[] = $this->extract_check_constraint_metadata( $table_constraint, $table_name, $check_ordinal );
 						continue;
 					}
 
@@ -1241,9 +1287,32 @@ class WP_PostgreSQL_Create_Table_Translator {
 		if ( $include_indexes ) {
 			$metadata['indexes']      = $indexes;
 			$metadata['foreign_keys'] = $foreign_keys;
+			$metadata['checks']       = $checks;
 		}
 
 		return $metadata;
+	}
+
+	/**
+	 * Extract metadata for a CHECK constraint.
+	 *
+	 * @param WP_Parser_Node $node          Node containing a checkConstraint child.
+	 * @param string         $table_name    Table name used for implicit constraint names.
+	 * @param int            $check_ordinal Next implicit CHECK ordinal.
+	 * @param bool           $not_enforced  Whether enforcement was represented by a following sibling node.
+	 * @return array CHECK constraint metadata.
+	 */
+	private function extract_check_constraint_metadata( WP_Parser_Node $node, string $table_name, int &$check_ordinal, bool $not_enforced = false ): array {
+		$check_constraint = 'checkConstraint' === $node->rule_name ? $node : $node->get_first_child_node( 'checkConstraint' );
+		if ( ! $check_constraint ) {
+			throw new InvalidArgumentException( 'Expected CHECK constraint node.' );
+		}
+
+		return array(
+			'name'         => $this->get_check_constraint_name( $node, $table_name, $check_ordinal ),
+			'check_clause' => $this->translate_check_constraint_expression( $check_constraint ),
+			'enforced'     => ( $not_enforced || $this->is_check_constraint_not_enforced( $node ) ) ? 'NO' : 'YES',
+		);
 	}
 
 	/**

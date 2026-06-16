@@ -16,6 +16,7 @@ class WP_PostgreSQL_Driver {
 	const MYSQL_COLUMN_METADATA_TABLE      = '__wp_postgresql_mysql_column_metadata';
 	const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
 	const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
+	const MYSQL_CHECK_METADATA_TABLE       = '__wp_postgresql_mysql_check_metadata';
 	const MYSQL_CHARSET_METADATA_TABLE     = '__wp_postgresql_mysql_charset_metadata';
 	const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
 	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
@@ -2471,6 +2472,21 @@ class WP_PostgreSQL_Driver {
 			)
 		);
 
+		$this->connection->query(
+			sprintf(
+				'CREATE TABLE IF NOT EXISTS %s (
+					table_schema TEXT NOT NULL,
+					table_name TEXT NOT NULL,
+					constraint_name TEXT NOT NULL,
+					constraint_ordinal INTEGER NOT NULL,
+					check_clause TEXT NOT NULL,
+					enforced TEXT NOT NULL,
+					PRIMARY KEY (table_schema, table_name, constraint_name)
+				)',
+				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+			)
+		);
+
 		$this->mysql_schema_metadata_tables_ensured = true;
 	}
 
@@ -2575,6 +2591,7 @@ class WP_PostgreSQL_Driver {
 				self::MYSQL_COLUMN_METADATA_TABLE,
 				self::MYSQL_INDEX_METADATA_TABLE,
 				self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+				self::MYSQL_CHECK_METADATA_TABLE,
 				self::MYSQL_TABLE_METADATA_TABLE,
 			),
 			true
@@ -2721,6 +2738,10 @@ class WP_PostgreSQL_Driver {
 			foreach ( $metadata['foreign_keys'] ?? array() as $foreign_key ) {
 				$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $schema_name;
 				$this->insert_mysql_foreign_key_metadata( $schema_name, $table_name, $foreign_key );
+			}
+
+			foreach ( $metadata['checks'] ?? array() as $check ) {
+				$this->insert_mysql_check_metadata( $schema_name, $table_name, $check );
 			}
 		}
 	}
@@ -2934,6 +2955,13 @@ $wp_mysql_on_update$',
 				),
 				$params
 			);
+			$this->connection->query(
+				sprintf(
+					'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+				),
+				$params
+			);
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 		}
 	}
@@ -3010,6 +3038,9 @@ $wp_mysql_on_update$',
 			foreach ( $metadata['foreign_keys'] ?? array() as $foreign_key ) {
 				$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $table_schema;
 				$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key );
+			}
+			foreach ( $metadata['checks'] ?? array() as $check ) {
+				$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
 			}
 			return;
 		}
@@ -3141,8 +3172,18 @@ $wp_mysql_on_update$',
 			return;
 		}
 
+		if ( 'add_check' === $metadata['operation'] ) {
+			$this->insert_mysql_check_metadata( $table_schema, $table_name, $metadata['check'] );
+			return;
+		}
+
 		if ( 'drop_foreign_key' === $metadata['operation'] ) {
 			$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['constraint'] );
+			return;
+		}
+
+		if ( 'drop_check' === $metadata['operation'] ) {
+			$this->delete_mysql_check_metadata( $table_schema, $table_name, $metadata['constraint'] );
 			return;
 		}
 
@@ -3194,7 +3235,7 @@ $wp_mysql_on_update$',
 		);
 		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
 
-		foreach ( array( self::MYSQL_TABLE_METADATA_TABLE, self::MYSQL_COLUMN_METADATA_TABLE, self::MYSQL_INDEX_METADATA_TABLE, self::MYSQL_FOREIGN_KEY_METADATA_TABLE ) as $metadata_table ) {
+		foreach ( array( self::MYSQL_TABLE_METADATA_TABLE, self::MYSQL_COLUMN_METADATA_TABLE, self::MYSQL_INDEX_METADATA_TABLE, self::MYSQL_FOREIGN_KEY_METADATA_TABLE, self::MYSQL_CHECK_METADATA_TABLE ) as $metadata_table ) {
 			$this->connection->query(
 				sprintf(
 					'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
@@ -3557,6 +3598,100 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Insert MySQL CHECK constraint metadata.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @param array  $check        CHECK constraint metadata.
+	 */
+	private function insert_mysql_check_metadata( string $table_schema, string $table_name, array $check ): void {
+		$this->delete_mysql_check_metadata( $table_schema, $table_name, $check['name'] );
+
+		$this->connection->query(
+			sprintf(
+				'INSERT INTO %s
+					(table_schema, table_name, constraint_name, constraint_ordinal, check_clause, enforced)
+				VALUES (?, ?, ?, ?, ?, ?)',
+				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+			),
+			array(
+				$table_schema,
+				$table_name,
+				$check['name'],
+				$this->get_next_mysql_check_metadata_ordinal( $table_schema, $table_name ),
+				$check['check_clause'],
+				$check['enforced'] ?? 'YES',
+			)
+		);
+
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Delete metadata rows for one CHECK constraint.
+	 *
+	 * @param string $table_schema    Metadata schema.
+	 * @param string $table_name      Table name.
+	 * @param string $constraint_name Constraint name.
+	 */
+	private function delete_mysql_check_metadata( string $table_schema, string $table_name, string $constraint_name ): void {
+		$this->connection->query(
+			sprintf(
+				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)',
+				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $constraint_name )
+		);
+
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Get stored metadata for one CHECK constraint.
+	 *
+	 * @param string $table_schema    Metadata schema.
+	 * @param string $table_name      Table name.
+	 * @param string $constraint_name Constraint name.
+	 * @return array|null CHECK metadata row, or null when absent.
+	 */
+	private function get_mysql_check_metadata( string $table_schema, string $table_name, string $constraint_name ): ?array {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT constraint_name, check_clause, enforced
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)
+				LIMIT 1',
+				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $constraint_name )
+		);
+
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
+		return false === $row ? null : $row;
+	}
+
+	/**
+	 * Get the next CHECK metadata ordinal for a table.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @return int Next ordinal.
+	 */
+	private function get_next_mysql_check_metadata_ordinal( string $table_schema, string $table_name ): int {
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		return (int) $stmt->fetchColumn();
+	}
+
+	/**
 	 * Delete metadata rows for one foreign key.
 	 *
 	 * @param string $table_schema    Metadata schema.
@@ -3870,6 +4005,28 @@ $wp_mysql_on_update$',
 			}
 		} catch ( PDOException $e ) {
 			// Test fixtures and SQLite-backed connections may not expose PostgreSQL catalogs.
+		}
+
+		try {
+			$this->ensure_mysql_schema_metadata_tables();
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT constraint_name
+					FROM %s
+					WHERE table_schema = ?
+						AND table_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name )
+			);
+
+			foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $constraint_name ) {
+				if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
+					$max = max( $max, (int) $matches[1] );
+				}
+			}
+		} catch ( PDOException $e ) {
+			// Test fixtures and SQLite-backed connections may not expose metadata side tables yet.
 		}
 
 		foreach ( $reserved as $constraint_name ) {
@@ -5655,6 +5812,7 @@ $wp_mysql_on_update$',
 				'column'       => $column['metadata'],
 				'indexes'      => $column['indexes'],
 				'foreign_keys' => $column['foreign_keys'],
+				'checks'       => $column['checks'],
 			),
 		);
 	}
@@ -5812,12 +5970,17 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
+		$enforced = 'YES';
 		if ( $check_end < $end ) {
-			if (
-				$check_end + 1 !== $end
-				|| ! isset( $tokens[ $check_end ] )
-				|| WP_MySQL_Lexer::ENFORCED_SYMBOL !== $tokens[ $check_end ]->id
+			if ( $check_end + 1 === $end && WP_MySQL_Lexer::ENFORCED_SYMBOL === ( $tokens[ $check_end ]->id ?? null ) ) {
+				$enforced = 'YES';
+			} elseif (
+				$check_end + 2 === $end
+				&& WP_MySQL_Lexer::NOT_SYMBOL === ( $tokens[ $check_end ]->id ?? null )
+				&& WP_MySQL_Lexer::ENFORCED_SYMBOL === ( $tokens[ $check_end + 1 ]->id ?? null )
 			) {
+				$enforced = 'NO';
+			} else {
 				return null;
 			}
 		}
@@ -5833,17 +5996,25 @@ $wp_mysql_on_update$',
 			$check_end - 1
 		);
 
+		$statements = array();
+		if ( 'YES' === $enforced ) {
+			$statements[] = sprintf(
+				'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
+				$this->connection->quote_identifier( $table_name ),
+				$this->connection->quote_identifier( $constraint_name ),
+				$expression
+			);
+		}
+
 		return array(
-			'statements' => array(
-				sprintf(
-					'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $constraint_name ),
-					$expression
-				),
-			),
+			'statements' => $statements,
 			'metadata'   => array(
-				'operation' => 'noop',
+				'operation' => 'add_check',
+				'check'     => array(
+					'name'         => $constraint_name,
+					'check_clause' => $expression,
+					'enforced'     => $enforced,
+				),
 			),
 		);
 	}
@@ -6165,17 +6336,11 @@ $wp_mysql_on_update$',
 			return $this->get_mysql_dbdelta_drop_foreign_key_translation( $table_name, $constraint_name );
 		}
 
-		return array(
-			'statements' => array(
-				sprintf(
-					'ALTER TABLE %s DROP CONSTRAINT %s',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $constraint_name )
-				),
-			),
-			'metadata'   => array(
-				'operation' => 'noop',
-			),
+		$check_metadata = $this->get_mysql_check_metadata( 'public', $table_name, $constraint_name );
+		return $this->get_mysql_dbdelta_drop_check_translation(
+			$table_name,
+			$constraint_name,
+			null === $check_metadata || 'NO' !== strtoupper( (string) $check_metadata['enforced'] )
 		);
 	}
 
@@ -6239,16 +6404,37 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
+		$check_metadata = $this->get_mysql_check_metadata( 'public', $table_name, $constraint_name );
+		return $this->get_mysql_dbdelta_drop_check_translation(
+			$table_name,
+			$constraint_name,
+			null === $check_metadata || 'NO' !== strtoupper( (string) $check_metadata['enforced'] )
+		);
+	}
+
+	/**
+	 * Build a DROP CHECK translation for a named constraint.
+	 *
+	 * @param string $table_name            Table name.
+	 * @param string $constraint_name       Constraint name.
+	 * @param bool   $drop_backend_constraint Whether a backend constraint should be dropped.
+	 * @return array{statements: string[], metadata: array} Drop CHECK translation.
+	 */
+	private function get_mysql_dbdelta_drop_check_translation( string $table_name, string $constraint_name, bool $drop_backend_constraint ): array {
+		$statements = array();
+		if ( $drop_backend_constraint ) {
+			$statements[] = sprintf(
+				'ALTER TABLE %s DROP CONSTRAINT %s',
+				$this->connection->quote_identifier( $table_name ),
+				$this->connection->quote_identifier( $constraint_name )
+			);
+		}
+
 		return array(
-			'statements' => array(
-				sprintf(
-					'ALTER TABLE %s DROP CONSTRAINT %s',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $constraint_name )
-				),
-			),
+			'statements' => $statements,
 			'metadata'   => array(
-				'operation' => 'noop',
+				'operation'  => 'drop_check',
+				'constraint' => $constraint_name,
 			),
 		);
 	}
@@ -7311,7 +7497,7 @@ $wp_mysql_on_update$',
 	 *
 	 * @param string      $definition MySQL column definition.
 	 * @param string|null $table_name  Table name for inline foreign key names.
-	 * @return array{sql: string, metadata: array, indexes: array, foreign_keys: array}|null Translated column, or null when unsupported.
+	 * @return array{sql: string, metadata: array, indexes: array, foreign_keys: array, checks: array}|null Translated column, or null when unsupported.
 	 */
 	private function translate_mysql_column_definition_fragment( string $definition, ?string $table_name = null ): ?array {
 		$definition = $this->trim_mysql_statement_fragment( $definition );
@@ -7330,6 +7516,7 @@ $wp_mysql_on_update$',
 			'metadata'     => $metadata[0]['columns'][0],
 			'indexes'      => $metadata[0]['indexes'] ?? array(),
 			'foreign_keys' => $metadata[0]['foreign_keys'] ?? array(),
+			'checks'       => $metadata[0]['checks'] ?? array(),
 		);
 	}
 
@@ -10584,12 +10771,13 @@ ORDER BY ordinal_position';
 		FROM information_schema.tables
 		WHERE table_schema = ?
 				AND table_type IN (\'BASE TABLE\', \'VIEW\')
-				AND table_name NOT IN (%s, %s, %s, %s, %s)',
+				AND table_name NOT IN (%s, %s, %s, %s, %s, %s)',
 			$table_column,
 			$is_full ? ', CASE WHEN table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
 			$this->connection->quote( self::MYSQL_COLUMN_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_INDEX_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_FOREIGN_KEY_METADATA_TABLE ),
+			$this->connection->quote( self::MYSQL_CHECK_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_TABLE_METADATA_TABLE )
 		);
@@ -10899,9 +11087,31 @@ ORDER BY table_name';
 	 * @return array[] CHECK constraint metadata rows.
 	 */
 	private function get_show_create_table_check_constraint_metadata_rows( string $schema_name, string $table_name ): array {
-		$sql    = 'SELECT
+		$sql    = sprintf(
+			'SELECT constraint_name, constraint_ordinal, check_clause, enforced
+			FROM %s
+			WHERE table_schema = ? AND table_name = ?
+			ORDER BY constraint_ordinal, constraint_name',
+			$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+		);
+		$params = array( $schema_name, $table_name );
+		$stmt   = $this->connection->query( $sql, $params );
+
+		$metadata_rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		if ( ! empty( $metadata_rows ) ) {
+			return $metadata_rows;
+		}
+
+		$catalog_sql    = 'SELECT
 				tc.constraint_name,
-				cc.check_clause
+				cc.check_clause,
+				\'YES\' AS enforced
 			FROM information_schema.table_constraints tc
 			INNER JOIN information_schema.check_constraints cc
 				ON cc.constraint_schema = tc.constraint_schema
@@ -10910,17 +11120,17 @@ ORDER BY table_name';
 				AND tc.table_name = ?
 				AND tc.constraint_type = ?
 			ORDER BY tc.constraint_name';
-		$params = array( $schema_name, $table_name, 'CHECK' );
+		$catalog_params = array( $schema_name, $table_name, 'CHECK' );
 
 		try {
-			$stmt = $this->connection->query( $sql, $params );
+			$stmt = $this->connection->query( $catalog_sql, $catalog_params );
 		} catch ( PDOException $e ) {
 			return array();
 		}
 
 		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
+			'sql'    => $catalog_sql,
+			'params' => $catalog_params,
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
@@ -11007,11 +11217,17 @@ ORDER BY table_name';
 	 * @return string CHECK constraint definition SQL.
 	 */
 	private function get_mysql_create_table_check_constraint_definition_from_metadata( array $check ): string {
-		return sprintf(
+		$sql = sprintf(
 			'  CONSTRAINT %s CHECK (%s)',
 			$this->quote_mysql_identifier( (string) $check['constraint_name'] ),
 			(string) $check['check_clause']
 		);
+
+		if ( 'NO' === strtoupper( (string) ( $check['enforced'] ?? 'YES' ) ) ) {
+			$sql .= ' /*!80016 NOT ENFORCED */';
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -11288,7 +11504,7 @@ ORDER BY table_name';
 					AND tm.table_name = t.table_name
 				WHERE t.table_schema = ?
 					AND t.table_type = ?
-					AND t.table_name NOT IN (?, ?, ?, ?, ?)
+					AND t.table_name NOT IN (?, ?, ?, ?, ?, ?)
 					ORDER BY t.table_name',
 			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
 		);
@@ -11298,6 +11514,7 @@ ORDER BY table_name';
 			self::MYSQL_COLUMN_METADATA_TABLE,
 			self::MYSQL_INDEX_METADATA_TABLE,
 			self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			self::MYSQL_CHECK_METADATA_TABLE,
 			self::MYSQL_CHARSET_METADATA_TABLE,
 			self::MYSQL_TABLE_METADATA_TABLE,
 		);
@@ -20969,7 +21186,7 @@ WHERE option_name IN (
 		$placeholders = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
 		$stmt         = $this->connection->query(
 			sprintf(
-				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (?, ?, ?, ?, ?) AND %1$s IN (%5$s)',
+				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (?, ?, ?, ?, ?, ?) AND %1$s IN (%5$s)',
 				$this->connection->quote_identifier( 'table_name' ),
 				$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
 				$this->connection->quote_identifier( 'table_schema' ),
@@ -20984,6 +21201,7 @@ WHERE option_name IN (
 					self::MYSQL_COLUMN_METADATA_TABLE,
 					self::MYSQL_INDEX_METADATA_TABLE,
 					self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					self::MYSQL_CHECK_METADATA_TABLE,
 					self::MYSQL_CHARSET_METADATA_TABLE,
 					self::MYSQL_TABLE_METADATA_TABLE,
 				),
@@ -21014,7 +21232,7 @@ WHERE option_name IN (
 	 */
 	private function get_information_schema_tables_site_health_relation_sql( array $existing_table_names ): string {
 		return sprintf(
-			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s, %14$s, %15$s, %16$s, %17$s)',
+			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s, %14$s, %15$s, %16$s, %17$s, %18$s)',
 			$this->connection->quote_identifier( 'table_name' ),
 			$this->connection->quote( $this->db_name ),
 			$this->connection->quote_identifier( 'TABLE_SCHEMA' ),
@@ -21030,6 +21248,7 @@ WHERE option_name IN (
 			$this->connection->quote( self::MYSQL_COLUMN_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_INDEX_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_FOREIGN_KEY_METADATA_TABLE ),
+			$this->connection->quote( self::MYSQL_CHECK_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_TABLE_METADATA_TABLE )
 		);
@@ -23235,6 +23454,7 @@ WHERE option_name IN (
 			self::MYSQL_COLUMN_METADATA_TABLE,
 			self::MYSQL_INDEX_METADATA_TABLE,
 			self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			self::MYSQL_CHECK_METADATA_TABLE,
 			self::MYSQL_CHARSET_METADATA_TABLE,
 			self::MYSQL_TABLE_METADATA_TABLE,
 		);
@@ -23785,6 +24005,7 @@ FROM %2$s im',
 
 		$index_metadata_table       = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
 		$foreign_key_metadata_table = $this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE );
+		$check_metadata_table       = $this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE );
 
 		return sprintf(
 			'WITH index_constraints AS (
@@ -23804,15 +24025,25 @@ foreign_key_constraints AS (
 		\'FOREIGN KEY\' AS constraint_type
 	FROM %2$s fk
 ),
+check_constraints AS (
+	SELECT
+		cm.table_schema,
+		cm.table_name,
+		cm.constraint_name,
+		\'CHECK\' AS constraint_type,
+		cm.enforced
+	FROM %3$s cm
+),
 catalog_constraints AS (
 	SELECT
 		tc.table_schema,
 		tc.table_name,
 		CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS constraint_name,
-		tc.constraint_type
+		tc.constraint_type,
+		\'YES\' AS enforced
 	FROM information_schema.table_constraints tc
 	WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND tc.table_name NOT IN (%3$s)
+		AND tc.table_name NOT IN (%4$s)
 		AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')
 		AND NOT EXISTS (
 			SELECT 1
@@ -23828,24 +24059,34 @@ catalog_constraints AS (
 				AND fkc.table_name = tc.table_name
 				AND fkc.constraint_name = tc.constraint_name
 		)
+		AND NOT EXISTS (
+			SELECT 1
+			FROM check_constraints cc
+			WHERE cc.table_schema = tc.table_schema
+				AND cc.table_name = tc.table_name
+				AND cc.constraint_name = tc.constraint_name
+		)
 )
 SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
-	%4$s AS "CONSTRAINT_SCHEMA",
+	%5$s AS "CONSTRAINT_SCHEMA",
 	constraint_name AS "CONSTRAINT_NAME",
-	%4$s AS "TABLE_SCHEMA",
+	%5$s AS "TABLE_SCHEMA",
 	table_name AS "TABLE_NAME",
 	constraint_type AS "CONSTRAINT_TYPE",
-	\'YES\' AS "ENFORCED"
+	enforced AS "ENFORCED"
 FROM (
-	SELECT * FROM index_constraints
+	SELECT table_schema, table_name, constraint_name, constraint_type, \'YES\' AS enforced FROM index_constraints
 	UNION ALL
-	SELECT * FROM foreign_key_constraints
+	SELECT table_schema, table_name, constraint_name, constraint_type, \'YES\' AS enforced FROM foreign_key_constraints
+	UNION ALL
+	SELECT * FROM check_constraints
 	UNION ALL
 	SELECT * FROM catalog_constraints
 ) constraints',
 			$index_metadata_table,
 			$foreign_key_metadata_table,
+			$check_metadata_table,
 			$this->get_direct_information_schema_hidden_table_list_sql(),
 			$this->get_direct_information_schema_display_schema_sql( 'table_schema' )
 		);
@@ -24028,15 +24269,44 @@ FROM (
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_check_constraints_relation_sql(): string {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$check_metadata_table = $this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE );
+
 		return sprintf(
-			'SELECT
+			'WITH metadata_checks AS (
+	SELECT
+		cm.table_schema AS constraint_schema,
+		cm.constraint_name,
+		cm.check_clause
+	FROM %2$s cm
+),
+catalog_checks AS (
+	SELECT
+		cc.constraint_schema,
+		cc.constraint_name,
+		cc.check_clause
+	FROM information_schema.check_constraints cc
+	WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')
+		AND NOT EXISTS (
+			SELECT 1
+			FROM metadata_checks mc
+			WHERE mc.constraint_schema = cc.constraint_schema
+				AND mc.constraint_name = cc.constraint_name
+		)
+)
+SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
-	cc.constraint_name AS "CONSTRAINT_NAME",
-	cc.check_clause AS "CHECK_CLAUSE"
-FROM information_schema.check_constraints cc
-WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
-			$this->get_direct_information_schema_display_schema_sql( 'cc.constraint_schema' )
+	constraint_name AS "CONSTRAINT_NAME",
+	check_clause AS "CHECK_CLAUSE"
+FROM (
+	SELECT * FROM metadata_checks
+	UNION ALL
+	SELECT * FROM catalog_checks
+) checks',
+			$this->get_direct_information_schema_display_schema_sql( 'constraint_schema' ),
+			$check_metadata_table
 		);
 	}
 
@@ -36980,9 +37250,11 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 						WP_MySQL_Lexer::BOOLEAN_SYMBOL,
 							WP_MySQL_Lexer::BOOL_SYMBOL,
 							WP_MySQL_Lexer::CHARSET_SYMBOL,
+							WP_MySQL_Lexer::CHECK_SYMBOL,
 							WP_MySQL_Lexer::COLLATE_SYMBOL,
 							WP_MySQL_Lexer::COMMENT_SYMBOL,
 							WP_MySQL_Lexer::DEC_SYMBOL,
+							WP_MySQL_Lexer::ENFORCED_SYMBOL,
 						WP_MySQL_Lexer::ENGINE_SYMBOL,
 						WP_MySQL_Lexer::FIXED_SYMBOL,
 						WP_MySQL_Lexer::FULLTEXT_SYMBOL,
