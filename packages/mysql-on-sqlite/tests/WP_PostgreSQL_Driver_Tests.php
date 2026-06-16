@@ -5037,6 +5037,17 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'UPDATE "wptests_update_limited" SET "value" = 7 WHERE (ctid IN (SELECT ctid FROM "wptests_update_limited" WHERE id > 0 ORDER BY id DESC LIMIT 2 OFFSET 1)) AND ("value" IS DISTINCT FROM (7))',
 			$sql
 		);
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE wptests_update_limited SET `value` = 5 WHERE id > 0 ORDER BY id DESC LIMIT 2 OFFSET 1'
+		);
+
+		$this->assertSame(
+			'UPDATE "wptests_update_limited" SET "value" = 5 WHERE (ctid IN (SELECT ctid FROM "wptests_update_limited" WHERE id > 0 ORDER BY id DESC LIMIT 2 OFFSET 1)) AND ("value" IS DISTINCT FROM (5))',
+			$sql
+		);
 	}
 
 	/**
@@ -5423,6 +5434,17 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'DELETE FROM "wptests_delete_limited" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM "wptests_delete_limited" AS "d" WHERE d.value = \'stale\' ORDER BY d.id ASC LIMIT 2 OFFSET 1)',
 			$sql
 		);
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_delete_query',
+			"DELETE FROM wptests_delete_limited AS d WHERE d.value = 'stale' ORDER BY d.id ASC LIMIT 2 OFFSET 1"
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_limited" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM "wptests_delete_limited" AS "d" WHERE d.value = \'stale\' ORDER BY d.id ASC LIMIT 2 OFFSET 1)',
+			$sql
+		);
 	}
 
 	/**
@@ -5680,7 +5702,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	/**
 	 * Tests joined DELETE supports MySQL LIMIT offset,count syntax.
 	 */
-	public function test_mysql_join_delete_limit_offset_count_is_translated_to_postgresql(): void {
+	public function test_mysql_join_delete_limit_offsets_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
 		$delete = "DELETE d FROM wptests_delete_limited d
@@ -5688,6 +5710,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			WHERE d.status = 'old'
 			ORDER BY d.id ASC
 			LIMIT 2, 3";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_limited" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM wptests_delete_limited d JOIN wptests_related r ON r.id = d.related_id WHERE d.status = \'old\' ORDER BY d.id ASC LIMIT 3 OFFSET 2)',
+			$sql
+		);
+
+		$delete = "DELETE d FROM wptests_delete_limited d
+			JOIN wptests_related r ON r.id = d.related_id
+			WHERE d.status = 'old'
+			ORDER BY d.id ASC
+			LIMIT 3 OFFSET 2";
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,

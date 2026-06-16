@@ -32371,6 +32371,17 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			return ' LIMIT ' . $tokens[ $start + 3 ]->get_bytes() . ' OFFSET ' . $tokens[ $start + 1 ]->get_bytes();
 		}
 
+		if (
+			$allow_offset_count
+			&& $start + 4 === $end
+			&& isset( $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
+			&& WP_MySQL_Lexer::OFFSET_SYMBOL === $tokens[ $start + 2 ]->id
+			&& $this->is_supported_simple_select_limit_number( $tokens[ $start + 1 ] )
+			&& $this->is_supported_simple_select_limit_number( $tokens[ $start + 3 ] )
+		) {
+			return ' LIMIT ' . $tokens[ $start + 1 ]->get_bytes() . ' OFFSET ' . $tokens[ $start + 3 ]->get_bytes();
+		}
+
 		return null;
 	}
 
