@@ -6822,6 +6822,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_multi_parent" AS "p"', $sql );
 		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_multi_child" AS "c"', $sql );
 		$this->assertStringContainsString( 'SELECT (SELECT COUNT(*) FROM mysql_delete_target_0) + (SELECT COUNT(*) FROM mysql_delete_target_1) AS affected_rows', $sql );
+
+		$ordered_delete = "DELETE p, c
+			FROM wptests_delete_multi_parent AS p
+			JOIN wptests_delete_multi_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'
+			ORDER BY LENGTH(c.reason), p.id DESC";
+
+		$ordered_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$ordered_delete
+		);
+
+		$this->assertNotNull( $ordered_sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $ordered_sql );
+		$this->assertStringContainsString( "WHERE p.status = 'stale'", $ordered_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $ordered_sql );
 	}
 
 	/**

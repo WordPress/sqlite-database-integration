@@ -15152,10 +15152,11 @@ WHERE option_name IN (
 	/**
 	 * Translate supported MySQL target-list DELETE statements.
 	 *
-	 * PostgreSQL cannot delete from multiple target tables directly. For bounded
-	 * target-list DELETE statements, first materialize each target row ctid from
-	 * the MySQL table-reference list, then delete each target through writable
-	 * CTEs and return the summed affected row count.
+	 * PostgreSQL cannot delete from multiple target tables directly. First
+	 * materialize each target row ctid from the MySQL table-reference list, then
+	 * delete each target through writable CTEs and return the summed affected row
+	 * count. ORDER BY without LIMIT is validated and omitted because it does not
+	 * change the affected row set.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when unsupported.
@@ -15199,11 +15200,15 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $table_references_start, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $table_references_start, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $table_references_start, $statement_end );
-		if ( null !== $order_position || null !== $limit_position ) {
+		if (
+			null !== $limit_position
+			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+		) {
 			return null;
 		}
 
-		$from_end = $where_position ?? $statement_end;
+		$from_end = $where_position ?? $order_position ?? $statement_end;
 		if ( $table_references_start >= $from_end ) {
 			return null;
 		}
@@ -15266,7 +15271,8 @@ WHERE option_name IN (
 
 		$where_sql = '';
 		if ( null !== $where_position ) {
-			if ( $where_position + 1 >= $statement_end ) {
+			$where_end = $order_position ?? $statement_end;
+			if ( $where_position + 1 >= $where_end ) {
 				return null;
 			}
 
@@ -15274,7 +15280,7 @@ WHERE option_name IN (
 				$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
 					$tokens,
 					$where_position + 1,
-					$statement_end,
+					$where_end,
 					$information_schema_source_translation['context']
 				);
 				if ( null === $where ) {
@@ -15282,14 +15288,14 @@ WHERE option_name IN (
 				}
 				$where_sql = ' WHERE ' . $where;
 			} else {
-				if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end ) ) {
+				if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end ) ) {
 					return null;
 				}
 
 				$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 					$tokens,
 					$where_position + 1,
-					$statement_end,
+					$where_end,
 					$scope
 				);
 				$where_sql = ' WHERE ' . $where['sql'];
