@@ -33975,8 +33975,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @param string $value_sql PostgreSQL expression SQL.
 	 * @return string PostgreSQL expression SQL.
 	 */
-	private function get_postgresql_mysql_interval_value_sql( string $value_sql ): string {
-		return sprintf( 'CAST(%s AS double precision)', $this->get_postgresql_mysql_integer_cast_sql( $value_sql ) );
+	private function get_postgresql_mysql_interval_value_sql( string $value_sql, string $unit ): string {
+		$value_cast_sql = 'second' === $unit
+			? $this->get_postgresql_mysql_numeric_cast_sql( $value_sql )
+			: $this->get_postgresql_mysql_integer_cast_sql( $value_sql );
+
+		return sprintf( 'CAST(%s AS double precision)', $value_cast_sql );
 	}
 
 	/**
@@ -33991,7 +33995,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 		return sprintf(
 			'(%1$s * INTERVAL %2$s)',
-			$this->get_postgresql_mysql_interval_value_sql( $value_sql ),
+			$this->get_postgresql_mysql_interval_value_sql( $value_sql, $unit ),
 			$this->connection->quote( $interval_unit )
 		);
 	}

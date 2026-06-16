@@ -9589,6 +9589,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests fractional SECOND interval values preserve MySQL numeric coercion.
+	 */
+	public function test_mysql_date_arithmetic_preserves_fractional_second_intervals_for_postgresql(): void {
+		$driver = $this->create_driver();
+		$cases  = array(
+			array(
+				'SELECT DATE_ADD(post_date_gmt, INTERVAL 0.5 SECOND) AS shifted',
+				'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'post_date_gmt', '0.5', 'second' ) . ' AS shifted',
+				'DATE_ADD',
+			),
+			array(
+				"SELECT DATE_SUB(post_date_gmt, INTERVAL '0.25' SECOND) AS shifted",
+				'SELECT ' . $this->get_expected_date_arithmetic_sql( '-', 'post_date_gmt', "'0.25'", 'second' ) . ' AS shifted',
+				'DATE_SUB',
+			),
+			array(
+				'SELECT TIMESTAMPADD(SECOND, 0.5, post_date_gmt) AS shifted',
+				'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'post_date_gmt', '0.5', 'second' ) . ' AS shifted',
+				'TIMESTAMPADD',
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			list( $select, $expected, $function_name ) = $case;
+
+			$sql = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+			$this->assertSame( $expected, $sql, $select );
+			$this->assertStringContainsString( ' AS numeric)', $sql, $select );
+			$this->assertStringNotContainsString( $function_name, $sql, $select );
+		}
+	}
+
+	/**
 	 * Tests DATE_ADD translates full MySQL composite interval literals exactly.
 	 */
 	public function test_mysql_date_add_supports_composite_interval_literals_for_postgresql(): void {
@@ -17275,7 +17309,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		return sprintf(
 			"(%1\$s * INTERVAL '%2\$s')",
-			$this->get_expected_mysql_interval_value_sql( $value_sql ),
+			$this->get_expected_mysql_interval_value_sql( $value_sql, $unit ),
 			$interval_unit
 		);
 	}
@@ -17305,8 +17339,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @param string $value_sql PostgreSQL expression SQL.
 	 * @return string PostgreSQL expression SQL.
 	 */
-	private function get_expected_mysql_interval_value_sql( string $value_sql ): string {
-		return sprintf( 'CAST(%s AS double precision)', $this->get_expected_mysql_integer_cast_sql( $value_sql ) );
+	private function get_expected_mysql_interval_value_sql( string $value_sql, string $unit ): string {
+		$value_cast_sql = 'second' === $unit
+			? $this->get_expected_mysql_numeric_cast_sql( $value_sql )
+			: $this->get_expected_mysql_integer_cast_sql( $value_sql );
+
+		return sprintf( 'CAST(%s AS double precision)', $value_cast_sql );
 	}
 
 	/**
