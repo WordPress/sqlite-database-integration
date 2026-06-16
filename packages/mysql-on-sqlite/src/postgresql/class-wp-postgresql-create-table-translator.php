@@ -52,7 +52,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param bool     $allow_metadata_only_index_options Whether metadata-only index options are allowed.
 	 */
 	public function __construct( array $sql_modes = array(), bool $allow_metadata_only_index_options = false ) {
-		$this->sql_modes                          = $sql_modes;
+		$this->sql_modes                         = $sql_modes;
 		$this->allow_metadata_only_index_options = $allow_metadata_only_index_options;
 	}
 
@@ -97,12 +97,12 @@ class WP_PostgreSQL_Create_Table_Translator {
 			throw new InvalidArgumentException( 'CREATE TABLE ... AS SELECT is not supported by the PostgreSQL DDL translator.' );
 		}
 
-		$table_name    = $this->get_table_name( $create_table );
-		$if_not_exists = $create_table->has_child_node( 'ifNotExists' );
-		$column_types  = $this->get_create_table_column_types( $element_list );
-		$columns       = array();
-		$constraints   = array();
-		$indexes       = array();
+		$table_name          = $this->get_table_name( $create_table );
+		$if_not_exists       = $create_table->has_child_node( 'ifNotExists' );
+		$column_types        = $this->get_create_table_column_types( $element_list );
+		$columns             = array();
+		$constraints         = array();
+		$indexes             = array();
 		$foreign_key_ordinal = 1;
 		$check_ordinal       = 1;
 
@@ -235,11 +235,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 				++$i;
 			}
 
-			$start     = $start_token->start;
-			$end       = $end_token->start + $end_token->length;
+			$start      = $start_token->start;
+			$end        = $end_token->start + $end_token->length;
 			$rewritten .= substr( $sql, $cursor, $start - $cursor ) . 'LONG VARCHAR';
-			$cursor    = $end;
-			$changed   = true;
+			$cursor     = $end;
+			$changed    = true;
 		}
 
 		if ( ! $changed ) {
@@ -789,7 +789,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$reference['referenced_schema'],
 			$reference['referenced_table']
 		);
-		$columns = array_map( array( $this, 'quote_identifier' ), $reference['referenced_columns'] );
+		$columns   = array_map( array( $this, 'quote_identifier' ), $reference['referenced_columns'] );
 
 		$sql = sprintf(
 			'REFERENCES %s (%s)',
@@ -910,7 +910,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return array{update_rule: string, delete_rule: string}
 	 */
 	private function get_inline_reference_rules( WP_Parser_Node $references ): array {
-		$rules = array(
+		$rules  = array(
 			'update_rule' => 'NO ACTION',
 			'delete_rule' => 'NO ACTION',
 		);
@@ -1026,7 +1026,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		} elseif ( in_array( $type, array( 'bit', 'bool', 'boolean', 'int', 'integer', 'mediumint', 'smallint', 'tinyint' ), true ) ) {
 			$postgresql_type = 'integer';
 		} elseif ( in_array( $type, array( 'varchar', 'char' ), true ) ) {
-			$length          = $this->get_field_length( $data_type );
+			$length = $this->get_field_length( $data_type );
 			if ( 'char' === $type && null === $length ) {
 				$length = 1;
 			}
@@ -1064,7 +1064,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return string PostgreSQL DEFAULT clause.
 	 */
 	private function translate_default_attribute( WP_Parser_Node $attribute, ?WP_Parser_Node $data_type = null ): string {
-		$value_tokens = $this->get_default_attribute_value_tokens( $attribute );
+		$value_tokens      = $this->get_default_attribute_value_tokens( $attribute );
 		$expression_tokens = $this->strip_default_attribute_outer_parentheses( $value_tokens );
 
 		if (
@@ -1529,8 +1529,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return bool Whether parentheses are balanced.
 	 */
 	private function generated_default_parentheses_are_balanced( string $sql ): bool {
-		$depth = 0;
-		$quote = null;
+		$depth  = 0;
+		$quote  = null;
 		$length = strlen( $sql );
 
 		for ( $i = 0; $i < $length; ++$i ) {
@@ -1931,16 +1931,16 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return array Table metadata.
 	 */
 	private function extract_create_table_metadata( WP_Parser_Node $create_table, bool $include_indexes = false ): array {
-		$table_name    = $this->get_table_name( $create_table );
-		$charset       = $this->get_table_charset_and_collation( $create_table );
-		$table_comment = $this->get_table_comment( $create_table );
-		$columns       = array();
-		$column_types  = array();
-		$indexes       = array();
-		$foreign_keys  = array();
-		$checks        = array();
-		$ordinal       = 1;
-		$index_ordinal = 1;
+		$table_name          = $this->get_table_name( $create_table );
+		$charset             = $this->get_table_charset_and_collation( $create_table );
+		$table_comment       = $this->get_table_comment( $create_table );
+		$columns             = array();
+		$column_types        = array();
+		$indexes             = array();
+		$foreign_keys        = array();
+		$checks              = array();
+		$ordinal             = 1;
+		$index_ordinal       = 1;
 		$foreign_key_ordinal = 1;
 		$check_ordinal       = 1;
 
@@ -2413,7 +2413,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
-			$value_tokens = $this->get_default_attribute_value_tokens( $attribute );
+			$value_tokens      = $this->get_default_attribute_value_tokens( $attribute );
 			$expression_tokens = $this->strip_default_attribute_outer_parentheses( $value_tokens );
 
 			if (
@@ -2929,8 +2929,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 			return array( null, null );
 		}
 
-		$charset   = null;
-		$collation = null;
+		$charset     = null;
+		$collation   = null;
 		$is_binary   = false;
 		$is_national = $this->is_national_character_data_type( $field_definition->get_first_child_node( 'dataType' ) );
 
@@ -3000,7 +3000,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$type .= $numeric_precision;
 		}
 		if ( in_array( $type, array( 'datetime', 'time', 'timestamp' ), true ) ) {
-			$temporal_precision = $numeric_precision ?: $this->get_temporal_precision_fragment( $data_type );
+			$temporal_precision = $numeric_precision;
+			if ( '' === $temporal_precision ) {
+				$temporal_precision = $this->get_temporal_precision_fragment( $data_type );
+			}
 			if ( '' !== $temporal_precision ) {
 				$type .= $temporal_precision;
 			}
