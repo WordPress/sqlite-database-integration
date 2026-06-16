@@ -19799,11 +19799,15 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
-		if ( null !== $order_position || null !== $limit_position ) {
+		if (
+			null !== $limit_position
+			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -19822,9 +19826,10 @@ WHERE option_name IN (
 
 		$where_sql = '';
 		if ( null !== $where_position ) {
+			$where_end = $order_position ?? $statement_end;
 			if (
-				$where_position + 1 >= $statement_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+				$where_position + 1 >= $where_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
 			) {
 				return null;
 			}
@@ -19832,7 +19837,7 @@ WHERE option_name IN (
 			$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
-				$statement_end,
+				$where_end,
 				$scope
 			);
 			$where_sql = ' WHERE ' . $where['sql'];
@@ -20008,8 +20013,9 @@ WHERE option_name IN (
 	 *
 	 * PostgreSQL UPDATE ... FROM can represent MySQL single-target UPDATE
 	 * statements whose extra table references only qualify the target rows.
-	 * Assignments to any non-target table, outer joins, NATURAL/RIGHT joins,
-	 * and ordered/limited joined updates remain unsupported.
+	 * Assignments to any non-target table, NATURAL/RIGHT joins, and limited
+	 * joined updates remain unsupported. ORDER BY without LIMIT is validated and
+	 * omitted because it does not change the affected row set.
 	 *
 	 * @param string           $query         MySQL query.
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
@@ -20106,11 +20112,15 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
-		if ( null !== $order_position || null !== $limit_position ) {
+		if (
+			null !== $limit_position
+			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -20153,9 +20163,10 @@ WHERE option_name IN (
 
 		$predicates = $join_predicates;
 		if ( null !== $where_position ) {
+			$where_end = $order_position ?? $statement_end;
 			if (
-				$where_position + 1 >= $statement_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+				$where_position + 1 >= $where_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
 			) {
 				return null;
 			}
@@ -20163,7 +20174,7 @@ WHERE option_name IN (
 			$where_sql    = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
-				$statement_end,
+				$where_end,
 				$scope
 			);
 			$predicates[] = $where_sql['sql'];
@@ -20215,11 +20226,15 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $source_end + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $source_end + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $source_end + 1, $statement_end );
-		if ( null !== $order_position || null !== $limit_position ) {
+		if (
+			null !== $limit_position
+			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $statement_end;
 		if ( $source_end + 1 >= $set_end ) {
 			return null;
 		}
@@ -20239,14 +20254,15 @@ WHERE option_name IN (
 
 		$where_sql = '';
 		if ( null !== $where_position ) {
-			if ( $where_position + 1 >= $statement_end ) {
+			$where_end = $order_position ?? $statement_end;
+			if ( $where_position + 1 >= $where_end ) {
 				return null;
 			}
 
 			$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
 				$tokens,
 				$where_position + 1,
-				$statement_end,
+				$where_end,
 				$source_translation['context']
 			);
 			if ( null === $where ) {
@@ -20385,11 +20401,15 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
-		if ( null !== $order_position || null !== $limit_position ) {
+		if (
+			null !== $limit_position
+			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -20407,9 +20427,10 @@ WHERE option_name IN (
 
 		$predicates = $join_predicates;
 		if ( null !== $where_position ) {
+			$where_end = $order_position ?? $statement_end;
 			if (
-				$where_position + 1 >= $statement_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+				$where_position + 1 >= $where_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
 			) {
 				return null;
 			}
@@ -20417,7 +20438,7 @@ WHERE option_name IN (
 			$where_sql    = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
-				$statement_end,
+				$where_end,
 				$scope
 			);
 			$predicates[] = $where_sql['sql'];

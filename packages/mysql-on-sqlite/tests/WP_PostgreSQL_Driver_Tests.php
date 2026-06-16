@@ -5508,6 +5508,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined UPDATE ORDER BY without LIMIT updates the same matched row set.
+	 */
+	public function test_joined_update_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_order (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_order_meta (
+				post_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_joined_order (id, status) VALUES (1, 'draft'), (2, 'draft'), (3, 'publish')" );
+		$driver->query( "INSERT INTO wptests_update_joined_order_meta (post_id, meta_key, meta_value) VALUES (1, '_status', 'private'), (2, '_status', 'scheduled'), (3, '_other', 'ignore')" );
+
+		$update = "UPDATE wptests_update_joined_order AS p
+			JOIN wptests_update_joined_order_meta AS pm ON p.id = pm.post_id
+			SET p.status = pm.meta_value
+			WHERE pm.meta_key = '_status'
+			ORDER BY LENGTH(pm.meta_value), p.id + 0 DESC";
+
+		$this->assertSame( 2, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'UPDATE "wptests_update_joined_order" AS "p" SET "status" = pm.meta_value', $sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $sql );
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_joined_order ORDER BY id' );
+		$this->assertSame( 'private', $rows[0]->status );
+		$this->assertSame( 'scheduled', $rows[1]->status );
+		$this->assertSame( 'publish', $rows[2]->status );
+	}
+
+	/**
 	 * Tests MySQL inner joined UPDATE statements support derived-table sources.
 	 */
 	public function test_inner_join_update_with_derived_source_is_translated_to_postgresql(): void {
@@ -5744,6 +5784,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertNotNull( $join_sql );
 		$this->assertStringContainsString( 'WHERE (t.id = s.id) AND (s.id = 1)', $join_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $join_sql );
+
+		$ordered_update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
+			SET s.value = t.value, t.value = s.value
+			WHERE t.id = s.id
+			ORDER BY t.id DESC, LENGTH(s.value)';
+		$ordered_sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_update_query',
+			$ordered_update
+		);
+
+		$this->assertNotNull( $ordered_sql );
+		$this->assertStringContainsString( 'WHERE (t.id = s.id)', $ordered_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $ordered_sql );
 
 		$single_target_update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
 			SET s.value = t.value
@@ -5768,7 +5823,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$update = "UPDATE wptests_options AS o
 			JOIN information_schema.tables AS it ON o.option_name = it.table_name
 			SET o.option_value = it.table_type
-			WHERE it.table_schema = DATABASE()";
+			WHERE it.table_schema = DATABASE()
+			ORDER BY it.table_name";
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -5784,6 +5840,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" = \'wptests\'', $sql );
 		$this->assertStringContainsString( '"o".ctid = "mysql_update_values"."mysql_update_target_ctid"', $sql );
 		$this->assertStringContainsString( '"o"."option_value" IS DISTINCT FROM ("mysql_update_values"."mysql_update_value_0")', $sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $sql );
 	}
 
 	/**
@@ -5835,7 +5892,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests joined UPDATE ORDER BY/LIMIT shapes fail before backend execution.
+	 * Tests joined UPDATE LIMIT shapes fail before backend execution.
 	 */
 	public function test_joined_update_order_limit_shapes_fail_closed_before_backend_execution(): void {
 		$driver = $this->create_driver();
@@ -5850,10 +5907,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				SET p.status = pm.meta_value
 				WHERE pm.post_id = p.id
 				LIMIT 1',
-			'multi_target_order'    => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
+			'multi_target_limit'    => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
 				SET p.status = pm.meta_value, pm.meta_value = p.status
 				WHERE pm.post_id = p.id
-				ORDER BY p.id ASC',
+				ORDER BY p.id ASC
+				LIMIT 1',
 		);
 
 		foreach ( $updates as $label => $update ) {
@@ -6058,7 +6116,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			LEFT JOIN wptests_update_left_joined_meta AS pm
 				ON pm.post_id = p.author_id AND pm.meta_key = '_status'
 			SET p.status = IFNULL(pm.meta_value, 'orphan')
-			WHERE p.status = 'draft'";
+			WHERE p.status = 'draft'
+			ORDER BY LENGTH(p.status), p.id DESC";
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
