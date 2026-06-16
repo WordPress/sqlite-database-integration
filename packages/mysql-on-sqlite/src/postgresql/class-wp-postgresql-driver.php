@@ -1669,6 +1669,14 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		$translated_query = $this->translate_information_schema_main_database_select_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
 		$translated_query = $this->translate_distinct_order_by_query( $query );
 		if ( null !== $translated_query ) {
 			return array(
@@ -38935,6 +38943,152 @@ FROM (
 	}
 
 	/**
+	 * Translate SELECTs that explicitly target only main-database tables while information_schema is selected.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_information_schema_main_database_select_query( string $query ): ?string {
+		if ( 0 !== strcasecmp( $this->db_name, 'information_schema' ) ) {
+			return null;
+		}
+
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		if (
+			$this->select_references_direct_information_schema_relation( $tokens, 1, $statement_end )
+			|| $this->contains_top_level_mysql_token(
+				$tokens,
+				1,
+				$statement_end,
+				array(
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+		for ( $position = 1; $position < $statement_end; $position++ ) {
+			if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
+				return null;
+			}
+		}
+
+		if (
+			$this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $statement_end )
+			|| $this->contains_unsupported_mysql_date_format_function( $tokens, 0, $statement_end )
+			|| $this->contains_unsupported_mysql_rand_function( $tokens, 0, $statement_end )
+			|| $this->contains_unsupported_mysql_week_function( $tokens, 0, $statement_end )
+			|| $this->contains_unsupported_mysql_common_function( $tokens, 0, $statement_end )
+			|| $this->contains_unsupported_mysql_group_concat_function( $tokens, 0, $statement_end )
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		if ( null === $from_position || 1 === $from_position ) {
+			return null;
+		}
+
+		$from_end = $this->find_first_top_level_mysql_token(
+			$tokens,
+			array(
+				WP_MySQL_Lexer::FOR_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::LOCK_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+				WP_MySQL_Lexer::UNION_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+			),
+			$from_position + 1,
+			$statement_end
+		) ?? $statement_end;
+
+		$replacements = $this->get_information_schema_main_database_select_table_replacements(
+			$tokens,
+			$from_position + 1,
+			$from_end
+		);
+		if ( null === $replacements ) {
+			return null;
+		}
+
+		return $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			0,
+			$statement_end,
+			$replacements
+		);
+	}
+
+	/**
+	 * Get replacement ranges for explicitly main-database-qualified SELECT table sources.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First FROM-clause token after FROM.
+	 * @param int             $end    Final FROM-clause token, exclusive.
+	 * @return array[]|null Replacement ranges, or null when the source list is unsupported.
+	 */
+	private function get_information_schema_main_database_select_table_replacements( array $tokens, int $start, int $end ): ?array {
+		$position     = $start;
+		$expect_next  = true;
+		$replacements = array();
+
+		while ( $position < $end ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			if ( $expect_next ) {
+				$reference_start = $position;
+				$reference       = $this->parse_mysql_table_reference( $tokens, $position, $end );
+				if (
+					null === $reference
+					|| 0 !== strcasecmp( $reference['schema'], $this->main_db_name )
+				) {
+					return null;
+				}
+
+				$replacements[] = array(
+					'start' => $reference_start,
+					'end'   => $reference_start + 3,
+					'sql'   => $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $reference_start + 2 ] ?? null ),
+				);
+				$position       = $reference['position'];
+				$expect_next    = false;
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id
+				|| $this->is_mysql_join_token( $tokens[ $position ] )
+			) {
+				$expect_next = true;
+			}
+
+			++$position;
+		}
+
+		return empty( $replacements ) || $expect_next ? null : $replacements;
+	}
+
+	/**
 	 * Check whether a SELECT under USE information_schema explicitly reads one main database table.
 	 *
 	 * This mirrors the existing simple SELECT translator, which strips the current
@@ -38946,10 +39100,15 @@ FROM (
 	 * @return bool Whether this SELECT can safely continue to the simple SELECT translator.
 	 */
 	private function information_schema_select_query_targets_main_database_explicitly( string $query, array $tokens, int $statement_end ): bool {
-		if (
-			0 !== strcasecmp( $this->db_name, 'information_schema' )
-			|| null === $this->translate_simple_mysql_select_query( $query )
-		) {
+		if ( 0 !== strcasecmp( $this->db_name, 'information_schema' ) ) {
+			return false;
+		}
+
+		if ( null !== $this->translate_information_schema_main_database_select_query( $query ) ) {
+			return true;
+		}
+
+		if ( null === $this->translate_simple_mysql_select_query( $query ) ) {
 			return false;
 		}
 

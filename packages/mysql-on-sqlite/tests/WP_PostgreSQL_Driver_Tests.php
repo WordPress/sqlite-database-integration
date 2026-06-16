@@ -22610,7 +22610,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$driver->query( 'CREATE TABLE use_info_main_read (id INTEGER PRIMARY KEY, label TEXT)' );
+		$driver->query( 'CREATE TABLE use_info_main_read_two (id INTEGER PRIMARY KEY, label TEXT)' );
 		$driver->query( "INSERT INTO use_info_main_read (id, label) VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( "INSERT INTO use_info_main_read_two (id, label) VALUES (1, 'first'), (2, 'second')" );
 
 		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
 
@@ -22676,6 +22678,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT r.label FROM use_info_main_read AS "r" WHERE r.id = 1 ORDER BY r.label LIMIT 1',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
+
+		$rows = $driver->query(
+			"SELECT r.label, r2.label AS two_label
+			FROM wptests.use_info_main_read AS r
+			JOIN wptests.use_info_main_read_two AS r2 ON r2.id = r.id
+			WHERE r.id = 2
+			ORDER BY r2.label"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'label'     => 'two',
+					'two_label' => 'second',
+				),
+			),
+			$rows
+		);
+		$this->assertSame(
+			'SELECT r.label, r2.label AS two_label FROM use_info_main_read AS r JOIN use_info_main_read_two AS r2 ON r2.id = r.id WHERE r.id = 2 ORDER BY r2.label',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
 	}
 
 	/**
@@ -22683,7 +22707,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_use_statement_information_schema_broader_main_database_qualified_selects_fail_closed(): void {
 		$queries = array(
-			'SELECT r.label FROM wptests.use_info_main_read AS r JOIN wptests.use_info_main_read_two AS r2 ON r2.id = r.id',
 			'SELECT label FROM (SELECT label FROM wptests.use_info_main_read) AS r',
 			'SELECT (SELECT label FROM wptests.use_info_main_read) AS label',
 		);
