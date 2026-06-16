@@ -1963,27 +1963,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests duplicate REPLACE ... SELECT source keys fail closed.
+	 * Tests duplicate REPLACE ... SELECT source keys replay with MySQL row-by-row semantics.
 	 */
-	public function test_replace_select_with_duplicate_source_conflict_keys_is_rejected(): void {
+	public function test_replace_select_with_duplicate_source_conflict_keys_replays_rows_sequentially(): void {
 		$driver = $this->create_driver();
 
 		$driver->query( 'CREATE TABLE wptests_replace_select_duplicate (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
 		$driver->query( 'CREATE TABLE wptests_replace_select_duplicate_source (id INTEGER NOT NULL, value TEXT NOT NULL)' );
 		$driver->query( "INSERT INTO wptests_replace_select_duplicate_source (id, value) VALUES (1, 'first'), (1, 'second')" );
 
-		try {
+		$this->assertSame(
+			3,
 			$driver->query(
 				'REPLACE INTO wptests_replace_select_duplicate (id, value)
 					SELECT id, value FROM wptests_replace_select_duplicate_source'
-			);
-			$this->fail( 'Duplicate source conflict keys should be rejected.' );
-		} catch ( InvalidArgumentException $exception ) {
-			$this->assertSame( 'Unsupported REPLACE SELECT statement.', $exception->getMessage() );
-		}
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 9, $sql );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_replace_select_ord_[a-f0-9]{12}" AS SELECT ROW_NUMBER\(\) OVER \(\) AS "__wp_pg_replace_ordinal"/', $sql[2] );
+		$this->assertStringContainsString( '"__wp_pg_replace_rows"."__wp_pg_replace_ordinal" = 1', $sql[3] );
+		$this->assertStringContainsString( '"__wp_pg_replace_rows"."__wp_pg_replace_ordinal" = 1', $sql[4] );
+		$this->assertStringContainsString( '"__wp_pg_replace_rows"."__wp_pg_replace_ordinal" = 2', $sql[5] );
+		$this->assertStringContainsString( '"__wp_pg_replace_rows"."__wp_pg_replace_ordinal" = 2', $sql[6] );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_replace_select_ord_[a-f0-9]{12}"$/', $sql[7] );
 
 		$rows = $driver->query( 'SELECT id, value FROM wptests_replace_select_duplicate' );
-		$this->assertSame( array(), $rows );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'second', $rows[0]->value );
 	}
 
 	/**
@@ -8768,11 +8777,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
 			'translate_mysql_compatible_query',
-			"SELECT LENGTH(UNHEX('c3a9')) AS utf8_byte_length, LENGTH(UNHEX('ff')) AS binary_byte_length"
+			"SELECT
+				LENGTH(UNHEX('c3a9')) AS utf8_byte_length,
+				LENGTH(UNHEX('ff')) AS binary_byte_length,
+				LENGTH(x'c3a9') AS raw_hex_byte_length,
+				LENGTH(0xC3A9) AS prefixed_hex_byte_length"
 		);
 
 		$this->assertSame(
-			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS utf8_byte_length, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS binary_byte_length",
+			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS utf8_byte_length, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS binary_byte_length, 2 AS raw_hex_byte_length, 2 AS prefixed_hex_byte_length",
 			$sql
 		);
 	}
@@ -8789,11 +8802,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"SELECT
 				CHAR_LENGTH(UNHEX('c3a9')) AS unhex_char_bytes,
 				CHARACTER_LENGTH(UNHEX('ff')) AS unhex_raw_bytes,
-				CHAR_LENGTH(FROM_BASE64('w6k=')) AS base64_char_bytes"
+				CHAR_LENGTH(FROM_BASE64('w6k=')) AS base64_char_bytes,
+				CHAR_LENGTH(x'c3a9') AS raw_hex_char_bytes,
+				CHARACTER_LENGTH(0xC3A9) AS prefixed_hex_char_bytes"
 		);
 
 		$this->assertSame(
-			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS unhex_char_bytes, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS unhex_raw_bytes, CASE WHEN CAST('w6k=' AS text) IS NULL OR CAST('w6k=' AS text) !~ '^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$' THEN NULL ELSE OCTET_LENGTH(DECODE(CAST('w6k=' AS text), 'base64')) END AS base64_char_bytes",
+			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS unhex_char_bytes, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS unhex_raw_bytes, CASE WHEN CAST('w6k=' AS text) IS NULL OR CAST('w6k=' AS text) !~ '^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$' THEN NULL ELSE OCTET_LENGTH(DECODE(CAST('w6k=' AS text), 'base64')) END AS base64_char_bytes, 2 AS raw_hex_char_bytes, 2 AS prefixed_hex_char_bytes",
 			$sql
 		);
 	}
@@ -21229,6 +21244,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'CREATE TRIGGER plugin_trigger BEFORE INSERT ON plugin_table FOR EACH ROW SET NEW.id = 1' => 'Unsupported CREATE TRIGGER statement.',
 			'CREATE EVENT plugin_event ON SCHEDULE EVERY 1 DAY DO SELECT 1'                  => 'Unsupported CREATE EVENT statement.',
 			'CREATE USER plugin_user'                                                        => 'Unsupported CREATE USER statement.',
+			'CREATE SERVER plugin_server FOREIGN DATA WRAPPER mysql OPTIONS (HOST "localhost")' => 'Unsupported CREATE SERVER statement.',
+			'CREATE LOGFILE GROUP plugin_logfile ADD UNDOFILE "undo.dat"'                    => 'Unsupported CREATE LOGFILE statement.',
+			'CREATE SPATIAL REFERENCE SYSTEM 4326 NAME "WGS 84" ORGANIZATION "EPSG" IDENTIFIED BY 4326 DEFINITION "GEOGCS[]"' => 'Unsupported CREATE SPATIAL REFERENCE SYSTEM statement.',
 			'CREATE TABLESPACE plugin_tablespace ADD DATAFILE "plugin.ibd"'                  => 'Unsupported CREATE TABLESPACE statement.',
 		);
 
@@ -21259,7 +21277,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'DROP EVENT IF EXISTS plugin_event'   => 'Unsupported DROP EVENT statement.',
 			'DROP USER plugin_user'               => 'Unsupported DROP USER statement.',
 			'DROP ROLE plugin_role'               => 'Unsupported DROP ROLE statement.',
+			'DROP SPATIAL REFERENCE SYSTEM 4326'  => 'Unsupported DROP SPATIAL REFERENCE SYSTEM statement.',
 			'DROP TABLESPACE plugin_tablespace'   => 'Unsupported DROP TABLESPACE statement.',
+			'DROP UNDO TABLESPACE plugin_undo'    => 'Unsupported DROP UNDO TABLESPACE statement.',
 			'DROP SERVER plugin_server'           => 'Unsupported DROP SERVER statement.',
 			'DROP LOGFILE GROUP plugin_logfile'   => 'Unsupported DROP LOGFILE statement.',
 		);
@@ -21268,6 +21288,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			try {
 				$driver->query( $query );
 				$this->fail( 'Expected unsupported DROP statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $expected_message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests unsupported ALTER/RENAME statement families fail without backend execution.
+	 */
+	public function test_unsupported_alter_and_rename_statement_families_fail_closed(): void {
+		$driver = $this->create_driver();
+
+		$queries = array(
+			'ALTER DATABASE plugin_db CHARACTER SET utf8mb4'          => 'Unsupported ALTER DATABASE statement.',
+			'ALTER EVENT plugin_event DISABLE'                       => 'Unsupported ALTER EVENT statement.',
+			'ALTER LOGFILE GROUP plugin_logfile ADD UNDOFILE "u.dat"' => 'Unsupported ALTER LOGFILE statement.',
+			'ALTER SERVER plugin_server OPTIONS (HOST "localhost")'  => 'Unsupported ALTER SERVER statement.',
+			'ALTER TABLESPACE plugin_tablespace ADD DATAFILE "t.ibd"' => 'Unsupported ALTER TABLESPACE statement.',
+			'ALTER UNDO TABLESPACE plugin_undo SET INACTIVE'         => 'Unsupported ALTER UNDO TABLESPACE statement.',
+			'ALTER VIEW plugin_view AS SELECT 1 AS id'               => 'Unsupported ALTER VIEW statement.',
+			'RENAME USER old_user TO new_user'                       => 'Unsupported RENAME USER statement.',
+		);
+
+		foreach ( $queries as $query => $expected_message ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported ALTER/RENAME statement to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( $expected_message, $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );

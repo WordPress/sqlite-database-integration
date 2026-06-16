@@ -1059,8 +1059,39 @@ class WP_PostgreSQL_Driver {
 				return 'Unsupported UNINSTALL statement.';
 
 			case WP_MySQL_Lexer::ALTER_SYMBOL:
+				switch ( $tokens[1]->id ?? null ) {
+					case WP_MySQL_Lexer::TABLE_SYMBOL:
+						return null;
+
+					case WP_MySQL_Lexer::DATABASE_SYMBOL:
+						return 'Unsupported ALTER DATABASE statement.';
+
+					case WP_MySQL_Lexer::EVENT_SYMBOL:
+						return 'Unsupported ALTER EVENT statement.';
+
+					case WP_MySQL_Lexer::LOGFILE_SYMBOL:
+						return 'Unsupported ALTER LOGFILE statement.';
+
+					case WP_MySQL_Lexer::SERVER_SYMBOL:
+						return 'Unsupported ALTER SERVER statement.';
+
+					case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
+						return 'Unsupported ALTER TABLESPACE statement.';
+
+					case WP_MySQL_Lexer::UNDO_SYMBOL:
+						return 'Unsupported ALTER UNDO TABLESPACE statement.';
+
+					case WP_MySQL_Lexer::USER_SYMBOL:
+						return 'Unsupported ALTER USER statement.';
+
+					case WP_MySQL_Lexer::VIEW_SYMBOL:
+						return 'Unsupported ALTER VIEW statement.';
+				}
+				return null;
+
+			case WP_MySQL_Lexer::RENAME_SYMBOL:
 				if ( isset( $tokens[1] ) && WP_MySQL_Lexer::USER_SYMBOL === $tokens[1]->id ) {
-					return 'Unsupported ALTER USER statement.';
+					return 'Unsupported RENAME USER statement.';
 				}
 				return null;
 		}
@@ -1106,7 +1137,18 @@ class WP_PostgreSQL_Driver {
 			return $this->get_unsupported_mysql_create_table_statement_message( $tokens, $position + 1 );
 		}
 
-		switch ( $tokens[ $position ]->id ?? null ) {
+		$statement_token = $tokens[ $position ] ?? null;
+		if (
+			null !== $statement_token
+			&& WP_MySQL_Lexer::SPATIAL_SYMBOL === $statement_token->id
+			&& isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::REFERENCE_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::SYSTEM_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			return 'Unsupported CREATE SPATIAL REFERENCE SYSTEM statement.';
+		}
+
+		switch ( $statement_token->id ?? null ) {
 			case WP_MySQL_Lexer::DATABASE_SYMBOL:
 			case WP_MySQL_Lexer::SCHEMA_SYMBOL:
 				return 'Unsupported CREATE DATABASE statement.';
@@ -1137,6 +1179,12 @@ class WP_PostgreSQL_Driver {
 
 			case WP_MySQL_Lexer::ROLE_SYMBOL:
 				return 'Unsupported CREATE ROLE statement.';
+
+			case WP_MySQL_Lexer::SERVER_SYMBOL:
+				return 'Unsupported CREATE SERVER statement.';
+
+			case WP_MySQL_Lexer::LOGFILE_SYMBOL:
+				return 'Unsupported CREATE LOGFILE statement.';
 
 			case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
 				return 'Unsupported CREATE TABLESPACE statement.';
@@ -2099,13 +2147,16 @@ class WP_PostgreSQL_Driver {
 				$stmt          = $this->connection->query( $replace_query['duplicate_conflict_rows_sql'] );
 				$has_duplicate = false !== $stmt->fetchColumn();
 				$stmt->closeCursor();
-				if ( $has_duplicate ) {
-					throw new InvalidArgumentException( 'Unsupported REPLACE SELECT statement.' );
-				}
+			} else {
+				$has_duplicate = false;
 			}
 
 			$return_value = null;
-			if ( isset( $replace_query['replace_select_affected_rows_sql'] ) && is_string( $replace_query['replace_select_affected_rows_sql'] ) ) {
+			if ( $has_duplicate ) {
+				$affected_rows                     = $this->execute_materialized_mysql_replace_select_rows_sequentially( $replace_query );
+				$return_value                      = $affected_rows;
+				$replace_query['inserted_new_row'] = $affected_rows > 0;
+			} elseif ( isset( $replace_query['replace_select_affected_rows_sql'] ) && is_string( $replace_query['replace_select_affected_rows_sql'] ) ) {
 				$stmt = $this->connection->query( $replace_query['replace_select_affected_rows_sql'] );
 				$row  = $stmt->fetch( PDO::FETCH_ASSOC );
 				$stmt->closeCursor();
@@ -2115,15 +2166,17 @@ class WP_PostgreSQL_Driver {
 				}
 			}
 
-			$affected_rows = 0;
-			foreach ( $mutation_statements as $statement ) {
-				$statement                       = (string) $statement;
-				$stmt                            = $this->connection->query( $statement );
-				$this->last_postgresql_queries[] = array(
-					'sql'    => $statement,
-					'params' => array(),
-				);
-				$affected_rows                  += $stmt->rowCount();
+			if ( ! $has_duplicate ) {
+				$affected_rows = 0;
+				foreach ( $mutation_statements as $statement ) {
+					$statement                       = (string) $statement;
+					$stmt                            = $this->connection->query( $statement );
+					$this->last_postgresql_queries[] = array(
+						'sql'    => $statement,
+						'params' => array(),
+					);
+					$affected_rows                  += $stmt->rowCount();
+				}
 			}
 		} finally {
 			foreach ( $cleanup_statements as $statement ) {
@@ -2143,6 +2196,125 @@ class WP_PostgreSQL_Driver {
 		$this->repair_dml_identity_sequences_after_success( $replace_query, $affected_rows );
 
 		return (int) $this->last_result;
+	}
+
+	/**
+	 * Replay a materialized REPLACE ... SELECT source one row at a time.
+	 *
+	 * Duplicate source conflict keys need MySQL's row-by-row REPLACE semantics:
+	 * each later row may delete the row inserted by an earlier source row.
+	 *
+	 * @param array $replace_query Translated REPLACE ... SELECT metadata.
+	 * @return int MySQL-compatible affected rows.
+	 */
+	private function execute_materialized_mysql_replace_select_rows_sequentially( array $replace_query ): int {
+		if (
+			! isset( $replace_query['table_name'], $replace_query['columns'], $replace_query['source_table_sql'], $replace_query['ordinal_source_table_sql'], $replace_query['conflict_index_groups'] )
+			|| ! is_string( $replace_query['table_name'] )
+			|| ! is_array( $replace_query['columns'] )
+			|| ! is_string( $replace_query['source_table_sql'] )
+			|| ! is_string( $replace_query['ordinal_source_table_sql'] )
+			|| ! is_array( $replace_query['conflict_index_groups'] )
+		) {
+			throw new InvalidArgumentException( 'Unsupported REPLACE SELECT statement.' );
+		}
+
+		$ordinal_column       = '__wp_pg_replace_ordinal';
+		$quoted_ordinal      = $this->connection->quote_identifier( $ordinal_column );
+		$source_alias        = $this->connection->quote_identifier( '__wp_pg_replace_source' );
+		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
+		$target_alias        = $this->connection->quote_identifier( '__wp_pg_replace_target' );
+		$quoted_target_table = $this->connection->quote_identifier( $replace_query['table_name'] );
+		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $replace_query['columns'] ) );
+
+		$insert_projection_sql = array();
+		foreach ( $replace_query['columns'] as $column ) {
+			$insert_projection_sql[] = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( (string) $column )
+			);
+		}
+
+		$delete_predicate_sql = $this->get_mysql_replace_select_delete_predicate_sql(
+			$target_alias,
+			$rows_alias,
+			$replace_query['conflict_index_groups']
+		);
+		if ( null === $delete_predicate_sql ) {
+			throw new InvalidArgumentException( 'Unsupported REPLACE SELECT statement.' );
+		}
+
+		$create_ordinal_table_sql = sprintf(
+			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
+			$replace_query['ordinal_source_table_sql'],
+			$quoted_ordinal,
+			$source_alias,
+			$replace_query['source_table_sql'],
+			$source_alias
+		);
+		$stmt                     = $this->connection->query( $create_ordinal_table_sql );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $create_ordinal_table_sql,
+			'params' => array(),
+		);
+		$stmt->closeCursor();
+
+		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $replace_query['ordinal_source_table_sql'] );
+
+		try {
+			$stmt     = $this->connection->query(
+				sprintf(
+					'SELECT %1$s FROM %2$s ORDER BY %1$s',
+					$quoted_ordinal,
+					$replace_query['ordinal_source_table_sql']
+				)
+			);
+			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			$stmt->closeCursor();
+
+			$affected_rows = 0;
+			foreach ( $ordinals as $ordinal ) {
+				$ordinal_value = (int) $ordinal;
+				$row_filter    = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
+				$delete_sql    = sprintf(
+					'DELETE FROM %s AS %s WHERE EXISTS (SELECT 1 FROM %s AS %s WHERE %s AND %s)',
+					$quoted_target_table,
+					$target_alias,
+					$replace_query['ordinal_source_table_sql'],
+					$rows_alias,
+					$row_filter,
+					$delete_predicate_sql
+				);
+				$insert_sql    = sprintf(
+					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s',
+					$quoted_target_table,
+					$column_sql,
+					implode( ', ', $insert_projection_sql ),
+					$replace_query['ordinal_source_table_sql'],
+					$rows_alias,
+					$row_filter
+				);
+
+				foreach ( array( $delete_sql, $insert_sql ) as $statement ) {
+					$stmt                            = $this->connection->query( $statement );
+					$this->last_postgresql_queries[] = array(
+						'sql'    => $statement,
+						'params' => array(),
+					);
+					$affected_rows                  += $stmt->rowCount();
+				}
+			}
+
+			return $affected_rows;
+		} finally {
+			$stmt                            = $this->connection->query( $drop_ordinal_table_sql );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $drop_ordinal_table_sql,
+				'params' => array(),
+			);
+			$stmt->closeCursor();
+		}
 	}
 
 	/**
@@ -8052,8 +8224,21 @@ $wp_mysql_on_update$',
 			case WP_MySQL_Lexer::ROLE_SYMBOL:
 				return 'Unsupported DROP ROLE statement.';
 
+			case WP_MySQL_Lexer::SPATIAL_SYMBOL:
+				if (
+					isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+					&& WP_MySQL_Lexer::REFERENCE_SYMBOL === $tokens[ $position + 1 ]->id
+					&& WP_MySQL_Lexer::SYSTEM_SYMBOL === $tokens[ $position + 2 ]->id
+				) {
+					return 'Unsupported DROP SPATIAL REFERENCE SYSTEM statement.';
+				}
+				return null;
+
 			case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
 				return 'Unsupported DROP TABLESPACE statement.';
+
+			case WP_MySQL_Lexer::UNDO_SYMBOL:
+				return 'Unsupported DROP UNDO TABLESPACE statement.';
 
 			case WP_MySQL_Lexer::SERVER_SYMBOL:
 				return 'Unsupported DROP SERVER statement.';
@@ -18525,8 +18710,11 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$temp_table_name      = '__wp_pg_replace_select_' . substr( md5( $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
+		$temp_table_hash      = substr( md5( $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
+		$temp_table_name      = '__wp_pg_replace_select_' . $temp_table_hash;
+		$ordinal_table_name   = '__wp_pg_replace_select_ord_' . $temp_table_hash;
 		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
+		$quoted_ordinal_table = $this->connection->quote_identifier( $ordinal_table_name );
 		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
 		$target_alias         = $this->connection->quote_identifier( '__wp_pg_replace_target' );
 		$quoted_target_table  = $this->connection->quote_identifier( $table_name );
@@ -18614,6 +18802,8 @@ WHERE option_name IN (
 			'replace_select_materialized'      => true,
 			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
 			'duplicate_conflict_rows_sql'      => $duplicate_conflict_rows_sql,
+			'source_table_sql'                 => $quoted_temp_table,
+			'ordinal_source_table_sql'         => $quoted_ordinal_table,
 			'conflict_indexes'                 => $conflict_indexes,
 			'conflict_index_groups'            => $conflict_index_groups,
 		);
@@ -40401,6 +40591,11 @@ FROM (
 	 * @return string|null PostgreSQL byte-length SQL, or null when not binary.
 	 */
 	private function get_postgresql_mysql_binary_argument_byte_length_sql( array $tokens, int $start, int $end ): ?string {
+		$hex_literal_length_sql = $this->get_postgresql_mysql_hex_literal_byte_length_sql( $tokens, $start, $end );
+		if ( null !== $hex_literal_length_sql ) {
+			return $hex_literal_length_sql;
+		}
+
 		$unhex_length_sql = $this->get_postgresql_mysql_unhex_length_sql( $tokens, $start, $end );
 		if ( null !== $unhex_length_sql ) {
 			return $unhex_length_sql;
@@ -40448,6 +40643,19 @@ FROM (
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for LENGTH/CHAR_LENGTH of a raw MySQL hex literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First argument token.
+	 * @param int              $end    Final argument token, exclusive.
+	 * @return string|null Literal byte count SQL, or null when not a hex literal.
+	 */
+	private function get_postgresql_mysql_hex_literal_byte_length_sql( array $tokens, int $start, int $end ): ?string {
+		$value = $this->get_mysql_text_hex_literal_value( $tokens, $start, $end );
+		return null === $value ? null : (string) strlen( $value );
 	}
 
 	/**
