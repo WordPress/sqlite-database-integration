@@ -575,6 +575,16 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_show_databases_query( $show_databases_query, $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$show_create_database_query = $this->get_show_create_database_query( $query );
+		if ( null !== $show_create_database_query ) {
+			return $this->execute_show_create_database_query( $show_create_database_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
+		$show_engines_query = $this->get_show_engines_query( $query );
+		if ( null !== $show_engines_query ) {
+			return $this->execute_show_engines_query( $show_engines_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
 		$show_grants_query = $this->get_show_grants_query( $query );
 		if ( null !== $show_grants_query ) {
 			return $this->execute_show_grants_query( $fetch_mode, ...$fetch_mode_args );
@@ -8625,6 +8635,90 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Parse a supported MySQL SHOW CREATE DATABASE/SCHEMA statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{database: string, if_not_exists: bool}|null SHOW CREATE DATABASE options, or null when this is not SHOW CREATE DATABASE.
+	 */
+	private function get_show_create_database_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1], $tokens[2] )
+			|| WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[1]->id
+			|| (
+				WP_MySQL_Lexer::DATABASE_SYMBOL !== $tokens[2]->id
+				&& WP_MySQL_Lexer::SCHEMA_SYMBOL !== $tokens[2]->id
+			)
+		) {
+			return null;
+		}
+
+		$position      = 3;
+		$if_not_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$if_not_exists = true;
+			$position     += 3;
+		}
+
+		$database = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null, true );
+		if ( null === $database || ! $this->is_at_mysql_query_end( $tokens, $position + 1 ) ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW CREATE DATABASE statement.' );
+		}
+
+		return array(
+			'database'      => $database,
+			'if_not_exists' => $if_not_exists,
+		);
+	}
+
+	/**
+	 * Parse a supported MySQL SHOW ENGINES statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return array{type: string, column: string|null, pattern: string|null}|null SHOW ENGINES options, or null when this is not SHOW ENGINES.
+	 */
+	private function get_show_engines_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SHOW_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::STORAGE_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::ENGINES_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$position += 2;
+		} elseif ( WP_MySQL_Lexer::ENGINES_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		} else {
+			return null;
+		}
+
+		$allowed_columns = array(
+			'engine'       => 'Engine',
+			'support'      => 'Support',
+			'comment'      => 'Comment',
+			'transactions' => 'Transactions',
+			'xa'           => 'XA',
+			'savepoints'   => 'Savepoints',
+		);
+		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Engine', $allowed_columns );
+		if ( null === $filter ) {
+			throw new InvalidArgumentException( 'Unsupported SHOW ENGINES statement.' );
+		}
+
+		return $filter;
+	}
+
+	/**
 	 * Parse a supported MySQL SHOW GRANTS statement.
 	 *
 	 * @param string $query MySQL query.
@@ -12258,6 +12352,40 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Get static MySQL-compatible SHOW ENGINES rows.
+	 *
+	 * @return array[] SHOW ENGINES rows.
+	 */
+	private function get_mysql_static_show_engine_rows(): array {
+		return array(
+			array(
+				'Engine'       => 'InnoDB',
+				'Support'      => 'DEFAULT',
+				'Comment'      => 'Supports transactions, row-level locking, and foreign keys',
+				'Transactions' => 'YES',
+				'XA'           => 'YES',
+				'Savepoints'   => 'YES',
+			),
+			array(
+				'Engine'       => 'MEMORY',
+				'Support'      => 'YES',
+				'Comment'      => 'Hash based, stored in memory, useful for temporary tables',
+				'Transactions' => 'NO',
+				'XA'           => 'NO',
+				'Savepoints'   => 'NO',
+			),
+			array(
+				'Engine'       => 'MyISAM',
+				'Support'      => 'YES',
+				'Comment'      => 'MyISAM storage engine',
+				'Transactions' => 'NO',
+				'XA'           => 'NO',
+				'Savepoints'   => 'NO',
+			),
+		);
+	}
+
+	/**
 	 * Execute a MySQL SHOW CHARACTER SET statement from static MySQL-compatible metadata.
 	 *
 	 * @param array $show_character_set_query SHOW CHARACTER SET options.
@@ -12320,6 +12448,64 @@ ORDER BY table_name';
 
 		return $this->set_mysql_static_show_result(
 			array( 'Database' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Execute a MySQL SHOW CREATE DATABASE/SCHEMA statement from emulated metadata.
+	 *
+	 * @param array $show_create_database_query SHOW CREATE DATABASE options.
+	 * @param int   $fetch_mode                 PDO fetch mode.
+	 * @param array ...$fetch_mode_args         Additional fetch mode arguments.
+	 * @return mixed SHOW CREATE DATABASE result rows.
+	 */
+	private function execute_show_create_database_query( array $show_create_database_query, $fetch_mode, ...$fetch_mode_args ) {
+		$database      = (string) $show_create_database_query['database'];
+		$if_not_exists = ! empty( $show_create_database_query['if_not_exists'] );
+		if ( 0 !== strcasecmp( $database, $this->main_db_name ) && 0 !== strcasecmp( $database, 'information_schema' ) ) {
+			$rows = array();
+		} else {
+			$rows = array(
+				array(
+					'Database'        => $database,
+					'Create Database' => sprintf(
+						'CREATE DATABASE %s%s DEFAULT CHARACTER SET %s COLLATE %s',
+						$if_not_exists ? 'IF NOT EXISTS ' : '',
+						$this->quote_mysql_identifier( $database ),
+						$this->charset,
+						$this->collation
+					),
+				),
+			);
+		}
+
+		return $this->set_mysql_static_show_result(
+			array( 'Database', 'Create Database' ),
+			$rows,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	/**
+	 * Execute a MySQL SHOW ENGINES statement from static MySQL-compatible metadata.
+	 *
+	 * @param array $show_engines_query SHOW ENGINES options.
+	 * @param int   $fetch_mode         PDO fetch mode.
+	 * @param array ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed SHOW ENGINES result rows.
+	 */
+	private function execute_show_engines_query( array $show_engines_query, $fetch_mode, ...$fetch_mode_args ) {
+		$rows = $this->filter_mysql_static_show_rows(
+			$this->get_mysql_static_show_engine_rows(),
+			$show_engines_query
+		);
+
+		return $this->set_mysql_static_show_result(
+			array( 'Engine', 'Support', 'Comment', 'Transactions', 'XA', 'Savepoints' ),
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args

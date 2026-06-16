@@ -15083,6 +15083,125 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW CREATE DATABASE/SCHEMA return MySQL-shaped static metadata.
+	 */
+	public function test_show_create_database_returns_mysql_shaped_metadata(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SHOW CREATE DATABASE `wptests`' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests', $rows[0]->Database );
+		$this->assertSame(
+			'CREATE DATABASE `wptests` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+			$rows[0]->{'Create Database'}
+		);
+		$this->assertSame( array( 'Database', 'Create Database' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$rows = $driver->query( 'SHOW CREATE SCHEMA IF NOT EXISTS wptests', PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Database'        => 'wptests',
+					'Create Database' => 'CREATE DATABASE IF NOT EXISTS `wptests` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				),
+			),
+			$rows
+		);
+
+		$this->assertSame( array(), $driver->query( 'SHOW CREATE DATABASE missing_database' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests malformed SHOW CREATE DATABASE clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_create_database_clauses_fail_closed(): void {
+		$queries = array(
+			'SHOW CREATE DATABASE',
+			'SHOW CREATE DATABASE wptests LIKE "wp%"',
+			'SHOW CREATE DATABASE IF EXISTS wptests',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW CREATE DATABASE statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW CREATE DATABASE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests SHOW ENGINES returns MySQL-shaped static storage engine rows.
+	 */
+	public function test_show_engines_returns_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SHOW ENGINES' );
+
+		$this->assertSame(
+			array( 'InnoDB', 'MEMORY', 'MyISAM' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Engine;
+				},
+				$rows
+			)
+		);
+		$this->assertSame( 'DEFAULT', $rows[0]->Support );
+		$this->assertSame( 'YES', $rows[0]->Transactions );
+		$this->assertSame( array( 'Engine', 'Support', 'Comment', 'Transactions', 'XA', 'Savepoints' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$default_rows = $driver->query( "SHOW STORAGE ENGINES WHERE Support = 'DEFAULT'" );
+		$this->assertSame( array( 'InnoDB' ), array( $default_rows[0]->Engine ) );
+
+		$like_rows = $driver->query( "SHOW ENGINES LIKE 'M%'" );
+		$this->assertSame(
+			array( 'MEMORY', 'MyISAM' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Engine;
+				},
+				$like_rows
+			)
+		);
+
+		$transaction_rows = $driver->query( "SHOW ENGINES WHERE Transactions = 'YES' AND Savepoints = 'YES'" );
+		$this->assertSame( array( 'InnoDB' ), array( $transaction_rows[0]->Engine ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests unsupported SHOW ENGINES clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_engines_clauses_fail_closed(): void {
+		$queries = array(
+			'SHOW ENGINES LIMIT 1',
+			'SHOW ENGINES LIKE Engine',
+			"SHOW ENGINES WHERE Unknown = 'x'",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW ENGINES statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW ENGINES statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests USE accepts main database identifiers without backend execution.
 	 */
 	public function test_use_statement_accepts_main_database_identifiers_without_backend_execution(): void {
@@ -15687,10 +15806,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_unimplemented_mysql_show_and_administration_statements_fail_closed(): void {
 		$cases = array(
-			'SHOW ENGINES'                                      => 'Unsupported SHOW statement.',
 			'SHOW TRIGGERS'                                     => 'Unsupported SHOW statement.',
 			'SHOW OPEN TABLES'                                  => 'Unsupported SHOW statement.',
-			'SHOW CREATE DATABASE `wptests`'                    => 'Unsupported SHOW statement.',
 			'SHOW ENGINE InnoDB STATUS'                         => 'Unsupported SHOW statement.',
 			'SHOW PLUGINS'                                      => 'Unsupported SHOW statement.',
 			'CHECKSUM TABLE administration_existing'            => 'Unsupported CHECKSUM TABLE statement.',
