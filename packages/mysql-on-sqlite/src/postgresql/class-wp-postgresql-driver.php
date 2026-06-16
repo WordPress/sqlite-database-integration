@@ -958,7 +958,7 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
-		} elseif ( $this->is_unsupported_mysql_multi_table_update_query( $query ) ) {
+		} elseif ( $this->is_unsupported_mysql_update_query( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported UPDATE statement.' );
 		}
 
@@ -1965,7 +1965,7 @@ class WP_PostgreSQL_Driver {
 			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
 		}
 
-			return $sql;
+		return $sql;
 	}
 
 	/**
@@ -9623,9 +9623,25 @@ $wp_mysql_on_update$',
 			throw new InvalidArgumentException( 'Unsupported DESCRIBE statement.' );
 		}
 
+		$requested_schema = $table_reference['schema'];
+		$table_name       = $table_reference['table'];
+		if (
+			( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
+			|| ( null !== $requested_schema && 0 === strcasecmp( $requested_schema, 'information_schema' ) )
+		) {
+			if ( null === $this->get_direct_information_schema_relation_columns( $table_name ) ) {
+				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+			}
+
+			return array(
+				'schema' => 'information_schema',
+				'table'  => $table_name,
+			);
+		}
+
 		return array(
 			'schema' => $this->get_mysql_writable_table_backend_schema( $table_reference, 'DESCRIBE' ),
-			'table'  => $table_reference['table'],
+			'table'  => $table_name,
 		);
 	}
 
@@ -10933,12 +10949,17 @@ $wp_mysql_on_update$',
 			if ( null === $right ) {
 				return null;
 			}
+			$escape = $this->parse_mysql_show_where_like_escape( $tokens, $position, $end );
+			if ( false === $escape ) {
+				return null;
+			}
 
 			return array(
 				'type'     => 'comparison',
 				'operator' => $is_not ? 'not_like' : 'like',
 				'left'     => $left,
 				'right'    => $right,
+				'escape'   => $escape,
 			);
 		}
 
@@ -11019,6 +11040,36 @@ $wp_mysql_on_update$',
 		}
 
 		return null;
+	}
+
+	/**
+	 * Parse an optional SHOW WHERE LIKE ESCAPE clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, advanced on success.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return string|false|null Escape character, false when invalid, or null for default escaping.
+	 */
+	private function parse_mysql_show_where_like_escape( array $tokens, int &$position, int $end ) {
+		if ( ! isset( $tokens[ $position ] ) || $position >= $end || WP_MySQL_Lexer::ESCAPE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position + 1 ] )
+			|| $position + 1 >= $end
+			|| ! $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
+		) {
+			return false;
+		}
+
+		$escape = $tokens[ $position + 1 ]->get_value();
+		if ( 1 !== strlen( $escape ) ) {
+			return false;
+		}
+
+		$position += 2;
+		return $escape;
 	}
 
 	/**
@@ -11138,6 +11189,19 @@ $wp_mysql_on_update$',
 		}
 
 		$token = $tokens[ $position ];
+		if ( WP_MySQL_Lexer::BINARY_SYMBOL === $token->id ) {
+			++$position;
+			$expression = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+			if ( null === $expression ) {
+				return null;
+			}
+
+			return array(
+				'type' => 'binary',
+				'expr' => $expression,
+			);
+		}
+
 		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 			if ( null === $after_close ) {
@@ -11230,6 +11294,11 @@ $wp_mysql_on_update$',
 
 			case 'function':
 				return in_array( $expression['function'] ?? null, array( 'length', 'char_length' ), true );
+
+			case 'binary':
+				return isset( $expression['expr'] )
+					&& is_array( $expression['expr'] )
+					&& $this->is_mysql_show_where_numeric_value_expression( $expression['expr'], $numeric_columns );
 		}
 
 		return false;
@@ -12597,6 +12666,17 @@ $wp_mysql_on_update$',
 	 */
 	private function execute_describe_query( string $schema_name, string $table_name, $fetch_mode, ...$fetch_mode_args ) {
 		$this->ensure_mysql_schema_metadata_tables();
+
+		if ( 0 === strcasecmp( $schema_name, 'information_schema' ) ) {
+			return $this->execute_direct_information_schema_show_columns_query(
+				$table_name,
+				false,
+				null,
+				null,
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
 
 		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
 		$cache_key       = $this->get_mysql_introspection_result_cache_key(
@@ -14561,7 +14641,14 @@ ORDER BY table_name';
 				$operator = $predicate['operator'] ?? null;
 				$left     = $this->evaluate_mysql_show_where_value( $predicate['left'], $row );
 				$right    = $this->evaluate_mysql_show_where_value( $predicate['right'], $row );
-				return $this->evaluate_mysql_show_where_comparison( $left, $operator, $right );
+				return $this->evaluate_mysql_show_where_comparison(
+					$left,
+					$operator,
+					$right,
+					$this->mysql_show_where_value_expression_has_binary_modifier( $predicate['left'] )
+						|| $this->mysql_show_where_value_expression_has_binary_modifier( $predicate['right'] ),
+					$predicate['escape'] ?? null
+				);
 
 			case 'in':
 				$left = $this->evaluate_mysql_show_where_value( $predicate['expr'], $row );
@@ -14569,6 +14656,7 @@ ORDER BY table_name';
 					return false;
 				}
 
+				$left_is_binary = $this->mysql_show_where_value_expression_has_binary_modifier( $predicate['expr'] );
 				$has_null = false;
 				foreach ( $predicate['values'] ?? array() as $value_expression ) {
 					$value = $this->evaluate_mysql_show_where_value( $value_expression, $row );
@@ -14577,7 +14665,14 @@ ORDER BY table_name';
 						continue;
 					}
 
-					if ( $this->evaluate_mysql_show_where_comparison( $left, '=', $value ) ) {
+					if (
+						$this->evaluate_mysql_show_where_comparison(
+							$left,
+							'=',
+							$value,
+							$left_is_binary || $this->mysql_show_where_value_expression_has_binary_modifier( $value_expression )
+						)
+					) {
 						return empty( $predicate['not'] );
 					}
 				}
@@ -14592,8 +14687,17 @@ ORDER BY table_name';
 					return false;
 				}
 
-				$matches = $this->compare_mysql_show_where_values( $value, $lower ) >= 0
-					&& $this->compare_mysql_show_where_values( $value, $upper ) <= 0;
+				$value_is_binary = $this->mysql_show_where_value_expression_has_binary_modifier( $predicate['expr'] );
+				$matches         = $this->compare_mysql_show_where_values(
+					$value,
+					$lower,
+					$value_is_binary || $this->mysql_show_where_value_expression_has_binary_modifier( $predicate['lower'] )
+				) >= 0
+					&& $this->compare_mysql_show_where_values(
+						$value,
+						$upper,
+						$value_is_binary || $this->mysql_show_where_value_expression_has_binary_modifier( $predicate['upper'] )
+					) <= 0;
 				return ! empty( $predicate['not'] ) ? ! $matches : $matches;
 		}
 
@@ -14622,6 +14726,11 @@ ORDER BY table_name';
 
 			case 'function':
 				return $this->evaluate_mysql_show_where_function_value( $expression, $row );
+
+			case 'binary':
+				return isset( $expression['expr'] ) && is_array( $expression['expr'] )
+					? $this->evaluate_mysql_show_where_value( $expression['expr'], $row )
+					: null;
 
 			case 'arithmetic':
 				$left  = $this->evaluate_mysql_show_where_value( $expression['left'], $row );
@@ -14768,13 +14877,13 @@ ORDER BY table_name';
 	 * @param scalar|null $right    Right value.
 	 * @return bool Whether the comparison matches.
 	 */
-	private function evaluate_mysql_show_where_comparison( $left, ?string $operator, $right ): bool {
+	private function evaluate_mysql_show_where_comparison( $left, ?string $operator, $right, bool $binary = false, ?string $escape = null ): bool {
 		if ( '<=>' === $operator ) {
 			if ( null === $left || null === $right ) {
 				return null === $left && null === $right;
 			}
 
-			return 0 === $this->compare_mysql_show_where_values( $left, $right );
+			return 0 === $this->compare_mysql_show_where_values( $left, $right, $binary );
 		}
 
 		if ( null === $left || null === $right ) {
@@ -14782,11 +14891,11 @@ ORDER BY table_name';
 		}
 
 		if ( 'like' === $operator || 'not_like' === $operator ) {
-			$matches = $this->matches_mysql_like_pattern( (string) $left, (string) $right );
+			$matches = $this->matches_mysql_like_pattern( (string) $left, (string) $right, $escape, $binary );
 			return 'not_like' === $operator ? ! $matches : $matches;
 		}
 
-		$comparison = $this->compare_mysql_show_where_values( $left, $right );
+		$comparison = $this->compare_mysql_show_where_values( $left, $right, $binary );
 		switch ( $operator ) {
 			case '=':
 				return 0 === $comparison;
@@ -14800,6 +14909,32 @@ ORDER BY table_name';
 				return $comparison < 0;
 			case '<=':
 				return $comparison <= 0;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a parsed SHOW WHERE value expression has a BINARY modifier.
+	 *
+	 * @param array $expression Value expression AST.
+	 * @return bool Whether the expression should use binary string comparison semantics.
+	 */
+	private function mysql_show_where_value_expression_has_binary_modifier( array $expression ): bool {
+		if ( 'binary' === ( $expression['type'] ?? null ) ) {
+			return true;
+		}
+
+		if ( 'arithmetic' === ( $expression['type'] ?? null ) ) {
+			return (
+				isset( $expression['left'] )
+				&& is_array( $expression['left'] )
+				&& $this->mysql_show_where_value_expression_has_binary_modifier( $expression['left'] )
+			) || (
+				isset( $expression['right'] )
+				&& is_array( $expression['right'] )
+				&& $this->mysql_show_where_value_expression_has_binary_modifier( $expression['right'] )
+			);
 		}
 
 		return false;
@@ -14834,8 +14969,8 @@ ORDER BY table_name';
 	 * @param scalar $right Right value.
 	 * @return int Negative, zero, or positive comparison result.
 	 */
-	private function compare_mysql_show_where_values( $left, $right ): int {
-		if ( is_numeric( $left ) && is_numeric( $right ) ) {
+	private function compare_mysql_show_where_values( $left, $right, bool $binary = false ): int {
+		if ( ! $binary && is_numeric( $left ) && is_numeric( $right ) ) {
 			$left_number  = (float) $left;
 			$right_number = (float) $right;
 			if ( $left_number === $right_number ) {
@@ -14845,7 +14980,7 @@ ORDER BY table_name';
 			return $left_number < $right_number ? -1 : 1;
 		}
 
-		return strcasecmp( (string) $left, (string) $right );
+		return $binary ? strcmp( (string) $left, (string) $right ) : strcasecmp( (string) $left, (string) $right );
 	}
 
 	/**
@@ -14928,17 +15063,20 @@ ORDER BY table_name';
 	/**
 	 * Match a string against a MySQL LIKE pattern.
 	 *
-	 * @param string $value   Value to check.
-	 * @param string $pattern MySQL LIKE pattern.
+	 * @param string      $value          Value to check.
+	 * @param string      $pattern        MySQL LIKE pattern.
+	 * @param string|null $escape         Escape character, or null for the default backslash escape.
+	 * @param bool        $case_sensitive Whether matching should be case-sensitive.
 	 * @return bool Whether the pattern matches.
 	 */
-	private function matches_mysql_like_pattern( string $value, string $pattern ): bool {
-		$regex  = '/^';
-		$length = strlen( $pattern );
+	private function matches_mysql_like_pattern( string $value, string $pattern, ?string $escape = null, bool $case_sensitive = false ): bool {
+		$regex       = '/^';
+		$length      = strlen( $pattern );
+		$escape_char = null === $escape ? '\\' : $escape;
 
 		for ( $i = 0; $i < $length; $i++ ) {
 			$char = $pattern[ $i ];
-			if ( '\\' === $char && $i + 1 < $length ) {
+			if ( '' !== $escape_char && $escape_char === $char && $i + 1 < $length ) {
 				++$i;
 				$regex .= preg_quote( $pattern[ $i ], '/' );
 				continue;
@@ -14957,7 +15095,7 @@ ORDER BY table_name';
 			$regex .= preg_quote( $char, '/' );
 		}
 
-		$regex .= '$/i';
+		$regex .= $case_sensitive ? '$/' : '$/i';
 		return 1 === preg_match( $regex, $value );
 	}
 
@@ -17636,12 +17774,9 @@ WHERE option_name IN (
 			$value_rows,
 			$probe_safe_rows
 		);
-		if ( null === $conflict_target ) {
-			return null;
-		}
-		$conflict_columns = $conflict_target['columns'];
-		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
-		if ( null === $conflict_indexes ) {
+		$conflict_columns = null === $conflict_target ? array() : $conflict_target['columns'];
+		$conflict_indexes = null === $conflict_target ? null : $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
+		if ( null !== $conflict_target && null === $conflict_indexes ) {
 			return null;
 		}
 
@@ -17657,6 +17792,41 @@ WHERE option_name IN (
 		$assignments        = $this->parse_upsert_update_assignments( $table_name, $tokens, $position, $statement_end, $column_lookup, $table_column_lookup, $upsert_source_aliases, $assignment_effects );
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
+		}
+
+		if ( null === $conflict_target ) {
+			if ( count( $value_rows ) < 2 ) {
+				return null;
+			}
+
+			if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
+				return null;
+			}
+
+			$per_row_upsert = $this->get_mysql_per_row_upsert_statements_for_ambiguous_targets(
+				$table_name,
+				$columns,
+				$value_rows,
+				$probe_safe_rows,
+				$assignments,
+				$assignment_effects['assigned_columns'] ?? array()
+			);
+			if ( null === $per_row_upsert ) {
+				return null;
+			}
+
+			return array(
+				'action'               => 'upsert',
+				'statements'           => $per_row_upsert['statements'],
+				'table_name'           => $table_name,
+				'columns'              => $columns,
+				'values'               => $per_row_upsert['inserted_value_rows'][0] ?? array(),
+				'value_rows'           => $per_row_upsert['inserted_value_rows'],
+				'insert_id_value_rows' => $value_rows,
+				'conflict_columns'     => $per_row_upsert['conflict_columns'],
+				'conflict_index_groups' => $per_row_upsert['conflict_index_groups'],
+				'inserted_new_row'     => count( $per_row_upsert['inserted_value_rows'] ) > 0,
+			);
 		}
 
 		$inserted_value_rows = $this->get_mysql_upsert_inserted_value_rows(
@@ -18510,13 +18680,11 @@ WHERE option_name IN (
 		?array $value_rows = null,
 		?array $probe_safe_rows = null
 	): ?array {
-		$insert_column_lookup = array();
-		$insert_columns       = array();
+		$insert_columns = array();
 		foreach ( $columns as $column ) {
 			$insert_column = strtolower( $column );
 
-			$insert_column_lookup[ $insert_column ] = true;
-			$insert_columns[]                       = $insert_column;
+			$insert_columns[] = $insert_column;
 		}
 		sort( $insert_columns, SORT_STRING );
 
@@ -18529,7 +18697,45 @@ WHERE option_name IN (
 			return null === $cached ? null : $cached;
 		}
 
-		$stmt = $this->connection->query(
+		$candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns );
+
+		if ( 1 !== count( $candidates ) ) {
+			if ( null !== $value_rows && null !== $probe_safe_rows && count( $candidates ) > 1 ) {
+				return $this->get_mysql_upsert_conflict_target_for_value_rows(
+					$table_name,
+					$columns,
+					$candidates,
+					$value_rows,
+					$probe_safe_rows
+				);
+			}
+
+			return null;
+		}
+
+		$conflict_target = $this->get_mysql_upsert_conflict_target_from_candidate( $candidates[0] );
+
+		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_target;
+		return $conflict_target;
+	}
+
+	/**
+	 * Get metadata-backed unique-key candidates usable as PostgreSQL upsert arbiters.
+	 *
+	 * @param string   $table_name Table name.
+	 * @param string[] $columns    Inserted column names.
+	 * @return array<int,array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>}> Conflict candidates.
+	 */
+	private function get_mysql_upsert_conflict_target_candidates( string $table_name, array $columns ): array {
+		$insert_column_lookup = array();
+		foreach ( $columns as $column ) {
+			$insert_column_lookup[ strtolower( $column ) ] = true;
+		}
+
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$stmt         = $this->connection->query(
 			sprintf(
 				'SELECT key_name, column_name, index_type, sub_part
 				FROM %s
@@ -18592,24 +18798,7 @@ WHERE option_name IN (
 			);
 		}
 
-		if ( 1 !== count( $candidates ) ) {
-			if ( null !== $value_rows && null !== $probe_safe_rows && count( $candidates ) > 1 ) {
-				return $this->get_mysql_upsert_conflict_target_for_value_rows(
-					$table_name,
-					$columns,
-					$candidates,
-					$value_rows,
-					$probe_safe_rows
-				);
-			}
-
-			return null;
-		}
-
-		$conflict_target = $this->get_mysql_upsert_conflict_target_from_candidate( $candidates[0] );
-
-		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_target;
-		return $conflict_target;
+		return $candidates;
 	}
 
 	/**
@@ -18666,10 +18855,126 @@ WHERE option_name IN (
 		}
 
 		if ( 0 === count( $conflicting_candidates ) ) {
+			$conflict_index_groups = array();
+			foreach ( $candidates as $candidate ) {
+				$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $candidate['parts'] );
+				if ( null === $conflict_indexes ) {
+					return null;
+				}
+				$conflict_index_groups[] = $conflict_indexes;
+			}
+			if ( $this->has_duplicate_mysql_replace_conflict_value_rows_in_groups( $value_rows, $probe_safe_rows, $conflict_index_groups ) ) {
+				return null;
+			}
+
 			return $this->get_mysql_upsert_conflict_target_from_candidate( $candidates[0] );
 		}
 
 		return null;
+	}
+
+	/**
+	 * Build per-row upsert statements when one PostgreSQL arbiter cannot model MySQL.
+	 *
+	 * MySQL checks every unique key for each VALUES row. PostgreSQL requires one
+	 * ON CONFLICT target, so mixed deterministic batches are replayed row by row
+	 * only when each row has zero or one provable conflict target.
+	 *
+	 * @param string   $table_name       Table name.
+	 * @param string[] $columns          Inserted column names.
+	 * @param array[]  $value_rows       Translated PostgreSQL VALUES rows.
+	 * @param array[]  $probe_safe_rows  Per-value conflict-probe safety flags.
+	 * @param string[] $assignments      PostgreSQL UPDATE assignments.
+	 * @param string[] $assigned_columns Assignment target columns keyed by lowercase name.
+	 * @return array{statements: string[], inserted_value_rows: array[], conflict_columns: string[], conflict_index_groups: array[]}|null Per-row flow, or null when unsupported.
+	 */
+	private function get_mysql_per_row_upsert_statements_for_ambiguous_targets( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $assignments, array $assigned_columns ): ?array {
+		$candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns );
+		if ( count( $candidates ) < 2 ) {
+			return null;
+		}
+
+		$conflict_index_groups = array();
+		foreach ( $candidates as $candidate ) {
+			foreach ( $candidate['parts'] as $part ) {
+				if ( isset( $assigned_columns[ strtolower( (string) ( $part['column'] ?? '' ) ) ] ) ) {
+					return null;
+				}
+			}
+
+			$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $candidate['parts'] );
+			if ( null === $conflict_indexes ) {
+				return null;
+			}
+
+			$conflict_index_groups[] = $conflict_indexes;
+		}
+
+		$column_sql           = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
+		$inserted_value_rows  = array();
+		$statements           = array();
+		$seen_inserted_values = array();
+		$used_columns         = array();
+
+		foreach ( $value_rows as $row_index => $values ) {
+			$probe_safety     = $probe_safe_rows[ $row_index ] ?? array();
+			$matching_indexes = array();
+
+			foreach ( $conflict_index_groups as $candidate_index => $conflict_indexes ) {
+				foreach ( $conflict_indexes as $conflict_index ) {
+					if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
+						return null;
+					}
+				}
+
+				$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
+				if ( null === $conflict_exists ) {
+					return null;
+				}
+
+				$seen_key      = $this->get_mysql_replace_conflict_seen_key_for_row( $values, $conflict_indexes );
+				$seen_conflict = null !== $seen_key && isset( $seen_inserted_values[ $candidate_index ][ $seen_key ] );
+				if ( $conflict_exists || $seen_conflict ) {
+					$matching_indexes[] = $candidate_index;
+				}
+			}
+
+			if ( count( $matching_indexes ) > 1 ) {
+				return null;
+			}
+
+			$target_index    = 1 === count( $matching_indexes ) ? $matching_indexes[0] : 0;
+			$conflict_target = $this->get_mysql_upsert_conflict_target_from_candidate( $candidates[ $target_index ] );
+			foreach ( $conflict_target['columns'] as $column ) {
+				$used_columns[ strtolower( $column ) ] = $column;
+			}
+
+			$statements[] = sprintf(
+				'INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s',
+				$this->connection->quote_identifier( $table_name ),
+				$column_sql,
+				implode( ', ', $values ),
+				implode( ', ', $conflict_target['sql'] ),
+				implode( ', ', $assignments )
+			);
+
+			if ( 0 === count( $matching_indexes ) ) {
+				$inserted_value_rows[] = $values;
+				foreach ( $conflict_index_groups as $candidate_index => $conflict_indexes ) {
+					$seen_key = $this->get_mysql_replace_conflict_seen_key_for_row( $values, $conflict_indexes );
+					if ( null !== $seen_key ) {
+						$seen_inserted_values[ $candidate_index ][ $seen_key ] = true;
+					}
+				}
+			}
+		}
+
+		return array(
+			'statements'             => $statements,
+			'inserted_value_rows'    => $inserted_value_rows,
+			'conflict_columns'       => array_values( $used_columns ),
+			'conflict_index_groups'  => $conflict_index_groups,
+		);
 	}
 
 	/**
@@ -22436,47 +22741,14 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether a MySQL multi-table UPDATE was not translated.
+	 * Check whether a top-level UPDATE statement reached the unsupported fallback.
 	 *
 	 * @param string $query MySQL query.
-	 * @return bool Whether the query is an unsupported multi-table UPDATE.
+	 * @return bool Whether this is an unsupported UPDATE statement.
 	 */
-	private function is_unsupported_mysql_multi_table_update_query( string $query ): bool {
+	private function is_unsupported_mysql_update_query( string $query ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::UPDATE_SYMBOL !== $tokens[0]->id ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
-			return false;
-		}
-
-		$set_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::SET_SYMBOL,
-			1,
-			$statement_end
-		);
-		if ( null === $set_position ) {
-			return false;
-		}
-
-		return $this->contains_top_level_mysql_token(
-			$tokens,
-			1,
-			$set_position,
-			array(
-				WP_MySQL_Lexer::COMMA_SYMBOL,
-				WP_MySQL_Lexer::CROSS_SYMBOL,
-				WP_MySQL_Lexer::INNER_SYMBOL,
-				WP_MySQL_Lexer::JOIN_SYMBOL,
-				WP_MySQL_Lexer::LEFT_SYMBOL,
-				WP_MySQL_Lexer::NATURAL_SYMBOL,
-				WP_MySQL_Lexer::RIGHT_SYMBOL,
-				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-			)
-		);
+		return isset( $tokens[0] ) && WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[0]->id;
 	}
 
 	/**
@@ -29122,6 +29394,9 @@ WHERE option_name IN (
 				'applicable_roles',
 				'administrable_role_authorizations',
 				'enabled_roles',
+				'role_column_grants',
+				'role_routine_grants',
+				'role_table_grants',
 				'processlist',
 				'views',
 				'triggers',
@@ -29436,6 +29711,49 @@ WHERE option_name IN (
 					'IS_MANDATORY',
 				);
 
+			case 'role_table_grants':
+				return array(
+					'GRANTOR',
+					'GRANTOR_HOST',
+					'GRANTEE',
+					'GRANTEE_HOST',
+					'TABLE_CATALOG',
+					'TABLE_SCHEMA',
+					'TABLE_NAME',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
+			case 'role_column_grants':
+				return array(
+					'GRANTOR',
+					'GRANTOR_HOST',
+					'GRANTEE',
+					'GRANTEE_HOST',
+					'TABLE_CATALOG',
+					'TABLE_SCHEMA',
+					'TABLE_NAME',
+					'COLUMN_NAME',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
+			case 'role_routine_grants':
+				return array(
+					'GRANTOR',
+					'GRANTOR_HOST',
+					'GRANTEE',
+					'GRANTEE_HOST',
+					'SPECIFIC_CATALOG',
+					'SPECIFIC_SCHEMA',
+					'SPECIFIC_NAME',
+					'ROUTINE_CATALOG',
+					'ROUTINE_SCHEMA',
+					'ROUTINE_NAME',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
 			case 'views':
 				return array(
 					'TABLE_CATALOG',
@@ -29679,6 +29997,9 @@ WHERE option_name IN (
 			case 'applicable_roles':
 			case 'administrable_role_authorizations':
 			case 'enabled_roles':
+			case 'role_column_grants':
+			case 'role_routine_grants':
+			case 'role_table_grants':
 				return $this->get_direct_information_schema_empty_relation_sql( $view );
 			case 'views':
 			case 'triggers':
@@ -35324,6 +35645,25 @@ FROM (
 		}
 
 		if (
+			WP_MySQL_Lexer::DESCRIBE_SYMBOL === $tokens[0]->id
+			|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[0]->id
+		) {
+			$position        = 1;
+			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			if (
+				null !== $table_reference
+				&& $this->is_at_mysql_query_end( $tokens, $position )
+				&& (
+					null === $table_reference['schema']
+					|| 0 === strcasecmp( $table_reference['schema'], 'information_schema' )
+				)
+				&& null !== $this->get_direct_information_schema_relation_columns( $table_reference['table'] )
+			) {
+				return false;
+			}
+		}
+
+		if (
 			in_array(
 				$tokens[0]->id,
 				array(
@@ -35742,6 +36082,7 @@ FROM (
 			}
 
 			$target_column = $target['column'];
+			$assignment_effects['assigned_columns'][ strtolower( $target_column ) ] = $target_column;
 			$position      = $target['end'];
 			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
 				return null;
@@ -44465,23 +44806,25 @@ FROM (
 	 * @return string|null PostgreSQL expression SQL, or null when unsupported.
 	 */
 	private function get_postgresql_mysql_date_format_string_sql( string $format, string $expression_sql ): ?string {
-		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql );
+		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql, false );
 	}
 
 	/**
 	 * Get PostgreSQL SQL for general MySQL DATE_FORMAT() format strings.
 	 *
-	 * @param string $format         MySQL DATE_FORMAT format.
-	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @param string $format                   MySQL DATE_FORMAT format.
+	 * @param string $expression_sql           PostgreSQL expression SQL.
+	 * @param bool   $preserve_zero_date_parts Whether to derive numeric/time parts from zero-ish dates.
 	 * @return string|null PostgreSQL expression SQL, or null when unsupported.
 	 */
-	private function get_postgresql_mysql_generic_date_format_sql( string $format, string $expression_sql ): ?string {
-		$timestamp_sql       = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
-		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
-		$fragments           = array();
-		$literal             = '';
-		$length              = strlen( $format );
+	private function get_postgresql_mysql_generic_date_format_sql( string $format, string $expression_sql, bool $preserve_zero_date_parts = true ): ?string {
+		$timestamp_sql        = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
+		$zero_date_format_sql = $this->get_postgresql_mysql_zero_date_format_sql( $format, $expression_text_sql );
+		$fragments            = array();
+		$literal              = '';
+		$length               = strlen( $format );
 
 		for ( $i = 0; $i < $length; $i++ ) {
 			$character = $format[ $i ];
@@ -44514,16 +44857,236 @@ FROM (
 			$fragments[] = $this->connection->quote( $literal );
 		}
 
-		if ( empty( $fragments ) ) {
-			return "''";
+		$formatted_sql = empty( $fragments ) ? "''" : implode( ' || ', $fragments );
+		if ( ! $preserve_zero_date_parts ) {
+			return sprintf(
+				'CASE WHEN %1$s IS NULL OR %2$s THEN NULL ELSE %3$s END',
+				$expression_text_sql,
+				$zero_date_condition,
+				$formatted_sql
+			);
 		}
 
-		$formatted_sql = implode( ' || ', $fragments );
 		return sprintf(
-			'CASE WHEN %1$s IS NULL OR %2$s THEN NULL ELSE %3$s END',
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s THEN %3$s ELSE %4$s END',
 			$expression_text_sql,
 			$zero_date_condition,
+			$zero_date_format_sql,
 			$formatted_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for DATE_FORMAT() against a zero or partial-zero date string.
+	 *
+	 * MySQL can format numeric month/day ranges that include zero, but specifiers
+	 * that need a real calendar date still return NULL for incomplete dates.
+	 *
+	 * @param string $format              MySQL DATE_FORMAT format.
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_zero_date_format_sql( string $format, string $expression_text_sql ): string {
+		$fragments = array();
+		$literal   = '';
+		$length    = strlen( $format );
+
+		for ( $i = 0; $i < $length; $i++ ) {
+			$character = $format[ $i ];
+			if ( '%' !== $character ) {
+				$literal .= $character;
+				continue;
+			}
+
+			if ( $i + 1 >= $length ) {
+				$literal .= '%';
+				continue;
+			}
+
+			if ( '' !== $literal ) {
+				$fragments[] = $this->connection->quote( $literal );
+				$literal     = '';
+			}
+
+			++$i;
+			$fragment = $this->get_postgresql_mysql_zero_date_format_specifier_sql( $format[ $i ], $expression_text_sql );
+			if ( null === $fragment ) {
+				if ( $this->is_postgresql_mysql_known_date_format_specifier( $format[ $i ] ) ) {
+					return 'NULL';
+				}
+
+				$literal .= '%' . $format[ $i ];
+				continue;
+			}
+
+			$fragments[] = $fragment;
+		}
+
+		if ( '' !== $literal ) {
+			$fragments[] = $this->connection->quote( $literal );
+		}
+
+		return empty( $fragments ) ? "''" : implode( ' || ', $fragments );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for one DATE_FORMAT() specifier on a zero-ish date.
+	 *
+	 * @param string $specifier           MySQL DATE_FORMAT specifier without the leading percent.
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string|null PostgreSQL SQL fragment, or null when a real calendar date is required.
+	 */
+	private function get_postgresql_mysql_zero_date_format_specifier_sql( string $specifier, string $expression_text_sql ): ?string {
+		switch ( $specifier ) {
+			case '%':
+				return $this->connection->quote( '%' );
+
+			case 'Y':
+				return sprintf( 'SUBSTRING(%s FROM 1 FOR 4)', $expression_text_sql );
+
+			case 'y':
+				return sprintf( 'SUBSTRING(%s FROM 3 FOR 2)', $expression_text_sql );
+
+			case 'm':
+				return sprintf( 'SUBSTRING(%s FROM 6 FOR 2)', $expression_text_sql );
+
+			case 'c':
+				return sprintf( 'CAST(CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer) AS text)', $expression_text_sql );
+
+			case 'd':
+				return sprintf( 'SUBSTRING(%s FROM 9 FOR 2)', $expression_text_sql );
+
+			case 'e':
+				return sprintf( 'CAST(CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer) AS text)', $expression_text_sql );
+
+			case 'D':
+				return $this->get_postgresql_mysql_day_with_suffix_sql(
+					sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql )
+				);
+
+			case 'H':
+				return $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 );
+
+			case 'k':
+				return sprintf(
+					'CAST(CAST(%s AS integer) AS text)',
+					$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 )
+				);
+
+			case 'h':
+			case 'I':
+				return sprintf(
+					"LPAD(CAST(%s AS text), 2, '0')",
+					$this->get_postgresql_mysql_zero_date_hour_12_sql( $expression_text_sql )
+				);
+
+			case 'l':
+				return sprintf( 'CAST(%s AS text)', $this->get_postgresql_mysql_zero_date_hour_12_sql( $expression_text_sql ) );
+
+			case 'i':
+				return $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 15, 2 );
+
+			case 'S':
+			case 's':
+				return $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 18, 2 );
+
+			case 'T':
+				return sprintf(
+					"%1\$s || ':' || %2\$s || ':' || %3\$s",
+					$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 ),
+					$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 15, 2 ),
+					$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 18, 2 )
+				);
+
+			case 'r':
+				return sprintf(
+					"%1\$s || ':' || %2\$s || ':' || %3\$s || ' ' || %4\$s",
+					sprintf(
+						"LPAD(CAST(%s AS text), 2, '0')",
+						$this->get_postgresql_mysql_zero_date_hour_12_sql( $expression_text_sql )
+					),
+					$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 15, 2 ),
+					$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 18, 2 ),
+					$this->get_postgresql_mysql_zero_date_meridiem_sql( $expression_text_sql )
+				);
+
+			case 'p':
+				return $this->get_postgresql_mysql_zero_date_meridiem_sql( $expression_text_sql );
+
+			case 'f':
+				return $this->get_postgresql_mysql_zero_date_microsecond_sql( $expression_text_sql );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a DATE_FORMAT() specifier is one MySQL defines.
+	 *
+	 * @param string $specifier MySQL DATE_FORMAT specifier without the leading percent.
+	 * @return bool Whether MySQL defines the specifier.
+	 */
+	private function is_postgresql_mysql_known_date_format_specifier( string $specifier ): bool {
+		return '%' === $specifier
+			|| 'D' === $specifier
+			|| 'w' === $specifier
+			|| null !== $this->get_postgresql_mysql_date_format_week_specifier_sql( $specifier, 'NULL' )
+			|| isset( $this->get_postgresql_mysql_date_format_to_char_formats()[ $specifier ] );
+	}
+
+	/**
+	 * Get a time component from a zero-ish date string, defaulting to 00.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @param int    $start               One-based substring start.
+	 * @param int    $length              Substring length.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_zero_date_time_part_sql( string $expression_text_sql, int $start, int $length ): string {
+		return sprintf(
+			"CASE WHEN %1\$s ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN SUBSTRING(%1\$s FROM %2\$d FOR %3\$d) ELSE '00' END",
+			$expression_text_sql,
+			$start,
+			$length
+		);
+	}
+
+	/**
+	 * Get a 12-hour clock hour from a zero-ish date string.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL integer expression SQL.
+	 */
+	private function get_postgresql_mysql_zero_date_hour_12_sql( string $expression_text_sql ): string {
+		return sprintf(
+			'MOD(CAST(%s AS integer) + 11, 12) + 1',
+			$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 )
+		);
+	}
+
+	/**
+	 * Get an AM/PM marker from a zero-ish date string.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_zero_date_meridiem_sql( string $expression_text_sql ): string {
+		return sprintf(
+			"CASE WHEN CAST(%s AS integer) < 12 THEN 'AM' ELSE 'PM' END",
+			$this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 )
+		);
+	}
+
+	/**
+	 * Get the microsecond component from a zero-ish date string.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_zero_date_microsecond_sql( string $expression_text_sql ): string {
+		return sprintf(
+			"CASE WHEN %1\$s ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]+' THEN LEFT(RPAD(SUBSTRING(%1\$s FROM '[.]([0-9]+)'), 6, '0'), 6) ELSE '000000' END",
+			$expression_text_sql
 		);
 	}
 
@@ -44855,6 +45418,16 @@ FROM (
 	private function get_postgresql_mysql_date_format_day_with_suffix_sql( string $timestamp_sql ): string {
 		$day_sql = sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql );
 
+		return $this->get_postgresql_mysql_day_with_suffix_sql( $day_sql );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL ordinal day value.
+	 *
+	 * @param string $day_sql PostgreSQL integer day expression.
+	 * @return string PostgreSQL SQL fragment.
+	 */
+	private function get_postgresql_mysql_day_with_suffix_sql( string $day_sql ): string {
 		return sprintf(
 			'CAST(%1$s AS text) || CASE WHEN %1$s %% 100 BETWEEN 11 AND 13 THEN \'th\' WHEN %1$s %% 10 = 1 THEN \'st\' WHEN %1$s %% 10 = 2 THEN \'nd\' WHEN %1$s %% 10 = 3 THEN \'rd\' ELSE \'th\' END',
 			$day_sql

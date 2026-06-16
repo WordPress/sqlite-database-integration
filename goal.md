@@ -70,6 +70,8 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Tolerate supported MySQL table/storage options in `ALTER TABLE` with either `OPTION=value` or `OPTION value` spelling as PostgreSQL no-ops.
 - [x] Emulate the common plugin upsert side effect `ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)` for deterministic single-row AUTO_INCREMENT self-assignments.
 - [x] Harden `ON DUPLICATE KEY UPDATE` expression assignments so resolved current-row columns and `VALUES(column)` work, while unknown column references fail before backend execution.
+- [x] Replay deterministic multi-row `ON DUPLICATE KEY UPDATE` batches per row when each row needs a different unique-key arbiter.
+- [x] Fail closed for unsupported bounded single-table `UPDATE ... ORDER BY/LIMIT` shapes before backend execution.
 
 ## Runtime And Metadata Parity
 
@@ -85,8 +87,11 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Synthesize direct `information_schema.TABLES.AUTO_INCREMENT` values with schema-aware lookup instead of assuming only `public`.
 - [x] Expose direct `information_schema.plugins` as an empty queryable relation with MySQL-compatible columns.
 - [x] Expose direct privilege/security `information_schema` relations (`user_privileges`, `schema_privileges`, `table_privileges`, `column_privileges`, `applicable_roles`, `administrable_role_authorizations`, and `enabled_roles`) as empty queryable relations with MySQL-compatible columns.
+- [x] Expose direct MySQL `information_schema` role grant relations (`role_table_grants`, `role_column_grants`, and `role_routine_grants`) as empty queryable relations with MySQL-compatible columns.
 - [x] Emulate `ROW_COUNT()` after failed backend statements and explicit unsupported-SQL errors.
-- [ ] Decide whether to expose further MySQL `information_schema` role grant tables beyond the currently supported relations and empty routine/view/trigger/parameter/privilege/security shims; unsupported relations continue to fail explicitly.
+- [x] Decide whether to expose further MySQL `information_schema` role grant tables beyond the currently supported relations and empty routine/view/trigger/parameter/privilege/security shims; unsupported relations continue to fail explicitly.
+- [x] Preserve derivable numeric and time `DATE_FORMAT()` parts for zero or partial-zero literal dates while keeping calendar-dependent specifiers conservative.
+- [x] Support bounded `SHOW ... WHERE` predicates using `BINARY` string comparison and `LIKE ... ESCAPE`.
 
 ## Tests
 
@@ -108,3 +113,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL tests for standalone `LAST_INSERT_ID(expr)` assignment behavior, `GROUP_CONCAT` truncation and fail-closed forms, `information_schema.plugins`, optional-equals `ALTER TABLE` options, and upsert expression column validation.
 - [x] Add PostgreSQL tests for empty privilege/security `information_schema` relation reads, metadata columns, `USE information_schema` routing, and joins.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` after backend failures and explicit unsupported-SQL failures.
+- [x] Add PostgreSQL tests for deterministic multi-row ambiguous upsert replay, unsupported bounded `UPDATE` fail-closed behavior, role grant `information_schema` shims, zero-date `DATE_FORMAT()` literal masks, and `SHOW WHERE` `BINARY`/`ESCAPE` filters.

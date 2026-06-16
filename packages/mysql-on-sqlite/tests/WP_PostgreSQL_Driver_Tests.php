@@ -6263,6 +6263,80 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests multi-row upserts replay rows that conflict on different unique keys.
+	 */
+	public function test_multi_row_on_duplicate_key_update_replays_distinct_ambiguous_conflict_targets(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO ambiguous_upsert (id, slug, value) VALUES (1, 'one', 'old-id'), (2, 'two', 'old-slug')" );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`)
+			VALUES (1, 'fresh', 'updated-id'), (3, 'two', 'updated-slug')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (1, \'fresh\', \'updated-id\') ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+				'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (3, \'two\', \'updated-slug\') ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			)
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'slug'  => 'one',
+					'value' => 'updated-id',
+				),
+				(object) array(
+					'id'    => '2',
+					'slug'  => 'two',
+					'value' => 'updated-slug',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests multi-row upserts replay incoming duplicates on a secondary unique key.
+	 */
+	public function test_multi_row_on_duplicate_key_update_replays_incoming_secondary_unique_conflicts(): void {
+		$driver = $this->create_driver();
+
+		$this->install_ambiguous_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `ambiguous_upsert` (`id`, `slug`, `value`)
+			VALUES (1, 'shared', 'first'), (2, 'shared', 'second')
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (1, \'shared\', \'first\') ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+				'INSERT INTO "ambiguous_upsert" ("id", "slug", "value") VALUES (2, \'shared\', \'second\') ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			)
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM ambiguous_upsert' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'slug'  => 'shared',
+					'value' => 'second',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests SELECT-sourced upserts resolve ambiguous targets from literal source rows.
 	 */
 	public function test_insert_select_on_duplicate_key_update_uses_conflicting_unique_key_for_literal_select(): void {
@@ -7274,6 +7348,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'UPDATE "wptests_update_limited" SET "value" = 5 WHERE (ctid IN (SELECT ctid FROM "wptests_update_limited" WHERE id > 0 ORDER BY id DESC LIMIT 2 OFFSET 1)) AND ("value" IS DISTINCT FROM (5))',
 			$sql
 		);
+	}
+
+	/**
+	 * Tests unsupported bounded UPDATE ORDER BY/LIMIT forms fail before backend execution.
+	 */
+	public function test_unsupported_simple_update_order_by_limit_shapes_fail_closed_before_backend(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_unsupported_limit (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+
+		foreach (
+			array(
+				"UPDATE wptests_update_unsupported_limit SET status = 'x' ORDER BY LENGTH(status) LIMIT 1",
+				"UPDATE wptests_update_unsupported_limit SET status = 'x' LIMIT bad",
+				"UPDATE wptests_update_unsupported_limit SET status = 'x' ORDER BY id LIMIT bad",
+				"UPDATE wptests_update_unsupported_limit SET status = 'x' ORDER BY id LIMIT 1, bad",
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported UPDATE statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
@@ -9415,7 +9520,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				FROM_UNIXTIME(0, '0.%i%s') AS formatted_minute_second_fraction,
 				FROM_UNIXTIME(1609632000, '%U %u %V %v %X %x') AS formatted_week_modes,
 				FROM_UNIXTIME(NULL, 'literal') AS null_literal,
-				DATE_FORMAT(NULL, '%%') AS null_percent"
+				FROM_UNIXTIME(NULL, '') AS null_empty_from_unixtime,
+				DATE_FORMAT(NULL, '%%') AS null_percent,
+				DATE_FORMAT(NULL, '') AS null_empty_format"
 		);
 
 		$this->assertNotNull( $sql );
@@ -9453,7 +9560,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "'SS'", $sql );
 		$this->assertStringContainsString( "'US'", $sql );
 		$this->assertStringContainsString( "CASE WHEN CAST(TO_TIMESTAMP(CAST(NULL AS double precision)) AT TIME ZONE 'UTC' AS text) IS NULL OR", $sql );
-		$this->assertStringContainsString( 'CASE WHEN CAST(NULL AS text) IS NULL OR', $sql );
+		$this->assertStringContainsString( "THEN NULL ELSE '' END AS null_empty_from_unixtime", $sql );
+		$this->assertStringContainsString( 'CASE WHEN CAST(NULL AS text) IS NULL THEN NULL WHEN', $sql );
+		$this->assertStringContainsString( "THEN '' ELSE '' END AS null_empty_format", $sql );
 		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
 		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 	}
@@ -13077,6 +13186,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
 		$this->assertStringNotContainsString( "CAST('2020-00-15 13:05:00' AS timestamp)", $sql );
 		$this->assertStringNotContainsString( "CAST('2020-01-00 13:05:00' AS timestamp)", $sql );
+	}
+
+	/**
+	 * Tests DATE_FORMAT derives numeric/time parts from zero-ish dates without timestamp casts.
+	 */
+	public function test_mysql_date_format_zero_date_numeric_and_time_specifiers_are_translated_to_postgresql(): void {
+		$driver         = $this->create_driver();
+		$expression_sql = "CAST('2006-06-00 13:04:05.123' AS text)";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT DATE_FORMAT('2006-06-00 13:04:05.123', '%Y %y %m %c %d %e %D %H %k %h %I %l %i %s %S %T %r %p %f %% %q') AS formatted_date"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WHEN ' . $this->get_expected_zero_date_condition_sql( $expression_sql ) . ' THEN SUBSTRING(' . $expression_sql . ' FROM 1 FOR 4)', $sql );
+		$this->assertStringContainsString( 'SUBSTRING(' . $expression_sql . ' FROM 6 FOR 2)', $sql );
+		$this->assertStringContainsString( 'CAST(CAST(SUBSTRING(' . $expression_sql . ' FROM 6 FOR 2) AS integer) AS text)', $sql );
+		$this->assertStringContainsString( 'SUBSTRING(' . $expression_sql . ' FROM 9 FOR 2)', $sql );
+		$this->assertStringContainsString( "CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN SUBSTRING($expression_sql FROM 12 FOR 2) ELSE '00' END", $sql );
+		$this->assertStringContainsString( 'LPAD(CAST(MOD(CAST(CASE WHEN ' . $expression_sql, $sql );
+		$this->assertStringContainsString( "CASE WHEN CAST(CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN SUBSTRING($expression_sql FROM 12 FOR 2) ELSE '00' END AS integer) < 12 THEN 'AM' ELSE 'PM' END", $sql );
+		$this->assertStringContainsString( "LEFT(RPAD(SUBSTRING($expression_sql FROM '[.]([0-9]+)'), 6, '0'), 6)", $sql );
+		$this->assertStringContainsString( "'%'", $sql );
+		$this->assertStringContainsString( "|| '%q'", $sql );
+		$this->assertStringNotContainsString( "CAST('2006-06-00 13:04:05.123' AS timestamp)", $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
+
+	/**
+	 * Tests DATE_FORMAT keeps NULL semantics for zero-ish dates requiring a real calendar date.
+	 */
+	public function test_mysql_date_format_zero_date_calendar_specifiers_return_null_for_postgresql(): void {
+		$driver         = $this->create_driver();
+		$expression_sql = "CAST('2006-06-00' AS text)";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT DATE_FORMAT('2006-06-00', '%Y %W') AS formatted_date"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WHEN ' . $this->get_expected_zero_date_condition_sql( $expression_sql ) . ' THEN NULL ELSE', $sql );
+		$this->assertStringContainsString( "TO_CHAR(" . $this->get_expected_zero_date_safe_timestamp_sql( "'2006-06-00'" ) . ", 'FMDay')", $sql );
+		$this->assertStringNotContainsString( "CAST('2006-06-00' AS timestamp)", $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 	}
 
 	/**
@@ -17115,6 +17272,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
 
+		$result = $driver->query( "SHOW COLUMNS FROM wptests_options WHERE BINARY Field = 'OPTION_ID'" );
+		$this->assertSame( array(), $result );
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
 		$this->assertSame( array(), $driver->query( 'SHOW COLUMNS FROM wptests_options WHERE NOT 1' ) );
 		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
 	}
@@ -18307,6 +18468,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
+		$case_insensitive_threads = $driver->query( "SHOW STATUS WHERE Variable_name LIKE 'threads_%'" );
+		$this->assertSame(
+			array(
+				'Threads_cached',
+				'Threads_connected',
+				'Threads_created',
+				'Threads_running',
+			),
+			array_map(
+				static function ( $row ): string {
+					return $row->Variable_name;
+				},
+				$case_insensitive_threads
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$binary_threads = $driver->query( "SHOW STATUS WHERE BINARY Variable_name LIKE 'threads_%'" );
+		$this->assertSame( array(), $binary_threads );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$escaped_threads = $driver->query( "SHOW STATUS WHERE Variable_name LIKE 'Threads!_%' ESCAPE '!'" );
+		$this->assertSame(
+			array(
+				'Threads_cached',
+				'Threads_connected',
+				'Threads_created',
+				'Threads_running',
+			),
+			array_map(
+				static function ( $row ): string {
+					return $row->Variable_name;
+				},
+				$escaped_threads
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
 		$selected_values = $driver->query( "SHOW STATUS WHERE Variable_name IN ('Uptime', 'Threads_running')" );
 		$this->assertSame(
 			array(
@@ -18342,6 +18541,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"SHOW STATUS WHERE Unknown = '0'",
 			'SHOW STATUS LIMIT 1',
 			'SHOW STATUS LIKE Threads_%',
+			"SHOW STATUS WHERE Variable_name LIKE 'Threads!!%' ESCAPE '!!'",
 		);
 
 		foreach ( $queries as $query ) {
@@ -18576,6 +18776,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$where_rows = $driver->query( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
 		$this->assertSame( array( 'utf8_bin' ), array( $where_rows[0]->Collation ) );
+
+		$case_insensitive_charset_rows = $driver->query( "SHOW COLLATION WHERE Charset = 'UTF8'" );
+		$this->assertSame(
+			array( 'utf8_bin', 'utf8_general_ci', 'utf8_unicode_ci' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Collation;
+				},
+				$case_insensitive_charset_rows
+			)
+		);
+
+		$binary_charset_rows = $driver->query( "SHOW COLLATION WHERE BINARY Charset = 'UTF8'" );
+		$this->assertSame( array(), $binary_charset_rows );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$where_expression_rows = $driver->query( "SHOW COLLATION WHERE Collation LIKE 'utf8%' AND Charset = 'utf8'" );
 		$this->assertSame(
@@ -19374,6 +19589,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'applicable_roles'                   => array( 'USER', 'HOST', 'GRANTEE', 'GRANTEE_HOST', 'ROLE_NAME', 'ROLE_HOST', 'IS_GRANTABLE', 'IS_DEFAULT', 'IS_MANDATORY' ),
 			'administrable_role_authorizations' => array( 'USER', 'HOST', 'GRANTEE', 'GRANTEE_HOST', 'ROLE_NAME', 'ROLE_HOST', 'IS_GRANTABLE', 'IS_DEFAULT', 'IS_MANDATORY' ),
 			'enabled_roles'                      => array( 'ROLE_NAME', 'ROLE_HOST', 'IS_DEFAULT', 'IS_MANDATORY' ),
+			'role_table_grants'                  => array( 'GRANTOR', 'GRANTOR_HOST', 'GRANTEE', 'GRANTEE_HOST', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			'role_column_grants'                 => array( 'GRANTOR', 'GRANTOR_HOST', 'GRANTEE', 'GRANTEE_HOST', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'COLUMN_NAME', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			'role_routine_grants'                => array( 'GRANTOR', 'GRANTOR_HOST', 'GRANTEE', 'GRANTEE_HOST', 'SPECIFIC_CATALOG', 'SPECIFIC_SCHEMA', 'SPECIFIC_NAME', 'ROUTINE_CATALOG', 'ROUTINE_SCHEMA', 'ROUTINE_NAME', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
 		);
 
 		foreach ( $relations as $relation => $columns ) {
@@ -19394,9 +19612,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$columns = $driver->query( "SHOW COLUMNS FROM enabled_roles LIKE 'IS_%'" );
 		$this->assertSame( array( 'IS_DEFAULT', 'IS_MANDATORY' ), array_column( $columns, 'Field' ) );
 
+		$grant_columns = $driver->query( "SHOW COLUMNS FROM role_table_grants LIKE '%GRANT%'" );
+		$this->assertSame(
+			array( 'GRANTOR', 'GRANTOR_HOST', 'GRANTEE', 'GRANTEE_HOST', 'IS_GRANTABLE' ),
+			array_column( $grant_columns, 'Field' )
+		);
+
+		$describe = $driver->query( 'DESCRIBE role_routine_grants' );
+		$this->assertSame(
+			array(
+				'GRANTOR',
+				'GRANTOR_HOST',
+				'GRANTEE',
+				'GRANTEE_HOST',
+				'SPECIFIC_CATALOG',
+				'SPECIFIC_SCHEMA',
+				'SPECIFIC_NAME',
+				'ROUTINE_CATALOG',
+				'ROUTINE_SCHEMA',
+				'ROUTINE_NAME',
+				'PRIVILEGE_TYPE',
+				'IS_GRANTABLE',
+			),
+			array_column( $describe, 'Field' )
+		);
+
+		$qualified_describe = $driver->query( 'DESC information_schema.role_table_grants' );
+		$this->assertSame(
+			array( 'GRANTOR', 'GRANTOR_HOST', 'GRANTEE', 'GRANTEE_HOST', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			array_column( $qualified_describe, 'Field' )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
 		$joined = $driver->query(
 			'SELECT p.GRANTEE, t.TABLE_NAME
-			FROM information_schema.table_privileges AS p
+			FROM information_schema.role_table_grants AS p
 			JOIN information_schema.tables AS t
 				ON p.TABLE_SCHEMA = t.TABLE_SCHEMA
 				AND p.TABLE_NAME = t.TABLE_NAME'
@@ -19404,6 +19654,24 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( array(), $joined );
 		$this->assertSame( array( 'GRANTEE', 'TABLE_NAME' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$role_join = $driver->query(
+			'SELECT c.GRANTEE, r.ROUTINE_NAME
+			FROM information_schema.role_column_grants AS c
+			LEFT JOIN information_schema.role_routine_grants AS r
+				ON r.GRANTEE = c.GRANTEE'
+		);
+
+		$this->assertSame( array(), $role_join );
+		$this->assertSame( array( 'GRANTEE', 'ROUTINE_NAME' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		try {
+			$driver->query( 'SELECT * FROM information_schema.role_database_grants' );
+			$this->fail( 'Expected unsupported role grant relation to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
