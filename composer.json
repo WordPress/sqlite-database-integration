@@ -45,6 +45,7 @@
 		],
 		"test-e2e": [
 			"@wp-test-ensure-env @no_additional_args",
+			"npm --prefix wordpress run env:cli -- plugin install query-monitor --force @no_additional_args",
 			"rm -f tests/e2e/package.json tests/e2e/node_modules @no_additional_args",
 			"ln -s ../../wordpress/package.json tests/e2e/package.json @no_additional_args",
 			"ln -s ../../wordpress/node_modules tests/e2e/node_modules @no_additional_args",
@@ -81,8 +82,10 @@
 		],
 		"wp-test-e2e": [
 			"@wp-test-ensure-env @no_additional_args",
+			"@wp-test-install-postgresql-site @no_additional_args",
 			"npm --prefix wordpress run test:e2e -- @additional_args"
 		],
+		"wp-test-install-postgresql-site": "node ./bin/wp-test-install-postgresql-site.js",
 		"wp-test-clean": [
 			"npm --prefix wordpress run env:clean",
 			"rm -rf wordpress/src/wp-content/database/.ht.sqlite"

@@ -174,6 +174,27 @@ for ( const [ filename, composerCommand ] of [
 	assertIncludes( filename, `run: ${ composerCommand }`, `e2e workflow must run ${ composerCommand }.` );
 }
 
+assertIncludes(
+	'end-to-end-tests.yml',
+	'WP_TEST_DB_BACKEND: sqlite',
+	'plugin Query Monitor e2e workflow must explicitly run the SQLite backend.'
+);
+assertIncludes(
+	'wp-tests-end-to-end.yml',
+	'backend:',
+	'WordPress e2e workflow must define a database backend matrix.'
+);
+assertIncludes(
+	'wp-tests-end-to-end.yml',
+	'- postgresql',
+	'WordPress e2e workflow matrix must include PostgreSQL.'
+);
+assertIncludes(
+	'wp-tests-end-to-end.yml',
+	'WP_TEST_DB_BACKEND: ${{ matrix.backend }}',
+	'WordPress e2e workflow must pass the selected database backend to composer.'
+);
+
 const progressBlock = getJobBlock( readWorkflow( 'wp-tests-phpunit.yml' ), 'update-pr-description' );
 if ( ! progressBlock ) {
 	fail( 'wp-tests-phpunit.yml', 'missing update-pr-description job.' );

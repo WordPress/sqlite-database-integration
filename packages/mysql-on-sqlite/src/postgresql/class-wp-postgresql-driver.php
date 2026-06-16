@@ -1068,6 +1068,22 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
+		$translated_query = $this->translate_mysql_version_function_select_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
+		$translated_query = $this->translate_wordpress_postmeta_distinct_meta_key_having_query( $query );
+		if ( null !== $translated_query ) {
+			return array(
+				'sql'        => $translated_query,
+				'translated' => true,
+			);
+		}
+
 		$translated_query = $this->translate_simple_mysql_select_query( $query );
 		if ( null !== $translated_query ) {
 			return array(
@@ -5231,7 +5247,7 @@ $wp_mysql_on_update$',
 
 		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
 		$table_name   = $table_reference['table'];
-		$clause     = $this->trim_mysql_statement_fragment(
+		$clause       = $this->trim_mysql_statement_fragment(
 			$this->get_mysql_token_range_bytes( $query, $query_tokens, $position, $statement_end )
 		);
 
@@ -5271,6 +5287,8 @@ $wp_mysql_on_update$',
 			}
 		}
 
+		$this->preflight_mysql_dbdelta_alter_table_metadata_operations( $table_schema, $table_name, $metadata_operations );
+
 		if ( 1 === count( $metadata_operations ) ) {
 			$metadata          = $metadata_operations[0];
 			$metadata['schema'] = $table_schema;
@@ -5294,6 +5312,68 @@ $wp_mysql_on_update$',
 			'statements' => $statements,
 			'metadata'   => $metadata,
 		);
+	}
+
+	/**
+	 * Validate ALTER TABLE metadata operations before backend DDL executes.
+	 *
+	 * @param string  $table_schema        Backend schema name.
+	 * @param string  $table_name          Table name.
+	 * @param array[] $metadata_operations ALTER metadata operations.
+	 */
+	private function preflight_mysql_dbdelta_alter_table_metadata_operations( string $table_schema, string $table_name, array $metadata_operations ): void {
+		$added_columns = array();
+		$added_indexes = array();
+
+		foreach ( $metadata_operations as $metadata ) {
+			if ( 'add_column' === ( $metadata['operation'] ?? '' ) ) {
+				$column_name = (string) ( $metadata['column']['name'] ?? '' );
+				if ( '' !== $column_name ) {
+					$column_key = strtolower( $column_name );
+					if (
+						isset( $added_columns[ $column_key ] )
+						|| $this->mysql_table_has_column_for_translation( $table_schema, $table_name, $column_name )
+					) {
+						throw new InvalidArgumentException( sprintf( "Duplicate column name '%s'.", $column_name ) );
+					}
+					$added_columns[ $column_key ] = true;
+				}
+
+				foreach ( $metadata['indexes'] ?? array() as $index ) {
+					$this->preflight_mysql_dbdelta_alter_table_add_index_metadata( $table_schema, $table_name, $index, $added_indexes );
+				}
+				continue;
+			}
+
+			if ( 'add_index' === ( $metadata['operation'] ?? '' ) ) {
+				$this->preflight_mysql_dbdelta_alter_table_add_index_metadata( $table_schema, $table_name, $metadata['index'] ?? array(), $added_indexes );
+			}
+		}
+	}
+
+	/**
+	 * Validate one ALTER TABLE ADD INDEX metadata operation.
+	 *
+	 * @param string $table_schema  Backend schema name.
+	 * @param string $table_name    Table name.
+	 * @param array  $index         Index metadata.
+	 * @param array  $added_indexes Index names already added by this ALTER statement.
+	 */
+	private function preflight_mysql_dbdelta_alter_table_add_index_metadata( string $table_schema, string $table_name, array $index, array &$added_indexes ): void {
+		$index_name = (string) ( $index['name'] ?? '' );
+		if ( '' === $index_name ) {
+			return;
+		}
+
+		$index_key = strtolower( $index_name );
+		if (
+			isset( $added_indexes[ $index_key ] )
+			|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $index_name )
+		) {
+			throw new InvalidArgumentException( sprintf( "Duplicate key name '%s'.", $index_name ) );
+		}
+
+		$added_indexes[ $index_key ] = true;
 	}
 
 	/**
@@ -18675,8 +18755,7 @@ WHERE option_name IN (
 			$tokens,
 			$set_position + 1,
 			$set_end,
-			$table_references,
-			strtolower( $first_reference_alias )
+			$table_references
 		);
 		if ( null === $target_reference ) {
 			return null;
@@ -18763,14 +18842,13 @@ WHERE option_name IN (
 	 * @param int              $start                 First SET-clause token position.
 	 * @param int              $end                   Final SET-clause token position, exclusive.
 	 * @param array[]          $table_references      Joined table references.
-	 * @param string           $default_target_alias  Default target alias key for unqualified assignments.
 	 * @return array|null Target table reference, or null when unsupported.
 	 */
-	private function get_mysql_joined_update_target_reference( array $tokens, int $start, int $end, array $table_references, string $default_target_alias ): ?array {
+	private function get_mysql_joined_update_target_reference( array $tokens, int $start, int $end, array $table_references ): ?array {
 		$target_alias_key = null;
 
 		for ( $position = $start; $position < $end; ) {
-			$target = $this->parse_mysql_joined_update_assignment_target( $tokens, $position, $end, $table_references, $default_target_alias );
+			$target = $this->parse_mysql_joined_update_assignment_target( $tokens, $position, $end, $table_references );
 			if ( null === $target ) {
 				return null;
 			}
@@ -18826,10 +18904,9 @@ WHERE option_name IN (
 	 * @param int              $position              Assignment target start.
 	 * @param int              $end                   Final SET-clause token position, exclusive.
 	 * @param array[]          $table_references      Joined table references.
-	 * @param string           $default_target_alias  Default target alias key for unqualified assignments.
 	 * @return array{alias_key: string, end: int}|null Target data, or null when unsupported.
 	 */
-	private function parse_mysql_joined_update_assignment_target( array $tokens, int $position, int $end, array $table_references, string $default_target_alias ): ?array {
+	private function parse_mysql_joined_update_assignment_target( array $tokens, int $position, int $end, array $table_references ): ?array {
 		$first_identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null );
 		if ( null === $first_identifier ) {
 			return null;
@@ -18852,8 +18929,16 @@ WHERE option_name IN (
 			);
 		}
 
+		$target_reference = $this->get_mysql_joined_update_reference_for_unqualified_column(
+			$first_identifier,
+			$table_references
+		);
+		if ( null === $target_reference ) {
+			return null;
+		}
+
 		return array(
-			'alias_key' => $default_target_alias,
+			'alias_key' => $target_reference['alias_key'],
 			'end'       => $position + 1,
 		);
 	}
@@ -18891,6 +18976,92 @@ WHERE option_name IN (
 		}
 
 		return $matched_reference;
+	}
+
+	/**
+	 * Resolve an unqualified joined UPDATE assignment column to one table reference.
+	 *
+	 * @param string  $column_name      MySQL column name.
+	 * @param array[] $table_references Joined table references.
+	 * @return array|null Table reference, or null when ambiguous, derived, or unknown.
+	 */
+	private function get_mysql_joined_update_reference_for_unqualified_column( string $column_name, array $table_references ): ?array {
+		$real_table_references = array();
+		foreach ( $table_references as $table_reference ) {
+			if (
+				empty( $table_reference['derived'] )
+				&& ! empty( $table_reference['table'] )
+			) {
+				$real_table_references[] = $table_reference;
+			}
+		}
+
+		if ( 1 === count( $real_table_references ) ) {
+			return $real_table_references[0];
+		}
+
+		$matched_reference = null;
+		foreach ( $real_table_references as $table_reference ) {
+			$table_name   = (string) $table_reference['table'];
+			$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+			if ( ! $this->mysql_table_has_column_for_translation( $table_schema, $table_name, $column_name ) ) {
+				continue;
+			}
+
+			if ( null !== $matched_reference ) {
+				return null;
+			}
+
+			$matched_reference = $table_reference;
+		}
+
+		return $matched_reference;
+	}
+
+	/**
+	 * Check whether a table contains a column for SQL translation decisions.
+	 *
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  MySQL column name.
+	 * @return bool Whether the table contains the column.
+	 */
+	private function mysql_table_has_column_for_translation( string $table_schema, string $table_name, string $column_name ): bool {
+		if ( $this->mysql_table_has_column_metadata( $table_schema, $table_name ) ) {
+			return null !== $this->get_mysql_table_column_type( $table_schema, $table_name, $column_name );
+		}
+
+		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if ( 'sqlite' === $driver_name ) {
+			$schema_prefix = 'temp' === $table_schema ? 'temp.' : '';
+			$stmt          = $this->connection->query(
+				sprintf(
+					'PRAGMA %stable_info(%s)',
+					$schema_prefix,
+					$this->connection->quote_identifier( $table_name )
+				)
+			);
+
+			foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
+				if ( 0 === strcasecmp( $column_name, (string) ( $column['name'] ?? '' ) ) ) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		$stmt = $this->connection->query(
+			'SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = ?
+				AND table_name = ?
+				AND LOWER(column_name) = LOWER(?)
+			LIMIT 1',
+			array( $table_schema, $table_name, $column_name )
+		);
+
+		return false !== $stmt->fetchColumn();
 	}
 
 	/**
@@ -18991,8 +19162,12 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$select_start = $position + 1;
-		$select_end   = $after_close - 1;
+		$select_start  = $position + 1;
+		$select_end    = $after_close - 1;
+		$locking_start = $this->find_mysql_select_row_locking_clause_start( $tokens, $select_start + 1, $select_end );
+		if ( null !== $locking_start ) {
+			$select_end = $locking_start;
+		}
 		if ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
 			return null;
 		}
@@ -20316,26 +20491,67 @@ WHERE option_name IN (
 	 * @return string|null PostgreSQL value SQL, or null when the literal does not need normalization.
 	 */
 	private function get_non_strict_mysql_dml_date_time_literal_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
-		if (
-			$start + 1 !== $end
-			|| ! isset( $tokens[ $start ] )
-			|| ! $this->is_mysql_string_literal_token( $tokens[ $start ] )
-		) {
-			return null;
-		}
-
 		$base_type = $this->get_base_mysql_dml_column_type( (string) ( $column_metadata['column_type'] ?? '' ) );
 		if ( ! in_array( $base_type, array( 'date', 'datetime', 'timestamp' ), true ) ) {
 			return null;
 		}
 
-		$value         = $tokens[ $start ]->get_value();
-		$storage_value = $this->get_non_strict_mysql_dml_date_time_storage_value( $base_type, $value );
-		if ( null === $storage_value || $storage_value === $value ) {
+		$literal = $this->get_mysql_dml_literal_value( $tokens, $start, $end );
+		if ( null === $literal || null === $literal['value'] ) {
 			return null;
 		}
 
-		return $this->connection->quote( $storage_value );
+		if ( 'string' === $literal['type'] ) {
+			$value         = $literal['value'];
+			$storage_value = $this->get_non_strict_mysql_dml_date_time_storage_value( $base_type, $value );
+			if ( null === $storage_value || $storage_value === $value ) {
+				return null;
+			}
+
+			return $this->connection->quote( $storage_value );
+		}
+
+		if (
+			'boolean' !== $literal['type']
+			&& ( 'numeric' !== $literal['type'] || ! $this->is_mysql_zero_numeric_literal_value( $literal['value'] ) )
+		) {
+			return null;
+		}
+
+		return $this->connection->quote( $this->get_mysql_zero_date_time_storage_value_for_type( $base_type ) );
+	}
+
+	/**
+	 * Get the MySQL zero storage value for a date/time type.
+	 *
+	 * @param string $base_type Base MySQL date/time column type.
+	 * @return string Zero storage value.
+	 */
+	private function get_mysql_zero_date_time_storage_value_for_type( string $base_type ): string {
+		if ( 'date' === $base_type ) {
+			return '0000-00-00';
+		}
+
+		return '0000-00-00 00:00:00';
+	}
+
+	/**
+	 * Check whether a parsed numeric literal represents MySQL zero.
+	 *
+	 * @param string $value Original numeric literal bytes.
+	 * @return bool Whether the value is numerically zero.
+	 */
+	private function is_mysql_zero_numeric_literal_value( string $value ): bool {
+		$value = trim( $value );
+		if ( '' === $value ) {
+			return false;
+		}
+
+		if ( isset( $value[0] ) && '+' === $value[0] ) {
+			$value = substr( $value, 1 );
+		}
+
+		return 1 === preg_match( '/^-?(?:0+)(?:\.0+)?(?:[eE][+-]?0+)?$/', $value );
 	}
 
 	/**
@@ -20785,6 +21001,255 @@ WHERE option_name IN (
 	 */
 	private function is_mysql_sql_mode_active( string $mode ): bool {
 		return $this->is_sql_mode_active( $mode );
+	}
+
+	/**
+	 * Translate SELECT VERSION() while preserving MySQL's visible output label.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_mysql_version_function_select_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, 1, $statement_end );
+		if ( null === $projection_ranges || 1 !== count( $projection_ranges ) ) {
+			return null;
+		}
+
+		$projection = $projection_ranges[0];
+		$bounds     = $this->get_mysql_common_function_bounds( $tokens, $projection['start'], $projection['end'] );
+		if (
+			null === $bounds
+			|| 'version' !== $bounds['function']
+			|| $bounds['close'] + 1 !== $projection['end']
+		) {
+			return null;
+		}
+
+		return sprintf(
+			'SELECT %s AS %s',
+			$this->connection->quote( $this->get_mysql_version_string() ),
+			$this->connection->quote_identifier( 'VERSION()' )
+		);
+	}
+
+	/**
+	 * Translate WordPress's distinct postmeta-key lookup that uses HAVING without GROUP BY.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_wordpress_postmeta_distinct_meta_key_having_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::DISTINCT_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$projection_start = 2;
+		$statement_end    = $this->get_mysql_statement_end_position( $tokens, $projection_start );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $projection_start, $statement_end );
+		$select_end     = $limit_position ?? $statement_end;
+		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			return null;
+		}
+
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $projection_start, $select_end );
+		if (
+			null === $order_position
+			|| ! isset( $tokens[ $order_position + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
+			|| $order_position + 2 >= $select_end
+		) {
+			return null;
+		}
+
+		$having_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::HAVING_SYMBOL, $projection_start, $order_position );
+		if ( null === $having_position || $having_position + 1 >= $order_position ) {
+			return null;
+		}
+
+		if (
+			null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $having_position )
+			|| $this->contains_top_level_mysql_token(
+				$tokens,
+				$projection_start,
+				$select_end,
+				array(
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::INTO_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $having_position );
+		if ( null === $from_position || $projection_start === $from_position ) {
+			return null;
+		}
+
+		$projection_items = $this->parse_mysql_select_projection_items( $tokens, $projection_start, $from_position );
+		if ( null === $projection_items || 1 !== count( $projection_items ) ) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $having_position );
+		$from_end       = $where_position ?? $having_position;
+		$table          = $this->parse_mysql_table_reference( $tokens, $from_position + 1, $from_end );
+		if (
+			null === $table
+			|| $table['position'] !== $from_end
+			|| 'public' !== $table['schema']
+			|| ! $this->is_mysql_wordpress_table_name( $table['table'], 'postmeta' )
+			|| ! $this->is_mysql_postmeta_meta_key_reference(
+				$tokens,
+				$projection_items[0]['expression_start'],
+				$projection_items[0]['expression_end'],
+				$table
+			)
+			|| ! $this->is_mysql_postmeta_meta_key_not_like_predicate( $tokens, $having_position + 1, $order_position, $table )
+			|| ! $this->is_mysql_postmeta_meta_key_order_by_clause( $tokens, $order_position + 2, $select_end, $table )
+		) {
+			return null;
+		}
+
+		$from_sql   = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $from_end );
+		$having_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $having_position + 1, $order_position );
+		$order_sql  = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $order_position, $select_end );
+
+		if ( null !== $where_position ) {
+			$where_sql = sprintf(
+				'(%s) AND (%s)',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $having_position ),
+				$having_sql
+			);
+		} else {
+			$where_sql = $having_sql;
+		}
+
+		$sql = sprintf(
+			'SELECT DISTINCT %s %s WHERE %s %s',
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $from_position ),
+			$from_sql,
+			$where_sql,
+			$order_sql
+		);
+
+		if ( null !== $limit_position ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Check whether a token range is a postmeta.meta_key reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @param array            $table  Parsed postmeta table reference.
+	 * @return bool Whether the range references meta_key.
+	 */
+	private function is_mysql_postmeta_meta_key_reference( array $tokens, int $start, int $end, array $table ): bool {
+		$bounds    = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
+		$reference = $this->parse_mysql_column_reference( $tokens, $bounds['start'], $bounds['end'] );
+		if (
+			null === $reference
+			|| $reference['end'] !== $bounds['end']
+			|| 0 !== strcasecmp( $reference['column'], 'meta_key' )
+		) {
+			return false;
+		}
+
+		return null === $reference['qualifier']
+			|| $this->is_mysql_dml_table_qualifier( $reference['qualifier'], $table['table'], $table['alias'] );
+	}
+
+	/**
+	 * Check whether a HAVING predicate is meta_key NOT LIKE pattern.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First HAVING predicate token.
+	 * @param int              $end    Final HAVING predicate token, exclusive.
+	 * @param array            $table  Parsed postmeta table reference.
+	 * @return bool Whether the predicate is supported.
+	 */
+	private function is_mysql_postmeta_meta_key_not_like_predicate( array $tokens, int $start, int $end, array $table ): bool {
+		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
+		if (
+			null === $reference
+			|| ! $this->is_mysql_postmeta_meta_key_reference( $tokens, $reference['start'], $reference['end'], $table )
+			|| ! isset( $tokens[ $reference['end'] ], $tokens[ $reference['end'] + 1 ] )
+			|| WP_MySQL_Lexer::NOT_SYMBOL !== $tokens[ $reference['end'] ]->id
+			|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $reference['end'] + 1 ]->id
+			|| $reference['end'] + 2 >= $end
+		) {
+			return false;
+		}
+
+		return ! $this->contains_top_level_mysql_token(
+			$tokens,
+			$reference['end'] + 2,
+			$end,
+			array(
+				WP_MySQL_Lexer::AND_SYMBOL,
+				WP_MySQL_Lexer::OR_SYMBOL,
+				WP_MySQL_Lexer::SELECT_SYMBOL,
+			)
+		);
+	}
+
+	/**
+	 * Check whether an ORDER BY clause sorts by meta_key.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First ORDER BY item token.
+	 * @param int              $end    Final ORDER BY token, exclusive.
+	 * @param array            $table  Parsed postmeta table reference.
+	 * @return bool Whether the ORDER BY clause is supported.
+	 */
+	private function is_mysql_postmeta_meta_key_order_by_clause( array $tokens, int $start, int $end, array $table ): bool {
+		$order_items = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $order_items || 1 !== count( $order_items ) ) {
+			return false;
+		}
+
+		$item_end = $order_items[0]['end'];
+		if (
+			isset( $tokens[ $item_end - 1 ] )
+			&& (
+				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $item_end - 1 ]->id
+				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $item_end - 1 ]->id
+			)
+		) {
+			--$item_end;
+		}
+
+		return $this->is_mysql_postmeta_meta_key_reference( $tokens, $order_items[0]['start'], $item_end, $table );
 	}
 
 	/**
@@ -34929,7 +35394,7 @@ FROM (
 				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')" : null;
 
 			case 'version':
-				return 0 === $count ? $this->connection->quote( '5.5' ) : null;
+				return 0 === $count ? $this->connection->quote( $this->get_mysql_version_string() ) : null;
 
 			case 'database':
 			case 'schema':
@@ -37065,7 +37530,18 @@ FROM (
 			return $identifier;
 		}
 
-		if ( null !== $token && WP_MySQL_Lexer::VALUE_SYMBOL === $token->id ) {
+		if (
+			null !== $token
+			&& in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::COMMENT_SYMBOL,
+					WP_MySQL_Lexer::STATUS_SYMBOL,
+					WP_MySQL_Lexer::VALUE_SYMBOL,
+				),
+				true
+			)
+		) {
 			return $token->get_value();
 		}
 

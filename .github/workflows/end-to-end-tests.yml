@@ -35,8 +35,12 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Run end-to-end tests
+        env:
+          WP_TEST_DB_BACKEND: sqlite
         run: composer run test-e2e
 
       - name: Stop Docker containers
         if: always()
+        env:
+          WP_TEST_DB_BACKEND: sqlite
         run: composer run wp-test-clean

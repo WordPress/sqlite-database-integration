@@ -771,6 +771,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict INSERT normalizes temporal boolean and zero literals using MySQL metadata.
+	 */
+	public function test_non_strict_insert_normalizes_temporal_boolean_and_zero_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`)
+				VALUES (1, TRUE, FALSE, 0)'
+			)
+		);
+
+		$this->assertSame(
+			'INSERT INTO "wptests_strict_values" ("id", "date_value", "datetime_value", "timestamp_value") VALUES (1, \'0000-00-00\', \'0000-00-00 00:00:00\', \'0000-00-00 00:00:00\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT date_value, datetime_value, timestamp_value FROM wptests_strict_values WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00', $rows[0]->date_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->datetime_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->timestamp_value );
+	}
+
+	/**
+	 * Tests non-strict UPDATE normalizes temporal boolean and zero literals using MySQL metadata.
+	 */
+	public function test_non_strict_update_normalizes_temporal_boolean_and_zero_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`)
+			VALUES (1, '2025-01-01', '2025-01-01 00:00:00', '2025-01-01 00:00:00')"
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'UPDATE `wptests_strict_values`
+				SET `date_value` = TRUE,
+					`datetime_value` = FALSE,
+					`timestamp_value` = 0
+				WHERE `id` = 1'
+			)
+		);
+
+		$rows = $driver->query( 'SELECT date_value, datetime_value, timestamp_value FROM wptests_strict_values WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00', $rows[0]->date_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->datetime_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->timestamp_value );
+	}
+
+	/**
 	 * Tests strict integer DML rejects impossible coercions and MySQL range violations.
 	 */
 	public function test_strict_integer_literals_reject_invalid_values_and_out_of_range_values(): void {
@@ -3939,6 +3999,70 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict ON DUPLICATE KEY UPDATE normalizes temporal scalar assignment literals.
+	 */
+	public function test_non_strict_upsert_update_assignments_normalize_temporal_boolean_and_zero_literals(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`)
+			VALUES (1, '2025-01-01', '2025-01-01 00:00:00', '2025-01-01 00:00:00')"
+		);
+
+		$upsert = "INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`)
+			VALUES (1, '2026-01-01', '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `date_value` = TRUE,
+			                        `datetime_value` = FALSE,
+			                        `timestamp_value` = 0";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_strict_values" ("id", "date_value", "datetime_value", "timestamp_value") VALUES (1, \'2026-01-01\', \'2026-01-01 00:00:00\', \'2026-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "date_value" = \'0000-00-00\', "datetime_value" = \'0000-00-00 00:00:00\', "timestamp_value" = \'0000-00-00 00:00:00\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT date_value, datetime_value, timestamp_value FROM wptests_strict_values WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00', $rows[0]->date_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->datetime_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->timestamp_value );
+	}
+
+	/**
+	 * Tests non-strict ON DUPLICATE KEY UPDATE normalizes temporal scalar VALUES rows.
+	 */
+	public function test_non_strict_upsert_values_rows_normalize_temporal_boolean_and_zero_literals(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`)
+			VALUES (1, '2025-01-01', '2025-01-01 00:00:00', '2025-01-01 00:00:00')"
+		);
+
+		$upsert = 'INSERT INTO `wptests_strict_values` (`id`, `date_value`, `datetime_value`, `timestamp_value`)
+			VALUES (1, TRUE, FALSE, 0)
+			ON DUPLICATE KEY UPDATE `date_value` = VALUES(`date_value`),
+			                        `datetime_value` = VALUES(`datetime_value`),
+			                        `timestamp_value` = VALUES(`timestamp_value`)';
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_strict_values" ("id", "date_value", "datetime_value", "timestamp_value") VALUES (1, \'0000-00-00\', \'0000-00-00 00:00:00\', \'0000-00-00 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "date_value" = excluded."date_value", "datetime_value" = excluded."datetime_value", "timestamp_value" = excluded."timestamp_value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT date_value, datetime_value, timestamp_value FROM wptests_strict_values WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00', $rows[0]->date_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->datetime_value );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->timestamp_value );
+	}
+
+	/**
 	 * Tests non-strict ON DUPLICATE KEY UPDATE NULL assignments still fail for NOT NULL columns.
 	 */
 	public function test_non_strict_upsert_null_assignment_does_not_coerce_not_null_columns(): void {
@@ -4835,6 +4959,61 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests Action Scheduler claim UPDATE uses ordered limited derived sources.
+	 */
+	public function test_action_scheduler_claim_update_with_ordered_limited_derived_source(): void {
+		$driver = $this->create_driver();
+
+		$driver->set_sql_mode( '' );
+		$driver->query(
+			"CREATE TABLE wptests_actionscheduler_actions (
+				action_id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL,
+				scheduled_date_gmt TEXT NULL default '0000-00-00 00:00:00',
+				scheduled_date_local TEXT NULL default '0000-00-00 00:00:00',
+				priority INTEGER NOT NULL default '10',
+				attempts INTEGER NOT NULL default '0',
+				last_attempt_gmt TEXT NULL default '0000-00-00 00:00:00',
+				last_attempt_local TEXT NULL default '0000-00-00 00:00:00',
+				claim_id INTEGER NOT NULL default '0'
+			)"
+		);
+		$driver->query(
+			"INSERT INTO wptests_actionscheduler_actions
+				(action_id, status, scheduled_date_gmt, scheduled_date_local, priority, attempts, claim_id)
+			VALUES
+				(1, 'pending', '2025-09-03 12:00:00', '2025-09-03 12:00:00', 20, 1, 0),
+				(2, 'pending', '2025-09-03 11:00:00', '2025-09-03 11:00:00', 5, 2, 0),
+				(3, 'complete', '2025-09-03 10:00:00', '2025-09-03 10:00:00', 1, 0, 0),
+				(4, 'pending', '2025-09-03 09:00:00', '2025-09-03 09:00:00', 1, 0, 9),
+				(5, 'pending', '2025-09-04 09:00:00', '2025-09-04 09:00:00', 1, 0, 0)"
+		);
+
+		$update = "UPDATE wptests_actionscheduler_actions t1
+			JOIN (
+				SELECT action_id
+				FROM wptests_actionscheduler_actions
+				WHERE claim_id = 0 AND scheduled_date_gmt <= '2025-09-03 12:23:55' AND status = 'pending'
+				ORDER BY priority ASC, attempts ASC, scheduled_date_gmt ASC, action_id ASC
+				LIMIT 2
+				FOR UPDATE
+			) t2 ON t1.action_id = t2.action_id
+			SET claim_id = 37, last_attempt_gmt = '2025-09-03 12:23:55', last_attempt_local = '2025-09-03 12:23:55'";
+
+		$this->assertSame( 2, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'ORDER BY priority ASC, attempts ASC, scheduled_date_gmt ASC, action_id ASC LIMIT 2', $sql );
+		$this->assertStringNotContainsString( 'FOR UPDATE', $sql );
+
+		$rows = $driver->query( 'SELECT action_id, claim_id, last_attempt_gmt, last_attempt_local FROM wptests_actionscheduler_actions ORDER BY action_id' );
+		$this->assertSame( array( '37', '37', '0', '9', '0' ), array_column( $rows, 'claim_id' ) );
+		$this->assertSame( '2025-09-03 12:23:55', $rows[0]->last_attempt_gmt );
+		$this->assertSame( '2025-09-03 12:23:55', $rows[1]->last_attempt_local );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[2]->last_attempt_gmt );
+	}
+
+	/**
 	 * Tests MySQL inner joined UPDATE ... USING statements translate to PostgreSQL predicates.
 	 */
 	public function test_inner_join_update_using_is_translated_to_postgresql(): void {
@@ -5000,7 +5179,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query(
 			'CREATE TABLE wptests_update_multi_source (
 				id INTEGER PRIMARY KEY,
-				status TEXT NOT NULL
+				status TEXT NOT NULL,
+				comment TEXT NULL
 			)'
 		);
 		$driver->query(
@@ -5043,6 +5223,115 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'publish', $rows[0]->status );
 		$this->assertSame( 'draft', $rows[1]->status );
 		$this->assertSame( 'draft', $rows[2]->status );
+
+		$unqualified_update = "UPDATE wptests_update_multi_source AS p, wptests_update_multi_source_meta AS pm
+			JOIN wptests_update_multi_source_terms AS tt ON tt.post_id = p.id
+			SET comment = 'review'
+			WHERE pm.post_id = p.id
+			AND pm.meta_key = '_status'
+			AND tt.term = 'publish'";
+
+		$this->assertSame( 1, $driver->query( $unqualified_update ) );
+		$this->assertSame( 0, $driver->query( $unqualified_update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'UPDATE "wptests_update_multi_source" AS "p" SET "comment" = \'review\'', $sql );
+		$this->assertStringContainsString( 'FROM "wptests_update_multi_source_meta" AS "pm", "wptests_update_multi_source_terms" AS "tt"', $sql );
+
+		$rows = $driver->query( 'SELECT id, comment FROM wptests_update_multi_source ORDER BY id' );
+		$this->assertSame( 'review', $rows[0]->comment );
+		$this->assertNull( $rows[1]->comment );
+		$this->assertNull( $rows[2]->comment );
+	}
+
+	/**
+	 * Tests mixed comma/JOIN UPDATE resolves unqualified SET targets by column ownership.
+	 */
+	public function test_comma_join_update_unqualified_set_target_resolves_non_leftmost_table(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_mixed_source (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_mixed_target (
+				id INTEGER PRIMARY KEY,
+				comment TEXT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_mixed_filter (
+				id INTEGER PRIMARY KEY,
+				name TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_mixed_source (id, status) VALUES (1, 'draft'), (2, 'publish'), (3, 'publish')" );
+		$driver->query( "INSERT INTO wptests_update_mixed_target (id, comment) VALUES (1, NULL), (2, NULL), (3, NULL)" );
+		$driver->query( "INSERT INTO wptests_update_mixed_filter (id, name) VALUES (1, 'update'), (2, 'skip'), (3, 'update')" );
+
+		$update = "UPDATE wptests_update_mixed_source AS s, wptests_update_mixed_target AS t
+			JOIN wptests_update_mixed_filter AS f ON f.id = s.id
+			SET comment = 'updated'
+			WHERE t.id = s.id
+				AND t.id = f.id
+				AND s.status = 'publish'
+				AND f.name = 'update'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 0, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'UPDATE "wptests_update_mixed_target" AS "t" SET "comment" = \'updated\'', $sql );
+		$this->assertStringContainsString( 'FROM "wptests_update_mixed_source" AS "s", "wptests_update_mixed_filter" AS "f"', $sql );
+		$this->assertStringContainsString( '(f.id = s.id)', $sql );
+		$this->assertStringContainsString( '("t"."comment" IS DISTINCT FROM (\'updated\'))', $sql );
+
+		$rows = $driver->query( 'SELECT id, comment FROM wptests_update_mixed_target ORDER BY id' );
+		$this->assertNull( $rows[0]->comment );
+		$this->assertNull( $rows[1]->comment );
+		$this->assertSame( 'updated', $rows[2]->comment );
+	}
+
+	/**
+	 * Tests ambiguous unqualified joined UPDATE SET targets fail closed.
+	 */
+	public function test_comma_join_update_ambiguous_unqualified_set_target_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_mixed_ambiguous_source (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_mixed_ambiguous_target (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_mixed_ambiguous_filter (
+				id INTEGER PRIMARY KEY
+			)'
+		);
+
+		try {
+			$driver->query(
+				"UPDATE wptests_update_mixed_ambiguous_source AS s, wptests_update_mixed_ambiguous_target AS t
+				JOIN wptests_update_mixed_ambiguous_filter AS f ON f.id = s.id
+				SET status = 'updated'
+				WHERE t.id = s.id
+					AND t.id = f.id"
+			);
+			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -6323,6 +6612,27 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SELECT VERSION() matches the emulated MySQL version and output label.
+	 */
+	public function test_version_runtime_function_matches_emulated_mysql_version(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SELECT VERSION()' );
+
+		$this->assertSame( '8.0.38', $rows[0]->{'VERSION()'} );
+		$this->assertSame( array( 'VERSION()' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'SELECT \'8.0.38\' AS "VERSION()"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
 	 * Tests common MySQL runtime functions from the SQLite compatibility layer are translated.
 	 */
 	public function test_common_mysql_runtime_functions_are_translated_to_postgresql(): void {
@@ -6959,6 +7269,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertNull( $sql );
+	}
+
+	/**
+	 * Tests WordPress postmeta key lookups with HAVING but no GROUP BY match SQLite parity.
+	 */
+	public function test_wordpress_postmeta_distinct_meta_key_having_without_group_by_is_rewritten(): void {
+		$driver = $this->create_driver();
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				meta_id INTEGER PRIMARY KEY,
+				meta_key TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, meta_key) VALUES
+				(1, '_hidden'),
+				(2, 'visible_meta_key_03'),
+				(3, 'visible_meta_key_01'),
+				(4, 'visible_meta_key_02'),
+				(5, 'visible_meta_key_02')"
+		);
+
+		$queries = array(
+			"SELECT DISTINCT meta_key FROM wptests_postmeta WHERE meta_key NOT BETWEEN '_' AND '_z' HAVING meta_key NOT LIKE '\\_%' ORDER BY meta_key LIMIT 3",
+			"SELECT DISTINCT meta_key FROM wptests_postmeta WHERE meta_key NOT BETWEEN '_' AND '_z' HAVING meta_key NOT LIKE CONCAT('\\_', '%') ORDER BY meta_key LIMIT 3",
+		);
+
+		foreach ( $queries as $query ) {
+			$rows = $driver->query( $query );
+
+			$this->assertSame(
+				array( 'visible_meta_key_01', 'visible_meta_key_02', 'visible_meta_key_03' ),
+				array_map(
+					static function ( $row ): string {
+						return $row->meta_key;
+					},
+					$rows
+				),
+				$query
+			);
+
+			$sql = $this->get_last_single_postgresql_sql( $driver );
+			$this->assertStringContainsString( 'SELECT DISTINCT meta_key FROM wptests_postmeta WHERE (meta_key NOT BETWEEN', $sql, $query );
+			$this->assertStringContainsString( ') AND (meta_key NOT LIKE', $sql, $query );
+			$this->assertStringContainsString( 'ORDER BY meta_key LIMIT 3', $sql, $query );
+			$this->assertStringNotContainsString( ' HAVING ', $sql, $query );
+			$this->assertStringNotContainsString( 'CONCAT(', $sql, $query );
+		}
 	}
 
 	/**
@@ -11366,6 +11724,99 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests duplicate ALTER TABLE ADD COLUMN statements fail before backend execution.
+	 */
+	public function test_alter_table_duplicate_add_column_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_duplicate_alter_column (id INTEGER)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_duplicate_alter_column (
+				id int NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_duplicate_alter_column ADD COLUMN id int' );
+			$this->fail( 'Expected duplicate ALTER TABLE ADD COLUMN to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Duplicate column name 'id'.", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame( array( 'id' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_duplicate_alter_column' ), 'column_name' ) );
+	}
+
+	/**
+	 * Tests same-statement duplicate ALTER TABLE ADD COLUMN batches fail atomically.
+	 */
+	public function test_alter_table_duplicate_add_column_batch_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_duplicate_alter_column_batch (id INTEGER)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_duplicate_alter_column_batch (
+				id int NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_duplicate_alter_column_batch ADD COLUMN slug varchar(20), ADD COLUMN slug varchar(30)' );
+			$this->fail( 'Expected duplicate ALTER TABLE ADD COLUMN batch to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Duplicate column name 'slug'.", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame( array( 'id' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_duplicate_alter_column_batch' ), 'column_name' ) );
+	}
+
+	/**
+	 * Tests duplicate ALTER TABLE ADD INDEX statements fail before backend execution.
+	 */
+	public function test_alter_table_duplicate_add_index_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_duplicate_alter_index (id INTEGER)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_duplicate_alter_index (
+				id int NOT NULL,
+				KEY idx (id)
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_duplicate_alter_index ADD KEY idx (id)' );
+			$this->fail( 'Expected duplicate ALTER TABLE ADD INDEX to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Duplicate key name 'idx'.", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame( array( 'idx' ), array_values( array_unique( array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_duplicate_alter_index' ), 'key_name' ) ) ) );
+	}
+
+	/**
+	 * Tests same-statement duplicate ALTER TABLE ADD INDEX batches fail atomically.
+	 */
+	public function test_alter_table_duplicate_add_index_batch_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_duplicate_alter_index_batch (id INTEGER)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_duplicate_alter_index_batch (
+				id int NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_duplicate_alter_index_batch ADD KEY idx (id), ADD UNIQUE idx (id)' );
+			$this->fail( 'Expected duplicate ALTER TABLE ADD INDEX batch to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Duplicate key name 'idx'.", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame( array(), $this->get_mysql_index_metadata_rows( $driver, 'wptests_duplicate_alter_index_batch' ) );
+	}
+
+	/**
 	 * Tests alias-only CREATE TABLE statements use the MySQL DDL translator.
 	 */
 	public function test_create_table_with_only_mysql_type_alias_markers_uses_translator(): void {
@@ -11527,6 +11978,104 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_on_update_default' )[0]->{'Create Table'};
 
 		$this->assertStringContainsString( '  `updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP', $create_table );
+	}
+
+	/**
+	 * Tests generated default expressions preserve SQLite-compatible MySQL metadata.
+	 */
+	public function test_create_table_generated_default_expressions_preserve_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$query  = "CREATE TABLE wptests_generated_defaults (
+			id int NOT NULL,
+			col1 int NOT NULL DEFAULT (1 + 2),
+			col2 datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),
+			col3 varchar(255) NOT NULL DEFAULT (CONCAT('a', 'b'))
+		)";
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$statements = $translator->translate_schema( $query );
+
+		$this->assertCount( 1, $statements );
+		$this->assertStringContainsString(
+			'"col1" integer NOT NULL DEFAULT (1 + 2)',
+			$statements[0]
+		);
+		$this->assertStringContainsString(
+			'"col2" text NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
+			$statements[0]
+		);
+		$this->assertStringContainsString(
+			'"col3" varchar(255) NOT NULL DEFAULT ((CAST(\'a\' AS text) || CAST(\'b\' AS text)))',
+			$statements[0]
+		);
+
+		$metadata = $translator->extract_schema_metadata( $query, true );
+		$this->assertSame( '1 + 2', $metadata[0]['columns'][1]['default'] );
+		$this->assertSame( 'DATE_ADD(NOW(), INTERVAL 1 YEAR)', $metadata[0]['columns'][2]['default'] );
+		$this->assertSame( "CONCAT('a', 'b')", $metadata[0]['columns'][3]['default'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $metadata[0]['columns'][1]['extra'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $metadata[0]['columns'][2]['extra'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $metadata[0]['columns'][3]['extra'] );
+
+		$driver->store_mysql_schema_metadata( $query );
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_generated_defaults' )[0]->{'Create Table'};
+
+		$this->assertStringContainsString( '  `col1` int NOT NULL DEFAULT (1 + 2)', $create_table );
+		$this->assertStringContainsString( '  `col2` datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR))', $create_table );
+		$this->assertStringContainsString( "  `col3` varchar(255) NOT NULL DEFAULT (CONCAT('a', 'b'))", $create_table );
+	}
+
+	/**
+	 * Tests ALTER ADD COLUMN generated default expressions use the CREATE TABLE fragment translator.
+	 */
+	public function test_alter_table_add_generated_default_expressions_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_generated_default_alter (
+				id int NOT NULL
+			)'
+		);
+
+		$driver->query(
+			"ALTER TABLE wptests_generated_default_alter
+				ADD COLUMN col1 int NOT NULL DEFAULT (1 + 2),
+				ADD COLUMN col2 datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),
+				ADD COLUMN col3 varchar(255) NOT NULL DEFAULT (CONCAT('a', 'b'))"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_generated_default_alter" ADD COLUMN "col1" integer NOT NULL DEFAULT (1 + 2)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_generated_default_alter" ADD COLUMN "col2" text NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_generated_default_alter" ADD COLUMN "col3" varchar(255) NOT NULL DEFAULT ((CAST(\'a\' AS text) || CAST(\'b\' AS text)))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_generated_default_alter' );
+		$this->assertSame( array( 'id', 'col1', 'col2', 'col3' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( '1 + 2', $columns[1]['column_default'] );
+		$this->assertSame( 'DATE_ADD(NOW(), INTERVAL 1 YEAR)', $columns[2]['column_default'] );
+		$this->assertSame( "CONCAT('a', 'b')", $columns[3]['column_default'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $columns[1]['extra'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $columns[2]['extra'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $columns[3]['extra'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_generated_default_alter' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `col1` int NOT NULL DEFAULT (1 + 2)', $create_table );
+		$this->assertStringContainsString( '  `col2` datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR))', $create_table );
+		$this->assertStringContainsString( "  `col3` varchar(255) NOT NULL DEFAULT (CONCAT('a', 'b'))", $create_table );
 	}
 
 	/**
@@ -17689,6 +18238,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='sql_mode'" );
 		$this->assertSame( 'ANSI_QUOTES', $rows[0]->Value );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests keyword-valued MySQL session variables match SQLite backend compatibility.
+	 */
+	public function test_keyword_session_system_variables_can_be_set_and_selected(): void {
+		$driver = $this->create_driver();
+
+		$cases = array(
+			'SET resultset_metadata = FULL'             => array( '@@resultset_metadata', 'FULL' ),
+			'SET session_track_gtids = OWN_GTID'        => array( '@@session_track_gtids', 'OWN_GTID' ),
+			'SET session_track_transaction_info = STATE' => array( '@@session_track_transaction_info', 'STATE' ),
+			'SET transaction_isolation = SERIALIZABLE'  => array( '@@transaction_isolation', 'SERIALIZABLE' ),
+			'SET use_secondary_engine = FORCED'         => array( '@@use_secondary_engine', 'FORCED' ),
+		);
+
+		foreach ( $cases as $query => $expected ) {
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$rows = $driver->query( 'SELECT ' . $expected[0] );
+			$this->assertSame( $expected[1], $rows[0]->{ $expected[0] }, $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
 	}
 
 	/**

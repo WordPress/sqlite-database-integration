@@ -13,11 +13,17 @@ permissions: {}
 
 jobs:
   test:
-    name: WordPress End-to-end Tests
+    name: WordPress End-to-end Tests / ${{ matrix.backend }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     permissions:
       contents: read # Required to clone the repo.
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - sqlite
+          - postgresql
 
     steps:
       - name: Checkout repository
@@ -35,8 +41,14 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Run WordPress end-to-end tests
+        env:
+          WP_TEST_DB_BACKEND: ${{ matrix.backend }}
         run: composer run wp-test-e2e
 
       - name: Stop Docker containers
         if: always()
+        env:
+          WP_TEST_DB_BACKEND: ${{ matrix.backend }}
+          LOCAL_DB_TYPE: mysql
+          LOCAL_PHP_MEMCACHED: 'false'
         run: composer run wp-test-clean

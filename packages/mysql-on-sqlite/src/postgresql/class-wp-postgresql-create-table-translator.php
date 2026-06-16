@@ -346,7 +346,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
-				$parts[] = $this->translate_default_attribute( $attribute );
+				$parts[] = $this->translate_default_attribute( $attribute, $data_type );
 			}
 		}
 
@@ -853,19 +853,37 @@ class WP_PostgreSQL_Create_Table_Translator {
 	}
 
 	/**
-	 * Translate a simple DEFAULT attribute.
+	 * Translate a DEFAULT attribute.
 	 *
-	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @param WP_Parser_Node      $attribute Column attribute node.
+	 * @param WP_Parser_Node|null $data_type Column data type node.
 	 * @return string PostgreSQL DEFAULT clause.
 	 */
-	private function translate_default_attribute( WP_Parser_Node $attribute ): string {
-		$value_token = $attribute->get_first_descendant_token( WP_MySQL_Lexer::NULL_SYMBOL );
-		if ( $value_token ) {
+	private function translate_default_attribute( WP_Parser_Node $attribute, ?WP_Parser_Node $data_type = null ): string {
+		$value_tokens = $this->get_default_attribute_value_tokens( $attribute );
+		$expression_tokens = $this->strip_default_attribute_outer_parentheses( $value_tokens );
+
+		if (
+			1 === count( $expression_tokens )
+			&& $this->is_unquoted_mysql_null_token( $expression_tokens[0] )
+		) {
 			return 'DEFAULT NULL';
 		}
 
 		if ( $this->is_current_timestamp_default_attribute( $attribute ) ) {
 			return "DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+		}
+
+		if ( $this->is_generated_default_attribute( $attribute ) ) {
+			$expression = $this->translate_generated_default_expression(
+				$expression_tokens,
+				$data_type
+			);
+			if ( null === $expression ) {
+				throw new InvalidArgumentException( 'Unsupported column DEFAULT expression.' );
+			}
+
+			return 'DEFAULT (' . $expression . ')';
 		}
 
 		foreach ( $attribute->get_descendant_tokens() as $token ) {
@@ -891,6 +909,487 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		throw new InvalidArgumentException( 'Unsupported column DEFAULT expression.' );
+	}
+
+	/**
+	 * Translate a MySQL generated DEFAULT expression to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[]    $tokens    DEFAULT expression tokens.
+	 * @param WP_Parser_Node|null $data_type Column data type node.
+	 * @return string|null PostgreSQL expression SQL, or null when unsupported.
+	 */
+	private function translate_generated_default_expression( array $tokens, ?WP_Parser_Node $data_type = null ): ?string {
+		$expression = $this->translate_generated_default_expression_tokens( $tokens, 0, count( $tokens ) );
+		if ( null === $expression ) {
+			return null;
+		}
+
+		if ( empty( $expression['temporal'] ) ) {
+			return $expression['sql'];
+		}
+
+		$base_type = $data_type ? $this->get_base_mysql_column_type( $this->get_node_value( $data_type ) ) : '';
+		if ( in_array( $base_type, array( 'datetime', 'timestamp' ), true ) ) {
+			return sprintf( "TO_CHAR(%s, 'YYYY-MM-DD HH24:MI:SS')", $expression['sql'] );
+		}
+
+		if ( 'date' === $base_type ) {
+			return sprintf( "TO_CHAR(%s, 'YYYY-MM-DD')", $expression['sql'] );
+		}
+
+		if ( 'time' === $base_type ) {
+			return sprintf( "TO_CHAR(%s, 'HH24:MI:SS')", $expression['sql'] );
+		}
+
+		return $expression['sql'];
+	}
+
+	/**
+	 * Translate supported generated DEFAULT expression tokens.
+	 *
+	 * @param WP_MySQL_Token[] $tokens DEFAULT expression tokens.
+	 * @param int              $start  Start offset, inclusive.
+	 * @param int              $end    End offset, exclusive.
+	 * @return array{sql: string, temporal: bool}|null PostgreSQL SQL and type hint, or null when unsupported.
+	 */
+	private function translate_generated_default_expression_tokens( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$sql      = '';
+		$temporal = false;
+
+		for ( $position = $start; $position < $end; ++$position ) {
+			$function = $this->translate_generated_default_function_call( $tokens, $position, $end );
+			if ( null !== $function ) {
+				$sql       = $this->append_generated_default_sql_fragment( $sql, $function['sql'] );
+				$temporal  = $temporal || $function['temporal'];
+				$position  = $function['next'] - 1;
+				continue;
+			}
+
+			$token = $tokens[ $position ];
+			if ( $this->is_generated_default_literal_token( $token ) ) {
+				$sql = $this->append_generated_default_sql_fragment(
+					$sql,
+					$this->translate_generated_default_literal_token( $token )
+				);
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || $this->is_unquoted_mysql_null_token( $token ) ) {
+				$sql = $this->append_generated_default_sql_fragment( $sql, 'NULL' );
+				continue;
+			}
+
+			if ( in_array( $token->id, array( WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::MINUS_OPERATOR, WP_MySQL_Lexer::MULT_OPERATOR, WP_MySQL_Lexer::DIV_OPERATOR, WP_MySQL_Lexer::MOD_OPERATOR ), true ) ) {
+				$sql = rtrim( $sql ) . ' ' . $token->get_bytes() . ' ';
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				$sql = $this->append_generated_default_sql_fragment( $sql, '(' );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				$sql = rtrim( $sql ) . ')';
+				continue;
+			}
+
+			return null;
+		}
+
+		$sql = trim( $sql );
+		if ( '' === $sql || ! $this->generated_default_parentheses_are_balanced( $sql ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => $sql,
+			'temporal' => $temporal,
+		);
+	}
+
+	/**
+	 * Translate a supported generated DEFAULT function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   DEFAULT expression tokens.
+	 * @param int              $position Function token offset.
+	 * @param int              $end      End offset, exclusive.
+	 * @return array{sql: string, temporal: bool, next: int}|null Function SQL and next offset, or null.
+	 */
+	private function translate_generated_default_function_call( array $tokens, int $position, int $end ): ?array {
+		$token = $tokens[ $position ] ?? null;
+		if ( ! $token ) {
+			return null;
+		}
+
+		if ( $this->is_generated_default_current_timestamp_function_token( $token ) ) {
+			$next = $position + 1;
+			if ( isset( $tokens[ $next ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $next ]->id ) {
+				$close = $this->find_matching_generated_default_parenthesis( $tokens, $next, $end );
+				if ( $next + 1 !== $close ) {
+					return null;
+				}
+
+				$next = $close + 1;
+			}
+
+			return array(
+				'sql'      => "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
+				'temporal' => true,
+				'next'     => $next,
+			);
+		}
+
+		$function_name = strtoupper( $token->get_value() );
+		if ( 'CONCAT' === $function_name ) {
+			return $this->translate_generated_default_concat_function( $tokens, $position, $end );
+		}
+
+		if (
+			in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::ADDDATE_SYMBOL,
+					WP_MySQL_Lexer::DATE_ADD_SYMBOL,
+					WP_MySQL_Lexer::DATE_SUB_SYMBOL,
+					WP_MySQL_Lexer::SUBDATE_SYMBOL,
+				),
+				true
+			)
+		) {
+			return $this->translate_generated_default_date_arithmetic_function( $tokens, $position, $end );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Translate a generated DEFAULT CONCAT(...) function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   DEFAULT expression tokens.
+	 * @param int              $position Function token offset.
+	 * @param int              $end      End offset, exclusive.
+	 * @return array{sql: string, temporal: bool, next: int}|null Function SQL and next offset, or null.
+	 */
+	private function translate_generated_default_concat_function( array $tokens, int $position, int $end ): ?array {
+		if ( ! isset( $tokens[ $position + 1 ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id ) {
+			return null;
+		}
+
+		$close = $this->find_matching_generated_default_parenthesis( $tokens, $position + 1, $end );
+		if ( null === $close ) {
+			return null;
+		}
+
+		$arguments = $this->split_generated_default_arguments( $tokens, $position + 2, $close );
+		if ( null === $arguments ) {
+			return null;
+		}
+
+		if ( empty( $arguments ) ) {
+			return array(
+				'sql'      => $this->quote_string_literal( '' ),
+				'temporal' => false,
+				'next'     => $close + 1,
+			);
+		}
+
+		$sql_arguments = array();
+		foreach ( $arguments as $argument ) {
+			$expression = $this->translate_generated_default_expression_tokens( $tokens, $argument[0], $argument[1] );
+			if ( null === $expression ) {
+				return null;
+			}
+
+			$sql_arguments[] = 'CAST(' . $expression['sql'] . ' AS text)';
+		}
+
+		return array(
+			'sql'      => '(' . implode( ' || ', $sql_arguments ) . ')',
+			'temporal' => false,
+			'next'     => $close + 1,
+		);
+	}
+
+	/**
+	 * Translate a generated DEFAULT DATE_ADD/DATE_SUB function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   DEFAULT expression tokens.
+	 * @param int              $position Function token offset.
+	 * @param int              $end      End offset, exclusive.
+	 * @return array{sql: string, temporal: bool, next: int}|null Function SQL and next offset, or null.
+	 */
+	private function translate_generated_default_date_arithmetic_function( array $tokens, int $position, int $end ): ?array {
+		if ( ! isset( $tokens[ $position + 1 ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id ) {
+			return null;
+		}
+
+		$close = $this->find_matching_generated_default_parenthesis( $tokens, $position + 1, $end );
+		if ( null === $close ) {
+			return null;
+		}
+
+		$arguments = $this->split_generated_default_arguments( $tokens, $position + 2, $close );
+		if ( null === $arguments || 2 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$base = $this->translate_generated_default_expression_tokens( $tokens, $arguments[0][0], $arguments[0][1] );
+		if ( null === $base || empty( $base['temporal'] ) ) {
+			return null;
+		}
+
+		$interval = $this->translate_generated_default_interval_argument( $tokens, $arguments[1][0], $arguments[1][1] );
+		if ( null === $interval ) {
+			return null;
+		}
+
+		$operator = in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::DATE_SUB_SYMBOL, WP_MySQL_Lexer::SUBDATE_SYMBOL ), true ) ? '-' : '+';
+
+		return array(
+			'sql'      => '(' . $base['sql'] . ' ' . $operator . ' (' . $interval . '))',
+			'temporal' => true,
+			'next'     => $close + 1,
+		);
+	}
+
+	/**
+	 * Translate a simple INTERVAL argument for generated DEFAULT DATE_ADD/DATE_SUB.
+	 *
+	 * @param WP_MySQL_Token[] $tokens DEFAULT expression tokens.
+	 * @param int              $start  Start offset, inclusive.
+	 * @param int              $end    End offset, exclusive.
+	 * @return string|null PostgreSQL interval SQL, or null when unsupported.
+	 */
+	private function translate_generated_default_interval_argument( array $tokens, int $start, int $end ): ?string {
+		if ( $start + 2 > $end || WP_MySQL_Lexer::INTERVAL_SYMBOL !== $tokens[ $start ]->id ) {
+			return null;
+		}
+
+		$unit = $this->get_generated_default_interval_unit( $tokens[ $end - 1 ] );
+		if ( null === $unit ) {
+			return null;
+		}
+
+		$value = $this->translate_generated_default_expression_tokens( $tokens, $start + 1, $end - 1 );
+		if ( null === $value || ! empty( $value['temporal'] ) ) {
+			return null;
+		}
+
+		return $value['sql'] . ' * INTERVAL ' . $this->quote_string_literal( $unit );
+	}
+
+	/**
+	 * Get PostgreSQL interval unit text for a supported MySQL interval unit token.
+	 *
+	 * @param WP_MySQL_Token $token MySQL interval unit token.
+	 * @return string|null PostgreSQL interval unit, or null when unsupported.
+	 */
+	private function get_generated_default_interval_unit( WP_MySQL_Token $token ): ?string {
+		$units = array(
+			WP_MySQL_Lexer::MICROSECOND_SYMBOL => '1 microsecond',
+			WP_MySQL_Lexer::SECOND_SYMBOL      => '1 second',
+			WP_MySQL_Lexer::MINUTE_SYMBOL      => '1 minute',
+			WP_MySQL_Lexer::HOUR_SYMBOL        => '1 hour',
+			WP_MySQL_Lexer::DAY_SYMBOL         => '1 day',
+			WP_MySQL_Lexer::WEEK_SYMBOL        => '1 week',
+			WP_MySQL_Lexer::MONTH_SYMBOL       => '1 month',
+			WP_MySQL_Lexer::QUARTER_SYMBOL     => '3 months',
+			WP_MySQL_Lexer::YEAR_SYMBOL        => '1 year',
+		);
+
+		return $units[ $token->id ] ?? null;
+	}
+
+	/**
+	 * Split top-level function arguments within a generated DEFAULT expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens DEFAULT expression tokens.
+	 * @param int              $start  Start offset, inclusive.
+	 * @param int              $end    End offset, exclusive.
+	 * @return array<int, array{0: int, 1: int}>|null Argument offset ranges, or null for malformed input.
+	 */
+	private function split_generated_default_arguments( array $tokens, int $start, int $end ): ?array {
+		if ( $start === $end ) {
+			return array();
+		}
+
+		$arguments      = array();
+		$argument_start = $start;
+		$depth          = 0;
+
+		for ( $position = $start; $position < $end; ++$position ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				if ( $argument_start === $position ) {
+					return null;
+				}
+
+				$arguments[]    = array( $argument_start, $position );
+				$argument_start = $position + 1;
+			}
+		}
+
+		if ( 0 !== $depth || $argument_start === $end ) {
+			return null;
+		}
+
+		$arguments[] = array( $argument_start, $end );
+
+		return $arguments;
+	}
+
+	/**
+	 * Find the closing parenthesis for a generated DEFAULT expression range.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        DEFAULT expression tokens.
+	 * @param int              $open_position Opening parenthesis offset.
+	 * @param int              $end           End offset, exclusive.
+	 * @return int|null Closing parenthesis offset, or null.
+	 */
+	private function find_matching_generated_default_parenthesis( array $tokens, int $open_position, int $end ): ?int {
+		if ( ! isset( $tokens[ $open_position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $open_position ]->id ) {
+			return null;
+		}
+
+		$depth = 0;
+		for ( $position = $open_position; $position < $end; ++$position ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				++$depth;
+			} elseif ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				--$depth;
+				if ( 0 === $depth ) {
+					return $position;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Append an expression fragment with minimal spacing.
+	 *
+	 * @param string $sql      Existing SQL.
+	 * @param string $fragment Fragment to append.
+	 * @return string Combined SQL.
+	 */
+	private function append_generated_default_sql_fragment( string $sql, string $fragment ): string {
+		if ( '' === $sql || '(' === $fragment || '(' === substr( rtrim( $sql ), -1 ) || ' ' === substr( $sql, -1 ) ) {
+			return $sql . $fragment;
+		}
+
+		if ( ')' === $fragment || ',' === $fragment ) {
+			return rtrim( $sql ) . $fragment;
+		}
+
+		return $sql . ' ' . $fragment;
+	}
+
+	/**
+	 * Check whether serialized generated DEFAULT SQL has balanced parentheses.
+	 *
+	 * @param string $sql PostgreSQL expression SQL.
+	 * @return bool Whether parentheses are balanced.
+	 */
+	private function generated_default_parentheses_are_balanced( string $sql ): bool {
+		$depth = 0;
+		$quote = null;
+		$length = strlen( $sql );
+
+		for ( $i = 0; $i < $length; ++$i ) {
+			$character = $sql[ $i ];
+			if ( "'" === $quote ) {
+				if ( "'" === $character ) {
+					if ( isset( $sql[ $i + 1 ] ) && "'" === $sql[ $i + 1 ] ) {
+						++$i;
+						continue;
+					}
+
+					$quote = null;
+				}
+				continue;
+			}
+
+			if ( "'" === $character ) {
+				$quote = "'";
+				continue;
+			}
+
+			if ( '(' === $character ) {
+				++$depth;
+			} elseif ( ')' === $character ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return false;
+				}
+			}
+		}
+
+		return 0 === $depth && null === $quote;
+	}
+
+	/**
+	 * Check whether a token is a supported generated DEFAULT literal.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is supported.
+	 */
+	private function is_generated_default_literal_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT,
+				WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT,
+				WP_MySQL_Lexer::INT_NUMBER,
+				WP_MySQL_Lexer::LONG_NUMBER,
+				WP_MySQL_Lexer::ULONGLONG_NUMBER,
+				WP_MySQL_Lexer::DECIMAL_NUMBER,
+				WP_MySQL_Lexer::FLOAT_NUMBER,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Translate a supported generated DEFAULT literal token.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return string PostgreSQL literal SQL.
+	 */
+	private function translate_generated_default_literal_token( WP_MySQL_Token $token ): string {
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return $this->quote_string_literal( $token->get_value() );
+		}
+
+		return $token->get_value();
+	}
+
+	/**
+	 * Check whether a token is CURRENT_TIMESTAMP or NOW for generated DEFAULTs.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is a supported timestamp function token.
+	 */
+	private function is_generated_default_current_timestamp_function_token( WP_MySQL_Token $token ): bool {
+		return $this->is_current_timestamp_token( $token )
+			|| WP_MySQL_Lexer::NOW_SYMBOL === $token->id;
 	}
 
 	/**
@@ -1650,13 +2149,25 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
-			if ( $attribute->has_child_token( WP_MySQL_Lexer::NULL_SYMBOL ) ) {
+			$value_tokens = $this->get_default_attribute_value_tokens( $attribute );
+			$expression_tokens = $this->strip_default_attribute_outer_parentheses( $value_tokens );
+
+			if (
+				1 === count( $expression_tokens )
+				&& $this->is_unquoted_mysql_null_token( $expression_tokens[0] )
+			) {
 				return null;
 			}
 
 			$current_timestamp_default = $this->get_current_timestamp_default_metadata( $attribute );
 			if ( null !== $current_timestamp_default ) {
 				return $current_timestamp_default;
+			}
+
+			if ( $this->is_generated_default_attribute( $attribute ) ) {
+				return $this->get_generated_default_metadata_expression(
+					$expression_tokens
+				);
 			}
 
 			foreach ( $attribute->get_descendant_tokens() as $token ) {
@@ -1673,6 +2184,82 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get MySQL-facing metadata SQL for a generated DEFAULT expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens DEFAULT expression tokens.
+	 * @return string MySQL-facing expression SQL.
+	 */
+	private function get_generated_default_metadata_expression( array $tokens ): string {
+		$sql            = '';
+		$previous_token = null;
+
+		foreach ( $tokens as $token ) {
+			if ( '' !== $sql && $this->generated_default_metadata_tokens_need_space( $previous_token, $token ) ) {
+				$sql .= ' ';
+			}
+
+			$sql           .= $token->get_bytes();
+			$previous_token = $token;
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Decide whether two generated DEFAULT metadata tokens need a separating space.
+	 *
+	 * @param WP_MySQL_Token|null $previous Previous token, or null.
+	 * @param WP_MySQL_Token      $current  Current token.
+	 * @return bool Whether to add a space.
+	 */
+	private function generated_default_metadata_tokens_need_space( ?WP_MySQL_Token $previous, WP_MySQL_Token $current ): bool {
+		if ( null === $previous ) {
+			return false;
+		}
+
+		if (
+			WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $current->id
+			|| WP_MySQL_Lexer::COMMA_SYMBOL === $current->id
+			|| WP_MySQL_Lexer::DOT_SYMBOL === $current->id
+			|| WP_MySQL_Lexer::DOT_SYMBOL === $previous->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous->id
+		) {
+			return false;
+		}
+
+		if (
+			WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $current->id
+			&& $this->is_generated_default_function_like_token( $previous )
+		) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a token can be followed by function-call parentheses.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is function-like.
+	 */
+	private function is_generated_default_function_like_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::ADDDATE_SYMBOL,
+				WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL,
+				WP_MySQL_Lexer::DATE_ADD_SYMBOL,
+				WP_MySQL_Lexer::DATE_SUB_SYMBOL,
+				WP_MySQL_Lexer::IDENTIFIER,
+				WP_MySQL_Lexer::NOW_SYMBOL,
+				WP_MySQL_Lexer::SUBDATE_SYMBOL,
+			),
+			true
+		);
 	}
 
 	/**
