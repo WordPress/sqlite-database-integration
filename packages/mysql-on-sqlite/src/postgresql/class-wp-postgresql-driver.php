@@ -677,6 +677,10 @@ class WP_PostgreSQL_Driver {
 			$this->last_result = 0;
 			return $this->last_result;
 		}
+		$unsupported_create_statement = $this->get_unsupported_mysql_create_statement_message( $query );
+		if ( null !== $unsupported_create_statement ) {
+			throw new InvalidArgumentException( $unsupported_create_statement );
+		}
 
 		$alter_query = $this->translate_mysql_dbdelta_alter_table_query( $query );
 		if ( null !== $alter_query ) {
@@ -712,6 +716,11 @@ class WP_PostgreSQL_Driver {
 			$this->last_result = 0;
 			return $this->last_result;
 		}
+		$unsupported_drop_statement = $this->get_unsupported_mysql_drop_statement_message( $query );
+		if ( null !== $unsupported_drop_statement ) {
+			throw new InvalidArgumentException( $unsupported_drop_statement );
+		}
+
 		$rename_table_query = $this->translate_mysql_rename_table_query( $query );
 		if ( null !== $rename_table_query ) {
 			$this->execute_postgresql_statements( $rename_table_query['statements'] );
@@ -1019,6 +1028,163 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get an explicit unsupported error for unclaimed MySQL CREATE statements.
+	 *
+	 * Supported CREATE TABLE/CREATE INDEX forms are dispatched before this guard.
+	 * Plain PostgreSQL-compatible CREATE TABLE statements may still fall through,
+	 * but MySQL-only CREATE constructs should not reach the backend parser.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Unsupported error message, or null when not guarded.
+	 */
+	private function get_unsupported_mysql_create_statement_message( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return 'Unsupported CREATE statement.';
+		}
+
+		$position = 1;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$position += 2;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id ) {
+			return $this->get_unsupported_mysql_create_table_statement_message( $tokens, $position + 1 );
+		}
+
+		switch ( $tokens[ $position ]->id ?? null ) {
+			case WP_MySQL_Lexer::DATABASE_SYMBOL:
+			case WP_MySQL_Lexer::SCHEMA_SYMBOL:
+				return 'Unsupported CREATE DATABASE statement.';
+
+			case WP_MySQL_Lexer::VIEW_SYMBOL:
+				return 'Unsupported CREATE VIEW statement.';
+
+			case WP_MySQL_Lexer::INDEX_SYMBOL:
+			case WP_MySQL_Lexer::UNIQUE_SYMBOL:
+			case WP_MySQL_Lexer::FULLTEXT_SYMBOL:
+			case WP_MySQL_Lexer::SPATIAL_SYMBOL:
+				return 'Unsupported CREATE INDEX statement.';
+
+			case WP_MySQL_Lexer::PROCEDURE_SYMBOL:
+				return 'Unsupported CREATE PROCEDURE statement.';
+
+			case WP_MySQL_Lexer::FUNCTION_SYMBOL:
+				return 'Unsupported CREATE FUNCTION statement.';
+
+			case WP_MySQL_Lexer::TRIGGER_SYMBOL:
+				return 'Unsupported CREATE TRIGGER statement.';
+
+			case WP_MySQL_Lexer::EVENT_SYMBOL:
+				return 'Unsupported CREATE EVENT statement.';
+
+			case WP_MySQL_Lexer::USER_SYMBOL:
+				return 'Unsupported CREATE USER statement.';
+
+			case WP_MySQL_Lexer::ROLE_SYMBOL:
+				return 'Unsupported CREATE ROLE statement.';
+
+			case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
+				return 'Unsupported CREATE TABLESPACE statement.';
+		}
+
+		return 'Unsupported CREATE statement.';
+	}
+
+	/**
+	 * Get an explicit unsupported error for MySQL CREATE TABLE forms not handled by supported translators.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Position immediately after TABLE.
+	 * @return string|null Unsupported error message, or null for backend-compatible plain CREATE TABLE.
+	 */
+	private function get_unsupported_mysql_create_table_statement_message( array $tokens, int $position ): ?string {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+		if ( null === $statement_end ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$position += 3;
+		}
+
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if ( null === $table_reference ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		$has_as = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+			$has_as = true;
+			++$position;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		if ( $has_as && isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		$definition_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+		if ( null === $definition_end ) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		$position = $definition_end;
+		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+			return null;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			return 'Unsupported CREATE TABLE statement.';
+		}
+
+		return 'Unsupported CREATE TABLE statement.';
 	}
 
 	/**
@@ -2549,10 +2715,10 @@ class WP_PostgreSQL_Driver {
 					index_ordinal INTEGER NOT NULL,
 					seq_in_index INTEGER NOT NULL,
 					column_name TEXT NOT NULL,
-					non_unique TEXT NOT NULL,
-					index_type TEXT NOT NULL,
-					collation TEXT,
-					sub_part TEXT,
+						non_unique TEXT NOT NULL,
+						index_type TEXT NOT NULL,
+						"collation" TEXT,
+						sub_part TEXT,
 					nullable TEXT NOT NULL,
 					index_comment TEXT NOT NULL DEFAULT \'\',
 					PRIMARY KEY (table_schema, table_name, key_name, seq_in_index)
@@ -3557,7 +3723,7 @@ $wp_mysql_on_update$',
 			$this->connection->query(
 				sprintf(
 					'INSERT INTO %s
-						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, collation, sub_part, nullable, index_comment)
+						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, "collation", sub_part, nullable, index_comment)
 					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 				),
@@ -4453,6 +4619,10 @@ $wp_mysql_on_update$',
 						throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
 					}
 				}
+			}
+
+			if ( null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SELECT_SYMBOL, $position, $statement_end ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
 			}
 
 			return null;
@@ -5417,6 +5587,7 @@ $wp_mysql_on_update$',
 	 * @param array[] $metadata_operations ALTER metadata operations.
 	 */
 	private function preflight_mysql_dbdelta_alter_table_metadata_operations( string $table_schema, string $table_name, array $metadata_operations ): void {
+		$metadata_operations = $this->flatten_mysql_dbdelta_alter_table_metadata_operations( $metadata_operations );
 		$added_columns = array();
 		$added_indexes = array();
 
@@ -5444,6 +5615,29 @@ $wp_mysql_on_update$',
 				$this->preflight_mysql_dbdelta_alter_table_add_index_metadata( $table_schema, $table_name, $metadata['index'] ?? array(), $added_indexes );
 			}
 		}
+	}
+
+	/**
+	 * Flatten nested ALTER TABLE metadata operations for validation.
+	 *
+	 * @param array[] $metadata_operations ALTER metadata operations.
+	 * @return array[] Flat operation list.
+	 */
+	private function flatten_mysql_dbdelta_alter_table_metadata_operations( array $metadata_operations ): array {
+		$flat_operations = array();
+		foreach ( $metadata_operations as $metadata ) {
+			if ( 'operations' === ( $metadata['operation'] ?? '' ) ) {
+				$flat_operations = array_merge(
+					$flat_operations,
+					$this->flatten_mysql_dbdelta_alter_table_metadata_operations( $metadata['operations'] ?? array() )
+				);
+				continue;
+			}
+
+			$flat_operations[] = $metadata;
+		}
+
+		return $flat_operations;
 	}
 
 	/**
@@ -5947,15 +6141,103 @@ $wp_mysql_on_update$',
 			++$position;
 		}
 
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			return $this->translate_mysql_dbdelta_add_parenthesized_columns_alter_action(
+				$table_schema,
+				$table_name,
+				$clause,
+				$tokens,
+				$position,
+				$end,
+				$foreign_key_names
+			);
+		}
+
 		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
 		if ( null === $definition_end || $position >= $definition_end ) {
 			return null;
 		}
 
-		$column = $this->translate_mysql_column_definition_fragment(
+		return $this->translate_mysql_dbdelta_add_column_definition_alter_action(
+			$table_schema,
+			$table_name,
 			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end ),
-			$table_name
+			$foreign_key_names
 		);
+	}
+
+	/**
+	 * Translate an ALTER TABLE ADD (column, column) action.
+	 *
+	 * @param string           $table_schema      Backend schema name.
+	 * @param string           $table_name        Table name.
+	 * @param string           $clause            Full ALTER clause string.
+	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
+	 * @param int              $position          Opening parenthesis token.
+	 * @param int              $end               Final action token, exclusive.
+	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_add_parenthesized_columns_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $position, int $end, array &$foreign_key_names ): ?array {
+		$parenthesized_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if ( $parenthesized_end !== $end ) {
+			return null;
+		}
+
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $position + 1, $end - 1 );
+		if ( null === $ranges || array() === $ranges ) {
+			return null;
+		}
+
+		$statements          = array();
+		$metadata_operations = array();
+		foreach ( $ranges as $range ) {
+			$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $range['start'], $range['end'] );
+			if ( null === $definition_end || $range['start'] >= $definition_end || $definition_end !== $range['end'] ) {
+				return null;
+			}
+
+			$translation = $this->translate_mysql_dbdelta_add_column_definition_alter_action(
+				$table_schema,
+				$table_name,
+				$this->get_mysql_token_range_bytes( $clause, $tokens, $range['start'], $definition_end ),
+				$foreign_key_names
+			);
+			if ( null === $translation ) {
+				return null;
+			}
+
+			$statements            = array_merge( $statements, $translation['statements'] );
+			$metadata_operations[] = $translation['metadata'];
+		}
+
+		return array(
+			'statements' => $statements,
+			'metadata'   => array(
+				'operation'  => 'operations',
+				'operations' => $metadata_operations,
+			),
+		);
+	}
+
+	/**
+	 * Translate one ALTER TABLE ADD column definition.
+	 *
+	 * @param string   $table_schema      Backend schema name.
+	 * @param string   $table_name        Table name.
+	 * @param string   $definition        Column definition fragment.
+	 * @param string[] $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
+	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
+	 */
+	private function translate_mysql_dbdelta_add_column_definition_alter_action( string $table_schema, string $table_name, string $definition, array &$foreign_key_names ): ?array {
+		try {
+			$column = $this->translate_mysql_column_definition_fragment(
+				$definition,
+				$table_name
+			);
+		} catch ( InvalidArgumentException $e ) {
+			return null;
+		}
 		if ( null === $column ) {
 			return null;
 		}
@@ -7357,6 +7639,69 @@ $wp_mysql_on_update$',
 		}
 
 		return $this->get_mysql_drop_index_translation( $table_reference, $index_name, 'DROP INDEX' );
+	}
+
+	/**
+	 * Get an explicit unsupported error for unclaimed MySQL DROP statements.
+	 *
+	 * Supported DROP TABLE/DROP INDEX forms and the narrow procedure shim are
+	 * dispatched before this guard.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Unsupported error message, or null when not guarded.
+	 */
+	private function get_unsupported_mysql_drop_statement_message( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		switch ( $tokens[ $position ]->id ?? null ) {
+			case WP_MySQL_Lexer::TABLE_SYMBOL:
+			case WP_MySQL_Lexer::INDEX_SYMBOL:
+				return null;
+
+			case WP_MySQL_Lexer::DATABASE_SYMBOL:
+			case WP_MySQL_Lexer::SCHEMA_SYMBOL:
+				return 'Unsupported DROP DATABASE statement.';
+
+			case WP_MySQL_Lexer::VIEW_SYMBOL:
+				return 'Unsupported DROP VIEW statement.';
+
+			case WP_MySQL_Lexer::PROCEDURE_SYMBOL:
+				return 'Unsupported DROP PROCEDURE statement.';
+
+			case WP_MySQL_Lexer::FUNCTION_SYMBOL:
+				return 'Unsupported DROP FUNCTION statement.';
+
+			case WP_MySQL_Lexer::TRIGGER_SYMBOL:
+				return 'Unsupported DROP TRIGGER statement.';
+
+			case WP_MySQL_Lexer::EVENT_SYMBOL:
+				return 'Unsupported DROP EVENT statement.';
+
+			case WP_MySQL_Lexer::USER_SYMBOL:
+				return 'Unsupported DROP USER statement.';
+
+			case WP_MySQL_Lexer::ROLE_SYMBOL:
+				return 'Unsupported DROP ROLE statement.';
+
+			case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
+				return 'Unsupported DROP TABLESPACE statement.';
+
+			case WP_MySQL_Lexer::SERVER_SYMBOL:
+				return 'Unsupported DROP SERVER statement.';
+
+			case WP_MySQL_Lexer::LOGFILE_SYMBOL:
+				return 'Unsupported DROP LOGFILE statement.';
+		}
+
+		return null;
 	}
 
 	/**
@@ -11390,7 +11735,7 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_index_metadata_rows( string $schema_name, string $table_name ): array {
 		$sql    = sprintf(
-			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, collation, sub_part, index_comment
+			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, "collation" AS "collation", sub_part, index_comment
 			FROM %s
 			WHERE table_schema = ? AND table_name = ?
 			ORDER BY
@@ -14310,7 +14655,7 @@ metadata_index_rows AS (
 		im.key_name AS "Key_name",
 		CAST(im.seq_in_index AS text) AS "Seq_in_index",
 		im.column_name AS "Column_name",
-		CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im.collation, \'A\') END AS "Collation",
+			CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "Collation",
 		\'0\' AS "Cardinality",
 		im.sub_part AS "Sub_part",
 		NULL AS "Packed",
@@ -14448,7 +14793,7 @@ FROM (
 		im.key_name AS "Key_name",
 		CAST(im.seq_in_index AS text) AS "Seq_in_index",
 		im.column_name AS "Column_name",
-		CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im.collation, \'A\') END AS "Collation",
+			CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "Collation",
 		\'0\' AS "Cardinality",
 		im.sub_part AS "Sub_part",
 		NULL AS "Packed",
@@ -15286,6 +15631,7 @@ WHERE option_name IN (
 		$value_rows                  = null;
 		$value_range_rows            = array();
 		$probe_safe_rows             = array();
+		$upsert_source_aliases       = array();
 		$on_duplicate                = $this->find_on_duplicate_key_update_clause( $tokens, $position );
 		if ( null === $on_duplicate ) {
 			return null;
@@ -15365,6 +15711,11 @@ WHERE option_name IN (
 			if ( null === $value_rows ) {
 				return null;
 			}
+
+			$upsert_source_aliases = $this->parse_mysql_upsert_values_alias_clause( $tokens, $position, $on_duplicate, $columns );
+			if ( null === $upsert_source_aliases ) {
+				return null;
+			}
 		}
 
 		if ( null === $column_metadata ) {
@@ -15425,7 +15776,7 @@ WHERE option_name IN (
 		$table_column_lookup = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$position            = $on_duplicate + 4;
 
-		$assignments = $this->parse_upsert_update_assignments( $table_name, $tokens, $position, $statement_end, $column_lookup, $table_column_lookup );
+		$assignments = $this->parse_upsert_update_assignments( $table_name, $tokens, $position, $statement_end, $column_lookup, $table_column_lookup, $upsert_source_aliases );
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
@@ -15842,7 +16193,10 @@ WHERE option_name IN (
 			$probe_safe_rows[]  = $probe_safe_values;
 			$value_range_rows[] = $parsed_values['ranges'];
 
-			if ( $position === $end ) {
+			if (
+				$position === $end
+				|| WP_MySQL_Lexer::AS_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			) {
 				return $rows;
 			}
 
@@ -15854,6 +16208,71 @@ WHERE option_name IN (
 		}
 
 		return count( $rows ) > 0 ? $rows : null;
+	}
+
+	/**
+	 * Parse an optional MySQL VALUES-row alias for ON DUPLICATE KEY UPDATE.
+	 *
+	 * MySQL 8 accepts "VALUES (...) AS row_alias" and optional column aliases.
+	 * The alias is only meaningful inside the update expressions, where it maps
+	 * back to the inserted row represented by PostgreSQL's excluded pseudo-table.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Current token position, updated on success.
+	 * @param int             $end      ON DUPLICATE token position.
+	 * @param string[]        $columns  Insert target columns in value order.
+	 * @return array{row: string, qualified: array<string,string>, unqualified: array<string,string>}|array{}|null Alias map, empty when no alias is present, or null when malformed.
+	 */
+	private function parse_mysql_upsert_values_alias_clause( array $tokens, int &$position, int $end, array $columns ): ?array {
+		if ( $position === $end ) {
+			return array();
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AS_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$row_alias = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		if ( null === $row_alias ) {
+			return null;
+		}
+
+		$position += 2;
+
+		$qualified = array();
+		foreach ( $columns as $column ) {
+			$qualified[ strtolower( $column ) ] = $column;
+		}
+
+		$unqualified = array();
+		if ( $position < $end && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$column_aliases = $this->parse_mysql_identifier_list( $tokens, $position );
+			if ( null === $column_aliases || count( $column_aliases ) !== count( $columns ) ) {
+				return null;
+			}
+
+			$seen_aliases = array();
+			foreach ( $column_aliases as $index => $column_alias ) {
+				$alias_key = strtolower( $column_alias );
+				if ( isset( $seen_aliases[ $alias_key ] ) ) {
+					return null;
+				}
+
+				$seen_aliases[ $alias_key ] = true;
+				$qualified[ $alias_key ]    = $columns[ $index ];
+				$unqualified[ $alias_key ]  = $columns[ $index ];
+			}
+		}
+
+		if ( $position !== $end ) {
+			return null;
+		}
+
+		return array(
+			'row'         => strtolower( $row_alias ),
+			'qualified'   => $qualified,
+			'unqualified' => $unqualified,
+		);
 	}
 
 	/**
@@ -24343,6 +24762,15 @@ WHERE option_name IN (
 				'check_constraints',
 				'character_sets',
 				'collations',
+				'engines',
+				'session_variables',
+				'global_variables',
+				'session_status',
+				'global_status',
+				'processlist',
+				'views',
+				'triggers',
+				'routines',
 			),
 			true
 		);
@@ -24545,6 +24973,112 @@ WHERE option_name IN (
 					'SORTLEN',
 					'PAD_ATTRIBUTE',
 				);
+
+			case 'engines':
+				return array(
+					'ENGINE',
+					'SUPPORT',
+					'COMMENT',
+					'TRANSACTIONS',
+					'XA',
+					'SAVEPOINTS',
+				);
+
+			case 'session_variables':
+			case 'global_variables':
+			case 'session_status':
+			case 'global_status':
+				return array(
+					'VARIABLE_NAME',
+					'VARIABLE_VALUE',
+				);
+
+			case 'processlist':
+				return array(
+					'ID',
+					'USER',
+					'HOST',
+					'DB',
+					'COMMAND',
+					'TIME',
+					'STATE',
+					'INFO',
+				);
+
+			case 'views':
+				return array(
+					'TABLE_CATALOG',
+					'TABLE_SCHEMA',
+					'TABLE_NAME',
+					'VIEW_DEFINITION',
+					'CHECK_OPTION',
+					'IS_UPDATABLE',
+					'DEFINER',
+					'SECURITY_TYPE',
+					'CHARACTER_SET_CLIENT',
+					'COLLATION_CONNECTION',
+				);
+
+			case 'triggers':
+				return array(
+					'TRIGGER_CATALOG',
+					'TRIGGER_SCHEMA',
+					'TRIGGER_NAME',
+					'EVENT_MANIPULATION',
+					'EVENT_OBJECT_CATALOG',
+					'EVENT_OBJECT_SCHEMA',
+					'EVENT_OBJECT_TABLE',
+					'ACTION_ORDER',
+					'ACTION_CONDITION',
+					'ACTION_STATEMENT',
+					'ACTION_ORIENTATION',
+					'ACTION_TIMING',
+					'ACTION_REFERENCE_OLD_TABLE',
+					'ACTION_REFERENCE_NEW_TABLE',
+					'ACTION_REFERENCE_OLD_ROW',
+					'ACTION_REFERENCE_NEW_ROW',
+					'CREATED',
+					'SQL_MODE',
+					'DEFINER',
+					'CHARACTER_SET_CLIENT',
+					'COLLATION_CONNECTION',
+					'DATABASE_COLLATION',
+				);
+
+			case 'routines':
+				return array(
+					'SPECIFIC_NAME',
+					'ROUTINE_CATALOG',
+					'ROUTINE_SCHEMA',
+					'ROUTINE_NAME',
+					'ROUTINE_TYPE',
+					'DATA_TYPE',
+					'CHARACTER_MAXIMUM_LENGTH',
+					'CHARACTER_OCTET_LENGTH',
+					'NUMERIC_PRECISION',
+					'NUMERIC_SCALE',
+					'DATETIME_PRECISION',
+					'CHARACTER_SET_NAME',
+					'COLLATION_NAME',
+					'DTD_IDENTIFIER',
+					'ROUTINE_BODY',
+					'ROUTINE_DEFINITION',
+					'EXTERNAL_NAME',
+					'EXTERNAL_LANGUAGE',
+					'PARAMETER_STYLE',
+					'IS_DETERMINISTIC',
+					'SQL_DATA_ACCESS',
+					'SQL_PATH',
+					'SECURITY_TYPE',
+					'CREATED',
+					'LAST_ALTERED',
+					'SQL_MODE',
+					'ROUTINE_COMMENT',
+					'DEFINER',
+					'CHARACTER_SET_CLIENT',
+					'COLLATION_CONNECTION',
+					'DATABASE_COLLATION',
+				);
 		}
 
 		return null;
@@ -24628,6 +25162,8 @@ WHERE option_name IN (
 					'MAXLEN',
 					'ID',
 					'SORTLEN',
+					'TIME',
+					'ACTION_ORDER',
 				),
 				true
 			)
@@ -24635,11 +25171,11 @@ WHERE option_name IN (
 			return 'bigint DEFAULT NULL';
 		}
 
-		if ( in_array( $column, array( 'COLUMN_DEFAULT', 'CHECK_CLAUSE', 'GENERATION_EXPRESSION', 'EXPRESSION' ), true ) ) {
+		if ( in_array( $column, array( 'COLUMN_DEFAULT', 'CHECK_CLAUSE', 'GENERATION_EXPRESSION', 'EXPRESSION', 'VIEW_DEFINITION', 'ACTION_CONDITION', 'ACTION_STATEMENT', 'ROUTINE_DEFINITION' ), true ) ) {
 			return 'longtext DEFAULT NULL';
 		}
 
-		if ( in_array( $column, array( 'CREATE_TIME', 'UPDATE_TIME', 'CHECK_TIME' ), true ) ) {
+		if ( in_array( $column, array( 'CREATE_TIME', 'UPDATE_TIME', 'CHECK_TIME', 'CREATED', 'LAST_ALTERED' ), true ) ) {
 			return 'datetime DEFAULT NULL';
 		}
 
@@ -24674,6 +25210,20 @@ WHERE option_name IN (
 				return $this->get_direct_information_schema_character_sets_relation_sql();
 			case 'collations':
 				return $this->get_direct_information_schema_collations_relation_sql();
+			case 'engines':
+				return $this->get_direct_information_schema_engines_relation_sql();
+			case 'session_variables':
+			case 'global_variables':
+				return $this->get_direct_information_schema_variables_relation_sql();
+			case 'session_status':
+			case 'global_status':
+				return $this->get_direct_information_schema_status_relation_sql();
+			case 'processlist':
+				return $this->get_direct_information_schema_processlist_relation_sql();
+			case 'views':
+			case 'triggers':
+			case 'routines':
+				return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
 		return null;
@@ -25273,6 +25823,106 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Build the MySQL-shaped information_schema.ENGINES relation.
+	 *
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_engines_relation_sql(): string {
+		$rows = array();
+		foreach ( $this->get_mysql_static_show_engine_rows() as $row ) {
+			$rows[] = array(
+				'ENGINE'       => $row['Engine'],
+				'SUPPORT'      => $row['Support'],
+				'COMMENT'      => $row['Comment'],
+				'TRANSACTIONS' => $row['Transactions'],
+				'XA'           => $row['XA'],
+				'SAVEPOINTS'   => $row['Savepoints'],
+			);
+		}
+
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( 'engines' ),
+			$rows
+		);
+	}
+
+	/**
+	 * Build the MySQL-shaped information_schema.SESSION_VARIABLES/GLOBAL_VARIABLES relation.
+	 *
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_variables_relation_sql(): string {
+		$rows = array();
+		foreach ( $this->get_mysql_session_variables() as $name => $value ) {
+			$rows[] = array(
+				'VARIABLE_NAME'  => $name,
+				'VARIABLE_VALUE' => $value,
+			);
+		}
+
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( 'session_variables' ),
+			$rows
+		);
+	}
+
+	/**
+	 * Build the MySQL-shaped information_schema.SESSION_STATUS/GLOBAL_STATUS relation.
+	 *
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_status_relation_sql(): string {
+		$rows = array();
+		foreach ( $this->get_mysql_status_variables() as $name => $value ) {
+			$rows[] = array(
+				'VARIABLE_NAME'  => $name,
+				'VARIABLE_VALUE' => $value,
+			);
+		}
+
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( 'session_status' ),
+			$rows
+		);
+	}
+
+	/**
+	 * Build the MySQL-shaped information_schema.PROCESSLIST relation.
+	 *
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_processlist_relation_sql(): string {
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( 'processlist' ),
+			array(
+				array(
+					'ID'      => '1',
+					'USER'    => 'root',
+					'HOST'    => 'localhost',
+					'DB'      => $this->db_name,
+					'COMMAND' => 'Query',
+					'TIME'    => '0',
+					'STATE'   => '',
+					'INFO'    => (string) $this->last_mysql_query,
+				),
+			)
+		);
+	}
+
+	/**
+	 * Build an empty MySQL-shaped information_schema relation.
+	 *
+	 * @param string $view information_schema relation name.
+	 * @return string Relation SQL.
+	 */
+	private function get_direct_information_schema_empty_relation_sql( string $view ): string {
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( $view ),
+			array()
+		);
+	}
+
+	/**
 	 * Build the MySQL-shaped information_schema.TABLES relation.
 	 *
 	 * @return string Relation SQL.
@@ -25722,7 +26372,7 @@ END',
 	im.key_name AS "INDEX_NAME",
 	im.seq_in_index AS "SEQ_IN_INDEX",
 	im.column_name AS "COLUMN_NAME",
-	CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im.collation, \'A\') END AS "COLLATION",
+	CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "COLLATION",
 	0 AS "CARDINALITY",
 	im.sub_part AS "SUB_PART",
 	NULL AS "PACKED",
@@ -30592,9 +31242,10 @@ FROM (
 	 * @param int              $end                 Final assignment token position, exclusive.
 	 * @param array           $column_lookup       Insert-column lookup by lowercase name.
 	 * @param array           $table_column_lookup Table-column metadata lookup by lowercase name.
+	 * @param array           $source_aliases      Optional VALUES-row alias lookup.
 	 * @return string[]|null PostgreSQL SET assignments, or null when unsupported.
 	 */
-	private function parse_upsert_update_assignments( string $table_name, array $tokens, int &$position, int $end, array $column_lookup, array $table_column_lookup ): ?array {
+	private function parse_upsert_update_assignments( string $table_name, array $tokens, int &$position, int $end, array $column_lookup, array $table_column_lookup, array $source_aliases = array() ): ?array {
 		$assignments = array();
 		$scope       = $this->get_mysql_single_table_scope( $table_name );
 
@@ -30627,7 +31278,7 @@ FROM (
 			}
 
 			$target_metadata = $table_column_lookup[ strtolower( $target_column ) ];
-			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $column_lookup );
+			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $column_lookup, $source_aliases );
 			if ( $this->is_mysql_default_keyword_expression( $tokens, $value_start, $assignment_end ) ) {
 				$value_sql = $this->get_mysql_dml_default_assignment_sql_for_column( $target_metadata );
 			} elseif ( null !== $source_column ) {
@@ -30641,7 +31292,8 @@ FROM (
 					$tokens,
 					$value_start,
 					$assignment_end,
-					$column_lookup
+					$column_lookup,
+					$source_aliases
 				);
 				if (
 					null === $values_replacements
@@ -31053,25 +31705,26 @@ FROM (
 	 * @param int              $start         First expression token.
 	 * @param int              $end           Final expression token, exclusive.
 	 * @param array            $column_lookup Insert-column lookup by lowercase name.
+	 * @param array            $source_aliases Optional VALUES-row alias lookup.
 	 * @return string|null Source column name, or null when the expression is not VALUES(column).
 	 */
-	private function get_mysql_upsert_values_assignment_source_column( array $tokens, int $start, int $end, array $column_lookup ): ?string {
+	private function get_mysql_upsert_values_assignment_source_column( array $tokens, int $start, int $end, array $column_lookup, array $source_aliases = array() ): ?string {
 		if (
-			$start + 4 !== $end
-			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
-			|| WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $start ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
-			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $start + 3 ]->id
+			$start + 4 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
+			&& WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $start ]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $start + 3 ]->id
 		) {
-			return null;
+			$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $start + 2 ] );
+			if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
+				return null;
+			}
+
+			return $source_column;
 		}
 
-		$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $start + 2 ] );
-		if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
-			return null;
-		}
-
-		return $source_column;
+		return $this->get_mysql_upsert_alias_assignment_source_column( $tokens, $start, $end, $source_aliases );
 	}
 
 	/**
@@ -31081,42 +31734,139 @@ FROM (
 	 * @param int              $start         First expression token.
 	 * @param int              $end           Final expression token, exclusive.
 	 * @param array            $column_lookup Insert-column lookup by lowercase name.
+	 * @param array            $source_aliases Optional VALUES-row alias lookup.
 	 * @return array[]|null Replacement ranges, or null when VALUES() is malformed/unsupported.
 	 */
-	private function get_mysql_upsert_values_expression_replacements( array $tokens, int $start, int $end, array $column_lookup ): ?array {
+	private function get_mysql_upsert_values_expression_replacements( array $tokens, int $start, int $end, array $column_lookup, array $source_aliases = array() ): ?array {
 		$replacements = array();
 
 		for ( $position = $start; $position < $end; $position++ ) {
-			if ( WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+			if ( WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $position ]->id ) {
+				if (
+					$position + 4 > $end
+					|| ! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+					|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+					|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position + 3 ]->id
+				) {
+					return null;
+				}
+
+				$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] );
+				if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
+					return null;
+				}
+
+				$replacements[] = array(
+					'start' => $position,
+					'end'   => $position + 4,
+					'sql'   => sprintf(
+						'excluded.%s',
+						$this->connection->quote_identifier( $source_column )
+					),
+				);
+				$position      += 3;
 				continue;
 			}
 
-			if (
-				$position + 4 > $end
-				|| ! isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
-				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position + 3 ]->id
-			) {
-				return null;
+			$alias_reference = $this->get_mysql_upsert_alias_expression_reference( $tokens, $position, $start, $end, $source_aliases );
+			if ( null === $alias_reference ) {
+				continue;
 			}
 
-			$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] );
-			if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
+			if ( false === $alias_reference ) {
 				return null;
 			}
 
 			$replacements[] = array(
 				'start' => $position,
-				'end'   => $position + 4,
+				'end'   => $alias_reference['end'],
 				'sql'   => sprintf(
 					'excluded.%s',
-					$this->connection->quote_identifier( $source_column )
+					$this->connection->quote_identifier( $alias_reference['column'] )
 				),
 			);
-			$position      += 3;
+			$position      = $alias_reference['end'] - 1;
 		}
 
 		return $replacements;
+	}
+
+	/**
+	 * Get an exact alias source column from an upsert assignment expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param int              $start          First expression token.
+	 * @param int              $end            Final expression token, exclusive.
+	 * @param array            $source_aliases Optional VALUES-row alias lookup.
+	 * @return string|null Source column name, or null when the expression is not an alias reference.
+	 */
+	private function get_mysql_upsert_alias_assignment_source_column( array $tokens, int $start, int $end, array $source_aliases ): ?string {
+		$reference = $this->get_mysql_upsert_alias_expression_reference( $tokens, $start, $start, $end, $source_aliases );
+		if ( ! is_array( $reference ) || $reference['end'] !== $end ) {
+			return null;
+		}
+
+		return $reference['column'];
+	}
+
+	/**
+	 * Resolve a VALUES-row alias reference inside an upsert expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param int              $position       Candidate reference position.
+	 * @param int              $start          First expression token.
+	 * @param int              $end            Final expression token, exclusive.
+	 * @param array            $source_aliases Optional VALUES-row alias lookup.
+	 * @return array{column: string, end: int}|false|null Reference data, false for malformed alias use, or null when not an alias reference.
+	 */
+	private function get_mysql_upsert_alias_expression_reference( array $tokens, int $position, int $start, int $end, array $source_aliases ) {
+		if ( empty( $source_aliases ) || ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		$identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] );
+		if ( null === $identifier ) {
+			return null;
+		}
+
+		$identifier_key = strtolower( $identifier );
+		if ( $identifier_key === ( $source_aliases['row'] ?? null ) ) {
+			if (
+				$position + 2 >= $end
+				|| WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $position + 1 ]->id ?? null )
+			) {
+				return false;
+			}
+
+			$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] ?? null );
+			if ( null === $source_column ) {
+				return false;
+			}
+
+			$source_key = strtolower( $source_column );
+			if ( ! isset( $source_aliases['qualified'][ $source_key ] ) ) {
+				return false;
+			}
+
+			return array(
+				'column' => $source_aliases['qualified'][ $source_key ],
+				'end'    => $position + 3,
+			);
+		}
+
+		if (
+			isset( $source_aliases['unqualified'][ $identifier_key ] )
+			&& ( $position <= $start || WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $position - 1 ]->id ?? null ) )
+			&& ( $position + 1 >= $end || WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $position + 1 ]->id ?? null ) )
+			&& ( $position + 1 >= $end || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== ( $tokens[ $position + 1 ]->id ?? null ) )
+		) {
+			return array(
+				'column' => $source_aliases['unqualified'][ $identifier_key ],
+				'end'    => $position + 1,
+			);
+		}
+
+		return null;
 	}
 
 	/**
@@ -34521,7 +35271,7 @@ FROM (
 	 * @return bool Whether the token is supported.
 	 */
 	private function is_supported_simple_mysql_expression_token( WP_MySQL_Token $token ): bool {
-		if ( null !== $this->get_mysql_identifier_token_value( $token ) ) {
+		if ( null !== $this->get_mysql_dml_identifier_token_value( $token ) ) {
 			return true;
 		}
 
@@ -36388,6 +37138,7 @@ FROM (
 			WP_MySQL_Lexer::CURRENT_TIME_SYMBOL      => 'utc_time',
 			WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL => 'utc_timestamp',
 			WP_MySQL_Lexer::DATABASE_SYMBOL          => 'database',
+			WP_MySQL_Lexer::DATE_SYMBOL              => 'date',
 			WP_MySQL_Lexer::IF_SYMBOL                => 'if',
 			WP_MySQL_Lexer::LEFT_SYMBOL              => 'left',
 			WP_MySQL_Lexer::MID_SYMBOL               => 'substring',
@@ -36577,7 +37328,7 @@ FROM (
 				return 1 === $count ? $this->get_postgresql_mysql_inet_ntoa_sql( $argument_sql[0] ) : null;
 
 			case 'datediff':
-				return 2 === $count ? sprintf( 'CAST((CAST(%s AS date) - CAST(%s AS date)) AS integer)', $argument_sql[0], $argument_sql[1] ) : null;
+				return 2 === $count ? $this->get_postgresql_mysql_datediff_sql( $argument_sql[0], $argument_sql[1] ) : null;
 
 			case 'locate':
 				if ( 2 === $count ) {
@@ -36589,7 +37340,7 @@ FROM (
 				return null;
 
 			case 'date':
-				return 1 === $count ? sprintf( "TO_CHAR(%s, 'YYYY-MM-DD')", $this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[0] ) ) : null;
+				return 1 === $count ? $this->get_postgresql_mysql_date_sql( $argument_sql[0] ) : null;
 
 			case 'replace':
 				return 3 === $count ? sprintf( 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))', $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
@@ -36641,6 +37392,38 @@ FROM (
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DATE(expr), preserving zero-date text values.
+	 *
+	 * @param string $expression_sql Translated expression SQL.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_date_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+		return sprintf(
+			"CASE WHEN %1\$s THEN SUBSTRING(%2\$s FROM 1 FOR 10) ELSE TO_CHAR(%3\$s, 'YYYY-MM-DD') END",
+			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
+			$expression_text_sql,
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DATEDIFF(expr1, expr2), guarding zero-date casts.
+	 *
+	 * @param string $start_sql Translated start expression SQL.
+	 * @param string $end_sql   Translated end expression SQL.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_datediff_sql( string $start_sql, string $end_sql ): string {
+		return sprintf(
+			'CAST((CAST(%1$s AS date) - CAST(%2$s AS date)) AS integer)',
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $start_sql ),
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $end_sql )
+		);
 	}
 
 	/**
@@ -38086,9 +38869,9 @@ FROM (
 			'S' => 'SS',
 			's' => 'SS',
 			'T' => 'HH24:MI:SS',
-			'U' => 'WW',
+			'U' => 'IW',
 			'u' => 'IW',
-			'V' => 'WW',
+			'V' => 'IW',
 			'v' => 'IW',
 			'W' => 'FMDay',
 			'X' => 'YYYY',
@@ -38790,6 +39573,10 @@ FROM (
 			}
 
 			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id ) {
+				return true;
+			}
+
+			if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
 				return true;
 			}
 
