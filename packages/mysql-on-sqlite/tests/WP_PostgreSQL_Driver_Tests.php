@@ -15635,6 +15635,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests TIMESTAMPDIFF supports simple MySQL interval units for PostgreSQL.
+	 */
+	public function test_mysql_timestampdiff_supports_simple_mysql_interval_units_for_postgresql(): void {
+		$driver = $this->create_driver();
+		$units  = array(
+			'MICROSECOND'     => 'microsecond',
+			'SECOND'          => 'second',
+			'MINUTE'          => 'minute',
+			'HOUR'            => 'hour',
+			'DAY'             => 'day',
+			'WEEK'            => 'week',
+			'MONTH'           => 'month',
+			'QUARTER'         => 'quarter',
+			'YEAR'            => 'year',
+			'SQL_TSI_SECOND'  => 'second',
+			'SQL_TSI_QUARTER' => 'quarter',
+		);
+
+		foreach ( $units as $mysql_unit => $postgresql_unit ) {
+			$select = "SELECT TIMESTAMPDIFF($mysql_unit, '2001-02-01 12:59:59.123456', post_date_gmt) AS diff";
+			$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+			$this->assertSame(
+				'SELECT ' . $this->get_expected_mysql_timestampdiff_sql( $postgresql_unit, "'2001-02-01 12:59:59.123456'", 'post_date_gmt' ) . ' AS diff',
+				$sql,
+				$mysql_unit
+			);
+			$this->assertStringNotContainsString( 'TIMESTAMPDIFF', $sql, $mysql_unit );
+		}
+	}
+
+	/**
+	 * Tests TIMESTAMPDIFF guards zero-date timestamp casts for PostgreSQL.
+	 */
+	public function test_mysql_timestampdiff_guards_zero_date_timestamp_casts_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = "SELECT TIMESTAMPDIFF(DAY, '0000-00-00 00:00:00', post_date_gmt) AS diff";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_mysql_timestampdiff_sql( 'day', "'0000-00-00 00:00:00'", 'post_date_gmt' ) . ' AS diff',
+			$sql
+		);
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "THEN NULL ELSE CAST('0000-00-00 00:00:00' AS text) END AS timestamp", $sql );
+		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
+	}
+
+	/**
 	 * Tests TIMESTAMPADD supports composite MySQL interval literal units for PostgreSQL.
 	 */
 	public function test_mysql_timestampadd_supports_composite_interval_literals_for_postgresql(): void {
@@ -15970,6 +16020,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT TIMESTAMPADD(DAY_SECOND, 6/4, post_date_gmt) AS shifted',
 			"SELECT TIMESTAMPADD(MINUTE_SECOND, '1:2:3', post_date_gmt) AS shifted",
 			'SELECT TIMESTAMPADD(DAY, 1) AS shifted',
+			'SELECT TIMESTAMPDIFF(FORTNIGHT, started_at, finished_at) AS diff',
+			'SELECT TIMESTAMPDIFF(DAY_SECOND, started_at, finished_at) AS diff',
+			'SELECT TIMESTAMPDIFF(DAY, started_at) AS diff',
+			'SELECT TIMESTAMPDIFF(DAY, started_at, finished_at, extra_at) AS diff',
 		);
 
 		foreach ( $queries as $query ) {
@@ -29699,6 +29753,80 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'CAST((CAST(%1$s AS date) - CAST(%2$s AS date)) AS integer)',
 			$this->get_expected_zero_date_safe_timestamp_sql( $start_sql ),
 			$this->get_expected_zero_date_safe_timestamp_sql( $end_sql )
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL TIMESTAMPDIFF(unit, expr1, expr2).
+	 *
+	 * @param string $unit      Normalized TIMESTAMPDIFF unit.
+	 * @param string $start_sql PostgreSQL start expression SQL.
+	 * @param string $end_sql   PostgreSQL end expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_timestampdiff_sql( string $unit, string $start_sql, string $end_sql ): string {
+		$start_timestamp_sql = $this->get_expected_zero_date_safe_timestamp_sql( $start_sql );
+		$end_timestamp_sql   = $this->get_expected_zero_date_safe_timestamp_sql( $end_sql );
+
+		if ( 'microsecond' === $unit ) {
+			return sprintf(
+				'CAST(TRUNC(EXTRACT(EPOCH FROM (%2$s - %1$s)) * 1000000) AS bigint)',
+				$start_timestamp_sql,
+				$end_timestamp_sql
+			);
+		}
+
+		$seconds_per_unit = array(
+			'second' => 1,
+			'minute' => 60,
+			'hour'   => 3600,
+			'day'    => 86400,
+			'week'   => 604800,
+		);
+		if ( isset( $seconds_per_unit[ $unit ] ) ) {
+			return sprintf(
+				'CAST(TRUNC(EXTRACT(EPOCH FROM (%2$s - %1$s)) / %3$d) AS bigint)',
+				$start_timestamp_sql,
+				$end_timestamp_sql,
+				$seconds_per_unit[ $unit ]
+			);
+		}
+
+		$month_sql = $this->get_expected_mysql_timestampdiff_month_sql( $start_timestamp_sql, $end_timestamp_sql );
+		if ( 'month' === $unit ) {
+			return $month_sql;
+		}
+
+		if ( 'quarter' === $unit ) {
+			return sprintf( 'CAST(TRUNC((%s)::numeric / 3) AS bigint)', $month_sql );
+		}
+
+		return sprintf( 'CAST(TRUNC((%s)::numeric / 12) AS bigint)', $month_sql );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL TIMESTAMPDIFF(MONTH, ...).
+	 *
+	 * @param string $start_timestamp_sql Zero-date-safe start timestamp SQL.
+	 * @param string $end_timestamp_sql   Zero-date-safe end timestamp SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_timestampdiff_month_sql( string $start_timestamp_sql, string $end_timestamp_sql ): string {
+		$month_delta_sql     = sprintf(
+			'((CAST(EXTRACT(YEAR FROM %2$s) AS integer) * 12 + CAST(EXTRACT(MONTH FROM %2$s) AS integer)) - (CAST(EXTRACT(YEAR FROM %1$s) AS integer) * 12 + CAST(EXTRACT(MONTH FROM %1$s) AS integer)))',
+			$start_timestamp_sql,
+			$end_timestamp_sql
+		);
+		$start_remainder_sql = sprintf( "TO_CHAR(%s, 'DD HH24:MI:SS.US')", $start_timestamp_sql );
+		$end_remainder_sql   = sprintf( "TO_CHAR(%s, 'DD HH24:MI:SS.US')", $end_timestamp_sql );
+
+		return sprintf(
+			'CAST(CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s >= %1$s THEN (%3$s - CASE WHEN %4$s < %5$s THEN 1 ELSE 0 END) ELSE (%3$s + CASE WHEN %4$s > %5$s THEN 1 ELSE 0 END) END AS bigint)',
+			$start_timestamp_sql,
+			$end_timestamp_sql,
+			$month_delta_sql,
+			$end_remainder_sql,
+			$start_remainder_sql
 		);
 	}
 

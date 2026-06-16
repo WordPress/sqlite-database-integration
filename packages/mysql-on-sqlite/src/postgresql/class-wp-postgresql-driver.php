@@ -40982,7 +40982,7 @@ FROM (
 			return null;
 		}
 
-		if ( in_array( $bounds['function'], array( 'last_insert_id', 'timestampadd' ), true ) ) {
+		if ( in_array( $bounds['function'], array( 'last_insert_id', 'timestampadd', 'timestampdiff' ), true ) ) {
 			return false;
 		}
 
@@ -47378,6 +47378,10 @@ FROM (
 			return $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
 		}
 
+		if ( 'timestampdiff' === $bounds['function'] ) {
+			return $this->translate_mysql_timestampdiff_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
+		}
+
 		if (
 			'last_insert_id' === $bounds['function']
 			&& 1 === count( $arguments )
@@ -47741,6 +47745,7 @@ FROM (
 			'substring',
 			'system_user',
 			'timestampadd',
+			'timestampdiff',
 			'to_base64',
 			'ucase',
 			'unhex',
@@ -48896,7 +48901,8 @@ $wp_mysql_json_valid$'
 		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
 
 		return $this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $end )
-			|| $this->contains_unsupported_mysql_timestampadd_function( $tokens, 0, $end );
+			|| $this->contains_unsupported_mysql_timestampadd_function( $tokens, 0, $end )
+			|| $this->contains_unsupported_mysql_timestampdiff_function( $tokens, 0, $end );
 	}
 
 	/**
@@ -49381,6 +49387,200 @@ $wp_mysql_json_valid$'
 		}
 
 		return false;
+	}
+
+	/**
+	 * Translate MySQL TIMESTAMPDIFF(unit, datetime_expr1, datetime_expr2) to PostgreSQL.
+	 *
+	 * @param WP_MySQL_Token[]                    $tokens    MySQL lexer token stream.
+	 * @param array<int,array{start:int,end:int}> $arguments Function argument bounds.
+	 * @param int                                 $close     Closing parenthesis token position.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_timestampdiff_function_to_postgresql( array $tokens, array $arguments, int $close ): ?array {
+		if ( 3 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$unit = $this->get_mysql_timestampdiff_unit(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+		if ( null === $unit ) {
+			return null;
+		}
+
+		$start_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[1]['start'],
+			$arguments[1]['end']
+		);
+		$end_sql   = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[2]['start'],
+			$arguments[2]['end']
+		);
+
+		return array(
+			'sql'      => $this->get_postgresql_mysql_timestampdiff_sql( $unit, $start_sql, $end_sql ),
+			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+			'position' => $close,
+		);
+	}
+
+	/**
+	 * Check whether a range contains an unsupported MySQL TIMESTAMPDIFF() call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported TIMESTAMPDIFF() call is present.
+	 */
+	private function contains_unsupported_mysql_timestampdiff_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				'timestampdiff' !== $this->get_mysql_common_function_name( $tokens[ $i ] ?? null )
+				|| ! isset( $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
+			if ( null === $bounds ) {
+				return true;
+			}
+
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if (
+				null === $arguments
+				|| null === $this->translate_mysql_timestampdiff_function_to_postgresql( $tokens, $arguments, $bounds['close'] )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Get supported TIMESTAMPDIFF unit data.
+	 *
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $unit_start First unit token.
+	 * @param int              $unit_end   Final unit token, exclusive.
+	 * @return string|null Normalized TIMESTAMPDIFF unit, or null when unsupported.
+	 */
+	private function get_mysql_timestampdiff_unit( array $tokens, int $unit_start, int $unit_end ): ?string {
+		if ( $unit_start + 1 !== $unit_end || ! isset( $tokens[ $unit_start ] ) ) {
+			return null;
+		}
+
+		switch ( $tokens[ $unit_start ]->id ) {
+			case WP_MySQL_Lexer::MICROSECOND_SYMBOL:
+				return 'microsecond';
+
+			case WP_MySQL_Lexer::SECOND_SYMBOL:
+				return 'second';
+
+			case WP_MySQL_Lexer::MINUTE_SYMBOL:
+				return 'minute';
+
+			case WP_MySQL_Lexer::HOUR_SYMBOL:
+				return 'hour';
+
+			case WP_MySQL_Lexer::DAY_SYMBOL:
+				return 'day';
+
+			case WP_MySQL_Lexer::WEEK_SYMBOL:
+				return 'week';
+
+			case WP_MySQL_Lexer::MONTH_SYMBOL:
+				return 'month';
+
+			case WP_MySQL_Lexer::QUARTER_SYMBOL:
+				return 'quarter';
+
+			case WP_MySQL_Lexer::YEAR_SYMBOL:
+				return 'year';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a MySQL TIMESTAMPDIFF() expression.
+	 *
+	 * @param string $unit      Normalized TIMESTAMPDIFF unit.
+	 * @param string $start_sql Translated start datetime SQL.
+	 * @param string $end_sql   Translated end datetime SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_timestampdiff_sql( string $unit, string $start_sql, string $end_sql ): string {
+		$start_timestamp_sql = $this->get_postgresql_zero_date_safe_timestamp_sql( $start_sql );
+		$end_timestamp_sql   = $this->get_postgresql_zero_date_safe_timestamp_sql( $end_sql );
+
+		if ( 'microsecond' === $unit ) {
+			return sprintf(
+				'CAST(TRUNC(EXTRACT(EPOCH FROM (%2$s - %1$s)) * 1000000) AS bigint)',
+				$start_timestamp_sql,
+				$end_timestamp_sql
+			);
+		}
+
+		$seconds_per_unit = array(
+			'second' => 1,
+			'minute' => 60,
+			'hour'   => 3600,
+			'day'    => 86400,
+			'week'   => 604800,
+		);
+		if ( isset( $seconds_per_unit[ $unit ] ) ) {
+			return sprintf(
+				'CAST(TRUNC(EXTRACT(EPOCH FROM (%2$s - %1$s)) / %3$d) AS bigint)',
+				$start_timestamp_sql,
+				$end_timestamp_sql,
+				$seconds_per_unit[ $unit ]
+			);
+		}
+
+		$month_sql = $this->get_postgresql_mysql_timestampdiff_month_sql( $start_timestamp_sql, $end_timestamp_sql );
+		if ( 'month' === $unit ) {
+			return $month_sql;
+		}
+
+		if ( 'quarter' === $unit ) {
+			return sprintf( 'CAST(TRUNC((%s)::numeric / 3) AS bigint)', $month_sql );
+		}
+
+		return sprintf( 'CAST(TRUNC((%s)::numeric / 12) AS bigint)', $month_sql );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL TIMESTAMPDIFF(MONTH, ...).
+	 *
+	 * @param string $start_timestamp_sql Zero-date-safe start timestamp SQL.
+	 * @param string $end_timestamp_sql   Zero-date-safe end timestamp SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_timestampdiff_month_sql( string $start_timestamp_sql, string $end_timestamp_sql ): string {
+		$month_delta_sql     = sprintf(
+			'((CAST(EXTRACT(YEAR FROM %2$s) AS integer) * 12 + CAST(EXTRACT(MONTH FROM %2$s) AS integer)) - (CAST(EXTRACT(YEAR FROM %1$s) AS integer) * 12 + CAST(EXTRACT(MONTH FROM %1$s) AS integer)))',
+			$start_timestamp_sql,
+			$end_timestamp_sql
+		);
+		$start_remainder_sql = sprintf( "TO_CHAR(%s, 'DD HH24:MI:SS.US')", $start_timestamp_sql );
+		$end_remainder_sql   = sprintf( "TO_CHAR(%s, 'DD HH24:MI:SS.US')", $end_timestamp_sql );
+
+		return sprintf(
+			'CAST(CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s >= %1$s THEN (%3$s - CASE WHEN %4$s < %5$s THEN 1 ELSE 0 END) ELSE (%3$s + CASE WHEN %4$s > %5$s THEN 1 ELSE 0 END) END AS bigint)',
+			$start_timestamp_sql,
+			$end_timestamp_sql,
+			$month_delta_sql,
+			$end_remainder_sql,
+			$start_remainder_sql
+		);
 	}
 
 	/**

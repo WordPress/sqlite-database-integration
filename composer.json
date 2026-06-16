@@ -83,6 +83,8 @@
 		"wp-test-e2e": [
 			"@wp-test-ensure-env @no_additional_args",
 			"@wp-test-install-postgresql-site @no_additional_args",
+			"npm --prefix wordpress run env:cli -- plugin install gutenberg --version=22.3.0",
+			"npm --prefix wordpress run env:cli -- plugin install query-monitor",
 			"npm --prefix wordpress run test:e2e -- @additional_args"
 		],
 		"wp-test-install-postgresql-site": "node ./bin/wp-test-install-postgresql-site.js",
