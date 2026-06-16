@@ -19873,10 +19873,10 @@ WHERE option_name IN (
 	 * Translate common direct MySQL information_schema SELECT statements.
 	 *
 	 * This is intentionally limited to supported information_schema relations as
-	 * FROM/JOIN sources, including derived subqueries that themselves use only
-	 * supported information_schema relations. CTEs, mixed application table
-	 * joins, and unsupported relation shapes fail closed rather than receiving a
-	 * partial rewrite.
+	 * FROM/JOIN sources, main-database tables with MySQL metadata, and derived
+	 * subqueries that themselves use supported direct information_schema shapes.
+	 * CTEs, unsupported relation shapes, and nested application-table subqueries
+	 * fail closed rather than receiving a partial rewrite.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the shape is unsupported.
@@ -20133,6 +20133,13 @@ WHERE option_name IN (
 	 * @return array{sources: array[], join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[]}|null Parsed sources, or null.
 	 */
 	private function parse_direct_information_schema_select_sources( string $query, array $tokens, int $start, int $end ): ?array {
+		if (
+			0 !== strcasecmp( $this->db_name, 'information_schema' )
+			&& ! $this->direct_information_schema_source_range_references_information_schema( $tokens, $start, $end )
+		) {
+			return null;
+		}
+
 		$sources                     = array();
 		$aliases                     = array();
 		$join_predicate_ranges       = array();
@@ -20230,12 +20237,12 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if ( count( $sources ) > 1 ) {
-			foreach ( $sources as $source ) {
-				if ( ! isset( $source['view'] ) || ! $this->is_direct_information_schema_join_relation( $source['view'] ) ) {
-					return null;
-				}
-			}
+		if ( ! $this->direct_information_schema_sources_include_information_schema_relation( $sources ) ) {
+			return null;
+		}
+
+		if ( count( $sources ) > 1 && ! $this->direct_information_schema_sources_are_joinable( $sources ) ) {
+			return null;
 		}
 
 		return array(
@@ -20260,7 +20267,8 @@ WHERE option_name IN (
 			return $this->parse_direct_information_schema_derived_select_source( $query, $tokens, $position, $end );
 		}
 
-		$first = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
+		$source_start = $position;
+		$first        = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
 		if ( null === $first ) {
 			return null;
 		}
@@ -20281,7 +20289,7 @@ WHERE option_name IN (
 			$position += 2;
 		} else {
 			if ( 0 !== strcasecmp( $this->db_name, 'information_schema' ) ) {
-				return null;
+				return $this->parse_direct_information_schema_main_table_source( $tokens, $source_start, $end );
 			}
 
 			$view = $first;
@@ -20318,6 +20326,51 @@ WHERE option_name IN (
 			'alias'    => $alias,
 			'position' => $position,
 		);
+	}
+
+	/**
+	 * Parse a main-database table source used in a mixed information_schema SELECT.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Source token position.
+	 * @param int              $end      Source range end position, exclusive.
+	 * @return array{table:string,alias:string,position:int,columns:string[]}|null Parsed source, or null.
+	 */
+	private function parse_direct_information_schema_main_table_source( array $tokens, int $position, int $end ): ?array {
+		$reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $end );
+		if ( null === $reference ) {
+			return null;
+		}
+
+		$columns = $this->get_direct_information_schema_main_table_columns( $reference['table'] );
+		if ( null === $columns ) {
+			return null;
+		}
+
+		return array(
+			'table'    => $reference['table'],
+			'alias'    => null === $reference['alias'] ? $reference['table'] : $reference['alias'],
+			'position' => $position,
+			'columns'  => $columns,
+		);
+	}
+
+	/**
+	 * Get MySQL-facing column names for a main-database table source.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string[]|null Ordered column names, or null when unavailable.
+	 */
+	private function get_direct_information_schema_main_table_columns( string $table_name ): ?array {
+		$columns = array();
+		foreach ( $this->get_mysql_dml_column_metadata( $table_name ) as $column ) {
+			if ( ! isset( $column['column_name'] ) ) {
+				return null;
+			}
+			$columns[] = (string) $column['column_name'];
+		}
+
+		return empty( $columns ) ? null : $columns;
 	}
 
 	/**
@@ -20404,6 +20457,15 @@ WHERE option_name IN (
 	private function get_direct_information_schema_source_replacements( array $context ): ?array {
 		$replacements = array();
 		foreach ( $context['sources'] as $source ) {
+			if ( isset( $source['table'] ) ) {
+				$replacements[] = array(
+					'start' => $source['source_start'],
+					'end'   => $source['source_end'],
+					'sql'   => $this->get_postgresql_dml_table_reference_sql( $source['table'], $source['alias'] ),
+				);
+				continue;
+			}
+
 			$relation_sql = $source['relation_sql'] ?? $this->get_direct_information_schema_relation_sql( $source['view'] ?? '' );
 			if ( null === $relation_sql ) {
 				return null;
@@ -20520,7 +20582,11 @@ WHERE option_name IN (
 	 */
 	private function get_direct_information_schema_star_projection_output_columns( array $tokens, int $start, int $end, array $context ): ?array {
 		if ( $start + 1 === $end && isset( $tokens[ $start ] ) && '*' === $tokens[ $start ]->get_bytes() ) {
-			return 1 === count( $context['sources'] ) ? $context['sources'][0]['columns'] : null;
+			$columns = array();
+			foreach ( $context['sources'] as $source ) {
+				$columns = array_merge( $columns, $source['columns'] );
+			}
+			return $columns;
 		}
 
 		if (
@@ -20863,6 +20929,75 @@ WHERE option_name IN (
 		}
 
 		return $columns;
+	}
+
+	/**
+	 * Check whether parsed sources include at least one information_schema relation.
+	 *
+	 * @param array[] $sources Parsed direct information_schema sources.
+	 * @return bool Whether at least one source is a catalog source.
+	 */
+	private function direct_information_schema_sources_include_information_schema_relation( array $sources ): bool {
+		foreach ( $sources as $source ) {
+			if ( isset( $source['view'] ) || isset( $source['relation_sql'] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a FROM source range directly names information_schema.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First source token.
+	 * @param int              $end    Final source token, exclusive.
+	 * @return bool Whether the source range directly references information_schema.
+	 */
+	private function direct_information_schema_source_range_references_information_schema( array $tokens, int $start, int $end ): bool {
+		for ( $position = $start; $position + 1 < $end; $position++ ) {
+			$identifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
+			if (
+				null !== $identifier
+				&& 0 === strcasecmp( $identifier, 'information_schema' )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether direct information_schema sources are safe for a multi-source rewrite.
+	 *
+	 * @param array[] $sources Parsed direct information_schema sources.
+	 * @return bool Whether the sources are safe to rewrite together.
+	 */
+	private function direct_information_schema_sources_are_joinable( array $sources ): bool {
+		$has_information_schema_source = false;
+		$main_table_count              = 0;
+
+		foreach ( $sources as $source ) {
+			if ( isset( $source['view'] ) && $this->is_direct_information_schema_join_relation( $source['view'] ) ) {
+				$has_information_schema_source = true;
+				continue;
+			}
+
+			if ( isset( $source['table'] ) ) {
+				++$main_table_count;
+				if ( $main_table_count > 1 ) {
+					return false;
+				}
+				continue;
+			}
+
+			return false;
+		}
+
+		return $has_information_schema_source;
 	}
 
 	/**
@@ -21232,12 +21367,11 @@ WHERE option_name IN (
 	 */
 	private function get_direct_information_schema_star_projection_select_list( array $tokens, int $start, int $end, array $context ): ?string {
 		if ( $start + 1 === $end && isset( $tokens[ $start ] ) && '*' === $tokens[ $start ]->get_bytes() ) {
-			if ( 1 !== count( $context['sources'] ) ) {
-				return null;
+			$select_lists = array();
+			foreach ( $context['sources'] as $source ) {
+				$select_lists[] = $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
 			}
-
-			$source = $context['sources'][0];
-			return $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
+			return implode( ', ', $select_lists );
 		}
 
 		if (

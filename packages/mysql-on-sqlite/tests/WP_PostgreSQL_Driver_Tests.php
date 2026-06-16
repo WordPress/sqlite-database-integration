@@ -13934,6 +13934,63 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema SELECTs can join one application table source.
+	 */
+	public function test_direct_information_schema_mixed_application_table_join_returns_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_schema_names (
+				id INTEGER NOT NULL,
+				db_name TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_schema_names (
+				id int(11) NOT NULL,
+				db_name varchar(191) NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_schema_names (id, db_name)
+			VALUES (1, 'other'), (2, 'wptests')"
+		);
+
+		$result = $driver->query(
+			"SELECT sub.id, sub.table_schema, sub.table_name, sub.column_name
+			FROM (
+				SELECT *
+				FROM information_schema.columns AS c
+				JOIN wptests_schema_names AS app
+					ON app.db_name = CONCAT(COALESCE(c.table_schema, 'default'), '')
+				JOIN information_schema.schemata AS s
+					ON s.schema_name = c.table_schema
+				WHERE c.table_name = 'wptests_schema_names'
+			) AS sub
+			ORDER BY ordinal_position"
+		);
+
+		$this->assertSame(
+			array(
+				array( '2', 'wptests', 'wptests_schema_names', 'id' ),
+				array( '2', 'wptests', 'wptests_schema_names', 'db_name' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->TABLE_SCHEMA, $row->TABLE_NAME, $row->COLUMN_NAME );
+				},
+				$result
+			)
+		);
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( '"wptests_schema_names" AS "app"', $sql );
+		$this->assertStringContainsString( '"app"."db_name" = CONCAT', $sql );
+		$this->assertStringContainsString( 'COALESCE ( "c"."TABLE_SCHEMA" , \'default\')', $sql );
+	}
+
+	/**
 	 * Tests unsupported mixed information_schema joins fail before backend execution.
 	 */
 	public function test_direct_information_schema_mixed_join_shape_fails_closed(): void {
@@ -13942,9 +13999,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		foreach (
 			array(
-				'SELECT t.table_name
-				FROM information_schema.tables AS t
-				JOIN wptests_options AS o ON o.option_name = t.table_name',
 				'SELECT t.table_name
 				FROM information_schema.tables AS t
 				WHERE t.table_name IN (
