@@ -12936,6 +12936,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$result = $driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field IN ('option_id', 'autoload')" );
+
+		$this->assertSame(
+			array( 'option_id', 'autoload' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$result = $driver->query( "SHOW COLUMNS FROM wptests_options WHERE Field BETWEEN 'option_id' AND 'option_value'" );
+
+		$this->assertSame(
+			array( 'option_id', 'option_name', 'option_value' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( array(), $driver->query( 'SHOW COLUMNS FROM wptests_options WHERE NOT 1' ) );
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
 	}
 
 	/**
@@ -13163,6 +13192,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( array( 'wptests_view' ), array( $tables[0]->Tables_in_wptests ) );
 		$this->assertSame( 'VIEW', $tables[0]->Table_type );
+		$this->assertSame( array( 'public' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( array(), $driver->query( 'SHOW TABLES WHERE FALSE' ) );
 		$this->assertSame( array( 'public' ), $driver->get_last_postgresql_queries()[0]['params'] );
 	}
 
@@ -14005,8 +14037,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
+		$selected_values = $driver->query( "SHOW STATUS WHERE Variable_name IN ('Uptime', 'Threads_running')" );
+		$this->assertSame(
+			array(
+				'Threads_running',
+				'Uptime',
+			),
+			array_map(
+				static function ( $row ): string {
+					return $row->Variable_name;
+				},
+				$selected_values
+			)
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$unknown_not_in_values = $driver->query( "SHOW STATUS WHERE Value NOT IN ('0', NULL)" );
+		$this->assertSame( array(), $unknown_not_in_values );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$truthy_status = $driver->query( 'SHOW STATUS WHERE NOT 0' );
+		$this->assertNotCount( 0, $truthy_status );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
 		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '5', $found_rows[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( (string) count( $truthy_status ), $found_rows[0]->{'FOUND_ROWS()'} );
 	}
 
 	/**
@@ -16294,6 +16349,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( array( 'PRIMARY', 'autoload' ), array( $indexes[0]->Key_name, $indexes[1]->Key_name ) );
 		$this->assertSame( array( '0', '1' ), array( $indexes[0]->Non_unique, $indexes[1]->Non_unique ) );
+		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_options WHERE Key_name NOT IN ('PRIMARY')" );
+
+		$this->assertSame( array( 'option_name', 'autoload' ), array( $indexes[0]->Key_name, $indexes[1]->Key_name ) );
 		$this->assertSame( array( 'public', 'wptests_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
 	}
 

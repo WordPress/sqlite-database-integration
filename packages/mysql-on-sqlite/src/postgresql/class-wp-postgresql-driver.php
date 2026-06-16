@@ -9048,8 +9048,15 @@ $wp_mysql_on_update$',
 	 */
 	private function parse_mysql_show_where_comparison_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
 		$left = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
-		if ( null === $left || ! isset( $tokens[ $position ] ) || $position >= $end ) {
+		if ( null === $left ) {
 			return null;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || $position >= $end ) {
+			return array(
+				'type' => 'truthy',
+				'expr' => $left,
+			);
 		}
 
 		if ( WP_MySQL_Lexer::IS_SYMBOL === $tokens[ $position ]->id ) {
@@ -9088,27 +9095,83 @@ $wp_mysql_on_update$',
 			);
 		}
 
-		$is_not_like = false;
+		$is_not = false;
 		if ( WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position ]->id ) {
-			$is_not_like = true;
+			$is_not = true;
 			++$position;
 		}
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
+		if ( ! isset( $tokens[ $position ] ) || $position >= $end ) {
+			return $is_not ? null : array(
+				'type' => 'truthy',
+				'expr' => $left,
+			);
 		}
-		++$position;
 
-		$right = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
-		if ( null === $right ) {
+		if ( WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			$right = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			if ( null === $right ) {
+				return null;
+			}
+
+			return array(
+				'type'     => 'comparison',
+				'operator' => $is_not ? 'not_like' : 'like',
+				'left'     => $left,
+				'right'    => $right,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			$values = $this->parse_mysql_show_where_value_list( $tokens, $position, $end, $allowed_columns );
+			if ( null === $values ) {
+				return null;
+			}
+
+			return array(
+				'type'   => 'in',
+				'expr'   => $left,
+				'values' => $values,
+				'not'    => $is_not,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::BETWEEN_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			$lower = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			if (
+				null === $lower
+				|| ! isset( $tokens[ $position ] )
+				|| $position >= $end
+				|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $position ]->id
+			) {
+				return null;
+			}
+
+			++$position;
+			$upper = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			if ( null === $upper ) {
+				return null;
+			}
+
+			return array(
+				'type'  => 'between',
+				'expr'  => $left,
+				'lower' => $lower,
+				'upper' => $upper,
+				'not'   => $is_not,
+			);
+		}
+
+		if ( $is_not ) {
 			return null;
 		}
 
 		return array(
-			'type'     => 'comparison',
-			'operator' => $is_not_like ? 'not_like' : 'like',
-			'left'     => $left,
-			'right'    => $right,
+			'type' => 'truthy',
+			'expr' => $left,
 		);
 	}
 
@@ -9336,6 +9399,45 @@ $wp_mysql_on_update$',
 		return $this->is_mysql_unsigned_integer_token( $token )
 			|| WP_MySQL_Lexer::DECIMAL_NUMBER === $token->id
 			|| WP_MySQL_Lexer::FLOAT_NUMBER === $token->id;
+	}
+
+	/**
+	 * Parse a non-empty parenthesized value list for SHOW WHERE IN predicates.
+	 *
+	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
+	 * @param int                  $position        Current token position, advanced on success.
+	 * @param int                  $end             Final token position, exclusive.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @return array<int,array>|null Value expressions, or null when unsupported.
+	 */
+	private function parse_mysql_show_where_value_list( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$argument_ranges = $this->split_top_level_mysql_arguments( $tokens, $position + 1, $after_close - 1 );
+		if ( empty( $argument_ranges ) ) {
+			return null;
+		}
+
+		$values = array();
+		foreach ( $argument_ranges as $argument_range ) {
+			$argument_position = $argument_range['start'];
+			$value             = $this->parse_mysql_show_where_value_expression( $tokens, $argument_position, $argument_range['end'], $allowed_columns );
+			if ( null === $value || $argument_position !== $argument_range['end'] ) {
+				return null;
+			}
+
+			$values[] = $value;
+		}
+
+		$position = $after_close;
+		return $values;
 	}
 
 	/**
@@ -12286,6 +12388,11 @@ ORDER BY table_name';
 			case 'not':
 				return ! $this->evaluate_mysql_show_where_predicate( $predicate['expr'], $row );
 
+			case 'truthy':
+				return $this->is_mysql_show_where_truthy(
+					$this->evaluate_mysql_show_where_value( $predicate['expr'], $row )
+				);
+
 			case 'is_null':
 				$is_null = null === $this->evaluate_mysql_show_where_value( $predicate['expr'], $row );
 				return ! empty( $predicate['not'] ) ? ! $is_null : $is_null;
@@ -12295,6 +12402,39 @@ ORDER BY table_name';
 				$left     = $this->evaluate_mysql_show_where_value( $predicate['left'], $row );
 				$right    = $this->evaluate_mysql_show_where_value( $predicate['right'], $row );
 				return $this->evaluate_mysql_show_where_comparison( $left, $operator, $right );
+
+			case 'in':
+				$left = $this->evaluate_mysql_show_where_value( $predicate['expr'], $row );
+				if ( null === $left ) {
+					return false;
+				}
+
+				$has_null = false;
+				foreach ( $predicate['values'] ?? array() as $value_expression ) {
+					$value = $this->evaluate_mysql_show_where_value( $value_expression, $row );
+					if ( null === $value ) {
+						$has_null = true;
+						continue;
+					}
+
+					if ( $this->evaluate_mysql_show_where_comparison( $left, '=', $value ) ) {
+						return empty( $predicate['not'] );
+					}
+				}
+
+				return ! empty( $predicate['not'] ) && ! $has_null;
+
+			case 'between':
+				$value = $this->evaluate_mysql_show_where_value( $predicate['expr'], $row );
+				$lower = $this->evaluate_mysql_show_where_value( $predicate['lower'], $row );
+				$upper = $this->evaluate_mysql_show_where_value( $predicate['upper'], $row );
+				if ( null === $value || null === $lower || null === $upper ) {
+					return false;
+				}
+
+				$matches = $this->compare_mysql_show_where_values( $value, $lower ) >= 0
+					&& $this->compare_mysql_show_where_values( $value, $upper ) <= 0;
+				return ! empty( $predicate['not'] ) ? ! $matches : $matches;
 		}
 
 		return false;
@@ -12420,6 +12560,28 @@ ORDER BY table_name';
 				return $comparison < 0;
 			case '<=':
 				return $comparison <= 0;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Evaluate one scalar SHOW WHERE value using MySQL boolean coercion.
+	 *
+	 * @param scalar|null $value Value to coerce.
+	 * @return bool Whether the value is true in a WHERE predicate.
+	 */
+	private function is_mysql_show_where_truthy( $value ): bool {
+		if ( null === $value ) {
+			return false;
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+
+		if ( is_int( $value ) || is_float( $value ) || is_string( $value ) ) {
+			return 0.0 !== (float) $value;
 		}
 
 		return false;
