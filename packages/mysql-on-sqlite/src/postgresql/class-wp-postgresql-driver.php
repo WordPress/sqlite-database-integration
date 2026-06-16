@@ -772,6 +772,11 @@ class WP_PostgreSQL_Driver {
 			return $result;
 		}
 
+		$create_view_query = $this->translate_mysql_create_view_query( $query );
+		if ( null !== $create_view_query ) {
+			return $this->execute_postgresql_statements( $create_view_query['statements'] );
+		}
+
 		$create_index_query = $this->translate_mysql_create_index_query( $query );
 		if ( null !== $create_index_query ) {
 			$this->execute_postgresql_statements( $create_index_query['statements'] );
@@ -802,11 +807,23 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
+		$alter_view_query = $this->translate_mysql_alter_view_query( $query );
+		if ( null !== $alter_view_query ) {
+			return $this->execute_postgresql_statements( $alter_view_query['statements'] );
+		}
+
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
 			$this->execute_postgresql_statements( $drop_query['statements'] );
 			$this->maybe_clear_mysql_schema_metadata_table_state( $drop_query['tables'] );
 			$this->delete_mysql_schema_metadata_for_table_targets( $drop_query['metadata_targets'] );
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
+		$drop_view_query = $this->translate_mysql_drop_view_query( $query );
+		if ( null !== $drop_view_query ) {
+			$this->execute_postgresql_statements( $drop_view_query['statements'] );
 			$this->last_result = 0;
 			return $this->last_result;
 		}
@@ -6351,6 +6368,339 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Translate supported MySQL CREATE VIEW statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL CREATE VIEW query.
+	 * @return array{statements: string[]}|null Translation, or null when this is not CREATE VIEW.
+	 */
+	private function translate_mysql_create_view_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			if ( $this->contains_mysql_view_token_after_position( $tokens, 1 ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE VIEW statement.' );
+			}
+			return null;
+		}
+
+		$position   = 1;
+		$or_replace = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$or_replace = true;
+			$position  += 2;
+		}
+
+		if ( $this->contains_mysql_unsupported_view_prefix_clause( $tokens, $position, $statement_end ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE VIEW statement.' );
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VIEW_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		return $this->translate_mysql_view_definition_query(
+			$query,
+			$tokens,
+			$position,
+			$statement_end,
+			$or_replace,
+			'CREATE VIEW'
+		);
+	}
+
+	/**
+	 * Translate supported MySQL ALTER VIEW statements to PostgreSQL CREATE OR REPLACE VIEW.
+	 *
+	 * @param string $query MySQL ALTER VIEW query.
+	 * @return array{statements: string[]}|null Translation, or null when this is not ALTER VIEW.
+	 */
+	private function translate_mysql_alter_view_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::ALTER_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			if ( $this->contains_mysql_view_token_after_position( $tokens, 1 ) ) {
+				throw new InvalidArgumentException( 'Unsupported ALTER VIEW statement.' );
+			}
+			return null;
+		}
+
+		$position = 1;
+		if ( $this->contains_mysql_unsupported_view_prefix_clause( $tokens, $position, $statement_end ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER VIEW statement.' );
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VIEW_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		return $this->translate_mysql_view_definition_query(
+			$query,
+			$tokens,
+			$position,
+			$statement_end,
+			true,
+			'ALTER VIEW'
+		);
+	}
+
+	/**
+	 * Translate a supported CREATE/ALTER VIEW definition.
+	 *
+	 * @param string           $query         MySQL query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Position of VIEW token.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @param bool             $or_replace    Whether to emit CREATE OR REPLACE VIEW.
+	 * @param string           $statement_type Statement type for fail-closed error messages.
+	 * @return array{statements: string[]} Translation.
+	 */
+	private function translate_mysql_view_definition_query(
+		string $query,
+		array $tokens,
+		int $position,
+		int $statement_end,
+		bool $or_replace,
+		string $statement_type
+	): array {
+		++$position;
+		$view_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $view_reference ) {
+			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+		}
+
+		$view_schema     = $this->get_mysql_writable_table_backend_schema( $view_reference, $statement_type );
+		$view_identifier = null === $view_reference['schema']
+			? $this->connection->quote_identifier( $view_reference['table'] )
+			: $this->get_postgresql_schema_identifier( $view_schema, $view_reference['table'] );
+
+		$columns_sql = '';
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$columns_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if ( null === $columns_end ) {
+				throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+			}
+
+			$columns = $this->parse_mysql_view_column_list( $tokens, $position + 1, $columns_end - 1 );
+			if ( null === $columns ) {
+				throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+			}
+
+			$columns_sql = ' (' . implode( ', ', $columns ) . ')';
+			$position    = $columns_end;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AS_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+		}
+
+		++$position;
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+		}
+
+		if ( $this->contains_mysql_unsupported_view_trailing_clause( $tokens, $position, $statement_end ) ) {
+			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+		}
+
+		$select_sql = $this->get_mysql_token_range_bytes( $query, $tokens, $position, $statement_end );
+		$this->validate_mysql_view_select_query( $select_sql, $statement_type );
+		$select_translation = $this->translate_mysql_select_query_for_postgresql( $select_sql );
+		$select_sql         = $select_translation['sql'];
+		$this->validate_mysql_view_select_query( $select_sql, $statement_type );
+
+		return array(
+			'statements' => array(
+				sprintf(
+					'CREATE %sVIEW %s%s AS %s',
+					$or_replace ? 'OR REPLACE ' : '',
+					$view_identifier,
+					$columns_sql,
+					$select_sql
+				),
+			),
+		);
+	}
+
+	/**
+	 * Parse a CREATE/ALTER VIEW column list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First column token position.
+	 * @param int              $end    Final column token position, exclusive.
+	 * @return string[]|null PostgreSQL-quoted column identifiers, or null when unsupported.
+	 */
+	private function parse_mysql_view_column_list( array $tokens, int $start, int $end ): ?array {
+		if ( $start >= $end ) {
+			return null;
+		}
+
+		$columns  = array();
+		$position = $start;
+		while ( $position < $end ) {
+			$column_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $column_name ) {
+				return null;
+			}
+
+			$columns[] = $this->connection->quote_identifier( $column_name );
+			++$position;
+
+			if ( $position === $end ) {
+				break;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			++$position;
+			if ( $position === $end ) {
+				return null;
+			}
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Check whether a CREATE/ALTER VIEW prefix uses unsupported MySQL-only clauses.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Position immediately after CREATE/ALTER modifiers.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether an unsupported view prefix clause appears before VIEW.
+	 */
+	private function contains_mysql_unsupported_view_prefix_clause( array $tokens, int $position, int $statement_end ): bool {
+		$unsupported = false;
+		for ( $i = $position; $i < $statement_end; $i++ ) {
+			if ( WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[ $i ]->id ) {
+				return $unsupported;
+			}
+
+			if (
+				in_array(
+					$tokens[ $i ]->id,
+					array(
+						WP_MySQL_Lexer::ALGORITHM_SYMBOL,
+						WP_MySQL_Lexer::DEFINER_SYMBOL,
+						WP_MySQL_Lexer::SECURITY_SYMBOL,
+					),
+					true
+				)
+			) {
+				$unsupported = true;
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::SQL_SYMBOL === $tokens[ $i ]->id
+				&& isset( $tokens[ $i + 1 ] )
+				&& WP_MySQL_Lexer::SECURITY_SYMBOL === $tokens[ $i + 1 ]->id
+			) {
+				$unsupported = true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token stream contains VIEW after a position.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First token position to inspect.
+	 * @return bool Whether VIEW appears before EOF.
+	 */
+	private function contains_mysql_view_token_after_position( array $tokens, int $position ): bool {
+		for ( $i = $position; isset( $tokens[ $i ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $i ]->id; $i++ ) {
+			if ( WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[ $i ]->id ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a VIEW SELECT has unsupported MySQL trailing clauses.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First SELECT token position.
+	 * @param int              $end    Final SELECT token position, exclusive.
+	 * @return bool Whether an unsupported trailing clause is present.
+	 */
+	private function contains_mysql_unsupported_view_trailing_clause( array $tokens, int $start, int $end ): bool {
+		$depth = 0;
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return true;
+				}
+				continue;
+			}
+
+			if ( 0 !== $depth || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[ $i ]->id ) {
+				continue;
+			}
+
+			$next_token = $tokens[ $i + 1 ] ?? null;
+			if (
+				null !== $next_token
+				&& in_array(
+					$next_token->id,
+					array(
+						WP_MySQL_Lexer::CASCADED_SYMBOL,
+						WP_MySQL_Lexer::CHECK_SYMBOL,
+						WP_MySQL_Lexer::LOCAL_SYMBOL,
+					),
+					true
+				)
+			) {
+				return true;
+			}
+		}
+
+		return 0 !== $depth;
+	}
+
+	/**
+	 * Validate a view SELECT against MySQL constructs the driver must reject.
+	 *
+	 * @param string $select_sql     MySQL or translated SELECT SQL.
+	 * @param string $statement_type Statement type for fail-closed error messages.
+	 */
+	private function validate_mysql_view_select_query( string $select_sql, string $statement_type ): void {
+		if (
+			$this->contains_mysql_index_hint_syntax( $select_sql )
+			|| $this->contains_unsupported_mysql_date_arithmetic_function_query( $select_sql )
+			|| $this->contains_unsupported_mysql_fulltext_search_query( $select_sql )
+			|| $this->contains_unsupported_mysql_common_function_query( $select_sql )
+			|| $this->contains_unsupported_mysql_group_concat_function_query( $select_sql )
+			|| $this->contains_unsupported_mysql_week_function_query( $select_sql )
+		) {
+			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+		}
+	}
+
+	/**
 	 * Check whether parsed key parts should be exposed as a MySQL SPATIAL index.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -6885,33 +7235,142 @@ $wp_mysql_on_update$',
 	 */
 	private function preflight_mysql_dbdelta_alter_table_metadata_operations( string $table_schema, string $table_name, array $metadata_operations ): void {
 		$metadata_operations = $this->flatten_mysql_dbdelta_alter_table_metadata_operations( $metadata_operations );
-		$added_columns = array();
-		$added_indexes = array();
+		$added_columns   = array();
+		$added_indexes   = array();
+		$dropped_columns = array();
+		$dropped_indexes = array();
 
 		foreach ( $metadata_operations as $metadata ) {
+			if ( 'drop_column' === ( $metadata['operation'] ?? '' ) ) {
+				$column_name = (string) ( $metadata['column'] ?? '' );
+				if ( '' !== $column_name ) {
+					$column_key = strtolower( $column_name );
+					unset( $added_columns[ $column_key ] );
+					$dropped_columns[ $column_key ] = true;
+					foreach (
+						$this->get_mysql_index_names_removed_by_dropped_columns(
+							$table_schema,
+							$table_name,
+							array_keys( $dropped_columns )
+						) as $index_name
+					) {
+						$dropped_indexes[ strtolower( $index_name ) ] = true;
+					}
+				}
+				continue;
+			}
+
+			if ( 'drop_index' === ( $metadata['operation'] ?? '' ) ) {
+				$index_name = (string) ( $metadata['index'] ?? '' );
+				if ( '' !== $index_name ) {
+					$index_key = strtolower( $index_name );
+					unset( $added_indexes[ $index_key ] );
+					$dropped_indexes[ $index_key ] = true;
+				}
+				continue;
+			}
+
 			if ( 'add_column' === ( $metadata['operation'] ?? '' ) ) {
 				$column_name = (string) ( $metadata['column']['name'] ?? '' );
 				if ( '' !== $column_name ) {
 					$column_key = strtolower( $column_name );
 					if (
 						isset( $added_columns[ $column_key ] )
-						|| $this->mysql_table_has_column_for_translation( $table_schema, $table_name, $column_name )
+						|| (
+							! isset( $dropped_columns[ $column_key ] )
+							&& $this->mysql_table_has_column_for_translation( $table_schema, $table_name, $column_name )
+						)
 					) {
 						throw new InvalidArgumentException( sprintf( "Duplicate column name '%s'.", $column_name ) );
 					}
 					$added_columns[ $column_key ] = true;
+					unset( $dropped_columns[ $column_key ] );
 				}
 
 				foreach ( $metadata['indexes'] ?? array() as $index ) {
-					$this->preflight_mysql_dbdelta_alter_table_add_index_metadata( $table_schema, $table_name, $index, $added_indexes );
+					$this->preflight_mysql_dbdelta_alter_table_add_index_metadata(
+						$table_schema,
+						$table_name,
+						$index,
+						$added_indexes,
+						$dropped_indexes
+					);
 				}
 				continue;
 			}
 
 			if ( 'add_index' === ( $metadata['operation'] ?? '' ) ) {
-				$this->preflight_mysql_dbdelta_alter_table_add_index_metadata( $table_schema, $table_name, $metadata['index'] ?? array(), $added_indexes );
+				$this->preflight_mysql_dbdelta_alter_table_add_index_metadata(
+					$table_schema,
+					$table_name,
+					$metadata['index'] ?? array(),
+					$added_indexes,
+					$dropped_indexes
+				);
 			}
 		}
+	}
+
+	/**
+	 * Get indexes that would be fully removed by the columns already dropped in this ALTER statement.
+	 *
+	 * @param string   $table_schema        Backend schema name.
+	 * @param string   $table_name          Table name.
+	 * @param string[] $dropped_column_keys Lowercase column names dropped before the current action.
+	 * @return string[] MySQL index names whose key parts are all dropped.
+	 */
+	private function get_mysql_index_names_removed_by_dropped_columns( string $table_schema, string $table_name, array $dropped_column_keys ): array {
+		if ( array() === $dropped_column_keys ) {
+			return array();
+		}
+
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$dropped_column_lookup = array_fill_keys( $dropped_column_keys, true );
+		$stmt                  = $this->connection->query(
+			sprintf(
+				'SELECT key_name, column_name
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY key_name, seq_in_index',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		$indexes = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$index_key = strtolower( (string) $row['key_name'] );
+			if ( ! isset( $indexes[ $index_key ] ) ) {
+				$indexes[ $index_key ] = array(
+					'name'    => (string) $row['key_name'],
+					'columns' => array(),
+				);
+			}
+
+			$indexes[ $index_key ]['columns'][] = strtolower( (string) $row['column_name'] );
+		}
+
+		$removed_indexes = array();
+		foreach ( $indexes as $index ) {
+			if ( array() === $index['columns'] ) {
+				continue;
+			}
+
+			$all_columns_dropped = true;
+			foreach ( $index['columns'] as $column_key ) {
+				if ( ! isset( $dropped_column_lookup[ $column_key ] ) ) {
+					$all_columns_dropped = false;
+					break;
+				}
+			}
+
+			if ( $all_columns_dropped ) {
+				$removed_indexes[] = $index['name'];
+			}
+		}
+
+		return $removed_indexes;
 	}
 
 	/**
@@ -6973,8 +7432,15 @@ $wp_mysql_on_update$',
 	 * @param string $table_name    Table name.
 	 * @param array  $index         Index metadata.
 	 * @param array  $added_indexes Index names already added by this ALTER statement.
+	 * @param array  $dropped_indexes Index names already dropped by this ALTER statement.
 	 */
-	private function preflight_mysql_dbdelta_alter_table_add_index_metadata( string $table_schema, string $table_name, array $index, array &$added_indexes ): void {
+	private function preflight_mysql_dbdelta_alter_table_add_index_metadata(
+		string $table_schema,
+		string $table_name,
+		array $index,
+		array &$added_indexes,
+		array $dropped_indexes
+	): void {
 		$index_name = (string) ( $index['name'] ?? '' );
 		if ( '' === $index_name ) {
 			return;
@@ -6983,7 +7449,10 @@ $wp_mysql_on_update$',
 		$index_key = strtolower( $index_name );
 		if (
 			isset( $added_indexes[ $index_key ] )
-			|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $index_name )
+			|| (
+				! isset( $dropped_indexes[ $index_key ] )
+				&& $this->mysql_index_metadata_exists( $table_schema, $table_name, $index_name )
+			)
 		) {
 			throw new InvalidArgumentException( sprintf( "Duplicate key name '%s'.", $index_name ) );
 		}
@@ -9582,6 +10051,94 @@ $wp_mysql_on_update$',
 			'statements'       => $statements,
 			'tables'           => $table_names,
 			'metadata_targets' => $metadata_targets,
+		);
+	}
+
+	/**
+	 * Translate supported MySQL DROP VIEW statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL DROP VIEW query.
+	 * @return array{statements: string[]}|null Translation, or null when this is not DROP VIEW.
+	 */
+	private function translate_mysql_drop_view_query( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::VIEW_SYMBOL !== $tokens[1]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported DROP VIEW statement.' );
+		}
+
+		$position = 2;
+		$if_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$if_exists = true;
+			$position += 2;
+		}
+
+		$view_identifiers = array();
+		while ( $position < $statement_end ) {
+			$reference_start = $position;
+			$view_reference  = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			if ( null === $view_reference || $position === $reference_start ) {
+				throw new InvalidArgumentException( 'Unsupported DROP VIEW statement.' );
+			}
+
+			$view_schema        = $this->get_mysql_writable_table_backend_schema( $view_reference, 'DROP VIEW' );
+			$view_identifiers[] = null === $view_reference['schema']
+				? $this->connection->quote_identifier( $view_reference['table'] )
+				: $this->get_postgresql_schema_identifier( $view_schema, $view_reference['table'] );
+
+			if ( $position === $statement_end ) {
+				break;
+			}
+
+			if (
+				isset( $tokens[ $position ] )
+				&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::CASCADE_SYMBOL, WP_MySQL_Lexer::RESTRICT_SYMBOL ), true )
+			) {
+				++$position;
+				if ( $position !== $statement_end ) {
+					throw new InvalidArgumentException( 'Unsupported DROP VIEW statement.' );
+				}
+				break;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				throw new InvalidArgumentException( 'Unsupported DROP VIEW statement.' );
+			}
+
+			++$position;
+			if ( $position === $statement_end ) {
+				throw new InvalidArgumentException( 'Unsupported DROP VIEW statement.' );
+			}
+		}
+
+		if ( array() === $view_identifiers ) {
+			throw new InvalidArgumentException( 'Unsupported DROP VIEW statement.' );
+		}
+
+		$statements = array();
+		foreach ( $view_identifiers as $view_identifier ) {
+			$statements[] = sprintf(
+				'DROP VIEW %s%s',
+				$if_exists ? 'IF EXISTS ' : '',
+				$view_identifier
+			);
+		}
+
+		return array(
+			'statements' => $statements,
 		);
 	}
 
@@ -18273,9 +18830,28 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$scope = $this->get_mysql_select_scope( $tokens, 3, $where_position );
-		if ( null === $scope || ! empty( $scope['unknown'] ) ) {
-			return null;
+		$information_schema_source_translation = null;
+		if (
+			0 === strcasecmp( $this->db_name, 'information_schema' )
+			|| $this->direct_information_schema_source_range_references_information_schema( $tokens, 3, $where_position )
+		) {
+			$information_schema_source_translation = $this->get_direct_information_schema_dml_source_translation(
+				$query,
+				$tokens,
+				3,
+				$where_position
+			);
+			if ( null === $information_schema_source_translation ) {
+				return null;
+			}
+			$scope      = $information_schema_source_translation['scope'];
+			$source_sql = $information_schema_source_translation['sql'];
+		} else {
+			$scope = $this->get_mysql_select_scope( $tokens, 3, $where_position );
+			if ( null === $scope || ! empty( $scope['unknown'] ) ) {
+				return null;
+			}
+			$source_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, 3, $where_position );
 		}
 
 		$where_end = $order_position ?? $limit_position ?? $statement_end;
@@ -18283,12 +18859,25 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
-			$tokens,
-			$where_position + 1,
-			$where_end,
-			$scope
-		);
+		if ( null !== $information_schema_source_translation ) {
+			$where_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$where_end,
+				$information_schema_source_translation['context']
+			);
+			if ( null === $where_sql ) {
+				return null;
+			}
+		} else {
+			$where = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$where_end,
+				$scope
+			);
+			$where_sql = $where['sql'];
+		}
 
 		$order_sql = '';
 		if ( null !== $order_position ) {
@@ -18320,8 +18909,8 @@ WHERE option_name IN (
 			$target_alias_sql,
 			$target_alias_sql,
 			$target_alias_sql,
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 3, $where_position ),
-			$where_sql['sql'],
+			$source_sql,
+			$where_sql,
 			$order_sql,
 			$limit_sql
 		);
@@ -36977,8 +37566,22 @@ FROM (
 	 */
 	private function create_query_targets_main_database_explicitly( array $tokens ): bool {
 		$position = 1;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OR_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$position += 2;
+		}
+
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			$view_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			return $this->is_explicit_main_database_table_reference( $view_reference );
 		}
 
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id ) {
@@ -37056,6 +37659,25 @@ FROM (
 	 * @return bool Whether the target table is explicitly main-database qualified.
 	 */
 	private function alter_table_query_targets_main_database_explicitly( array $tokens ): bool {
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[1]->id ) {
+			$position       = 2;
+			$view_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+			return $this->is_explicit_main_database_table_reference( $view_reference );
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null !== $statement_end && $this->contains_mysql_unsupported_view_prefix_clause( $tokens, 1, $statement_end ) ) {
+			for ( $position = 1; $position < $statement_end; $position++ ) {
+				if ( WP_MySQL_Lexer::VIEW_SYMBOL !== $tokens[ $position ]->id ) {
+					continue;
+				}
+
+				++$position;
+				$view_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+				return $this->is_explicit_main_database_table_reference( $view_reference );
+			}
+		}
+
 		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id ) {
 			return false;
 		}
@@ -37072,7 +37694,10 @@ FROM (
 	 * @return bool Whether all target tables are explicitly main-database qualified.
 	 */
 	private function drop_query_targets_main_database_explicitly( array $tokens ): bool {
-		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id ) {
+		if (
+			isset( $tokens[1] )
+			&& in_array( $tokens[1]->id, array( WP_MySQL_Lexer::TABLE_SYMBOL, WP_MySQL_Lexer::VIEW_SYMBOL ), true )
+		) {
 			$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
 			if ( null === $statement_end ) {
 				return false;
@@ -37097,6 +37722,15 @@ FROM (
 				$matched = true;
 				if ( $position === $statement_end ) {
 					break;
+				}
+
+				if (
+					WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[1]->id
+					&& isset( $tokens[ $position ] )
+					&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::CASCADE_SYMBOL, WP_MySQL_Lexer::RESTRICT_SYMBOL ), true )
+				) {
+					++$position;
+					return $position === $statement_end;
 				}
 
 				if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
@@ -42240,6 +42874,7 @@ FROM (
 				WP_MySQL_Lexer::NOT_SYMBOL,
 				WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
 				WP_MySQL_Lexer::NULL_SYMBOL,
+				WP_MySQL_Lexer::NOW_SYMBOL,
 				WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
 				WP_MySQL_Lexer::OR_SYMBOL,
 				WP_MySQL_Lexer::PLUS_OPERATOR,
@@ -42934,6 +43569,9 @@ FROM (
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_session_user_function_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
@@ -44466,6 +45104,44 @@ FROM (
 	}
 
 	/**
+	 * Translate MySQL timestamp functions that allow no parentheses.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_nonparenthesized_timestamp_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::NOW_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $position + 1 ] )
+			&& $position + 1 < $end
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$function_name = strtolower( $tokens[ $position ]->get_value() );
+		if ( ! in_array( $function_name, array( 'current_timestamp', 'localtime', 'localtimestamp' ), true ) ) {
+			return null;
+		}
+
+		$sql = $this->get_postgresql_mysql_common_function_sql( $function_name, array() );
+		if ( null === $sql ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => $sql,
+			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+			'position' => $position,
+		);
+	}
+
+	/**
 	 * Translate common MySQL runtime functions to PostgreSQL expressions.
 	 *
 	 * This mirrors the broad SQLite UDF layer for simple function shapes used by
@@ -45072,6 +45748,7 @@ FROM (
 			case 'utc_time':
 				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS')" : null;
 
+			case 'current_timestamp':
 			case 'localtime':
 			case 'localtimestamp':
 			case 'now':
@@ -48404,6 +49081,10 @@ $wp_mysql_json_valid$'
 			}
 
 			if ( null !== $this->translate_mysql_session_user_function_to_postgresql( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $i, $end ) ) {
 				return true;
 			}
 

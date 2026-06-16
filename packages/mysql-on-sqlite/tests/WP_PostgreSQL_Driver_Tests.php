@@ -925,6 +925,83 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests strict ON DUPLICATE KEY UPDATE rejects zero-date literals before backend execution.
+	 */
+	public function test_strict_upsert_update_assignment_rejects_zero_date_literals_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_date_gmt, post_modified, post_modified_gmt)
+			VALUES (1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+		);
+
+		try {
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES (1, '2020-01-02 00:00:00', '2020-01-02 00:00:00', '2020-01-02 00:00:00', '2020-01-02 00:00:00')
+				ON DUPLICATE KEY UPDATE `post_modified` = '0000-00-00 00:00:00'"
+			);
+			$this->fail( 'Expected zero date assignment to be rejected in strict SQL mode.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( "Incorrect datetime value: '0000-00-00 00:00:00'", $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests non-strict ON DUPLICATE KEY UPDATE normalizes VALUES() partial-zero dates.
+	 */
+	public function test_non_strict_upsert_values_assignment_normalizes_zero_in_dates_when_no_zero_in_date_mode_is_enabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'NO_ZERO_IN_DATE' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_date_gmt, post_modified, post_modified_gmt)
+			VALUES (1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES (1, '2020-01-02 00:00:00', '2020-01-02 00:00:00', '2020-00-15 14:15:27', '2020-01-02 00:00:00')
+				ON DUPLICATE KEY UPDATE `post_modified` = VALUES(`post_modified`)"
+			)
+		);
+		$this->assertSame(
+			'INSERT INTO "wptests_posts" ("ID", "post_date", "post_date_gmt", "post_modified", "post_modified_gmt") VALUES (1, \'2020-01-02 00:00:00\', \'2020-01-02 00:00:00\', \'0000-00-00 00:00:00\', \'2020-01-02 00:00:00\') ON CONFLICT ("ID") DO UPDATE SET "post_modified" = excluded."post_modified"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->post_modified );
+	}
+
+	/**
+	 * Tests non-strict REPLACE ... SELECT normalizes partial-zero date/time projections.
+	 */
+	public function test_non_strict_replace_select_normalizes_zero_in_dates_when_no_zero_in_date_mode_is_enabled(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'NO_ZERO_IN_DATE' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"REPLACE INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				SELECT 1, '2020-01-02 00:00:00', '2020-01-02 00:00:00', '2020-00-15 14:15:27', '2020-01-02 00:00:00' FROM DUAL"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0000-00-00 00:00:00', $rows[0]->post_modified );
+	}
+
+	/**
 	 * Tests stored zero dates remain readable and comparable regardless of the current SQL mode.
 	 */
 	public function test_stored_zero_dates_remain_readable_comparable_and_orderable_after_modes_change(): void {
@@ -5960,6 +6037,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$current_timestamp_translation['sql']
 		);
 
+		$current_timestamp_keyword_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = CURRENT_TIMESTAMP";
+
+		$current_timestamp_keyword_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$current_timestamp_keyword_upsert
+		);
+		$this->assertNotNull( $current_timestamp_keyword_translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			$current_timestamp_keyword_translation['sql']
+		);
+
 		$this->assertNull(
 			$this->translate_driver_query_data_with_private_method(
 				$driver,
@@ -5969,6 +6061,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					ON DUPLICATE KEY UPDATE `updated_at` = NOW(6)"
 			)
 		);
+
+		try {
+			$driver->query(
+				"INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+					VALUES (1, '2001-01-01 00:00:00')
+					ON DUPLICATE KEY UPDATE `updated_at` = NOW(6)"
+			);
+			$this->fail( 'Expected unsupported timestamp precision upsert assignment to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -9027,6 +9131,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined DELETE statements can read from information_schema sources.
+	 */
+	public function test_joined_delete_can_read_information_schema_sources(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$delete = "DELETE o
+			FROM wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			WHERE it.table_schema = DATABASE()
+				AND o.autoload = 'yes'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_options" AS "o" WHERE "o".ctid IN (SELECT "o".ctid FROM "wptests_options" AS "o" JOIN (', $sql );
+		$this->assertStringContainsString( ') AS "it" ON "o"."option_name" = "it"."TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" = \'wptests\'', $sql );
+		$this->assertStringContainsString( '"o"."autoload" = \'yes\'', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+	}
+
+	/**
+	 * Tests unsupported information_schema joined DELETE predicates fail before backend execution.
+	 */
+	public function test_joined_delete_rejects_unsupported_information_schema_predicates(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$delete = "DELETE o
+			FROM wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			WHERE it.table_schema IN (SELECT DATABASE())";
+
+		try {
+			$driver->query( $delete );
+			$this->fail( 'Expected unsupported DELETE statement.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported DELETE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests unsupported DELETE shapes fail before backend execution.
 	 */
 	public function test_unsupported_delete_shapes_fail_closed_before_backend(): void {
@@ -9885,8 +10037,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				UTC_DATE() AS utc_date_value,
 				UTC_TIME() AS utc_time_value,
 				NOW() AS now_value,
+				CURRENT_TIMESTAMP AS current_timestamp_keyword_value,
 				LOCALTIME() AS localtime_value,
+				LOCALTIME AS localtime_keyword_value,
 				LOCALTIMESTAMP() AS localtimestamp_value,
+				LOCALTIMESTAMP AS localtimestamp_keyword_value,
 				UTC_TIMESTAMP() AS utc_timestamp_value,
 				DATABASE() AS database_value,
 				SCHEMA() AS schema_value,
@@ -9899,8 +10054,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS utc_date_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS') AS utc_time_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS now_value", $sql );
+		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS current_timestamp_keyword_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS localtime_value", $sql );
+		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS localtime_keyword_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS localtimestamp_value", $sql );
+		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS localtimestamp_keyword_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS utc_timestamp_value", $sql );
 		$this->assertStringContainsString( "'wptests' AS database_value", $sql );
 		$this->assertStringContainsString( "'wptests' AS schema_value", $sql );
@@ -10439,6 +10597,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT JSON_VALID() AS invalid_json',
 			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
+			'SELECT CURRENT_TIMESTAMP(6) AS fractional_timestamp',
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
 			'SELECT ROW_COUNT(123) AS rows_changed',
 			'SELECT UUID() AS uuid_value',
@@ -10466,6 +10625,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT JSON_VALID() AS invalid_json',
 			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
+			'SELECT CURRENT_TIMESTAMP(6) AS fractional_timestamp',
 			"SELECT FROM_UNIXTIME(0, '%Y', 'extra') AS invalid_from_unixtime",
 			"SELECT LAST_INSERT_ID('123') AS invalid_last_insert_id",
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
@@ -15729,6 +15889,159 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plugin_alter' )[0]->{'Create Table'};
 		$this->assertStringContainsString( '  KEY `flag_idx` (`flag` DESC)', $create_table );
+	}
+
+	/**
+	 * Tests ALTER TABLE can drop and recreate the same column name in one batch.
+	 */
+	public function test_alter_table_drop_and_readd_same_column_updates_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_alter_readd_column (
+				id int(11) NOT NULL,
+				slug varchar(20) DEFAULT 'old',
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$driver->query(
+			"ALTER TABLE wptests_alter_readd_column
+				DROP COLUMN slug,
+				ADD COLUMN slug varchar(50) NOT NULL DEFAULT 'restored'"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_readd_column" DROP COLUMN "slug"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_readd_column" ADD COLUMN "slug" varchar(50) NOT NULL DEFAULT \'restored\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alter_readd_column' );
+		$this->assertSame( array( 'id', 'slug' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( 'varchar(50)', $columns[1]['column_type'] );
+		$this->assertSame( 'NO', $columns[1]['is_nullable'] );
+		$this->assertSame( 'restored', $columns[1]['column_default'] );
+	}
+
+	/**
+	 * Tests ALTER TABLE can drop and recreate the same secondary or primary key name in one batch.
+	 */
+	public function test_alter_table_drop_and_readd_same_index_names_update_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_alter_readd_index (
+				id int(11) NOT NULL,
+				slug varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY lookup (slug)
+			)"
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alter_readd_index
+				DROP INDEX lookup,
+				ADD INDEX lookup (id DESC)'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "wptests_alter_readd_index__lookup"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_alter_readd_index__lookup" ON "wptests_alter_readd_index" ("id" DESC)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$lookup_index = array_values(
+			array_filter(
+				$this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_readd_index' ),
+				static function ( array $row ): bool {
+					return 'lookup' === $row['key_name'];
+				}
+			)
+		);
+		$this->assertSame( array( 'id' ), array_column( $lookup_index, 'column_name' ) );
+		$this->assertSame( array( 'D' ), array_column( $lookup_index, 'collation' ) );
+
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_alter_readd_primary (
+				id int(11) NOT NULL,
+				slug int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)"
+		);
+
+		$driver->query(
+			'ALTER TABLE wptests_alter_readd_primary
+				DROP PRIMARY KEY,
+				ADD PRIMARY KEY (slug)'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_readd_primary" DROP CONSTRAINT "wptests_alter_readd_primary_pkey"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_readd_primary" ADD PRIMARY KEY ("slug")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$primary_index = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_readd_primary' );
+		$this->assertSame( array( 'PRIMARY' ), array_values( array_unique( array_column( $primary_index, 'key_name' ) ) ) );
+		$this->assertSame( array( 'slug' ), array_column( $primary_index, 'column_name' ) );
+	}
+
+	/**
+	 * Tests same-name ALTER TABLE replacements still require DROP before ADD.
+	 */
+	public function test_alter_table_same_name_replacements_require_drop_before_add(): void {
+		$queries = array(
+			'ALTER TABLE wptests_alter_readd_order ADD COLUMN slug varchar(50), DROP COLUMN slug' => "Duplicate column name 'slug'.",
+			'ALTER TABLE wptests_alter_readd_order ADD INDEX lookup (id), DROP INDEX lookup'      => "Duplicate key name 'lookup'.",
+		);
+
+		foreach ( $queries as $query => $message ) {
+			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$this->install_information_schema_fixture( $driver );
+			$driver->store_mysql_schema_metadata(
+				"CREATE TABLE wptests_alter_readd_order (
+					id int(11) NOT NULL,
+					slug varchar(20) DEFAULT NULL,
+					KEY lookup (slug)
+				)"
+			);
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected same-name ALTER replacement with ADD before DROP to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
@@ -23996,6 +24309,135 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE VIEW with a MySQL column list is translated and queryable.
+	 */
+	public function test_create_view_with_column_list_translates_and_reads_rows(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE view_source (`id` INTEGER, `name` TEXT)' );
+		$driver->query( "INSERT INTO view_source (`id`, `name`) VALUES (1, 'one'), (2, 'two')" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( 'CREATE VIEW view_copy (`item_id`, `item_name`) AS SELECT `id`, `name` FROM `view_source` WHERE `id` > 1' )
+		);
+		$this->assertSame(
+			'CREATE VIEW "view_copy" ("item_id", "item_name") AS SELECT "id", "name" FROM "view_source" WHERE "id" > 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT item_id, item_name FROM view_copy ORDER BY item_id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'item_id'   => '2',
+					'item_name' => 'two',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests CREATE OR REPLACE VIEW and ALTER VIEW emit PostgreSQL CREATE OR REPLACE VIEW.
+	 */
+	public function test_create_or_replace_view_and_alter_view_translate_to_create_or_replace(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE OR REPLACE VIEW view_replace (`item_id`) AS SELECT 1 AS `item_id`' )
+		);
+		$this->assertSame(
+			'CREATE OR REPLACE VIEW "view_replace" ("item_id") AS SELECT 1 AS "item_id"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER VIEW view_replace (`item_id`) AS SELECT 2 AS `item_id`' )
+		);
+		$this->assertSame(
+			'CREATE OR REPLACE VIEW "view_replace" ("item_id") AS SELECT 2 AS "item_id"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests DROP VIEW accepts IF EXISTS, multiple targets, and MySQL RESTRICT no-op.
+	 */
+	public function test_drop_view_if_exists_accepts_multiple_targets_and_restrict(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE VIEW drop_view_one AS SELECT 1 AS id' );
+		$driver->query( 'CREATE VIEW drop_view_two AS SELECT 2 AS id' );
+
+		$this->assertSame( 0, $driver->query( 'DROP VIEW IF EXISTS drop_view_one, drop_view_two RESTRICT' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP VIEW IF EXISTS "drop_view_one"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP VIEW IF EXISTS "drop_view_two"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests main database-qualified VIEW DDL targets are accepted.
+	 */
+	public function test_view_ddl_accepts_main_database_qualified_targets(): void {
+		$driver = $this->create_driver( 'wp' );
+
+		$this->assertSame( 0, $driver->query( 'CREATE VIEW wp.qualified_view AS SELECT 1 AS id' ) );
+		$this->assertSame(
+			'CREATE VIEW "qualified_view" AS SELECT 1 AS id',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame( 0, $driver->query( 'DROP VIEW wp.qualified_view CASCADE' ) );
+		$this->assertSame(
+			'DROP VIEW "qualified_view"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests unsupported MySQL-only VIEW clauses fail without backend execution.
+	 */
+	public function test_unsupported_view_ddl_clauses_fail_closed(): void {
+		$driver = $this->create_driver();
+
+		$queries = array(
+			'CREATE ALGORITHM = MERGE VIEW plugin_view AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement.',
+			'CREATE DEFINER = root@localhost VIEW plugin_view AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement.',
+			'CREATE SQL SECURITY DEFINER VIEW plugin_view AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement.',
+			'CREATE VIEW plugin_view AS SELECT 1 AS id WITH CHECK OPTION' => 'Unsupported CREATE VIEW statement.',
+			'CREATE VIEW plugin_view AS SELECT 1 AS id WITH LOCAL' => 'Unsupported CREATE VIEW statement.',
+			'ALTER VIEW plugin_view AS SELECT 1 AS id WITH LOCAL CHECK OPTION' => 'Unsupported ALTER VIEW statement.',
+			'CREATE VIEW information_schema.plugin_view AS SELECT 1 AS id' => 'Unsupported information_schema query.',
+			'DROP VIEW information_schema.plugin_view' => 'Unsupported information_schema query.',
+			'CREATE VIEW plugin_view (id,) AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement.',
+		);
+
+		foreach ( $queries as $query => $expected_message ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported VIEW DDL to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $expected_message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests unsupported CREATE statement families fail without backend execution.
 	 */
 	public function test_unsupported_create_statement_families_fail_closed(): void {
@@ -24004,8 +24446,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'CREATE DATABASE plugin_db'                                                      => 'Unsupported CREATE DATABASE statement.',
 			'CREATE SCHEMA plugin_schema'                                                    => 'Unsupported CREATE DATABASE statement.',
-			'CREATE VIEW plugin_view AS SELECT 1 AS id'                                      => 'Unsupported CREATE VIEW statement.',
-			'CREATE OR REPLACE VIEW plugin_view AS SELECT 1 AS id'                           => 'Unsupported CREATE VIEW statement.',
 			'CREATE TRIGGER plugin_trigger BEFORE INSERT ON plugin_table FOR EACH ROW SET NEW.id = 1' => 'Unsupported CREATE TRIGGER statement.',
 			'CREATE EVENT plugin_event ON SCHEDULE EVERY 1 DAY DO SELECT 1'                  => 'Unsupported CREATE EVENT statement.',
 			'CREATE USER plugin_user'                                                        => 'Unsupported CREATE USER statement.',
@@ -24035,7 +24475,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'DROP DATABASE plugin_db'             => 'Unsupported DROP DATABASE statement.',
 			'DROP SCHEMA IF EXISTS plugin_schema' => 'Unsupported DROP DATABASE statement.',
-			'DROP VIEW IF EXISTS plugin_view'     => 'Unsupported DROP VIEW statement.',
 			'DROP PROCEDURE plugin_procedure'     => 'Unsupported DROP PROCEDURE statement.',
 			'DROP FUNCTION plugin_function'       => 'Unsupported DROP FUNCTION statement.',
 			'DROP TRIGGER plugin_trigger'         => 'Unsupported DROP TRIGGER statement.',
@@ -24073,7 +24512,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'ALTER SERVER plugin_server OPTIONS (HOST "localhost")'  => 'Unsupported ALTER SERVER statement.',
 			'ALTER TABLESPACE plugin_tablespace ADD DATAFILE "t.ibd"' => 'Unsupported ALTER TABLESPACE statement.',
 			'ALTER UNDO TABLESPACE plugin_undo SET INACTIVE'         => 'Unsupported ALTER UNDO TABLESPACE statement.',
-			'ALTER VIEW plugin_view AS SELECT 1 AS id'               => 'Unsupported ALTER VIEW statement.',
 			'RENAME USER old_user TO new_user'                       => 'Unsupported RENAME USER statement.',
 		);
 

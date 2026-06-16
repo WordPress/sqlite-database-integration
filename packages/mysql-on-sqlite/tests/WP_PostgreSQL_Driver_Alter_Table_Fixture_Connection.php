@@ -77,6 +77,14 @@ class WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection extends WP_PostgreSQL_
 			return parent::query( 'SELECT 1 WHERE 0 = 1' );
 		}
 
+		if ( 0 === strpos( $sql, 'CREATE OR REPLACE VIEW ' ) ) {
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
 		return parent::query( $sql, $params );
 	}
 
