@@ -20077,6 +20077,86 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests multi-pair RENAME TABLE applies table, index, and FK metadata left-to-right.
+	 */
+	public function test_multi_pair_rename_table_updates_indexes_and_foreign_key_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_swap_left (
+				id int(11) NOT NULL,
+				left_value varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY left_value_idx (left_value)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_swap_right (
+				id int(11) NOT NULL,
+				right_value varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY right_value_idx (right_value)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_swap_child (
+				id int(11) NOT NULL,
+				parent_id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query(
+			'ALTER TABLE wptests_rename_swap_child
+				ADD CONSTRAINT swap_parent_fk FOREIGN KEY (parent_id) REFERENCES wptests_rename_swap_left (id)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'RENAME TABLE
+					wptests_rename_swap_left TO wptests_rename_swap_tmp,
+					wptests_rename_swap_right TO wptests_rename_swap_left,
+					wptests_rename_swap_tmp TO wptests_rename_swap_right'
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertSame(
+			array(
+				'ALTER TABLE "wptests_rename_swap_left" RENAME TO "wptests_rename_swap_tmp"',
+				'ALTER INDEX "wptests_rename_swap_left__left_value_idx" RENAME TO "wptests_rename_swap_tmp__left_value_idx"',
+				'ALTER TABLE "wptests_rename_swap_right" RENAME TO "wptests_rename_swap_left"',
+				'ALTER INDEX "wptests_rename_swap_right__right_value_idx" RENAME TO "wptests_rename_swap_left__right_value_idx"',
+				'ALTER TABLE "wptests_rename_swap_tmp" RENAME TO "wptests_rename_swap_right"',
+				'ALTER INDEX "wptests_rename_swap_tmp__left_value_idx" RENAME TO "wptests_rename_swap_right__left_value_idx"',
+			),
+			$sql
+		);
+
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_swap_tmp' ) );
+		$this->assertSame(
+			array( 'id', 'right_value' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_swap_left' ), 'column_name' )
+		);
+		$this->assertSame(
+			array( 'id', 'left_value' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_swap_right' ), 'column_name' )
+		);
+		$this->assertSame(
+			array( 'PRIMARY', 'right_value_idx' ),
+			array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_rename_swap_left' ), 'key_name' )
+		);
+		$this->assertSame(
+			array( 'PRIMARY', 'left_value_idx' ),
+			array_column( $this->get_mysql_index_metadata_rows( $driver, 'wptests_rename_swap_right' ), 'key_name' )
+		);
+
+		$child_foreign_keys = $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_rename_swap_child' );
+		$this->assertSame( array( 'wptests_rename_swap_right' ), array_values( array_unique( array_column( $child_foreign_keys, 'referenced_table_name' ) ) ) );
+	}
+
+	/**
 	 * Tests ALTER TABLE RENAME AS and bare RENAME forms are accepted.
 	 */
 	public function test_alter_table_rename_as_and_bare_rename_forms_update_metadata(): void {
@@ -20098,8 +20178,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_unsupported_rename_table_variants_do_not_reach_backend(): void {
 		$queries = array(
-			'RENAME TABLE wptests_old_name TO wptests_new_name, wptests_old_two TO wptests_new_two',
 			'RENAME TABLE wptests_old_name TO other_db.wptests_new_name',
+			'RENAME TABLE wptests_old_name TO wptests_new_name, wptests_old_two TO other_db.wptests_new_two',
 			'RENAME TABLE information_schema.tables TO wptests_tables',
 		);
 
@@ -25817,6 +25897,70 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 'wptests_posts_status_chk', $checks[0]->CONSTRAINT_NAME );
 		$this->assertSame( 'post_status IS NOT NULL', $checks[0]->CHECK_CLAUSE );
+	}
+
+	/**
+	 * Tests CREATE TABLE table-level foreign keys populate MySQL-facing metadata.
+	 */
+	public function test_create_table_table_level_foreign_keys_populate_information_schema(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_fk_parent (
+				id INTEGER NOT NULL,
+				site_id INTEGER NOT NULL,
+				PRIMARY KEY (id, site_id)
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_fk_child (
+					id INTEGER NOT NULL PRIMARY KEY,
+					parent_id INTEGER NOT NULL,
+					parent_site_id INTEGER NOT NULL,
+					CONSTRAINT parent_fk FOREIGN KEY parent_lookup (parent_id, parent_site_id)
+						REFERENCES wptests_fk_parent (id, site_id)
+						ON DELETE CASCADE
+						ON UPDATE RESTRICT
+				)'
+			)
+		);
+
+		$this->assertStringContainsString(
+			'CONSTRAINT "parent_fk" FOREIGN KEY ("parent_id", "parent_site_id") REFERENCES "wptests_fk_parent" ("id", "site_id") ON DELETE CASCADE ON UPDATE RESTRICT',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$foreign_keys = $this->get_mysql_foreign_key_metadata_rows( $driver, 'wptests_fk_child' );
+		$this->assertSame(
+			array(
+				array( 'parent_fk', 'parent_id', 'wptests_fk_parent', 'id', '1' ),
+				array( 'parent_fk', 'parent_site_id', 'wptests_fk_parent', 'site_id', '2' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array(
+						$row['constraint_name'],
+						$row['column_name'],
+						$row['referenced_table_name'],
+						$row['referenced_column_name'],
+						(string) $row['seq_in_index'],
+					);
+				},
+				$foreign_keys
+			)
+		);
+
+		$this->assertSame( array( 'RESTRICT' ), array_values( array_unique( array_column( $foreign_keys, 'update_rule' ) ) ) );
+		$this->assertSame( array( 'CASCADE' ), array_values( array_unique( array_column( $foreign_keys, 'delete_rule' ) ) ) );
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_fk_child' )[0]->{'Create Table'};
+		$this->assertStringContainsString(
+			'CONSTRAINT `parent_fk` FOREIGN KEY (`parent_id`, `parent_site_id`) REFERENCES `wptests_fk_parent` (`id`, `site_id`) ON DELETE CASCADE ON UPDATE RESTRICT',
+			$show_create
+		);
 	}
 
 	/**

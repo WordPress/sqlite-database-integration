@@ -225,6 +225,64 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests table-level foreign keys are translated and preserved in metadata.
+	 */
+	public function test_translate_table_level_foreign_keys_and_metadata(): void {
+		$sql = 'CREATE TABLE wp_table_foreign_keys (
+			id int NOT NULL,
+			parent_id int NOT NULL,
+			parent_site_id int NOT NULL,
+			parent_extra_id int NOT NULL,
+			CONSTRAINT fk_parent FOREIGN KEY parent_lookup (parent_id, parent_site_id) REFERENCES wp_parent (id, site_id) ON DELETE CASCADE ON UPDATE RESTRICT,
+			CONSTRAINT wp_table_foreign_keys_ibfk_1 FOREIGN KEY (parent_extra_id) REFERENCES wp_parent (id),
+			FOREIGN KEY (parent_id) REFERENCES wp_parent (id)
+		) DEFAULT CHARACTER SET utf8mb4';
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_table_foreign_keys\" (\n  \"id\" integer NOT NULL,\n  \"parent_id\" integer NOT NULL,\n  \"parent_site_id\" integer NOT NULL,\n  \"parent_extra_id\" integer NOT NULL,\n  CONSTRAINT \"fk_parent\" FOREIGN KEY (\"parent_id\", \"parent_site_id\") REFERENCES \"wp_parent\" (\"id\", \"site_id\") ON DELETE CASCADE ON UPDATE RESTRICT,\n  CONSTRAINT \"wp_table_foreign_keys_ibfk_1\" FOREIGN KEY (\"parent_extra_id\") REFERENCES \"wp_parent\" (\"id\"),\n  CONSTRAINT \"wp_table_foreign_keys_ibfk_2\" FOREIGN KEY (\"parent_id\") REFERENCES \"wp_parent\" (\"id\")\n)",
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql, true );
+		$this->assertSame(
+			array(
+				array(
+					'name'               => 'fk_parent',
+					'columns'            => array( 'parent_id', 'parent_site_id' ),
+					'referenced_schema'  => null,
+					'referenced_table'   => 'wp_parent',
+					'referenced_columns' => array( 'id', 'site_id' ),
+					'update_rule'        => 'RESTRICT',
+					'delete_rule'        => 'CASCADE',
+				),
+				array(
+					'name'               => 'wp_table_foreign_keys_ibfk_1',
+					'columns'            => array( 'parent_extra_id' ),
+					'referenced_schema'  => null,
+					'referenced_table'   => 'wp_parent',
+					'referenced_columns' => array( 'id' ),
+					'update_rule'        => 'NO ACTION',
+					'delete_rule'        => 'NO ACTION',
+				),
+				array(
+					'name'               => 'wp_table_foreign_keys_ibfk_2',
+					'columns'            => array( 'parent_id' ),
+					'referenced_schema'  => null,
+					'referenced_table'   => 'wp_parent',
+					'referenced_columns' => array( 'id' ),
+					'update_rule'        => 'NO ACTION',
+					'delete_rule'        => 'NO ACTION',
+				),
+			),
+			$metadata[0]['foreign_keys']
+		);
+	}
+
+	/**
 	 * Tests unsupported MySQL index options fail explicitly.
 	 */
 	public function test_translate_rejects_unsupported_index_options(): void {

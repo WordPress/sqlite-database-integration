@@ -4746,9 +4746,16 @@ $wp_mysql_on_update$',
 	/**
 	 * Apply MySQL-facing metadata changes after a table rename.
 	 *
-	 * @param array{schema: string, old_table: string, new_table: string} $metadata Rename metadata.
+	 * @param array{schema?: string, old_table?: string, new_table?: string, renames?: array<int,array{schema:string,old_table:string,new_table:string}>} $metadata Rename metadata.
 	 */
 	private function apply_mysql_rename_table_metadata( array $metadata ): void {
+		if ( isset( $metadata['renames'] ) && is_array( $metadata['renames'] ) ) {
+			foreach ( $metadata['renames'] as $rename_metadata ) {
+				$this->apply_mysql_rename_table_metadata( $rename_metadata );
+			}
+			return;
+		}
+
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$table_schema   = $metadata['schema'];
@@ -11093,7 +11100,7 @@ $wp_mysql_on_update$',
 	 * Translate supported MySQL RENAME TABLE statements to PostgreSQL.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{statements: string[], metadata: array{schema: string, old_table: string, new_table: string}}|null Translation, or null when this is not RENAME TABLE.
+	 * @return array{statements: string[], metadata: array{schema?: string, old_table?: string, new_table?: string, renames?: array<int,array{schema:string,old_table:string,new_table:string}>}}|null Translation, or null when this is not RENAME TABLE.
 	 */
 	private function translate_mysql_rename_table_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -11110,39 +11117,89 @@ $wp_mysql_on_update$',
 			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
 		}
 
-		$position            = 2;
-		$old_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
-		if ( null === $old_table_reference ) {
-			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
-		}
+		$position              = 2;
+		$statements            = array();
+		$renames               = array();
+		$metadata_source_names = array();
+		while ( $position < $statement_end ) {
+			$old_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+			if ( null === $old_table_reference ) {
+				throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+			}
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TO_SYMBOL !== $tokens[ $position ]->id ) {
-			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
-		}
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TO_SYMBOL !== $tokens[ $position ]->id ) {
+				throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+			}
 
-		++$position;
-		$new_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
-		if ( null === $new_table_reference || $position !== $statement_end ) {
-			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
-		}
+			++$position;
+			$new_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+			if ( null === $new_table_reference ) {
+				throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+			}
 
-		$table_schema     = $this->get_mysql_writable_table_backend_schema( $old_table_reference, 'RENAME TABLE' );
-		$new_table_schema = $this->get_mysql_rename_table_target_backend_schema( $new_table_reference, $table_schema, 'RENAME TABLE' );
-		if ( $new_table_schema !== $table_schema ) {
-			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
-		}
+			$table_schema     = $this->get_mysql_writable_table_backend_schema( $old_table_reference, 'RENAME TABLE' );
+			$new_table_schema = $this->get_mysql_rename_table_target_backend_schema( $new_table_reference, $table_schema, 'RENAME TABLE' );
+			if ( $new_table_schema !== $table_schema ) {
+				throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+			}
 
-		$old_table_name = $old_table_reference['table'];
-		$new_table_name = $new_table_reference['table'];
+			$old_table_name       = $old_table_reference['table'];
+			$new_table_name       = $new_table_reference['table'];
+			$old_metadata_key     = $this->get_mysql_rename_table_metadata_key( $table_schema, $old_table_name );
+			$new_metadata_key     = $this->get_mysql_rename_table_metadata_key( $table_schema, $new_table_name );
+			$metadata_source_name = $metadata_source_names[ $old_metadata_key ] ?? $old_table_name;
 
-		return array(
-			'statements' => $this->get_mysql_rename_table_statements( $table_schema, $old_table_name, $new_table_name ),
-			'metadata'   => array(
+			$statements = array_merge(
+				$statements,
+				$this->get_mysql_rename_table_statements( $table_schema, $old_table_name, $new_table_name, $metadata_source_name )
+			);
+			$renames[]  = array(
 				'schema'    => $table_schema,
 				'old_table' => $old_table_name,
 				'new_table' => $new_table_name,
+			);
+
+			unset( $metadata_source_names[ $old_metadata_key ] );
+			$metadata_source_names[ $new_metadata_key ] = $metadata_source_name;
+
+			if ( $position === $statement_end ) {
+				break;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
+				throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+			}
+			++$position;
+		}
+
+		if ( empty( $renames ) ) {
+			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
+		}
+
+		if ( 1 === count( $renames ) ) {
+			return array(
+				'statements' => $statements,
+				'metadata'   => $renames[0],
+			);
+		}
+
+		return array(
+			'statements' => $statements,
+			'metadata'   => array(
+				'renames' => $renames,
 			),
 		);
+	}
+
+	/**
+	 * Get a virtual rename metadata key for an in-flight RENAME TABLE sequence.
+	 *
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Current table name.
+	 * @return string Metadata key.
+	 */
+	private function get_mysql_rename_table_metadata_key( string $table_schema, string $table_name ): string {
+		return strtolower( $table_schema ) . "\0" . strtolower( $table_name );
 	}
 
 	/**
@@ -11181,7 +11238,7 @@ $wp_mysql_on_update$',
 	 * @param string $new_table_name New table name.
 	 * @return string[] PostgreSQL statements.
 	 */
-	private function get_mysql_rename_table_statements( string $table_schema, string $old_table_name, string $new_table_name ): array {
+	private function get_mysql_rename_table_statements( string $table_schema, string $old_table_name, string $new_table_name, ?string $metadata_table_name = null ): array {
 		$statements = array(
 			sprintf(
 				'ALTER TABLE %s RENAME TO %s',
@@ -11192,7 +11249,7 @@ $wp_mysql_on_update$',
 
 		return array_merge(
 			$statements,
-			$this->get_mysql_rename_table_index_statements( $table_schema, $old_table_name, $new_table_name )
+			$this->get_mysql_rename_table_index_statements( $table_schema, $old_table_name, $new_table_name, $metadata_table_name ?? $old_table_name )
 		);
 	}
 
@@ -11204,7 +11261,7 @@ $wp_mysql_on_update$',
 	 * @param string $new_table_name New table name.
 	 * @return string[] PostgreSQL ALTER INDEX statements.
 	 */
-	private function get_mysql_rename_table_index_statements( string $table_schema, string $old_table_name, string $new_table_name ): array {
+	private function get_mysql_rename_table_index_statements( string $table_schema, string $old_table_name, string $new_table_name, string $metadata_table_name ): array {
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$stmt = $this->connection->query(
@@ -11215,7 +11272,7 @@ $wp_mysql_on_update$',
 				ORDER BY key_name',
 				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 			),
-			array( $table_schema, $old_table_name )
+			array( $table_schema, $metadata_table_name )
 		);
 
 		$statements = array();
@@ -53033,6 +53090,10 @@ $wp_mysql_json_valid$'
 				return true;
 			}
 
+			if ( $this->is_mysql_create_table_foreign_key_marker( $tokens, $position ) ) {
+				return true;
+			}
+
 			if ( $this->is_mysql_create_table_primary_key_index_option_marker( $tokens, $position ) ) {
 				return true;
 			}
@@ -53103,11 +53164,24 @@ $wp_mysql_json_valid$'
 	}
 
 	/**
+	 * Check whether a CREATE TABLE token introduces a FOREIGN KEY definition.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position.
+	 * @return bool Whether the tokens are a FOREIGN KEY marker.
+	 */
+	private function is_mysql_create_table_foreign_key_marker( array $tokens, int $position ): bool {
+		return isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $position + 1 ]->id;
+	}
+
+	/**
 	 * Check whether a CREATE TABLE token introduces a MySQL secondary index definition.
 	 *
-	 * PostgreSQL-compatible PRIMARY KEY and FOREIGN KEY clauses can fall through
-	 * to the backend parser, but MySQL KEY/INDEX table elements must use the DDL
-	 * translator even when the statement has no other MySQL-only markers.
+	 * PostgreSQL-compatible PRIMARY KEY clauses can fall through to the backend
+	 * parser, but MySQL KEY/INDEX table elements must use the DDL translator even
+	 * when the statement has no other MySQL-only markers.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int              $position Current token position.

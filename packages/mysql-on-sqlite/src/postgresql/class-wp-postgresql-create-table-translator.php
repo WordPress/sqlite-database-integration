@@ -104,12 +104,13 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$constraints         = array();
 		$indexes             = array();
 		$foreign_key_ordinal = 1;
+		$foreign_key_names   = array();
 		$check_ordinal       = 1;
 
 		foreach ( $element_list->get_child_nodes( 'tableElement' ) as $table_element ) {
 			$column_definition = $table_element->get_first_child_node( 'columnDefinition' );
 			if ( $column_definition ) {
-				$columns[] = $this->translate_column_definition( $column_definition, $table_name, $foreign_key_ordinal, $check_ordinal );
+				$columns[] = $this->translate_column_definition( $column_definition, $table_name, $foreign_key_ordinal, $foreign_key_names, $check_ordinal );
 				continue;
 			}
 
@@ -123,6 +124,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 				if ( null !== $check_sql ) {
 					$constraints[] = $check_sql;
 				}
+				continue;
+			}
+
+			if ( $this->is_table_foreign_key_constraint( $table_constraint ) ) {
+				$constraints[] = $this->translate_table_foreign_key_constraint_definition( $table_constraint, $table_name, $foreign_key_ordinal, $foreign_key_names );
 				continue;
 			}
 
@@ -292,10 +298,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $column_definition   Column definition node.
 	 * @param string         $table_name          Table name.
 	 * @param int            $foreign_key_ordinal Next inline foreign key ordinal.
+	 * @param array          $foreign_key_names   Foreign key names already emitted.
 	 * @param int            $check_ordinal       Next inline CHECK ordinal.
 	 * @return string PostgreSQL column definition.
 	 */
-	private function translate_column_definition( WP_Parser_Node $column_definition, string $table_name, int &$foreign_key_ordinal, int &$check_ordinal ): string {
+	private function translate_column_definition( WP_Parser_Node $column_definition, string $table_name, int &$foreign_key_ordinal, array &$foreign_key_names, int &$check_ordinal ): string {
 		$name             = $this->get_identifier_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
 		$field_definition = $column_definition->get_first_child_node( 'fieldDefinition' );
 		if ( ! $field_definition ) {
@@ -375,9 +382,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$references = $this->get_inline_references_node( $column_definition );
 		if ( $references ) {
-			$constraint_name = $this->get_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal );
+			$constraint_name = $this->get_next_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal, $foreign_key_names );
 			$parts[]         = 'CONSTRAINT ' . $this->quote_identifier( $constraint_name ) . ' ' . $this->translate_inline_references( $references );
-			++$foreign_key_ordinal;
 		}
 
 		$check_constraint = $this->get_inline_check_constraint_node( $column_definition );
@@ -809,6 +815,52 @@ class WP_PostgreSQL_Create_Table_Translator {
 	}
 
 	/**
+	 * Check whether a table constraint is a FOREIGN KEY definition.
+	 *
+	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @return bool Whether the node is a FOREIGN KEY constraint.
+	 */
+	private function is_table_foreign_key_constraint( WP_Parser_Node $table_constraint ): bool {
+		return $table_constraint->has_child_token( WP_MySQL_Lexer::FOREIGN_SYMBOL )
+			&& null !== $table_constraint->get_first_child_node( 'references' );
+	}
+
+	/**
+	 * Translate a table-level MySQL FOREIGN KEY constraint.
+	 *
+	 * @param WP_Parser_Node $table_constraint   Table constraint node.
+	 * @param string         $table_name         Table name used for implicit constraint names.
+	 * @param int            $foreign_key_ordinal Next implicit FOREIGN KEY ordinal.
+	 * @param array          $foreign_key_names   Foreign key names already emitted.
+	 * @return string PostgreSQL FOREIGN KEY constraint SQL.
+	 */
+	private function translate_table_foreign_key_constraint_definition( WP_Parser_Node $table_constraint, string $table_name, int &$foreign_key_ordinal, array &$foreign_key_names ): string {
+		$foreign_key = $this->extract_table_foreign_key_metadata( $table_constraint, $table_name, $foreign_key_ordinal, $foreign_key_names );
+		$table_sql   = $this->quote_table_reference(
+			$foreign_key['referenced_schema'],
+			$foreign_key['referenced_table']
+		);
+
+		$sql = sprintf(
+			'CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)',
+			$this->quote_identifier( $foreign_key['name'] ),
+			implode( ', ', array_map( array( $this, 'quote_identifier' ), $foreign_key['columns'] ) ),
+			$table_sql,
+			implode( ', ', array_map( array( $this, 'quote_identifier' ), $foreign_key['referenced_columns'] ) )
+		);
+
+		if ( 'NO ACTION' !== $foreign_key['delete_rule'] ) {
+			$sql .= ' ON DELETE ' . $foreign_key['delete_rule'];
+		}
+
+		if ( 'NO ACTION' !== $foreign_key['update_rule'] ) {
+			$sql .= ' ON UPDATE ' . $foreign_key['update_rule'];
+		}
+
+		return $sql;
+	}
+
+	/**
 	 * Extract the referenced table, columns, and rules from inline REFERENCES.
 	 *
 	 * @param WP_Parser_Node $references REFERENCES node.
@@ -1004,6 +1056,50 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 */
 	private function get_implicit_foreign_key_constraint_name( string $table_name, int $ordinal ): string {
 		return $table_name . '_ibfk_' . $ordinal;
+	}
+
+	/**
+	 * Get a MySQL-compatible FOREIGN KEY constraint name.
+	 *
+	 * @param WP_Parser_Node $table_constraint   Table constraint node.
+	 * @param string         $table_name         Table name used for implicit constraint names.
+	 * @param int            $foreign_key_ordinal Next implicit FOREIGN KEY ordinal.
+	 * @param array          $foreign_key_names   Foreign key names already emitted.
+	 * @return string Constraint name.
+	 */
+	private function get_foreign_key_constraint_name( WP_Parser_Node $table_constraint, string $table_name, int &$foreign_key_ordinal, array &$foreign_key_names ): string {
+		$constraint_name = $table_constraint->get_first_child_node( 'constraintName' );
+		if ( $constraint_name ) {
+			$name = $this->get_identifier_value( $constraint_name->get_first_child_node( 'identifier' ) );
+			$key  = strtolower( $name );
+			if ( isset( $foreign_key_names[ $key ] ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE foreign key option.' );
+			}
+
+			$foreign_key_names[ $key ] = true;
+			return $name;
+		}
+
+		return $this->get_next_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal, $foreign_key_names );
+	}
+
+	/**
+	 * Get the next implicit MySQL FOREIGN KEY constraint name.
+	 *
+	 * @param string $table_name          Table name used for implicit constraint names.
+	 * @param int    $foreign_key_ordinal Next implicit FOREIGN KEY ordinal.
+	 * @param array  $foreign_key_names   Foreign key names already emitted.
+	 * @return string Constraint name.
+	 */
+	private function get_next_implicit_foreign_key_constraint_name( string $table_name, int &$foreign_key_ordinal, array &$foreign_key_names ): string {
+		do {
+			$constraint_name = $this->get_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal );
+			++$foreign_key_ordinal;
+			$key = strtolower( $constraint_name );
+		} while ( isset( $foreign_key_names[ $key ] ) );
+
+		$foreign_key_names[ $key ] = true;
+		return $constraint_name;
 	}
 
 	/**
@@ -1956,6 +2052,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$ordinal             = 1;
 		$index_ordinal       = 1;
 		$foreign_key_ordinal = 1;
+		$foreign_key_names   = array();
 		$check_ordinal       = 1;
 
 		list ( $table_charset, $table_collation ) = $charset;
@@ -2010,10 +2107,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 						++$index_ordinal;
 					}
 
-					$foreign_key = $this->extract_inline_foreign_key_metadata( $table_name, $name, $field_definition, $column_definition, $foreign_key_ordinal );
+					$foreign_key = $this->extract_inline_foreign_key_metadata( $table_name, $name, $field_definition, $column_definition, $foreign_key_ordinal, $foreign_key_names );
 					if ( null !== $foreign_key ) {
 						$foreign_keys[] = $foreign_key;
-						++$foreign_key_ordinal;
 					}
 
 					$column_attributes = $field_definition->get_child_nodes( 'columnAttribute' );
@@ -2045,6 +2141,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 				if ( $table_constraint ) {
 					if ( $table_constraint->get_first_child_node( 'checkConstraint' ) ) {
 						$checks[] = $this->extract_check_constraint_metadata( $table_constraint, $table_name, $check_ordinal );
+						continue;
+					}
+
+					if ( $this->is_table_foreign_key_constraint( $table_constraint ) ) {
+						$foreign_keys[] = $this->extract_table_foreign_key_metadata( $table_constraint, $table_name, $foreign_key_ordinal, $foreign_key_names );
 						continue;
 					}
 
@@ -2183,9 +2284,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $field_definition   Field definition node.
 	 * @param WP_Parser_Node $column_definition  Column definition node.
 	 * @param int            $foreign_key_ordinal Current foreign key ordinal.
+	 * @param array          $foreign_key_names   Foreign key names already emitted.
 	 * @return array|null Foreign key metadata, or null.
 	 */
-	private function extract_inline_foreign_key_metadata( string $table_name, string $column_name, WP_Parser_Node $field_definition, WP_Parser_Node $column_definition, int $foreign_key_ordinal ): ?array {
+	private function extract_inline_foreign_key_metadata( string $table_name, string $column_name, WP_Parser_Node $field_definition, WP_Parser_Node $column_definition, int &$foreign_key_ordinal, array &$foreign_key_names ): ?array {
 		$references = $this->get_inline_references_node( $column_definition );
 		if ( ! $references ) {
 			return null;
@@ -2197,7 +2299,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return array(
-			'name'               => $this->get_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal ),
+			'name'               => $this->get_next_implicit_foreign_key_constraint_name( $table_name, $foreign_key_ordinal, $foreign_key_names ),
 			'columns'            => array( $column_name ),
 			'referenced_schema'  => $reference['referenced_schema'],
 			'referenced_table'   => $reference['referenced_table'],
@@ -2205,6 +2307,61 @@ class WP_PostgreSQL_Create_Table_Translator {
 			'update_rule'        => $reference['update_rule'],
 			'delete_rule'        => $reference['delete_rule'],
 		);
+	}
+
+	/**
+	 * Extract metadata for a table-level foreign key reference.
+	 *
+	 * @param WP_Parser_Node $table_constraint   Table constraint node.
+	 * @param string         $table_name         Table name.
+	 * @param int            $foreign_key_ordinal Current foreign key ordinal.
+	 * @param array          $foreign_key_names   Foreign key names already emitted.
+	 * @return array Foreign key metadata.
+	 */
+	private function extract_table_foreign_key_metadata( WP_Parser_Node $table_constraint, string $table_name, int &$foreign_key_ordinal, array &$foreign_key_names ): array {
+		$references = $table_constraint->get_first_child_node( 'references' );
+		if ( ! $references ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE foreign key option.' );
+		}
+
+		$columns   = $this->get_foreign_key_columns( $table_constraint );
+		$reference = $this->extract_inline_reference_metadata( $references );
+		if ( count( $columns ) !== count( $reference['referenced_columns'] ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE foreign key option.' );
+		}
+
+		return array(
+			'name'               => $this->get_foreign_key_constraint_name( $table_constraint, $table_name, $foreign_key_ordinal, $foreign_key_names ),
+			'columns'            => $columns,
+			'referenced_schema'  => $reference['referenced_schema'],
+			'referenced_table'   => $reference['referenced_table'],
+			'referenced_columns' => $reference['referenced_columns'],
+			'update_rule'        => $reference['update_rule'],
+			'delete_rule'        => $reference['delete_rule'],
+		);
+	}
+
+	/**
+	 * Get local column names from a table-level FOREIGN KEY constraint.
+	 *
+	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @return string[] Local column names.
+	 */
+	private function get_foreign_key_columns( WP_Parser_Node $table_constraint ): array {
+		$columns = array();
+		foreach ( $table_constraint->get_descendant_nodes( 'keyPart' ) as $key_part ) {
+			if ( null !== $this->get_field_length( $key_part ) || $key_part->get_first_child_node( 'direction' ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE foreign key option.' );
+			}
+
+			$columns[] = $this->get_identifier_value( $key_part->get_first_child_node( 'identifier' ) );
+		}
+
+		if ( empty( $columns ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE foreign key option.' );
+		}
+
+		return $columns;
 	}
 
 	/**
