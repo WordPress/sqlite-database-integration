@@ -654,6 +654,7 @@ class WP_PostgreSQL_Driver {
 				$this->store_mysql_temporary_schema_metadata( $query );
 			} else {
 				$this->store_mysql_schema_metadata( $query );
+				$this->sync_mysql_on_update_current_timestamp_triggers_for_create_query( $query );
 			}
 			return $result;
 		}
@@ -1722,6 +1723,21 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Execute PostgreSQL side-effect statements without changing the query result.
+	 *
+	 * @param string[] $statements PostgreSQL SQL statements to execute.
+	 */
+	private function execute_postgresql_side_effect_statements( array $statements ): void {
+		foreach ( $statements as $statement ) {
+			$this->connection->query( $statement );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $statement,
+				'params' => array(),
+			);
+		}
+	}
+
+	/**
 	 * Execute translated DML statements for a single MySQL-facing query.
 	 *
 	 * @param array    $dml_query    Translated DML query metadata.
@@ -2707,6 +2723,157 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Create PostgreSQL trigger side effects for CREATE TABLE ON UPDATE columns.
+	 *
+	 * @param string $query MySQL CREATE TABLE query.
+	 */
+	private function sync_mysql_on_update_current_timestamp_triggers_for_create_query( string $query ): void {
+		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
+			return;
+		}
+
+		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
+		foreach ( $metadata_tables as $metadata ) {
+			$table_name = (string) $metadata['table_name'];
+			foreach ( $metadata['columns'] as $column ) {
+				if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
+					$this->execute_postgresql_side_effect_statements(
+						$this->get_postgresql_on_update_current_timestamp_create_statements( 'public', $table_name, (string) $column['name'] )
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Check whether MySQL column extra metadata contains ON UPDATE CURRENT_TIMESTAMP.
+	 *
+	 * @param string|null $extra Extra metadata.
+	 * @return bool Whether the column needs an ON UPDATE trigger.
+	 */
+	private function mysql_column_extra_has_on_update_current_timestamp( ?string $extra ): bool {
+		return null !== $extra && false !== stripos( $extra, 'on update CURRENT_TIMESTAMP' );
+	}
+
+	/**
+	 * Check whether MySQL column extra metadata contains DEFAULT_GENERATED.
+	 *
+	 * @param string|null $extra Extra metadata.
+	 * @return bool Whether the default is generated.
+	 */
+	private function mysql_column_extra_has_default_generated( ?string $extra ): bool {
+		return null !== $extra && false !== stripos( $extra, 'DEFAULT_GENERATED' );
+	}
+
+	/**
+	 * Get CREATE/replace trigger statements for a MySQL ON UPDATE CURRENT_TIMESTAMP column.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string[] PostgreSQL statements.
+	 */
+	private function get_postgresql_on_update_current_timestamp_create_statements( string $table_schema, string $table_name, string $column_name ): array {
+		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
+			return array();
+		}
+
+		$trigger_name  = $this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $table_name, $column_name );
+		$function_name = $this->get_postgresql_on_update_current_timestamp_function_name( $table_schema, $table_name, $column_name );
+		$table_sql    = $this->get_postgresql_schema_identifier( $table_schema, $table_name );
+		$function_sql = $this->get_postgresql_schema_identifier( $table_schema, $function_name );
+		$column_sql   = $this->connection->quote_identifier( $column_name );
+		$column_value = $this->connection->quote( $column_name );
+
+		return array(
+			sprintf(
+				'CREATE OR REPLACE FUNCTION %s()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $wp_mysql_on_update$
+BEGIN
+  IF NEW.%s IS NOT DISTINCT FROM OLD.%s
+     AND to_jsonb(NEW) - %s IS DISTINCT FROM to_jsonb(OLD) - %s THEN
+    NEW.%s = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\');
+  END IF;
+  RETURN NEW;
+END;
+$wp_mysql_on_update$',
+				$function_sql,
+				$column_sql,
+				$column_sql,
+				$column_value,
+				$column_value,
+				$column_sql
+			),
+			sprintf(
+				'DROP TRIGGER IF EXISTS %s ON %s',
+				$this->connection->quote_identifier( $trigger_name ),
+				$table_sql
+			),
+			sprintf(
+				'CREATE TRIGGER %s BEFORE UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION %s()',
+				$this->connection->quote_identifier( $trigger_name ),
+				$table_sql,
+				$function_sql
+			),
+		);
+	}
+
+	/**
+	 * Get drop trigger/function statements for a MySQL ON UPDATE CURRENT_TIMESTAMP column.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string[] PostgreSQL statements.
+	 */
+	private function get_postgresql_on_update_current_timestamp_drop_statements( string $table_schema, string $table_name, string $column_name ): array {
+		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
+			return array();
+		}
+
+		$trigger_name  = $this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $table_name, $column_name );
+		$function_name = $this->get_postgresql_on_update_current_timestamp_function_name( $table_schema, $table_name, $column_name );
+
+		return array(
+			sprintf(
+				'DROP TRIGGER IF EXISTS %s ON %s',
+				$this->connection->quote_identifier( $trigger_name ),
+				$this->get_postgresql_schema_identifier( $table_schema, $table_name )
+			),
+			sprintf(
+				'DROP FUNCTION IF EXISTS %s()',
+				$this->get_postgresql_schema_identifier( $table_schema, $function_name )
+			),
+		);
+	}
+
+	/**
+	 * Get a stable PostgreSQL trigger name for an ON UPDATE column.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string Trigger name.
+	 */
+	private function get_postgresql_on_update_current_timestamp_trigger_name( string $table_schema, string $table_name, string $column_name ): string {
+		return '__wp_pg_on_update_' . substr( sha1( $table_schema . "\0" . $table_name . "\0" . $column_name ), 0, 32 );
+	}
+
+	/**
+	 * Get a stable PostgreSQL function name for an ON UPDATE column.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string Function name.
+	 */
+	private function get_postgresql_on_update_current_timestamp_function_name( string $table_schema, string $table_name, string $column_name ): string {
+		return '__wp_pg_on_update_fn_' . substr( sha1( $table_schema . "\0" . $table_name . "\0" . $column_name ), 0, 29 );
+	}
+
+	/**
 	 * Get the metadata schema name for an active temporary table.
 	 *
 	 * @param string $table_name Table name.
@@ -2826,6 +2993,11 @@ class WP_PostgreSQL_Driver {
 			$column['ordinal'] = $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
 			$column_nullable   = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
 			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
+				);
+			}
 			$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
 			foreach ( $metadata['indexes'] ?? array() as $index ) {
 				$index['ordinal'] = $index_ordinal;
@@ -2840,6 +3012,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( 'change_column' === $metadata['operation'] ) {
+			$old_extra         = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
 			$column            = $metadata['column'];
 			$column['ordinal'] = $this->get_existing_mysql_column_ordinal(
 				$table_schema,
@@ -2849,6 +3022,16 @@ class WP_PostgreSQL_Driver {
 
 			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['old_column'] );
 			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
+				);
+			}
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
+				);
+			}
 			$this->rename_mysql_index_column_metadata(
 				$table_schema,
 				$table_name,
@@ -2880,6 +3063,7 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( 'rename_column' === $metadata['operation'] ) {
+			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
 			$this->rename_mysql_column_metadata(
 				$table_schema,
 				$table_name,
@@ -2904,10 +3088,24 @@ class WP_PostgreSQL_Driver {
 				$metadata['old_column'],
 				$metadata['new_column']
 			);
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					array_merge(
+						$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] ),
+						$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $metadata['new_column'] )
+					)
+				);
+			}
 			return;
 		}
 
 		if ( 'drop_column' === $metadata['operation'] ) {
+			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['column'] );
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
+				);
+			}
 			$this->delete_mysql_index_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
 			$this->delete_mysql_foreign_key_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
 			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['column'] );
@@ -3786,6 +3984,27 @@ class WP_PostgreSQL_Driver {
 
 		$nullable = $stmt->fetchColumn();
 		return false === $nullable ? 'YES' : (string) $nullable;
+	}
+
+	/**
+	 * Get stored MySQL extra metadata for a table column.
+	 *
+	 * @param string $table_schema Table schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return string Extra metadata.
+	 */
+	private function get_mysql_column_extra_metadata( string $table_schema, string $table_name, string $column_name ): string {
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT extra FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $column_name )
+		);
+
+		$extra = $stmt->fetchColumn();
+		return false === $extra ? '' : (string) $extra;
 	}
 
 	/**
@@ -7255,6 +7474,15 @@ class WP_PostgreSQL_Driver {
 		$fragment = $this->trim_mysql_statement_fragment( $fragment );
 		$tokens   = $this->get_mysql_tokens( $fragment );
 		$end      = $this->get_mysql_statement_end_position( $tokens, 0 );
+
+		$current_timestamp_metadata = $this->get_mysql_current_timestamp_default_fragment_metadata( $tokens, $end );
+		if ( null !== $current_timestamp_metadata ) {
+			return array(
+				'sql'      => "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')",
+				'metadata' => $current_timestamp_metadata,
+			);
+		}
+
 		if ( 1 !== $end ) {
 			return null;
 		}
@@ -7283,6 +7511,63 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get metadata for a current timestamp DEFAULT fragment.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Default fragment tokens.
+	 * @param int|null         $end    Statement end.
+	 * @return string|null Metadata value, or null.
+	 */
+	private function get_mysql_current_timestamp_default_fragment_metadata( array $tokens, ?int $end ): ?string {
+		if ( null === $end ) {
+			return null;
+		}
+
+		if (
+			1 === $end
+			&& isset( $tokens[0] )
+			&& $this->is_mysql_current_timestamp_token( $tokens[0] )
+		) {
+			return 'CURRENT_TIMESTAMP';
+		}
+
+		if (
+			3 === $end
+			&& isset( $tokens[0], $tokens[1], $tokens[2] )
+			&& $this->is_mysql_current_timestamp_token( $tokens[0] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
+		) {
+			return 'CURRENT_TIMESTAMP';
+		}
+
+		if (
+			3 === $end
+			&& isset( $tokens[0], $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::NOW_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
+		) {
+			return 'now()';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token represents CURRENT_TIMESTAMP.
+	 *
+	 * @param WP_MySQL_Token $token Token.
+	 * @return bool Whether the token is CURRENT_TIMESTAMP.
+	 */
+	private function is_mysql_current_timestamp_token( WP_MySQL_Token $token ): bool {
+		return WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL === $token->id
+			|| (
+				WP_MySQL_Lexer::NOW_SYMBOL === $token->id
+				&& 'CURRENT_TIMESTAMP' === strtoupper( $token->get_value() )
+			);
 	}
 
 	/**
@@ -10660,6 +10945,7 @@ ORDER BY table_name';
 	 * @return string Column definition SQL.
 	 */
 	private function get_mysql_create_table_column_definition_from_metadata( array $column ): string {
+		$extra = (string) ( $column['extra'] ?? '' );
 		$sql = sprintf(
 			'  %s %s',
 			$this->quote_mysql_identifier( (string) $column['column_name'] ),
@@ -10670,14 +10956,25 @@ ORDER BY table_name';
 			$sql .= ' NOT NULL';
 		}
 
-		if ( false !== stripos( (string) $column['extra'], 'auto_increment' ) ) {
+		if ( false !== stripos( $extra, 'auto_increment' ) ) {
 			$sql .= ' AUTO_INCREMENT';
 		}
 
 		if ( null !== $column['column_default'] ) {
-			$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( (string) $column['column_default'] );
+			$default = (string) $column['column_default'];
+			if ( $this->is_mysql_current_timestamp_default_metadata( $default ) ) {
+				$sql .= ' DEFAULT ' . $default;
+			} elseif ( $this->mysql_column_extra_has_default_generated( $extra ) ) {
+				$sql .= ' DEFAULT (' . $default . ')';
+			} else {
+				$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $default );
+			}
 		} elseif ( 'NO' !== strtoupper( (string) $column['is_nullable'] ) ) {
 			$sql .= ' DEFAULT NULL';
+		}
+
+		if ( $this->mysql_column_extra_has_on_update_current_timestamp( $extra ) ) {
+			$sql .= ' ON UPDATE CURRENT_TIMESTAMP';
 		}
 
 		if ( '' !== (string) ( $column['column_comment'] ?? '' ) ) {
@@ -10685,6 +10982,16 @@ ORDER BY table_name';
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Check whether stored default metadata is a MySQL current timestamp expression.
+	 *
+	 * @param string $default Default metadata.
+	 * @return bool Whether the default should render unquoted.
+	 */
+	private function is_mysql_current_timestamp_default_metadata( string $default ): bool {
+		return in_array( strtolower( $default ), array( 'current_timestamp', 'current_timestamp()' ), true );
 	}
 
 	/**
@@ -35969,6 +36276,14 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	private function has_mysql_create_table_marker( array $tokens ): bool {
 		foreach ( $tokens as $position => $token ) {
 			if ( $this->is_mysql_create_table_charset_set_marker( $tokens, $position ) ) {
+				return true;
+			}
+
+			if (
+				WP_MySQL_Lexer::ON_SYMBOL === $token->id
+				&& isset( $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
 				return true;
 			}
 

@@ -840,6 +840,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			return 'DEFAULT NULL';
 		}
 
+		if ( $this->is_current_timestamp_default_attribute( $attribute ) ) {
+			return "DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+		}
+
 		foreach ( $attribute->get_descendant_tokens() as $token ) {
 			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token->id ) {
 				continue;
@@ -1191,7 +1195,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				if ( $include_indexes ) {
 					$column_metadata['nullable'] = $is_serial || $is_inline_primary || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) ? 'NO' : 'YES';
 					$column_metadata['default']  = $field_definition ? $this->get_column_default_metadata( $field_definition ) : null;
-					$column_metadata['extra']    = $is_serial || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) ? 'auto_increment' : '';
+					$column_metadata['extra']    = $field_definition ? $this->get_column_extra_metadata( $field_definition, $is_serial ) : '';
 				}
 
 				$columns[]                           = $column_metadata;
@@ -1581,6 +1585,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 				return null;
 			}
 
+			$current_timestamp_default = $this->get_current_timestamp_default_metadata( $attribute );
+			if ( null !== $current_timestamp_default ) {
+				return $current_timestamp_default;
+			}
+
 			foreach ( $attribute->get_descendant_tokens() as $token ) {
 				if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token->id ) {
 					continue;
@@ -1595,6 +1604,222 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get MySQL column extra metadata.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @param bool           $is_serial        Whether the data type implies AUTO_INCREMENT.
+	 * @return string Extra metadata.
+	 */
+	private function get_column_extra_metadata( WP_Parser_Node $field_definition, bool $is_serial ): string {
+		$extras = array();
+		if ( $is_serial || $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+			$extras[] = 'auto_increment';
+		}
+
+		if ( $this->field_definition_has_generated_default( $field_definition ) ) {
+			$extras[] = 'DEFAULT_GENERATED';
+		}
+
+		if ( $this->field_definition_has_on_update_current_timestamp( $field_definition ) ) {
+			$extras[] = 'on update CURRENT_TIMESTAMP';
+		}
+
+		return implode( ' ', $extras );
+	}
+
+	/**
+	 * Check whether a field definition has a generated default expression.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @return bool Whether the default should be reported as generated metadata.
+	 */
+	private function field_definition_has_generated_default( WP_Parser_Node $field_definition ): bool {
+		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+			if (
+				$attribute->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL )
+				&& $this->is_generated_default_attribute( $attribute )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a field definition has ON UPDATE CURRENT_TIMESTAMP.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @return bool Whether ON UPDATE CURRENT_TIMESTAMP is present.
+	 */
+	private function field_definition_has_on_update_current_timestamp( WP_Parser_Node $field_definition ): bool {
+		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+			if ( $this->tokens_have_on_update_current_timestamp( $attribute->get_descendant_tokens() ) ) {
+				return true;
+			}
+		}
+
+		return $this->tokens_have_on_update_current_timestamp( $field_definition->get_descendant_tokens() );
+	}
+
+	/**
+	 * Check whether a token stream contains ON UPDATE CURRENT_TIMESTAMP.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Token stream.
+	 * @return bool Whether ON UPDATE CURRENT_TIMESTAMP is present.
+	 */
+	private function tokens_have_on_update_current_timestamp( array $tokens ): bool {
+		for ( $i = 0; $i + 2 < count( $tokens ); ++$i ) {
+			if (
+				WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $i ]->id
+				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $i + 1 ]->id
+				&& $this->is_current_timestamp_token( $tokens[ $i + 2 ] )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a DEFAULT attribute is generated rather than a literal.
+	 *
+	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @return bool Whether the default is generated.
+	 */
+	private function is_generated_default_attribute( WP_Parser_Node $attribute ): bool {
+		$tokens = $this->get_default_attribute_value_tokens( $attribute );
+		if ( empty( $tokens ) ) {
+			return false;
+		}
+
+		return WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+			|| $this->is_current_timestamp_default_attribute( $attribute );
+	}
+
+	/**
+	 * Check whether a DEFAULT attribute is CURRENT_TIMESTAMP/NOW.
+	 *
+	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @return bool Whether the default is a current timestamp expression.
+	 */
+	private function is_current_timestamp_default_attribute( WP_Parser_Node $attribute ): bool {
+		return null !== $this->get_current_timestamp_default_metadata( $attribute );
+	}
+
+	/**
+	 * Get metadata for a CURRENT_TIMESTAMP/NOW default attribute.
+	 *
+	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @return string|null MySQL-facing default metadata, or null.
+	 */
+	private function get_current_timestamp_default_metadata( WP_Parser_Node $attribute ): ?string {
+		$tokens = $this->strip_default_attribute_outer_parentheses(
+			$this->get_default_attribute_value_tokens( $attribute )
+		);
+		$count  = count( $tokens );
+
+		if ( 1 === $count && $this->is_current_timestamp_token( $tokens[0] ) ) {
+			return 'CURRENT_TIMESTAMP';
+		}
+
+		if (
+			3 === $count
+			&& $this->is_current_timestamp_token( $tokens[0] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
+		) {
+			return 'CURRENT_TIMESTAMP';
+		}
+
+		if (
+			3 === $count
+			&& WP_MySQL_Lexer::NOW_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
+		) {
+			return 'now()';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token represents CURRENT_TIMESTAMP.
+	 *
+	 * @param WP_MySQL_Token $token Token.
+	 * @return bool Whether the token is CURRENT_TIMESTAMP.
+	 */
+	private function is_current_timestamp_token( WP_MySQL_Token $token ): bool {
+		return WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL === $token->id
+			|| (
+				WP_MySQL_Lexer::NOW_SYMBOL === $token->id
+				&& 'CURRENT_TIMESTAMP' === strtoupper( $token->get_value() )
+			);
+	}
+
+	/**
+	 * Get DEFAULT attribute value tokens without the DEFAULT keyword.
+	 *
+	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @return WP_MySQL_Token[] Value tokens.
+	 */
+	private function get_default_attribute_value_tokens( WP_Parser_Node $attribute ): array {
+		$value_tokens = array();
+		$seen_default = false;
+		foreach ( $attribute->get_descendant_tokens() as $token ) {
+			if ( ! $seen_default ) {
+				if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token->id ) {
+					$seen_default = true;
+				}
+				continue;
+			}
+
+			$value_tokens[] = $token;
+		}
+
+		return $value_tokens;
+	}
+
+	/**
+	 * Strip simple wrapping parentheses from DEFAULT value tokens.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Value tokens.
+	 * @return WP_MySQL_Token[] Unwrapped tokens.
+	 */
+	private function strip_default_attribute_outer_parentheses( array $tokens ): array {
+		while (
+			count( $tokens ) >= 2
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ count( $tokens ) - 1 ]->id
+		) {
+			$depth      = 0;
+			$wraps_all  = true;
+			$last_index = count( $tokens ) - 1;
+			foreach ( $tokens as $index => $token ) {
+				if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+					++$depth;
+				} elseif ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+					--$depth;
+					if ( 0 === $depth && $index < $last_index ) {
+						$wraps_all = false;
+						break;
+					}
+				}
+			}
+
+			if ( ! $wraps_all || 0 !== $depth ) {
+				break;
+			}
+
+			$tokens = array_slice( $tokens, 1, -1 );
+		}
+
+		return $tokens;
 	}
 
 	/**

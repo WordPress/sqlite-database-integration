@@ -11175,6 +11175,116 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE preserves ON UPDATE CURRENT_TIMESTAMP metadata.
+	 */
+	public function test_create_table_on_update_current_timestamp_updates_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_on_update_create (
+					id int NOT NULL,
+					updated timestamp NULL ON UPDATE CURRENT_TIMESTAMP
+				)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_on_update_create\" (\n  \"id\" integer NOT NULL,\n  \"updated\" text\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_on_update_create' );
+		$this->assertSame( 'on update CURRENT_TIMESTAMP', $columns[1]['extra'] );
+
+		$this->install_information_schema_fixture( $driver );
+		$describe = $driver->query( 'DESC wptests_on_update_create' );
+		$this->assertSame( 'on update CURRENT_TIMESTAMP', $describe[1]->Extra );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_on_update_create' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `updated` timestamp DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP', $create_table );
+	}
+
+	/**
+	 * Tests generated timestamp defaults preserve MySQL metadata and SHOW CREATE shape.
+	 */
+	public function test_create_table_generated_timestamp_defaults_preserve_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$query  = 'CREATE TABLE wptests_on_update_default (
+			id int NOT NULL,
+			updated timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP
+		)';
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$statements = $translator->translate_schema( $query );
+
+		$this->assertCount( 1, $statements );
+		$this->assertStringContainsString(
+			'"updated" text NOT NULL DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			$statements[0]
+		);
+
+		$metadata = $translator->extract_schema_metadata( $query, true );
+		$this->assertSame( 'now()', $metadata[0]['columns'][1]['default'] );
+		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $metadata[0]['columns'][1]['extra'] );
+
+		$driver->store_mysql_schema_metadata( $query );
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_on_update_default' )[0]->{'Create Table'};
+
+		$this->assertStringContainsString( '  `updated` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP', $create_table );
+	}
+
+	/**
+	 * Tests PostgreSQL trigger DDL for ON UPDATE CURRENT_TIMESTAMP columns.
+	 */
+	public function test_on_update_current_timestamp_trigger_statements_use_postgresql_row_trigger(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection {
+			public function get_driver_name(): string {
+				return 'pgsql';
+			}
+		};
+		$driver = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$get_create_statements = Closure::bind(
+			function (): array {
+				return $this->get_postgresql_on_update_current_timestamp_create_statements( 'public', 'wptests_triggered', 'updated' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_drop_statements   = Closure::bind(
+			function (): array {
+				return $this->get_postgresql_on_update_current_timestamp_drop_statements( 'public', 'wptests_triggered', 'updated' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$create_statements = $get_create_statements();
+		$this->assertCount( 3, $create_statements );
+		$this->assertStringContainsString( 'CREATE OR REPLACE FUNCTION ', $create_statements[0] );
+		$this->assertStringContainsString( '__wp_pg_on_update_fn_', $create_statements[0] );
+		$this->assertStringContainsString( 'NEW."updated" IS NOT DISTINCT FROM OLD."updated"', $create_statements[0] );
+		$this->assertStringContainsString( 'to_jsonb(NEW) - \'updated\' IS DISTINCT FROM to_jsonb(OLD) - \'updated\'', $create_statements[0] );
+		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')", $create_statements[0] );
+		$this->assertStringContainsString( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_', $create_statements[1] );
+		$this->assertStringContainsString( 'CREATE TRIGGER "__wp_pg_on_update_', $create_statements[2] );
+		$this->assertStringContainsString( 'BEFORE UPDATE ON "wptests_triggered"', $create_statements[2] );
+
+		$drop_statements = $get_drop_statements();
+		$this->assertCount( 2, $drop_statements );
+		$this->assertStringContainsString( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_', $drop_statements[0] );
+		$this->assertStringContainsString( 'DROP FUNCTION IF EXISTS ', $drop_statements[1] );
+		$this->assertStringContainsString( '__wp_pg_on_update_fn_', $drop_statements[1] );
+	}
+
+	/**
 	 * Tests CREATE TABLE routes LONG-prefixed MySQL aliases through the DDL translator.
 	 */
 	public function test_create_table_long_aliases_use_sqlite_compatible_metadata(): void {
