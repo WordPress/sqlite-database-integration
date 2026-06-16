@@ -4715,6 +4715,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL inner joined UPDATE statements support derived-table sources.
+	 */
+	public function test_inner_join_update_with_derived_source_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_derived (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_derived_meta (
+				post_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_joined_derived (id, status) VALUES (1, 'draft'), (2, 'draft')" );
+		$driver->query( "INSERT INTO wptests_update_joined_derived_meta (post_id, meta_key, meta_value) VALUES (1, '_status', 'publish'), (2, '_other', 'private')" );
+
+		$update = "UPDATE wptests_update_joined_derived AS p
+			JOIN (
+				SELECT post_id, meta_value
+				FROM wptests_update_joined_derived_meta
+				WHERE meta_key = '_status'
+			) AS src ON p.id = src.post_id
+			SET p.status = src.meta_value
+			WHERE p.id IN (1, 2)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 0, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM (SELECT post_id, meta_value FROM wptests_update_joined_derived_meta WHERE meta_key = \'_status\') AS "src"', $sql );
+		$this->assertStringContainsString( '(p.id = src.post_id)', $sql );
+		$this->assertStringContainsString( '("p"."status" IS DISTINCT FROM (src.meta_value))', $sql );
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_joined_derived ORDER BY id' );
+		$this->assertSame( 'publish', $rows[0]->status );
+		$this->assertSame( 'draft', $rows[1]->status );
+	}
+
+	/**
 	 * Tests MySQL inner joined UPDATE ... USING statements translate to PostgreSQL predicates.
 	 */
 	public function test_inner_join_update_using_is_translated_to_postgresql(): void {

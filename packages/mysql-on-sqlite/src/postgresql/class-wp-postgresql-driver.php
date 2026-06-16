@@ -17854,6 +17854,25 @@ WHERE option_name IN (
 	 * @return bool Whether a table source was appended.
 	 */
 	private function append_mysql_joined_update_source_table( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, ?string &$appended_alias ): bool {
+		$derived_reference = $this->parse_mysql_joined_update_derived_table_source( $tokens, $position, $end );
+		if ( null !== $derived_reference ) {
+			$joined_alias_key = strtolower( $derived_reference['alias'] );
+			if ( isset( $scope['aliases'][ $joined_alias_key ] ) ) {
+				return false;
+			}
+
+			$scope['aliases'][ $joined_alias_key ] = array(
+				'schema'  => null,
+				'table'   => null,
+				'derived' => true,
+			);
+			$scope['unknown']                    = true;
+			$from_parts[]                        = $derived_reference['sql'];
+			$appended_alias                      = $derived_reference['alias'];
+
+			return true;
+		}
+
 		$joined_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $end );
 		if ( null === $joined_reference ) {
 			return false;
@@ -17880,6 +17899,56 @@ WHERE option_name IN (
 		$appended_alias = $joined_alias;
 
 		return true;
+	}
+
+	/**
+	 * Parse a parenthesized SELECT source for a joined UPDATE.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current source table position, updated on success.
+	 * @param int              $end      Final UPDATE table-reference-list token, exclusive.
+	 * @return array{alias: string, sql: string}|null Derived source data, or null when unsupported.
+	 */
+	private function parse_mysql_joined_update_derived_table_source( array $tokens, int &$position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$select_start = $position + 1;
+		$select_end   = $after_close - 1;
+		if ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+			return null;
+		}
+
+		$alias_position = $after_close;
+		if ( $alias_position < $end && WP_MySQL_Lexer::AS_SYMBOL === ( $tokens[ $alias_position ]->id ?? null ) ) {
+			++$alias_position;
+		}
+
+		$alias = $this->get_mysql_identifier_token_value( $tokens[ $alias_position ] ?? null );
+		if ( null === $alias ) {
+			return null;
+		}
+
+		$position = $alias_position + 1;
+
+		return array(
+			'alias' => $alias,
+			'sql'   => sprintf(
+				'(%s) AS %s',
+				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $select_start, $select_end ),
+				$this->connection->quote_identifier( $alias )
+			),
+		);
 	}
 
 	/**
@@ -29735,7 +29804,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	private function get_mysql_table_for_column_reference( array $reference, array $scope ): ?array {
 		if ( null !== $reference['qualifier'] ) {
 			$alias = strtolower( $reference['qualifier'] );
-			return $scope['aliases'][ $alias ] ?? null;
+			$table = $scope['aliases'][ $alias ] ?? null;
+			if ( null === $table || ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return null;
+			}
+
+			return $table;
 		}
 
 		if ( ! empty( $scope['unknown'] ) ) {
@@ -29775,7 +29849,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	private function get_mysql_single_scope_table_for_column_reference( array $reference, array $scope ): ?array {
 		if ( null !== $reference['qualifier'] ) {
 			$alias = strtolower( $reference['qualifier'] );
-			return $scope['aliases'][ $alias ] ?? null;
+			$table = $scope['aliases'][ $alias ] ?? null;
+			if ( null === $table || ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return null;
+			}
+
+			return $table;
 		}
 
 		if ( ! empty( $scope['unknown'] ) || 1 !== count( $scope['tables'] ) ) {
@@ -30283,6 +30362,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		$table = $scope['aliases'][ $alias ];
+		if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+			return null;
+		}
+
 		return $this->get_mysql_table_column_name( $table['schema'], $table['table'], $reference['column'] );
 	}
 
@@ -31159,6 +31242,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			}
 
 			$table = $scope['aliases'][ $alias ];
+			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return null;
+			}
+
 			return $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] );
 		}
 
@@ -31168,6 +31255,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 		$matched_type = null;
 		foreach ( $scope['tables'] as $table ) {
+			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return null;
+			}
+
 			if (
 				count( $scope['tables'] ) > 1
 				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
@@ -31205,6 +31296,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			}
 
 			$table = $scope['aliases'][ $alias ];
+			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return null;
+			}
+
 			return $this->get_mysql_table_column_collation( $table['schema'], $table['table'], $reference['column'] );
 		}
 
@@ -31214,6 +31309,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 		$matched_collation = null;
 		foreach ( $scope['tables'] as $table ) {
+			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return null;
+			}
+
 			if (
 				count( $scope['tables'] ) > 1
 				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
