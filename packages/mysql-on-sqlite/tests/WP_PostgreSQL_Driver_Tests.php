@@ -15634,6 +15634,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unimplemented MySQL SHOW and administration statements fail before backend execution.
+	 */
+	public function test_unimplemented_mysql_show_and_administration_statements_fail_closed(): void {
+		$cases = array(
+			'SHOW ENGINES'                                      => 'Unsupported SHOW statement.',
+			'SHOW TRIGGERS'                                     => 'Unsupported SHOW statement.',
+			'SHOW OPEN TABLES'                                  => 'Unsupported SHOW statement.',
+			'SHOW CREATE DATABASE `wptests`'                    => 'Unsupported SHOW statement.',
+			'SHOW ENGINE InnoDB STATUS'                         => 'Unsupported SHOW statement.',
+			'SHOW PLUGINS'                                      => 'Unsupported SHOW statement.',
+			'CHECKSUM TABLE administration_existing'            => 'Unsupported CHECKSUM TABLE statement.',
+			'FLUSH TABLES'                                      => 'Unsupported FLUSH statement.',
+			'KILL 1'                                            => 'Unsupported KILL statement.',
+			'CACHE INDEX administration_existing IN `default`'   => 'Unsupported CACHE INDEX statement.',
+			'LOAD INDEX INTO CACHE administration_existing'      => 'Unsupported LOAD statement.',
+			'BINLOG "unsupported-binlog-event"'                 => 'Unsupported BINLOG statement.',
+			'SHUTDOWN'                                          => 'Unsupported SHUTDOWN statement.',
+			'ANALYZE FORMAT = TREE SELECT 1'                    => 'Unsupported table administration statement.',
+		);
+
+		foreach ( $cases as $query => $message ) {
+			$driver = $this->create_driver();
+			$driver->query( 'CREATE TABLE administration_existing (id INTEGER)' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported MySQL administration statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests information_schema table administration targets fail closed.
 	 */
 	public function test_table_administration_information_schema_target_fails_closed(): void {

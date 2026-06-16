@@ -912,6 +912,11 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL index hint syntax.' );
 		}
 
+		$unsupported_mysql_administration_statement = $this->get_unsupported_mysql_administration_statement_message( $query );
+		if ( null !== $unsupported_mysql_administration_statement ) {
+			throw new InvalidArgumentException( $unsupported_mysql_administration_statement );
+		}
+
 		$stmt                            = $this->connection->query( $query );
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $query,
@@ -949,6 +954,57 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return $this->last_result;
+	}
+
+	/**
+	 * Get an explicit unsupported error for unclaimed MySQL administration SQL.
+	 *
+	 * Supported SHOW/table-administration forms are dispatched before this guard.
+	 * If one of these MySQL-only statement families reaches the backend fallback,
+	 * fail closed rather than letting PostgreSQL parse incompatible SQL.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Unsupported error message, or null when not guarded.
+	 */
+	private function get_unsupported_mysql_administration_statement_message( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return null;
+		}
+
+		switch ( $tokens[0]->id ) {
+			case WP_MySQL_Lexer::SHOW_SYMBOL:
+				return 'Unsupported SHOW statement.';
+
+			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
+			case WP_MySQL_Lexer::CHECK_SYMBOL:
+			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
+			case WP_MySQL_Lexer::REPAIR_SYMBOL:
+				return 'Unsupported table administration statement.';
+
+			case WP_MySQL_Lexer::CHECKSUM_SYMBOL:
+				return 'Unsupported CHECKSUM TABLE statement.';
+
+			case WP_MySQL_Lexer::FLUSH_SYMBOL:
+				return 'Unsupported FLUSH statement.';
+
+			case WP_MySQL_Lexer::KILL_SYMBOL:
+				return 'Unsupported KILL statement.';
+
+			case WP_MySQL_Lexer::CACHE_SYMBOL:
+				return 'Unsupported CACHE INDEX statement.';
+
+			case WP_MySQL_Lexer::LOAD_SYMBOL:
+				return 'Unsupported LOAD statement.';
+
+			case WP_MySQL_Lexer::BINLOG_SYMBOL:
+				return 'Unsupported BINLOG statement.';
+
+			case WP_MySQL_Lexer::SHUTDOWN_SYMBOL:
+				return 'Unsupported SHUTDOWN statement.';
+		}
+
+		return null;
 	}
 
 	/**
