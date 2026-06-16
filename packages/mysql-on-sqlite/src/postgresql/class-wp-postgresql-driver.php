@@ -32976,12 +32976,15 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				}
 				if ( 2 === $count ) {
 					$format = $this->get_mysql_sql_string_literal_value( $argument_sql[1] );
-					if ( null === $format ) {
-						return null;
+					if ( null !== $format ) {
+						return $this->get_postgresql_mysql_date_format_sql(
+							$format,
+							sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $argument_sql[0] )
+						);
 					}
 
-					return $this->get_postgresql_mysql_date_format_sql(
-						$format,
+					return $this->get_postgresql_mysql_dynamic_date_format_sql(
+						$argument_sql[1],
 						sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $argument_sql[0] )
 					);
 				}
@@ -34055,7 +34058,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
 	 */
 	private function translate_mysql_date_format_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_date_format_bounds( $tokens, $position, $end );
+		$bounds = $this->get_mysql_date_format_call_bounds( $tokens, $position, $end );
 		if ( null === $bounds ) {
 			return null;
 		}
@@ -34065,7 +34068,16 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$bounds['expression_start'],
 			$bounds['expression_end']
 		);
-		$sql            = $this->get_postgresql_mysql_date_format_sql( $bounds['format'], $expression_sql );
+		if ( null !== $bounds['format'] ) {
+			$sql = $this->get_postgresql_mysql_date_format_sql( $bounds['format'], $expression_sql );
+		} else {
+			$format_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$bounds['format_start'],
+				$bounds['format_end']
+			);
+			$sql        = $this->get_postgresql_mysql_dynamic_date_format_sql( $format_sql, $expression_sql );
+		}
 		if ( null === $sql ) {
 			return null;
 		}
@@ -34086,24 +34098,43 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @return array{format: string, expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
 	 */
 	private function get_mysql_date_format_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_date_format_call_bounds( $tokens, $position, $end );
+		if ( null === $bounds || null === $bounds['format'] ) {
+			return null;
+		}
+
+		return $bounds;
+	}
+
+	/**
+	 * Get token bounds for MySQL DATE_FORMAT(expr, format) calls.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{format: string|null, expression_start: int, expression_end: int, format_start: int, format_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_date_format_call_bounds( array $tokens, int $position, int $end ): ?array {
 		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, 'date_format' );
 		if ( null === $bounds ) {
 			return null;
 		}
 
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
-		if (
-			null === $arguments
-			|| 2 !== count( $arguments )
-			|| ! $this->is_mysql_string_literal_range( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
-		) {
+		if ( null === $arguments || 2 !== count( $arguments ) ) {
 			return null;
 		}
 
+		$format = $this->is_mysql_string_literal_range( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
+			? $tokens[ $arguments[1]['start'] ]->get_value()
+			: null;
+
 		return array(
-			'format'           => $tokens[ $arguments[1]['start'] ]->get_value(),
+			'format'           => $format,
 			'expression_start' => $arguments[0]['start'],
 			'expression_end'   => $arguments[0]['end'],
+			'format_start'     => $arguments[1]['start'],
+			'format_end'       => $arguments[1]['end'],
 			'close'            => $bounds['close'],
 		);
 	}
@@ -34193,6 +34224,99 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
+	 * Get PostgreSQL SQL for a MySQL DATE_FORMAT() call with a runtime format expression.
+	 *
+	 * @param string $format_sql     PostgreSQL SQL for the MySQL format expression.
+	 * @param string $expression_sql PostgreSQL SQL for the value to format.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_dynamic_date_format_sql( string $format_sql, string $expression_sql ): string {
+		$timestamp_sql       = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$format_text_sql     = sprintf( 'CAST(%s AS text)', $format_sql );
+		$zero_date_condition = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
+
+		$character_sql = sprintf(
+			'SUBSTRING(%s FROM "__wp_pg_mysql_date_format"."position" FOR 1)',
+			$format_text_sql
+		);
+		$specifier_sql = sprintf(
+			'SUBSTRING(%s FROM "__wp_pg_mysql_date_format"."position" + 1 FOR 1)',
+			$format_text_sql
+		);
+		$percent_sql       = $this->connection->quote( '%' );
+		$next_position_sql = sprintf(
+			'CASE WHEN %1$s = %2$s AND "__wp_pg_mysql_date_format"."position" < CHAR_LENGTH(%3$s) THEN "__wp_pg_mysql_date_format"."position" + 2 ELSE "__wp_pg_mysql_date_format"."position" + 1 END',
+			$character_sql,
+			$percent_sql,
+			$format_text_sql
+		);
+		$fragment_sql      = sprintf(
+			'CASE WHEN %1$s <> %2$s THEN %1$s WHEN "__wp_pg_mysql_date_format"."position" >= CHAR_LENGTH(%3$s) THEN %2$s ELSE %4$s END',
+			$character_sql,
+			$percent_sql,
+			$format_text_sql,
+			$this->get_postgresql_mysql_dynamic_date_format_specifier_case_sql( $specifier_sql, $timestamp_sql )
+		);
+		$formatter_sql     = sprintf(
+			'(WITH RECURSIVE "__wp_pg_mysql_date_format"("position", "formatted") AS (SELECT 1, CAST(\'\' AS text) UNION ALL SELECT %1$s, "formatted" || %2$s FROM "__wp_pg_mysql_date_format" WHERE "position" <= CHAR_LENGTH(%3$s)) SELECT "formatted" FROM "__wp_pg_mysql_date_format" ORDER BY "position" DESC LIMIT 1)',
+			$next_position_sql,
+			$fragment_sql,
+			$format_text_sql
+		);
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %3$s THEN NULL ELSE %4$s END',
+			$expression_text_sql,
+			$format_text_sql,
+			$zero_date_condition,
+			$formatter_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL CASE SQL for a runtime MySQL DATE_FORMAT() specifier.
+	 *
+	 * @param string $specifier_sql PostgreSQL SQL for the format specifier character.
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL CASE expression SQL.
+	 */
+	private function get_postgresql_mysql_dynamic_date_format_specifier_case_sql( string $specifier_sql, string $timestamp_sql ): string {
+		$cases = array();
+		foreach ( $this->get_postgresql_mysql_date_format_to_char_formats() as $specifier => $format ) {
+			$cases[] = sprintf(
+				'WHEN %s THEN TO_CHAR(%s, %s)',
+				$this->connection->quote( $specifier ),
+				$timestamp_sql,
+				$this->connection->quote( $format )
+			);
+		}
+
+		$cases[] = sprintf(
+			'WHEN %s THEN %s',
+			$this->connection->quote( '%' ),
+			$this->connection->quote( '%' )
+		);
+		$cases[] = sprintf(
+			'WHEN %s THEN %s',
+			$this->connection->quote( 'D' ),
+			$this->get_postgresql_mysql_date_format_day_with_suffix_sql( $timestamp_sql )
+		);
+		$cases[] = sprintf(
+			'WHEN %s THEN CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)',
+			$this->connection->quote( 'w' ),
+			$timestamp_sql
+		);
+
+		return sprintf(
+			'CASE %1$s %2$s ELSE %3$s || %1$s END',
+			$specifier_sql,
+			implode( ' ', $cases ),
+			$this->connection->quote( '%' )
+		);
+	}
+
+	/**
 	 * Get PostgreSQL SQL for one MySQL DATE_FORMAT() specifier.
 	 *
 	 * @param string $specifier    MySQL DATE_FORMAT specifier without the leading percent.
@@ -34200,7 +34324,38 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @return string|null PostgreSQL SQL fragment, or null when the specifier is unknown.
 	 */
 	private function get_postgresql_mysql_date_format_specifier_sql( string $specifier, string $timestamp_sql ): ?string {
-		$to_char_formats = array(
+		$to_char_formats = $this->get_postgresql_mysql_date_format_to_char_formats();
+
+		if ( '%' === $specifier ) {
+			return $this->connection->quote( '%' );
+		}
+
+		if ( 'D' === $specifier ) {
+			return $this->get_postgresql_mysql_date_format_day_with_suffix_sql( $timestamp_sql );
+		}
+
+		if ( 'w' === $specifier ) {
+			return sprintf( 'CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)', $timestamp_sql );
+		}
+
+		if ( isset( $to_char_formats[ $specifier ] ) ) {
+			return sprintf(
+				'TO_CHAR(%s, %s)',
+				$timestamp_sql,
+				$this->connection->quote( $to_char_formats[ $specifier ] )
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get PostgreSQL TO_CHAR format strings keyed by MySQL DATE_FORMAT() specifier.
+	 *
+	 * @return array<string, string> PostgreSQL TO_CHAR formats.
+	 */
+	private function get_postgresql_mysql_date_format_to_char_formats(): array {
+		return array(
 			'a' => 'Dy',
 			'b' => 'Mon',
 			'c' => 'FMMM',
@@ -34231,28 +34386,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'Y' => 'YYYY',
 			'y' => 'YY',
 		);
-
-		if ( '%' === $specifier ) {
-			return $this->connection->quote( '%' );
-		}
-
-		if ( 'D' === $specifier ) {
-			return $this->get_postgresql_mysql_date_format_day_with_suffix_sql( $timestamp_sql );
-		}
-
-		if ( 'w' === $specifier ) {
-			return sprintf( 'CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)', $timestamp_sql );
-		}
-
-		if ( isset( $to_char_formats[ $specifier ] ) ) {
-			return sprintf(
-				'TO_CHAR(%s, %s)',
-				$timestamp_sql,
-				$this->connection->quote( $to_char_formats[ $specifier ] )
-			);
-		}
-
-		return null;
 	}
 
 	/**
@@ -34999,7 +35132,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return true;
 			}
 
-			if ( null !== $this->get_mysql_date_format_bounds( $tokens, $i, $end ) ) {
+			if ( null !== $this->get_mysql_date_format_call_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 

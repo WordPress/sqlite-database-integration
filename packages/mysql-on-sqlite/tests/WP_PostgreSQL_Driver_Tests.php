@@ -5844,6 +5844,64 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests DATE_FORMAT() supports runtime format expressions like SQLite's UDF.
+	 */
+	public function test_mysql_date_format_runtime_format_expressions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT
+				DATE_FORMAT(post_date, format_mask) AS dynamic_column_format,
+				DATE_FORMAT(post_date, CONCAT('%Y', '-%m')) AS dynamic_expression_format,
+				DATE_FORMAT(NULL, format_mask) AS null_date_format,
+				DATE_FORMAT(post_date, NULL) AS null_mask_format
+			FROM wptests_dynamic_date_formats"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertStringContainsString( 'CAST(format_mask AS text)', $sql );
+		$this->assertStringContainsString( "(CAST('%Y' AS text) || CAST('-%m' AS text))", $sql );
+		$this->assertStringContainsString( "WHEN 'Y' THEN TO_CHAR", $sql );
+		$this->assertStringContainsString( "WHEN 'D' THEN CAST(CAST(EXTRACT(DAY FROM", $sql );
+		$this->assertStringContainsString( "WHEN 'w' THEN CAST(CAST(EXTRACT(DOW FROM", $sql );
+		$this->assertStringContainsString( "ELSE '%' || SUBSTRING", $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT DATE_FORMAT(post_date, format_mask) AS dynamic_column_format FROM wptests_dynamic_date_formats'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
+
+	/**
+	 * Tests formatted FROM_UNIXTIME() supports runtime format expressions.
+	 */
+	public function test_from_unixtime_runtime_format_expression_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT FROM_UNIXTIME(0, format_mask) AS formatted_epoch
+			FROM wptests_unix_time_formats"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertStringContainsString( "TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC'", $sql );
+		$this->assertStringContainsString( 'CAST(format_mask AS text)', $sql );
+		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+	}
+
+	/**
 	 * Tests unsupported common MySQL runtime function forms are left without compatibility translations.
 	 */
 	public function test_unsupported_common_mysql_runtime_function_forms_return_null_translation(): void {
