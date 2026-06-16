@@ -1402,6 +1402,78 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests non-strict REPLACE ... SELECT fills omitted NOT NULL defaults from MySQL metadata.
+	 */
+	public function test_non_strict_replace_select_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+
+		$driver->query(
+			'CREATE TABLE wptests_replace_select_defaults (
+				id INTEGER PRIMARY KEY,
+				name TEXT NOT NULL,
+				size INTEGER NOT NULL DEFAULT 999,
+				color TEXT
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_replace_select_defaults (
+				id int NOT NULL,
+				name text NOT NULL,
+				size int NOT NULL DEFAULT 999,
+				color text,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_replace_select_defaults_source (
+				id INTEGER NOT NULL,
+				size INTEGER NOT NULL,
+				color TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_replace_select_defaults (id, name, size, color) VALUES (1, 'old', 10, 'red')" );
+		$driver->query( "INSERT INTO wptests_replace_select_defaults_source (id, size, color) VALUES (1, 123, 'blue'), (2, 456, 'green')" );
+
+		$replace = 'REPLACE INTO wptests_replace_select_defaults (`color`, `id`, `size`)
+			SELECT color, id, size FROM wptests_replace_select_defaults_source';
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$postgresql_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString(
+			'INSERT INTO wptests_replace_select_defaults ("color", "id", "size", "name")',
+			$postgresql_sql
+		);
+		$this->assertStringContainsString(
+			'SELECT "__wp_pg_replace_source".*, \'\' AS "name" FROM (SELECT',
+			$postgresql_sql
+		);
+		$this->assertStringContainsString(
+			'ON CONFLICT ("id") DO UPDATE SET',
+			$postgresql_sql
+		);
+
+		$rows = $driver->query( 'SELECT id, name, size, color FROM wptests_replace_select_defaults ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'name'  => '',
+					'size'  => '123',
+					'color' => 'blue',
+				),
+				(object) array(
+					'id'    => '2',
+					'name'  => '',
+					'size'  => '456',
+					'color' => 'green',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests columnless REPLACE ... SELECT infers target columns from MySQL metadata.
 	 */
 	public function test_columnless_replace_select_uses_mysql_metadata_columns(): void {

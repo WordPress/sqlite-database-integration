@@ -16590,12 +16590,18 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$select_columns  = $columns;
+		$default_columns = $this->get_non_strict_dml_defaults_for_omitted_columns( $table_name, $columns );
+		foreach ( $default_columns as $default_column ) {
+			$columns[] = $default_column['column'];
+		}
+
 		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
 			$tokens,
 			$table_reference_start,
 			$table_reference_end
 		);
-		if ( $insert_column_list ) {
+		if ( $insert_column_list || ! empty( $default_columns ) ) {
 			$table_reference_sql .= ' (' . implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ) . ')';
 		}
 		$select_start        = $position;
@@ -16603,7 +16609,7 @@ WHERE option_name IN (
 		$outer_replacements  = array(
 			array(
 				'start' => 0,
-				'end'   => $table_reference_end,
+				'end'   => ! empty( $default_columns ) ? $position : $table_reference_end,
 				'sql'   => 'INSERT INTO ' . $table_reference_sql,
 			),
 		);
@@ -16638,17 +16644,16 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$replacements = $this->get_mysql_insert_select_projection_replacements(
+		$select_replacements = $this->get_mysql_insert_select_projection_replacements(
 			$table_name,
-			$columns,
+			$select_columns,
 			$tokens,
 			$select_start,
 			$select_end
 		);
-		if ( null === $replacements ) {
+		if ( null === $select_replacements ) {
 			return null;
 		}
-		$replacements = array_merge( $outer_replacements, $replacements, $closing_replacement );
 
 		$direct_information_schema_select_sql = $this->get_insert_select_direct_information_schema_select_sql(
 			$query,
@@ -16657,11 +16662,11 @@ WHERE option_name IN (
 			$select_end
 		);
 		if ( null !== $direct_information_schema_select_sql ) {
-			if ( $this->mysql_replacements_overlap_range( $replacements, $select_start, $select_end ) ) {
+			if ( $this->mysql_replacements_overlap_range( $select_replacements, $select_start, $select_end ) ) {
 				return null;
 			}
 
-			$replacements[] = array(
+			$select_replacements[] = array(
 				'start' => $select_start,
 				'end'   => $select_end,
 				'sql'   => $direct_information_schema_select_sql,
@@ -16670,6 +16675,34 @@ WHERE option_name IN (
 			return null;
 		}
 
+		if ( ! empty( $default_columns ) ) {
+			usort(
+				$select_replacements,
+				static function ( array $left, array $right ): int {
+					return $left['start'] <=> $right['start'];
+				}
+			);
+
+			$select_sql          = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				$select_start,
+				$select_end,
+				$select_replacements
+			);
+			$select_replacements = array(
+				array(
+					'start' => $select_start,
+					'end'   => $select_end,
+					'sql'   => $this->append_mysql_select_default_projection_sql(
+						$select_sql,
+						$default_columns,
+						'__wp_pg_replace_source'
+					),
+				),
+			);
+		}
+
+		$replacements = array_merge( $outer_replacements, $select_replacements, $closing_replacement );
 		usort(
 			$replacements,
 			static function ( array $left, array $right ): int {
@@ -16707,6 +16740,8 @@ WHERE option_name IN (
 			$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
 				$table_name,
 				$columns,
+				$select_columns,
+				$default_columns,
 				$conflict_target,
 				$tokens,
 				$select_start,
@@ -16732,13 +16767,15 @@ WHERE option_name IN (
 	 *
 	 * @param string           $table_name      Target table name.
 	 * @param string[]         $columns         Target column names.
+	 * @param string[]         $select_columns  Original SELECT target column names.
+	 * @param array[]          $default_columns Metadata-derived default projections.
 	 * @param array            $conflict_target Conflict target.
 	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
 	 * @param int              $select_start    SELECT token position.
 	 * @param int              $select_end      Final SELECT token position, exclusive.
 	 * @return string|null PostgreSQL count SQL, or null when unsupported.
 	 */
-	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, array $conflict_target, array $tokens, int $select_start, int $select_end ): ?string {
+	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, array $select_columns, array $default_columns, array $conflict_target, array $tokens, int $select_start, int $select_end ): ?string {
 		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
 		if ( null === $conflict_indexes ) {
 			return null;
@@ -16751,7 +16788,7 @@ WHERE option_name IN (
 		$from_position     = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $select_start + 1, $select_end );
 		$projection_end    = $from_position ?? $select_end;
 		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $select_start + 1, $projection_end );
-		if ( null === $projection_ranges || count( $projection_ranges ) !== count( $columns ) ) {
+		if ( null === $projection_ranges || count( $projection_ranges ) !== count( $select_columns ) ) {
 			return null;
 		}
 
@@ -16787,7 +16824,7 @@ WHERE option_name IN (
 			$expression_start = $expression_bounds['start'];
 			$expression_end   = $expression_bounds['end'];
 			$projection_sql   = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $expression_start, $expression_end );
-			$column_metadata  = $target_metadata[ strtolower( $columns[ $index ] ) ] ?? null;
+			$column_metadata  = $target_metadata[ strtolower( $select_columns[ $index ] ) ] ?? null;
 			if ( null !== $column_metadata ) {
 				$coerced_sql = $this->get_mysql_insert_select_projection_sql_for_target_column(
 					$table_name,
@@ -16806,16 +16843,24 @@ WHERE option_name IN (
 			$alias_replacements[] = array(
 				'start' => $range['start'],
 				'end'   => $range['end'],
-				'sql'   => $projection_sql . ' AS ' . $this->connection->quote_identifier( $columns[ $index ] ),
+				'sql'   => $projection_sql . ' AS ' . $this->connection->quote_identifier( $select_columns[ $index ] ),
 			);
 		}
 
-		$select_sql      = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+		$select_sql = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
 			$tokens,
 			$select_start,
 			$select_end,
 			$alias_replacements
 		);
+		if ( ! empty( $default_columns ) ) {
+			$select_sql = $this->append_mysql_select_default_projection_sql(
+				$select_sql,
+				$default_columns,
+				'__wp_pg_replace_rows_source'
+			);
+		}
+
 		$rows_alias      = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
 		$conflict_exists = $this->get_mysql_replace_select_conflict_exists_sql(
 			$table_name,
@@ -16831,6 +16876,36 @@ WHERE option_name IN (
 			$conflict_exists,
 			$select_sql,
 			$rows_alias
+		);
+	}
+
+	/**
+	 * Append constant default projections to a translated SELECT.
+	 *
+	 * @param string  $select_sql       Translated SELECT SQL.
+	 * @param array[] $default_columns  Default column descriptors.
+	 * @param string  $source_alias     Unquoted derived-table alias.
+	 * @return string SELECT SQL with appended default projections.
+	 */
+	private function append_mysql_select_default_projection_sql( string $select_sql, array $default_columns, string $source_alias ): string {
+		$quoted_source_alias = $this->connection->quote_identifier( $source_alias );
+		$projection_sql      = array(
+			$quoted_source_alias . '.*',
+		);
+
+		foreach ( $default_columns as $default_column ) {
+			$projection_sql[] = sprintf(
+				'%s AS %s',
+				$default_column['sql'],
+				$this->connection->quote_identifier( $default_column['column'] )
+			);
+		}
+
+		return sprintf(
+			'SELECT %s FROM (%s) AS %s WHERE 1 = 1',
+			implode( ', ', $projection_sql ),
+			$select_sql,
+			$quoted_source_alias
 		);
 	}
 
@@ -20166,8 +20241,53 @@ WHERE option_name IN (
 			&& WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null );
 	}
 
-		/**
-		 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
+	/**
+	 * Get metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
+	 *
+	 * @param string     $table_name      Table name.
+	 * @param string[]   $columns         Supplied DML columns.
+	 * @param array|null $column_metadata Optional ordered column metadata rows.
+	 * @return array[] Default column descriptors.
+	 */
+	private function get_non_strict_dml_defaults_for_omitted_columns( string $table_name, array $columns, ?array $column_metadata = null ): array {
+		if ( $this->is_mysql_strict_sql_mode_active() ) {
+			return array();
+		}
+
+		$supplied_columns = array();
+		foreach ( $columns as $column ) {
+			$supplied_columns[ strtolower( (string) $column ) ] = true;
+		}
+
+		if ( null === $column_metadata ) {
+			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		}
+
+		$defaults = array();
+		foreach ( $column_metadata as $column_metadata_row ) {
+			$column_name = (string) ( $column_metadata_row['column_name'] ?? '' );
+			if ( '' === $column_name || isset( $supplied_columns[ strtolower( $column_name ) ] ) ) {
+				continue;
+			}
+
+			$default_sql = $this->get_non_strict_dml_default_sql_for_column( $column_metadata_row );
+			if ( null === $default_sql ) {
+				continue;
+			}
+
+			$defaults[] = array(
+				'column' => $column_name,
+				'sql'    => $default_sql,
+			);
+
+			$supplied_columns[ strtolower( $column_name ) ] = true;
+		}
+
+		return $defaults;
+	}
+
+	/**
+	 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
 	 *
 	 * @param string     $table_name      Table name.
 	 * @param string[]   $columns         DML columns, mutated when defaults are appended.
