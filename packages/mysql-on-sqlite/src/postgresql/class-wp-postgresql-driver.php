@@ -821,6 +821,9 @@ class WP_PostgreSQL_Driver {
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
 		}
+		if ( ! $translated_for_postgresql && $this->is_unsupported_mysql_delete_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported DELETE statement.' );
+		}
 
 		$upsert_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
 		if ( null !== $upsert_query ) {
@@ -13706,6 +13709,13 @@ WHERE option_name IN (
 			}
 
 			$target_table         = $scope['aliases'][ $target_key ];
+			$this->get_mysql_writable_table_backend_schema(
+				array(
+					'schema' => $target_table['schema'],
+					'table'  => $target_table['table'],
+				),
+				'DELETE'
+			);
 			$target_physical_name = strtolower( $target_table['schema'] . '.' . $target_table['table'] );
 			if ( isset( $target_physical_names[ $target_physical_name ] ) ) {
 				return null;
@@ -13847,11 +13857,24 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 3, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 3, $statement_end );
+		if ( null !== $order_position || null !== $limit_position ) {
+			return null;
+		}
+
 		$delete_alias = $this->get_mysql_identifier_token_value( $tokens[1] );
 		$target_ref   = $this->parse_mysql_table_reference( $tokens, 3, $where_position );
 		if ( null === $delete_alias || null === $target_ref ) {
 			return null;
 		}
+		$this->get_mysql_writable_table_backend_schema(
+			array(
+				'schema' => $target_ref['schema'],
+				'table'  => $target_ref['table'],
+			),
+			'DELETE'
+		);
 
 		$target_alias = null === $target_ref['alias'] ? $target_ref['table'] : $target_ref['alias'];
 		if (
@@ -13862,6 +13885,9 @@ WHERE option_name IN (
 		}
 
 		if ( null === $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::JOIN_SYMBOL, $target_ref['position'], $where_position ) ) {
+			return null;
+		}
+		if ( $this->contains_top_level_mysql_token( $tokens, $where_position + 1, $statement_end, array( WP_MySQL_Lexer::REGEXP_SYMBOL ) ) ) {
 			return null;
 		}
 
@@ -14031,6 +14057,17 @@ WHERE option_name IN (
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Check whether a top-level DELETE statement reached the unsupported fallback.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether this is an unsupported DELETE statement.
+	 */
+	private function is_unsupported_mysql_delete_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0] ) && WP_MySQL_Lexer::DELETE_SYMBOL === $tokens[0]->id;
 	}
 
 	/**

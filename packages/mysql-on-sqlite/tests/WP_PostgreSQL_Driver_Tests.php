@@ -5240,6 +5240,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported DELETE shapes fail before backend execution.
+	 */
+	public function test_unsupported_delete_shapes_fail_closed_before_backend(): void {
+		$queries = array(
+			"DELETE d FROM wptests_delete d
+				JOIN wptests_related r ON r.id = d.related_id
+				WHERE d.status = 'old'
+				ORDER BY d.id LIMIT 1",
+			"DELETE d FROM wptests_delete d
+				JOIN wptests_related r ON r.id = d.related_id
+				WHERE d.name REGEXP '^x'",
+			"DELETE d, r FROM wptests_delete d
+				JOIN wptests_related r ON r.id = d.related_id
+				WHERE d.status = 'old'
+				ORDER BY d.id LIMIT 1",
+			"DELETE d FROM other_db.wptests_delete d
+				JOIN wptests_related r ON r.id = d.related_id
+				WHERE d.status = 'old'",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported DELETE statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported DELETE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests MySQL DUAL table references are erased in PostgreSQL-compatible SELECTs.
 	 */
 	public function test_mysql_dual_table_reference_is_translated_to_postgresql(): void {
