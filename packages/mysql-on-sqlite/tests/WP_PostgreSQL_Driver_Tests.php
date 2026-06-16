@@ -395,6 +395,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests INSERT ... SET accepts unquoted keyword column names.
+	 */
+	public function test_insert_set_accepts_unquoted_name_column_target(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_insert_set_name (id INTEGER PRIMARY KEY, name TEXT NOT NULL, attempts INTEGER NOT NULL)' );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT INTO wptests_insert_set_name SET id = 1, name = UPPER('alpha'), attempts = 1 + 2"
+			)
+		);
+
+		$rows = $driver->query( 'SELECT id, name, attempts FROM wptests_insert_set_name' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'ALPHA', $rows[0]->name );
+		$this->assertSame( '3', $rows[0]->attempts );
+	}
+
+	/**
 	 * Tests MySQL INSERT priority modifiers are accepted as compatibility no-ops.
 	 */
 	public function test_insert_priority_modifiers_are_accepted_as_noops(): void {
@@ -1834,6 +1857,57 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'id'    => '1',
 					'slug'  => 'shared-slug',
 					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests REPLACE VALUES materializes expression-backed conflicts across unique keys.
+	 */
+	public function test_multi_row_replace_with_expression_conflict_key_deletes_all_unique_conflicts(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_replace_expr_multi (
+				id int(11) NOT NULL,
+				slug varchar(191) NOT NULL,
+				value text NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_key (slug)
+			) DEFAULT CHARACTER SET utf8mb4'
+		);
+		$driver->query( "INSERT INTO wptests_replace_expr_multi (id, slug, value) VALUES (1, 'one', 'old-one')" );
+		$driver->query( "INSERT INTO wptests_replace_expr_multi (id, slug, value) VALUES (2, 'two', 'old-two')" );
+
+		$replace = "REPLACE INTO wptests_replace_expr_multi (id, slug, value)
+			VALUES (1, (SELECT 'two'), 'new'), (3, 'three', 'fresh')";
+
+		$this->assertSame( 4, $driver->query( $replace ) );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 5, $sql );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_replace_values_[a-f0-9]{12}"$/', $sql[0] );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_replace_values_[a-f0-9]{12}" AS SELECT 1 AS "id", \\(SELECT \'two\'\\) AS "slug", \'new\' AS "value" UNION ALL SELECT 3, \'three\', \'fresh\'$/', $sql[1] );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_replace_expr_multi"', $sql[2] );
+		$this->assertStringContainsString( '"__wp_pg_replace_target"."id" = "__wp_pg_replace_rows"."id"', $sql[2] );
+		$this->assertStringContainsString( '"__wp_pg_replace_target"."slug" = "__wp_pg_replace_rows"."slug"', $sql[2] );
+		$this->assertStringContainsString( 'INSERT INTO "wptests_replace_expr_multi"', $sql[3] );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_replace_values_[a-f0-9]{12}"$/', $sql[4] );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_replace_expr_multi ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'slug'  => 'two',
+					'value' => 'new',
+				),
+				(object) array(
+					'id'    => '3',
+					'slug'  => 'three',
+					'value' => 'fresh',
 				),
 			),
 			$rows
@@ -10953,6 +11027,112 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'ORDER BY ' . $meta_value_cast_sql . ' DESC',
 			$driver->get_last_postgresql_queries()[0]['sql']
 		);
+	}
+
+	/**
+	 * Tests CONVERT(expr, CHAR/BINARY) expressions are translated to PostgreSQL.
+	 */
+	public function test_convert_char_and_binary_expressions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( "SELECT CONVERT('abc', CHAR) AS char_value, CONVERT('abc', BINARY) AS binary_value" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'abc', $rows[0]->char_value );
+		$this->assertSame( 'abc', $rows[0]->binary_value );
+		$this->assertSame(
+			"SELECT CAST('abc' AS text) AS char_value, CAST('abc' AS text) AS binary_value",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests CONVERT(expr, CHAR/BINARY) expressions translate in predicates and ordering.
+	 */
+	public function test_convert_char_and_binary_column_references_translate_in_predicates_and_ordering(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_convert_typed (value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_convert_typed (value) VALUES ('abc')" );
+		$driver->query( "INSERT INTO wptests_convert_typed (value) VALUES ('ABC')" );
+
+		$rows = $driver->query(
+			"SELECT CONVERT(value, CHAR) AS value_text
+			FROM wptests_convert_typed
+			WHERE CONVERT(value, BINARY) = 'abc'
+			ORDER BY CONVERT(value, CHAR)"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'abc', $rows[0]->value_text );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'SELECT CAST(value AS text) AS value_text', $sql );
+		$this->assertStringContainsString( "WHERE CAST(value AS text) = 'abc'", $sql );
+		$this->assertStringContainsString( 'ORDER BY CAST(value AS text)', $sql );
+		$this->assertStringNotContainsString( 'CONVERT', $sql );
+	}
+
+	/**
+	 * Tests CONVERT(expr, DECIMAL/DATE) expressions use explicit PostgreSQL semantics.
+	 */
+	public function test_convert_decimal_and_date_expressions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver_with_postgresql_substring_function();
+
+		$rows = $driver->query(
+			"SELECT CONVERT('123.456tail', DECIMAL) AS decimal_value"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '123.456', $rows[0]->decimal_value );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( ' AS decimal_value', $sql );
+		$this->assertStringNotContainsString( 'CONVERT', $sql );
+
+		$date_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT CONVERT('2025-10-05 14:05:28', DATE) AS date_value"
+		);
+
+		$this->assertNotNull( $date_sql );
+		$this->assertStringContainsString( 'TO_CHAR', $date_sql );
+		$this->assertStringContainsString( ' AS date_value', $date_sql );
+		$this->assertStringNotContainsString( 'CONVERT', $date_sql );
+	}
+
+	/**
+	 * Tests unsupported CONVERT(expr, type) forms fail before backend execution.
+	 */
+	public function test_unsupported_convert_typed_forms_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			"SELECT CONVERT('12:34:56', TIME) AS time_value",
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					$query
+				),
+				$query
+			);
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported CONVERT() runtime form to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
 	}
 
 	/**
@@ -22537,6 +22717,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$checks
 		);
+	}
+
+	/**
+	 * Tests USE information_schema routes multi-source catalog joins.
+	 */
+	public function test_use_statement_information_schema_routes_multi_source_catalog_joins(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$rows = $driver->query(
+			"SELECT t.table_name AS table_name, c.column_name AS column_name, s.index_name AS index_name
+			FROM tables AS t
+			JOIN columns AS c USING (table_schema, table_name)
+			LEFT JOIN statistics AS s
+				ON s.table_schema = c.table_schema
+				AND s.table_name = c.table_name
+				AND s.column_name = c.column_name
+			WHERE t.table_name = 'wptests_options'
+			ORDER BY c.ordinal_position, s.index_name"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'wptests_options', 'option_id', 'PRIMARY' ),
+				array( 'wptests_options', 'option_name', 'option_name' ),
+				array( 'wptests_options', 'option_value', null ),
+				array( 'wptests_options', 'autoload', 'autoload' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->table_name, $row->column_name, $row->index_name );
+				},
+				$rows
+			)
+		);
+
+		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'AS "t"', $sql );
+		$this->assertStringContainsString( 'AS "c"', $sql );
+		$this->assertStringContainsString( 'AS "s"', $sql );
+		$this->assertStringContainsString( 'LEFT JOIN', $sql );
 	}
 
 	/**

@@ -1100,6 +1100,10 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
+		if ( $this->contains_unsupported_mysql_convert_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
+		}
+
 		if ( $this->contains_unsupported_mysql_fulltext_search_query( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
 		}
@@ -22057,18 +22061,46 @@ WHERE option_name IN (
 			implode( ', ', $value_sql_rows )
 		);
 
-		$conflict_target              = $this->get_mysql_replace_conflict_target(
+		$conflict_target                  = $this->get_mysql_replace_conflict_target(
 			$table_name,
 			$columns,
 			$value_rows,
 			$probe_safe_rows
 		);
-		$delete_conflict_index_groups = $this->get_mysql_replace_delete_conflict_index_groups(
+		$delete_conflict_index_groups     = $this->get_mysql_replace_delete_conflict_index_groups(
 			$table_name,
 			$columns,
 			$value_rows,
 			$probe_safe_rows
 		);
+		$all_delete_conflict_index_groups = $this->get_mysql_replace_select_delete_conflict_index_groups( $table_name, $columns );
+		if (
+			null !== $conflict_target
+			&& count( $all_delete_conflict_index_groups ) > count( $delete_conflict_index_groups )
+		) {
+			$materialized_values_flow = $this->get_mysql_replace_values_delete_then_insert_flow(
+				$table_name,
+				$columns,
+				$value_rows,
+				$conflict_target,
+				$all_delete_conflict_index_groups
+			);
+			if ( null !== $materialized_values_flow ) {
+				return array_merge(
+					array(
+						'action'                   => 'replace',
+						'table_name'               => $table_name,
+						'columns'                  => $columns,
+						'value_rows'               => $value_rows,
+						'conflict_column'          => $conflict_target['columns'][0] ?? null,
+						'conflict_target'          => $conflict_target,
+						'conflict_probe_safe_rows' => $probe_safe_rows,
+						'inserted_new_row'         => true,
+					),
+					$materialized_values_flow
+				);
+			}
+		}
 		if ( null === $conflict_target ) {
 			if ( ! empty( $delete_conflict_index_groups ) ) {
 				$delete_insert_statements = $this->get_mysql_replace_delete_then_insert_statements(
@@ -22671,6 +22703,140 @@ WHERE option_name IN (
 		}
 
 		return $replace_query;
+	}
+
+	/**
+	 * Build a materialized delete-then-insert flow for REPLACE ... VALUES.
+	 *
+	 * @param string   $table_name            Target table name.
+	 * @param string[] $columns               Target column names.
+	 * @param array[]  $value_rows            Translated VALUES rows.
+	 * @param array    $conflict_target       Conflict target.
+	 * @param array[]  $conflict_index_groups Conflict target column/index tuple groups.
+	 * @return array|null Materialized flow metadata, or null when unsupported.
+	 */
+	private function get_mysql_replace_values_delete_then_insert_flow( string $table_name, array $columns, array $value_rows, array $conflict_target, array $conflict_index_groups ): ?array {
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
+		if ( null === $conflict_indexes || empty( $conflict_index_groups ) || empty( $value_rows ) ) {
+			return null;
+		}
+
+		$select_rows = array();
+		foreach ( $value_rows as $row_index => $values ) {
+			if ( count( $values ) !== count( $columns ) ) {
+				return null;
+			}
+
+			$projections = array();
+			foreach ( $values as $column_index => $value_sql ) {
+				$projection = (string) $value_sql;
+				if ( 0 === $row_index ) {
+					$projection .= ' AS ' . $this->connection->quote_identifier( $columns[ $column_index ] );
+				}
+				$projections[] = $projection;
+			}
+
+			$select_rows[] = 'SELECT ' . implode( ', ', $projections );
+		}
+
+		$select_sql           = implode( ' UNION ALL ', $select_rows );
+		$temp_table_hash      = substr( md5( $table_name . "\0" . implode( "\0", $columns ) . "\0" . implode( "\0", array_map( 'implode', $value_rows ) ) ), 0, 12 );
+		$temp_table_name      = '__wp_pg_replace_values_' . $temp_table_hash;
+		$ordinal_table_name   = '__wp_pg_replace_values_ord_' . $temp_table_hash;
+		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
+		$quoted_ordinal_table = $this->connection->quote_identifier( $ordinal_table_name );
+		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
+		$target_alias         = $this->connection->quote_identifier( '__wp_pg_replace_target' );
+		$quoted_target_table  = $this->connection->quote_identifier( $table_name );
+		$delete_predicate_sql = $this->get_mysql_replace_select_delete_predicate_sql(
+			$target_alias,
+			$rows_alias,
+			$conflict_index_groups
+		);
+		if ( null === $delete_predicate_sql ) {
+			return null;
+		}
+
+		$insert_projection_sql = array();
+		foreach ( $columns as $column ) {
+			$insert_projection_sql[] = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( $column )
+			);
+		}
+
+		$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
+			$table_name,
+			$columns,
+			$columns,
+			array(),
+			$conflict_target,
+			array(),
+			0,
+			0,
+			$quoted_temp_table,
+			$conflict_index_groups
+		);
+		if ( null === $affected_rows_count_sql ) {
+			return null;
+		}
+
+		$duplicate_conflict_rows_sql = $this->get_mysql_replace_select_duplicate_conflict_rows_sql(
+			$quoted_temp_table,
+			$rows_alias,
+			$conflict_index_groups
+		);
+		if ( null === $duplicate_conflict_rows_sql ) {
+			return null;
+		}
+
+		$delete_sql = sprintf(
+			'DELETE FROM %s AS %s WHERE EXISTS (SELECT 1 FROM %s AS %s WHERE %s)',
+			$quoted_target_table,
+			$target_alias,
+			$quoted_temp_table,
+			$rows_alias,
+			$delete_predicate_sql
+		);
+		$insert_sql = sprintf(
+			'INSERT INTO %s (%s) SELECT %s FROM %s AS %s',
+			$quoted_target_table,
+			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
+			implode( ', ', $insert_projection_sql ),
+			$quoted_temp_table,
+			$rows_alias
+		);
+		$drop_sql   = sprintf( 'DROP TABLE IF EXISTS %s', $quoted_temp_table );
+
+		return array(
+			'sql'                              => $insert_sql,
+			'statements'                       => array(
+				$drop_sql,
+				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
+				$delete_sql,
+				$insert_sql,
+				$drop_sql,
+			),
+			'materialize_statements'           => array(
+				$drop_sql,
+				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
+			),
+			'mutation_statements'              => array(
+				$delete_sql,
+				$insert_sql,
+			),
+			'cleanup_statements'               => array(
+				$drop_sql,
+			),
+			'replace_select_materialized'      => true,
+			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
+			'duplicate_conflict_rows_sql'      => $duplicate_conflict_rows_sql,
+			'source_table_sql'                 => $quoted_temp_table,
+			'ordinal_source_table_sql'         => $quoted_ordinal_table,
+			'conflict_indexes'                 => $conflict_indexes,
+			'conflict_index_groups'            => $conflict_index_groups,
+		);
 	}
 
 	/**
@@ -23947,7 +24113,7 @@ WHERE option_name IN (
 	 * @return array{column: string, value_start: int}|null Parsed assignment target, or null when unsupported.
 	 */
 	private function parse_simple_mysql_insert_set_assignment_target( string $table_name, array $tokens, int $start, int $end ): ?array {
-		$first = $this->get_mysql_dml_identifier_token_value( $tokens[ $start ] ?? null );
+		$first = $this->get_mysql_insert_set_identifier_token_value( $tokens[ $start ] ?? null );
 		if ( null === $first ) {
 			return null;
 		}
@@ -23966,14 +24132,14 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$second = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		$second = $this->get_mysql_insert_set_identifier_token_value( $tokens[ $position + 1 ] ?? null );
 		if ( null === $second ) {
 			return null;
 		}
 		$position += 2;
 
 		if ( WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
-			$third = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			$third = $this->get_mysql_insert_set_identifier_token_value( $tokens[ $position + 1 ] ?? null );
 			if (
 				null === $third
 				|| 0 !== strcasecmp( $first, $this->main_db_name )
@@ -24003,6 +24169,23 @@ WHERE option_name IN (
 			'column'      => $column,
 			'value_start' => $position + 1,
 		);
+	}
+
+	/**
+	 * Get an identifier token value for INSERT/REPLACE ... SET assignment targets.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return string|null Identifier value, or null when unsupported.
+	 */
+	private function get_mysql_insert_set_identifier_token_value( ?WP_MySQL_Token $token ): ?string {
+		$identifier = $this->get_mysql_dml_identifier_token_value( $token );
+		if ( null !== $identifier ) {
+			return $identifier;
+		}
+
+		return null !== $token && WP_MySQL_Lexer::NAME_SYMBOL === $token->id
+			? $token->get_value()
+			: null;
 	}
 
 	/**
@@ -38965,6 +39148,10 @@ FROM (
 			return null;
 		}
 
+		if ( $this->contains_unsupported_mysql_convert_function( $tokens, 0, $statement_end ) ) {
+			return null;
+		}
+
 		if ( $this->contains_unsupported_mysql_common_function( $tokens, 0, $statement_end ) ) {
 			return null;
 		}
@@ -39606,6 +39793,7 @@ FROM (
 			|| $this->contains_unsupported_mysql_date_format_function( $tokens, 0, $statement_end )
 			|| $this->contains_unsupported_mysql_rand_function( $tokens, 0, $statement_end )
 			|| $this->contains_unsupported_mysql_week_function( $tokens, 0, $statement_end )
+			|| $this->contains_unsupported_mysql_convert_function( $tokens, 0, $statement_end )
 			|| $this->contains_unsupported_mysql_common_function( $tokens, 0, $statement_end )
 			|| $this->contains_unsupported_mysql_group_concat_function( $tokens, 0, $statement_end )
 		) {
@@ -40390,6 +40578,7 @@ FROM (
 								$assignment_end,
 								$expression_replacements
 							)
+							|| $this->contains_unsupported_mysql_convert_function( $tokens, $value_start, $assignment_end )
 							|| $this->contains_unsupported_mysql_common_function( $tokens, $value_start, $assignment_end )
 							|| ! $this->mysql_upsert_expression_column_references_resolve_to_scope(
 								$tokens,
@@ -45883,6 +46072,9 @@ FROM (
 				$translated_fragment = $this->translate_mysql_integer_convert_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_character_convert_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_character_cast_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -45890,6 +46082,15 @@ FROM (
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_binary_cast_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_binary_convert_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_decimal_convert_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_date_convert_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_regexp_operator_to_postgresql( $tokens, $i, $end );
@@ -46884,6 +47085,33 @@ FROM (
 	}
 
 	/**
+	 * Translate MySQL CONVERT(expr, CHAR) to PostgreSQL text.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_character_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_character_convert_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
 	 * Get PostgreSQL SQL for MySQL-compatible integer text coercion.
 	 *
 	 * MySQL accepts text values when casting to SIGNED/UNSIGNED and coerces the
@@ -47167,6 +47395,55 @@ FROM (
 	}
 
 	/**
+	 * Get token bounds for a supported MySQL CONVERT(expr, CHAR) expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_character_convert_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
+		if ( $bounds['start'] !== $position ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$comma_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::COMMA_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $comma_position
+			|| $comma_position <= $position + 2
+			|| ! $this->is_mysql_character_cast_type( $tokens, $comma_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $comma_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
 	 * Translate MySQL CAST(expr AS DATETIME/TIMESTAMP) to PostgreSQL timestamp.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -47294,6 +47571,87 @@ FROM (
 	}
 
 	/**
+	 * Translate MySQL CONVERT(expr, BINARY) to PostgreSQL text.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_binary_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_binary_convert_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Translate MySQL CONVERT(expr, DECIMAL) to PostgreSQL numeric.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_decimal_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_decimal_convert_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => $this->get_postgresql_mysql_numeric_cast_sql( $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Translate MySQL CONVERT(expr, DATE) to PostgreSQL text.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_date_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_date_convert_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => $this->get_postgresql_mysql_date_sql( $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
 	 * Get token bounds for a supported MySQL binary CAST expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -47403,6 +47761,118 @@ FROM (
 		return $start + 1 === $end
 			&& isset( $tokens[ $start ] )
 			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL CONVERT(expr, DECIMAL) expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_decimal_convert_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
+		if ( $bounds['start'] !== $position ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$comma_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::COMMA_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $comma_position
+			|| $comma_position <= $position + 2
+			|| ! $this->is_mysql_decimal_cast_type( $tokens, $comma_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $comma_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL CONVERT(expr, DATE) expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CONVERT token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_date_convert_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
+		if ( $bounds['start'] !== $position ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$comma_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::COMMA_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $comma_position
+			|| $comma_position <= $position + 2
+			|| ! $this->is_mysql_date_convert_type( $tokens, $comma_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $comma_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
+	 * Check whether a CONVERT type is MySQL DATE.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First convert type token.
+	 * @param int             $end    Final convert type token, exclusive.
+	 * @return bool Whether the type is supported.
+	 */
+	private function is_mysql_date_convert_type( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::DATE_SYMBOL === $tokens[ $start ]->id;
 	}
 
 	/**
@@ -48157,6 +48627,61 @@ FROM (
 		}
 
 		return false;
+	}
+
+	/**
+	 * Check whether a range contains an unsupported MySQL CONVERT() function.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First token position.
+	 * @param int             $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported CONVERT() form is present.
+	 */
+	private function contains_unsupported_mysql_convert_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				! isset( $tokens[ $i ], $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $i ]->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			if (
+				null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end )
+				|| null !== $this->get_mysql_integer_convert_bounds( $tokens, $i, $end )
+				|| null !== $this->get_mysql_character_convert_bounds( $tokens, $i, $end )
+				|| null !== $this->get_mysql_binary_convert_bounds( $tokens, $i, $end )
+				|| null !== $this->get_mysql_decimal_convert_bounds( $tokens, $i, $end )
+				|| null !== $this->get_mysql_date_convert_bounds( $tokens, $i, $end )
+			) {
+				continue;
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a query contains an unsupported MySQL CONVERT() function.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether an unsupported CONVERT() form is present.
+	 */
+	private function contains_unsupported_mysql_convert_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return $this->contains_unsupported_mysql_convert_function(
+			$tokens,
+			0,
+			null === $statement_end ? count( $tokens ) : $statement_end
+		);
 	}
 
 	/**
@@ -52023,11 +52548,27 @@ $wp_mysql_json_valid$'
 				return true;
 			}
 
+			if ( null !== $this->get_mysql_character_convert_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
 			if ( null !== $this->get_mysql_date_time_cast_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 
 			if ( null !== $this->get_mysql_binary_cast_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_binary_convert_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_decimal_convert_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_date_convert_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 
