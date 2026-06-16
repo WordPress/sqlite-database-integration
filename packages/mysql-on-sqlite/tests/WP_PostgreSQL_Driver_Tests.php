@@ -4631,6 +4631,105 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests LAST_INSERT_ID(id) upsert updates expose an existing AUTO_INCREMENT id.
+	 */
+	public function test_upsert_last_insert_id_assignment_exposes_existing_auto_increment_value(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
+
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_unique_upsert (id, slug, value) VALUES (7, 'existing', 'old')" );
+
+		$upsert = "INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+			VALUES ('existing', 'updated')
+			ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`),
+			                        `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") VALUES (\'existing\', \'updated\') ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->id );
+		$this->assertSame( 'existing', $rows[0]->slug );
+		$this->assertSame( 'updated', $rows[0]->value );
+
+		$select_upsert = "INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+			SELECT 'existing', 'selected' FROM DUAL
+			ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`),
+			                        `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $select_upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") SELECT \'existing\', \'selected\' ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->id );
+		$this->assertSame( 'existing', $rows[0]->slug );
+		$this->assertSame( 'selected', $rows[0]->value );
+
+		$insert_driver = $this->create_driver();
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $insert_driver );
+		$insert = "INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+			VALUES ('new', 'created')
+			ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`),
+			                        `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $insert_driver->query( $insert ) );
+		$this->assertSame( 1, $insert_driver->get_insert_id() );
+	}
+
+	/**
+	 * Tests unsupported LAST_INSERT_ID(expr) upsert assignments fail closed.
+	 */
+	public function test_upsert_last_insert_id_assignment_unsupported_shapes_fail_closed(): void {
+		$driver = $this->create_driver();
+
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE wptests_identity_unique_upsert_source (
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_unique_upsert_source (
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+
+		$queries = array(
+			"INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+				VALUES ('existing', 'updated')
+				ON DUPLICATE KEY UPDATE `value` = LAST_INSERT_ID(`id`)",
+			"INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+				VALUES ('existing', 'updated')
+				ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id` + 1)",
+			"INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+				SELECT `slug`, `value` FROM `wptests_identity_unique_upsert_source`
+				ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`)",
+		);
+
+		foreach ( $queries as $query ) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported LAST_INSERT_ID() upsert assignment to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests inserts into tables without AUTO_INCREMENT do not expose stale IDs.
 	 */
 	public function test_get_insert_id_is_zero_for_non_auto_increment_insert(): void {
@@ -8691,6 +8790,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ROW_COUNT() reflects mutable last-result state instead of cached SQL.
+	 */
+	public function test_row_count_runtime_function_tracks_last_result_and_is_not_cached(): void {
+		$driver = $this->create_driver();
+
+		$initial = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+		$this->assertSame( '0', $initial[0]->row_count );
+		$this->assertSame( 'SELECT 0 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$driver->query( 'CREATE TABLE wptests_runtime_row_count (id INTEGER PRIMARY KEY, value TEXT)' );
+		$driver->query( "INSERT INTO wptests_runtime_row_count (id, value) VALUES (1, 'first'), (2, 'second')" );
+		$after_insert = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+
+		$this->assertSame( '2', $after_insert[0]->row_count );
+		$this->assertSame( 'SELECT 2 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$driver->query( "UPDATE wptests_runtime_row_count SET value = 'updated' WHERE id = 1" );
+		$after_update = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+
+		$this->assertSame( '1', $after_update[0]->row_count );
+		$this->assertSame( 'SELECT 1 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$driver->query( 'DELETE FROM wptests_runtime_row_count WHERE id = 99' );
+		$after_delete = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+
+		$this->assertSame( '0', $after_delete[0]->row_count );
+		$this->assertSame( 'SELECT 0 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$driver->query( 'SELECT id FROM wptests_runtime_row_count WHERE id = 1' );
+		$after_result_set = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+
+		$this->assertSame( '-1', $after_result_set[0]->row_count );
+		$this->assertSame( 'SELECT -1 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
 	 * Tests common MySQL runtime functions from the SQLite compatibility layer are translated.
 	 */
 	public function test_common_mysql_runtime_functions_are_translated_to_postgresql(): void {
@@ -9198,7 +9333,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT LOG() AS invalid_log',
 			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id',
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
-			'SELECT ROW_COUNT() AS rows_changed',
+			'SELECT ROW_COUNT(123) AS rows_changed',
 			'SELECT UUID() AS uuid_value',
 		);
 
@@ -9226,7 +9361,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id',
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
 			'SELECT USER(1) AS invalid_user',
-			'SELECT ROW_COUNT() AS rows_changed',
+			'SELECT ROW_COUNT(123) AS rows_changed',
 			'SELECT UUID() AS uuid_value',
 		);
 
@@ -14359,6 +14494,74 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests parenthesized ALTER TABLE ADD column lists ignore MySQL placement.
+	 */
+	public function test_alter_table_add_parenthesized_column_list_accepts_placement_suffixes(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_parenthesized_placement_alter (
+				id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"ALTER TABLE wptests_parenthesized_placement_alter ADD (
+					title varchar(100) NOT NULL DEFAULT 'draft' FIRST,
+					score int DEFAULT 0 AFTER title
+				)"
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_placement_alter" ADD COLUMN "title" varchar(100) NOT NULL DEFAULT \'draft\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_parenthesized_placement_alter" ADD COLUMN "score" integer DEFAULT \'0\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_parenthesized_placement_alter' );
+		$this->assertSame( array( 'id', 'title', 'score' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( 'NO', $columns[1]['is_nullable'] );
+		$this->assertSame( 'draft', $columns[1]['column_default'] );
+		$this->assertSame( '0', $columns[2]['column_default'] );
+	}
+
+	/**
+	 * Tests malformed placement in parenthesized ALTER TABLE ADD lists fails before backend execution.
+	 */
+	public function test_alter_table_add_parenthesized_column_list_malformed_placement_fails_before_backend_execution(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_parenthesized_bad_placement_alter (id INTEGER)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_parenthesized_bad_placement_alter (
+				id int NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_parenthesized_bad_placement_alter ADD (slug varchar(20) AFTER)' );
+			$this->fail( 'Expected malformed parenthesized ALTER TABLE ADD COLUMN placement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+
+		$this->assertSame( array( 'id' ), array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_parenthesized_bad_placement_alter' ), 'column_name' ) );
+	}
+
+	/**
 	 * Tests duplicate columns inside parenthesized ALTER TABLE ADD lists fail atomically.
 	 */
 	public function test_alter_table_add_parenthesized_duplicate_column_fails_before_backend_execution(): void {
@@ -19483,6 +19686,84 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema.TABLES AUTO_INCREMENT values match SHOW TABLE STATUS metadata.
+	 */
+	public function test_direct_information_schema_tables_exposes_auto_increment_values(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_show_table_status_auto_increment_fixture( $driver );
+		$pdo = $driver->get_connection()->get_pdo();
+
+		$pdo->exec( 'CREATE TABLE analytics_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
+		$pdo->exec( "INSERT INTO analytics_posts (value) VALUES ('a'), ('b')" );
+		$pdo->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('analytics', 'analytics_posts', 'BASE TABLE')"
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.columns
+				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, collation_name, is_nullable, column_default, is_identity)
+			VALUES
+				('analytics', 'analytics_posts', 'id', 1, 'bigint', NULL, NULL, 'NO', NULL, 'YES')"
+		);
+
+		$tables = $driver->query(
+			"SELECT TABLE_NAME, AUTO_INCREMENT
+			FROM information_schema.tables
+			WHERE table_schema = 'wptests'
+				AND table_name IN ('wptests_options', 'wptests_plain', 'wptests_posts')
+			ORDER BY table_name"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'wptests_options', '1' ),
+				array( 'wptests_plain', null ),
+				array( 'wptests_posts', '6' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->TABLE_NAME, $row->AUTO_INCREMENT );
+				},
+				$tables
+			)
+		);
+
+		$high_auto_increment = $driver->query(
+			"SELECT TABLE_NAME
+			FROM information_schema.tables
+			WHERE table_schema = 'wptests'
+				AND table_type = 'BASE TABLE'
+				AND auto_increment > 3"
+		);
+
+		$this->assertSame( array( 'wptests_posts' ), array_column( $high_auto_increment, 'TABLE_NAME' ) );
+
+		$without_auto_increment = $driver->query(
+			"SELECT TABLE_NAME
+			FROM information_schema.tables
+			WHERE table_schema = 'wptests'
+				AND table_type = 'BASE TABLE'
+				AND auto_increment IS NULL"
+		);
+
+		$this->assertSame( array( 'wptests_plain' ), array_column( $without_auto_increment, 'TABLE_NAME' ) );
+
+		$schema_qualified_auto_increment = $driver->query(
+			"SELECT TABLE_SCHEMA, TABLE_NAME, AUTO_INCREMENT
+			FROM information_schema.tables
+			WHERE table_schema = 'analytics'
+				AND table_name = 'analytics_posts'"
+		);
+
+		$this->assertSame( 'analytics', $schema_qualified_auto_increment[0]->TABLE_SCHEMA );
+		$this->assertSame( 'analytics_posts', $schema_qualified_auto_increment[0]->TABLE_NAME );
+		$this->assertSame( '3', $schema_qualified_auto_increment[0]->AUTO_INCREMENT );
+	}
+
+	/**
 	 * Tests direct information_schema schema predicates accept DATABASE() and SCHEMA().
 	 */
 	public function test_direct_information_schema_current_database_function_predicates_return_mysql_shape(): void {
@@ -22728,6 +23009,60 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$rows = $driver->query( 'SELECT ' . $expected[0] );
 			$this->assertSame( $expected[1], $rows[0]->{ $expected[0] }, $query );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
+	 * Tests GROUP_CONCAT length SET state matches SQLite backend compatibility.
+	 */
+	public function test_group_concat_max_len_can_be_set_selected_and_restored(): void {
+		$driver = $this->create_driver();
+
+		$default = $driver->query( "SHOW VARIABLES LIKE 'group_concat_max_len'" );
+		$this->assertCount( 1, $default );
+		$this->assertSame( 'group_concat_max_len', $default[0]->Variable_name );
+		$this->assertSame( '1024', $default[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$this->assertSame( 0, $driver->query( 'SET @old_group_concat_max_len = @@SESSION.group_concat_max_len' ) );
+		$this->assertSame( 0, $driver->query( 'SET SESSION group_concat_max_len = 1000000' ) );
+
+		$rows = $driver->query( 'SELECT @@SESSION.group_concat_max_len' );
+		$this->assertSame( '1000000', $rows[0]->{'@@SESSION.group_concat_max_len'} );
+
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name = 'group_concat_max_len'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1000000', $rows[0]->Value );
+
+		$this->assertSame( 0, $driver->query( 'SET group_concat_max_len = @old_group_concat_max_len' ) );
+		$rows = $driver->query( 'SELECT @@group_concat_max_len' );
+		$this->assertSame( '1024', $rows[0]->{'@@group_concat_max_len'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests unsafe GROUP_CONCAT length SET forms fail before reaching PDO.
+	 */
+	public function test_unsupported_group_concat_max_len_set_forms_fail_closed(): void {
+		$queries = array(
+			'SET GLOBAL group_concat_max_len = 1000000',
+			'SET GLOBAL group_concat_max_len = DEFAULT',
+			'SET @@GLOBAL.group_concat_max_len = 1000000',
+			'SET @@GLOBAL.group_concat_max_len = DEFAULT',
+			'SET SESSION group_concat_max_len = OFF',
+			'SET SESSION group_concat_max_len = 1 + 1',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SET statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SET statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 

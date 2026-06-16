@@ -292,6 +292,13 @@ class WP_PostgreSQL_Driver {
 	private $last_insert_id = 0;
 
 	/**
+	 * MySQL-compatible ROW_COUNT() value preserved while per-query state resets.
+	 *
+	 * @var int
+	 */
+	private $last_row_count = 0;
+
+	/**
 	 * MySQL-compatible session SQL mode state.
 	 *
 	 * @var string[]
@@ -512,6 +519,7 @@ class WP_PostgreSQL_Driver {
 	 * @return mixed Return value, depending on the query type.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->last_row_count = $this->get_mysql_row_count_from_last_result();
 		$this->reset_query_state();
 		$this->last_mysql_query = $query;
 
@@ -1380,7 +1388,7 @@ class WP_PostgreSQL_Driver {
 
 		for ( $i = 1; $i < $statement_end; $i++ ) {
 			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $statement_end );
-			if ( null !== $bounds && 'last_insert_id' === $bounds['function'] ) {
+			if ( null !== $bounds && in_array( $bounds['function'], array( 'last_insert_id', 'row_count' ), true ) ) {
 				return true;
 			}
 		}
@@ -2809,13 +2817,16 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function get_mysql_set_assignment_operations( array $tokens ): ?array {
 		$position = 1;
-		$this->get_mysql_set_statement_scope( $tokens, $position );
+		$statement_scope = $this->get_mysql_set_statement_scope( $tokens, $position );
 		$ops = array();
 
 		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
 			$target = $this->parse_mysql_set_assignment_target( $tokens, $position );
 			if ( null === $target ) {
 				return null;
+			}
+			if ( 'system' === $target['type'] && null === ( $target['scope'] ?? null ) ) {
+				$target['scope'] = $statement_scope;
 			}
 
 			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
@@ -2875,7 +2886,7 @@ class WP_PostgreSQL_Driver {
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int              $position Current token position, updated on success.
-	 * @return array{type: string, name: string}|null Assignment target.
+	 * @return array{type: string, name: string, scope?: string|null}|null Assignment target.
 	 */
 	private function parse_mysql_set_assignment_target( array $tokens, int &$position ): ?array {
 		if ( ! isset( $tokens[ $position ] ) ) {
@@ -2890,14 +2901,17 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $tokens[ $position ]->id ) {
-			$name = $this->parse_mysql_system_variable_reference( $tokens, $position );
+			$display = null;
+			$scope   = null;
+			$name    = $this->parse_mysql_system_variable_reference( $tokens, $position, $display, $scope );
 			if ( null === $name || ! $this->is_supported_mysql_system_variable( $name ) ) {
 				return null;
 			}
 
 			return array(
-				'type' => 'system',
-				'name' => $name,
+				'type'  => 'system',
+				'name'  => $name,
+				'scope' => $scope,
 			);
 		}
 
@@ -2908,8 +2922,9 @@ class WP_PostgreSQL_Driver {
 
 		++$position;
 		return array(
-			'type' => 'system',
-			'name' => $name,
+			'type'  => 'system',
+			'name'  => $name,
+			'scope' => null,
 		);
 	}
 
@@ -2928,7 +2943,11 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( 'system' === $target['type'] ) {
-			$value = $this->normalize_mysql_system_variable_assignment_value( $target['name'], $value );
+			$value = $this->normalize_mysql_system_variable_assignment_value(
+				$target['name'],
+				$value,
+				$target['scope'] ?? null
+			);
 			if ( null === $value ) {
 				return null;
 			}
@@ -7043,7 +7062,7 @@ $wp_mysql_on_update$',
 				);
 			} else {
 				$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $range['start'], $range['end'] );
-				if ( null === $definition_end || $range['start'] >= $definition_end || $definition_end !== $range['end'] ) {
+				if ( null === $definition_end || $range['start'] >= $definition_end ) {
 					return null;
 				}
 
@@ -13658,12 +13677,13 @@ ORDER BY table_name';
 	 *
 	 * @param string $table_name      Table name.
 	 * @param string $identity_column Identity column name.
+	 * @param string $table_schema    Backend schema name.
 	 * @return string|null Next AUTO_INCREMENT value, or null when unavailable.
 	 */
-	private function get_show_table_status_auto_increment_value( string $table_name, string $identity_column ): ?string {
+	private function get_show_table_status_auto_increment_value( string $table_name, string $identity_column, string $table_schema = 'public' ): ?string {
 		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
 		if ( 'pgsql' === $driver_name ) {
-			return $this->get_postgresql_show_table_status_auto_increment_value( $table_name, $identity_column );
+			return $this->get_postgresql_show_table_status_auto_increment_value( $table_schema, $table_name, $identity_column );
 		}
 
 		if ( 'sqlite' === $driver_name ) {
@@ -13676,11 +13696,12 @@ ORDER BY table_name';
 	/**
 	 * Get the next AUTO_INCREMENT value from PostgreSQL identity sequence state.
 	 *
+	 * @param string $table_schema    Backend schema name.
 	 * @param string $table_name      Table name.
 	 * @param string $identity_column Identity column name.
 	 * @return string|null Next AUTO_INCREMENT value, or null when unavailable.
 	 */
-	private function get_postgresql_show_table_status_auto_increment_value( string $table_name, string $identity_column ): ?string {
+	private function get_postgresql_show_table_status_auto_increment_value( string $table_schema, string $table_name, string $identity_column ): ?string {
 		$sequence_sql                    = 'SELECT
 				seq_ns.nspname AS sequence_schema,
 				seq.relname AS sequence_name
@@ -13693,11 +13714,11 @@ ORDER BY table_name';
 				ON seq_ns.oid = seq.relnamespace';
 		$stmt                            = $this->connection->query(
 			$sequence_sql,
-			array( 'public', $table_name, $identity_column )
+			array( $table_schema, $table_name, $identity_column )
 		);
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $sequence_sql,
-			'params' => array( 'public', $table_name, $identity_column ),
+			'params' => array( $table_schema, $table_name, $identity_column ),
 		);
 
 		$sequence = $stmt->fetch( PDO::FETCH_ASSOC );
@@ -13713,7 +13734,7 @@ ORDER BY table_name';
 			(string) $sequence['sequence_schema'],
 			(string) $sequence['sequence_name']
 		);
-		$table_identifier                = $this->get_postgresql_qualified_identifier( 'public', $table_name );
+		$table_identifier                = $this->get_postgresql_qualified_identifier( $table_schema, $table_name );
 		$sql                             = sprintf(
 			'WITH sequence_state AS (
 				SELECT last_value, is_called FROM %1$s
@@ -15030,14 +15051,16 @@ ORDER BY table_name';
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int              $position Current token position, updated on success.
 	 * @param string|null      $display  Optional display name, populated when requested.
+	 * @param string|null      $scope    Optional variable scope, populated when requested.
 	 * @return string|null Lowercase system variable name, or null when unsupported.
 	 */
-	private function parse_mysql_system_variable_reference( array $tokens, int &$position, ?string &$display = null ): ?string {
+	private function parse_mysql_system_variable_reference( array $tokens, int &$position, ?string &$display = null, ?string &$scope = null ): ?string {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
 
 		$display_parts = array( '@@' );
+		$scope         = null;
 		++$position;
 
 		if (
@@ -15053,6 +15076,7 @@ ORDER BY table_name';
 			)
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position + 1 ]->id
 		) {
+			$scope          = strtolower( $tokens[ $position ]->get_value() );
 			$display_parts[] = $tokens[ $position ]->get_value();
 			$display_parts[] = '.';
 			$position       += 2;
@@ -15112,12 +15136,17 @@ ORDER BY table_name';
 	/**
 	 * Normalize a SET value for a supported system variable.
 	 *
-	 * @param string $name  Lowercase variable name.
-	 * @param string $value Raw assignment value.
+	 * @param string      $name  Lowercase variable name.
+	 * @param string      $value Raw assignment value.
+	 * @param string|null $scope Optional SET scope.
 	 * @return string|null Normalized value, or null when unsupported.
 	 */
-	private function normalize_mysql_system_variable_assignment_value( string $name, string $value ): ?string {
+	private function normalize_mysql_system_variable_assignment_value( string $name, string $value, ?string $scope = null ): ?string {
 		$normalized_value = strtolower( trim( $value, "'\"` \t\n\r\0\x0B" ) );
+		if ( 'group_concat_max_len' === $name && 'global' === $scope ) {
+			return null;
+		}
+
 		if ( 'default' === $normalized_value ) {
 			if ( 'sql_mode' === $name ) {
 				return 'DEFAULT';
@@ -15133,6 +15162,10 @@ ORDER BY table_name';
 
 			$defaults = $this->get_default_mysql_system_variable_values();
 			return array_key_exists( $name, $defaults ) ? $defaults[ $name ] : null;
+		}
+
+		if ( 'group_concat_max_len' === $name ) {
+			return preg_match( '/\A[0-9]+\z/', $normalized_value ) ? $normalized_value : null;
 		}
 
 		if ( $this->is_mysql_boolean_system_variable( $name ) ) {
@@ -15280,6 +15313,7 @@ ORDER BY table_name';
 			'end_markers_in_json'                     => '0',
 			'explicit_defaults_for_timestamp'         => '1',
 			'foreign_key_checks'                      => '1',
+			'group_concat_max_len'                    => '1024',
 			'innodb_lock_wait_timeout'                => '50',
 			'interactive_timeout'                     => '28800',
 			'keep_files_on_create'                    => '0',
@@ -17561,7 +17595,8 @@ WHERE option_name IN (
 		$table_column_lookup = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$position            = $on_duplicate + 4;
 
-		$assignments = $this->parse_upsert_update_assignments( $table_name, $tokens, $position, $statement_end, $column_lookup, $table_column_lookup, $upsert_source_aliases );
+		$assignment_effects = array();
+		$assignments        = $this->parse_upsert_update_assignments( $table_name, $tokens, $position, $statement_end, $column_lookup, $table_column_lookup, $upsert_source_aliases, $assignment_effects );
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
 		}
@@ -17575,6 +17610,27 @@ WHERE option_name IN (
 		);
 		if ( null === $inserted_value_rows ) {
 			return null;
+		}
+
+		$last_insert_id_on_duplicate_key_update = null;
+		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
+			if ( 1 !== count( $value_rows ) ) {
+				return null;
+			}
+
+			$last_insert_id_row = $this->get_mysql_upsert_conflicting_row_column_value(
+				$table_name,
+				(string) $assignment_effects['last_insert_id_column'],
+				$value_rows[0],
+				$probe_safe_rows[0] ?? array(),
+				$conflict_indexes
+			);
+			if ( null === $last_insert_id_row ) {
+				return null;
+			}
+			if ( $last_insert_id_row['found'] ) {
+				$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
+			}
 		}
 
 		$sql_value_rows = array();
@@ -17606,6 +17662,9 @@ WHERE option_name IN (
 			'conflict_indexes'     => $conflict_indexes,
 			'inserted_new_row'     => count( $inserted_value_rows ) > 0,
 		);
+		if ( null !== $last_insert_id_on_duplicate_key_update ) {
+			$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
+		}
 
 		if ( $this->has_duplicate_mysql_upsert_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
 			$statements = array();
@@ -17750,13 +17809,16 @@ WHERE option_name IN (
 		}
 
 		$assignment_position = $on_duplicate + 4;
+		$assignment_effects  = array();
 		$assignments         = $this->parse_upsert_update_assignments(
 			$table_name,
 			$tokens,
 			$assignment_position,
 			$statement_end,
 			$column_lookup,
-			$table_column_lookup
+			$table_column_lookup,
+			array(),
+			$assignment_effects
 		);
 		if ( null === $assignments || ! $this->is_at_mysql_query_end( $tokens, $assignment_position ) ) {
 			return null;
@@ -17765,6 +17827,36 @@ WHERE option_name IN (
 		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
 		if ( null === $conflict_indexes ) {
 			return null;
+		}
+
+		$last_insert_id_on_duplicate_key_update = null;
+		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
+			if ( null === $literal_value_row ) {
+				$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+					$table_name,
+					$columns,
+					$tokens,
+					$select_start,
+					$select_end
+				);
+			}
+			if ( null === $literal_value_row ) {
+				return null;
+			}
+
+			$last_insert_id_row = $this->get_mysql_upsert_conflicting_row_column_value(
+				$table_name,
+				(string) $assignment_effects['last_insert_id_column'],
+				$literal_value_row['values'],
+				$literal_value_row['probe_safe_values'],
+				$conflict_indexes
+			);
+			if ( null === $last_insert_id_row ) {
+				return null;
+			}
+			if ( $last_insert_id_row['found'] ) {
+				$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
+			}
 		}
 		$conflict_sql = sprintf(
 			'ON CONFLICT (%s) DO UPDATE SET %s',
@@ -17847,6 +17939,9 @@ WHERE option_name IN (
 			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
 			'explicit_identity_columns' => $explicit_identity_columns,
 		);
+		if ( null !== $last_insert_id_on_duplicate_key_update ) {
+			$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
+		}
 
 		$literal_select_row = $literal_value_row;
 		if ( null === $literal_select_row ) {
@@ -18654,6 +18749,70 @@ WHERE option_name IN (
 		);
 
 		return false !== $stmt->fetchColumn();
+	}
+
+	/**
+	 * Fetch a conflicting target-row column for a deterministic upsert row.
+	 *
+	 * @param string $table_name       Table name.
+	 * @param string $column_name      Target column to read.
+	 * @param array  $values           Translated PostgreSQL VALUES row.
+	 * @param array  $probe_safety     Per-value conflict-probe safety flags.
+	 * @param array  $conflict_indexes Conflict target column/index tuples.
+	 * @return array{found: bool, value: mixed}|null Conflict row value, or null when unsupported.
+	 */
+	private function get_mysql_upsert_conflicting_row_column_value( string $table_name, string $column_name, array $values, array $probe_safety, array $conflict_indexes ): ?array {
+		$where = array();
+		foreach ( $conflict_indexes as $conflict_index ) {
+			if (
+				! array_key_exists( $conflict_index['index'], $values )
+				|| empty( $probe_safety[ $conflict_index['index'] ] )
+			) {
+				return null;
+			}
+
+			$value = (string) $values[ $conflict_index['index'] ];
+			if ( $this->is_mysql_generated_auto_increment_value_sql( $value ) ) {
+				return array(
+					'found' => false,
+					'value' => null,
+				);
+			}
+
+			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+				$where[] = sprintf(
+					'%s = SUBSTR(CAST(%s AS text), 1, %d)',
+					$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
+					$value,
+					(int) $conflict_index['sub_part']
+				);
+			} else {
+				$where[] = sprintf(
+					'%s = %s',
+					$this->connection->quote_identifier( (string) $conflict_index['column'] ),
+					$value
+				);
+			}
+		}
+
+		if ( empty( $where ) ) {
+			return null;
+		}
+
+		$stmt  = $this->connection->query(
+			sprintf(
+				'SELECT %s FROM %s WHERE %s LIMIT 1',
+				$this->connection->quote_identifier( $column_name ),
+				$this->connection->quote_identifier( $table_name ),
+				implode( ' AND ', $where )
+			)
+		);
+		$value = $stmt->fetchColumn();
+
+		return array(
+			'found' => false !== $value,
+			'value' => false === $value ? null : $value,
+		);
 	}
 
 	/**
@@ -21298,6 +21457,12 @@ WHERE option_name IN (
 
 		if ( ! empty( $dml_query['insert_id_unknown'] ) ) {
 			$this->last_insert_id = 0;
+			return;
+		}
+
+		if ( array_key_exists( 'last_insert_id_on_duplicate_key_update', $dml_query ) ) {
+			$last_insert_id       = $dml_query['last_insert_id_on_duplicate_key_update'];
+			$this->last_insert_id = is_numeric( $last_insert_id ) ? (int) $last_insert_id : $last_insert_id;
 			return;
 		}
 
@@ -29912,9 +30077,9 @@ WHERE option_name IN (
 			$identity_column = null === $row['identity_column'] ? null : (string) $row['identity_column'];
 			$auto_increment  = null;
 
-			if ( null !== $identity_column && 0 === strcasecmp( $table_schema, 'public' ) ) {
+			if ( null !== $identity_column ) {
 				try {
-					$auto_increment = $this->get_show_table_status_auto_increment_value( $table_name, $identity_column );
+					$auto_increment = $this->get_show_table_status_auto_increment_value( $table_name, $identity_column, $table_schema );
 				} catch ( PDOException $e ) {
 					$auto_increment = null;
 				}
@@ -35187,9 +35352,11 @@ FROM (
 	 * @param array           $column_lookup       Insert-column lookup by lowercase name.
 	 * @param array           $table_column_lookup Table-column metadata lookup by lowercase name.
 	 * @param array           $source_aliases      Optional VALUES-row alias lookup.
+	 * @param array|null      $assignment_effects  Optional side effects detected while parsing.
 	 * @return string[]|null PostgreSQL SET assignments, or null when unsupported.
 	 */
-	private function parse_upsert_update_assignments( string $table_name, array $tokens, int &$position, int $end, array $column_lookup, array $table_column_lookup, array $source_aliases = array() ): ?array {
+	private function parse_upsert_update_assignments( string $table_name, array $tokens, int &$position, int $end, array $column_lookup, array $table_column_lookup, array $source_aliases = array(), ?array &$assignment_effects = null ): ?array {
+		$assignment_effects   = array();
 		$assignments          = array();
 		$scope                = $this->get_mysql_single_table_scope( $table_name );
 		$values_column_lookup = $this->get_mysql_upsert_values_column_lookup( $column_lookup, $table_column_lookup );
@@ -35232,74 +35399,98 @@ FROM (
 					$this->connection->quote_identifier( $source_column )
 				);
 			} else {
-				$scalar_subquery_sql = null;
-				$values_replacements = $this->get_mysql_upsert_values_expression_replacements(
+				$last_insert_id_assignment = $this->get_mysql_upsert_last_insert_id_assignment(
+					$table_name,
+					$target_column,
 					$tokens,
 					$value_start,
 					$assignment_end,
-					$values_column_lookup,
-					$source_aliases
+					$scope,
+					$table_column_lookup
 				);
-				if (
-					null === $values_replacements
-					|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
-						$tokens,
-						$value_start,
-						$assignment_end,
-						$values_replacements
-					)
-				) {
-					$scalar_subquery_sql = $this->get_mysql_upsert_scalar_subquery_assignment_sql(
-						$tokens,
-						$value_start,
-						$assignment_end,
-						$scope
-					);
-					if ( null === $scalar_subquery_sql ) {
+				if ( false === $last_insert_id_assignment ) {
+					return null;
+				}
+				if ( is_array( $last_insert_id_assignment ) ) {
+					if (
+						isset( $assignment_effects['last_insert_id_column'] )
+						&& 0 !== strcasecmp( (string) $assignment_effects['last_insert_id_column'], $last_insert_id_assignment['column'] )
+					) {
 						return null;
 					}
-					$values_replacements = array();
-				}
 
-				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-
-				$value_sql = $scalar_subquery_sql ?? null;
-				if (
-					null !== $value_sql
-					&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
-				) {
-					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
-				}
-				if ( null === $value_sql ) {
-					$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-				}
-				if ( null === $value_sql ) {
-					$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-				}
-				if ( null === $value_sql ) {
-					if ( empty( $values_replacements ) ) {
-						$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+					$value_sql                                    = $last_insert_id_assignment['sql'];
+					$assignment_effects['last_insert_id_column'] = $last_insert_id_assignment['column'];
+				} else {
+					$scalar_subquery_sql = null;
+					$values_replacements = $this->get_mysql_upsert_values_expression_replacements(
+						$tokens,
+						$value_start,
+						$assignment_end,
+						$values_column_lookup,
+						$source_aliases
+					);
+					if (
+						null === $values_replacements
+						|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
+							$tokens,
+							$value_start,
+							$assignment_end,
+							$values_replacements
+						)
+					) {
+						$scalar_subquery_sql = $this->get_mysql_upsert_scalar_subquery_assignment_sql(
 							$tokens,
 							$value_start,
 							$assignment_end,
 							$scope
 						);
-						$value_sql      = $expression_sql['sql'];
-						$changed        = $expression_sql['changed'];
-					} else {
-						$value_sql = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
-							$tokens,
-							$value_start,
-							$assignment_end,
-							$values_replacements
-						);
-						$changed   = true;
+						if ( null === $scalar_subquery_sql ) {
+							return null;
+						}
+						$values_replacements = array();
 					}
+
+					$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+
+					$value_sql = $scalar_subquery_sql ?? null;
 					if (
-						$changed
+						null !== $value_sql
 						&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
 					) {
 						$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+					}
+					if ( null === $value_sql ) {
+						$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+					}
+					if ( null === $value_sql ) {
+						$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+					}
+					if ( null === $value_sql ) {
+						if ( empty( $values_replacements ) ) {
+							$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+								$tokens,
+								$value_start,
+								$assignment_end,
+								$scope
+							);
+							$value_sql      = $expression_sql['sql'];
+							$changed        = $expression_sql['changed'];
+						} else {
+							$value_sql = $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+								$tokens,
+								$value_start,
+								$assignment_end,
+								$values_replacements
+							);
+							$changed   = true;
+						}
+						if (
+							$changed
+							&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+						) {
+							$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+						}
 					}
 				}
 			}
@@ -35319,6 +35510,88 @@ FROM (
 		}
 
 		return count( $assignments ) > 0 ? $assignments : null;
+	}
+
+	/**
+	 * Parse the supported LAST_INSERT_ID(column) upsert assignment side effect.
+	 *
+	 * MySQL plugins commonly use "id = LAST_INSERT_ID(id)" so mysqli_insert_id()
+	 * returns the existing row id on duplicate-key updates. Only the no-op
+	 * AUTO_INCREMENT self-assignment is safe to emulate here.
+	 *
+	 * @param string           $table_name           Target table name.
+	 * @param string           $target_column        Assignment target column.
+	 * @param WP_MySQL_Token[] $tokens               MySQL lexer token stream.
+	 * @param int              $start                First expression token.
+	 * @param int              $end                  Final expression token, exclusive.
+	 * @param array            $scope                Statement table scope.
+	 * @param array            $table_column_lookup  Table-column metadata lookup by lowercase name.
+	 * @return array{column: string, sql: string}|false|null Assignment data, false for unsupported LAST_INSERT_ID usage, or null when not applicable.
+	 */
+	private function get_mysql_upsert_last_insert_id_assignment( string $table_name, string $target_column, array $tokens, int $start, int $end, array $scope, array $table_column_lookup ) {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || 'last_insert_id' !== $bounds['function'] ) {
+			return $this->contains_mysql_last_insert_id_function_call( $tokens, $start, $end ) ? false : null;
+		}
+
+		if ( $bounds['close'] + 1 !== $end ) {
+			return false;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return false;
+		}
+
+		$argument  = $arguments[0];
+		$reference = $this->parse_mysql_column_reference( $tokens, $argument['start'], $argument['end'] );
+		if (
+			null === $reference
+			|| $reference['end'] !== $argument['end']
+			|| 0 !== strcasecmp( $reference['column'], $target_column )
+			|| null === $this->get_mysql_column_type_for_reference( $reference, $scope )
+		) {
+			return false;
+		}
+
+		if (
+			null !== $reference['qualifier']
+			&& ! $this->is_mysql_dml_table_qualifier( $reference['qualifier'], $table_name, null )
+		) {
+			return false;
+		}
+
+		$column_key = strtolower( $reference['column'] );
+		if (
+			! isset( $table_column_lookup[ $column_key ] )
+			|| ! $this->is_mysql_auto_increment_column_metadata( $table_column_lookup[ $column_key ] )
+		) {
+			return false;
+		}
+
+		return array(
+			'column' => (string) ( $table_column_lookup[ $column_key ]['column_name'] ?? $reference['column'] ),
+			'sql'    => $this->connection->quote_identifier( $reference['column'] ),
+		);
+	}
+
+	/**
+	 * Check whether a range contains a LAST_INSERT_ID(...) function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token.
+	 * @param int              $end    Final token, exclusive.
+	 * @return bool Whether LAST_INSERT_ID() appears in the range.
+	 */
+	private function contains_mysql_last_insert_id_function_call( array $tokens, int $start, int $end ): bool {
+		for ( $position = $start; $position < $end; $position++ ) {
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
+			if ( null !== $bounds && 'last_insert_id' === $bounds['function'] ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -41833,6 +42106,9 @@ FROM (
 			case 'last_insert_id':
 				return 0 === $count ? $this->get_postgresql_mysql_last_insert_id_sql() : null;
 
+			case 'row_count':
+				return 0 === $count ? $this->get_postgresql_mysql_row_count_sql() : null;
+
 			case 'ifnull':
 				return 2 === $count ? sprintf( 'COALESCE(%s, %s)', $argument_sql[0], $argument_sql[1] ) : null;
 
@@ -41944,7 +42220,6 @@ FROM (
 			case 'release_lock':
 				return 1 === $count ? '1' : null;
 
-			case 'row_count':
 			case 'uuid':
 				return null;
 		}
@@ -41960,6 +42235,28 @@ FROM (
 	private function get_postgresql_mysql_last_insert_id_sql(): string {
 		$last_insert_id = $this->get_insert_id();
 		return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL ROW_COUNT().
+	 *
+	 * @return string PostgreSQL SQL literal.
+	 */
+	private function get_postgresql_mysql_row_count_sql(): string {
+		return (string) $this->last_row_count;
+	}
+
+	/**
+	 * Get the MySQL ROW_COUNT() value from the previous driver result.
+	 *
+	 * @return int MySQL-compatible ROW_COUNT() value.
+	 */
+	private function get_mysql_row_count_from_last_result(): int {
+		if ( is_array( $this->last_result ) ) {
+			return -1;
+		}
+
+		return is_numeric( $this->last_result ) ? (int) $this->last_result : 0;
 	}
 
 	/**
