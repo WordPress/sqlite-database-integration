@@ -18807,6 +18807,7 @@ WHERE option_name IN (
 
 			if ( null !== $information_schema_source_translation ) {
 				$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+					$query,
 					$tokens,
 					$where_position + 1,
 					$where_end,
@@ -19030,28 +19031,42 @@ WHERE option_name IN (
 	/**
 	 * Translate a DML predicate that may reference information_schema sources.
 	 *
+	 * @param string|null      $query Original MySQL query, or null when nested SELECTs are unsupported.
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int              $start First predicate token.
 	 * @param int              $end Final predicate token, exclusive.
 	 * @param array            $context Direct information_schema context.
 	 * @return string|null PostgreSQL predicate SQL, or null when unsupported.
 	 */
-	private function translate_direct_information_schema_dml_predicate_to_postgresql( array $tokens, int $start, int $end, array $context ): ?string {
-		if (
-			$this->contains_mysql_token(
+	private function translate_direct_information_schema_dml_predicate_to_postgresql( ?string $query, array $tokens, int $start, int $end, array $context ): ?string {
+		$nested_select_replacements = array();
+		if ( $this->contains_mysql_token( $tokens, $start, $end, array( WP_MySQL_Lexer::SELECT_SYMBOL ) ) ) {
+			if (
+				null === $query
+				|| $this->contains_mysql_token( $tokens, $start, $end, array( WP_MySQL_Lexer::UNION_SYMBOL ) )
+			) {
+				return null;
+			}
+
+			$nested_select_replacements = $this->get_direct_information_schema_nested_select_replacements(
+				$query,
 				$tokens,
-				$start,
-				$end,
 				array(
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
+					array(
+						'start' => $start,
+						'end'   => $end,
+					),
 				)
-			)
-		) {
-			return null;
+			);
+			if (
+				null === $nested_select_replacements
+				|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, $start, $end, $nested_select_replacements )
+			) {
+				return null;
+			}
 		}
 
-		$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements( $tokens, $start, $end );
+		$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements( $tokens, $start, $end, $nested_select_replacements );
 		if ( null === $current_database_function_replacements ) {
 			return null;
 		}
@@ -19061,13 +19076,13 @@ WHERE option_name IN (
 			$start,
 			$end,
 			$context,
-			$current_database_function_replacements
+			array_merge( $nested_select_replacements, $current_database_function_replacements )
 		);
 		if ( null === $column_replacements ) {
 			return null;
 		}
 
-		$replacements = array_merge( $current_database_function_replacements, $column_replacements );
+		$replacements = array_merge( $nested_select_replacements, $current_database_function_replacements, $column_replacements );
 		usort(
 			$replacements,
 			static function ( array $left, array $right ): int {
@@ -19221,6 +19236,7 @@ WHERE option_name IN (
 
 		if ( null !== $information_schema_source_translation ) {
 			$where_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+				$query,
 				$tokens,
 				$where_position + 1,
 				$where_end,
@@ -25057,6 +25073,7 @@ WHERE option_name IN (
 			}
 			if ( null === $value_sql && null !== $information_schema_context ) {
 				$value_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+					null,
 					$tokens,
 					$value_start,
 					$assignment_end,
@@ -25447,6 +25464,7 @@ WHERE option_name IN (
 			}
 
 			$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+				$query,
 				$tokens,
 				$where_position + 1,
 				$where_end,

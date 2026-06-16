@@ -8428,14 +8428,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests information_schema joined UPDATE predicates can use nested current-database SELECTs.
+	 */
+	public function test_joined_update_can_read_information_schema_predicate_subqueries(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$update = "UPDATE wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			SET o.option_value = it.table_type
+			WHERE it.table_schema IN (SELECT DATABASE())";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$update
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'UPDATE "wptests_options" AS "o" SET "option_value" = "mysql_update_values"."mysql_update_value_0"', $sql );
+		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" IN ( SELECT \'wptests\' )', $sql );
+		$this->assertStringNotContainsString( 'DATABASE()', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+	}
+
+	/**
 	 * Tests unsupported information_schema joined UPDATE predicates fail before backend execution.
 	 */
 	public function test_joined_update_rejects_unsupported_information_schema_predicates(): void {
 		$queries = array(
-			"UPDATE wptests_options AS o
-				JOIN information_schema.tables AS it ON o.option_name = it.table_name
-				SET o.option_value = it.table_type
-				WHERE it.table_schema IN (SELECT DATABASE())",
 			"UPDATE wptests_options AS o
 				JOIN information_schema.tables AS it ON o.option_name = it.table_name
 				SET o.option_value = it.table_type
@@ -9889,6 +9910,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests information_schema joined DELETE predicates can use nested current-database SELECTs.
+	 */
+	public function test_joined_delete_can_read_information_schema_predicate_subqueries(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$delete = "DELETE o
+			FROM wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			WHERE it.table_schema IN (SELECT DATABASE())";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_options" AS "o" WHERE "o".ctid IN (SELECT "o".ctid FROM "wptests_options" AS "o" JOIN (', $sql );
+		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" IN ( SELECT \'wptests\' )', $sql );
+		$this->assertStringNotContainsString( 'DATABASE()', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+	}
+
+	/**
 	 * Tests unsupported information_schema joined DELETE predicates fail before backend execution.
 	 */
 	public function test_joined_delete_rejects_unsupported_information_schema_predicates(): void {
@@ -9898,7 +9944,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$delete = "DELETE o
 			FROM wptests_options AS o
 			JOIN information_schema.tables AS it ON o.option_name = it.table_name
-			WHERE it.table_schema IN (SELECT DATABASE())";
+			WHERE it.table_schema IN (SELECT DATABASE() UNION SELECT DATABASE())";
 
 		try {
 			$driver->query( $delete );
