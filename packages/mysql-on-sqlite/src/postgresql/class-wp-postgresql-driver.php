@@ -14107,6 +14107,10 @@ WHERE option_name IN (
 		}
 
 		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
 		}
@@ -27404,15 +27408,16 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		$scope       = $this->get_mysql_single_table_scope( $table_name );
 
 		while ( $position < $end ) {
-			$target_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null );
+			$target = $this->parse_mysql_upsert_assignment_target( $table_name, $tokens, $position, $end );
 			if (
-				null === $target_column
-				|| ! isset( $table_column_lookup[ strtolower( $target_column ) ] )
+				null === $target
+				|| ! isset( $table_column_lookup[ strtolower( $target['column'] ) ] )
 			) {
 				return null;
 			}
 
-			++$position;
+			$target_column = $target['column'];
+			$position      = $target['end'];
 			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $position ]->id ) {
 				return null;
 			}
@@ -27432,7 +27437,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 			$target_metadata = $table_column_lookup[ strtolower( $target_column ) ];
 			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $column_lookup );
-			if ( null !== $source_column ) {
+			if ( $this->is_mysql_default_keyword_expression( $tokens, $value_start, $assignment_end ) ) {
+				$value_sql = $this->get_mysql_dml_default_assignment_sql_for_column( $target_metadata );
+			} elseif ( null !== $source_column ) {
 				$value_sql = sprintf(
 					'excluded.%s',
 					$this->connection->quote_identifier( $source_column )
@@ -27524,6 +27531,87 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		return count( $assignments ) > 0 ? $assignments : null;
+	}
+
+	/**
+	 * Parse the target column for an ON DUPLICATE KEY UPDATE assignment.
+	 *
+	 * @param string           $table_name Target table name.
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $position   Assignment target start.
+	 * @param int              $end        Final assignment token position, exclusive.
+	 * @return array{column: string, end: int}|null Assignment target, or null when unsupported.
+	 */
+	private function parse_mysql_upsert_assignment_target( string $table_name, array $tokens, int $position, int $end ): ?array {
+		$first_identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		if ( $position + 2 >= $end || WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $position + 1 ]->id ?? null ) ) {
+			return array(
+				'column' => $first_identifier,
+				'end'    => $position + 1,
+			);
+		}
+
+		$second_identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] ?? null );
+		if ( null === $second_identifier ) {
+			return null;
+		}
+
+		if ( $position + 4 < $end && WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position + 3 ]->id ?? null ) ) {
+			$third_identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 4 ] ?? null );
+			if (
+				null === $third_identifier
+				|| 0 !== strcasecmp( $first_identifier, $this->main_db_name )
+				|| ! $this->is_mysql_dml_table_qualifier( $second_identifier, $table_name, null )
+			) {
+				return null;
+			}
+
+			return array(
+				'column' => $third_identifier,
+				'end'    => $position + 5,
+			);
+		}
+
+		if ( ! $this->is_mysql_dml_table_qualifier( $first_identifier, $table_name, null ) ) {
+			return null;
+		}
+
+		return array(
+			'column' => $second_identifier,
+			'end'    => $position + 3,
+		);
+	}
+
+	/**
+	 * Check whether an expression is exactly the DEFAULT keyword.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @return bool Whether this is DEFAULT.
+	 */
+	private function is_mysql_default_keyword_expression( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
+	 * Get SQL for a MySQL DEFAULT assignment expression.
+	 *
+	 * @param array $column_metadata Column metadata row.
+	 * @return string PostgreSQL SQL expression.
+	 */
+	private function get_mysql_dml_default_assignment_sql_for_column( array $column_metadata ): string {
+		if ( null !== ( $column_metadata['column_default'] ?? null ) ) {
+			return $this->connection->quote( (string) $column_metadata['column_default'] );
+		}
+
+		return 'NULL';
 	}
 
 	/**

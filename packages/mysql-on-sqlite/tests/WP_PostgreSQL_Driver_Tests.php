@@ -3672,6 +3672,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports INSERT IGNORE, qualified targets, and DEFAULT.
+	 */
+	public function test_options_upsert_supports_ignore_qualified_assignment_targets_and_default(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('siteurl', 'old', 'no')" );
+
+		$upsert = "INSERT IGNORE INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'inserted', 'off')
+			ON DUPLICATE KEY UPDATE `wptests_options`.`option_value` = VALUES(`option_value`),
+			                        `wptests`.`wptests_options`.`autoload` = DEFAULT";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'inserted\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = \'yes\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'inserted', $rows[0]->option_value );
+		$this->assertSame( 'yes', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE fails closed for unknown assignment qualifiers.
+	 */
+	public function test_options_upsert_rejects_unknown_assignment_qualifier(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'inserted', 'off')
+			ON DUPLICATE KEY UPDATE `other_table`.`option_value` = VALUES(`option_value`)";
+
+		try {
+			$driver->query( $upsert );
+			$this->fail( 'Expected unsupported qualified upsert assignment to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE decodes text-targeted hex literals.
 	 */
 	public function test_upsert_update_assignments_decode_hex_literals_for_text_columns(): void {
