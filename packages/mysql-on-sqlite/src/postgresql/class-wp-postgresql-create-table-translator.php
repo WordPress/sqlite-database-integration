@@ -1679,7 +1679,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		foreach ( $table_constraint->get_descendant_nodes( 'indexType' ) as $index_type ) {
-			if ( ! $index_type->has_child_token( WP_MySQL_Lexer::BTREE_SYMBOL ) ) {
+			if ( ! $this->is_supported_mysql_btree_index_type( $index_type ) ) {
 				throw new InvalidArgumentException( 'Unsupported CREATE TABLE index option.' );
 			}
 		}
@@ -1739,7 +1739,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$index_type_clause = $index_option->get_first_child_node( 'indexTypeClause' );
 		if ( $index_type_clause ) {
 			$index_type = $index_type_clause->get_first_child_node( 'indexType' );
-			return $index_type && $index_type->has_child_token( WP_MySQL_Lexer::BTREE_SYMBOL );
+			return $index_type && $this->is_supported_mysql_btree_index_type( $index_type );
 		}
 
 		$common_option = $index_option->get_first_child_node( 'commonIndexOption' );
@@ -1760,6 +1760,20 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return ! $is_primary || $visibility->has_child_token( WP_MySQL_Lexer::VISIBLE_SYMBOL );
+	}
+
+	/**
+	 * Check whether a MySQL index type maps to a PostgreSQL btree index.
+	 *
+	 * InnoDB reports HASH declarations as BTREE, matching the SQLite backend's
+	 * metadata normalization.
+	 *
+	 * @param WP_Parser_Node $index_type Index type node.
+	 * @return bool Whether the index type is supported as a btree index.
+	 */
+	private function is_supported_mysql_btree_index_type( WP_Parser_Node $index_type ): bool {
+		return $index_type->has_child_token( WP_MySQL_Lexer::BTREE_SYMBOL )
+			|| $index_type->has_child_token( WP_MySQL_Lexer::HASH_SYMBOL );
 	}
 
 	/**

@@ -3169,7 +3169,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame(
 			0,
-			$driver->query( 'CREATE INDEX idx_value USING BTREE ON wptests_standalone_index_options (value) KEY_BLOCK_SIZE 8 INVISIBLE ALGORITHM DEFAULT LOCK NONE' )
+			$driver->query( 'CREATE INDEX idx_value USING HASH ON wptests_standalone_index_options (value) KEY_BLOCK_SIZE 8 INVISIBLE ALGORITHM DEFAULT LOCK NONE' )
 		);
 		$this->assertSame(
 			array(
@@ -3179,6 +3179,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				),
 			),
 			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame(
+			'BTREE',
+			$this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_index_options' )[0]['index_type']
 		);
 
 		$this->assertSame(
@@ -4106,7 +4110,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
-			'CREATE INDEX idx_value USING HASH ON wptests_index_fail (value)',
 			'CREATE INDEX idx_value ON wptests_index_fail (value) KEY_BLOCK_SIZE=bad',
 			'CREATE INDEX idx_value ON wptests_index_fail (value) ALGORITHM=INSTANT',
 			'CREATE INDEX idx_value ON wptests_index_fail (value) LOCK=UNKNOWN',
@@ -4221,6 +4224,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_primary_key_using' )[0]->{'Create Table'};
 		$this->assertStringContainsString( 'PRIMARY KEY (`id`)', $create_table );
+	}
+
+	/**
+	 * Tests CREATE TABLE HASH indexes are normalized to BTREE like the SQLite backend.
+	 */
+	public function test_create_table_hash_indexes_are_normalized_to_btree(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_create_hash_index (
+					id int NOT NULL,
+					value varchar(255) NOT NULL,
+					KEY value_hash USING HASH (value)
+				)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_create_hash_index\" (\n  \"id\" integer NOT NULL,\n  \"value\" varchar(255) NOT NULL\n)",
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_create_hash_index__value_hash" ON "wptests_create_hash_index" ("value")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_create_hash_index' );
+		$this->assertSame( array( 'value_hash' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( array( 'BTREE' ), array_column( $indexes, 'index_type' ) );
+
+		$show_index = $driver->query( 'SHOW INDEX FROM wptests_create_hash_index' );
+		$this->assertSame( 'BTREE', $show_index[0]->Index_type );
 	}
 
 	/**
@@ -8112,6 +8154,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests UPDATE IGNORE skips rows that would violate unique constraints.
+	 */
+	public function test_update_ignore_unique_conflict_returns_zero_and_preserves_rows(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_ignore_unique (
+				id INTEGER PRIMARY KEY,
+				slug TEXT NOT NULL UNIQUE,
+				note TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_ignore_unique (id, slug, note) VALUES (1, 'a', 'first'), (2, 'b', 'second')" );
+
+		$update = "UPDATE IGNORE wptests_update_ignore_unique SET slug = 'a', note = 'changed' WHERE slug = 'b'";
+
+		$this->assertSame( 0, $driver->query( $update ) );
+		$this->assertSame(
+			'UPDATE "wptests_update_ignore_unique" SET "slug" = \'a\', "note" = \'changed\' WHERE (slug = \'b\') AND ("slug" IS DISTINCT FROM (\'a\') OR "note" IS DISTINCT FROM (\'changed\'))',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, note FROM wptests_update_ignore_unique ORDER BY id' );
+
+		$this->assertSame( array( 'a', 'b' ), array_column( $rows, 'slug' ) );
+		$this->assertSame( array( 'first', 'second' ), array_column( $rows, 'note' ) );
+	}
+
+	/**
 	 * Tests simple WordPress UPDATE statements return changed rows, not matched rows.
 	 */
 	public function test_simple_wordpress_update_returns_zero_for_noop_update(): void {
@@ -8148,6 +8219,73 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WordPress UPDATE statements support IS NULL conditions.
+	 */
+	public function test_simple_wordpress_update_supports_is_null_where(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_null_where (
+				meta_id INTEGER PRIMARY KEY,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_null_where (meta_id, meta_key, meta_value) VALUES (1, 'null_update_where_key', NULL)" );
+
+		$update = "UPDATE `wptests_update_null_where` SET `meta_value` = 'null_update_where_key' WHERE `meta_key` = 'null_update_where_key' AND `meta_value` IS NULL";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_update_null_where" SET "meta_value" = \'null_update_where_key\' WHERE ("meta_key" = \'null_update_where_key\' AND "meta_value" IS NULL) AND ("meta_value" IS DISTINCT FROM (\'null_update_where_key\'))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT meta_value FROM wptests_update_null_where WHERE meta_key = 'null_update_where_key'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'null_update_where_key', $rows[0]->meta_value );
+	}
+
+	/**
+	 * Tests WordPress DELETE statements support IS NULL conditions.
+	 */
+	public function test_simple_wordpress_delete_supports_is_null_where(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_delete_null_where (
+				meta_id INTEGER PRIMARY KEY,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_delete_null_where (meta_id, meta_key, meta_value) VALUES (1, 'null_update_where_key', NULL)" );
+
+		$delete = "DELETE FROM `wptests_delete_null_where` WHERE `meta_key` = 'null_update_where_key' AND `meta_value` IS NULL";
+
+		$this->assertSame( 1, $driver->query( $delete ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DELETE FROM "wptests_delete_null_where" WHERE "meta_key" = \'null_update_where_key\' AND "meta_value" IS NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT meta_id FROM wptests_delete_null_where WHERE meta_key = 'null_update_where_key'" );
+
+		$this->assertSame( array(), $rows );
+	}
+
+	/**
 	 * Tests simple single-table UPDATE aliases and qualified assignment targets.
 	 */
 	public function test_simple_update_with_alias_is_translated_to_postgresql(): void {
@@ -8177,6 +8315,73 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( 'SELECT id, value FROM wptests_update_alias ORDER BY id' );
 		$this->assertSame( '5', $rows[0]->value );
 		$this->assertSame( '8', $rows[1]->value );
+	}
+
+	/**
+	 * Tests leading WITH clauses are preserved for supported UPDATE statements.
+	 */
+	public function test_cte_prefixed_update_with_cte_predicate_subquery_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_cte (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL,
+				priority INTEGER NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_update_cte (id, status, priority) VALUES
+				(1, 'queued', 20),
+				(2, 'queued', 10),
+				(3, 'queued', 30)"
+		);
+
+		$update = "WITH picked (picked_id) AS (
+				SELECT `id` FROM `wptests_update_cte` WHERE `priority` <= 20
+			)
+			UPDATE `wptests_update_cte`
+			SET `status` = 'claimed'
+			WHERE `id` IN (SELECT picked_id FROM picked)";
+
+		$this->assertSame( 2, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringStartsWith( 'WITH picked (picked_id) AS (SELECT "id" FROM "wptests_update_cte" WHERE "priority" <= 20) UPDATE "wptests_update_cte" SET "status" = \'claimed\'', $sql );
+		$this->assertStringContainsString( '"id" IN (SELECT picked_id FROM picked)', $sql );
+		$this->assertStringContainsString( '"status" IS DISTINCT FROM (\'claimed\')', $sql );
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_cte ORDER BY id' );
+		$this->assertSame( 'claimed', $rows[0]->status );
+		$this->assertSame( 'claimed', $rows[1]->status );
+		$this->assertSame( 'queued', $rows[2]->status );
+	}
+
+	/**
+	 * Tests CTE-prefixed UPDATE keeps unsupported nested app-table SELECTs fail-closed.
+	 */
+	public function test_cte_prefixed_update_with_non_cte_nested_select_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_cte_unsupported (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query(
+				"WITH picked AS (SELECT id FROM wptests_update_cte_unsupported)
+				UPDATE wptests_update_cte_unsupported
+				SET status = 'claimed'
+				WHERE id IN (SELECT id FROM wptests_update_cte_unsupported)"
+			);
+			$this->fail( 'Expected unsupported CTE-prefixed UPDATE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -8546,6 +8751,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'one', $rows[0]->value );
 		$this->assertSame( 'two', $rows[1]->value );
 		$this->assertSame( 'three', $rows[2]->value );
+	}
+
+	/**
+	 * Tests joined UPDATE IGNORE skips rows that would violate unique constraints.
+	 */
+	public function test_joined_update_ignore_unique_conflict_returns_zero_and_preserves_rows(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_ignore_join_target (
+				id INTEGER PRIMARY KEY,
+				slug TEXT NOT NULL UNIQUE,
+				note TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_ignore_join_source (
+				id INTEGER PRIMARY KEY,
+				new_slug TEXT NOT NULL,
+				new_note TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_ignore_join_target (id, slug, note) VALUES (1, 'a', 'first'), (2, 'b', 'second')" );
+		$driver->query( "INSERT INTO wptests_update_ignore_join_source (id, new_slug, new_note) VALUES (2, 'a', 'changed')" );
+
+		$update = 'UPDATE IGNORE wptests_update_ignore_join_target AS t
+			JOIN wptests_update_ignore_join_source AS s ON s.id = t.id
+			SET t.slug = s.new_slug, t.note = s.new_note
+			WHERE t.id = 2';
+
+		$this->assertSame( 0, $driver->query( $update ) );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'UPDATE "wptests_update_ignore_join_target" AS "t" SET "slug" = s.new_slug, "note" = s.new_note', $sql );
+		$this->assertStringContainsString( 'FROM "wptests_update_ignore_join_source" AS "s"', $sql );
+
+		$rows = $driver->query( 'SELECT id, slug, note FROM wptests_update_ignore_join_target ORDER BY id' );
+
+		$this->assertSame( array( 'a', 'b' ), array_column( $rows, 'slug' ) );
+		$this->assertSame( array( 'first', 'second' ), array_column( $rows, 'note' ) );
 	}
 
 	/**
@@ -9730,6 +9975,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL multi-target DELETE modifiers are accepted as compatibility no-ops.
+	 */
+	public function test_mysql_multi_target_delete_modifiers_are_accepted_as_compatibility_noops(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE LOW_PRIORITY QUICK IGNORE p, c
+			FROM wptests_delete_multi_modifier_parent AS p
+			JOIN wptests_delete_multi_modifier_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "p".ctid AS "mysql_delete_target_0_ctid", "c".ctid AS "mysql_delete_target_1_ctid"', $sql );
+		$this->assertStringContainsString( 'FROM wptests_delete_multi_modifier_parent AS p JOIN wptests_delete_multi_modifier_child AS c ON c.parent_id = p.id', $sql );
+		$this->assertStringContainsString( "WHERE p.status = 'stale'", $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_multi_modifier_parent" AS "p"', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_multi_modifier_child" AS "c"', $sql );
+		$this->assertStringNotContainsString( 'LOW_PRIORITY', $sql );
+		$this->assertStringNotContainsString( 'QUICK', $sql );
+		$this->assertStringNotContainsString( 'IGNORE', $sql );
+	}
+
+	/**
 	 * Tests single-target joined DELETE without WHERE uses the target-list rewrite.
 	 */
 	public function test_mysql_single_target_join_delete_without_where_is_translated_to_writable_cte(): void {
@@ -9777,6 +10051,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'FROM wptests_delete_using_parent AS p JOIN wptests_delete_using_child AS c ON c.parent_id = p.id', $sql );
 		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_using_parent" AS "p"', $sql );
 		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_using_child" AS "c"', $sql );
+	}
+
+	/**
+	 * Tests MySQL FROM ... USING multi-target DELETE modifiers are accepted.
+	 */
+	public function test_mysql_multi_target_delete_using_modifiers_are_accepted_as_compatibility_noops(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE LOW_PRIORITY QUICK IGNORE FROM p, c
+			USING wptests_delete_using_modifier_parent AS p
+			JOIN wptests_delete_using_modifier_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "p".ctid AS "mysql_delete_target_0_ctid", "c".ctid AS "mysql_delete_target_1_ctid"', $sql );
+		$this->assertStringContainsString( 'FROM wptests_delete_using_modifier_parent AS p JOIN wptests_delete_using_modifier_child AS c ON c.parent_id = p.id', $sql );
+		$this->assertStringContainsString( "WHERE p.status = 'stale'", $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_using_modifier_parent" AS "p"', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_using_modifier_child" AS "c"', $sql );
+		$this->assertStringNotContainsString( 'LOW_PRIORITY', $sql );
+		$this->assertStringNotContainsString( 'QUICK', $sql );
+		$this->assertStringNotContainsString( 'IGNORE', $sql );
 	}
 
 	/**
@@ -13296,7 +13599,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'SELECT link_id FROM wptests_links ORDER BY 0.90650219368422613 LIMIT 1',
+					'sql'    => 'SELECT link_id FROM wptests_links ORDER BY CAST(0.90650219368422613 AS double precision) LIMIT 1',
 					'params' => array(),
 				),
 			),
@@ -13320,7 +13623,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertEqualsWithDelta( 0.40613597483014313, (float) $rows[0]->rstring, 1e-12 );
 		$this->assertEqualsWithDelta( 0.15522042769493574, (float) $rows[0]->rbadstring, 1e-12 );
 		$this->assertSame(
-			'SELECT 0.15522042769493574 AS r0, 0.40540353712197724 AS r1, 0.40613597483014313 AS r5, 0.15522042769493574 AS rnull, 0.15595286540310166 AS rfloat, 0.40613597483014313 AS rstring, 0.15522042769493574 AS rbadstring',
+			'SELECT CAST(0.15522042769493574 AS double precision) AS r0, CAST(0.40540353712197724 AS double precision) AS r1, CAST(0.40613597483014313 AS double precision) AS r5, CAST(0.15522042769493574 AS double precision) AS rnull, CAST(0.15595286540310166 AS double precision) AS rfloat, CAST(0.40613597483014313 AS double precision) AS rstring, CAST(0.15522042769493574 AS double precision) AS rbadstring',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -17109,6 +17412,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plugin_alter' )[0]->{'Create Table'};
 		$this->assertStringContainsString( '  KEY `flag_idx` (`flag` DESC)', $create_table );
+	}
+
+	/**
+	 * Tests ALTER TABLE HASH indexes are normalized to BTREE like the SQLite backend.
+	 */
+	public function test_alter_table_add_hash_index_is_normalized_to_btree(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_hash_index (
+				id int NOT NULL,
+				value varchar(255) NOT NULL
+			)'
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query( 'ALTER TABLE wptests_alter_hash_index ADD KEY value_hash USING HASH (value)' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "wptests_alter_hash_index__value_hash" ON "wptests_alter_hash_index" ("value")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_hash_index' );
+		$this->assertSame( array( 'value_hash' ), array_column( $indexes, 'key_name' ) );
+		$this->assertSame( array( 'BTREE' ), array_column( $indexes, 'index_type' ) );
 	}
 
 	/**

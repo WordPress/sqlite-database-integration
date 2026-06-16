@@ -928,6 +928,7 @@ class WP_PostgreSQL_Driver {
 		$translated_for_postgresql    = $direct_information_schema_cte_translated;
 		$dml_identity_repair_query    = null;
 		$last_insert_id_after_success = null;
+		$mysql_update_ignore_query    = $this->is_mysql_update_ignore_query( $query );
 
 		$translated_query = $this->translate_wordpress_options_regexp_delete_query( $query );
 		if ( null !== $translated_query ) {
@@ -1018,16 +1019,34 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported INSERT statement.' );
 		}
 
+		$cte_update_query = $this->translate_mysql_cte_prefixed_update_query( $query );
+		if ( null !== $cte_update_query ) {
+			$query                     = $cte_update_query;
+			$translated_for_postgresql = true;
+		}
+
 		$multi_target_update_query = $this->translate_mysql_multi_target_update_query( $query );
 		if ( null !== $multi_target_update_query ) {
+			if ( $mysql_update_ignore_query ) {
+				return $this->execute_mysql_update_ignore_query( $multi_target_update_query, true );
+			}
 			return $this->execute_mysql_multi_target_update_query( $multi_target_update_query );
 		}
 
 		$translated_query = $this->translate_simple_mysql_update_query( $query );
 		if ( null !== $translated_query ) {
+			if ( $mysql_update_ignore_query ) {
+				return $this->execute_mysql_update_ignore_query( $translated_query );
+			}
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
-		} elseif ( $this->is_unsupported_mysql_update_query( $query ) ) {
+		} elseif (
+			! $translated_for_postgresql
+			&& (
+				$this->is_unsupported_mysql_update_query( $query )
+				|| $this->is_unsupported_mysql_cte_prefixed_update_query( $query )
+			)
+		) {
 			throw new InvalidArgumentException( 'Unsupported UPDATE statement.' );
 		}
 
@@ -2996,6 +3015,52 @@ class WP_PostgreSQL_Driver {
 		$this->clear_last_column_meta();
 		$this->last_result = isset( $row['affected_rows'] ) ? (int) $row['affected_rows'] : 0;
 
+		return $this->last_result;
+	}
+
+	/**
+	 * Execute a translated UPDATE IGNORE statement.
+	 *
+	 * MySQL skips rows that would raise data-integrity constraint errors under
+	 * UPDATE IGNORE. PostgreSQL has no UPDATE-level conflict action, so preserve
+	 * the visible MySQL behavior for translated statements by converting only
+	 * constraint-class failures into a zero-row result.
+	 *
+	 * @param string $statement                    PostgreSQL statement.
+	 * @param bool   $expects_affected_rows_result Whether the statement returns an affected_rows row.
+	 * @return int MySQL-compatible affected row count.
+	 */
+	private function execute_mysql_update_ignore_query( string $statement, bool $expects_affected_rows_result = false ): int {
+		try {
+			$this->ensure_postgresql_runtime_helpers_for_query( $statement );
+			$stmt                            = $this->connection->query( $statement );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $statement,
+				'params' => array(),
+			);
+		} catch ( PDOException $e ) {
+			if ( ! $this->is_mysql_update_ignore_constraint_exception( $e ) ) {
+				throw $e;
+			}
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $statement,
+				'params' => array(),
+			);
+			$this->clear_last_column_meta();
+			$this->last_result = 0;
+			return $this->last_result;
+		}
+
+		if ( $expects_affected_rows_result ) {
+			$row = $stmt->fetch( PDO::FETCH_ASSOC );
+			$this->clear_last_column_meta();
+			$this->last_result = isset( $row['affected_rows'] ) ? (int) $row['affected_rows'] : 0;
+			return $this->last_result;
+		}
+
+		$this->clear_last_column_meta();
+		$this->last_result = $stmt->rowCount();
 		return $this->last_result;
 	}
 
@@ -7218,7 +7283,13 @@ $wp_mysql_on_update$',
 			return true;
 		}
 
-		if ( ! isset( $tokens[ $position + 1 ] ) || ! $this->is_mysql_token_value( $tokens[ $position + 1 ], 'btree' ) ) {
+		if (
+			! isset( $tokens[ $position + 1 ] )
+			|| (
+				! $this->is_mysql_token_value( $tokens[ $position + 1 ], 'btree' )
+				&& ! $this->is_mysql_token_value( $tokens[ $position + 1 ], 'hash' )
+			)
+		) {
 			return false;
 		}
 
@@ -19207,26 +19278,33 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$position = 1;
+		$this->consume_mysql_delete_modifiers( $tokens, $position );
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
 		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
 			return null;
 		}
 
-		if ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[1]->id ) {
-			$using_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::USING_SYMBOL, 2, $statement_end );
-			if ( null === $using_position || 2 >= $using_position || $using_position + 1 >= $statement_end ) {
+		if ( ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id ) {
+			$using_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::USING_SYMBOL, $position + 1, $statement_end );
+			if ( null === $using_position || $position + 1 >= $using_position || $using_position + 1 >= $statement_end ) {
 				return null;
 			}
 
-			$target_aliases         = $this->parse_mysql_delete_target_aliases( $tokens, 2, $using_position );
+			$target_aliases         = $this->parse_mysql_delete_target_aliases( $tokens, $position + 1, $using_position );
 			$table_references_start = $using_position + 1;
 		} else {
-			$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
-			if ( null === $from_position || 1 >= $from_position || $from_position + 1 >= $statement_end ) {
+			$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $position, $statement_end );
+			if ( null === $from_position || $position >= $from_position || $from_position + 1 >= $statement_end ) {
 				return null;
 			}
 
-			$target_aliases         = $this->parse_mysql_delete_target_aliases( $tokens, 1, $from_position );
+			$target_aliases         = $this->parse_mysql_delete_target_aliases( $tokens, $position, $from_position );
 			$table_references_start = $from_position + 1;
 		}
 
@@ -25263,10 +25341,11 @@ WHERE option_name IN (
 	 * and unsupported expressions fail closed. Inner joined UPDATE syntax is
 	 * rewritten separately to PostgreSQL UPDATE ... FROM.
 	 *
-	 * @param string $query MySQL query.
+	 * @param string $query     MySQL query.
+	 * @param array  $cte_names Known CTE names keyed lowercase.
 	 * @return string|null PostgreSQL query, or null when the query is unsupported.
 	 */
-	private function translate_simple_mysql_update_query( string $query ): ?string {
+	private function translate_simple_mysql_update_query( string $query, array $cte_names = array() ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::UPDATE_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -25352,7 +25431,8 @@ WHERE option_name IN (
 				$query,
 				$tokens,
 				$where_position + 1,
-				$where_end
+				$where_end,
+				$cte_names
 			);
 			if (
 				$where_position + 1 >= $where_end
@@ -25417,7 +25497,116 @@ WHERE option_name IN (
 			$sql .= ' WHERE ' . $predicates[0];
 		}
 
-			return $sql;
+		return $sql;
+	}
+
+	/**
+	 * Translate MySQL WITH ... UPDATE statements to PostgreSQL.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_mysql_cte_prefixed_update_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		$cte    = $this->get_mysql_cte_prefixed_update_data( $query, $tokens );
+		if ( null === $cte ) {
+			return null;
+		}
+
+		$update_sql = $this->get_mysql_token_range_sql( $query, $tokens, $cte['update_position'], $cte['statement_end'] );
+		if ( null === $update_sql ) {
+			return null;
+		}
+
+		$translated_update = $this->translate_simple_mysql_update_query( $update_sql, $cte['names'] );
+		if ( null === $translated_update ) {
+			return null;
+		}
+
+		return $cte['sql'] . ' ' . $translated_update;
+	}
+
+	/**
+	 * Parse the leading CTE list for a WITH ... UPDATE statement.
+	 *
+	 * @param string           $query  MySQL query.
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return array{sql: string, names: array<string, bool>, update_position: int, statement_end: int}|null CTE data, or null when unsupported.
+	 */
+	private function get_mysql_cte_prefixed_update_data( string $query, array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
+			return null;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::RECURSIVE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$cte_names = array();
+		while ( $position < $statement_end ) {
+			$cte_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $cte_name ) {
+				return null;
+			}
+			$cte_names[ strtolower( $cte_name ) ] = true;
+			++$position;
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				$after_column_list = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+				if ( null === $after_column_list ) {
+					return null;
+				}
+				$position = $after_column_list;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AS_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+			++$position;
+
+			if (
+				! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+				|| ! in_array( $tokens[ $position + 1 ]->id, array( WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::WITH_SYMBOL ), true )
+			) {
+				return null;
+			}
+
+			$after_cte_body = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if ( null === $after_cte_body ) {
+				return null;
+			}
+			$position = $after_cte_body;
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $position ]->id ) {
+				$cte_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, 0, $position );
+				if ( null === $this->get_mysql_token_range_sql( $query, $tokens, 0, $position ) ) {
+					return null;
+				}
+
+				return array(
+					'sql'             => $cte_sql,
+					'names'           => $cte_names,
+					'update_position' => $position,
+					'statement_end'   => $statement_end,
+				);
+			}
+
+			return null;
+		}
+
+		return null;
 	}
 
 	/**
@@ -25429,6 +25618,65 @@ WHERE option_name IN (
 	private function is_unsupported_mysql_update_query( string $query ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
 		return isset( $tokens[0] ) && WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[0]->id;
+	}
+
+	/**
+	 * Check whether a WITH ... UPDATE statement reached the unsupported fallback.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether this is an unsupported CTE-prefixed UPDATE statement.
+	 */
+	private function is_unsupported_mysql_cte_prefixed_update_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return null !== $statement_end
+			&& null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UPDATE_SYMBOL, 1, $statement_end );
+	}
+
+	/**
+	 * Check whether a MySQL UPDATE statement includes the IGNORE modifier.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query is UPDATE IGNORE.
+	 */
+	private function is_mysql_update_ignore_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::UPDATE_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		return $this->mysql_update_modifiers_include_ignore( $tokens, 1, $statement_end );
+	}
+
+	/**
+	 * Check whether an UPDATE IGNORE exception should be skipped.
+	 *
+	 * @param PDOException $exception Query exception.
+	 * @return bool Whether the exception is a data-integrity constraint failure.
+	 */
+	private function is_mysql_update_ignore_constraint_exception( PDOException $exception ): bool {
+		$sqlstate = (string) $exception->getCode();
+		if ( 0 === strpos( $sqlstate, '23' ) ) {
+			return true;
+		}
+
+		$message = strtolower( $exception->getMessage() );
+		foreach ( array( 'constraint failed', 'unique constraint', 'not null constraint', 'check constraint', 'foreign key constraint', 'duplicate key value' ) as $needle ) {
+			if ( false !== strpos( $message, $needle ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -26463,6 +26711,32 @@ WHERE option_name IN (
 		) {
 			++$position;
 		}
+	}
+
+	/**
+	 * Check whether an UPDATE modifier sequence contains IGNORE.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First possible modifier token.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return bool Whether IGNORE is present before the table reference.
+	 */
+	private function mysql_update_modifiers_include_ignore( array $tokens, int $position, int $end ): bool {
+		while (
+			$position < $end
+			&& isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			if ( WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
+				return true;
+			}
+			++$position;
+		}
+
+		return false;
 	}
 
 	/**
@@ -33237,14 +33511,17 @@ WHERE option_name IN (
 	 * information_schema subqueries, but ordinary application-table subqueries
 	 * should remain unsupported until they have a deliberate translation path.
 	 *
-	 * @param string           $query  Original MySQL query.
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First predicate token position.
-	 * @param int              $end    Final predicate token position, exclusive.
+	 * @param string           $query     Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First predicate token position.
+	 * @param int              $end       Final predicate token position, exclusive.
+	 * @param array            $cte_names Known CTE names keyed lowercase.
 	 * @return array[]|null Replacement ranges, empty when no nested SELECT is present, or null when unsupported.
 	 */
-	private function get_simple_mysql_dml_predicate_nested_select_replacements( string $query, array $tokens, int $start, int $end ): ?array {
-		$has_nested_select = false;
+	private function get_simple_mysql_dml_predicate_nested_select_replacements( string $query, array $tokens, int $start, int $end, array $cte_names = array() ): ?array {
+		$has_nested_select             = false;
+		$has_information_schema_select = false;
+		$cte_replacements              = array();
 		for ( $position = $start; $position < $end; $position++ ) {
 			if (
 				! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
@@ -33261,7 +33538,15 @@ WHERE option_name IN (
 
 			$select_start = $position + 1;
 			$select_end   = $after_close - 1;
-			if ( ! $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+			if ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+				$has_information_schema_select = true;
+			} elseif ( $this->mysql_select_range_references_only_cte_sources( $tokens, $select_start, $select_end, $cte_names ) ) {
+				$cte_replacements[] = array(
+					'start' => $position,
+					'end'   => $after_close,
+					'sql'   => '(' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $select_start, $select_end ) . ')',
+				);
+			} else {
 				return null;
 			}
 
@@ -33273,20 +33558,36 @@ WHERE option_name IN (
 			return array();
 		}
 
-		$replacements = $this->get_direct_information_schema_nested_select_replacements(
-			$query,
-			$tokens,
-			array(
+		if ( $has_information_schema_select && ! empty( $cte_replacements ) ) {
+			return null;
+		}
+
+		$replacements = $cte_replacements;
+		if ( $has_information_schema_select ) {
+			$information_schema_replacements = $this->get_direct_information_schema_nested_select_replacements(
+				$query,
+				$tokens,
 				array(
-					'start' => $start,
-					'end'   => $end,
-				),
-			)
-		);
-		if (
-			null === $replacements
-			|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, $start, $end, $replacements )
-		) {
+					array(
+						'start' => $start,
+						'end'   => $end,
+					),
+				)
+			);
+			if (
+				null === $information_schema_replacements
+				|| ! $this->direct_information_schema_nested_selects_are_covered(
+					$tokens,
+					$start,
+					$end,
+					array_merge( $information_schema_replacements, $cte_replacements )
+				)
+			) {
+				return null;
+			}
+
+			$replacements = array_merge( $replacements, $information_schema_replacements );
+		} elseif ( ! $this->direct_information_schema_nested_selects_are_covered( $tokens, $start, $end, $cte_replacements ) ) {
 			return null;
 		}
 
@@ -33298,6 +33599,79 @@ WHERE option_name IN (
 		);
 
 		return $replacements;
+	}
+
+	/**
+	 * Check whether a SELECT range reads only CTE sources declared by the statement prefix.
+	 *
+	 * @param WP_MySQL_Token[]   $tokens    MySQL lexer token stream.
+	 * @param int                $start     SELECT token position.
+	 * @param int                $end       Final SELECT token position, exclusive.
+	 * @param array<string,bool> $cte_names Known CTE names keyed lowercase.
+	 * @return bool Whether all top-level FROM sources are known CTEs.
+	 */
+	private function mysql_select_range_references_only_cte_sources( array $tokens, int $start, int $end, array $cte_names ): bool {
+		if ( empty( $cte_names ) || ! isset( $tokens[ $start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $start ]->id ) {
+			return false;
+		}
+
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $start + 1, $end );
+		if ( null === $from_position ) {
+			return false;
+		}
+
+		$from_end = $this->find_first_top_level_mysql_token(
+			$tokens,
+			array(
+				WP_MySQL_Lexer::FOR_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::LOCK_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+				WP_MySQL_Lexer::UNION_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+			),
+			$from_position + 1,
+			$end
+		) ?? $end;
+
+		$position      = $from_position + 1;
+		$expect_source = true;
+		$source_count  = 0;
+		while ( $position < $from_end ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				return false;
+			}
+
+			if ( $expect_source ) {
+				$reference = $this->parse_mysql_table_reference( $tokens, $position, $from_end );
+				if (
+					null === $reference
+					|| 'public' !== $reference['schema']
+					|| ! isset( $cte_names[ strtolower( $reference['table'] ) ] )
+				) {
+					return false;
+				}
+
+				$position      = $reference['position'];
+				$expect_source = false;
+				++$source_count;
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id
+				|| $this->is_mysql_join_token( $tokens[ $position ] )
+			) {
+				$expect_source = true;
+			}
+
+			++$position;
+		}
+
+		return $source_count > 0 && ! $expect_source;
 	}
 
 	/**
@@ -44821,6 +45195,7 @@ FROM (
 				WP_MySQL_Lexer::HEX_NUMBER,
 				WP_MySQL_Lexer::IN_SYMBOL,
 				WP_MySQL_Lexer::INT_NUMBER,
+				WP_MySQL_Lexer::IS_SYMBOL,
 				WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
 				WP_MySQL_Lexer::LESS_THAN_OPERATOR,
 				WP_MySQL_Lexer::LIKE_SYMBOL,
@@ -47223,7 +47598,8 @@ FROM (
 		$seed2     = ( ( $seed_u32 * 0x10000001 ) & 0xFFFFFFFF ) % $max_value;
 		$seed1     = ( $seed1 * 3 + $seed2 ) % $max_value;
 
-		return rtrim( rtrim( sprintf( '%.17F', (float) $seed1 / (float) $max_value ), '0' ), '.' );
+		$literal = rtrim( rtrim( sprintf( '%.17F', (float) $seed1 / (float) $max_value ), '0' ), '.' );
+		return sprintf( 'CAST(%s AS double precision)', $literal );
 	}
 
 	/**

@@ -229,7 +229,6 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	 */
 	public function test_translate_rejects_unsupported_index_options(): void {
 		$queries = array(
-			'CREATE TABLE wp_bad_index_option (id int, value varchar(255), KEY value_lookup USING HASH (value))',
 			'CREATE TABLE wp_bad_index_option (id int, body text, FULLTEXT KEY body_fulltext (body) WITH PARSER ngram)',
 			'CREATE TABLE wp_bad_index_option (id int, shape point, SPATIAL KEY shape_spatial (shape) KEY_BLOCK_SIZE=8)',
 			'CREATE TABLE wp_bad_index_option (id int, PRIMARY KEY (id) INVISIBLE)',
@@ -245,6 +244,40 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 				$this->assertSame( 'Unsupported CREATE TABLE index option.', $exception->getMessage(), $query );
 			}
 		}
+	}
+
+	/**
+	 * Tests HASH index declarations are normalized to BTREE like the SQLite backend.
+	 */
+	public function test_translate_accepts_hash_indexes_as_btree(): void {
+		$sql = 'CREATE TABLE wp_hash_index (
+			id int,
+			value varchar(255),
+			slug varchar(191),
+			KEY value_lookup USING HASH (value),
+			UNIQUE KEY slug_lookup (slug) USING HASH
+		)';
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_hash_index\" (\n  \"id\" integer,\n  \"value\" varchar(255),\n  \"slug\" varchar(191)\n)",
+				'CREATE INDEX "wp_hash_index__value_lookup" ON "wp_hash_index" ("value")',
+				'CREATE UNIQUE INDEX "wp_hash_index__slug_lookup" ON "wp_hash_index" ("slug")',
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql, true );
+		$this->assertSame(
+			array( 'value_lookup', 'slug_lookup' ),
+			array_column( $metadata[0]['indexes'], 'name' )
+		);
+		$this->assertSame(
+			array( 'BTREE', 'BTREE' ),
+			array_column( $metadata[0]['indexes'], 'index_type' )
+		);
 	}
 
 	/**
