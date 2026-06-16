@@ -827,6 +827,8 @@ class WP_PostgreSQL_Driver {
 			$query                     = $upsert_query['sql'];
 			$dml_identity_repair_query = $upsert_query;
 			$translated_for_postgresql = true;
+		} elseif ( $this->is_unsupported_mysql_on_duplicate_key_update_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported ON DUPLICATE KEY UPDATE statement.' );
 		}
 
 		$replace_return_value = null;
@@ -14149,6 +14151,19 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Check whether a query is an unsupported INSERT ... ON DUPLICATE KEY UPDATE statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query contains an unsupported upsert clause.
+	 */
+	private function is_unsupported_mysql_on_duplicate_key_update_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0] )
+			&& WP_MySQL_Lexer::INSERT_SYMBOL === $tokens[0]->id
+			&& null !== $this->find_on_duplicate_key_update_clause( $tokens, 1 );
+	}
+
+	/**
 	 * Translate conservative INSERT ... SELECT ... ON DUPLICATE KEY UPDATE queries.
 	 *
 	 * SELECT-sourced upserts cannot be preflighted row-by-row without executing
@@ -27220,6 +27235,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					$this->connection->quote_identifier( $source_column )
 				);
 			} else {
+				$scalar_subquery_sql = null;
 				$values_replacements = $this->get_mysql_upsert_values_expression_replacements(
 					$tokens,
 					$value_start,
@@ -27227,14 +27243,14 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					$column_lookup
 				);
 				if (
-						null === $values_replacements
-						|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
-							$tokens,
-							$value_start,
-							$assignment_end,
-							$values_replacements
-						)
-					) {
+					null === $values_replacements
+					|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
+						$tokens,
+						$value_start,
+						$assignment_end,
+						$values_replacements
+					)
+				) {
 					$scalar_subquery_sql = $this->get_mysql_upsert_scalar_subquery_assignment_sql(
 						$tokens,
 						$value_start,
@@ -27247,15 +27263,21 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					$values_replacements = array();
 				}
 
-					$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
 
-					$value_sql = $scalar_subquery_sql ?? null;
+				$value_sql = $scalar_subquery_sql ?? null;
 				if (
-						null === $value_sql
-						&&
-						! $this->is_mysql_strict_sql_mode_active()
-						&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
-					) {
+					null !== $value_sql
+					&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+				) {
+					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+				}
+				if (
+					null === $value_sql
+					&&
+					! $this->is_mysql_strict_sql_mode_active()
+					&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
+				) {
 					$value_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
 				}
 				if ( null === $value_sql ) {
@@ -27306,22 +27328,21 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			++$position;
 		}
 
-			return count( $assignments ) > 0 ? $assignments : null;
+		return count( $assignments ) > 0 ? $assignments : null;
 	}
 
-		/**
-		 * Get PostgreSQL SQL for a supported scalar subquery upsert assignment.
-		 *
-		 * This intentionally supports only constant/no-table scalar SELECTs, with an
-		 * optional MySQL FROM DUAL clause. Correlated and table-backed subqueries stay
-		 * unsupported until they get broader statement-scope handling.
-		 *
-		 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-		 * @param int              $start  First expression token.
-		 * @param int              $end    Final expression token, exclusive.
-		 * @param array            $scope  Statement table scope.
-		 * @return string|null PostgreSQL scalar subquery SQL, or null when unsupported.
-		 */
+	/**
+	 * Get PostgreSQL SQL for a supported scalar subquery upsert assignment.
+	 *
+	 * This supports constant/no-table scalar SELECTs, optional MySQL FROM DUAL,
+	 * and uncorrelated COUNT(*)/COUNT(column) from a single current-database table.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @param array            $scope  Statement table scope.
+	 * @return string|null PostgreSQL scalar subquery SQL, or null when unsupported.
+	 */
 	private function get_mysql_upsert_scalar_subquery_assignment_sql( array $tokens, int $start, int $end, array $scope ): ?string {
 		$after_subquery = $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end );
 		if (
@@ -27369,16 +27390,42 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$select_end
 		);
 		if ( null !== $from_position ) {
-			if (
-				$from_position + 2 !== $select_end
-				|| WP_MySQL_Lexer::DUAL_SYMBOL !== ( $tokens[ $from_position + 1 ]->id ?? null )
-			) {
-				return null;
+			if ( $from_position + 2 === $select_end && WP_MySQL_Lexer::DUAL_SYMBOL === ( $tokens[ $from_position + 1 ]->id ?? null ) ) {
+				$projection_end = $from_position;
+			} else {
+				$reference_position = $from_position + 1;
+				$reference          = $this->parse_mysql_main_database_table_reference( $tokens, $reference_position, $select_end );
+				if ( null === $reference || $reference_position !== $select_end ) {
+					return null;
+				}
+
+				$projection = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $from_position );
+				if ( null === $projection || 1 !== count( $projection ) ) {
+					return null;
+				}
+
+				$projection_sql = $this->get_mysql_upsert_count_subquery_projection_sql(
+					$tokens,
+					$projection[0]['start'],
+					$projection[0]['end'],
+					$reference['table'],
+					$reference['alias']
+				);
+				if ( null === $projection_sql ) {
+					return null;
+				}
+
+				return sprintf(
+					'(SELECT %s FROM %s)',
+					$projection_sql,
+					$this->get_postgresql_dml_table_reference_sql( $reference['table'], $reference['alias'] )
+				);
 			}
+		} else {
+			$projection_end = $select_end;
 		}
 
-		$projection_end = $from_position ?? $select_end;
-		$projection     = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $projection_end );
+		$projection = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $projection_end );
 		if ( null === $projection || 1 !== count( $projection ) ) {
 			return null;
 		}
@@ -27400,8 +27447,73 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		);
 	}
 
-		/**
-		 * Get the source column from a supported VALUES(column) upsert assignment expression.
+	/**
+	 * Get PostgreSQL SQL for a supported table-backed COUNT() scalar subquery projection.
+	 *
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      First projection token.
+	 * @param int              $end        Final projection token, exclusive.
+	 * @param string           $table_name Subquery source table name.
+	 * @param string|null      $alias      Optional subquery source alias.
+	 * @return string|null PostgreSQL COUNT() SQL, or null when unsupported.
+	 */
+	private function get_mysql_upsert_count_subquery_projection_sql( array $tokens, int $start, int $end, string $table_name, ?string $alias ): ?string {
+		if (
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::COUNT_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_count = $this->get_mysql_parenthesized_sequence_end( $tokens, $start + 1, $end );
+		if ( null === $after_count || $after_count !== $end ) {
+			return null;
+		}
+
+		$argument_start = $start + 2;
+		$argument_end   = $after_count - 1;
+		if (
+			$argument_start + 1 === $argument_end
+			&& WP_MySQL_Lexer::MULT_OPERATOR === ( $tokens[ $argument_start ]->id ?? null )
+		) {
+			return 'COUNT(*)';
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $argument_start, $argument_end );
+		if ( null === $reference || $reference['end'] !== $argument_end ) {
+			return null;
+		}
+
+		if ( null === $this->get_mysql_table_column_type( 'public', $table_name, $reference['column'] ) ) {
+			return null;
+		}
+
+		$qualifier = null;
+		if ( null !== $reference['qualifier'] ) {
+			if ( null !== $alias ) {
+				if ( 0 !== strcasecmp( $reference['qualifier'], $alias ) ) {
+					return null;
+				}
+
+				$qualifier = $alias;
+			} else {
+				if ( 0 !== strcasecmp( $reference['qualifier'], $table_name ) ) {
+					return null;
+				}
+
+				$qualifier = $table_name;
+			}
+		}
+
+		return sprintf(
+			'COUNT(%s)',
+			$this->get_postgresql_dml_column_reference_sql( $reference['column'], $qualifier )
+		);
+	}
+
+	/**
+	 * Get the source column from a supported VALUES(column) upsert assignment expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $start         First expression token.

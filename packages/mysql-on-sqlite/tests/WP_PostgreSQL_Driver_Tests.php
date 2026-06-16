@@ -1036,7 +1036,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		try {
 			$driver->query( $upsert );
 			$this->fail( 'Probe-unsafe upsert expression should fail closed before sequence repair.' );
-		} catch ( PDOException $e ) {
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage() );
 			$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
 		}
 	}
@@ -9672,7 +9673,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = (SELECT \'http://example.net\')',
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT \'http://example.net\') AS text)',
 					'params' => array(),
 				),
 			),
@@ -9683,6 +9684,103 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'http://example.net', $rows[0]->option_value );
+	}
+
+	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports table-backed COUNT() scalar subquery assignments.
+	 */
+	public function test_options_upsert_table_backed_count_subquery_assignment_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE wptests_upsert_source (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_source (
+				id int(11) NOT NULL,
+				label varchar(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('source_counts', '0', '0')" );
+		$driver->query( "INSERT INTO wptests_upsert_source (id, label) VALUES (1, 'one'), (2, 'two'), (3, 'three')" );
+
+		$upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('source_counts', 'ignored', 'ignored')
+			ON DUPLICATE KEY UPDATE `option_value` = (SELECT COUNT(*) FROM `wptests_upsert_source`),
+			                        `autoload` = (SELECT COUNT(s.id) FROM `wptests_upsert_source` AS s)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT COUNT(*) FROM "wptests_upsert_source") AS text), "autoload" = CAST((SELECT COUNT("s"."id") FROM "wptests_upsert_source" AS "s") AS text)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'source_counts'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '3', $rows[0]->option_value );
+		$this->assertSame( '3', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests unsupported table-backed scalar subquery assignments fail closed.
+	 */
+	public function test_options_upsert_unsupported_table_backed_subquery_assignment_fails_closed(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query(
+			'CREATE TABLE wptests_upsert_source (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_source (
+				id int(11) NOT NULL,
+				label varchar(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('source_counts', '0', '0')" );
+
+		$queries = array(
+			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+				VALUES ('source_counts', 'ignored', 'ignored')
+				ON DUPLICATE KEY UPDATE `option_value` = (SELECT COUNT(*) FROM `wptests_upsert_source` WHERE id > 0)",
+			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+				VALUES ('source_counts', 'ignored', 'ignored')
+				ON DUPLICATE KEY UPDATE `option_value` = (SELECT label FROM `wptests_upsert_source`)",
+		);
+
+		foreach ( $queries as $query ) {
+			$this->assertNull(
+				$this->translate_driver_query_data_with_private_method(
+					$driver,
+					'translate_mysql_on_duplicate_key_update_query',
+					$query
+				),
+				$query
+			);
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported table-backed scalar subquery assignment to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
@@ -12433,6 +12531,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$errors = $driver->query( 'SHOW ERRORS LIMIT 0, 10', PDO::FETCH_ASSOC );
 		$this->assertSame( array(), $errors );
+		$this->assertSame( array( 'Level', 'Code', 'Message' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$limited_warnings = $driver->query( 'SHOW WARNINGS LIMIT 1 OFFSET 0' );
+		$this->assertSame( array(), $limited_warnings );
 		$this->assertSame( array( 'Level', 'Code', 'Message' ), array_column( $driver->get_last_column_meta(), 'name' ) );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
