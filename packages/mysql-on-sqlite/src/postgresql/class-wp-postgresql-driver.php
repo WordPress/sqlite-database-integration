@@ -10583,7 +10583,10 @@ $wp_mysql_on_update$',
 		$position = 1;
 		$this->consume_mysql_table_administration_leading_option( $tokens, $position, $operation );
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+		if (
+			! isset( $tokens[ $position ] )
+			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::TABLE_SYMBOL, WP_MySQL_Lexer::TABLES_SYMBOL ), true )
+		) {
 			throw new InvalidArgumentException( 'Unsupported table administration statement.' );
 		}
 

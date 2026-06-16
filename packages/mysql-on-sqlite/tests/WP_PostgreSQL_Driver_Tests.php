@@ -16687,10 +16687,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'CREATE TABLE administration_two (id INTEGER)' );
 
 		$cases = array(
-			'ANALYZE TABLE administration_one'  => 'analyze',
-			'CHECK TABLE `administration_one`'  => 'check',
-			'OPTIMIZE TABLE administration_one' => 'optimize',
-			'REPAIR TABLE administration_one'   => 'repair',
+			'ANALYZE TABLE administration_one'   => 'analyze',
+			'ANALYZE TABLES administration_one'  => 'analyze',
+			'CHECK TABLE `administration_one`'   => 'check',
+			'CHECK TABLES `administration_one`'  => 'check',
+			'OPTIMIZE TABLE administration_one'  => 'optimize',
+			'OPTIMIZE TABLES administration_one' => 'optimize',
+			'REPAIR TABLE administration_one'    => 'repair',
+			'REPAIR TABLES administration_one'   => 'repair',
 		);
 
 		foreach ( $cases as $query => $operation ) {
