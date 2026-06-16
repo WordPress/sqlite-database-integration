@@ -5581,10 +5581,11 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
-		$statements          = array();
-		$metadata_operations = array();
-		$check_names         = array();
-		$foreign_key_names   = array();
+		$statements              = array();
+		$metadata_operations     = array();
+		$has_online_ddl_options  = false;
+		$check_names             = array();
+		$foreign_key_names       = array();
 		foreach ( $ranges as $range ) {
 			$translation = $this->translate_mysql_dbdelta_alter_table_action(
 				$table_schema,
@@ -5601,9 +5602,16 @@ $wp_mysql_on_update$',
 			}
 
 			$statements = array_merge( $statements, $translation['statements'] );
+			if ( 'noop' === ( $translation['metadata']['operation'] ?? '' ) && 'online_ddl_option' === ( $translation['metadata']['option'] ?? '' ) ) {
+				$has_online_ddl_options = true;
+			}
 			if ( 'noop' !== ( $translation['metadata']['operation'] ?? '' ) ) {
 				$metadata_operations[] = $translation['metadata'];
 			}
+		}
+
+		if ( $has_online_ddl_options && $this->has_mysql_dbdelta_metadata_only_index_operation( $metadata_operations ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
 		$this->preflight_mysql_dbdelta_alter_table_metadata_operations( $table_schema, $table_name, $metadata_operations );
@@ -5669,6 +5677,35 @@ $wp_mysql_on_update$',
 				$this->preflight_mysql_dbdelta_alter_table_add_index_metadata( $table_schema, $table_name, $metadata['index'] ?? array(), $added_indexes );
 			}
 		}
+	}
+
+	/**
+	 * Check whether ALTER TABLE metadata operations contain FULLTEXT/SPATIAL indexes.
+	 *
+	 * @param array[] $metadata_operations ALTER metadata operations.
+	 * @return bool Whether any operation targets a metadata-only index type.
+	 */
+	private function has_mysql_dbdelta_metadata_only_index_operation( array $metadata_operations ): bool {
+		foreach ( $this->flatten_mysql_dbdelta_alter_table_metadata_operations( $metadata_operations ) as $metadata ) {
+			if (
+				'add_index' === ( $metadata['operation'] ?? '' )
+				&& $this->is_mysql_metadata_only_index_type( (string) ( $metadata['index']['index_type'] ?? '' ) )
+			) {
+				return true;
+			}
+
+			if ( 'add_column' !== ( $metadata['operation'] ?? '' ) ) {
+				continue;
+			}
+
+			foreach ( $metadata['indexes'] ?? array() as $index ) {
+				if ( $this->is_mysql_metadata_only_index_type( (string) ( $index['index_type'] ?? '' ) ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -5863,6 +5900,16 @@ $wp_mysql_on_update$',
 				'statements' => array(),
 				'metadata'   => array(
 					'operation' => 'noop',
+				),
+			);
+		}
+
+		if ( $this->is_supported_mysql_dbdelta_online_ddl_option_alter_action( $tokens, $start, $end ) ) {
+			return array(
+				'statements' => array(),
+				'metadata'   => array(
+					'operation' => 'noop',
+					'option'    => 'online_ddl_option',
 				),
 			);
 		}
@@ -7433,6 +7480,20 @@ $wp_mysql_on_update$',
 			'/^(?:ENGINE|ROW_FORMAT|COMMENT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b|^(?:DATA|INDEX)\s+DIRECTORY\b|^TABLESPACE\b|^UNION\s*=/',
 			$fragment
 		);
+	}
+
+	/**
+	 * Check whether an ALTER action is a supported MySQL online-DDL no-op.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First action token.
+	 * @param int              $end    Final action token, exclusive.
+	 * @return bool Whether this option can be safely ignored.
+	 */
+	private function is_supported_mysql_dbdelta_online_ddl_option_alter_action( array $tokens, int $start, int $end ): bool {
+		$position = $start;
+		return $this->consume_mysql_supported_index_lock_and_algorithm_options( $tokens, $position, $end )
+			&& $position === $end;
 	}
 
 	/**
@@ -10061,7 +10122,7 @@ $wp_mysql_on_update$',
 	 * @return array|null Value expression AST, or null when unsupported.
 	 */
 	private function parse_mysql_show_where_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
-		$left = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+		$left = $this->parse_mysql_show_where_multiplicative_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 		if ( null === $left ) {
 			return null;
 		}
@@ -10072,6 +10133,49 @@ $wp_mysql_on_update$',
 			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::MINUS_OPERATOR ), true )
 		) {
 			$operator = WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $position ]->id ? '+' : '-';
+			++$position;
+			$right = $this->parse_mysql_show_where_multiplicative_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+			if (
+				null === $right
+				|| ! $this->is_mysql_show_where_numeric_value_expression( $left, $numeric_columns )
+				|| ! $this->is_mysql_show_where_numeric_value_expression( $right, $numeric_columns )
+			) {
+				return null;
+			}
+
+			$left = array(
+				'type'     => 'arithmetic',
+				'operator' => $operator,
+				'left'     => $left,
+				'right'    => $right,
+			);
+		}
+
+		return $left;
+	}
+
+	/**
+	 * Parse a multiplicative scalar value expression for SHOW WHERE predicates.
+	 *
+	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
+	 * @param int                  $position        Current token position, advanced on success.
+	 * @param int                  $end             Final token position, exclusive.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
+	 * @return array|null Value expression AST, or null when unsupported.
+	 */
+	private function parse_mysql_show_where_multiplicative_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		$left = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+		if ( null === $left ) {
+			return null;
+		}
+
+		while (
+			isset( $tokens[ $position ] )
+			&& $position < $end
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::MULT_OPERATOR, WP_MySQL_Lexer::DIV_OPERATOR, WP_MySQL_Lexer::DIV_SYMBOL ), true )
+		) {
+			$operator = WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $position ]->id ? '*' : '/';
 			++$position;
 			$right = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if (
@@ -10809,19 +10913,20 @@ $wp_mysql_on_update$',
 				'visible'       => 'Visible',
 				'expression'    => 'Expression',
 			);
+			$numeric_columns  = array(
+				'Non_unique',
+				'Seq_in_index',
+				'Cardinality',
+				'Sub_part',
+			);
 			$where          = $this->get_mysql_show_where_filters(
 				$tokens,
 				$position,
 				$allowed_columns,
-				array(
-					'Non_unique',
-					'Seq_in_index',
-					'Cardinality',
-					'Sub_part',
-				)
+				$numeric_columns
 			);
 			if ( null === $where ) {
-				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
 			}
 			if ( null === $where ) {
 				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
@@ -13562,6 +13667,14 @@ ORDER BY table_name';
 
 		if ( '-' === $operator ) {
 			return $left_number - $right_number;
+		}
+
+		if ( '*' === $operator ) {
+			return $left_number * $right_number;
+		}
+
+		if ( '/' === $operator ) {
+			return 0.0 === $right_number ? null : $left_number / $right_number;
 		}
 
 		return null;
@@ -17697,7 +17810,20 @@ WHERE option_name IN (
 			'inserted_new_row'         => true,
 		);
 
-		if ( $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
+		$has_duplicate_conflict_rows = $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes );
+		$delete_insert_statements    = $this->get_mysql_replace_delete_then_insert_statements(
+			$table_name,
+			$columns,
+			$value_rows,
+			$probe_safe_rows,
+			$conflict_indexes,
+			$has_duplicate_conflict_rows
+		);
+		if ( null !== $delete_insert_statements ) {
+			$replace_query['statements']          = $delete_insert_statements;
+			$replace_query['delete_then_insert']  = true;
+			$replace_query['inserted_new_row']    = true;
+		} elseif ( $has_duplicate_conflict_rows ) {
 			$statements = array();
 			foreach ( $value_rows as $values ) {
 				$statements[] = sprintf(
@@ -17712,6 +17838,148 @@ WHERE option_name IN (
 		}
 
 		return $replace_query;
+	}
+
+	/**
+	 * Build delete-then-insert statements for deterministic REPLACE rows.
+	 *
+	 * MySQL and SQLite REPLACE delete matching rows before inserting the new
+	 * row, which makes DELETE triggers, cascades, and omitted-column defaults
+	 * observable. Limit this emulation to conflict keys whose incoming values
+	 * are safe to evaluate in both the DELETE predicate and INSERT row.
+	 *
+	 * @param string   $table_name           Table name.
+	 * @param string[] $columns              Inserted column names.
+	 * @param array[]  $value_rows           Translated VALUES rows.
+	 * @param array[]  $probe_safe_rows      Per-value conflict-probe safety flags.
+	 * @param array    $conflict_indexes     Conflict target column/index tuples.
+	 * @param bool     $sequential_statements Whether every row must run as its own DELETE/INSERT pair.
+	 * @return string[]|null PostgreSQL statements, or null when delete-then-insert is unsafe.
+	 */
+	private function get_mysql_replace_delete_then_insert_statements( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_indexes, bool $sequential_statements ): ?array {
+		$quoted_table = $this->connection->quote_identifier( $table_name );
+		$column_sql   = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
+
+		$row_predicates = array();
+		foreach ( $value_rows as $row_index => $values ) {
+			$predicate = $this->get_mysql_replace_delete_predicate_for_row(
+				$values,
+				$probe_safe_rows[ $row_index ] ?? array(),
+				$conflict_indexes
+			);
+			if ( false === $predicate ) {
+				return null;
+			}
+
+			$row_predicates[ $row_index ] = $predicate;
+		}
+
+		$statements = array();
+		if ( $sequential_statements ) {
+			foreach ( $value_rows as $row_index => $values ) {
+				if ( null !== $row_predicates[ $row_index ] ) {
+					$statements[] = sprintf(
+						'DELETE FROM %s WHERE %s',
+						$quoted_table,
+						$row_predicates[ $row_index ]
+					);
+				}
+
+				$statements[] = sprintf(
+					'INSERT INTO %s (%s) VALUES (%s)',
+					$quoted_table,
+					$column_sql,
+					implode( ', ', $values )
+				);
+			}
+
+			return $statements;
+		}
+
+		$delete_predicates = array_values(
+			array_filter(
+				$row_predicates,
+				static function ( $predicate ): bool {
+					return null !== $predicate;
+				}
+			)
+		);
+		if ( ! empty( $delete_predicates ) ) {
+			$statements[] = sprintf(
+				'DELETE FROM %s WHERE %s',
+				$quoted_table,
+				implode(
+					' OR ',
+					array_map(
+						static function ( string $predicate ): string {
+							return '(' . $predicate . ')';
+						},
+						$delete_predicates
+					)
+				)
+			);
+		}
+
+		$sql_value_rows = array();
+		foreach ( $value_rows as $values ) {
+			$sql_value_rows[] = '(' . implode( ', ', $values ) . ')';
+		}
+
+		$statements[] = sprintf(
+			'INSERT INTO %s (%s) VALUES %s',
+			$quoted_table,
+			$column_sql,
+			implode( ', ', $sql_value_rows )
+		);
+
+		return $statements;
+	}
+
+	/**
+	 * Build a DELETE predicate for one deterministic REPLACE row.
+	 *
+	 * @param array $values           Translated VALUES row.
+	 * @param array $probe_safety     Per-value conflict-probe safety flags.
+	 * @param array $conflict_indexes Conflict target column/index tuples.
+	 * @return string|false|null Predicate SQL, false when unsafe, or null when the row cannot conflict.
+	 */
+	private function get_mysql_replace_delete_predicate_for_row( array $values, array $probe_safety, array $conflict_indexes ) {
+		$where = array();
+		foreach ( $conflict_indexes as $conflict_index ) {
+			if (
+				! array_key_exists( $conflict_index['index'], $values )
+				|| ! isset( $probe_safety[ $conflict_index['index'] ] )
+				|| ! $probe_safety[ $conflict_index['index'] ]
+			) {
+				return false;
+			}
+
+			$value = trim( (string) $values[ $conflict_index['index'] ] );
+			if (
+				'' === $value
+				|| 'NULL' === strtoupper( $value )
+				|| $this->is_mysql_generated_auto_increment_value_sql( $value )
+			) {
+				return null;
+			}
+
+			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+				$where[] = sprintf(
+					'%s = SUBSTR(CAST(%s AS text), 1, %d)',
+					$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
+					$value,
+					(int) $conflict_index['sub_part']
+				);
+			} else {
+				$where[] = sprintf(
+					'%s = %s',
+					$this->connection->quote_identifier( (string) $conflict_index['column'] ),
+					$value
+				);
+			}
+		}
+
+		return empty( $where ) ? null : implode( ' AND ', $where );
 	}
 
 	/**
@@ -18201,7 +18469,7 @@ WHERE option_name IN (
 			}
 		}
 
-		$replace_query['inserted_new_row'] = $inserted_new_row;
+		$replace_query['inserted_new_row'] = ! empty( $replace_query['delete_then_insert'] ) ? true : $inserted_new_row;
 		return $return_value;
 	}
 
@@ -24572,6 +24840,7 @@ WHERE option_name IN (
 		}
 
 		$replacements = array();
+		$cte_sources  = array();
 		while ( $position < $statement_end ) {
 			$cte_name_position = $position;
 			$cte_name = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
@@ -24591,6 +24860,10 @@ WHERE option_name IN (
 			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 				$after_column_list = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
 				if ( null === $after_column_list ) {
+					return null;
+				}
+				$columns = $this->get_direct_information_schema_cte_column_list( $tokens, $position + 1, $after_column_list - 1 );
+				if ( empty( $columns ) ) {
 					return null;
 				}
 				$has_column_list = true;
@@ -24645,6 +24918,11 @@ WHERE option_name IN (
 				);
 			}
 
+			$cte_sources[ strtolower( $cte_name ) ] = array(
+				'name'    => $cte_name,
+				'columns' => $columns,
+			);
+
 			$replacements[] = array(
 				'start' => $select_start,
 				'end'   => $select_end,
@@ -24664,8 +24942,28 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if ( $this->select_references_direct_information_schema_relation( $tokens, $position + 1, $statement_end ) ) {
-			return null;
+		$final_select_needs_direct_translation = $this->select_references_direct_information_schema_relation( $tokens, $position + 1, $statement_end )
+			|| (
+				0 === strcasecmp( $this->db_name, 'information_schema' )
+				&& $this->information_schema_cte_final_select_has_non_cte_table_reference( $tokens, $position, $statement_end, $cte_sources )
+			);
+
+		if ( $final_select_needs_direct_translation ) {
+			$select_query = $this->get_mysql_token_range_bytes( $query, $tokens, $position, $statement_end );
+			if ( '' === $select_query ) {
+				return null;
+			}
+
+			$translated_select = $this->translate_direct_information_schema_select_query( $select_query, $cte_sources );
+			if ( null === $translated_select ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $position,
+				'end'   => $statement_end,
+				'sql'   => $translated_select,
+			);
 		}
 
 		usort(
@@ -24681,6 +24979,152 @@ WHERE option_name IN (
 			$statement_end,
 			$replacements
 		);
+	}
+
+	/**
+	 * Check whether a final CTE SELECT under USE information_schema reads outside known CTEs.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $start       SELECT token position.
+	 * @param int              $end         Final statement token, exclusive.
+	 * @param array            $cte_sources Known CTE sources keyed by lowercase name.
+	 * @return bool Whether the final SELECT must use direct information_schema routing.
+	 */
+	private function information_schema_cte_final_select_has_non_cte_table_reference( array $tokens, int $start, int $end, array $cte_sources ): bool {
+		$position = $start;
+		while ( $position < $end ) {
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+				return true;
+			}
+
+			$segment_end = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UNION_SYMBOL, $position + 1, $end ) ?? $end;
+			if ( $this->information_schema_cte_select_segment_has_non_cte_table_reference( $tokens, $position, $segment_end, $cte_sources ) ) {
+				return true;
+			}
+
+			if ( $segment_end >= $end ) {
+				return false;
+			}
+
+			$position = $segment_end + 1;
+			if (
+				isset( $tokens[ $position ] )
+				&& (
+					WP_MySQL_Lexer::ALL_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $position ]->id
+				)
+			) {
+				++$position;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether one SELECT segment reads a non-CTE source.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $start       SELECT token position.
+	 * @param int              $end         Segment end, exclusive.
+	 * @param array            $cte_sources Known CTE sources keyed by lowercase name.
+	 * @return bool Whether the segment has a non-CTE table source.
+	 */
+	private function information_schema_cte_select_segment_has_non_cte_table_reference( array $tokens, int $start, int $end, array $cte_sources ): bool {
+		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $start + 1, $end );
+		if ( null === $from_position ) {
+			return false;
+		}
+
+		$source_end = $this->find_direct_information_schema_source_end( $tokens, $from_position + 1, $end );
+		$position   = $from_position + 1;
+		while ( $position < $source_end ) {
+			if ( ! isset( $tokens[ $position ] ) ) {
+				return true;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				return true;
+			}
+
+			$identifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] );
+			if ( null === $identifier ) {
+				++$position;
+				continue;
+			}
+
+			if ( ! isset( $cte_sources[ strtolower( $identifier ) ] ) ) {
+				return true;
+			}
+
+			++$position;
+			while ( $position < $source_end ) {
+				if (
+					WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null )
+					|| WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position ]->id ?? null )
+				) {
+					++$position;
+					break;
+				}
+
+				if (
+					WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null )
+					|| WP_MySQL_Lexer::CROSS_SYMBOL === ( $tokens[ $position ]->id ?? null )
+					|| WP_MySQL_Lexer::LEFT_SYMBOL === ( $tokens[ $position ]->id ?? null )
+					|| WP_MySQL_Lexer::RIGHT_SYMBOL === ( $tokens[ $position ]->id ?? null )
+				) {
+					while ( $position < $source_end && WP_MySQL_Lexer::JOIN_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+						++$position;
+					}
+					if ( $position < $source_end ) {
+						++$position;
+					}
+					break;
+				}
+
+				++$position;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Get explicit CTE output columns from a parenthesized column list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First column token.
+	 * @param int              $end    Final column token, exclusive.
+	 * @return string[]|null Column names, or null when unsupported.
+	 */
+	private function get_direct_information_schema_cte_column_list( array $tokens, int $start, int $end ): ?array {
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $ranges || array() === $ranges ) {
+			return null;
+		}
+
+		$columns = array();
+		$seen    = array();
+		foreach ( $ranges as $range ) {
+			if ( $range['start'] + 1 !== $range['end'] || ! isset( $tokens[ $range['start'] ] ) ) {
+				return null;
+			}
+
+			$column = $this->get_direct_information_schema_identifier_token_value( $tokens[ $range['start'] ] );
+			if ( null === $column ) {
+				return null;
+			}
+
+			$column_key = strtolower( $column );
+			if ( isset( $seen[ $column_key ] ) ) {
+				return null;
+			}
+
+			$seen[ $column_key ] = true;
+			$columns[]          = $column;
+		}
+
+		return $columns;
 	}
 
 	/**
@@ -24816,14 +25260,15 @@ WHERE option_name IN (
 	 *
 	 * This is intentionally limited to supported information_schema relations as
 	 * FROM/JOIN sources, main-database tables with MySQL metadata, and derived
-	 * subqueries that themselves use supported direct information_schema shapes.
-	 * CTEs, unsupported relation shapes, and nested application-table subqueries
-	 * fail closed rather than receiving a partial rewrite.
+	 * subqueries that themselves use supported direct information_schema shapes,
+	 * and caller-provided CTE sources. Unsupported relation shapes and nested
+	 * application-table subqueries fail closed rather than receiving a partial
+	 * rewrite.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when the shape is unsupported.
 	 */
-	private function translate_direct_information_schema_select_query( string $query ): ?string {
+	private function translate_direct_information_schema_select_query( string $query, array $cte_sources = array() ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -24838,7 +25283,7 @@ WHERE option_name IN (
 			return $this->translate_direct_information_schema_union_select_query( $query, $tokens, $statement_end );
 		}
 
-		$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end );
+		$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end, $cte_sources );
 		if ( null === $context ) {
 			return null;
 		}
@@ -25250,7 +25695,7 @@ WHERE option_name IN (
 	 * @param int              $statement_end Final statement token position, exclusive.
 	 * @return array{sources: array[], from_position: int, source_start: int, source_end: int, join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[], clause_ranges: array[]}|null Context, or null.
 	 */
-	private function get_direct_information_schema_select_context( string $query, array $tokens, int $statement_end ): ?array {
+	private function get_direct_information_schema_select_context( string $query, array $tokens, int $statement_end, array $cte_sources = array() ): ?array {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
 		if ( null === $from_position || 1 === $from_position ) {
 			return null;
@@ -25262,7 +25707,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$sources = $this->parse_direct_information_schema_select_sources( $query, $tokens, $source_start, $source_end );
+		$sources = $this->parse_direct_information_schema_select_sources( $query, $tokens, $source_start, $source_end, $cte_sources );
 		if ( null === $sources ) {
 			return null;
 		}
@@ -25338,7 +25783,7 @@ WHERE option_name IN (
 	 * @param int              $end    Source end position, exclusive.
 	 * @return array{sources: array[], join_predicate_ranges: array[], join_predicate_replacements: array[], using_columns: array[]}|null Parsed sources, or null.
 	 */
-	private function parse_direct_information_schema_select_sources( string $query, array $tokens, int $start, int $end ): ?array {
+	private function parse_direct_information_schema_select_sources( string $query, array $tokens, int $start, int $end, array $cte_sources = array() ): ?array {
 		if (
 			0 !== strcasecmp( $this->db_name, 'information_schema' )
 			&& ! $this->direct_information_schema_source_range_references_information_schema( $tokens, $start, $end )
@@ -25355,7 +25800,7 @@ WHERE option_name IN (
 
 		while ( $position < $end ) {
 			$source_start = $position;
-			$source       = $this->parse_direct_information_schema_select_source( $query, $tokens, $position, $end );
+			$source       = $this->parse_direct_information_schema_select_source( $query, $tokens, $position, $end, $cte_sources );
 			if ( null === $source ) {
 				return null;
 			}
@@ -25468,7 +25913,7 @@ WHERE option_name IN (
 	 * @param int              $end      Source range end position, exclusive.
 	 * @return array{view?: string, alias: string, position: int, relation_sql?: string, columns?: string[]}|null Parsed source, or null.
 	 */
-	private function parse_direct_information_schema_select_source( string $query, array $tokens, int $position, int $end ): ?array {
+	private function parse_direct_information_schema_select_source( string $query, array $tokens, int $position, int $end, array $cte_sources = array() ): ?array {
 		if ( isset( $tokens[ $position ], $tokens[ $position + 1 ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			return $this->parse_direct_information_schema_derived_select_source( $query, $tokens, $position, $end );
 		}
@@ -25477,6 +25922,10 @@ WHERE option_name IN (
 		$first        = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
 		if ( null === $first ) {
 			return null;
+		}
+
+		if ( isset( $cte_sources[ strtolower( $first ) ] ) ) {
+			return $this->parse_direct_information_schema_cte_select_source( $tokens, $position, $end, $cte_sources[ strtolower( $first ) ] );
 		}
 
 		++$position;
@@ -25535,6 +25984,52 @@ WHERE option_name IN (
 			'view'     => $view,
 			'alias'    => $alias,
 			'position' => $position,
+		);
+	}
+
+	/**
+	 * Parse a CTE source used by a final direct information_schema SELECT.
+	 *
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $position   Source token position.
+	 * @param int              $end        Source range end position, exclusive.
+	 * @param array            $cte_source CTE source metadata.
+	 * @return array{cte:string,alias:string,position:int,columns:string[]}|null Parsed source, or null.
+	 */
+	private function parse_direct_information_schema_cte_select_source( array $tokens, int $position, int $end, array $cte_source ): ?array {
+		if ( ! isset( $cte_source['name'], $cte_source['columns'] ) || ! is_array( $cte_source['columns'] ) ) {
+			return null;
+		}
+
+		$cte_name = (string) $cte_source['name'];
+		$alias    = $cte_name;
+		++$position;
+
+		if ( $position < $end ) {
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+
+				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+				if ( null === $parsed_alias ) {
+					return null;
+				}
+
+				$alias = $parsed_alias;
+				++$position;
+			} else {
+				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+				if ( null !== $parsed_alias ) {
+					$alias = $parsed_alias;
+					++$position;
+				}
+			}
+		}
+
+		return array(
+			'cte'      => $cte_name,
+			'alias'    => $alias,
+			'position' => $position,
+			'columns'  => $cte_source['columns'],
 		);
 	}
 
@@ -25771,6 +26266,19 @@ WHERE option_name IN (
 	private function get_direct_information_schema_source_replacements( array $context ): ?array {
 		$replacements = array();
 		foreach ( $context['sources'] as $source ) {
+			if ( isset( $source['cte'] ) ) {
+				$replacements[] = array(
+					'start' => $source['source_start'],
+					'end'   => $source['source_end'],
+					'sql'   => sprintf(
+						'%s AS %s',
+						$this->connection->quote_identifier( $source['cte'] ),
+						$this->connection->quote_identifier( $source['alias'] )
+					),
+				);
+				continue;
+			}
+
 			if ( isset( $source['table'] ) ) {
 				$replacements[] = array(
 					'start' => $source['source_start'],
@@ -26443,6 +26951,10 @@ WHERE option_name IN (
 		foreach ( $sources as $source ) {
 			if ( isset( $source['view'] ) && $this->is_direct_information_schema_join_relation( $source['view'] ) ) {
 				$has_information_schema_source = true;
+				continue;
+			}
+
+			if ( isset( $source['cte'] ) ) {
 				continue;
 			}
 
@@ -38965,12 +39477,12 @@ FROM (
 	}
 
 	/**
-	 * Translate MySQL RAND() and RAND(seed) calls to PostgreSQL random().
+	 * Translate MySQL RAND() and literal RAND(seed) calls to PostgreSQL.
 	 *
-	 * PostgreSQL setseed() is session-stateful, so RAND(seed) deliberately maps
-	 * to random() for now instead of leaking deterministic seed state into later
-	 * statements. Seeded deterministic ordering is left for a higher-fidelity
-	 * emulation path.
+	 * PostgreSQL setseed() is session-stateful, so literal seeded calls are
+	 * folded to the first value from SQLite's seeded MySQL-compatible LCG.
+	 * Non-literal seeded calls stay on random() instead of leaking seed state
+	 * into later statements.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -38988,11 +39500,64 @@ FROM (
 			return null;
 		}
 
+		$sql = 'random()';
+		if ( 1 === count( $arguments ) ) {
+			$seed = $this->get_mysql_literal_rand_seed_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+			if ( null !== $seed ) {
+				$sql = $this->get_mysql_seeded_rand_literal_sql( $seed['value'] );
+			}
+		}
+
 		return array(
-			'sql'      => 'random()',
+			'sql'      => $sql,
 			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
 			'position' => $bounds['close'],
 		);
+	}
+
+	/**
+	 * Get a literal MySQL RAND(seed) value using SQLite UDF seed coercion.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First seed token.
+	 * @param int              $end    Final seed token, exclusive.
+	 * @return array{value: int}|null Seed value, or null when not a literal seed.
+	 */
+	private function get_mysql_literal_rand_seed_value( array $tokens, int $start, int $end ): ?array {
+		if ( $start + 1 === $end && isset( $tokens[ $start ] ) && WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $start ]->id ) {
+			return array( 'value' => 0 );
+		}
+
+		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
+			return array(
+				'value' => (int) fmod( round( (float) $tokens[ $start ]->get_value(), 0, PHP_ROUND_HALF_EVEN ), 0x100000000 ),
+			);
+		}
+
+		$literal = $this->parse_mysql_numeric_literal( $tokens, $start, $end );
+		if ( null === $literal || $literal['start'] !== $start || $literal['end'] !== $end ) {
+			return null;
+		}
+
+		return array(
+			'value' => (int) fmod( round( (float) $this->get_mysql_token_sequence_bytes( $tokens, $start, $end ), 0, PHP_ROUND_HALF_EVEN ), 0x100000000 ),
+		);
+	}
+
+	/**
+	 * Get the first SQLite/MySQL-compatible LCG value for RAND(seed).
+	 *
+	 * @param int $seed MySQL-coerced seed value.
+	 * @return string PostgreSQL numeric literal SQL.
+	 */
+	private function get_mysql_seeded_rand_literal_sql( int $seed ): string {
+		$max_value = 0x3FFFFFFF;
+		$seed_u32  = $seed & 0xFFFFFFFF;
+		$seed1     = ( ( $seed_u32 * 0x10001 + 55555555 ) & 0xFFFFFFFF ) % $max_value;
+		$seed2     = ( ( $seed_u32 * 0x10000001 ) & 0xFFFFFFFF ) % $max_value;
+		$seed1     = ( $seed1 * 3 + $seed2 ) % $max_value;
+
+		return rtrim( rtrim( sprintf( '%.17F', (float) $seed1 / (float) $max_value ), '0' ), '.' );
 	}
 
 	/**
@@ -41465,6 +42030,9 @@ FROM (
 		$date_time_text_pattern = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
 
 		switch ( $unit ) {
+			case 'DOY':
+				return 'NULL';
+
 			case 'YEAR':
 				return sprintf( 'CAST(SUBSTRING(%s FROM 1 FOR 4) AS integer)', $expression_text_sql );
 
@@ -41629,6 +42197,11 @@ FROM (
 
 			case WP_MySQL_Lexer::SECOND_SYMBOL:
 				return 'SECOND';
+		}
+
+		$name = $this->get_mysql_identifier_token_value( $token );
+		if ( null !== $name && 0 === strcasecmp( $name, 'dayofyear' ) ) {
+			return 'DOY';
 		}
 
 		return null;
