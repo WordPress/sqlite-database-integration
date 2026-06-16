@@ -4634,7 +4634,22 @@ $wp_mysql_on_update$',
 			++$position;
 		}
 
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+		$select_start = $position;
+		$select_end   = $statement_end;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$parenthesized_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if (
+				null !== $parenthesized_end
+				&& $parenthesized_end === $statement_end
+				&& isset( $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$select_start = $position + 1;
+				$select_end   = $parenthesized_end - 1;
+			}
+		}
+
+		if ( ! isset( $tokens[ $select_start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $select_start ]->id ) {
 			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 				$definition_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
 				if ( null !== $definition_end && isset( $tokens[ $definition_end ] ) ) {
@@ -4657,7 +4672,7 @@ $wp_mysql_on_update$',
 		}
 
 		$schema_name = $this->get_mysql_create_table_select_backend_schema( $table_reference, $is_temporary );
-		$select_sql  = $this->get_mysql_token_range_bytes( $query, $tokens, $position, $statement_end );
+		$select_sql  = $this->get_mysql_token_range_bytes( $query, $tokens, $select_start, $select_end );
 		if ( '' === trim( $select_sql ) ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
 		}
@@ -7013,6 +7028,14 @@ $wp_mysql_on_update$',
 			++$position;
 		}
 
+		if (
+			$position + 2 === $end
+			&& isset( $tokens[ $position + 1 ] )
+			&& in_array( $tokens[ $position + 1 ]->id, array( WP_MySQL_Lexer::CASCADE_SYMBOL, WP_MySQL_Lexer::RESTRICT_SYMBOL ), true )
+		) {
+			--$end;
+		}
+
 		if ( $position + 1 !== $end ) {
 			return null;
 		}
@@ -7396,7 +7419,7 @@ $wp_mysql_on_update$',
 		$fragment = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
 
 		return 1 === preg_match(
-			'/^(?:ENGINE|ROW_FORMAT|COMMENT)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b/',
+			'/^(?:ENGINE|ROW_FORMAT|COMMENT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b|^(?:DATA|INDEX)\s+DIRECTORY\b|^TABLESPACE\b|^UNION\s*=/',
 			$fragment
 		);
 	}
@@ -16684,14 +16707,17 @@ WHERE option_name IN (
 
 				if (
 					$this->is_mysql_auto_increment_column_metadata( $column_metadata )
-					&& ! $this->is_mysql_generated_auto_increment_value_sql( $projection_sql )
 				) {
-					if ( null === $constant_integer_expression && $constant_expression ) {
-						return null;
-					}
+					if ( $this->is_mysql_generated_auto_increment_value_sql( $projection_sql ) ) {
+						$insert_id_sql = $projection_sql;
+					} else {
+						if ( null === $constant_integer_expression && $constant_expression ) {
+							return null;
+						}
 
-					if ( null !== $constant_integer_expression ) {
-						$insert_id_sql = $constant_integer_expression;
+						if ( null !== $constant_integer_expression ) {
+							$insert_id_sql = $constant_integer_expression;
+						}
 					}
 				}
 			}
@@ -18816,13 +18842,42 @@ WHERE option_name IN (
 			$sql .= ' ON CONFLICT DO NOTHING';
 		}
 
+		$table_column_lookup       = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$auto_increment_column     = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
+		$literal_value_row         = null;
+		$insert_id_value_rows      = null;
+		$value_rows                = null;
+		$explicit_identity_columns = array();
+		if (
+			null !== $auto_increment_column
+			&& $this->mysql_dml_column_list_contains_column( $columns, $auto_increment_column )
+		) {
+			$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+				$table_name,
+				$columns,
+				$tokens,
+				$select_start,
+				$select_end
+			);
+			if ( null === $literal_value_row ) {
+				$explicit_identity_columns[ strtolower( $auto_increment_column ) ] = true;
+			} else {
+				$value_rows           = array( $literal_value_row['values'] );
+				$insert_id_value_rows = array( $literal_value_row['insert_id_values'] );
+			}
+		}
+
 		return array(
-			'action'           => 'insert',
-			'sql'              => $sql,
-			'table_name'       => $table_name,
-			'columns'          => $columns,
-			'ignore'           => $ignore,
-			'inserted_new_row' => true,
+			'action'                    => 'insert',
+			'sql'                       => $sql,
+			'table_name'                => $table_name,
+			'columns'                   => $columns,
+			'ignore'                    => $ignore,
+			'inserted_new_row'          => true,
+			'value_rows'                => $value_rows,
+			'insert_id_value_rows'      => $insert_id_value_rows,
+			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
+			'explicit_identity_columns' => $explicit_identity_columns,
 		);
 	}
 
@@ -41616,25 +41671,47 @@ FROM (
 					$token->id,
 					array(
 						WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL,
+						WP_MySQL_Lexer::AUTOEXTEND_SIZE_SYMBOL,
+						WP_MySQL_Lexer::AVG_ROW_LENGTH_SYMBOL,
 						WP_MySQL_Lexer::BACK_TICK_QUOTED_ID,
 						WP_MySQL_Lexer::BIT_SYMBOL,
 						WP_MySQL_Lexer::BOOLEAN_SYMBOL,
-							WP_MySQL_Lexer::BOOL_SYMBOL,
-							WP_MySQL_Lexer::CHARSET_SYMBOL,
-							WP_MySQL_Lexer::CHECK_SYMBOL,
-							WP_MySQL_Lexer::COLLATE_SYMBOL,
-							WP_MySQL_Lexer::COMMENT_SYMBOL,
-							WP_MySQL_Lexer::DEC_SYMBOL,
-							WP_MySQL_Lexer::ENFORCED_SYMBOL,
+						WP_MySQL_Lexer::BOOL_SYMBOL,
+						WP_MySQL_Lexer::CHARSET_SYMBOL,
+						WP_MySQL_Lexer::CHECK_SYMBOL,
+						WP_MySQL_Lexer::CHECKSUM_SYMBOL,
+						WP_MySQL_Lexer::COLLATE_SYMBOL,
+						WP_MySQL_Lexer::COMMENT_SYMBOL,
+						WP_MySQL_Lexer::COMPRESSION_SYMBOL,
+						WP_MySQL_Lexer::CONNECTION_SYMBOL,
+						WP_MySQL_Lexer::DEC_SYMBOL,
+						WP_MySQL_Lexer::DELAY_KEY_WRITE_SYMBOL,
+						WP_MySQL_Lexer::DIRECTORY_SYMBOL,
+						WP_MySQL_Lexer::ENCRYPTION_SYMBOL,
+						WP_MySQL_Lexer::ENFORCED_SYMBOL,
 						WP_MySQL_Lexer::ENGINE_SYMBOL,
+						WP_MySQL_Lexer::ENGINE_ATTRIBUTE_SYMBOL,
 						WP_MySQL_Lexer::FIXED_SYMBOL,
 						WP_MySQL_Lexer::FULLTEXT_SYMBOL,
+						WP_MySQL_Lexer::INSERT_METHOD_SYMBOL,
 						WP_MySQL_Lexer::JSON_SYMBOL,
+						WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL,
 						WP_MySQL_Lexer::LONG_SYMBOL,
+						WP_MySQL_Lexer::MAX_ROWS_SYMBOL,
+						WP_MySQL_Lexer::MIN_ROWS_SYMBOL,
+						WP_MySQL_Lexer::PACK_KEYS_SYMBOL,
+						WP_MySQL_Lexer::PASSWORD_SYMBOL,
 						WP_MySQL_Lexer::REAL_SYMBOL,
 						WP_MySQL_Lexer::ROW_FORMAT_SYMBOL,
+						WP_MySQL_Lexer::SECONDARY_ENGINE_SYMBOL,
+						WP_MySQL_Lexer::SECONDARY_ENGINE_ATTRIBUTE_SYMBOL,
 						WP_MySQL_Lexer::SPATIAL_SYMBOL,
+						WP_MySQL_Lexer::STATS_AUTO_RECALC_SYMBOL,
+						WP_MySQL_Lexer::STATS_PERSISTENT_SYMBOL,
+						WP_MySQL_Lexer::STATS_SAMPLE_PAGES_SYMBOL,
+						WP_MySQL_Lexer::TABLESPACE_SYMBOL,
 						WP_MySQL_Lexer::UNSIGNED_SYMBOL,
+						WP_MySQL_Lexer::UNION_SYMBOL,
 					),
 					true
 				)

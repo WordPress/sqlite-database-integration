@@ -4099,6 +4099,77 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests real source INSERT ... SELECT repairs explicit AUTO_INCREMENT targets.
+	 */
+	public function test_insert_select_with_auto_increment_target_repairs_real_source_table(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_identity_insert_select_source (
+				id INTEGER NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_insert_select_source (
+				id bigint(20) unsigned NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_identity_insert_select_source (id, value) VALUES (7, 'selected'), (8, 'created')" );
+
+		$insert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`)
+			SELECT `id`, `value` FROM `wptests_identity_insert_select_source` WHERE `id` > 0";
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_simple_mysql_insert_select_query',
+			$insert
+		);
+
+		$this->assertIsArray( $translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT "id", "value" FROM "wptests_identity_insert_select_source" WHERE "id" > 0',
+			$translation['sql']
+		);
+		$this->assertNull( $translation['value_rows'] );
+		$this->assertNull( $translation['insert_id_value_rows'] );
+		$this->assertTrue( $translation['insert_id_unknown'] );
+		$this->assertSame( array( 'id' => true ), $translation['explicit_identity_columns'] );
+
+		$this->assertSame( 2, $driver->query( $insert ) );
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT "id", "value" FROM "wptests_identity_insert_select_source" WHERE "id" > 0',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '7',
+					'value' => 'selected',
+				),
+				(object) array(
+					'id'    => '8',
+					'value' => 'created',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests upsert conflict updates expose explicit AUTO_INCREMENT values as the insert ID.
 	 */
 	public function test_get_insert_id_returns_explicit_auto_increment_value_for_upsert_conflict_update(): void {
@@ -14659,6 +14730,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE DROP COLUMN accepts MySQL RESTRICT/CASCADE suffixes as no-ops.
+	 */
+	public function test_alter_table_drop_column_suffixes_are_supported_noops(): void {
+		foreach ( array( 'RESTRICT', 'CASCADE' ) as $suffix ) {
+			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$this->install_information_schema_fixture( $driver );
+			$driver->store_mysql_schema_metadata(
+				"CREATE TABLE wptests_plugin_drop (
+					id int(11) NOT NULL,
+					status varchar(20) DEFAULT 'draft',
+					obsolete varchar(20) DEFAULT NULL,
+					PRIMARY KEY (id),
+					KEY obsolete_idx (obsolete)
+				)"
+			);
+
+			$driver->query( 'ALTER TABLE wptests_plugin_drop DROP COLUMN obsolete ' . $suffix );
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'ALTER TABLE "wptests_plugin_drop" DROP COLUMN "obsolete"',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries(),
+				$suffix
+			);
+
+			$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_drop' );
+			$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_plugin_drop' );
+
+			$this->assertSame( array( 'id', 'status' ), array_column( $columns, 'column_name' ), $suffix );
+			$this->assertSame( array( 'PRIMARY' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ), $suffix );
+		}
+	}
+
+	/**
 	 * Tests ALTER TABLE DROP COLUMN preserves surviving composite secondary index parts.
 	 */
 	public function test_alter_table_drop_column_preserves_composite_secondary_index_metadata(): void {
@@ -15088,7 +15197,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					ENGINE=InnoDB,
 					DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci,
 					DEFAULT COLLATE=utf8mb4_unicode_ci,
-					ROW_FORMAT=DYNAMIC'
+					ROW_FORMAT=DYNAMIC,
+					KEY_BLOCK_SIZE=8,
+					MAX_ROWS=10,
+					MIN_ROWS=1,
+					AVG_ROW_LENGTH=100,
+					CHECKSUM=1,
+					DELAY_KEY_WRITE=1,
+					PACK_KEYS=1,
+					STATS_PERSISTENT=0,
+					STATS_AUTO_RECALC=1,
+					STATS_SAMPLE_PAGES=10,
+					COMPRESSION="zlib",
+					ENCRYPTION="Y",
+					DATA DIRECTORY "/tmp",
+					INDEX DIRECTORY "/tmp",
+					CONNECTION="mysql://x",
+					PASSWORD="x",
+					INSERT_METHOD=NO,
+					TABLESPACE ts,
+					SECONDARY_ENGINE=mock,
+					AUTOEXTEND_SIZE=4M,
+					UNION=(t1,t2),
+					ENGINE_ATTRIBUTE="{}",
+					SECONDARY_ENGINE_ATTRIBUTE="{}"'
 			)
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
@@ -19965,6 +20097,98 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE ... AS (SELECT ...) parenthesized SELECT forms are translated.
+	 */
+	public function test_create_table_parenthesized_select_translates(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE ctas_parenthesized_source (`id` INTEGER, `label` TEXT)' );
+		$driver->query( "INSERT INTO ctas_parenthesized_source (`id`, `label`) VALUES (1, 'name')" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( 'CREATE TABLE ctas_parenthesized AS (SELECT `id`, `label` FROM `ctas_parenthesized_source`)' )
+		);
+		$this->assertSame(
+			'CREATE TABLE "ctas_parenthesized" AS SELECT "id", "label" FROM "ctas_parenthesized_source"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT * FROM ctas_parenthesized' );
+		$this->assertEquals( array( (object) array( 'id' => '1', 'label' => 'name' ) ), $rows );
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM ctas_parenthesized' );
+		$this->assertSame( 'id', $columns[0]->Field );
+		$this->assertSame( 'int', $columns[0]->Type );
+		$this->assertSame( 'label', $columns[1]->Field );
+		$this->assertSame( 'text', $columns[1]->Type );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( 'CREATE TEMPORARY TABLE ctas_parenthesized_temp (SELECT 2 AS `id`)' )
+		);
+		$this->assertSame(
+			'CREATE TEMPORARY TABLE "ctas_parenthesized_temp" AS SELECT 2 AS "id"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests CREATE TABLE accepts MySQL storage-only table options as no-ops.
+	 */
+	public function test_create_table_storage_options_are_supported_noops(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_create_table_options (
+					id INTEGER NOT NULL,
+					value TEXT,
+					PRIMARY KEY (id)
+				)
+				KEY_BLOCK_SIZE=8
+				MAX_ROWS=10
+				MIN_ROWS=1
+				AVG_ROW_LENGTH=100
+				CHECKSUM=1
+				DELAY_KEY_WRITE=1
+				PACK_KEYS=1
+				STATS_PERSISTENT=0
+				STATS_AUTO_RECALC=1
+				STATS_SAMPLE_PAGES=10
+				COMPRESSION="zlib"
+				ENCRYPTION="Y"
+				DATA DIRECTORY "/tmp"
+				INDEX DIRECTORY "/tmp"
+				CONNECTION="mysql://x"
+				PASSWORD="x"
+				INSERT_METHOD=NO
+				TABLESPACE ts
+				SECONDARY_ENGINE=mock
+				AUTOEXTEND_SIZE=4M
+				UNION=(t1,t2)
+				ENGINE_ATTRIBUTE="{}"
+				SECONDARY_ENGINE_ATTRIBUTE="{}"'
+			)
+		);
+		$this->assertSame(
+			'CREATE TABLE "wptests_create_table_options" (
+  "id" integer NOT NULL,
+  "value" text,
+  PRIMARY KEY ("id")
+)',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM wptests_create_table_options' );
+		$this->assertSame( array( 'id', 'value' ), array_column( $columns, 'Field' ) );
+		$this->assertSame( array( 'int', 'text' ), array_column( $columns, 'Type' ) );
+	}
+
+	/**
 	 * Tests unsupported CREATE TABLE ... SELECT variants fail without backend execution.
 	 */
 	public function test_unsupported_create_table_select_constructs_fail_closed(): void {
@@ -19974,8 +20198,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'column definitions plus select' => 'CREATE TABLE ctas_with_definitions (`id` INTEGER) AS SELECT 1 AS `id`',
 			'table option before select'     => 'CREATE TABLE ctas_with_options ENGINE=InnoDB AS SELECT 1 AS id',
 			'create table like'              => 'CREATE TABLE ctas_like LIKE ctas_source',
-			'parenthesized select'           => 'CREATE TABLE ctas_parenthesized AS (SELECT 1 AS id)',
-			'trailing table option'          => 'CREATE TABLE ctas_trailing (id INTEGER) DATA DIRECTORY "/tmp"',
 		);
 
 		foreach ( $queries as $label => $query ) {
