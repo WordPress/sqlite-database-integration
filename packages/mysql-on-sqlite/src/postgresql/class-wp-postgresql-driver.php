@@ -45883,11 +45883,19 @@ FROM (
 
 		$order_sql = '';
 		if ( null !== $parsed['order_start'] ) {
-			$order_sql = $this->get_mysql_group_concat_order_by_sql(
-				$tokens,
-				$parsed['order_start'],
-				$parsed['order_end']
-			);
+			$order_sql = $parsed['distinct']
+				? $this->get_mysql_group_concat_distinct_order_by_sql(
+					$tokens,
+					$parsed['expression_ranges'][0],
+					$expression_sql,
+					$parsed['order_start'],
+					$parsed['order_end']
+				)
+				: $this->get_mysql_group_concat_order_by_sql(
+					$tokens,
+					$parsed['order_start'],
+					$parsed['order_end']
+				);
 			if ( null === $order_sql ) {
 				return null;
 			}
@@ -46001,10 +46009,6 @@ FROM (
 		) {
 			return null;
 		}
-		if ( $distinct && null !== $order_position ) {
-			return null;
-		}
-
 		$expression_end = $order_position ?? $before_separator_end;
 		if ( $expression_start >= $expression_end ) {
 			return null;
@@ -46103,9 +46107,10 @@ FROM (
 		}
 
 		return sprintf(
-			'STRING_AGG(DISTINCT CAST(%1$s AS text), CAST(%2$s AS text))',
+			'STRING_AGG(DISTINCT CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
 			$expression_sql,
-			$separator_sql
+			$separator_sql,
+			$order_sql
 		);
 	}
 
@@ -46147,6 +46152,51 @@ FROM (
 		}
 
 		return ' ORDER BY ' . implode( ', ', $order_sql );
+	}
+
+	/**
+	 * Render ORDER BY for GROUP_CONCAT(DISTINCT expr ORDER BY expr).
+	 *
+	 * PostgreSQL requires DISTINCT aggregate ORDER BY expressions to match the
+	 * aggregate argument. Keep this to one item that translates to the same SQL as
+	 * the DISTINCT expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param array            $expression_range DISTINCT expression range.
+	 * @param string           $expression_sql Translated DISTINCT expression SQL.
+	 * @param int              $start          First ORDER BY item token position.
+	 * @param int              $end            Final ORDER BY item token position, exclusive.
+	 * @return string|null Aggregate ORDER BY SQL, or null when unsupported.
+	 */
+	private function get_mysql_group_concat_distinct_order_by_sql( array $tokens, array $expression_range, string $expression_sql, int $start, int $end ): ?string {
+		$items = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
+		if ( null === $items || 1 !== count( $items ) ) {
+			return null;
+		}
+
+		$item_start = $items[0]['start'];
+		$item_end   = $items[0]['end'];
+		$direction  = '';
+
+		if ( isset( $tokens[ $item_end - 1 ] ) ) {
+			if ( WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
+				$direction = ' DESC';
+				--$item_end;
+			} elseif ( WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
+				$direction = ' ASC';
+				--$item_end;
+			}
+		}
+
+		if (
+			$item_start >= $item_end
+			|| $this->translate_mysql_token_sequence_to_postgresql( $tokens, $expression_range['start'], $expression_range['end'] )
+				!== $this->translate_mysql_token_sequence_to_postgresql( $tokens, $item_start, $item_end )
+		) {
+			return null;
+		}
+
+		return sprintf( ' ORDER BY CAST(%s AS text)%s', $expression_sql, $direction );
 	}
 
 	/**

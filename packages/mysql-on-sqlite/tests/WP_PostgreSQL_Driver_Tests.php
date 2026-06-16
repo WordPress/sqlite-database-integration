@@ -27922,12 +27922,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests GROUP_CONCAT(DISTINCT expr ORDER BY expr) translates for PostgreSQL.
+	 */
+	public function test_group_concat_distinct_order_by_same_expression_translates_for_postgresql(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection {
+			public function get_driver_name(): string {
+				return 'pgsql';
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT GROUP_CONCAT(DISTINCT value ORDER BY value DESC SEPARATOR '|') AS combined FROM group_concat_values"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString(
+			"STRING_AGG(DISTINCT CAST(value AS text), CAST('|' AS text) ORDER BY CAST(value AS text) DESC)",
+			$sql
+		);
+		$this->assertStringNotContainsString( 'GROUP_CONCAT', $sql );
+	}
+
+	/**
 	 * Tests unsupported GROUP_CONCAT() forms fail before backend execution.
 	 */
 	public function test_unsupported_group_concat_forms_fail_closed_before_backend_execution(): void {
 		$queries = array(
 			'SELECT GROUP_CONCAT(DISTINCT id, value) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(DISTINCT value ORDER BY id) AS combined FROM group_concat_values',
+			'SELECT GROUP_CONCAT(DISTINCT value ORDER BY value, id) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(DISTINCT value SEPARATOR separator_value) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value ORDER id) AS combined FROM group_concat_values',
 			'SELECT GROUP_CONCAT(value SEPARATOR) AS combined FROM group_concat_values',
