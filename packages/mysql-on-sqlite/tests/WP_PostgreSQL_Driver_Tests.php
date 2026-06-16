@@ -359,6 +359,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL INSERT priority modifiers are accepted as compatibility no-ops.
+	 */
+	public function test_insert_priority_modifiers_are_accepted_as_noops(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_insert_priority (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->query( 'CREATE TABLE wptests_insert_priority_source (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_insert_priority_source (id, value) VALUES (2, 'delayed-select')" );
+
+		$this->assertSame( 1, $driver->query( "INSERT LOW_PRIORITY INTO wptests_insert_priority (id, value) VALUES (1, 'low')" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_priority" ("id", "value") VALUES (1, \'low\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame( 0, $driver->query( "INSERT HIGH_PRIORITY IGNORE INTO wptests_insert_priority (id, value) VALUES (1, 'ignored')" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_priority" ("id", "value") VALUES (1, \'ignored\') ON CONFLICT DO NOTHING',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				"INSERT DELAYED INTO wptests_insert_priority (id, value)
+				SELECT id, value FROM wptests_insert_priority_source"
+			)
+		);
+		$this->assertSame(
+			'INSERT INTO wptests_insert_priority (id, value) SELECT id, value FROM wptests_insert_priority_source',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertStringNotContainsString( 'DELAYED', $this->get_last_single_postgresql_sql( $driver ) );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_insert_priority ORDER BY id' );
+		$this->assertSame( array( '1', '2' ), array_column( $rows, 'id' ) );
+		$this->assertSame( array( 'low', 'delayed-select' ), array_column( $rows, 'value' ) );
+	}
+
+	/**
 	 * Tests unsupported INSERT ... SET shapes fail before backend execution.
 	 */
 	public function test_unsupported_insert_set_shapes_fail_closed_before_backend(): void {
@@ -1882,6 +1922,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
+
+		$low_priority_replace = "REPLACE LOW_PRIORITY INTO `wptests_posts` (`post_name`, `post_status`) VALUES ('hello-low', 'publish')";
+
+		$this->assertSame( 1, $driver->query( $low_priority_replace ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_posts" ("post_name", "post_status") VALUES (\'hello-low\', \'publish\')',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$delayed_replace = "REPLACE DELAYED INTO `wptests_posts` (`post_name`, `post_status`) VALUES ('hello-delayed', 'draft')";
+
+		$this->assertSame( 1, $driver->query( $delayed_replace ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_posts" ("post_name", "post_status") VALUES (\'hello-delayed\', \'draft\')',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
 	}
 
 	/**
@@ -1889,7 +1955,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_unsupported_replace_shapes_fail_closed_before_backend(): void {
 		$queries = array(
-			"REPLACE LOW_PRIORITY INTO wptests_posts (`post_name`, `post_status`) VALUES ('hello-world', 'publish')",
 			"REPLACE INTO wptests_posts SET post_name = 'hello-world', post_name = 'duplicate'",
 		);
 
@@ -4147,6 +4212,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$update = "INSERT INTO `wptests_options` SET `option_name` = 'siteurl',
 			`option_value` = 'http://example.net',
 			`autoload` = 'no'
+			ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`),
+			                        `autoload` = VALUES(`autoload`)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+		$this->assertSame( 'http://example.net', $rows[0]->option_value );
+		$this->assertSame( 'no', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests INSERT priority modifiers are accepted on ON DUPLICATE KEY UPDATE statements.
+	 */
+	public function test_insert_priority_modifier_upsert_is_translated_to_postgresql_on_conflict(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$insert = "INSERT LOW_PRIORITY INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.org', 'yes')
+			ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`),
+			                        `autoload` = VALUES(`autoload`)";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$update = "INSERT HIGH_PRIORITY INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.net', 'no')
 			ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`),
 			                        `autoload` = VALUES(`autoload`)";
 

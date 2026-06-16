@@ -15891,6 +15891,7 @@ WHERE option_name IN (
 		}
 
 		$position = 1;
+		$this->consume_mysql_insert_priority_modifier( $tokens, $position );
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
 		}
@@ -17027,10 +17028,11 @@ WHERE option_name IN (
 	 *
 	 * WordPress' wpdb::replace() emits VALUES rows with an explicit column list.
 	 * Columnless VALUES rows are supported when stored MySQL metadata can infer
-	 * the target columns. For rows with a known WordPress unique key, use
-	 * PostgreSQL's ON CONFLICT update path and synthesize MySQL's affected-row
-	 * count in query(). Without a known conflict column, fall back to a plain
-	 * INSERT so PostgreSQL still reports normal constraint and length errors.
+	 * the target columns. LOW_PRIORITY and DELAYED are accepted as compatibility
+	 * no-ops. For rows with a known WordPress unique key, use PostgreSQL's ON
+	 * CONFLICT update path and synthesize MySQL's affected-row count in query().
+	 * Without a known conflict column, fall back to a plain INSERT so PostgreSQL
+	 * still reports normal constraint and length errors.
 	 *
 	 * @param string $query MySQL query.
 	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
@@ -17042,6 +17044,7 @@ WHERE option_name IN (
 		}
 
 		$position = 1;
+		$this->consume_mysql_replace_priority_modifier( $tokens, $position );
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
 		}
@@ -18064,9 +18067,10 @@ WHERE option_name IN (
 	 * WordPress CRUD helpers emit a narrow INSERT INTO table (columns) VALUES
 	 * (...) shape. INSERT IGNORE uses PostgreSQL's conflict no-op syntax for
 	 * the same VALUES shape. Simple single-row INSERT ... SET assignments are
-	 * normalized into that same PostgreSQL INSERT form. Other MySQL-specific
-	 * modifiers and trailing clauses fall through unchanged. Columnless VALUES
-	 * rows are supported when stored MySQL metadata can infer target columns.
+	 * normalized into that same PostgreSQL INSERT form. MySQL priority
+	 * modifiers are accepted as compatibility no-ops. Other trailing clauses
+	 * fall through unchanged. Columnless VALUES rows are supported when stored
+	 * MySQL metadata can infer target columns.
 	 *
 	 * @param string $query MySQL query.
 	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
@@ -18079,6 +18083,7 @@ WHERE option_name IN (
 
 		$position = 1;
 		$ignore   = false;
+		$this->consume_mysql_insert_priority_modifier( $tokens, $position );
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
 			$ignore = true;
 			++$position;
@@ -18317,6 +18322,7 @@ WHERE option_name IN (
 
 		$position = 1;
 		$ignore   = false;
+		$this->consume_mysql_insert_priority_modifier( $tokens, $position );
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id ) {
 			$ignore = true;
 			++$position;
@@ -20649,6 +20655,51 @@ WHERE option_name IN (
 			&& (
 				WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[ $position ]->id
 				|| WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			++$position;
+		}
+	}
+
+	/**
+	 * Consume one MySQL INSERT priority modifier that does not change row values.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 */
+	private function consume_mysql_insert_priority_modifier( array $tokens, int &$position ): void {
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::DELAYED_SYMBOL,
+					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+				),
+				true
+			)
+		) {
+			++$position;
+		}
+	}
+
+	/**
+	 * Consume one MySQL REPLACE priority modifier that does not change row values.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 */
+	private function consume_mysql_replace_priority_modifier( array $tokens, int &$position ): void {
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::DELAYED_SYMBOL,
+				),
+				true
 			)
 		) {
 			++$position;
