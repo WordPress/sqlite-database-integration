@@ -90,6 +90,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$table_name    = $this->get_table_name( $create_table );
 		$if_not_exists = $create_table->has_child_node( 'ifNotExists' );
+		$column_types  = $this->get_create_table_column_types( $element_list );
 		$columns       = array();
 		$constraints   = array();
 		$indexes       = array();
@@ -123,7 +124,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
-			$index = $this->translate_secondary_index( $table_constraint, $table_name, $if_not_exists );
+			$index = $this->translate_secondary_index( $table_constraint, $table_name, $if_not_exists, $column_types );
 			if ( null !== $index ) {
 				$indexes[] = $index;
 			}
@@ -379,6 +380,35 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Get MySQL column types keyed by lowercase column name for DDL index translation.
+	 *
+	 * @param WP_Parser_Node $element_list CREATE TABLE element list.
+	 * @return array<string,string> Column types keyed by lowercase name.
+	 */
+	private function get_create_table_column_types( WP_Parser_Node $element_list ): array {
+		$column_types = array();
+
+		foreach ( $element_list->get_child_nodes( 'tableElement' ) as $table_element ) {
+			$column_definition = $table_element->get_first_child_node( 'columnDefinition' );
+			if ( ! $column_definition ) {
+				continue;
+			}
+
+			$name             = $this->get_identifier_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
+			$field_definition = $column_definition->get_first_child_node( 'fieldDefinition' );
+			if ( ! $field_definition ) {
+				throw new InvalidArgumentException( 'Column definition is missing a field definition.' );
+			}
+
+			$data_type = $field_definition->get_first_child_node( 'dataType' );
+
+			$column_types[ strtolower( $name ) ] = $this->get_mysql_column_type( $data_type, $field_definition );
+		}
+
+		return $column_types;
 	}
 
 	/**
@@ -1035,8 +1065,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 			return 'DEFAULT NULL';
 		}
 
-		if ( $this->is_current_timestamp_default_attribute( $attribute ) ) {
-			return "DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+		$current_timestamp_default = $this->get_current_timestamp_default_data( $attribute );
+		if ( null !== $current_timestamp_default ) {
+			return 'DEFAULT ' . $this->get_postgresql_mysql_current_timestamp_sql( $current_timestamp_default['fsp'] );
 		}
 
 		if ( $this->is_generated_default_attribute( $attribute ) ) {
@@ -1095,7 +1126,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$base_type = $data_type ? $this->get_base_mysql_column_type( $this->get_node_value( $data_type ) ) : '';
 		if ( in_array( $base_type, array( 'datetime', 'timestamp' ), true ) ) {
-			return sprintf( "TO_CHAR(%s, 'YYYY-MM-DD HH24:MI:SS')", $expression['sql'] );
+			return $this->get_postgresql_mysql_temporal_expression_sql( $expression['sql'], 'YYYY-MM-DD HH24:MI:SS', $expression['fsp'] );
 		}
 
 		if ( 'date' === $base_type ) {
@@ -1115,7 +1146,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_MySQL_Token[] $tokens DEFAULT expression tokens.
 	 * @param int              $start  Start offset, inclusive.
 	 * @param int              $end    End offset, exclusive.
-	 * @return array{sql: string, temporal: bool}|null PostgreSQL SQL and type hint, or null when unsupported.
+	 * @return array{sql: string, temporal: bool, fsp: int}|null PostgreSQL SQL and type hint, or null when unsupported.
 	 */
 	private function translate_generated_default_expression_tokens( array $tokens, int $start, int $end ): ?array {
 		if ( $start >= $end ) {
@@ -1124,13 +1155,15 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$sql      = '';
 		$temporal = false;
+		$fsp      = 0;
 
 		for ( $position = $start; $position < $end; ++$position ) {
 			$function = $this->translate_generated_default_function_call( $tokens, $position, $end );
 			if ( null !== $function ) {
-				$sql       = $this->append_generated_default_sql_fragment( $sql, $function['sql'] );
-				$temporal  = $temporal || $function['temporal'];
-				$position  = $function['next'] - 1;
+				$sql      = $this->append_generated_default_sql_fragment( $sql, $function['sql'] );
+				$temporal = $temporal || $function['temporal'];
+				$fsp      = max( $fsp, $function['fsp'] );
+				$position = $function['next'] - 1;
 				continue;
 			}
 
@@ -1174,6 +1207,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		return array(
 			'sql'      => $sql,
 			'temporal' => $temporal,
+			'fsp'      => $fsp,
 		);
 	}
 
@@ -1183,7 +1217,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_MySQL_Token[] $tokens   DEFAULT expression tokens.
 	 * @param int              $position Function token offset.
 	 * @param int              $end      End offset, exclusive.
-	 * @return array{sql: string, temporal: bool, next: int}|null Function SQL and next offset, or null.
+	 * @return array{sql: string, temporal: bool, fsp: int, next: int}|null Function SQL and next offset, or null.
 	 */
 	private function translate_generated_default_function_call( array $tokens, int $position, int $end ): ?array {
 		$token = $tokens[ $position ] ?? null;
@@ -1193,18 +1227,27 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		if ( $this->is_generated_default_current_timestamp_function_token( $token ) ) {
 			$next = $position + 1;
+			$fsp  = 0;
 			if ( isset( $tokens[ $next ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $next ]->id ) {
 				$close = $this->find_matching_generated_default_parenthesis( $tokens, $next, $end );
 				if ( $next + 1 !== $close ) {
-					return null;
+					if ( $next + 2 !== $close ) {
+						return null;
+					}
+
+					$fsp = $this->get_mysql_fractional_seconds_precision_token_value( $tokens[ $next + 1 ] ?? null );
+					if ( null === $fsp ) {
+						return null;
+					}
 				}
 
 				$next = $close + 1;
 			}
 
 			return array(
-				'sql'      => "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
+				'sql'      => $this->get_postgresql_current_timestamp_expression_sql( $fsp ),
 				'temporal' => true,
+				'fsp'      => $fsp,
 				'next'     => $next,
 			);
 		}
@@ -1238,7 +1281,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_MySQL_Token[] $tokens   DEFAULT expression tokens.
 	 * @param int              $position Function token offset.
 	 * @param int              $end      End offset, exclusive.
-	 * @return array{sql: string, temporal: bool, next: int}|null Function SQL and next offset, or null.
+	 * @return array{sql: string, temporal: bool, fsp: int, next: int}|null Function SQL and next offset, or null.
 	 */
 	private function translate_generated_default_concat_function( array $tokens, int $position, int $end ): ?array {
 		if ( ! isset( $tokens[ $position + 1 ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id ) {
@@ -1259,6 +1302,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			return array(
 				'sql'      => $this->quote_string_literal( '' ),
 				'temporal' => false,
+				'fsp'      => 0,
 				'next'     => $close + 1,
 			);
 		}
@@ -1276,6 +1320,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		return array(
 			'sql'      => '(' . implode( ' || ', $sql_arguments ) . ')',
 			'temporal' => false,
+			'fsp'      => 0,
 			'next'     => $close + 1,
 		);
 	}
@@ -1286,7 +1331,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_MySQL_Token[] $tokens   DEFAULT expression tokens.
 	 * @param int              $position Function token offset.
 	 * @param int              $end      End offset, exclusive.
-	 * @return array{sql: string, temporal: bool, next: int}|null Function SQL and next offset, or null.
+	 * @return array{sql: string, temporal: bool, fsp: int, next: int}|null Function SQL and next offset, or null.
 	 */
 	private function translate_generated_default_date_arithmetic_function( array $tokens, int $position, int $end ): ?array {
 		if ( ! isset( $tokens[ $position + 1 ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id ) {
@@ -1318,6 +1363,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		return array(
 			'sql'      => '(' . $base['sql'] . ' ' . $operator . ' (' . $interval . '))',
 			'temporal' => true,
+			'fsp'      => $base['fsp'],
 			'next'     => $close + 1,
 		);
 	}
@@ -1563,9 +1609,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $table_constraint Table constraint node.
 	 * @param string         $table_name       Table name.
 	 * @param bool           $if_not_exists    Whether CREATE TABLE used IF NOT EXISTS.
+	 * @param array          $column_types     Column types keyed by lowercase name.
 	 * @return string|null PostgreSQL CREATE INDEX statement, or null for metadata-only MySQL index types.
 	 */
-	private function translate_secondary_index( WP_Parser_Node $table_constraint, string $table_name, bool $if_not_exists ): ?string {
+	private function translate_secondary_index( WP_Parser_Node $table_constraint, string $table_name, bool $if_not_exists, array $column_types ): ?string {
 		if (
 			$table_constraint->has_child_token( WP_MySQL_Lexer::FULLTEXT_SYMBOL )
 			|| $table_constraint->has_child_token( WP_MySQL_Lexer::SPATIAL_SYMBOL )
@@ -1586,7 +1633,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$if_not_exists ? 'IF NOT EXISTS ' : '',
 			$this->quote_identifier( $table_name . '__' . $index_name ),
 			$this->quote_identifier( $table_name ),
-			implode( ', ', $this->quote_key_parts( $table_constraint, $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ), true ) )
+			implode( ', ', $this->quote_key_parts( $table_constraint, $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ), true, $column_types ) )
 		);
 	}
 
@@ -1674,14 +1721,19 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $table_constraint       Table constraint node.
 	 * @param bool           $use_prefix_expressions Whether explicit key-part prefix lengths should become expressions.
 	 * @param bool           $include_direction      Whether ASC/DESC key-part direction should be included.
+	 * @param array          $column_types           Column types keyed by lowercase name.
 	 * @return string[] Quoted PostgreSQL column names.
 	 */
-	private function quote_key_parts( WP_Parser_Node $table_constraint, bool $use_prefix_expressions = false, bool $include_direction = false ): array {
+	private function quote_key_parts( WP_Parser_Node $table_constraint, bool $use_prefix_expressions = false, bool $include_direction = false, array $column_types = array() ): array {
 		$quoted_parts = array();
 
 		foreach ( $table_constraint->get_descendant_nodes( 'keyPart' ) as $key_part ) {
 			$column_name = $this->get_identifier_value( $key_part->get_first_child_node( 'identifier' ) );
 			$sub_part    = $this->get_field_length( $key_part );
+			if ( $use_prefix_expressions && null === $sub_part ) {
+				$sub_part = $this->get_implicit_index_sub_part( $column_name, $column_types );
+			}
+
 			if ( $use_prefix_expressions && null !== $sub_part ) {
 				$quoted_part = $this->get_prefix_key_part_expression_sql( $column_name, $sub_part );
 			} else {
@@ -2539,13 +2591,27 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return string|null MySQL-facing default metadata, or null.
 	 */
 	private function get_current_timestamp_default_metadata( WP_Parser_Node $attribute ): ?string {
+		$data = $this->get_current_timestamp_default_data( $attribute );
+		return null === $data ? null : $data['metadata'];
+	}
+
+	/**
+	 * Get metadata and precision data for a CURRENT_TIMESTAMP/NOW default attribute.
+	 *
+	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @return array{metadata: string, fsp: int}|null MySQL-facing default metadata and precision, or null.
+	 */
+	private function get_current_timestamp_default_data( WP_Parser_Node $attribute ): ?array {
 		$tokens = $this->strip_default_attribute_outer_parentheses(
 			$this->get_default_attribute_value_tokens( $attribute )
 		);
 		$count  = count( $tokens );
 
 		if ( 1 === $count && $this->is_current_timestamp_token( $tokens[0] ) ) {
-			return 'CURRENT_TIMESTAMP';
+			return array(
+				'metadata' => 'CURRENT_TIMESTAMP',
+				'fsp'      => 0,
+			);
 		}
 
 		if (
@@ -2554,7 +2620,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
 		) {
-			return 'CURRENT_TIMESTAMP';
+			return array(
+				'metadata' => 'CURRENT_TIMESTAMP',
+				'fsp'      => 0,
+			);
 		}
 
 		if (
@@ -2563,7 +2632,44 @@ class WP_PostgreSQL_Create_Table_Translator {
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
 		) {
-			return 'now()';
+			return array(
+				'metadata' => 'now()',
+				'fsp'      => 0,
+			);
+		}
+
+		if (
+			4 === $count
+			&& $this->is_current_timestamp_token( $tokens[0] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[3]->id
+		) {
+			$fsp = $this->get_mysql_fractional_seconds_precision_token_value( $tokens[2] );
+			if ( null === $fsp ) {
+				return null;
+			}
+
+			return array(
+				'metadata' => sprintf( 'CURRENT_TIMESTAMP(%d)', $fsp ),
+				'fsp'      => $fsp,
+			);
+		}
+
+		if (
+			4 === $count
+			&& WP_MySQL_Lexer::NOW_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[3]->id
+		) {
+			$fsp = $this->get_mysql_fractional_seconds_precision_token_value( $tokens[2] );
+			if ( null === $fsp ) {
+				return null;
+			}
+
+			return array(
+				'metadata' => sprintf( 'now(%d)', $fsp ),
+				'fsp'      => $fsp,
+			);
 		}
 
 		return null;
@@ -2581,6 +2687,73 @@ class WP_PostgreSQL_Create_Table_Translator {
 				WP_MySQL_Lexer::NOW_SYMBOL === $token->id
 				&& 'CURRENT_TIMESTAMP' === strtoupper( $token->get_value() )
 			);
+	}
+
+	/**
+	 * Get a bounded MySQL fractional seconds precision from a token.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return int|null Precision, or null when unsupported.
+	 */
+	private function get_mysql_fractional_seconds_precision_token_value( ?WP_MySQL_Token $token ): ?int {
+		if ( null === $token || WP_MySQL_Lexer::INT_NUMBER !== $token->id ) {
+			return null;
+		}
+
+		$value = trim( $token->get_value() );
+		return 1 === preg_match( '/^[0-6]$/', $value ) ? (int) $value : null;
+	}
+
+	/**
+	 * Build a PostgreSQL current timestamp expression with optional precision.
+	 *
+	 * @param int $fsp Fractional seconds precision, 0 through 6.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_current_timestamp_expression_sql( int $fsp ): string {
+		return 0 === $fsp
+			? "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'"
+			: sprintf( "CURRENT_TIMESTAMP(%d) AT TIME ZONE 'UTC'", $fsp );
+	}
+
+	/**
+	 * Format a temporal expression as MySQL-compatible text.
+	 *
+	 * @param string $expression_sql PostgreSQL temporal expression SQL.
+	 * @param string $format         PostgreSQL TO_CHAR format.
+	 * @param int    $fsp            Fractional seconds precision, 0 through 6.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_temporal_expression_sql( string $expression_sql, string $format, int $fsp ): string {
+		if ( 0 === $fsp ) {
+			return sprintf( "TO_CHAR(%s, '%s')", $expression_sql, $format );
+		}
+
+		$output_prefix_lengths = array(
+			'YYYY-MM-DD HH24:MI:SS' => 20,
+			'HH24:MI:SS'            => 9,
+		);
+
+		return sprintf(
+			"LEFT(TO_CHAR(%s, '%s.US'), %d)",
+			$expression_sql,
+			$format,
+			( $output_prefix_lengths[ $format ] ?? 0 ) + $fsp
+		);
+	}
+
+	/**
+	 * Format the emulated MySQL current timestamp default.
+	 *
+	 * @param int $fsp Fractional seconds precision, 0 through 6.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_current_timestamp_sql( int $fsp ): string {
+		return $this->get_postgresql_mysql_temporal_expression_sql(
+			$this->get_postgresql_current_timestamp_expression_sql( $fsp ),
+			'YYYY-MM-DD HH24:MI:SS',
+			$fsp
+		);
 	}
 
 	/**
@@ -2778,6 +2951,12 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$numeric_precision = $this->get_numeric_precision_fragment( $data_type );
 		if ( '' !== $numeric_precision && in_array( $type, array( 'dec', 'decimal', 'double', 'fixed', 'float', 'numeric' ), true ) ) {
 			$type .= $numeric_precision;
+		}
+		if ( in_array( $type, array( 'datetime', 'time', 'timestamp' ), true ) ) {
+			$temporal_precision = $numeric_precision ?: $this->get_temporal_precision_fragment( $data_type );
+			if ( '' !== $temporal_precision ) {
+				$type .= $temporal_precision;
+			}
 		}
 
 		$length = $this->get_field_length( $data_type );
@@ -3097,6 +3276,28 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$field_length = $data_type->get_first_descendant_node( 'fieldLength' );
 		return $field_length ? $this->get_node_value( $field_length ) : '';
+	}
+
+	/**
+	 * Get a temporal fractional seconds precision SQL fragment.
+	 *
+	 * @param WP_Parser_Node $data_type Data type node.
+	 * @return string Precision fragment, including parentheses, or empty string.
+	 */
+	private function get_temporal_precision_fragment( WP_Parser_Node $data_type ): string {
+		$tokens = $data_type->get_descendant_tokens();
+		for ( $i = 0; $i + 2 < count( $tokens ); ++$i ) {
+			if (
+				WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id
+				&& WP_MySQL_Lexer::INT_NUMBER === $tokens[ $i + 1 ]->id
+				&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i + 2 ]->id
+			) {
+				$fsp = (int) $tokens[ $i + 1 ]->get_value();
+				return $fsp >= 0 && $fsp <= 6 ? sprintf( '(%d)', $fsp ) : '';
+			}
+		}
+
+		return '';
 	}
 
 	/**

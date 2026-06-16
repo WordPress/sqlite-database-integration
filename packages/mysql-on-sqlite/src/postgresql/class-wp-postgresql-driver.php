@@ -3325,6 +3325,12 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
+		$start = $position;
+		$end   = $this->get_mysql_set_assignment_value_end( $tokens, $start );
+		if ( null === $end || $start === $end ) {
+			return null;
+		}
+
 		if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
 			$user_variable_name = $this->normalize_mysql_user_variable_name( $tokens[ $position++ ]->get_value() );
 
@@ -3337,21 +3343,232 @@ class WP_PostgreSQL_Driver {
 				);
 			}
 
+			if ( $position !== $end ) {
+				return null;
+			}
+
 			return $this->get_mysql_user_variable_value( $user_variable_name );
 		}
 
 		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $tokens[ $position ]->id ) {
-			$system_variable_name = $this->parse_mysql_system_variable_reference( $tokens, $position );
-			return null === $system_variable_name ? null : $this->get_mysql_system_variable_value( $system_variable_name );
+			$display              = null;
+			$scope                = null;
+			$system_variable_name = $this->parse_mysql_system_variable_reference( $tokens, $position, $display, $scope );
+			if ( null === $system_variable_name || $position !== $end ) {
+				return null;
+			}
+
+			return $this->get_mysql_system_variable_value( $system_variable_name, $scope );
 		}
 
-		$value = $this->get_mysql_set_literal_token_value( $tokens[ $position ] );
-		if ( null === $value ) {
+		if ( 'system' === $target['type'] && 'sql_mode' === $target['name'] ) {
+			$value = $this->evaluate_mysql_sql_mode_set_expression( $tokens, $start, $end );
+			if ( null !== $value ) {
+				$position = $end;
+				return $value;
+			}
+		}
+
+		if ( $start + 1 !== $end ) {
 			return null;
 		}
 
-		++$position;
+		$value = $this->get_mysql_set_literal_token_value( $tokens[ $start ] );
+		if ( null !== $value ) {
+			$position = $end;
+		}
+
 		return $value;
+	}
+
+	/**
+	 * Find the end of one SET assignment value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First value token position.
+	 * @return int|null Final value token position, exclusive, or null when malformed.
+	 */
+	private function get_mysql_set_assignment_value_end( array $tokens, int $position ): ?int {
+		$depth = 0;
+		for ( $i = $position; isset( $tokens[ $i ] ); $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					return null;
+				}
+
+				continue;
+			}
+
+			if (
+				0 === $depth
+				&& in_array(
+					$tokens[ $i ]->id,
+					array(
+						WP_MySQL_Lexer::COMMA_SYMBOL,
+						WP_MySQL_Lexer::EOF,
+						WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+					),
+					true
+				)
+			) {
+				return $i;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Evaluate bounded SQL-mode SET expressions SQLite can handle dynamically.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token position.
+	 * @param int              $end    Final expression token position, exclusive.
+	 * @return string|null Evaluated SQL mode string, or null when unsupported.
+	 */
+	private function evaluate_mysql_sql_mode_set_expression( array $tokens, int $start, int $end ): ?string {
+		while (
+			$start < $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start ]->id
+		) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end );
+			if ( $after_close !== $end ) {
+				break;
+			}
+
+			if ( isset( $tokens[ $start + 1 ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $start + 1 ]->id ) {
+				return $this->evaluate_mysql_sql_mode_set_select_expression( $tokens, $start + 1, $end - 1 );
+			}
+
+			++$start;
+			--$end;
+		}
+
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
+			return null;
+		}
+
+		if ( $start + 1 === $end ) {
+			if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $start ]->id ) {
+				return $this->get_mysql_user_variable_value( $this->normalize_mysql_user_variable_name( $tokens[ $start ]->get_value() ) );
+			}
+
+			return $this->get_mysql_set_literal_token_value( $tokens[ $start ] );
+		}
+
+		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $tokens[ $start ]->id ) {
+			$position = $start;
+			$display  = null;
+			$scope    = null;
+			$name     = $this->parse_mysql_system_variable_reference( $tokens, $position, $display, $scope );
+			if ( null !== $name && $position === $end ) {
+				return $this->get_mysql_system_variable_value( $name, $scope );
+			}
+		}
+
+		return $this->evaluate_mysql_sql_mode_set_function_expression( $tokens, $start, $end );
+	}
+
+	/**
+	 * Evaluate a scalar SELECT wrapper used in SQL-mode SET expressions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  SELECT token position.
+	 * @param int              $end    Final SELECT token position, exclusive.
+	 * @return string|null Evaluated value, or null when unsupported.
+	 */
+	private function evaluate_mysql_sql_mode_set_select_expression( array $tokens, int $start, int $end ): ?string {
+		if ( ! isset( $tokens[ $start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $start ]->id ) {
+			return null;
+		}
+
+		$projection_start = $start + 1;
+		$projection_end   = $end;
+		$from_position    = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $end );
+		if ( null !== $from_position ) {
+			if (
+				! isset( $tokens[ $from_position + 1 ] )
+				|| WP_MySQL_Lexer::DUAL_SYMBOL !== $tokens[ $from_position + 1 ]->id
+				|| $from_position + 2 !== $end
+			) {
+				return null;
+			}
+
+			$projection_end = $from_position;
+		}
+
+		return $this->evaluate_mysql_sql_mode_set_expression( $tokens, $projection_start, $projection_end );
+	}
+
+	/**
+	 * Evaluate supported SQL-mode string functions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  Function token position.
+	 * @param int              $end    Final function token position, exclusive.
+	 * @return string|null Evaluated value, or null when unsupported.
+	 */
+	private function evaluate_mysql_sql_mode_set_function_expression( array $tokens, int $start, int $end ): ?string {
+		if (
+			! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $start + 1, $end );
+		if ( $after_close !== $end ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $start + 2, $end - 1 );
+		if ( null === $arguments ) {
+			return null;
+		}
+
+		$function = strtolower( $tokens[ $start ]->get_value() );
+		if ( 'concat' === $function ) {
+			$values = array();
+			foreach ( $arguments as $argument ) {
+				$value = $this->evaluate_mysql_sql_mode_set_expression( $tokens, $argument['start'], $argument['end'] );
+				if ( null === $value ) {
+					return null;
+				}
+
+				$values[] = $value;
+			}
+
+			return implode( '', $values );
+		}
+
+		if ( in_array( $function, array( 'replace', 'regexp_replace' ), true ) ) {
+			if ( 3 !== count( $arguments ) ) {
+				return null;
+			}
+
+			$subject     = $this->evaluate_mysql_sql_mode_set_expression( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+			$search      = $this->evaluate_mysql_sql_mode_set_expression( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+			$replacement = $this->evaluate_mysql_sql_mode_set_expression( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+			if ( null === $subject || null === $search || null === $replacement ) {
+				return null;
+			}
+
+			if ( 'replace' === $function ) {
+				return str_replace( $search, $replacement, $subject );
+			}
+
+			$result = @preg_replace( '/' . str_replace( '/', '\/', $search ) . '/', $replacement, $subject );
+			return null === $result ? null : $result;
+		}
+
+		return null;
 	}
 
 	/**
@@ -7896,17 +8113,17 @@ $wp_mysql_on_update$',
 
 		switch ( $tokens[ $start ]->id ) {
 			case WP_MySQL_Lexer::CHANGE_SYMBOL:
-				return $this->translate_mysql_dbdelta_change_column_alter_action( $table_name, $clause, $tokens, $start, $end );
+				return $this->translate_mysql_dbdelta_change_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
 
 			case WP_MySQL_Lexer::MODIFY_SYMBOL:
-				return $this->translate_mysql_dbdelta_modify_column_alter_action( $table_name, $clause, $tokens, $start, $end );
+				return $this->translate_mysql_dbdelta_modify_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
 
 			case WP_MySQL_Lexer::ADD_SYMBOL:
 				if ( $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end ) ) {
 					return $this->translate_mysql_dbdelta_add_constraint_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
 				}
 				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
-					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_name, $clause, $tokens, $start, $end );
+					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
 				}
 				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
 
@@ -7947,10 +8164,10 @@ $wp_mysql_on_update$',
 				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
 					return $this->translate_mysql_dbdelta_drop_index_alter_action( $table_name, $tokens, $start, $end );
 				}
-				return $this->translate_mysql_dbdelta_drop_column_alter_action( $table_name, $tokens, $start, $end );
+				return $this->translate_mysql_dbdelta_drop_column_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 
 			case WP_MySQL_Lexer::ALTER_SYMBOL:
-				return $this->translate_mysql_dbdelta_alter_column_default_action( $table_name, $clause, $tokens, $start, $end );
+				return $this->translate_mysql_dbdelta_alter_column_default_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
 
 			case WP_MySQL_Lexer::RENAME_SYMBOL:
 				$table_rename = $this->translate_mysql_dbdelta_rename_table_alter_action( $table_schema, $table_name, $tokens, $start, $end );
@@ -7958,7 +8175,7 @@ $wp_mysql_on_update$',
 					return $table_rename;
 				}
 				if ( isset( $tokens[ $start + 1 ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $start + 1 ]->id ) {
-					return $this->translate_mysql_dbdelta_rename_column_alter_action( $table_name, $tokens, $start, $end );
+					return $this->translate_mysql_dbdelta_rename_column_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 				}
 				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
 					return $this->translate_mysql_dbdelta_rename_index_alter_action( $table_name, $tokens, $start, $end );
@@ -7991,31 +8208,31 @@ $wp_mysql_on_update$',
 			);
 		}
 
-			if ( $this->is_supported_mysql_dbdelta_online_ddl_option_alter_action( $tokens, $start, $end ) ) {
-				return array(
-					'statements' => array(),
-					'metadata'   => array(
-						'operation' => 'noop',
+		if ( $this->is_supported_mysql_dbdelta_online_ddl_option_alter_action( $tokens, $start, $end ) ) {
+			return array(
+				'statements' => array(),
+				'metadata'   => array(
+					'operation' => 'noop',
 					'option'    => 'online_ddl_option',
 				),
-				);
-			}
+			);
+		}
 
-			$table_comment = $this->get_mysql_dbdelta_table_comment_alter_value( $tokens, $start, $end );
-			if ( null !== $table_comment ) {
-				return array(
-					'statements' => array(),
-					'metadata'   => array(
-						'operation' => 'set_table_comment',
-						'comment'   => $table_comment,
-					),
-				);
-			}
+		$table_comment = $this->get_mysql_dbdelta_table_comment_alter_value( $tokens, $start, $end );
+		if ( null !== $table_comment ) {
+			return array(
+				'statements' => array(),
+				'metadata'   => array(
+					'operation' => 'set_table_comment',
+					'comment'   => $table_comment,
+				),
+			);
+		}
 
-			if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
-				return array(
-					'statements' => array(),
-					'metadata'   => array(
+		if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
+			return array(
+				'statements' => array(),
+				'metadata'   => array(
 					'operation' => 'noop',
 				),
 			);
@@ -8070,7 +8287,7 @@ $wp_mysql_on_update$',
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_rename_column_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_rename_column_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		if (
 			! isset( $tokens[ $start + 4 ] )
 			|| WP_MySQL_Lexer::COLUMN_SYMBOL !== $tokens[ $start + 1 ]->id
@@ -8085,6 +8302,7 @@ $wp_mysql_on_update$',
 		if ( null === $old_column_name || null === $new_column_name ) {
 			return null;
 		}
+		$old_column_name = $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $old_column_name );
 
 		return array(
 			'statements' => array(
@@ -8250,7 +8468,7 @@ $wp_mysql_on_update$',
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_change_column_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_change_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
@@ -8260,6 +8478,7 @@ $wp_mysql_on_update$',
 		if ( null === $old_column ) {
 			return null;
 		}
+		$old_column = $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $old_column );
 
 		++$position;
 		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
@@ -8279,7 +8498,7 @@ $wp_mysql_on_update$',
 		}
 
 		return array(
-			'statements' => $this->get_mysql_dbdelta_change_column_statements( $table_name, $old_column, $column ),
+			'statements' => $this->get_mysql_dbdelta_change_column_statements( $table_schema, $table_name, $old_column, $column ),
 			'metadata'   => array(
 				'operation'  => 'change_column',
 				'old_column' => $old_column,
@@ -8299,7 +8518,7 @@ $wp_mysql_on_update$',
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_modify_column_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_modify_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
@@ -8322,11 +8541,12 @@ $wp_mysql_on_update$',
 		}
 
 		$column_name = $column['metadata']['name'];
+		$old_column  = $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $column_name );
 		return array(
-			'statements' => $this->get_mysql_dbdelta_change_column_statements( $table_name, $column_name, $column ),
+			'statements' => $this->get_mysql_dbdelta_change_column_statements( $table_schema, $table_name, $old_column, $column ),
 			'metadata'   => array(
 				'operation'  => 'change_column',
-				'old_column' => $column_name,
+				'old_column' => $old_column,
 				'column'     => $column['metadata'],
 				'indexes'    => $column['indexes'],
 			),
@@ -8407,6 +8627,7 @@ $wp_mysql_on_update$',
 		foreach ( $ranges as $range ) {
 			if ( $this->is_mysql_dbdelta_add_index_definition_action( $tokens, $range['start'], $range['end'] ) ) {
 				$translation = $this->translate_mysql_dbdelta_add_index_definition_alter_action(
+					$table_schema,
 					$table_name,
 					$clause,
 					$tokens,
@@ -8519,13 +8740,14 @@ $wp_mysql_on_update$',
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_index_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_add_index_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
 		$definition_start = $start + 1;
 		if ( $definition_start >= $end ) {
 			return null;
 		}
 
 		return $this->translate_mysql_dbdelta_add_index_definition_alter_action(
+			$table_schema,
 			$table_name,
 			$clause,
 			$tokens,
@@ -8544,10 +8766,11 @@ $wp_mysql_on_update$',
 	 * @param int              $end              Final index-definition token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_add_index_definition_alter_action( string $table_name, string $clause, array $tokens, int $definition_start, int $end ): ?array {
+	private function translate_mysql_dbdelta_add_index_definition_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $definition_start, int $end ): ?array {
 		$index = $this->translate_mysql_index_definition_fragment(
 			$table_name,
-			$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end )
+			$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end ),
+			$table_schema
 		);
 		if ( null === $index ) {
 			return null;
@@ -8624,7 +8847,8 @@ $wp_mysql_on_update$',
 			$is_unique_constraint = WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[ $position ]->id;
 			$index                = $this->translate_mysql_index_definition_fragment(
 				$table_name,
-				$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end )
+				$this->get_mysql_token_range_bytes( $clause, $tokens, $definition_start, $end ),
+				$table_schema
 			);
 			if ( null === $index ) {
 				return null;
@@ -8972,6 +9196,12 @@ $wp_mysql_on_update$',
 		if ( null === $columns || empty( $columns ) ) {
 			return null;
 		}
+		$columns = array_map(
+			function ( string $column_name ) use ( $table_schema, $table_name ): string {
+				return $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $column_name );
+			},
+			$columns
+		);
 
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::REFERENCES_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
@@ -8988,6 +9218,12 @@ $wp_mysql_on_update$',
 		if ( null === $referenced_columns || count( $referenced_columns ) !== count( $columns ) ) {
 			return null;
 		}
+		$referenced_columns = array_map(
+			function ( string $column_name ) use ( $referenced_schema, $referenced_table ): string {
+				return $this->resolve_mysql_existing_alter_column_name( $referenced_schema, $referenced_table['table'], $column_name );
+			},
+			$referenced_columns
+		);
 
 		$rules = $this->parse_mysql_foreign_key_rules( $tokens, $position, $end );
 		if ( null === $rules ) {
@@ -9398,7 +9634,7 @@ $wp_mysql_on_update$',
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_drop_column_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_drop_column_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
@@ -9420,6 +9656,7 @@ $wp_mysql_on_update$',
 		if ( null === $column_name ) {
 			return null;
 		}
+		$column_name = $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $column_name );
 
 		return array(
 			'statements' => array(
@@ -9446,7 +9683,7 @@ $wp_mysql_on_update$',
 	 * @param int              $end        Final action token, exclusive.
 	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
 	 */
-	private function translate_mysql_dbdelta_alter_column_default_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_alter_column_default_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
@@ -9456,6 +9693,7 @@ $wp_mysql_on_update$',
 		if ( null === $column_name || ! isset( $tokens[ $position + 1 ] ) ) {
 			return null;
 		}
+		$column_name = $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $column_name );
 
 		$position += 1;
 		if ( WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
@@ -9524,7 +9762,7 @@ $wp_mysql_on_update$',
 	 * @param array  $column     Translated column definition data.
 	 * @return string[] PostgreSQL ALTER statements.
 	 */
-	private function get_mysql_dbdelta_change_column_statements( string $table_name, string $old_column, array $column ): array {
+	private function get_mysql_dbdelta_change_column_statements( string $table_schema, string $table_name, string $old_column, array $column ): array {
 		$new_column = $column['metadata']['name'];
 		$statements = array();
 		if ( $old_column !== $new_column ) {
@@ -9538,7 +9776,7 @@ $wp_mysql_on_update$',
 
 		$column_type                = $this->get_translated_column_type_from_definition_line( $column['sql'] );
 		$preserve_existing_identity = $this->should_preserve_existing_identity_integer_column_change(
-			'public',
+			$table_schema,
 			$table_name,
 			$old_column,
 			$column['metadata']
@@ -9577,7 +9815,7 @@ $wp_mysql_on_update$',
 			}
 		}
 
-		if ( $this->should_add_identity_for_auto_increment_column_change( 'public', $table_name, $old_column, $column['metadata'] ) ) {
+		if ( $this->should_add_identity_for_auto_increment_column_change( $table_schema, $table_name, $old_column, $column['metadata'] ) ) {
 			$statements[] = sprintf(
 				'ALTER TABLE %s ALTER COLUMN %s ADD GENERATED BY DEFAULT AS IDENTITY',
 				$this->connection->quote_identifier( $table_name ),
@@ -9788,6 +10026,22 @@ $wp_mysql_on_update$',
 	 */
 	private function get_mysql_alter_identifier_token_value( ?WP_MySQL_Token $token ): ?string {
 		return $this->get_mysql_index_identifier_token_value( $token );
+	}
+
+	/**
+	 * Resolve an existing ALTER column reference to the stored MySQL column name.
+	 *
+	 * MySQL column identifiers are case-insensitive. The PostgreSQL DDL we emit is
+	 * quoted and therefore case-sensitive, so existing columns must use the stored
+	 * casing when a plugin supplies a different spelling.
+	 *
+	 * @param string $table_schema Backend schema name.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  User-supplied column name.
+	 * @return string Stored column name when known, otherwise the original name.
+	 */
+	private function resolve_mysql_existing_alter_column_name( string $table_schema, string $table_name, string $column_name ): string {
+		return $this->get_mysql_table_column_name( $table_schema, $table_name, $column_name ) ?? $column_name;
 	}
 
 	/**
@@ -10980,11 +11234,12 @@ $wp_mysql_on_update$',
 	/**
 	 * Translate a MySQL index definition fragment via the CREATE TABLE translator.
 	 *
-	 * @param string $table_name Table name receiving the index.
-	 * @param string $definition MySQL index definition.
+	 * @param string      $table_name   Table name receiving the index.
+	 * @param string      $definition   MySQL index definition.
+	 * @param string|null $table_schema Optional backend schema for resolving MySQL's case-insensitive column names.
 	 * @return array{statements: string[], metadata: array}|null Translated index, or null when unsupported.
 	 */
-	private function translate_mysql_index_definition_fragment( string $table_name, string $definition ): ?array {
+	private function translate_mysql_index_definition_fragment( string $table_name, string $definition, ?string $table_schema = null ): ?array {
 		$definition = $this->trim_mysql_statement_fragment( $definition );
 		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
 		$wrapper    = 'CREATE TABLE __wp_dbdelta_index (__wp_dummy int, ' . $definition . ')';
@@ -10995,6 +11250,17 @@ $wp_mysql_on_update$',
 		}
 
 		$index   = $metadata[0]['indexes'][0];
+		if ( null !== $table_schema ) {
+			foreach ( $index['columns'] as &$column ) {
+				$column['column_name'] = $this->resolve_mysql_existing_alter_column_name(
+					$table_schema,
+					$table_name,
+					(string) $column['column_name']
+				);
+			}
+			unset( $column );
+		}
+
 		$columns = array();
 		foreach ( $index['columns'] as $column ) {
 			$column_sql = $this->get_mysql_index_key_part_sql(
@@ -11121,11 +11387,11 @@ $wp_mysql_on_update$',
 		$tokens   = $this->get_mysql_tokens( $fragment );
 		$end      = $this->get_mysql_statement_end_position( $tokens, 0 );
 
-		$current_timestamp_metadata = $this->get_mysql_current_timestamp_default_fragment_metadata( $tokens, $end );
-		if ( null !== $current_timestamp_metadata ) {
+		$current_timestamp_default = $this->get_mysql_current_timestamp_default_fragment_data( $tokens, $end );
+		if ( null !== $current_timestamp_default ) {
 			return array(
-				'sql'      => "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')",
-				'metadata' => $current_timestamp_metadata,
+				'sql'      => $this->get_postgresql_mysql_current_timestamp_sql( $current_timestamp_default['fsp'] ),
+				'metadata' => $current_timestamp_default['metadata'],
 			);
 		}
 
@@ -11160,13 +11426,13 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Get metadata for a current timestamp DEFAULT fragment.
+	 * Get data for a current timestamp DEFAULT fragment.
 	 *
 	 * @param WP_MySQL_Token[] $tokens Default fragment tokens.
 	 * @param int|null         $end    Statement end.
-	 * @return string|null Metadata value, or null.
+	 * @return array{metadata: string, fsp: int}|null Metadata and fractional precision, or null.
 	 */
-	private function get_mysql_current_timestamp_default_fragment_metadata( array $tokens, ?int $end ): ?string {
+	private function get_mysql_current_timestamp_default_fragment_data( array $tokens, ?int $end ): ?array {
 		if ( null === $end ) {
 			return null;
 		}
@@ -11176,7 +11442,10 @@ $wp_mysql_on_update$',
 			&& isset( $tokens[0] )
 			&& $this->is_mysql_current_timestamp_token( $tokens[0] )
 		) {
-			return 'CURRENT_TIMESTAMP';
+			return array(
+				'metadata' => 'CURRENT_TIMESTAMP',
+				'fsp'      => 0,
+			);
 		}
 
 		if (
@@ -11186,7 +11455,10 @@ $wp_mysql_on_update$',
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
 		) {
-			return 'CURRENT_TIMESTAMP';
+			return array(
+				'metadata' => 'CURRENT_TIMESTAMP',
+				'fsp'      => 0,
+			);
 		}
 
 		if (
@@ -11196,7 +11468,46 @@ $wp_mysql_on_update$',
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[2]->id
 		) {
-			return 'now()';
+			return array(
+				'metadata' => 'now()',
+				'fsp'      => 0,
+			);
+		}
+
+		if (
+			4 === $end
+			&& isset( $tokens[0], $tokens[1], $tokens[2], $tokens[3] )
+			&& $this->is_mysql_current_timestamp_token( $tokens[0] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[3]->id
+		) {
+			$fsp = $this->get_mysql_fractional_seconds_precision_token_value( $tokens[2] );
+			if ( null === $fsp ) {
+				return null;
+			}
+
+			return array(
+				'metadata' => sprintf( 'CURRENT_TIMESTAMP(%d)', $fsp ),
+				'fsp'      => $fsp,
+			);
+		}
+
+		if (
+			4 === $end
+			&& isset( $tokens[0], $tokens[1], $tokens[2], $tokens[3] )
+			&& WP_MySQL_Lexer::NOW_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[3]->id
+		) {
+			$fsp = $this->get_mysql_fractional_seconds_precision_token_value( $tokens[2] );
+			if ( null === $fsp ) {
+				return null;
+			}
+
+			return array(
+				'metadata' => sprintf( 'now(%d)', $fsp ),
+				'fsp'      => $fsp,
+			);
 		}
 
 		return null;
@@ -14496,14 +14807,15 @@ $wp_mysql_on_update$',
 		);
 		$stmt   = $this->connection->query( $sql, $params );
 
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+			$this->last_column_meta          = $this->normalize_column_meta( $stmt );
+			$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+			$this->last_found_rows           = count( $this->last_result );
 
-		$this->store_mysql_introspection_result_in_cache( $cache_key );
+			$this->store_mysql_introspection_result_in_cache( $cache_key );
 
 		return $this->last_result;
 	}
@@ -14579,13 +14891,14 @@ ORDER BY ordinal_position';
 			'params' => $params,
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		if ( null !== $where_expression_filter ) {
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
-			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
-		} else {
-			$this->last_result = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-		}
+			if ( null !== $where_expression_filter ) {
+				$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+				$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+				$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+			} else {
+				$this->last_result     = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+				$this->last_found_rows = count( $this->last_result );
+			}
 
 		$this->store_mysql_introspection_result_in_cache( $cache_key );
 
@@ -14839,14 +15152,15 @@ ORDER BY table_name';
 			'sql'    => $sql,
 			'params' => $params,
 		);
-		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		if ( null !== $where_expression_filter ) {
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
-			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
-		} else {
-			$this->last_result = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-		}
+			$this->last_column_meta          = $this->normalize_column_meta( $stmt );
+			if ( null !== $where_expression_filter ) {
+				$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+				$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+				$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+			} else {
+				$this->last_result     = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+				$this->last_found_rows = count( $this->last_result );
+			}
 
 		return $this->last_result;
 	}
@@ -15332,7 +15646,7 @@ ORDER BY table_name';
 	 * @return bool Whether the default should render unquoted.
 	 */
 	private function is_mysql_current_timestamp_default_metadata( string $default ): bool {
-		return in_array( strtolower( $default ), array( 'current_timestamp', 'current_timestamp()' ), true );
+		return 1 === preg_match( '/^current_timestamp(?:\((?:[0-6])?\))?$/i', $default );
 	}
 
 	/**
@@ -15857,6 +16171,7 @@ ORDER BY table_name';
 
 		$rows = $this->filter_mysql_static_show_rows( $rows, $show_variables_query );
 
+		$this->last_found_rows  = 0;
 		$this->last_column_meta = array(
 			array(
 				'name'             => 'Variable_name',
@@ -16818,6 +17133,7 @@ ORDER BY table_name';
 	 * @return mixed Result rows formatted for the requested fetch mode.
 	 */
 	private function set_mysql_static_show_result( array $columns, array $rows, $fetch_mode, ...$fetch_mode_args ) {
+		$this->last_found_rows  = count( $rows );
 		$this->last_column_meta = array();
 		foreach ( $columns as $column ) {
 			$this->last_column_meta[] = array(
@@ -16865,6 +17181,8 @@ ORDER BY table_name';
 	 * @return mixed Result rows formatted for the requested fetch mode.
 	 */
 	private function set_mysql_associative_result_rows( array $rows, $fetch_mode, ...$fetch_mode_args ) {
+		$this->last_found_rows = count( $rows );
+
 		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
 			$this->last_result = $rows;
 			return $this->last_result;
@@ -17030,10 +17348,11 @@ ORDER BY table_name';
 	/**
 	 * Get an emulated MySQL system variable value.
 	 *
-	 * @param string $name Variable name.
+	 * @param string      $name  Variable name.
+	 * @param string|null $scope Optional variable scope.
 	 * @return string|null Variable value, or null when unsupported.
 	 */
-	private function get_mysql_system_variable_value( string $name ): ?string {
+	private function get_mysql_system_variable_value( string $name, ?string $scope = null ): ?string {
 		$name      = strtolower( $name );
 		$variables = $this->get_mysql_session_variables();
 		if ( array_key_exists( $name, $variables ) ) {
@@ -17595,6 +17914,7 @@ ORDER BY
 
 		$this->last_column_meta = $column_meta;
 		$this->last_result      = $result;
+		$this->last_found_rows  = count( $result );
 
 		return true;
 	}
@@ -42370,23 +42690,23 @@ FROM (
 			return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
 		}
 
-		$lowercase_column_name = strtolower( $column_name );
-		$stmt                  = $this->connection->query(
+		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT column_name FROM %s
 				WHERE table_schema = ?
 					AND table_name = ?
-					AND column_name = ?
-				LIMIT 1',
+					AND LOWER(column_name) = LOWER(?)
+				ORDER BY ordinal_position
+				LIMIT 2',
 				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
 			),
-			array( $table_schema, $table_name, $lowercase_column_name )
+			array( $table_schema, $table_name, $column_name )
 		);
 
-		$stored_column_name = $stmt->fetchColumn();
-		$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = false === $stored_column_name
-			? null
-			: (string) $stored_column_name;
+		$stored_column_names = $stmt->fetchAll( PDO::FETCH_COLUMN );
+		$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = 1 === count( $stored_column_names )
+			? (string) $stored_column_names[0]
+			: null;
 		return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
 	}
 
@@ -43598,12 +43918,15 @@ FROM (
 			$token->id,
 			array(
 				WP_MySQL_Lexer::AND_SYMBOL,
+				WP_MySQL_Lexer::CASE_SYMBOL,
 				WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
 				WP_MySQL_Lexer::COALESCE_SYMBOL,
 				WP_MySQL_Lexer::COMMA_SYMBOL,
 				WP_MySQL_Lexer::DECIMAL_NUMBER,
 				WP_MySQL_Lexer::DOT_SYMBOL,
 				WP_MySQL_Lexer::EQUAL_OPERATOR,
+				WP_MySQL_Lexer::ELSE_SYMBOL,
+				WP_MySQL_Lexer::END_SYMBOL,
 				WP_MySQL_Lexer::FALSE_SYMBOL,
 				WP_MySQL_Lexer::FLOAT_NUMBER,
 				WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
@@ -43629,8 +43952,10 @@ FROM (
 				WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL,
 				WP_MySQL_Lexer::SUBSTR_SYMBOL,
 				WP_MySQL_Lexer::SUBSTRING_SYMBOL,
+				WP_MySQL_Lexer::THEN_SYMBOL,
 				WP_MySQL_Lexer::TRUE_SYMBOL,
 				WP_MySQL_Lexer::ULONGLONG_NUMBER,
+				WP_MySQL_Lexer::WHEN_SYMBOL,
 				WP_MySQL_Lexer::XOR_SYMBOL,
 			),
 			true
@@ -46283,6 +46608,7 @@ FROM (
 			WP_MySQL_Lexer::COALESCE_SYMBOL           => 'coalesce',
 			WP_MySQL_Lexer::CURRENT_USER_SYMBOL      => 'current_user',
 			WP_MySQL_Lexer::CURDATE_SYMBOL           => 'curdate',
+			WP_MySQL_Lexer::CURTIME_SYMBOL           => 'utc_time',
 			WP_MySQL_Lexer::CURRENT_DATE_SYMBOL      => 'curdate',
 			WP_MySQL_Lexer::CURRENT_TIME_SYMBOL      => 'utc_time',
 			WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL => 'utc_timestamp',
@@ -46317,6 +46643,15 @@ FROM (
 		}
 
 		$name      = strtolower( $name );
+		$aliases   = array(
+			'current_date'      => 'curdate',
+			'current_time'      => 'utc_time',
+			'current_timestamp' => 'utc_timestamp',
+		);
+		if ( isset( $aliases[ $name ] ) ) {
+			return $aliases[ $name ];
+		}
+
 		$supported = array(
 			'char_length',
 			'character_length',
@@ -46585,14 +46920,16 @@ FROM (
 				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')" : null;
 
 			case 'utc_time':
-				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS')" : null;
+				$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision( $argument_sql );
+				return null === $fsp ? null : $this->get_postgresql_mysql_current_time_sql( $fsp );
 
 			case 'current_timestamp':
 			case 'localtime':
 			case 'localtimestamp':
 			case 'now':
 			case 'utc_timestamp':
-				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')" : null;
+				$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision( $argument_sql );
+				return null === $fsp ? null : $this->get_postgresql_mysql_current_timestamp_sql( $fsp );
 
 			case 'version':
 				return 0 === $count ? $this->connection->quote( $this->get_mysql_version_string() ) : null;
@@ -46856,6 +47193,85 @@ $wp_mysql_json_valid$'
 
 		json_decode( (string) $value );
 		return JSON_ERROR_NONE === json_last_error() ? 1 : 0;
+	}
+
+	/**
+	 * Get a bounded MySQL fractional seconds precision from translated function arguments.
+	 *
+	 * @param string[] $argument_sql Translated PostgreSQL arguments.
+	 * @return int|null Precision, or null when unsupported.
+	 */
+	private function get_mysql_temporal_function_fractional_seconds_precision( array $argument_sql ): ?int {
+		if ( 0 === count( $argument_sql ) ) {
+			return 0;
+		}
+
+		if ( 1 !== count( $argument_sql ) ) {
+			return null;
+		}
+
+		return $this->get_mysql_fractional_seconds_precision_sql_value( $argument_sql[0] );
+	}
+
+	/**
+	 * Get a bounded MySQL fractional seconds precision from a SQL literal.
+	 *
+	 * @param string $sql SQL expression.
+	 * @return int|null Precision, or null when unsupported.
+	 */
+	private function get_mysql_fractional_seconds_precision_sql_value( string $sql ): ?int {
+		$sql = trim( $sql );
+		return 1 === preg_match( '/^[0-6]$/', $sql ) ? (int) $sql : null;
+	}
+
+	/**
+	 * Get a bounded MySQL fractional seconds precision from a token.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return int|null Precision, or null when unsupported.
+	 */
+	private function get_mysql_fractional_seconds_precision_token_value( ?WP_MySQL_Token $token ): ?int {
+		if ( null === $token || WP_MySQL_Lexer::INT_NUMBER !== $token->id ) {
+			return null;
+		}
+
+		return $this->get_mysql_fractional_seconds_precision_sql_value( $token->get_value() );
+	}
+
+	/**
+	 * Format the emulated MySQL current time value with optional fractional seconds.
+	 *
+	 * @param int $fsp Fractional seconds precision, 0 through 6.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_current_time_sql( int $fsp ): string {
+		if ( 0 === $fsp ) {
+			return "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS')";
+		}
+
+		return sprintf(
+			"LEFT(TO_CHAR(CURRENT_TIMESTAMP(%1\$d) AT TIME ZONE 'UTC', 'HH24:MI:SS.US'), %2\$d)",
+			$fsp,
+			9 + $fsp
+		);
+	}
+
+	/**
+	 * Format the emulated MySQL current timestamp value with optional fractional seconds.
+	 *
+	 * @param int $fsp Fractional seconds precision, 0 through 6.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_current_timestamp_sql( int $fsp ): string {
+		if ( 0 === $fsp ) {
+			return "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+		}
+
+		return sprintf(
+			"LEFT(TO_CHAR(CURRENT_TIMESTAMP(%1\$d) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US'), %2\$d)",
+			$fsp,
+			20 + $fsp
+		);
 	}
 
 	/**
