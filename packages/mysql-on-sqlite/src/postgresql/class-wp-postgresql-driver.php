@@ -828,6 +828,9 @@ class WP_PostgreSQL_Driver {
 
 		$upsert_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
 		if ( null !== $upsert_query ) {
+			if ( isset( $upsert_query['statements'] ) && is_array( $upsert_query['statements'] ) ) {
+				return $this->execute_translated_dml_statements( $upsert_query );
+			}
 			$query                     = $upsert_query['sql'];
 			$dml_identity_repair_query = $upsert_query;
 			$translated_for_postgresql = true;
@@ -14679,6 +14682,10 @@ WHERE option_name IN (
 			return null;
 		}
 		$conflict_columns = $conflict_target['columns'];
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
+		if ( null === $conflict_indexes ) {
+			return null;
+		}
 
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
@@ -14709,15 +14716,20 @@ WHERE option_name IN (
 			$sql_value_rows[] = '(' . implode( ', ', $values ) . ')';
 		}
 
-		return array(
+		$column_sql   = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
+		$conflict_sql = sprintf(
+			'ON CONFLICT (%s) DO UPDATE SET %s',
+			implode( ', ', $conflict_target['sql'] ),
+			implode( ', ', $assignments )
+		);
+		$upsert_query = array(
 			'action'               => 'upsert',
 			'sql'                  => sprintf(
-				'INSERT INTO %s (%s) %s ON CONFLICT (%s) DO UPDATE SET %s',
+				'INSERT INTO %s (%s) %s %s',
 				$this->connection->quote_identifier( $table_name ),
-				implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
+				$column_sql,
 				'VALUES ' . implode( ', ', $sql_value_rows ),
-				implode( ', ', $conflict_target['sql'] ),
-				implode( ', ', $assignments )
+				$conflict_sql
 			),
 			'table_name'           => $table_name,
 			'columns'              => $columns,
@@ -14725,8 +14737,25 @@ WHERE option_name IN (
 			'value_rows'           => $inserted_value_rows,
 			'insert_id_value_rows' => $value_rows,
 			'conflict_columns'     => $conflict_columns,
+			'conflict_indexes'     => $conflict_indexes,
 			'inserted_new_row'     => count( $inserted_value_rows ) > 0,
 		);
+
+		if ( $this->has_duplicate_mysql_upsert_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
+			$statements = array();
+			foreach ( $value_rows as $values ) {
+				$statements[] = sprintf(
+					'INSERT INTO %s (%s) VALUES (%s) %s',
+					$this->connection->quote_identifier( $table_name ),
+					$column_sql,
+					implode( ', ', $values ),
+					$conflict_sql
+				);
+			}
+			$upsert_query['statements'] = $statements;
+		}
+
+		return $upsert_query;
 	}
 
 	/**
@@ -15531,6 +15560,22 @@ WHERE option_name IN (
 		);
 
 		return false !== $stmt->fetchColumn();
+	}
+
+	/**
+	 * Check whether an upsert batch contains duplicate deterministic conflict rows.
+	 *
+	 * PostgreSQL cannot update the same row twice in one INSERT ... ON CONFLICT
+	 * statement. MySQL applies VALUES rows sequentially, so duplicate conflict
+	 * keys need one PostgreSQL statement per input row.
+	 *
+	 * @param array[] $value_rows       Translated VALUES rows.
+	 * @param array[] $probe_safe_rows  Per-value probe safety.
+	 * @param array   $conflict_indexes Conflict target column/index tuples.
+	 * @return bool Whether PostgreSQL needs per-row statements.
+	 */
+	private function has_duplicate_mysql_upsert_conflict_value_rows( array $value_rows, array $probe_safe_rows, array $conflict_indexes ): bool {
+		return $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes );
 	}
 
 	/**

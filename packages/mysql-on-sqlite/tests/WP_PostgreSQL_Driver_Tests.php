@@ -4068,6 +4068,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests duplicate conflict keys in one ON DUPLICATE KEY UPDATE batch run sequentially.
+	 */
+	public function test_multi_row_on_duplicate_key_update_with_duplicate_conflict_values_runs_sequentially(): void {
+		$driver = $this->create_driver();
+
+		$this->install_term_relationships_table_with_mysql_metadata( $driver, 'custom_term_relationships' );
+
+		$insert = 'INSERT INTO `custom_term_relationships` (`object_id`, `term_taxonomy_id`, `term_order`)
+			VALUES (227, 709, 1), (227, 709, 2)
+			ON DUPLICATE KEY UPDATE `term_order` = VALUES(`term_order`)';
+
+		$this->assertSame( 2, $driver->query( $insert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "custom_term_relationships" ("object_id", "term_taxonomy_id", "term_order") VALUES (227, 709, 1) ON CONFLICT ("object_id", "term_taxonomy_id") DO UPDATE SET "term_order" = excluded."term_order"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'INSERT INTO "custom_term_relationships" ("object_id", "term_taxonomy_id", "term_order") VALUES (227, 709, 2) ON CONFLICT ("object_id", "term_taxonomy_id") DO UPDATE SET "term_order" = excluded."term_order"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query(
+			'SELECT object_id, term_taxonomy_id, term_order
+			FROM custom_term_relationships'
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '227', $rows[0]->object_id );
+		$this->assertSame( '709', $rows[0]->term_taxonomy_id );
+		$this->assertSame( '2', $rows[0]->term_order );
+	}
+
+	/**
 	 * Tests INSERT ... SELECT ON DUPLICATE KEY UPDATE uses MySQL unique-key metadata.
 	 */
 	public function test_insert_select_on_duplicate_key_update_uses_metadata_conflict_target(): void {
