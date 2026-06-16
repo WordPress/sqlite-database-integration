@@ -2031,6 +2031,114 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TEMPORARY TABLE IF NOT EXISTS follows MySQL duplicate-table behavior.
+	 */
+	public function test_create_temporary_table_if_not_exists_keeps_existing_table(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'CREATE TEMPORARY TABLE wptests_temp_if_not_exists (id INTEGER, name TEXT)' ) );
+		$this->assertSame( 0, $driver->query( 'CREATE TEMPORARY TABLE IF NOT EXISTS wptests_temp_if_not_exists (id INTEGER, name TEXT)' ) );
+
+		try {
+			$driver->query( 'CREATE TEMPORARY TABLE wptests_temp_if_not_exists (id INTEGER, name TEXT)' );
+			$this->fail( 'Expected duplicate temporary CREATE TABLE to fail.' );
+		} catch ( PDOException $exception ) {
+			$this->assertNotSame( '', $exception->getMessage() );
+		}
+	}
+
+	/**
+	 * Tests temporary tables shadow standard tables for unqualified MySQL introspection and DDL.
+	 */
+	public function test_temporary_table_has_priority_over_standard_table_for_introspection_and_alter(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE wptests_temp_shadow (a INTEGER)' );
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_temp_shadow (a int DEFAULT NULL, KEY ia(a))' );
+
+		$driver->query( 'CREATE TEMPORARY TABLE wptests_temp_shadow (b INTEGER)' );
+		$this->store_mysql_temporary_schema_metadata_for_test(
+			$driver,
+			'CREATE TEMPORARY TABLE wptests_temp_shadow (b int DEFAULT NULL, KEY ib(b))'
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_temp_shadow' )[0]->{'Create Table'};
+		$this->assertStringStartsWith( 'CREATE TEMPORARY TABLE `wptests_temp_shadow`', $create_table );
+		$this->assertStringContainsString( '  KEY `ib` (`b`)', $create_table );
+		$this->assertStringNotContainsString( 'KEY `ia`', $create_table );
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM wptests_temp_shadow' );
+		$this->assertSame( array( 'b' ), array_column( $columns, 'Field' ) );
+
+		$describe = $driver->query( 'DESCRIBE wptests_temp_shadow' );
+		$this->assertSame( array( 'b' ), array_column( $describe, 'Field' ) );
+
+		$indexes = $driver->query( 'SHOW INDEXES FROM wptests_temp_shadow' );
+		$this->assertSame( array( 'ib' ), array_values( array_unique( array_column( $indexes, 'Key_name' ) ) ) );
+
+		$driver->query( 'ALTER TABLE wptests_temp_shadow ADD COLUMN c INT' );
+		$columns = $driver->query( 'SHOW COLUMNS FROM wptests_temp_shadow' );
+		$this->assertSame( array( 'b', 'c' ), array_column( $columns, 'Field' ) );
+
+		$information_schema_columns = $driver->query(
+			"SELECT column_name FROM information_schema.columns WHERE table_name = 'wptests_temp_shadow' ORDER BY ordinal_position"
+		);
+		$this->assertSame( array( 'a' ), array_column( $information_schema_columns, 'COLUMN_NAME' ) );
+
+		$driver->query( 'DROP TABLE wptests_temp_shadow' );
+		$columns = $driver->query( 'SHOW COLUMNS FROM wptests_temp_shadow' );
+		$this->assertSame( array( 'a' ), array_column( $columns, 'Field' ) );
+
+		$indexes = $driver->query( 'SHOW INDEXES FROM wptests_temp_shadow' );
+		$this->assertSame( array( 'ia' ), array_values( array_unique( array_column( $indexes, 'Key_name' ) ) ) );
+	}
+
+	/**
+	 * Tests temporary tables keep AUTO_INCREMENT state independent from permanent tables.
+	 */
+	public function test_temporary_table_auto_increment_state_is_independent_from_standard_table(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_temp_auto_increment (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_temp_auto_increment (
+				id int AUTO_INCREMENT PRIMARY KEY,
+				name text
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_temp_auto_increment (name) VALUES ('a'), ('b')" );
+
+		$driver->get_connection()->query(
+			'CREATE TEMPORARY TABLE wptests_temp_auto_increment (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)'
+		);
+		$this->store_mysql_temporary_schema_metadata_for_test(
+			$driver,
+			'CREATE TEMPORARY TABLE wptests_temp_auto_increment (
+				id int AUTO_INCREMENT PRIMARY KEY,
+				name text
+			)'
+		);
+
+		$driver->query( 'ALTER TABLE wptests_temp_auto_increment AUTO_INCREMENT = 500' );
+		$driver->query( "INSERT INTO wptests_temp_auto_increment (name) VALUES ('x')" );
+		$temp_rows = $driver->query( "SELECT id FROM wptests_temp_auto_increment WHERE name = 'x'" );
+		$this->assertSame( '500', $temp_rows[0]->id );
+
+		$driver->query( 'ALTER TABLE wptests_temp_auto_increment AUTO_INCREMENT = 1000' );
+		$driver->query( "INSERT INTO wptests_temp_auto_increment (name) VALUES ('y')" );
+		$temp_rows = $driver->query( "SELECT id FROM wptests_temp_auto_increment WHERE name = 'y'" );
+		$this->assertSame( '1000', $temp_rows[0]->id );
+
+		$driver->query( 'DROP TABLE wptests_temp_auto_increment' );
+		$permanent_rows = $driver->query( 'SELECT id FROM wptests_temp_auto_increment ORDER BY id' );
+		$this->assertSame( array( '1', '2' ), array_column( $permanent_rows, 'id' ) );
+		$driver->query( "INSERT INTO wptests_temp_auto_increment (name) VALUES ('c')" );
+		$permanent_rows = $driver->query( "SELECT id FROM wptests_temp_auto_increment WHERE name = 'c'" );
+		$this->assertSame( '3', $permanent_rows[0]->id );
+	}
+
+	/**
 	 * Tests standalone CREATE INDEX updates PostgreSQL schema and MySQL metadata.
 	 */
 	public function test_standalone_create_index_updates_postgresql_and_mysql_metadata(): void {
@@ -16447,6 +16555,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'LOAD INDEX INTO CACHE administration_existing'      => 'Unsupported LOAD statement.',
 			'BINLOG "unsupported-binlog-event"'                 => 'Unsupported BINLOG statement.',
 			'SHUTDOWN'                                          => 'Unsupported SHUTDOWN statement.',
+			'GRANT SELECT ON *.* TO plugin_user'                => 'Unsupported GRANT statement.',
+			'REVOKE SELECT ON *.* FROM plugin_user'             => 'Unsupported REVOKE statement.',
+			'ALTER USER plugin_user IDENTIFIED BY "secret"'     => 'Unsupported ALTER USER statement.',
+			'RESET PERSIST'                                     => 'Unsupported RESET statement.',
+			'PURGE BINARY LOGS BEFORE "2024-01-01"'             => 'Unsupported PURGE statement.',
+			'INSTALL PLUGIN plugin_name SONAME "plugin.so"'     => 'Unsupported INSTALL statement.',
+			'UNINSTALL PLUGIN plugin_name'                      => 'Unsupported UNINSTALL statement.',
 			'ANALYZE FORMAT = TREE SELECT 1'                    => 'Unsupported table administration statement.',
 		);
 
@@ -16459,6 +16574,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$this->fail( 'Expected unsupported MySQL administration statement to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests account/plugin/log administration statements do not reach the backend fallback.
+	 */
+	public function test_unsupported_mysql_account_and_plugin_administration_statements_do_not_reach_backend(): void {
+		$cases = array(
+			'GRANT SELECT ON *.* TO plugin_user'                => 'Unsupported GRANT statement.',
+			'REVOKE SELECT ON *.* FROM plugin_user'             => 'Unsupported REVOKE statement.',
+			'ALTER USER plugin_user IDENTIFIED BY "secret"'     => 'Unsupported ALTER USER statement.',
+			'RESET PERSIST'                                     => 'Unsupported RESET statement.',
+			'PURGE BINARY LOGS BEFORE "2024-01-01"'             => 'Unsupported PURGE statement.',
+			'INSTALL PLUGIN plugin_name SONAME "plugin.so"'     => 'Unsupported INSTALL statement.',
+			'UNINSTALL PLUGIN plugin_name'                      => 'Unsupported UNINSTALL statement.',
+		);
+
+		foreach ( $cases as $query => $message ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported MySQL administration statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( 0, $connection->get_query_count(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
 			}
 		}
@@ -20776,6 +20920,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Store temporary-table metadata for tests that create backend-specific temp tables.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @param string               $query  MySQL CREATE TEMPORARY TABLE query.
+	 */
+	private function store_mysql_temporary_schema_metadata_for_test( WP_PostgreSQL_Driver $driver, string $query ): void {
+		$method = new ReflectionMethod( WP_PostgreSQL_Driver::class, 'store_mysql_temporary_schema_metadata' );
+		if ( PHP_VERSION_ID < 80100 && method_exists( $method, 'setAccessible' ) ) {
+			$method->setAccessible( true );
+		}
+
+		$method->invoke( $driver, $query );
+	}
+
+	/**
 	 * Get stored MySQL foreign key metadata rows for a table.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
@@ -21205,4 +21364,44 @@ function wp_postgresql_driver_fetch_dynamic_field_for_introspection_cache_test( 
 
 	++$wp_postgresql_driver_named_fetch_func_invocations;
 	return $wp_postgresql_driver_named_fetch_func_invocations . ':' . $values[0];
+}
+
+/**
+ * Query-counting connection for backend-fallthrough assertions.
+ */
+class WP_PostgreSQL_Query_Spy_Connection extends WP_PostgreSQL_Connection {
+	/**
+	 * Number of backend queries attempted.
+	 *
+	 * @var int
+	 */
+	private $query_count = 0;
+
+	/**
+	 * Constructor.
+	 */
+	public function __construct() {
+		parent::__construct( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
+	}
+
+	/**
+	 * Execute a query and count backend attempts.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param array  $params Query parameters.
+	 * @return PDOStatement Statement.
+	 */
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		++$this->query_count;
+		return parent::query( $sql, $params );
+	}
+
+	/**
+	 * Get the backend query attempt count.
+	 *
+	 * @return int Query count.
+	 */
+	public function get_query_count(): int {
+		return $this->query_count;
+	}
 }

@@ -1025,6 +1025,30 @@ class WP_PostgreSQL_Driver {
 
 			case WP_MySQL_Lexer::SHUTDOWN_SYMBOL:
 				return 'Unsupported SHUTDOWN statement.';
+
+			case WP_MySQL_Lexer::GRANT_SYMBOL:
+				return 'Unsupported GRANT statement.';
+
+			case WP_MySQL_Lexer::REVOKE_SYMBOL:
+				return 'Unsupported REVOKE statement.';
+
+			case WP_MySQL_Lexer::RESET_SYMBOL:
+				return 'Unsupported RESET statement.';
+
+			case WP_MySQL_Lexer::PURGE_SYMBOL:
+				return 'Unsupported PURGE statement.';
+
+			case WP_MySQL_Lexer::INSTALL_SYMBOL:
+				return 'Unsupported INSTALL statement.';
+
+			case WP_MySQL_Lexer::UNINSTALL_SYMBOL:
+				return 'Unsupported UNINSTALL statement.';
+
+			case WP_MySQL_Lexer::ALTER_SYMBOL:
+				if ( isset( $tokens[1] ) && WP_MySQL_Lexer::USER_SYMBOL === $tokens[1]->id ) {
+					return 'Unsupported ALTER USER statement.';
+				}
+				return null;
 		}
 
 		return null;
@@ -6026,10 +6050,11 @@ $wp_mysql_on_update$',
 
 		$minimum_sequence_value = max( 0, $value - 1 );
 		$statements             = array();
+		$table_schema           = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
 
 		$statements = $this->get_postgresql_auto_increment_alter_statements( $table_name, $auto_increment_column, $minimum_sequence_value );
 		if ( empty( $statements ) && 'sqlite' === $this->connection->get_driver_name() ) {
-			$statements[] = $this->get_sqlite_auto_increment_alter_statement( $table_name, $auto_increment_column, $minimum_sequence_value );
+			$statements = $this->get_sqlite_auto_increment_alter_statements( $table_schema, $table_name, $auto_increment_column, $minimum_sequence_value );
 		}
 
 		return array(
@@ -11680,7 +11705,15 @@ ORDER BY table_name';
 		$foreign_keys     = $this->get_show_create_table_foreign_key_metadata_rows( $resolved_schema, $table_name );
 		$checks           = $this->get_show_create_table_check_constraint_metadata_rows( $resolved_schema, $table_name );
 		$table_comment    = $this->get_show_create_table_table_comment_metadata( $resolved_schema, $table_name );
-		$create_statement = $this->get_mysql_create_table_statement_from_metadata( $table_name, $columns, $indexes, $foreign_keys, $checks, $table_comment );
+		$create_statement = $this->get_mysql_create_table_statement_from_metadata(
+			$table_name,
+			$columns,
+			$indexes,
+			$foreign_keys,
+			$checks,
+			$table_comment,
+			$this->is_mysql_temporary_schema_name( $resolved_schema )
+		);
 		$rows             = array(
 			array(
 				'Table'        => $table_name,
@@ -11880,7 +11913,7 @@ ORDER BY table_name';
 	 * @param string  $table_comment Table comment.
 	 * @return string MySQL-compatible CREATE TABLE statement.
 	 */
-	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, array $checks, string $table_comment = '' ): string {
+	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, array $checks, string $table_comment = '', bool $temporary = false ): string {
 		$definitions = array();
 		foreach ( $columns as $column ) {
 			$definitions[] = $this->get_mysql_create_table_column_definition_from_metadata( $column );
@@ -11902,7 +11935,8 @@ ORDER BY table_name';
 		$charset   = $this->get_mysql_charset_from_collation( $collation );
 
 		$sql = sprintf(
-			"CREATE TABLE %s (\n%s\n) ENGINE=InnoDB DEFAULT CHARSET=%s COLLATE=%s",
+			"CREATE %sTABLE %s (\n%s\n) ENGINE=InnoDB DEFAULT CHARSET=%s COLLATE=%s",
+			$temporary ? 'TEMPORARY ' : '',
 			$this->quote_mysql_identifier( $table_name ),
 			implode( ",\n", $definitions ),
 			$charset,
@@ -11914,6 +11948,18 @@ ORDER BY table_name';
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Check whether a backend schema name represents the active temporary table namespace.
+	 *
+	 * @param string $schema_name Backend schema name.
+	 * @return bool Whether the schema is temporary.
+	 */
+	private function is_mysql_temporary_schema_name( string $schema_name ): bool {
+		return 0 === strcasecmp( $schema_name, 'temp' )
+			|| 0 === strcasecmp( $schema_name, 'pg_temp' )
+			|| 1 === preg_match( '/^pg_temp_[0-9]+$/i', $schema_name );
 	}
 
 	/**
@@ -19093,20 +19139,34 @@ WHERE option_name IN (
 	 * @param string $table_name             Target table name.
 	 * @param string $auto_increment_column AUTO_INCREMENT column name.
 	 * @param int    $minimum_sequence_value Minimum last sequence value.
-	 * @return string SQLite statement.
+	 * @return string[] SQLite statements.
 	 */
-	private function get_sqlite_auto_increment_alter_statement( string $table_name, string $auto_increment_column, int $minimum_sequence_value ): string {
+	private function get_sqlite_auto_increment_alter_statements( string $table_schema, string $table_name, string $auto_increment_column, int $minimum_sequence_value ): array {
+		$is_temporary    = $this->is_mysql_temporary_schema_name( $table_schema );
+		$table_identifier = $is_temporary
+			? 'temp.' . $this->connection->quote_identifier( $table_name )
+			: $this->connection->quote_identifier( $table_name );
+		$sequence_table   = $is_temporary ? 'temp.sqlite_sequence' : 'sqlite_sequence';
+
 		$sequence_value_sql = sprintf(
 			'MAX(%d, COALESCE((SELECT MAX(%s) FROM %s), 0))',
 			$minimum_sequence_value,
 			$this->connection->quote_identifier( $auto_increment_column ),
-			$this->connection->quote_identifier( $table_name )
+			$table_identifier
 		);
 
-		return sprintf(
-			'INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES (%s, (SELECT %s))',
-			$this->connection->quote( $table_name ),
-			$sequence_value_sql
+		return array(
+			sprintf(
+				'DELETE FROM %s WHERE name = %s',
+				$sequence_table,
+				$this->connection->quote( $table_name )
+			),
+			sprintf(
+				'INSERT INTO %s (name, seq) VALUES (%s, (SELECT %s))',
+				$sequence_table,
+				$this->connection->quote( $table_name ),
+				$sequence_value_sql
+			),
 		);
 	}
 
@@ -26119,7 +26179,8 @@ metadata_columns AS (
 			\'\' AS "GENERATION_EXPRESSION",
 		NULL AS "SRS_ID"
 	FROM %8$s cm
-	WHERE NOT EXISTS (
+	WHERE NOT %15$s
+		AND NOT EXISTS (
 		SELECT 1
 		FROM information_schema.columns c
 		WHERE c.table_schema = cm.table_schema
@@ -26143,7 +26204,21 @@ SELECT * FROM metadata_columns',
 			$metadata_type,
 			$metadata_charset,
 			$metadata_collation,
-			$metadata_key
+			$metadata_key,
+			$this->get_mysql_temporary_schema_sql_condition( 'cm.table_schema' )
+		);
+	}
+
+	/**
+	 * Get a SQL condition that matches temporary metadata schemas.
+	 *
+	 * @param string $schema_sql SQL expression for a backend schema name.
+	 * @return string SQL condition.
+	 */
+	private function get_mysql_temporary_schema_sql_condition( string $schema_sql ): string {
+		return sprintf(
+			'(LOWER(%1$s) IN (\'temp\', \'pg_temp\') OR LOWER(%1$s) LIKE \'pg_temp_%%\')',
+			$schema_sql
 		);
 	}
 
