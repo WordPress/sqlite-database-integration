@@ -34699,8 +34699,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				|| ! in_array(
 					$tokens[ $i ]->id,
 					array(
+						WP_MySQL_Lexer::ADDDATE_SYMBOL,
 						WP_MySQL_Lexer::DATE_ADD_SYMBOL,
 						WP_MySQL_Lexer::DATE_SUB_SYMBOL,
+						WP_MySQL_Lexer::SUBDATE_SYMBOL,
 					),
 					true
 				)
@@ -34732,8 +34734,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			|| ! in_array(
 				$tokens[ $position ]->id,
 				array(
+					WP_MySQL_Lexer::ADDDATE_SYMBOL,
 					WP_MySQL_Lexer::DATE_ADD_SYMBOL,
 					WP_MySQL_Lexer::DATE_SUB_SYMBOL,
+					WP_MySQL_Lexer::SUBDATE_SYMBOL,
 				),
 				true
 			)
@@ -34758,7 +34762,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		$bounds = array(
-			'operator'             => WP_MySQL_Lexer::DATE_SUB_SYMBOL === $tokens[ $position ]->id ? '-' : '+',
+			'operator'             => in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::DATE_SUB_SYMBOL, WP_MySQL_Lexer::SUBDATE_SYMBOL ), true ) ? '-' : '+',
 			'expression_start'     => $arguments[0]['start'],
 			'expression_end'       => $arguments[0]['end'],
 			'interval_value_start' => $interval['value_start'],

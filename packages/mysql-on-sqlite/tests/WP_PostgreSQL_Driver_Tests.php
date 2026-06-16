@@ -10062,6 +10062,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ADDDATE and SUBDATE aliases share DATE_ADD/DATE_SUB interval translation.
+	 */
+	public function test_mysql_adddate_and_subdate_aliases_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT ADDDATE(post_date_gmt, INTERVAL 2 DAY) AS newer, SUBDATE(post_date_gmt, INTERVAL 3 HOUR) AS older'
+		);
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'post_date_gmt', '2', 'day' ) . ' AS newer, ' . $this->get_expected_date_arithmetic_sql( '-', 'post_date_gmt', '3', 'hour' ) . ' AS older',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'ADDDATE', $sql );
+		$this->assertStringNotContainsString( 'SUBDATE', $sql );
+	}
+
+	/**
 	 * Tests DATE_ADD supports simple MySQL interval units for PostgreSQL.
 	 */
 	public function test_mysql_date_add_supports_simple_mysql_interval_units_for_postgresql(): void {
