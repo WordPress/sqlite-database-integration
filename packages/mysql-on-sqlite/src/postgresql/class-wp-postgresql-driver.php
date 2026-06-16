@@ -3357,6 +3357,7 @@ $wp_mysql_on_update$',
 
 			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['old_column'] );
 			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+			$column_nullable = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
 			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
 				$this->execute_postgresql_side_effect_statements(
 					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
@@ -3385,6 +3386,13 @@ $wp_mysql_on_update$',
 				$metadata['old_column'],
 				$column['name']
 			);
+			$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
+			foreach ( $metadata['indexes'] ?? array() as $index ) {
+				$index['ordinal'] = $index_ordinal;
+				$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
+				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
+				++$index_ordinal;
+			}
 			return;
 		}
 
@@ -6105,6 +6113,7 @@ $wp_mysql_on_update$',
 				'operation'  => 'change_column',
 				'old_column' => $old_column,
 				'column'     => $column['metadata'],
+				'indexes'    => $column['indexes'],
 			),
 		);
 	}
@@ -6144,6 +6153,7 @@ $wp_mysql_on_update$',
 				'operation'  => 'change_column',
 				'old_column' => $column_name,
 				'column'     => $column['metadata'],
+				'indexes'    => $column['indexes'],
 			),
 		);
 	}
@@ -7099,6 +7109,57 @@ $wp_mysql_on_update$',
 					$this->connection->quote_identifier( $new_column )
 				);
 			}
+		}
+
+		return array_merge(
+			$statements,
+			$this->get_mysql_dbdelta_inline_index_statements( $table_name, $column['indexes'] ?? array() )
+		);
+	}
+
+	/**
+	 * Build PostgreSQL statements for inline indexes parsed from a column definition.
+	 *
+	 * @param string $table_name Table name.
+	 * @param array  $indexes    MySQL index metadata rows.
+	 * @return string[] PostgreSQL ALTER/CREATE INDEX statements.
+	 */
+	private function get_mysql_dbdelta_inline_index_statements( string $table_name, array $indexes ): array {
+		$statements = array();
+		foreach ( $indexes as $index ) {
+			$columns = array();
+			foreach ( $index['columns'] as $column ) {
+				$column_sql = $this->get_mysql_index_key_part_sql(
+					(string) $column['column_name'],
+					'0' === (string) $index['non_unique'] ? $column['sub_part'] : null
+				);
+				if ( 'D' === strtoupper( (string) ( $column['collation'] ?? '' ) ) ) {
+					$column_sql .= ' DESC';
+				}
+
+				$columns[] = $column_sql;
+			}
+
+			if ( 'PRIMARY' === strtoupper( (string) $index['name'] ) ) {
+				$statements[] = sprintf(
+					'ALTER TABLE %s ADD PRIMARY KEY (%s)',
+					$this->connection->quote_identifier( $table_name ),
+					implode( ', ', $columns )
+				);
+				continue;
+			}
+
+			if ( $this->is_mysql_metadata_only_index_type( (string) $index['index_type'] ) ) {
+				continue;
+			}
+
+			$statements[] = sprintf(
+				'CREATE %sINDEX %s ON %s (%s)',
+				'0' === (string) $index['non_unique'] ? 'UNIQUE ' : '',
+				$this->connection->quote_identifier( $table_name . '__' . $index['name'] ),
+				$this->connection->quote_identifier( $table_name ),
+				implode( ', ', $columns )
+			);
 		}
 
 		return $statements;
@@ -8167,7 +8228,7 @@ $wp_mysql_on_update$',
 			return '';
 		}
 
-		$definition = $matches['definition'];
+		$definition = $this->remove_translated_inline_key_constraints_from_column_definition( $matches['definition'] );
 		$stop_at    = strlen( $definition );
 		foreach ( array( ' GENERATED ', ' NOT NULL', ' DEFAULT ' ) as $marker ) {
 			$position = stripos( $definition, $marker );
@@ -8191,12 +8252,30 @@ $wp_mysql_on_update$',
 			'',
 			$definition_line
 		);
+		$definition_line = $this->remove_translated_inline_key_constraints_from_column_definition( $definition_line );
 
 		if ( ! preg_match( '/\sDEFAULT\s+(?P<default>.+)$/is', $definition_line, $matches ) ) {
 			return null;
 		}
 
 		return trim( $matches['default'] );
+	}
+
+	/**
+	 * Remove inline key fragments from translated column SQL.
+	 *
+	 * @param string $definition Translated column definition or definition tail.
+	 * @return string Definition without inline PRIMARY/UNIQUE key fragments.
+	 */
+	private function remove_translated_inline_key_constraints_from_column_definition( string $definition ): string {
+		return preg_replace(
+			array(
+				'/\s+PRIMARY\s+KEY\b/i',
+				'/\s+UNIQUE\b/i',
+			),
+			'',
+			$definition
+		);
 	}
 
 	/**

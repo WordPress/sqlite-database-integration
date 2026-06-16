@@ -12885,6 +12885,81 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CHANGE/MODIFY COLUMN inline key constraints update backend and metadata.
+	 */
+	public function test_alter_table_change_and_modify_inline_key_constraints_update_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_change_inline_keys (
+				a int,
+				b int
+			)'
+		);
+
+		$driver->query( 'ALTER TABLE wptests_change_inline_keys CHANGE COLUMN a a INT PRIMARY KEY' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ALTER COLUMN "a" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ALTER COLUMN "a" SET NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ALTER COLUMN "a" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ADD PRIMARY KEY ("a")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$driver->query( 'ALTER TABLE wptests_change_inline_keys MODIFY COLUMN b INT UNIQUE' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ALTER COLUMN "b" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ALTER COLUMN "b" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_change_inline_keys" ALTER COLUMN "b" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE UNIQUE INDEX "wptests_change_inline_keys__b" ON "wptests_change_inline_keys" ("b")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_change_inline_keys' );
+		$this->assertSame( 'PRIMARY', $indexes[0]['key_name'] );
+		$this->assertSame( 'a', $indexes[0]['column_name'] );
+		$this->assertSame( '0', $indexes[0]['non_unique'] );
+		$this->assertSame( 'b', $indexes[1]['key_name'] );
+		$this->assertSame( 'b', $indexes[1]['column_name'] );
+		$this->assertSame( '0', $indexes[1]['non_unique'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_change_inline_keys' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  PRIMARY KEY (`a`)', $create_table );
+		$this->assertStringContainsString( '  UNIQUE KEY `b` (`b`)', $create_table );
+	}
+
+	/**
 	 * Tests CHANGE/MODIFY COLUMN preserve MySQL JSON metadata parity.
 	 */
 	public function test_alter_table_change_and_modify_json_update_backend_and_metadata(): void {
