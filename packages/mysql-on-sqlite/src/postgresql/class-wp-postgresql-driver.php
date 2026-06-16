@@ -610,7 +610,14 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_show_processlist_query( $show_processlist_query, $fetch_mode, ...$fetch_mode_args );
 		}
 
-		if ( $this->should_reject_information_schema_backend_query( $query ) ) {
+		$direct_information_schema_cte_translated = false;
+		$direct_information_schema_cte_query      = $this->translate_direct_information_schema_cte_select_query( $query );
+		if ( null !== $direct_information_schema_cte_query ) {
+			$query                                    = $direct_information_schema_cte_query;
+			$direct_information_schema_cte_translated = true;
+		}
+
+		if ( ! $direct_information_schema_cte_translated && $this->should_reject_information_schema_backend_query( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 		}
 
@@ -806,7 +813,7 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$translated_for_postgresql = false;
+		$translated_for_postgresql = $direct_information_schema_cte_translated;
 		$dml_identity_repair_query = null;
 
 		$translated_query = $this->translate_wordpress_options_regexp_delete_query( $query );
@@ -24540,6 +24547,268 @@ WHERE option_name IN (
 			implode( ' ', $cases ),
 			$this->connection->quote_identifier( 'TABLE_ROWS' )
 		);
+	}
+
+	/**
+	 * Translate supported CTE SELECTs over direct MySQL information_schema relations.
+	 *
+	 * @param string $query MySQL WITH ... SELECT query.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_direct_information_schema_cte_select_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return null;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::RECURSIVE_SYMBOL === $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$replacements = array();
+		while ( $position < $statement_end ) {
+			$cte_name_position = $position;
+			$cte_name = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $cte_name ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $cte_name_position,
+				'end'   => $cte_name_position + 1,
+				'sql'   => $this->connection->quote_identifier( $cte_name ),
+			);
+
+			++$position;
+			$column_list_insert_position = $position;
+			$has_column_list            = false;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				$after_column_list = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+				if ( null === $after_column_list ) {
+					return null;
+				}
+				$has_column_list = true;
+				$position        = $after_column_list;
+			}
+
+			if (
+				! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::AS_SYMBOL !== $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+			) {
+				return null;
+			}
+
+			$after_select_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $statement_end );
+			if ( null === $after_select_close ) {
+				return null;
+			}
+
+			$select_start = $position + 2;
+			$select_end   = $after_select_close - 1;
+			if ( ! isset( $tokens[ $select_start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $select_start ]->id ) {
+				return null;
+			}
+
+			$select_query = $this->get_mysql_token_range_bytes( $query, $tokens, $select_start, $select_end );
+			if ( '' === $select_query ) {
+				return null;
+			}
+
+			$translated_select = $this->translate_direct_information_schema_select_query( $select_query );
+			if ( null === $translated_select ) {
+				return null;
+			}
+
+			if ( ! $has_column_list ) {
+				$select_tokens        = $this->get_mysql_tokens( $select_query );
+				$select_statement_end = $this->get_mysql_statement_end_position( $select_tokens, 1 );
+				if ( null === $select_statement_end ) {
+					return null;
+				}
+
+				$columns = $this->get_direct_information_schema_cte_output_columns( $select_query, $select_tokens, $select_statement_end );
+				if ( empty( $columns ) ) {
+					return null;
+				}
+
+				$replacements[] = array(
+					'start' => $column_list_insert_position,
+					'end'   => $column_list_insert_position,
+					'sql'   => '(' . implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ) . ')',
+				);
+			}
+
+			$replacements[] = array(
+				'start' => $select_start,
+				'end'   => $select_end,
+				'sql'   => $translated_select,
+			);
+
+			$position = $after_select_close;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			break;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		if ( $this->select_references_direct_information_schema_relation( $tokens, $position + 1, $statement_end ) ) {
+			return null;
+		}
+
+		usort(
+			$replacements,
+			static function ( array $left, array $right ): int {
+				return $left['start'] <=> $right['start'];
+			}
+		);
+
+		return $this->translate_mysql_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			0,
+			$statement_end,
+			$replacements
+		);
+	}
+
+	/**
+	 * Get CTE output columns for a supported direct information_schema SELECT body.
+	 *
+	 * @param string           $query         MySQL SELECT query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return string[]|null Output column names, or null when unsupported.
+	 */
+	private function get_direct_information_schema_cte_output_columns( string $query, array $tokens, int $statement_end ): ?array {
+		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) ) ) {
+			return $this->get_direct_information_schema_select_or_union_output_columns( $query, $tokens, $statement_end );
+		}
+
+		$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end );
+		if ( null === $context ) {
+			return null;
+		}
+
+		$projection_start = 1;
+		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
+			++$projection_start;
+		}
+
+		$ranges = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $context['from_position'] );
+		if ( null === $ranges || array() === $ranges ) {
+			return null;
+		}
+
+		$columns = array();
+		foreach ( $ranges as $range ) {
+			$expression_bounds = $this->get_mysql_select_projection_expression_bounds( $tokens, $range['start'], $range['end'] );
+			if ( null === $expression_bounds ) {
+				return null;
+			}
+
+			$star_columns = $this->get_direct_information_schema_star_projection_output_columns(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end'],
+				$context
+			);
+			if ( null !== $star_columns ) {
+				if ( null !== $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] ) ) {
+					return null;
+				}
+				$columns = array_merge( $columns, $star_columns );
+				continue;
+			}
+
+			$alias = $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] );
+			if ( null !== $alias ) {
+				$columns[] = $alias;
+				continue;
+			}
+
+			if ( $this->is_direct_information_schema_count_star_projection( $tokens, $expression_bounds['start'], $expression_bounds['end'] ) ) {
+				$columns[] = 'COUNT(*)';
+				continue;
+			}
+
+			$column = $this->get_direct_information_schema_cte_projection_column_name(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end'],
+				$context
+			);
+			if ( null === $column ) {
+				return null;
+			}
+			$columns[] = $column;
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Get a projection column name preserving the original token spelling.
+	 *
+	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
+	 * @param int              $start   First expression token.
+	 * @param int              $end     Final expression token, exclusive.
+	 * @param array            $context Direct information_schema SELECT context.
+	 * @return string|null Output column name, or null.
+	 */
+	private function get_direct_information_schema_cte_projection_column_name( array $tokens, int $start, int $end, array $context ): ?string {
+		if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
+			return null === $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context )
+				? null
+				: $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+		}
+
+		if (
+			$start + 3 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+		) {
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			if ( null === $source || null === $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] ) ) {
+				return null;
+			}
+
+			return $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+		}
+
+		if (
+			$start + 5 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
+		) {
+			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
+				return null;
+			}
+
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			if ( null === $source || null === $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] ) ) {
+				return null;
+			}
+
+			return $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 4 ] );
+		}
+
+		return null;
 	}
 
 	/**

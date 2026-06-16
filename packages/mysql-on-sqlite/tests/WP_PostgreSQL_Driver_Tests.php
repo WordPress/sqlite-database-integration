@@ -17383,6 +17383,57 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests USE information_schema routes supported CTE reads.
+	 */
+	public function test_use_statement_information_schema_cte_selects_route_supported_relations(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$rows = $driver->query(
+			"WITH
+				cols AS (
+					SELECT column_name
+					FROM columns
+					WHERE table_name = 'wptests_options'
+				),
+				indexes AS (
+					SELECT DISTINCT index_name
+					FROM statistics
+					WHERE table_name = 'wptests_options'
+				)
+			SELECT CONCAT(column_name, ' (column)') AS name
+			FROM cols
+			UNION ALL
+			SELECT CONCAT(index_name, ' (index)') AS name
+			FROM indexes
+			ORDER BY name"
+		);
+
+		$this->assertSame(
+			array(
+				'PRIMARY (index)',
+				'autoload (column)',
+				'autoload (index)',
+				'option_id (column)',
+				'option_name (column)',
+				'option_name (index)',
+				'option_value (column)',
+			),
+			array_column( $rows, 'name' )
+		);
+
+		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'WITH "cols" ("column_name") AS', $sql );
+		$this->assertStringContainsString( '"indexes" ("index_name") AS', $sql );
+		$this->assertStringContainsString( 'AS "columns"', $sql );
+		$this->assertStringContainsString( 'AS "statistics"', $sql );
+		$this->assertStringContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
 	 * Tests unsupported USE information_schema table reads fail closed.
 	 */
 	public function test_use_statement_information_schema_unsupported_table_reads_fail_closed(): void {
