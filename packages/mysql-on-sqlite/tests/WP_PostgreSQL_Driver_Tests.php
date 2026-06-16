@@ -7016,11 +7016,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
 			'translate_mysql_compatible_query',
-			"SELECT FROM_UNIXTIME(0.123456, '%Y-%m-%d %H:%i:%s.%f') AS formatted_epoch, FROM_UNIXTIME(NULL, 'literal') AS null_literal, DATE_FORMAT(NULL, '%%') AS null_percent"
+			"SELECT
+				FROM_UNIXTIME(0.123456, '%Y-%m-%d %H:%i:%s.%f') AS formatted_epoch,
+				FROM_UNIXTIME(0, '%H.%i') AS formatted_hour_minute,
+				FROM_UNIXTIME(0, '%H.%i%s') AS formatted_hour_minute_second,
+				FROM_UNIXTIME(0, '0.%i%s') AS formatted_minute_second_fraction,
+				FROM_UNIXTIME(NULL, 'literal') AS null_literal,
+				DATE_FORMAT(NULL, '%%') AS null_percent"
 		);
 
 		$this->assertNotNull( $sql );
 		$this->assertStringContainsString( "TO_TIMESTAMP(CAST(0.123456 AS double precision)) AT TIME ZONE 'UTC'", $sql );
+		$this->assertStringContainsString( "'HH24') || '.' || TO_CHAR", $sql );
+		$this->assertStringContainsString( "'MI') END AS formatted_hour_minute", $sql );
+		$this->assertStringContainsString( "'MI') || TO_CHAR", $sql );
+		$this->assertStringContainsString( "'SS') END AS formatted_hour_minute_second", $sql );
+		$this->assertStringContainsString( "'0.' || TO_CHAR", $sql );
+		$this->assertStringContainsString( "'SS') END AS formatted_minute_second_fraction", $sql );
+		$this->assertStringNotContainsString( "CAST(TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'HH24.MI') AS double precision)", $sql );
+		$this->assertStringNotContainsString( "CAST(TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'HH24.MISS') AS double precision)", $sql );
+		$this->assertStringNotContainsString( "CAST('0.' || TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'MISS') AS double precision)", $sql );
 		$this->assertStringContainsString( "'YYYY'", $sql );
 		$this->assertStringContainsString( "'MM'", $sql );
 		$this->assertStringContainsString( "'DD'", $sql );
