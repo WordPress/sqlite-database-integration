@@ -804,6 +804,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests strict zero-date SQL modes reject expression-produced date/time values.
+	 */
+	public function test_strict_dml_rejects_expression_produced_zero_dates_from_mysql_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		try {
+			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) VALUES (1, CONCAT('0000-00-00', ' 00:00:00'))" );
+			$this->fail( 'Expected expression-produced zero date to be rejected in strict SQL mode.' );
+		} catch ( PDOException $e ) {
+			$this->assertSame( array(), $driver->query( 'SELECT ID FROM wptests_posts WHERE ID = 1' ) );
+		}
+
+		try {
+			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) SELECT 2, CONCAT('0000-00-00', ' 00:00:00')" );
+			$this->fail( 'Expected INSERT ... SELECT expression-produced zero date to be rejected in strict SQL mode.' );
+		} catch ( PDOException $e ) {
+			$this->assertSame( array(), $driver->query( 'SELECT ID FROM wptests_posts WHERE ID = 2' ) );
+		}
+
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_date_gmt, post_modified, post_modified_gmt)
+			VALUES (3, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
+		);
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE' );
+
+		try {
+			$driver->query( "UPDATE `wptests_posts` SET `post_modified` = CONCAT('2020-00', '-15 14:15:27') WHERE `ID` = 3" );
+			$this->fail( 'Expected expression-produced zero-in-date to be rejected in strict SQL mode.' );
+		} catch ( PDOException $e ) {
+			$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 3' );
+			$this->assertCount( 1, $rows );
+			$this->assertSame( '2020-01-01 00:00:00', $rows[0]->post_modified );
+		}
+	}
+
+	/**
 	 * Tests strict INSERT accepts zero dates when NO_ZERO_DATE is disabled.
 	 */
 	public function test_strict_insert_accepts_zero_dates_when_no_zero_date_mode_is_disabled(): void {
@@ -3034,6 +3071,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		} catch ( PDOException $exception ) {
 			$this->assertNotSame( '', $exception->getMessage() );
 		}
+	}
+
+	/**
+	 * Tests CREATE TABLE IF NOT EXISTS leaves existing MySQL metadata unchanged.
+	 */
+	public function test_create_table_if_not_exists_preserves_existing_metadata(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_create_if_existing (
+				id bigint(20) unsigned NOT NULL,
+				title varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY title_key (title)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_create_if_existing' );
+		$indexes_before = $this->get_mysql_index_metadata_rows( $driver, 'wptests_create_if_existing' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE IF NOT EXISTS wptests_create_if_existing (
+					other bigint(20) NOT NULL,
+					changed varchar(20) NOT NULL,
+					KEY changed_key (changed)
+				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+			)
+		);
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_create_if_existing' ) );
+		$this->assertSame( $indexes_before, $this->get_mysql_index_metadata_rows( $driver, 'wptests_create_if_existing' ) );
 	}
 
 	/**
@@ -5517,24 +5588,101 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported LAST_INSERT_ID(expr) upsert assignments fail closed.
+	 * Tests multi-row LAST_INSERT_ID(id) upsert updates report the final deterministic existing id.
 	 */
-	public function test_upsert_last_insert_id_assignment_unsupported_shapes_fail_closed(): void {
-		$driver = $this->create_driver();
+	public function test_multi_row_upsert_last_insert_id_assignment_exposes_existing_auto_increment_value(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
 
 		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_unique_upsert (id, slug, value) VALUES (7, 'one', 'old-one'), (8, 'two', 'old-two')" );
+
+		$upsert = "INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+			VALUES ('one', 'updated-one'), ('two', 'updated-two')
+			ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`),
+			                        `value` = VALUES(`value`)";
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assertSame( 8, $driver->get_insert_id() );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") VALUES (\'one\', \'updated-one\'), (\'two\', \'updated-two\') ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"',
+			)
+		);
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '7', 'one', 'updated-one' ),
+				array( '8', 'two', 'updated-two' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->slug, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests real SELECT-sourced LAST_INSERT_ID(id) upserts report deterministic existing ids.
+	 */
+	public function test_insert_select_upsert_last_insert_id_assignment_exposes_existing_auto_increment_value(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
+
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_unique_upsert (id, slug, value) VALUES (7, 'one', 'old-one'), (8, 'two', 'old-two')" );
 		$driver->query(
 			'CREATE TABLE wptests_identity_unique_upsert_source (
+				seq INTEGER NOT NULL,
 				slug TEXT NOT NULL,
 				value TEXT NOT NULL
 			)'
 		);
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_identity_unique_upsert_source (
+				seq int(11) NOT NULL,
 				slug varchar(191) NOT NULL,
 				value longtext NOT NULL
 			)'
 		);
+		$driver->query( "INSERT INTO wptests_identity_unique_upsert_source (seq, slug, value) VALUES (1, 'one', 'selected-one'), (2, 'two', 'selected-two')" );
+
+		$upsert = 'INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+			SELECT `slug`, `value` FROM `wptests_identity_unique_upsert_source` ORDER BY `seq`
+			ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`),
+			                        `value` = VALUES(`value`)';
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assertSame( 8, $driver->get_insert_id() );
+
+		$materialized_sql = $this->assert_last_upsert_select_materialized_sql( $driver, 'wptests_identity_unique_upsert' );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"', $materialized_sql[2] );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '7', 'one', 'selected-one' ),
+				array( '8', 'two', 'selected-two' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->slug, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests unsupported LAST_INSERT_ID(expr) upsert assignments fail closed.
+	 */
+	public function test_upsert_last_insert_id_assignment_unsupported_shapes_fail_closed(): void {
+		$driver = $this->create_driver();
+
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_unique_upsert (id, slug, value) VALUES (7, 'existing', 'old')" );
 
 		$queries = array(
 			"INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
@@ -5543,9 +5691,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
 				VALUES ('existing', 'updated')
 				ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id` + 1)",
-			'INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
-				SELECT `slug`, `value` FROM `wptests_identity_unique_upsert_source`
-				ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`)',
+			"INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+				VALUES ('existing', 'updated'), ('new', 'created')
+				ON DUPLICATE KEY UPDATE `id` = LAST_INSERT_ID(`id`)",
 		);
 
 		foreach ( $queries as $query ) {
@@ -6828,6 +6976,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests empty/default-row ON DUPLICATE KEY UPDATE forms fail closed.
+	 */
+	public function test_empty_default_row_upsert_forms_fail_closed(): void {
+		$driver = $this->create_driver();
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		foreach (
+			array(
+				'INSERT INTO `wptests_identity_upsert` VALUES () ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+				'INSERT INTO `wptests_identity_upsert` () VALUES () ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected empty/default-row upsert to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ON DUPLICATE KEY UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE supports VALUES() for omitted table columns.
 	 */
 	public function test_upsert_update_assignments_support_values_for_omitted_columns(): void {
@@ -7623,8 +7794,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertTrue( $translation['insert_id_unknown'] );
 		$this->assertSame( array( 'id' => true ), $translation['explicit_identity_columns'] );
 
-		$this->assertSame( 2, $driver->query( $upsert ) );
-		$this->assertSame( 0, $driver->get_insert_id() );
+			$this->assertSame( 2, $driver->query( $upsert ) );
+			$this->assertSame( 7, $driver->get_insert_id() );
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 5, $queries );
@@ -7940,9 +8111,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertTrue( $translation['insert_id_unknown'] );
 		$this->assertSame( array( 'id' => true ), $translation['explicit_identity_columns'] );
 
-		$sequence_sync_count = $connection->get_sequence_sync_query_count();
-		$this->assertSame( 3, $driver->query( $upsert ) );
-		$this->assertSame( 0, $driver->get_insert_id() );
+			$sequence_sync_count = $connection->get_sequence_sync_query_count();
+			$this->assertSame( 3, $driver->query( $upsert ) );
+			$this->assertSame( 7, $driver->get_insert_id() );
 
 		$queries = $driver->get_last_postgresql_queries();
 		$sql     = array_column( $queries, 'sql' );
@@ -9016,9 +9187,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'FROM "wptests_options" AS "o" JOIN (', $sql );
 		$this->assertStringContainsString( ') AS "it" ON "o"."option_name" = "it"."TABLE_NAME"', $sql );
 		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" = \'wptests\'', $sql );
+		$this->assertStringContainsString( 'ORDER BY "it"."TABLE_NAME"', $sql );
 		$this->assertStringContainsString( '"o".ctid = "mysql_update_values"."mysql_update_target_ctid"', $sql );
 		$this->assertStringContainsString( '"o"."option_value" IS DISTINCT FROM ("mysql_update_values"."mysql_update_value_0")', $sql );
-		$this->assertStringNotContainsString( 'ORDER BY', $sql );
+	}
+
+	/**
+	 * Tests unsupported information_schema joined UPDATE ORDER BY sources fail closed.
+	 */
+	public function test_joined_update_rejects_unsupported_information_schema_order_by_sources(): void {
+		$queries = array(
+			'UPDATE wptests_options AS o
+				JOIN information_schema.tables AS it ON o.option_name = it.table_name
+				SET o.option_value = it.table_type
+				WHERE it.table_schema = DATABASE()
+				ORDER BY missing_alias.table_name',
+			'UPDATE wptests_options AS o
+				JOIN information_schema.tables AS it ON o.option_name = it.table_name
+				SET o.option_value = it.table_type
+				WHERE it.table_schema = DATABASE()
+				ORDER BY it.missing_column',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+			$this->install_direct_information_schema_options_metadata( $driver );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported UPDATE statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
@@ -12125,13 +12327,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'CASE WHEN CAST(NULL AS text) IS NULL THEN NULL WHEN', $sql );
 		$this->assertStringContainsString( "THEN '' ELSE '' END AS null_empty_format", $sql );
 		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
-		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
-	}
+			$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+		}
 
-	/**
-	 * Tests DATE_FORMAT() supports runtime format expressions like SQLite's UDF.
-	 */
-	public function test_mysql_date_format_runtime_format_expressions_are_translated_to_postgresql(): void {
+		/**
+		 * Tests FROM_UNIXTIME() honors session time_zone and preserves fractional seconds.
+		 */
+		public function test_from_unixtime_runtime_function_honors_time_zone_and_fractional_seconds(): void {
+			$driver = $this->create_driver();
+			$driver->query( "SET SESSION time_zone = '+02:30'" );
+
+			$sql = $this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_compatible_query',
+				"SELECT
+					FROM_UNIXTIME(0) AS whole_epoch,
+					FROM_UNIXTIME(0.123456) AS fractional_epoch,
+					FROM_UNIXTIME(0, '%q %%') AS unknown_specifier"
+			);
+
+			$this->assertNotNull( $sql );
+			$this->assertStringContainsString( "(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC' + INTERVAL '150 minutes')", $sql );
+			$this->assertStringContainsString( "TO_CHAR((TO_TIMESTAMP(CAST(0.123456 AS double precision)) AT TIME ZONE 'UTC' + INTERVAL '150 minutes'), 'YYYY-MM-DD HH24:MI:SS.US')", $sql );
+			$this->assertStringContainsString( "'q ' || '%'", $sql );
+			$this->assertStringNotContainsString( "'%q '", $sql );
+			$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+		}
+
+		/**
+		 * Tests DATE_FORMAT() supports runtime format expressions like SQLite's UDF.
+		 */
+		public function test_mysql_date_format_runtime_format_expressions_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
 		$sql = $this->translate_driver_query_with_private_method(
@@ -12154,12 +12380,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "WHEN 'w' THEN CAST(CAST(EXTRACT(DOW FROM", $sql );
 		$this->assertStringContainsString( "WHEN 'U' THEN LPAD(CAST(CASE WHEN", $sql );
 		$this->assertStringContainsString( "WHEN 'u' THEN LPAD(CAST(CASE WHEN", $sql );
-		$this->assertStringContainsString( "WHEN 'V' THEN LPAD(CAST(CASE WHEN", $sql );
-		$this->assertStringContainsString( "WHEN 'v' THEN TO_CHAR", $sql );
-		$this->assertStringContainsString( "WHEN 'X' THEN CASE WHEN", $sql );
-		$this->assertStringContainsString( "WHEN 'x' THEN TO_CHAR", $sql );
-		$this->assertStringContainsString( "ELSE '%' || SUBSTRING", $sql );
-		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+			$this->assertStringContainsString( "WHEN 'V' THEN LPAD(CAST(CASE WHEN", $sql );
+			$this->assertStringContainsString( "WHEN 'v' THEN TO_CHAR", $sql );
+			$this->assertStringContainsString( "WHEN 'X' THEN CASE WHEN", $sql );
+			$this->assertStringContainsString( "WHEN 'x' THEN TO_CHAR", $sql );
+			$this->assertStringContainsString( 'ELSE SUBSTRING', $sql );
+			$this->assertStringNotContainsString( "ELSE '%' || SUBSTRING", $sql );
+			$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -12196,10 +12423,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "WHEN 's' THEN CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN SUBSTRING($expression_sql FROM 18 FOR 2) ELSE '00' END", $sql );
 		$this->assertStringContainsString( "WHEN 'f' THEN CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]+' THEN LEFT(RPAD(SUBSTRING($expression_sql FROM '[.]([0-9]+)'), 6, '0'), 6) ELSE '000000' END", $sql );
 		$this->assertStringContainsString( "WHEN 'W' THEN NULL", $sql );
-		$this->assertStringContainsString( "ELSE '%' || SUBSTRING(CAST(format_mask AS text) FROM \"__wp_pg_mysql_date_format\".\"position\" + 1 FOR 1) END", $sql );
-		$this->assertStringNotContainsString( "CAST('2006-06-00 13:04:05.123' AS timestamp)", $sql );
-		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
-	}
+			$this->assertStringContainsString( 'ELSE SUBSTRING(CAST(format_mask AS text) FROM "__wp_pg_mysql_date_format"."position" + 1 FOR 1) END', $sql );
+			$this->assertStringNotContainsString( "ELSE '%' || SUBSTRING", $sql );
+			$this->assertStringNotContainsString( "CAST('2006-06-00 13:04:05.123' AS timestamp)", $sql );
+			$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+		}
 
 	/**
 	 * Tests formatted FROM_UNIXTIME() supports runtime format expressions.
@@ -15546,7 +15774,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, DAYOFMONTH(post_date) AS d, HOUR(post_date) AS h FROM wptests_posts WHERE post_date = \'0000-00-00 00:00:00\'';
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
-		$this->assertStringContainsString( "CASE WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CASE WHEN CAST(post_date AS text) = '' THEN NULL WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
 		$this->assertStringContainsString( "SUBSTRING(CAST(post_date AS text) FROM 1 FOR 4) = '0000'", $sql );
 		$this->assertStringContainsString( "SUBSTRING(CAST(post_date AS text) FROM 6 FOR 2) = '00'", $sql );
 		$this->assertStringContainsString( "SUBSTRING(CAST(post_date AS text) FROM 9 FOR 2) = '00'", $sql );
@@ -15557,6 +15785,112 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringNotContainsString( 'SELECT CAST(EXTRACT(YEAR FROM CAST(post_date AS timestamp)) AS integer) AS y', $sql );
 		$this->assertStringContainsString( 'CAST(EXTRACT(YEAR FROM CAST(CASE WHEN CAST(post_date AS text)', $sql );
 		$this->assertStringContainsString( 'THEN NULL ELSE CAST(post_date AS text) END AS timestamp)', $sql );
+	}
+
+	/**
+	 * Tests stored empty temporal values are safe for MySQL-compatible date functions.
+	 */
+	public function test_stored_empty_temporal_values_are_safe_for_mysql_date_functions(): void {
+		$driver = $this->create_driver();
+		$driver->query(
+			'CREATE TABLE wp_acid_dates (
+				id int(11) NOT NULL,
+				note varchar(20) NOT NULL,
+				d date DEFAULT NULL,
+				dt datetime DEFAULT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->get_connection()->query(
+			"INSERT INTO wp_acid_dates (id, note, d, dt) VALUES
+				(1, 'empty', '', ''),
+				(2, 'zero', '0000-00-00', '0000-00-00 00:00:00'),
+				(3, 'partial', '2020-00-15', '2020-00-15 13:04:05'),
+				(4, 'valid', '2024-05-06', '2024-05-06 07:08:09')"
+		);
+
+		$select = "SELECT note, d, dt, DATE_FORMAT(d, '%Y-%m-%d') AS formatted, YEAR(d) AS y, MONTH(d) AS m, DAYOFMONTH(d) AS day
+			FROM wp_acid_dates
+			ORDER BY id";
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$this->assertNotNull( $sql );
+		$d_text_sql              = 'CAST(d AS text)';
+		$empty_temporal_sql      = $this->get_expected_empty_temporal_condition_sql( $d_text_sql );
+		$zero_date_condition_sql = $this->get_expected_zero_date_condition_sql( $d_text_sql );
+
+		$this->assertStringContainsString(
+			sprintf(
+				"CASE WHEN %1\$s THEN NULL WHEN %2\$s THEN SUBSTRING(%3\$s FROM 1 FOR 10) ELSE TO_CHAR(%4\$s, 'YYYY-MM-DD') END AS formatted",
+				$empty_temporal_sql,
+				$zero_date_condition_sql,
+				$d_text_sql,
+				$this->get_expected_zero_date_safe_timestamp_sql( 'd' )
+			),
+			$sql
+		);
+		$this->assertStringContainsString( $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'd' ) . ' AS y', $sql );
+		$this->assertStringContainsString( $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'd' ) . ' AS m', $sql );
+		$this->assertStringContainsString( $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'd' ) . ' AS day', $sql );
+		$this->assertStringContainsString(
+			sprintf( 'CAST(CASE WHEN %1$s OR %2$s THEN NULL ELSE %3$s END AS timestamp)', $empty_temporal_sql, $zero_date_condition_sql, $d_text_sql ),
+			$sql
+		);
+		$this->assertStringNotContainsString(
+			sprintf( 'CAST(CASE WHEN %1$s THEN NULL ELSE %2$s END AS timestamp)', $zero_date_condition_sql, $d_text_sql ),
+			$sql
+		);
+	}
+
+	/**
+	 * Tests MySQL temporal expressions compare safely against text-backed datetime columns.
+	 */
+	public function test_mysql_temporal_expression_comparisons_against_text_backed_datetime_columns_use_text_ordering_for_postgresql(): void {
+		$driver = $this->create_driver();
+		$driver->query(
+			'CREATE TABLE wp_acid_dates (
+				id int(11) NOT NULL,
+				note varchar(20) NOT NULL,
+				d date DEFAULT NULL,
+				dt datetime DEFAULT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->get_connection()->query(
+			"INSERT INTO wp_acid_dates (id, note, d, dt) VALUES
+				(1, 'empty', '', ''),
+				(2, 'zero', '0000-00-00', '0000-00-00 00:00:00'),
+				(3, 'partial', '2020-00-15', '2020-00-15 13:04:05'),
+				(4, 'old', '2001-01-01', '2001-01-01 00:00:00'),
+				(5, 'future', '2999-01-01', '2999-01-01 00:00:00')"
+		);
+
+		$now_sql           = "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+		$date_sub_sql      = $this->get_expected_date_arithmetic_sql( '-', $now_sql, '7', 'day' );
+		$threshold_sql     = $this->get_expected_temporal_expression_comparison_text_sql( $date_sub_sql, true );
+		$datetime_text_sql = 'CAST(dt AS text)';
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT COUNT(*) AS old_rows FROM wp_acid_dates WHERE DATE_SUB(NOW(), INTERVAL 7 DAY) > dt'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( $threshold_sql . ' > ' . $datetime_text_sql, $sql );
+		$this->assertStringNotContainsString( ') > dt', $sql );
+		$this->assertStringNotContainsString( 'CAST(dt AS timestamp)', $sql );
+
+		$reversed_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT COUNT(*) AS old_rows FROM wp_acid_dates WHERE dt < DATE_SUB(NOW(), INTERVAL 7 DAY)'
+		);
+
+		$this->assertNotNull( $reversed_sql );
+		$this->assertStringContainsString( $datetime_text_sql . ' < ' . $threshold_sql, $reversed_sql );
+		$this->assertStringNotContainsString( 'dt < (', $reversed_sql );
+		$this->assertStringNotContainsString( 'CAST(dt AS timestamp)', $reversed_sql );
 	}
 
 	/**
@@ -15828,9 +16162,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$select = "SELECT WEEK('0000-00-00 00:00:00', 1) AS week_num, DAYOFWEEK('2020-00-15 13:05:00') AS day_of_week, WEEKDAY('2020-01-00 13:05:00') AS weekday_value, DATE_FORMAT('0000-00-00 13:05:00', '%H.%i') AS hour_minute, DATE_FORMAT('2020-00-15 13:05:00', '%Y-%m-%d') AS formatted_date";
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
-		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
-		$this->assertStringContainsString( "CAST(CASE WHEN CAST('2020-00-15 13:05:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
-		$this->assertStringContainsString( "CAST(CASE WHEN CAST('2020-01-00 13:05:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) = '' OR CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('2020-00-15 13:05:00' AS text) = '' OR CAST('2020-00-15 13:05:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('2020-01-00 13:05:00' AS text) = '' OR CAST('2020-01-00 13:05:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
 		$this->assertStringContainsString( "THEN CAST(SUBSTRING(CAST('0000-00-00 13:05:00' AS text) FROM 12 FOR 2) || '.' || SUBSTRING(CAST('0000-00-00 13:05:00' AS text) FROM 15 FOR 2) AS double precision) ELSE 0 END", $sql );
 		$this->assertStringContainsString( "THEN SUBSTRING(CAST('2020-00-15 13:05:00' AS text) FROM 1 FOR 10)", $sql );
 		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
@@ -15861,7 +16195,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "CASE WHEN CAST(CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN SUBSTRING($expression_sql FROM 12 FOR 2) ELSE '00' END AS integer) < 12 THEN 'AM' ELSE 'PM' END", $sql );
 		$this->assertStringContainsString( "LEFT(RPAD(SUBSTRING($expression_sql FROM '[.]([0-9]+)'), 6, '0'), 6)", $sql );
 		$this->assertStringContainsString( "'%'", $sql );
-		$this->assertStringContainsString( "|| '%q'", $sql );
+		$this->assertStringContainsString( "|| 'q'", $sql );
 		$this->assertStringNotContainsString( "CAST('2006-06-00 13:04:05.123' AS timestamp)", $sql );
 		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 	}
@@ -16190,7 +16524,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT ' . $this->get_expected_mysql_timestampdiff_sql( 'day', "'0000-00-00 00:00:00'", 'post_date_gmt' ) . ' AS diff',
 			$sql
 		);
-		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) = '' OR CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
 		$this->assertStringContainsString( "THEN NULL ELSE CAST('0000-00-00 00:00:00' AS text) END AS timestamp", $sql );
 		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
 	}
@@ -16486,7 +16820,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', "'0000-00-00 00:00:00'", '1', 'day' ) . ' AS shifted',
 			$sql
 		);
-		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
+		$this->assertStringContainsString( "CAST(CASE WHEN CAST('0000-00-00 00:00:00' AS text) = '' OR CAST('0000-00-00 00:00:00' AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
 		$this->assertStringContainsString( "THEN NULL ELSE CAST('0000-00-00 00:00:00' AS text) END AS timestamp", $sql );
 		$this->assertStringNotContainsString( "CAST('0000-00-00 00:00:00' AS timestamp)", $sql );
 	}
@@ -20034,6 +20368,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE RENAME TO accepts current database and public-qualified targets.
+	 */
+	public function test_alter_table_rename_to_accepts_current_database_qualified_targets(): void {
+		$driver = $this->create_driver( 'wp' );
+
+		$driver->query( 'CREATE TABLE wptests_rename_table_qualified_old (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_table_qualified_old (
+				id int(11) NOT NULL,
+				name varchar(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE wptests_rename_table_qualified_old RENAME TO wp.wptests_rename_table_qualified_new' )
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains( 'ALTER TABLE "wptests_rename_table_qualified_old" RENAME TO "wptests_rename_table_qualified_new"', $sql );
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_table_qualified_old' ) );
+		$this->assertSame(
+			array( 'id', 'name' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_table_qualified_new' ), 'column_name' )
+		);
+
+		$driver->query( 'CREATE TABLE wptests_rename_table_public_old (id INTEGER NOT NULL PRIMARY KEY)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_rename_table_public_old (
+				id int(11) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE wptests_rename_table_public_old RENAME TO public.wptests_rename_table_public_new' )
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains( 'ALTER TABLE "wptests_rename_table_public_old" RENAME TO "wptests_rename_table_public_new"', $sql );
+		$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_table_public_old' ) );
+		$this->assertSame(
+			array( 'id' ),
+			array_column( $this->get_mysql_column_metadata_rows( $driver, 'wptests_rename_table_public_new' ), 'column_name' )
+		);
+	}
+
+	/**
 	 * Tests RENAME TABLE updates table, index, and foreign-key metadata.
 	 */
 	public function test_rename_table_updates_indexes_and_foreign_key_metadata(): void {
@@ -20926,6 +21310,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $queries );
 		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
 		$this->assertStringNotContainsString( 'MOD(LENGTH(Field), 2)', $queries[0]['sql'] );
+
+		$result = $driver->query( 'SHOW COLUMNS FROM wptests_options WHERE MOD(Field, 2) = 0' );
+
+		$this->assertSame(
+			array( 'option_id', 'option_name', 'option_value', 'autoload' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+		$this->assertStringNotContainsString( 'MOD(Field, 2)', $queries[0]['sql'] );
 	}
 
 	/**
@@ -20936,7 +21336,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SHOW COLUMNS FROM wptests_options WHERE Field = option_name',
 			'SHOW COLUMNS FROM wptests_options WHERE Field LIKE option_%',
 			"SHOW COLUMNS FROM wptests_options WHERE Unknown = 'option_name'",
-			'SHOW COLUMNS FROM wptests_options WHERE MOD(Field, 2) = 0',
 			"SHOW FIELDS FROM wptests_options WHERE Privileges = 'select,insert,update,references'",
 			"SHOW COLUMNS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
 			"SHOW FIELDS FROM wptests_options LIKE 'option_%' WHERE Field = 'option_name'",
@@ -23256,9 +23655,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$global_variables = $driver->query(
 			"SELECT VARIABLE_NAME
-			FROM information_schema.global_variables
-			WHERE VARIABLE_NAME LIKE 'character_set_%'
-			ORDER BY VARIABLE_NAME"
+					FROM information_schema.global_variables
+					WHERE VARIABLE_NAME LIKE 'character_set_%'
+					ORDER BY VARIABLE_NAME"
 		);
 
 		$this->assertSame(
@@ -23272,10 +23671,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array_column( $global_variables, 'VARIABLE_NAME' )
 		);
 
+		$this->assertSame( 0, $driver->query( "SET SESSION time_zone = '+02:00'" ) );
+		$this->assertSame( 0, $driver->query( "SET GLOBAL time_zone = '+03:00'" ) );
+
+		$session_time_zone = $driver->query(
+			"SELECT VARIABLE_VALUE
+					FROM information_schema.session_variables
+					WHERE VARIABLE_NAME = 'time_zone'"
+		);
+		$global_time_zone  = $driver->query(
+			"SELECT VARIABLE_VALUE
+					FROM information_schema.global_variables
+					WHERE VARIABLE_NAME = 'time_zone'"
+		);
+
+		$this->assertCount( 1, $session_time_zone );
+		$this->assertCount( 1, $global_time_zone );
+		$this->assertSame( '+02:00', $session_time_zone[0]->VARIABLE_VALUE );
+		$this->assertSame( '+03:00', $global_time_zone[0]->VARIABLE_VALUE );
+
 		$status = $driver->query(
 			"SELECT VARIABLE_NAME, VARIABLE_VALUE
-			FROM information_schema.session_status
-			WHERE VARIABLE_NAME = 'Threads_running'"
+				FROM information_schema.session_status
+				WHERE VARIABLE_NAME = 'Threads_running'"
 		);
 
 		$this->assertEquals(
@@ -25639,6 +26057,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '"wptests_schema_names" AS "app"', $sql );
 		$this->assertStringContainsString( '"app"."db_name" = "c"."TABLE_SCHEMA"', $sql );
 		$this->assertStringNotContainsString( 'wptests.wptests_schema_names', $sql );
+
+		$public_result = $driver->query(
+			"SELECT app.id, c.table_schema, c.table_name, c.column_name
+			FROM columns AS c
+			JOIN public.wptests_schema_names AS app
+				ON app.db_name = c.table_schema
+			WHERE c.table_name = 'wptests_schema_names'
+			ORDER BY c.ordinal_position"
+		);
+
+		$this->assertSame(
+			array(
+				array( '2', 'wptests', 'wptests_schema_names', 'id' ),
+				array( '2', 'wptests', 'wptests_schema_names', 'db_name' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->TABLE_SCHEMA, $row->TABLE_NAME, $row->COLUMN_NAME );
+				},
+				$public_result
+			)
+		);
+
+		$public_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( '"wptests_schema_names" AS "app"', $public_sql );
+		$this->assertStringContainsString( '"app"."db_name" = "c"."TABLE_SCHEMA"', $public_sql );
+		$this->assertStringNotContainsString( 'public.wptests_schema_names', $public_sql );
 	}
 
 	/**
@@ -26839,6 +27284,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE ... SELECT IF NOT EXISTS does not replace existing MySQL metadata.
+	 */
+	public function test_create_table_select_if_not_exists_preserves_existing_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE ctas_if_existing (id INTEGER NOT NULL, name TEXT NOT NULL)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE ctas_if_existing (
+				id int NOT NULL,
+				name varchar(20) NOT NULL,
+				KEY name_key (name)
+			)'
+		);
+		$driver->query( "INSERT INTO ctas_if_existing (id, name) VALUES (1, 'kept')" );
+		$driver->query( 'CREATE TABLE ctas_if_source (changed INTEGER NOT NULL)' );
+		$driver->query( 'INSERT INTO ctas_if_source (changed) VALUES (2)' );
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'ctas_if_existing' );
+		$indexes_before = $this->get_mysql_index_metadata_rows( $driver, 'ctas_if_existing' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE TABLE IF NOT EXISTS ctas_if_existing AS SELECT changed FROM ctas_if_source' )
+		);
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'ctas_if_existing' ) );
+		$this->assertSame( $indexes_before, $this->get_mysql_index_metadata_rows( $driver, 'ctas_if_existing' ) );
+
+		$rows = $driver->query( 'SELECT id, name FROM ctas_if_existing' );
+		$this->assertEquals( array( (object) array( 'id' => '1', 'name' => 'kept' ) ), $rows );
+	}
+
+	/**
 	 * Tests CREATE TABLE ... SELECT ignores supported MySQL table options.
 	 */
 	public function test_create_table_select_ignores_supported_mysql_table_options(): void {
@@ -27127,9 +27607,76 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		try {
 			$driver->query( "INSERT INTO like_copy (id, slug, score) VALUES (3, 'negative', -1)" );
 			$this->fail( 'Expected copied CHECK constraint to be enforced.' );
-		} catch ( PDOException $e ) {
-			$this->assertNotSame( '', $e->getMessage() );
-		}
+			} catch ( PDOException $e ) {
+				$this->assertNotSame( '', $e->getMessage() );
+			}
+	}
+
+	/**
+	 * Tests parenthesized CREATE TABLE ... LIKE copies source metadata.
+	 */
+	public function test_create_table_parenthesized_like_translates_and_copies_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			"CREATE TABLE like_parenthesized_source (
+				id int NOT NULL,
+				slug varchar(20) NOT NULL DEFAULT 'untitled',
+				PRIMARY KEY (id),
+				KEY slug_key (slug)
+			) COMMENT='template'"
+		);
+
+		$this->assertGreaterThanOrEqual( 0, $driver->query( 'CREATE TABLE like_parenthesized_copy (LIKE like_parenthesized_source)' ) );
+		$logged_sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'CREATE TABLE "like_parenthesized_copy"', $logged_sql );
+		$this->assertStringNotContainsString( ' LIKE ', strtoupper( $logged_sql ) );
+
+		$this->assertSame(
+			$this->get_mysql_column_metadata_rows( $driver, 'like_parenthesized_source' ),
+			$this->get_mysql_column_metadata_rows( $driver, 'like_parenthesized_copy' )
+		);
+		$this->assertSame(
+			$this->get_mysql_index_metadata_rows( $driver, 'like_parenthesized_source' ),
+			$this->get_mysql_index_metadata_rows( $driver, 'like_parenthesized_copy' )
+		);
+	}
+
+	/**
+	 * Tests CREATE TABLE ... LIKE IF NOT EXISTS does not replace existing MySQL metadata.
+	 */
+	public function test_create_table_like_if_not_exists_preserves_existing_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			'CREATE TABLE like_if_existing (
+				id int NOT NULL,
+				name varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY name_key (name)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE like_if_source (
+				changed bigint(20) NOT NULL,
+				changed_text longtext DEFAULT NULL,
+				KEY changed_key (changed)
+			)'
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'like_if_existing' );
+		$indexes_before = $this->get_mysql_index_metadata_rows( $driver, 'like_if_existing' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE TABLE IF NOT EXISTS like_if_existing LIKE like_if_source' )
+		);
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'like_if_existing' ) );
+		$this->assertSame( $indexes_before, $this->get_mysql_index_metadata_rows( $driver, 'like_if_existing' ) );
 	}
 
 	/**
@@ -27860,7 +28407,16 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'ANSI_QUOTES'" ) );
 		$this->assertSame( 'ANSI_QUOTES', $driver->get_sql_mode() );
 
-		$this->assertSame( 0, $driver->query( 'SET sql_mode = LOWER("NO_ZERO_DATE")' ) );
+		try {
+			$driver->query( 'SET sql_mode = LOWER("NO_ZERO_DATE")' );
+			$this->fail( 'Expected ANSI_QUOTES double-quoted SET expression to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SET statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+			$this->assertSame( 'ANSI_QUOTES', $driver->get_sql_mode() );
+		}
+
+		$this->assertSame( 0, $driver->query( "SET sql_mode = LOWER('NO_ZERO_DATE')" ) );
 		$this->assertSame( 'NO_ZERO_DATE', $driver->get_sql_mode() );
 
 		$this->assertSame( 0, $driver->query( "SET sql_mode = UCASE(REPLACE(@@sql_mode, 'NO_ZERO_DATE', 'ansi_quotes,no_backslash_escapes'))" ) );
@@ -28401,21 +28957,24 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests SHOW GLOBAL/SESSION VARIABLES match bare SHOW VARIABLES.
+	 * Tests SHOW GLOBAL/SESSION VARIABLES read the requested emulated scope.
 	 */
-	public function test_scoped_show_variables_matches_bare_show_variables(): void {
+	public function test_scoped_show_variables_read_requested_scope(): void {
 		$driver = $this->create_driver();
 
 		$this->assertSame( 0, $driver->query( "SET NAMES 'utf8' COLLATE 'utf8_general_ci'" ) );
 
-		$bare = $driver->query( 'SHOW VARIABLES' );
+		$bare = $driver->query( "SHOW VARIABLES WHERE Variable_name = 'character_set_client'" );
+		$this->assertCount( 1, $bare );
+		$this->assertSame( 'utf8', $bare[0]->Value );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
-		$global = $driver->query( 'SHOW GLOBAL VARIABLES' );
-		$this->assertEquals( $bare, $global );
+		$global = $driver->query( "SHOW GLOBAL VARIABLES WHERE Variable_name = 'character_set_client'" );
+		$this->assertCount( 1, $global );
+		$this->assertSame( 'utf8mb4', $global[0]->Value );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
-		$session = $driver->query( 'SHOW SESSION VARIABLES' );
+		$session = $driver->query( "SHOW SESSION VARIABLES WHERE Variable_name = 'character_set_client'" );
 		$this->assertEquals( $bare, $session );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
@@ -28572,13 +29131,20 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_show_variables_where_numeric_value_expressions_work(): void {
 		$driver = $this->create_driver();
 
-		$rows = $driver->query( "SHOW VARIABLES WHERE (Value + 1) = 1025 AND Variable_name = 'group_concat_max_len'" );
+			$rows = $driver->query( "SHOW VARIABLES WHERE (Value + 1) = 1025 AND Variable_name = 'group_concat_max_len'" );
 
-		$this->assertCount( 1, $rows );
-		$this->assertSame( 'group_concat_max_len', $rows[0]->Variable_name );
-		$this->assertSame( '1024', $rows[0]->Value );
-		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-	}
+			$this->assertCount( 1, $rows );
+			$this->assertSame( 'group_concat_max_len', $rows[0]->Variable_name );
+			$this->assertSame( '1024', $rows[0]->Value );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+			$rows = $driver->query( "SHOW VARIABLES WHERE Value + Variable_name > 1 AND Variable_name = 'group_concat_max_len'" );
+
+			$this->assertCount( 1, $rows );
+			$this->assertSame( 'group_concat_max_len', $rows[0]->Variable_name );
+			$this->assertSame( '1024', $rows[0]->Value );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 
 	/**
 	 * Tests SHOW VARIABLES WHERE supports generic predicate expressions.
@@ -28631,14 +29197,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests unsupported SHOW VARIABLES WHERE clauses fail before backend execution.
 	 */
 	public function test_unsupported_show_variables_where_clause_does_not_reach_backend(): void {
-		$driver = $this->create_driver();
+			$driver = $this->create_driver();
 
-		foreach (
-			array(
-				"SHOW VARIABLES WHERE Unknown = 'utf8mb4'",
-				'SHOW VARIABLES WHERE Value + Variable_name > 1',
-			) as $query
-		) {
+			foreach (
+				array(
+					"SHOW VARIABLES WHERE Unknown = 'utf8mb4'",
+				) as $query
+			) {
 			try {
 				$driver->query( $query );
 				$this->fail( 'Expected unsupported SHOW VARIABLES statement to throw.' );
@@ -28749,16 +29314,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '+00:00', $rows[0]->Value );
 
 		$this->assertSame( 0, $driver->query( 'SET GLOBAL foreign_key_checks = 0' ) );
-		$rows = $driver->query( 'SELECT @@foreign_key_checks' );
-		$this->assertSame( '0', $rows[0]->{'@@foreign_key_checks'} );
-		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='foreign_key_checks'" );
+		$rows = $driver->query( 'SELECT @@GLOBAL.foreign_key_checks' );
+		$this->assertSame( '0', $rows[0]->{'@@GLOBAL.foreign_key_checks'} );
+		$rows = $driver->query( 'SELECT @@SESSION.foreign_key_checks' );
+		$this->assertSame( '1', $rows[0]->{'@@SESSION.foreign_key_checks'} );
+		$rows = $driver->query( "SHOW GLOBAL VARIABLES WHERE Variable_name='foreign_key_checks'" );
 		$this->assertSame( '0', $rows[0]->Value );
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='foreign_key_checks'" );
+		$this->assertSame( '1', $rows[0]->Value );
 
 		$this->assertSame( 0, $driver->query( "SET GLOBAL sql_mode = 'ANSI_QUOTES'" ) );
 		$rows = $driver->query( 'SELECT @@GLOBAL.sql_mode' );
 		$this->assertSame( 'ANSI_QUOTES', $rows[0]->{'@@GLOBAL.sql_mode'} );
-		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='sql_mode'" );
+		$this->assertSame(
+			'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES',
+			$driver->get_sql_mode()
+		);
+		$rows = $driver->query( "SHOW GLOBAL VARIABLES WHERE Variable_name='sql_mode'" );
 		$this->assertSame( 'ANSI_QUOTES', $rows[0]->Value );
+		$rows = $driver->query( "SHOW VARIABLES WHERE Variable_name='sql_mode'" );
+		$this->assertSame( $driver->get_sql_mode(), $rows[0]->Value );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
@@ -30545,7 +31120,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
 
 		return sprintf(
-			'CASE WHEN %1$s THEN SUBSTRING(%2$s FROM 1 FOR 10) ELSE TO_CHAR(%3$s, \'YYYY-MM-DD\') END',
+			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, \'YYYY-MM-DD\') END',
+			$this->get_expected_empty_temporal_condition_sql( $expression_text_sql ),
 			$this->get_expected_zero_date_condition_sql( $expression_text_sql ),
 			$expression_text_sql,
 			$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql )
@@ -30659,11 +31235,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_expected_zero_date_safe_extract_sql( string $unit, string $expression_sql ): string {
-		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition = $this->get_expected_zero_date_condition_sql( $expression_text_sql );
+		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$empty_date_condition = $this->get_expected_empty_temporal_condition_sql( $expression_text_sql );
+		$zero_date_condition  = $this->get_expected_zero_date_condition_sql( $expression_text_sql );
 
 		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(EXTRACT(%3$s FROM %4$s) AS integer) END',
+			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN %3$s ELSE CAST(EXTRACT(%4$s FROM %5$s) AS integer) END',
+			$empty_date_condition,
 			$zero_date_condition,
 			$this->get_expected_zero_date_extract_part_sql( $unit, $expression_text_sql ),
 			$unit,
@@ -30681,10 +31259,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
 
 		return sprintf(
-			'CAST(CASE WHEN %1$s THEN NULL ELSE %2$s END AS timestamp)',
+			'CAST(CASE WHEN %1$s OR %2$s THEN NULL ELSE %3$s END AS timestamp)',
+			$this->get_expected_empty_temporal_condition_sql( $expression_text_sql ),
 			$this->get_expected_zero_date_condition_sql( $expression_text_sql ),
 			$expression_text_sql
 		);
+	}
+
+	/**
+	 * Get expected PostgreSQL text SQL for a temporal expression comparison operand.
+	 *
+	 * @param string $expression_sql    PostgreSQL temporal expression SQL.
+	 * @param bool   $returns_timestamp Whether the expression SQL is already a timestamp.
+	 * @return string PostgreSQL text expression SQL.
+	 */
+	private function get_expected_temporal_expression_comparison_text_sql( string $expression_sql, bool $returns_timestamp ): string {
+		if ( $returns_timestamp ) {
+			return sprintf(
+				"TO_CHAR(%s, 'YYYY-MM-DD HH24:MI:SS')",
+				$expression_sql
+			);
+		}
+
+		return sprintf(
+			"CASE WHEN CAST(%1\$s AS text) IS NULL THEN NULL WHEN CAST(%1\$s AS text) = '' THEN '' WHEN CAST(%1\$s AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN CAST(%1\$s AS text) || ' 00:00:00' ELSE CAST(%1\$s AS text) END",
+			$expression_sql
+		);
+	}
+
+	/**
+	 * Get expected condition that detects MySQL empty temporal strings.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL condition SQL.
+	 */
+	private function get_expected_empty_temporal_condition_sql( string $expression_text_sql ): string {
+		return sprintf( "%s = ''", $expression_text_sql );
 	}
 
 	/**
