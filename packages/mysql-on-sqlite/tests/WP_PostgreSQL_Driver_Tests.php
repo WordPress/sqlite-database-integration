@@ -10565,6 +10565,83 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CHANGE/MODIFY COLUMN preserve MySQL JSON metadata parity.
+	 */
+	public function test_alter_table_change_and_modify_json_update_backend_and_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_json_alter (
+				payload longtext COLLATE koi8r_general_ci NOT NULL,
+				settings JSON DEFAULT NULL
+			)"
+		);
+
+		$driver->query( 'ALTER TABLE wptests_json_alter CHANGE COLUMN payload payload JSON DEFAULT NULL' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "payload" TYPE text',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "payload" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "payload" SET DEFAULT NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_json_alter' );
+		$this->assertSame( 'json', $columns[0]['column_type'] );
+		$this->assertNull( $columns[0]['character_set_name'] );
+		$this->assertNull( $columns[0]['collation_name'] );
+		$this->assertSame( 'YES', $columns[0]['is_nullable'] );
+		$this->assertNull( $columns[0]['column_default'] );
+
+		$full = $driver->query( 'SHOW FULL COLUMNS FROM wptests_json_alter' );
+		$this->assertSame( 'payload', $full[0]->Field );
+		$this->assertSame( 'json', $full[0]->Type );
+		$this->assertNull( $full[0]->Collation );
+		$this->assertNull( $full[0]->Default );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_json_alter' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `payload` json DEFAULT NULL', $create_table );
+
+		$driver->query( 'ALTER TABLE wptests_json_alter MODIFY COLUMN settings LONGTEXT COLLATE koi8r_general_ci NOT NULL' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "settings" TYPE text',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "settings" SET NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "settings" DROP DEFAULT',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_json_alter' );
+		$this->assertSame( 'longtext', $columns[1]['column_type'] );
+		$this->assertSame( 'koi8r', $columns[1]['character_set_name'] );
+		$this->assertSame( 'koi8r_general_ci', $columns[1]['collation_name'] );
+		$this->assertSame( 'NO', $columns[1]['is_nullable'] );
+	}
+
+	/**
 	 * Tests mixed ALTER TABLE batches add columns and indexes while ignoring MySQL placement.
 	 */
 	public function test_alter_table_add_batch_updates_backend_and_metadata(): void {
@@ -10682,6 +10759,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$describe = $driver->query( 'DESC wptests_json_create' );
 		$this->assertSame( 'payload', $describe[1]->Field );
 		$this->assertSame( 'json', $describe[1]->Type );
+		$this->assertNull( $describe[1]->Default );
+
+		$full = $driver->query( 'SHOW FULL COLUMNS FROM wptests_json_create' );
+		$this->assertSame( 'payload', $full[1]->Field );
+		$this->assertSame( 'json', $full[1]->Type );
+		$this->assertNull( $full[1]->Collation );
+		$this->assertNull( $full[1]->Default );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_json_create' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `payload` json DEFAULT NULL', $create_table );
+
+		$information_schema = $driver->query(
+			"SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_DEFAULT
+			FROM information_schema.columns
+			WHERE table_name = 'wptests_json_create'
+				AND column_name = 'payload'"
+		);
+
+		$this->assertCount( 1, $information_schema );
+		$this->assertSame( 'payload', $information_schema[0]->COLUMN_NAME );
+		$this->assertSame( 'json', $information_schema[0]->DATA_TYPE );
+		$this->assertSame( 'json', $information_schema[0]->COLUMN_TYPE );
+		$this->assertNull( $information_schema[0]->CHARACTER_SET_NAME );
+		$this->assertNull( $information_schema[0]->COLLATION_NAME );
+		$this->assertNull( $information_schema[0]->COLUMN_DEFAULT );
 	}
 
 	/**
