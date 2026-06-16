@@ -291,6 +291,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 		if ( ! $field_definition ) {
 			throw new InvalidArgumentException( 'Column definition is missing a field definition.' );
 		}
+		if ( $this->has_unsupported_mysql_column_attribute( $field_definition ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE column attribute.' );
+		}
 
 		$data_type         = $field_definition->get_first_child_node( 'dataType' );
 		$is_serial         = $this->is_serial_data_type( $data_type );
@@ -376,6 +379,20 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Check whether a MySQL column attribute changes semantics PostgreSQL does not emulate.
+	 *
+	 * @param WP_Parser_Node $node Field definition or column attribute node.
+	 * @return bool Whether the attribute is unsupported.
+	 */
+	private function has_unsupported_mysql_column_attribute( WP_Parser_Node $node ): bool {
+		return null !== $node->get_first_descendant_token( WP_MySQL_Lexer::GENERATED_SYMBOL )
+			|| null !== $node->get_first_descendant_token( WP_MySQL_Lexer::COLUMN_FORMAT_SYMBOL )
+			|| null !== $node->get_first_descendant_token( WP_MySQL_Lexer::STORAGE_SYMBOL )
+			|| null !== $node->get_first_descendant_token( WP_MySQL_Lexer::VISIBLE_SYMBOL )
+			|| null !== $node->get_first_descendant_token( WP_MySQL_Lexer::INVISIBLE_SYMBOL );
 	}
 
 	/**

@@ -248,6 +248,31 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported MySQL column attributes fail explicitly.
+	 */
+	public function test_translate_rejects_unsupported_column_attributes(): void {
+		$queries = array(
+			'CREATE TABLE wp_bad_column_attribute (base int, generated_value int GENERATED ALWAYS AS (base + 1) STORED)',
+			'CREATE TABLE wp_bad_column_attribute (base int, generated_value int GENERATED ALWAYS AS (base + 1) VIRTUAL)',
+			'CREATE TABLE wp_bad_column_attribute (id int INVISIBLE)',
+			'CREATE TABLE wp_bad_column_attribute (id int VISIBLE)',
+			'CREATE TABLE wp_bad_column_attribute (id int COLUMN_FORMAT FIXED)',
+			'CREATE TABLE wp_bad_column_attribute (id int STORAGE DISK)',
+		);
+
+		foreach ( $queries as $query ) {
+			$translator = new WP_PostgreSQL_Create_Table_Translator();
+
+			try {
+				$translator->translate_schema( $query );
+				$this->fail( 'Expected unsupported CREATE TABLE column attribute to throw.' );
+			} catch ( InvalidArgumentException $exception ) {
+				$this->assertSame( 'Unsupported CREATE TABLE column attribute.', $exception->getMessage(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests zero date defaults are translated as text while MySQL metadata is preserved.
 	 */
 	public function test_translate_zero_date_defaults_as_text_and_metadata_defaults(): void {

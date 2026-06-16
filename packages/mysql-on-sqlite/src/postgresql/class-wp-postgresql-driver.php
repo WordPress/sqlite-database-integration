@@ -663,6 +663,10 @@ class WP_PostgreSQL_Driver {
 			return $result;
 		}
 
+		if ( $this->contains_unsupported_mysql_create_table_column_attribute_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE column attribute.' );
+		}
+
 		if ( $this->is_create_table_query( $query ) ) {
 			$this->validate_mysql_create_table_target_database( $query );
 
@@ -943,6 +947,14 @@ class WP_PostgreSQL_Driver {
 
 		if ( $this->contains_mysql_index_hint_syntax( $query ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL index hint syntax.' );
+		}
+
+		if ( $this->contains_unsupported_mysql_date_arithmetic_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL date arithmetic statement.' );
+		}
+
+		if ( $this->contains_unsupported_mysql_common_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
 		if ( $this->contains_unsupported_mysql_week_function_query( $query ) ) {
@@ -1271,6 +1283,55 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return 'Unsupported CREATE TABLE statement.';
+	}
+
+	/**
+	 * Check whether CREATE TABLE has unsupported MySQL column attributes.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the statement should fail before backend execution.
+	 */
+	private function contains_unsupported_mysql_create_table_column_attribute_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! $this->is_mysql_create_table_statement_prefix( $tokens ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if (
+			null === $statement_end
+			|| ! $this->contains_unsupported_mysql_column_attribute_tokens( $tokens, 0, $statement_end )
+		) {
+			return false;
+		}
+
+		try {
+			$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
+			$translator->translate_schema( $query );
+		} catch ( InvalidArgumentException $e ) {
+			return 'Unsupported CREATE TABLE column attribute.' === $e->getMessage();
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token stream starts with CREATE [TEMPORARY] TABLE.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return bool Whether this is a CREATE TABLE statement.
+	 */
+	private function is_mysql_create_table_statement_prefix( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		return isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id;
 	}
 
 	/**
@@ -5817,9 +5878,8 @@ $wp_mysql_on_update$',
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
-		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
-		$table_name   = $table_reference['table'];
-		$clause       = $this->trim_mysql_statement_fragment(
+		$table_name = $table_reference['table'];
+		$clause     = $this->trim_mysql_statement_fragment(
 			$this->get_mysql_token_range_bytes( $query, $query_tokens, $position, $statement_end )
 		);
 
@@ -5833,6 +5893,12 @@ $wp_mysql_on_update$',
 		if ( null === $ranges || array() === $ranges ) {
 			return null;
 		}
+
+		if ( $this->contains_unsupported_mysql_column_attribute_alter_actions( $tokens, $ranges ) ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
+
+		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
 
 		$statements              = array();
 		$metadata_operations     = array();
@@ -6051,6 +6117,152 @@ $wp_mysql_on_update$',
 	private function get_mysql_dbdelta_alter_table_target_name( array $table_reference ): string {
 		$this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
 		return $table_reference['table'];
+	}
+
+	/**
+	 * Check whether ALTER actions contain unsupported MySQL column attributes.
+	 *
+	 * @param WP_MySQL_Token[]                 $tokens Clause token stream.
+	 * @param array<int,array{start:int,end:int}> $ranges Top-level action ranges.
+	 * @return bool Whether an unsupported column attribute is present.
+	 */
+	private function contains_unsupported_mysql_column_attribute_alter_actions( array $tokens, array $ranges ): bool {
+		foreach ( $ranges as $range ) {
+			if ( $this->contains_unsupported_mysql_column_attribute_alter_action( $tokens, $range['start'], $range['end'] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether one ALTER action contains unsupported MySQL column attributes.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First action token.
+	 * @param int              $end    Final action token, exclusive.
+	 * @return bool Whether an unsupported column attribute is present.
+	 */
+	private function contains_unsupported_mysql_column_attribute_alter_action( array $tokens, int $start, int $end ): bool {
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::ADD_SYMBOL === $tokens[ $start ]->id ) {
+			if (
+				$this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end )
+				|| $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end )
+			) {
+				return false;
+			}
+
+			$position = $start + 1;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+			}
+
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				$parenthesized_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+				if ( $parenthesized_end !== $end ) {
+					return false;
+				}
+
+				$ranges = $this->split_top_level_mysql_arguments( $tokens, $position + 1, $end - 1 );
+				if ( null === $ranges ) {
+					return false;
+				}
+
+				foreach ( $ranges as $range ) {
+					if (
+						! $this->is_mysql_dbdelta_add_index_definition_action( $tokens, $range['start'], $range['end'] )
+						&& ! $this->is_mysql_dbdelta_add_constraint_definition_action( $tokens, $range['start'], $range['end'] )
+						&& $this->contains_unsupported_mysql_column_attribute_definition_tokens( $tokens, $range['start'], $range['end'] )
+					) {
+						return true;
+					}
+				}
+
+				return false;
+			}
+
+			return $this->contains_unsupported_mysql_column_attribute_definition_tokens( $tokens, $position, $end );
+		}
+
+		if ( WP_MySQL_Lexer::MODIFY_SYMBOL === $tokens[ $start ]->id ) {
+			$position = $start + 1;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+			}
+
+			return $this->contains_unsupported_mysql_column_attribute_definition_tokens( $tokens, $position, $end );
+		}
+
+		if ( WP_MySQL_Lexer::CHANGE_SYMBOL === $tokens[ $start ]->id ) {
+			$position = $start + 1;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+			}
+			if ( null === $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null ) ) {
+				return false;
+			}
+			++$position;
+			if ( null === $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null ) ) {
+				return false;
+			}
+			++$position;
+
+			return $this->contains_unsupported_mysql_column_attribute_tokens( $tokens, $position, $end );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a column definition range contains unsupported MySQL attributes.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First definition token.
+	 * @param int              $end    Final definition token, exclusive.
+	 * @return bool Whether an unsupported column attribute is present.
+	 */
+	private function contains_unsupported_mysql_column_attribute_definition_tokens( array $tokens, int $start, int $end ): bool {
+		if ( $start >= $end ) {
+			return false;
+		}
+
+		return $this->contains_unsupported_mysql_column_attribute_tokens( $tokens, $start + 1, $end );
+	}
+
+	/**
+	 * Check whether a token range contains unsupported MySQL column attributes.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported column attribute token is present.
+	 */
+	private function contains_unsupported_mysql_column_attribute_tokens( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				isset( $tokens[ $i ] )
+				&& in_array(
+					$tokens[ $i ]->id,
+					array(
+						WP_MySQL_Lexer::GENERATED_SYMBOL,
+						WP_MySQL_Lexer::COLUMN_FORMAT_SYMBOL,
+						WP_MySQL_Lexer::STORAGE_SYMBOL,
+						WP_MySQL_Lexer::VISIBLE_SYMBOL,
+						WP_MySQL_Lexer::INVISIBLE_SYMBOL,
+					),
+					true
+				)
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -6422,9 +6634,13 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
-		$column = $this->translate_mysql_column_definition_fragment(
-			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
-		);
+		try {
+			$column = $this->translate_mysql_column_definition_fragment(
+				$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
+			);
+		} catch ( InvalidArgumentException $e ) {
+			return null;
+		}
 		if ( null === $column ) {
 			return null;
 		}
@@ -6461,9 +6677,13 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
-		$column = $this->translate_mysql_column_definition_fragment(
-			$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
-		);
+		try {
+			$column = $this->translate_mysql_column_definition_fragment(
+				$this->get_mysql_token_range_bytes( $clause, $tokens, $position, $definition_end )
+			);
+		} catch ( InvalidArgumentException $e ) {
+			return null;
+		}
 		if ( null === $column ) {
 			return null;
 		}
@@ -7835,7 +8055,11 @@ $wp_mysql_on_update$',
 			}
 
 			$definition = $this->get_mysql_token_range_bytes( $clause, $tokens, $position, $range['end'] );
-			$column     = $this->translate_mysql_column_definition_fragment( $definition );
+			try {
+				$column = $this->translate_mysql_column_definition_fragment( $definition );
+			} catch ( InvalidArgumentException $e ) {
+				return null;
+			}
 			if ( null === $column ) {
 				return null;
 			}
@@ -40813,6 +41037,48 @@ FROM (
 	}
 
 	/**
+	 * Check whether a range contains an unsupported known MySQL runtime function.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported known MySQL runtime function is present.
+	 */
+	private function contains_unsupported_mysql_common_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if ( null === $this->get_mysql_common_function_bounds( $tokens, $i, $end ) ) {
+				continue;
+			}
+
+			if ( null === $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a query contains an unsupported known MySQL runtime function.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether an unsupported known MySQL runtime function is present.
+	 */
+	private function contains_unsupported_mysql_common_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return $this->contains_unsupported_mysql_common_function(
+			$tokens,
+			0,
+			null === $statement_end ? count( $tokens ) : $statement_end
+		);
+	}
+
+	/**
 	 * Get PostgreSQL SQL for MySQL FROM_BASE64().
 	 *
 	 * PostgreSQL DECODE(..., 'base64') raises for malformed input. MySQL and
@@ -41519,6 +41785,25 @@ FROM (
 	}
 
 	/**
+	 * Check whether a query contains an unsupported MySQL date arithmetic call.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether an unsupported date arithmetic call is present.
+	 */
+	private function contains_unsupported_mysql_date_arithmetic_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
+
+		return $this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $end )
+			|| $this->contains_unsupported_mysql_timestampadd_function( $tokens, 0, $end );
+	}
+
+	/**
 	 * Get token bounds for a supported MySQL date arithmetic expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -41953,7 +42238,42 @@ FROM (
 			),
 			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
 			'position' => $close,
-		);
+			);
+	}
+
+	/**
+	 * Check whether a range contains an unsupported MySQL TIMESTAMPADD() call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported TIMESTAMPADD() call is present.
+	 */
+	private function contains_unsupported_mysql_timestampadd_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				'timestampadd' !== $this->get_mysql_common_function_name( $tokens[ $i ] ?? null )
+				|| ! isset( $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
+			if ( null === $bounds ) {
+				return true;
+			}
+
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if (
+				null === $arguments
+				|| null === $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] )
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

@@ -9053,6 +9053,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported known MySQL runtime functions fail before backend execution.
+	 */
+	public function test_unsupported_common_mysql_runtime_function_forms_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			'SELECT CONCAT() AS empty_concat',
+			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
+			'SELECT LOG() AS invalid_log',
+			"SELECT FROM_UNIXTIME(0, '%Y', 'extra') AS invalid_from_unixtime",
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported MySQL runtime function form to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
 	 * Tests WordPress sticky base queries get MySQL's posts date ID tie-breaker.
 	 */
 	public function test_wordpress_posts_post_date_desc_order_uses_id_tiebreaker(): void {
@@ -13097,6 +13124,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests invalid date arithmetic forms fail before backend execution.
+	 */
+	public function test_mysql_date_arithmetic_unsupported_shapes_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			'SELECT DATE_ADD(post_date_gmt, 1) AS shifted',
+			'SELECT DATE_SUB(post_date_gmt, 1) AS shifted',
+			'SELECT DATE_ADD(post_date_gmt, INTERVAL 1 fortnight) AS shifted',
+			'SELECT DATE_ADD(post_date_gmt, INTERVAL 6/4 HOUR_MINUTE) AS shifted',
+			"SELECT DATE_ADD(post_date_gmt, INTERVAL '1:2:3' MINUTE_SECOND) AS shifted",
+			'SELECT TIMESTAMPADD(FORTNIGHT, 1, post_date_gmt) AS shifted',
+			'SELECT TIMESTAMPADD(DAY_SECOND, 1, post_date_gmt) AS shifted',
+			'SELECT TIMESTAMPADD(DAY, 1) AS shifted',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported date arithmetic statement to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL date arithmetic statement.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+		}
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE supports constant scalar subquery assignments.
 	 */
 	public function test_options_upsert_scalar_subquery_assignment_is_translated_to_postgresql(): void {
@@ -14768,6 +14825,64 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'varchar(255)', $columns[1]['column_type'] );
 		$this->assertSame( 'varchar(191)', $columns[2]['column_type'] );
 		$this->assertSame( 'x', $columns[2]['column_default'] );
+	}
+
+	/**
+	 * Tests unsupported CREATE TABLE column attributes fail before backend execution.
+	 */
+	public function test_create_table_unsupported_column_attributes_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			'CREATE TABLE wptests_bad_column_attribute (base int, generated_value int GENERATED ALWAYS AS (base + 1) STORED)',
+			'CREATE TABLE wptests_bad_column_attribute (base int, generated_value int GENERATED ALWAYS AS (base + 1) VIRTUAL)',
+			'CREATE TABLE wptests_bad_column_attribute (id int INVISIBLE)',
+			'CREATE TABLE wptests_bad_column_attribute (id int VISIBLE)',
+			'CREATE TABLE wptests_bad_column_attribute (id int COLUMN_FORMAT FIXED)',
+			'CREATE TABLE wptests_bad_column_attribute (id int STORAGE DISK)',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported CREATE TABLE column attribute to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported CREATE TABLE column attribute.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
+	 * Tests unsupported ALTER TABLE column attributes fail before backend execution.
+	 */
+	public function test_alter_table_unsupported_column_attributes_fail_closed_before_backend_execution(): void {
+		$queries = array(
+			'ALTER TABLE wptests_bad_column_attribute ADD COLUMN generated_value int GENERATED ALWAYS AS (base + 1) STORED',
+			'ALTER TABLE wptests_bad_column_attribute ADD COLUMN hidden_value int INVISIBLE',
+			'ALTER TABLE wptests_bad_column_attribute ADD COLUMN stored_value int COLUMN_FORMAT FIXED',
+			'ALTER TABLE wptests_bad_column_attribute ADD COLUMN disk_value int STORAGE DISK',
+			'ALTER TABLE wptests_bad_column_attribute MODIFY COLUMN hidden_value int INVISIBLE',
+			'ALTER TABLE wptests_bad_column_attribute CHANGE COLUMN hidden_value hidden_value int INVISIBLE',
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported ALTER TABLE column attribute to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
 	}
 
 	/**
