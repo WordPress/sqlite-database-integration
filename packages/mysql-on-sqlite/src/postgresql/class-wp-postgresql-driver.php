@@ -935,6 +935,10 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL index hint syntax.' );
 		}
 
+		if ( $this->contains_unsupported_mysql_week_function_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
+		}
+
 		$unsupported_mysql_administration_statement = $this->get_unsupported_mysql_administration_statement_message( $query );
 		if ( null !== $unsupported_mysql_administration_statement ) {
 			throw new InvalidArgumentException( $unsupported_mysql_administration_statement );
@@ -8906,7 +8910,18 @@ $wp_mysql_on_update$',
 			'create_options'  => 'Create_options',
 			'comment'         => 'Comment',
 		);
-		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+		$numeric_columns  = array(
+			'Version',
+			'Rows',
+			'Avg_row_length',
+			'Data_length',
+			'Max_data_length',
+			'Index_length',
+			'Data_free',
+			'Auto_increment',
+			'Checksum',
+		);
+		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
 		if ( null !== $where_expression ) {
 			return array(
 				'filter_type'      => 'where_expression',
@@ -8921,17 +8936,7 @@ $wp_mysql_on_update$',
 			$tokens,
 			$position,
 			$allowed_columns,
-			array(
-				'Version',
-				'Rows',
-				'Avg_row_length',
-				'Data_length',
-				'Max_data_length',
-				'Index_length',
-				'Data_free',
-				'Auto_increment',
-				'Checksum',
-			)
+			$numeric_columns
 		);
 		if ( null === $where_filter ) {
 			return null;
@@ -9716,9 +9721,10 @@ $wp_mysql_on_update$',
 	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
 	 * @param int                  $position        WHERE token position.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array{type: string, column: null, pattern: null, predicate: array}|null Parsed expression filter, or null when unsupported.
 	 */
-	private function get_mysql_show_where_expression_filter( array $tokens, int $position, array $allowed_columns ): ?array {
+	private function get_mysql_show_where_expression_filter( array $tokens, int $position, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
@@ -9729,7 +9735,7 @@ $wp_mysql_on_update$',
 		}
 
 		$expression_position = $position + 1;
-		$predicate           = $this->parse_mysql_show_where_or_expression( $tokens, $expression_position, $statement_end, $allowed_columns );
+		$predicate           = $this->parse_mysql_show_where_or_expression( $tokens, $expression_position, $statement_end, $allowed_columns, $numeric_columns );
 		if ( null === $predicate || $expression_position !== $statement_end ) {
 			return null;
 		}
@@ -9759,17 +9765,18 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Predicate AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_or_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
-		$left = $this->parse_mysql_show_where_and_expression( $tokens, $position, $end, $allowed_columns );
+	private function parse_mysql_show_where_or_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		$left = $this->parse_mysql_show_where_and_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 		if ( null === $left ) {
 			return null;
 		}
 
 		while ( isset( $tokens[ $position ] ) && $position < $end && WP_MySQL_Lexer::OR_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$right = $this->parse_mysql_show_where_and_expression( $tokens, $position, $end, $allowed_columns );
+			$right = $this->parse_mysql_show_where_and_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $right ) {
 				return null;
 			}
@@ -9791,17 +9798,18 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Predicate AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_and_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
-		$left = $this->parse_mysql_show_where_not_expression( $tokens, $position, $end, $allowed_columns );
+	private function parse_mysql_show_where_and_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		$left = $this->parse_mysql_show_where_not_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 		if ( null === $left ) {
 			return null;
 		}
 
 		while ( isset( $tokens[ $position ] ) && $position < $end && WP_MySQL_Lexer::AND_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$right = $this->parse_mysql_show_where_not_expression( $tokens, $position, $end, $allowed_columns );
+			$right = $this->parse_mysql_show_where_not_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $right ) {
 				return null;
 			}
@@ -9823,12 +9831,13 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Predicate AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_not_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
+	private function parse_mysql_show_where_not_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		if ( isset( $tokens[ $position ] ) && $position < $end && WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$expression = $this->parse_mysql_show_where_not_expression( $tokens, $position, $end, $allowed_columns );
+			$expression = $this->parse_mysql_show_where_not_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $expression ) {
 				return null;
 			}
@@ -9839,7 +9848,7 @@ $wp_mysql_on_update$',
 			);
 		}
 
-		return $this->parse_mysql_show_where_boolean_primary( $tokens, $position, $end, $allowed_columns );
+		return $this->parse_mysql_show_where_boolean_primary( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 	}
 
 	/**
@@ -9849,14 +9858,15 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Predicate AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_boolean_primary( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
+	private function parse_mysql_show_where_boolean_primary( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 			if ( null !== $after_close ) {
 				$inner_position = $position + 1;
-				$predicate      = $this->parse_mysql_show_where_or_expression( $tokens, $inner_position, $after_close - 1, $allowed_columns );
+				$predicate      = $this->parse_mysql_show_where_or_expression( $tokens, $inner_position, $after_close - 1, $allowed_columns, $numeric_columns );
 				if ( null !== $predicate && $inner_position === $after_close - 1 ) {
 					$position = $after_close;
 					return $predicate;
@@ -9864,7 +9874,7 @@ $wp_mysql_on_update$',
 			}
 		}
 
-		return $this->parse_mysql_show_where_comparison_expression( $tokens, $position, $end, $allowed_columns );
+		return $this->parse_mysql_show_where_comparison_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 	}
 
 	/**
@@ -9874,10 +9884,11 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Predicate AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_comparison_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
-		$left = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+	private function parse_mysql_show_where_comparison_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		$left = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 		if ( null === $left ) {
 			return null;
 		}
@@ -9912,7 +9923,7 @@ $wp_mysql_on_update$',
 		$operator = $this->get_mysql_show_where_comparison_operator( $tokens[ $position ] );
 		if ( null !== $operator ) {
 			++$position;
-			$right = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			$right = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $right ) {
 				return null;
 			}
@@ -9940,7 +9951,7 @@ $wp_mysql_on_update$',
 
 		if ( WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$right = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			$right = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $right ) {
 				return null;
 			}
@@ -9955,7 +9966,7 @@ $wp_mysql_on_update$',
 
 		if ( WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$values = $this->parse_mysql_show_where_value_list( $tokens, $position, $end, $allowed_columns );
+			$values = $this->parse_mysql_show_where_value_list( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $values ) {
 				return null;
 			}
@@ -9970,7 +9981,7 @@ $wp_mysql_on_update$',
 
 		if ( WP_MySQL_Lexer::BETWEEN_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$lower = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			$lower = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if (
 				null === $lower
 				|| ! isset( $tokens[ $position ] )
@@ -9981,7 +9992,7 @@ $wp_mysql_on_update$',
 			}
 
 			++$position;
-			$upper = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns );
+			$upper = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if ( null === $upper ) {
 				return null;
 			}
@@ -10039,9 +10050,53 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Value expression AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_value_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
+	private function parse_mysql_show_where_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		$left = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+		if ( null === $left ) {
+			return null;
+		}
+
+		while (
+			isset( $tokens[ $position ] )
+			&& $position < $end
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::MINUS_OPERATOR ), true )
+		) {
+			$operator = WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $position ]->id ? '+' : '-';
+			++$position;
+			$right = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+			if (
+				null === $right
+				|| ! $this->is_mysql_show_where_numeric_value_expression( $left, $numeric_columns )
+				|| ! $this->is_mysql_show_where_numeric_value_expression( $right, $numeric_columns )
+			) {
+				return null;
+			}
+
+			$left = array(
+				'type'     => 'arithmetic',
+				'operator' => $operator,
+				'left'     => $left,
+				'right'    => $right,
+			);
+		}
+
+		return $left;
+	}
+
+	/**
+	 * Parse a primary scalar value expression for SHOW WHERE predicates.
+	 *
+	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
+	 * @param int                  $position        Current token position, advanced on success.
+	 * @param int                  $end             Final token position, exclusive.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
+	 * @return array|null Value expression AST, or null when unsupported.
+	 */
+	private function parse_mysql_show_where_primary_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || $position >= $end ) {
 			return null;
 		}
@@ -10054,7 +10109,7 @@ $wp_mysql_on_update$',
 			}
 
 			$inner_position = $position + 1;
-			$expression     = $this->parse_mysql_show_where_value_expression( $tokens, $inner_position, $after_close - 1, $allowed_columns );
+			$expression     = $this->parse_mysql_show_where_value_expression( $tokens, $inner_position, $after_close - 1, $allowed_columns, $numeric_columns );
 			if ( null === $expression || $inner_position !== $after_close - 1 ) {
 				return null;
 			}
@@ -10063,7 +10118,7 @@ $wp_mysql_on_update$',
 			return $expression;
 		}
 
-		$function = $this->parse_mysql_show_where_function_value_expression( $tokens, $position, $end, $allowed_columns );
+		$function = $this->parse_mysql_show_where_function_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 		if ( null !== $function ) {
 			return $function;
 		}
@@ -10119,15 +10174,42 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Check whether a SHOW WHERE value expression may be used in arithmetic.
+	 *
+	 * @param array    $expression      Value expression AST.
+	 * @param string[] $numeric_columns Output columns that may be used in arithmetic expressions.
+	 * @return bool Whether the expression is numeric.
+	 */
+	private function is_mysql_show_where_numeric_value_expression( array $expression, array $numeric_columns ): bool {
+		switch ( $expression['type'] ?? null ) {
+			case 'number':
+			case 'arithmetic':
+				return true;
+
+			case 'literal':
+				return isset( $expression['value'] ) && is_numeric( $expression['value'] );
+
+			case 'column':
+				return isset( $expression['column'] ) && in_array( $expression['column'], $numeric_columns, true );
+
+			case 'function':
+				return in_array( $expression['function'] ?? null, array( 'length', 'char_length' ), true );
+		}
+
+		return false;
+	}
+
+	/**
 	 * Parse a supported scalar function value for SHOW WHERE predicates.
 	 *
 	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array|null Function value AST, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_function_value_expression( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
+	private function parse_mysql_show_where_function_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		$function_name = $this->get_mysql_show_where_function_name( $tokens[ $position ] ?? null );
 		if (
 			null === $function_name
@@ -10152,7 +10234,7 @@ $wp_mysql_on_update$',
 		$arguments = array();
 		foreach ( $argument_ranges as $argument_range ) {
 			$argument_position = $argument_range['start'];
-			$argument          = $this->parse_mysql_show_where_value_expression( $tokens, $argument_position, $argument_range['end'], $allowed_columns );
+			$argument          = $this->parse_mysql_show_where_value_expression( $tokens, $argument_position, $argument_range['end'], $allowed_columns, $numeric_columns );
 			if ( null === $argument || $argument_position !== $argument_range['end'] ) {
 				return null;
 			}
@@ -10164,7 +10246,7 @@ $wp_mysql_on_update$',
 		if (
 			( 'substring' === $function_name && ! in_array( $argument_count, array( 2, 3 ), true ) )
 			|| ( in_array( $function_name, array( 'left', 'right' ), true ) && 2 !== $argument_count )
-			|| ( in_array( $function_name, array( 'lower', 'upper' ), true ) && 1 !== $argument_count )
+			|| ( in_array( $function_name, array( 'lower', 'upper', 'length', 'char_length' ), true ) && 1 !== $argument_count )
 		) {
 			return null;
 		}
@@ -10216,6 +10298,14 @@ $wp_mysql_on_update$',
 			return 'substring';
 		}
 
+		if ( 'length' === $name ) {
+			return 'length';
+		}
+
+		if ( 'char_length' === $name || 'character_length' === $name ) {
+			return 'char_length';
+		}
+
 		return in_array( $name, array( 'left', 'right' ), true ) ? $name : null;
 	}
 
@@ -10238,9 +10328,10 @@ $wp_mysql_on_update$',
 	 * @param int                  $position        Current token position, advanced on success.
 	 * @param int                  $end             Final token position, exclusive.
 	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
 	 * @return array<int,array>|null Value expressions, or null when unsupported.
 	 */
-	private function parse_mysql_show_where_value_list( array $tokens, int &$position, int $end, array $allowed_columns ): ?array {
+	private function parse_mysql_show_where_value_list( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
 		}
@@ -10258,7 +10349,7 @@ $wp_mysql_on_update$',
 		$values = array();
 		foreach ( $argument_ranges as $argument_range ) {
 			$argument_position = $argument_range['start'];
-			$value             = $this->parse_mysql_show_where_value_expression( $tokens, $argument_position, $argument_range['end'], $allowed_columns );
+			$value             = $this->parse_mysql_show_where_value_expression( $tokens, $argument_position, $argument_range['end'], $allowed_columns, $numeric_columns );
 			if ( null === $value || $argument_position !== $argument_range['end'] ) {
 				return null;
 			}
@@ -13429,6 +13520,67 @@ ORDER BY table_name';
 
 			case 'function':
 				return $this->evaluate_mysql_show_where_function_value( $expression, $row );
+
+			case 'arithmetic':
+				$left  = $this->evaluate_mysql_show_where_value( $expression['left'], $row );
+				$right = $this->evaluate_mysql_show_where_value( $expression['right'], $row );
+				return $this->evaluate_mysql_show_where_arithmetic_value(
+					$left,
+					$expression['operator'] ?? null,
+					$right
+				);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Evaluate one SHOW WHERE arithmetic expression.
+	 *
+	 * @param scalar|null $left     Left value.
+	 * @param string|null $operator Arithmetic operator.
+	 * @param scalar|null $right    Right value.
+	 * @return float|null Evaluated numeric value, or null when not numeric.
+	 */
+	private function evaluate_mysql_show_where_arithmetic_value( $left, ?string $operator, $right ): ?float {
+		$left_number  = $this->coerce_mysql_show_where_numeric_value( $left );
+		$right_number = $this->coerce_mysql_show_where_numeric_value( $right );
+		if ( null === $left_number || null === $right_number ) {
+			return null;
+		}
+
+		if ( '+' === $operator ) {
+			return $left_number + $right_number;
+		}
+
+		if ( '-' === $operator ) {
+			return $left_number - $right_number;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Coerce one SHOW WHERE value to a numeric operand.
+	 *
+	 * @param scalar|null $value Value to coerce.
+	 * @return float|null Numeric value, or null when not numeric.
+	 */
+	private function coerce_mysql_show_where_numeric_value( $value ): ?float {
+		if ( null === $value ) {
+			return null;
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value ? 1.0 : 0.0;
+		}
+
+		if ( is_int( $value ) || is_float( $value ) ) {
+			return (float) $value;
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			return (float) $value;
 		}
 
 		return null;
@@ -13482,6 +13634,10 @@ ORDER BY table_name';
 
 				$length = (int) $length;
 				return $length <= 0 ? '' : substr( $value, $offset, $length );
+
+			case 'length':
+			case 'char_length':
+				return strlen( (string) $arguments[0] );
 		}
 
 		return null;
@@ -32117,6 +32273,10 @@ FROM (
 			return null;
 		}
 
+		if ( $this->contains_unsupported_mysql_week_function( $tokens, 0, $statement_end ) ) {
+			return null;
+		}
+
 		if ( ! $this->needs_mysql_compatible_rewrite( $tokens, 0, $statement_end ) ) {
 			return null;
 		}
@@ -40039,7 +40199,7 @@ FROM (
 	}
 
 	/**
-	 * Translate MySQL WEEK(expr, 1) calls to PostgreSQL.
+	 * Translate supported MySQL WEEK() calls to PostgreSQL.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -40059,19 +40219,19 @@ FROM (
 		);
 
 		return array(
-			'sql'      => $this->get_postgresql_mysql_week_mode_one_sql( $expression_sql ),
+			'sql'      => $this->get_postgresql_mysql_week_sql( $expression_sql, $bounds['mode'] ),
 			'token_id' => WP_MySQL_Lexer::CASE_SYMBOL,
 			'position' => $bounds['close'],
 		);
 	}
 
 	/**
-	 * Get token bounds for supported MySQL WEEK(expr, mode) calls.
+	 * Get token bounds for supported MySQL WEEK() calls.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
 	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 * @return array{expression_start: int, expression_end: int, mode: int, close: int}|null Bounds, or null when unsupported.
 	 */
 	private function get_mysql_week_function_bounds( array $tokens, int $position, int $end ): ?array {
 		if (
@@ -40090,32 +40250,121 @@ FROM (
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
 		if (
 			null === $arguments
-			|| 2 !== count( $arguments )
-			|| ! $this->is_mysql_week_mode_one_argument( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
+			|| ! in_array( count( $arguments ), array( 1, 2 ), true )
 		) {
 			return null;
+		}
+
+		$mode = 0;
+		if ( 2 === count( $arguments ) ) {
+			$mode = $this->get_mysql_supported_week_mode_argument( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+			if ( null === $mode ) {
+				return null;
+			}
 		}
 
 		return array(
 			'expression_start' => $arguments[0]['start'],
 			'expression_end'   => $arguments[0]['end'],
+			'mode'             => $mode,
 			'close'            => $after_close - 1,
 		);
 	}
 
 	/**
-	 * Check whether a WEEK() mode argument is the supported MySQL mode 1.
+	 * Check whether a range contains an unsupported MySQL WEEK() call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First token position.
+	 * @param int              $end    Final token position, exclusive.
+	 * @return bool Whether an unsupported WEEK() call is present.
+	 */
+	private function contains_unsupported_mysql_week_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				! isset( $tokens[ $i ], $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $i ]->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $end );
+			if ( null === $after_close || null === $this->get_mysql_week_function_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a query contains an unsupported MySQL WEEK() call.
+	 *
+	 * @param string $query SQL query.
+	 * @return bool Whether an unsupported WEEK() call is present.
+	 */
+	private function contains_unsupported_mysql_week_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return $this->contains_unsupported_mysql_week_function(
+			$tokens,
+			0,
+			null === $statement_end ? count( $tokens ) : $statement_end
+		);
+	}
+
+	/**
+	 * Get a supported MySQL WEEK() mode argument.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First mode token.
 	 * @param int             $end    Final mode token, exclusive.
-	 * @return bool Whether the mode is supported.
+	 * @return int|null Supported mode, or null when unsupported.
 	 */
-	private function is_mysql_week_mode_one_argument( array $tokens, int $start, int $end ): bool {
-		return $start + 1 === $end
-			&& isset( $tokens[ $start ] )
-			&& WP_MySQL_Lexer::INT_NUMBER === $tokens[ $start ]->id
-			&& '1' === $tokens[ $start ]->get_value();
+	private function get_mysql_supported_week_mode_argument( array $tokens, int $start, int $end ): ?int {
+		if (
+			$start + 1 !== $end
+			|| ! isset( $tokens[ $start ] )
+			|| WP_MySQL_Lexer::INT_NUMBER !== $tokens[ $start ]->id
+		) {
+			return null;
+		}
+
+		$mode = $tokens[ $start ]->get_value();
+		if ( ! in_array( $mode, array( '0', '1', '2' ), true ) ) {
+			return null;
+		}
+
+		return (int) $mode;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a supported MySQL WEEK() mode.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @param int    $mode           MySQL WEEK() mode.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_week_sql( string $expression_sql, int $mode ): string {
+		$timestamp_sql = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+
+		switch ( $mode ) {
+			case 0:
+				return $this->get_postgresql_mysql_sunday_week_mode_zero_sql( $timestamp_sql );
+
+			case 1:
+				return $this->get_postgresql_mysql_week_mode_one_timestamp_sql( $timestamp_sql );
+
+			case 2:
+				return $this->get_postgresql_mysql_sunday_week_mode_two_sql( $timestamp_sql );
+		}
+
+		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
 	}
 
 	/**

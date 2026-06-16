@@ -11940,6 +11940,68 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL WEEK modes supported by the PostgreSQL backend are translated.
+	 */
+	public function test_mysql_week_supported_modes_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$select = 'SELECT WEEK(post_date) AS default_week, WEEK(post_date, 0) AS sunday_zero_week, WEEK(post_date, 1) AS monday_zero_week, WEEK(post_date, 2) AS sunday_one_week FROM wptests_posts WHERE WEEK(post_date) = 0 OR WEEK(post_date, 0) = 0 OR WEEK(post_date, 1) = 1 OR WEEK(post_date, 2) = 1';
+		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+
+		$mode_zero_sql = $this->get_expected_mysql_week_sql( 'post_date', 0 );
+		$mode_one_sql  = $this->get_expected_mysql_week_sql( 'post_date', 1 );
+		$mode_two_sql  = $this->get_expected_mysql_week_sql( 'post_date', 2 );
+
+		$this->assertSame(
+			'SELECT ' . $mode_zero_sql . ' AS default_week, ' . $mode_zero_sql . ' AS sunday_zero_week, ' . $mode_one_sql . ' AS monday_zero_week, ' . $mode_two_sql . ' AS sunday_one_week FROM wptests_posts WHERE ' . $mode_zero_sql . ' = 0 OR ' . $mode_zero_sql . ' = 0 OR ' . $mode_one_sql . ' = 1 OR ' . $mode_two_sql . ' = 1',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'WEEK(', $sql );
+	}
+
+	/**
+	 * Tests unsupported MySQL WEEK modes fail closed.
+	 */
+	public function test_mysql_week_unsupported_modes_fail_closed(): void {
+		$driver  = $this->create_driver();
+		$queries = array(
+			'SELECT WEEK(post_date, 3) AS week_num',
+			'SELECT WEEK(post_date, 7) AS week_num',
+			'SELECT WEEK(post_date, default_week_format) AS week_num',
+			'SELECT WEEK(post_date, 1 + 1) AS week_num',
+			'SELECT WEEK(post_date, 0, 1) AS week_num',
+		);
+
+		foreach ( $queries as $query ) {
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					$query
+				),
+				$query
+			);
+		}
+	}
+
+	/**
+	 * Tests unsupported MySQL WEEK modes are rejected before backend execution.
+	 */
+	public function test_mysql_week_unsupported_modes_fail_closed_before_backend_execution(): void {
+		$connection = new WP_PostgreSQL_Query_Spy_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		try {
+			$driver->query( 'SELECT WEEK(post_date, 3) AS week_num' );
+			$this->fail( 'Expected unsupported WEEK() mode to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported MySQL WEEK() mode.', $e->getMessage() );
+		}
+
+		$this->assertSame( 0, $connection->get_query_count() );
+	}
+
+	/**
 	 * Tests lowercase MySQL date compatibility functions trigger translation.
 	 */
 	public function test_lowercase_mysql_date_compatibility_functions_are_translated_to_postgresql(): void {
@@ -15547,6 +15609,46 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW COLUMNS/FIELDS WHERE expression filters support runtime string functions.
+	 */
+	public function test_show_columns_where_runtime_functions_filter_catalog_rows(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query( 'SHOW COLUMNS FROM wptests_options WHERE LENGTH(Field) = 8' );
+
+		$this->assertSame(
+			array( 'autoload' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+		$this->assertStringNotContainsString( 'SHOW COLUMNS', strtoupper( $queries[0]['sql'] ) );
+
+		$result = $driver->query( 'SHOW FIELDS FROM wptests_options WHERE CHAR_LENGTH(Field) >= 11' );
+
+		$this->assertSame(
+			array( 'option_name', 'option_value' ),
+			array_map(
+				static function ( $row ): string {
+					return $row->Field;
+				},
+				$result
+			)
+		);
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
+		$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ) );
+	}
+
+	/**
 	 * Tests unsupported SHOW COLUMNS/FIELDS WHERE forms do not reach the backend.
 	 */
 	public function test_show_columns_where_unsupported_forms_do_not_reach_backend(): void {
@@ -16055,6 +16157,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array( 'wptests_options', 'wptests_plain', 'wptests_posts' ),
 			array_map( array( $this, 'get_show_table_status_row_name' ), $tables )
 		);
+	}
+
+	/**
+	 * Tests SHOW TABLE STATUS WHERE supports arithmetic over numeric output columns.
+	 */
+	public function test_show_table_status_where_arithmetic_expression_filters_output_columns(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$this->install_show_table_status_auto_increment_fixture( $driver );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Data_length + Index_length >= 0' );
+
+		$this->assertSame(
+			array( 'wptests_options', 'wptests_plain', 'wptests_posts' ),
+			array_map( array( $this, 'get_show_table_status_row_name' ), $tables )
+		);
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Data_length + Index_length > 0' );
+
+		$this->assertSame( array(), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS WHERE Auto_increment - 1 >= 5' );
+
+		$this->assertSame( array( 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ) );
 	}
 
 	/**
@@ -22055,6 +22181,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			: $this->get_expected_mysql_integer_cast_sql( $value_sql );
 
 		return sprintf( 'CAST(%s AS double precision)', $value_cast_sql );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for a supported MySQL WEEK() mode.
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @param int    $mode           MySQL WEEK() mode.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_week_sql( string $expression_sql, int $mode ): string {
+		$timestamp_sql = $this->get_expected_zero_date_safe_timestamp_sql( $expression_sql );
+
+		switch ( $mode ) {
+			case 0:
+				return $this->get_expected_mysql_sunday_week_mode_zero_sql( $timestamp_sql );
+
+			case 1:
+				return $this->get_expected_mysql_week_mode_one_timestamp_sql( $timestamp_sql );
+
+			case 2:
+				return $this->get_expected_mysql_sunday_week_mode_two_sql( $timestamp_sql );
+		}
+
+		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
 	}
 
 	/**
