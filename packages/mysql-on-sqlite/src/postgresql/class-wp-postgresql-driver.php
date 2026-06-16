@@ -16145,7 +16145,7 @@ WHERE option_name IN (
 			$infer_columns_from_metadata = true;
 		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $tokens, $position, $on_duplicate );
+			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $on_duplicate );
 			if ( null === $set_assignments ) {
 				return null;
 			}
@@ -17302,7 +17302,7 @@ WHERE option_name IN (
 			}
 
 			++$position;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $tokens, $position, $statement_end );
+			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $statement_end );
 			if ( null === $set_assignments ) {
 				return null;
 			}
@@ -18312,7 +18312,7 @@ WHERE option_name IN (
 		$value_range_rows = array();
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $tokens, $position, $statement_end );
+			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $statement_end );
 			if ( null === $set_assignments ) {
 				return null;
 			}
@@ -18448,12 +18448,13 @@ WHERE option_name IN (
 	/**
 	 * Parse a simple single-row MySQL INSERT ... SET assignment list.
 	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First assignment token position.
-	 * @param int              $end    Final assignment token position, exclusive.
+	 * @param string           $table_name Target table name.
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      First assignment token position.
+	 * @param int              $end        Final assignment token position, exclusive.
 	 * @return array{columns: string[], values: string[], ranges: array[], probe_safe_values: bool[]}|null Insert columns and values, or null when unsupported.
 	 */
-	private function parse_simple_mysql_insert_set_assignments( array $tokens, int $start, int $end ): ?array {
+	private function parse_simple_mysql_insert_set_assignments( string $table_name, array $tokens, int $start, int $end ): ?array {
 		$on_duplicate = $this->find_on_duplicate_key_update_clause( $tokens, $start );
 		if ( $start >= $end || ( null !== $on_duplicate && $on_duplicate < $end ) ) {
 			return null;
@@ -18464,23 +18465,24 @@ WHERE option_name IN (
 			return null;
 		}
 
-			$columns       = array();
-			$values        = array();
-			$ranges        = array();
-			$probe_safe    = array();
-			$column_lookup = array();
+		$columns       = array();
+		$values        = array();
+		$ranges        = array();
+		$probe_safe    = array();
+		$column_lookup = array();
 		foreach ( $assignments as $assignment ) {
-			if (
-				$assignment['start'] + 2 >= $assignment['end']
-				|| WP_MySQL_Lexer::EQUAL_OPERATOR !== ( $tokens[ $assignment['start'] + 1 ]->id ?? null )
-			) {
+			$target = $this->parse_simple_mysql_insert_set_assignment_target(
+				$table_name,
+				$tokens,
+				$assignment['start'],
+				$assignment['end']
+			);
+			if ( null === $target ) {
 				return null;
 			}
 
-			$column = $this->get_mysql_dml_identifier_token_value( $tokens[ $assignment['start'] ] ?? null );
-			if ( null === $column ) {
-				return null;
-			}
+			$column      = $target['column'];
+			$value_start = $target['value_start'];
 
 			$column_key = strtolower( $column );
 			if ( isset( $column_lookup[ $column_key ] ) ) {
@@ -18488,7 +18490,6 @@ WHERE option_name IN (
 			}
 			$column_lookup[ $column_key ] = true;
 
-			$value_start  = $assignment['start'] + 2;
 			$columns[]    = $column;
 			$values[]     = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $assignment['end'] );
 			$ranges[]     = array(
@@ -18498,12 +18499,80 @@ WHERE option_name IN (
 			$probe_safe[] = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $value_start, $assignment['end'] );
 		}
 
-			return array(
-				'columns'           => $columns,
-				'values'            => $values,
-				'ranges'            => $ranges,
-				'probe_safe_values' => $probe_safe,
-			);
+		return array(
+			'columns'           => $columns,
+			'values'            => $values,
+			'ranges'            => $ranges,
+			'probe_safe_values' => $probe_safe,
+		);
+	}
+
+	/**
+	 * Parse the target side of a simple INSERT/REPLACE ... SET assignment.
+	 *
+	 * @param string           $table_name Target table name.
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      Assignment start token position.
+	 * @param int              $end        Assignment end token position, exclusive.
+	 * @return array{column: string, value_start: int}|null Parsed assignment target, or null when unsupported.
+	 */
+	private function parse_simple_mysql_insert_set_assignment_target( string $table_name, array $tokens, int $start, int $end ): ?array {
+		$first = $this->get_mysql_dml_identifier_token_value( $tokens[ $start ] ?? null );
+		if ( null === $first ) {
+			return null;
+		}
+
+		$position = $start + 1;
+		if ( WP_MySQL_Lexer::EQUAL_OPERATOR === ( $tokens[ $position ]->id ?? null ) ) {
+			return $position + 1 < $end
+				? array(
+					'column'      => $first,
+					'value_start' => $position + 1,
+				)
+				: null;
+		}
+
+		if ( WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+			return null;
+		}
+
+		$second = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		if ( null === $second ) {
+			return null;
+		}
+		$position += 2;
+
+		if ( WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$third = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if (
+				null === $third
+				|| 0 !== strcasecmp( $first, $this->main_db_name )
+				|| 0 !== strcasecmp( $second, $table_name )
+			) {
+				return null;
+			}
+
+			$column    = $third;
+			$position += 2;
+		} else {
+			if ( ! $this->is_mysql_dml_table_qualifier( $first, $table_name, null ) ) {
+				return null;
+			}
+
+			$column = $second;
+		}
+
+		if (
+			WP_MySQL_Lexer::EQUAL_OPERATOR !== ( $tokens[ $position ]->id ?? null )
+			|| $position + 1 >= $end
+		) {
+			return null;
+		}
+
+		return array(
+			'column'      => $column,
+			'value_start' => $position + 1,
+		);
 	}
 
 	/**

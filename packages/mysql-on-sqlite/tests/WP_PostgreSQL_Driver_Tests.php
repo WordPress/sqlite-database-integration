@@ -356,6 +356,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( 'SELECT value, attempts FROM wptests_insert_set WHERE id = 1' );
 		$this->assertSame( 'one', $rows[0]->value );
 		$this->assertSame( '2', $rows[0]->attempts );
+
+		$qualified_insert = "INSERT INTO wptests_insert_set SET wptests_insert_set.id = 2, wptests_insert_set.value = 'two', wptests.wptests_insert_set.attempts = 4";
+
+		$this->assertSame( 1, $driver->query( $qualified_insert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_insert_set" ("id", "value", "attempts") VALUES (2, \'two\', 4)',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT value, attempts FROM wptests_insert_set WHERE id = 2' );
+		$this->assertSame( 'two', $rows[0]->value );
+		$this->assertSame( '4', $rows[0]->attempts );
 	}
 
 	/**
@@ -404,7 +416,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_insert_set_shapes_fail_closed_before_backend(): void {
 		$queries = array(
 			'INSERT INTO wptests_insert_set SET id = 1, id = 2',
-			'INSERT INTO wptests_insert_set SET wptests_insert_set.id = 1',
+			'INSERT INTO wptests_insert_set SET other_table.id = 1',
+			'INSERT INTO wptests_insert_set SET other_db.wptests_insert_set.id = 1',
 		);
 
 		foreach ( $queries as $query ) {
@@ -1328,6 +1341,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'updated', $rows[0]->option_value );
 		$this->assertSame( 'home', $rows[1]->option_name );
 		$this->assertSame( 'created', $rows[1]->option_value );
+
+		$qualified_replace = "REPLACE INTO `wptests_options` SET `wptests_options`.`option_id` = 10, `wptests_options`.`option_name` = 'home', `wptests`.`wptests_options`.`option_value` = 'qualified'";
+
+		$this->assertSame( 2, $driver->query( $qualified_replace ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_id", "option_name", "option_value") VALUES (10, \'home\', \'qualified\') ON CONFLICT ("option_name") DO UPDATE SET "option_id" = excluded."option_id", "option_name" = excluded."option_name", "option_value" = excluded."option_value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT option_id, option_value FROM wptests_options WHERE option_name = 'home'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '10', $rows[0]->option_id );
+		$this->assertSame( 'qualified', $rows[0]->option_value );
 	}
 
 	/**
@@ -4420,6 +4446,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'inserted', $rows[0]->option_value );
 		$this->assertSame( 'yes', $rows[0]->autoload );
+	}
+
+	/**
+	 * Tests INSERT ... SET upserts support qualified insert assignment targets.
+	 */
+	public function test_insert_set_upsert_supports_qualified_insert_assignment_targets(): void {
+		$driver = $this->create_driver();
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('siteurl', 'old', 'no')" );
+
+		$upsert = "INSERT INTO `wptests_options`
+			SET `wptests_options`.`option_name` = 'siteurl',
+			    `wptests`.`wptests_options`.`option_value` = 'from-set',
+			    `autoload` = 'off'
+			ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'from-set\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'from-set', $rows[0]->option_value );
+		$this->assertSame( 'no', $rows[0]->autoload );
 	}
 
 	/**
