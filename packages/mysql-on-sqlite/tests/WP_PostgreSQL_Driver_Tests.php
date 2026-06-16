@@ -4855,6 +4855,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple UPDATE ignores unsupported ORDER BY expressions without LIMIT.
+	 */
+	public function test_simple_update_expression_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_order_expression (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_order_expression (id, status) VALUES (1, 'draft'), (2, 'publish'), (3, 'draft')" );
+
+		$update = "UPDATE wptests_update_order_expression SET `status` = 'archived' WHERE `status` = 'draft' ORDER BY LENGTH(`status`), `id` + 0 DESC";
+
+		$this->assertSame( 2, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_update_order_expression" SET "status" = \'archived\' WHERE ("status" = \'draft\') AND ("status" IS DISTINCT FROM (\'archived\'))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_update_order_expression ORDER BY id' );
+		$this->assertSame( 'archived', $rows[0]->status );
+		$this->assertSame( 'publish', $rows[1]->status );
+		$this->assertSame( 'archived', $rows[2]->status );
+	}
+
+	/**
 	 * Tests simple UPDATE preserves a MySQL literal ending in an escaped backslash.
 	 */
 	public function test_simple_update_preserves_trailing_escaped_backslash_literal(): void {
@@ -5107,6 +5140,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$rows = $driver->query( 'SELECT id, status FROM wptests_delete_ordered ORDER BY id' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '2', $rows[0]->id );
+		$this->assertSame( 'keep', $rows[0]->status );
+	}
+
+	/**
+	 * Tests simple DELETE ignores unsupported ORDER BY expressions without LIMIT.
+	 */
+	public function test_simple_delete_expression_order_by_without_limit_omits_ordering(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_delete_order_expression (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_delete_order_expression (id, status) VALUES (1, 'stale'), (2, 'keep'), (3, 'stale')" );
+
+		$delete = "DELETE FROM wptests_delete_order_expression WHERE `status` = 'stale' ORDER BY LENGTH(`status`), `id` + 0 DESC";
+
+		$this->assertSame( 2, $driver->query( $delete ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DELETE FROM "wptests_delete_order_expression" WHERE "status" = \'stale\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT id, status FROM wptests_delete_order_expression ORDER BY id' );
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '2', $rows[0]->id );
 		$this->assertSame( 'keep', $rows[0]->status );
@@ -11099,8 +11165,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'CREATE TABLE wptests_inline_child (
 				id int(11) PRIMARY KEY,
 				slug varchar(100) UNIQUE,
+				score int CHECK (score > 0),
 				parent_id int(11) REFERENCES wptests_inline_parent(id) ON DELETE CASCADE ON UPDATE SET NULL
 			) DEFAULT CHARACTER SET utf8mb4'
+		);
+		$this->assertStringContainsString(
+			'CONSTRAINT "wptests_inline_child_chk_1" CHECK (score > 0)',
+			$this->get_last_single_postgresql_sql( $driver )
 		);
 
 		$this->assertSame(
@@ -11256,18 +11327,45 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests ALTER TABLE ADD COLUMN inline CHECK constraints fail explicitly.
+	 * Tests ALTER TABLE ADD COLUMN inline CHECK constraints are translated.
 	 */
-	public function test_alter_table_add_column_rejects_inline_check_constraint(): void {
+	public function test_alter_table_add_column_supports_inline_check_constraint(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_alter_inline_check (id int(11))' );
+
+		$driver->query( 'ALTER TABLE wptests_alter_inline_check ADD COLUMN score int CHECK (score > 0)' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_check" ADD COLUMN "score" integer CONSTRAINT "wptests_alter_inline_check_chk_1" CHECK (score > 0)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alter_inline_check' );
+		$this->assertSame( array( 'id', 'score' ), array_column( $columns, 'column_name' ) );
+		$this->assertSame( 'int(11)', $columns[0]['column_type'] );
+		$this->assertSame( 'int', $columns[1]['column_type'] );
+	}
+
+	/**
+	 * Tests ALTER TABLE ADD COLUMN NOT ENFORCED CHECK constraints fail explicitly.
+	 */
+	public function test_alter_table_add_column_rejects_not_enforced_inline_check_constraint(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 
 		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_alter_inline_check (id int(11))' );
 
 		$this->expectException( InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'Unsupported inline CHECK constraint.' );
+		$this->expectExceptionMessage( 'Unsupported NOT ENFORCED CHECK constraint.' );
 
-		$driver->query( 'ALTER TABLE wptests_alter_inline_check ADD COLUMN score int CHECK (score > 0)' );
+		$driver->query( 'ALTER TABLE wptests_alter_inline_check ADD COLUMN score int CHECK (score > 0) NOT ENFORCED' );
 	}
 
 	/**

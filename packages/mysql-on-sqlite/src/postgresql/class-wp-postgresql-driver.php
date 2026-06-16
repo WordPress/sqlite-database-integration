@@ -14026,7 +14026,7 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position ) {
+		if ( null !== $order_position && null !== $limit_position ) {
 			$order_end = $limit_position ?? $statement_end;
 			$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
 				$tokens,
@@ -14038,6 +14038,8 @@ WHERE option_name IN (
 			if ( null === $order_sql ) {
 				return null;
 			}
+		} elseif ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) ) {
+			return null;
 		}
 
 		$limit_sql = '';
@@ -17145,7 +17147,7 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position ) {
+		if ( null !== $order_position && null !== $limit_position ) {
 			$order_end = $limit_position ?? $statement_end;
 			$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
 				$tokens,
@@ -17157,6 +17159,8 @@ WHERE option_name IN (
 			if ( null === $order_sql ) {
 				return null;
 			}
+		} elseif ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) ) {
+			return null;
 		}
 
 		$limit_sql = '';
@@ -31314,8 +31318,29 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		) && ( $is_parameter_marker || ctype_digit( $token->get_value() ) );
 	}
 
-		/**
-		 * Translate a safe DML ORDER BY clause.
+	/**
+	 * Check whether a DML ORDER BY clause has a non-empty item list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  ORDER token position.
+	 * @param int              $end    Final clause token position, exclusive.
+	 * @return bool Whether this is a non-empty ORDER BY clause.
+	 */
+	private function is_nonempty_mysql_order_by_clause( array $tokens, int $start, int $end ): bool {
+		if (
+			$start + 2 >= $end
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== ( $tokens[ $start ]->id ?? null )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== ( $tokens[ $start + 1 ]->id ?? null )
+		) {
+			return false;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $start + 2, $end );
+		return null !== $items && ! empty( $items );
+	}
+
+	/**
+	 * Translate a safe DML ORDER BY clause.
 	 *
 	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
 	 * @param int              $start      ORDER token position.

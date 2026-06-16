@@ -655,13 +655,39 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests inline CHECK constraints fail closed instead of being dropped.
+	 * Tests inline and table CHECK constraints are translated.
 	 */
-	public function test_translate_rejects_inline_check_constraint(): void {
-		$this->expectException( InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'Unsupported inline CHECK constraint.' );
+	public function test_translate_supports_check_constraints(): void {
+		$sql = 'CREATE TABLE wp_inline_check (
+			id int CHECK (id > 0),
+			`score` int NOT NULL CHECK (`score` < 10),
+			CONSTRAINT c CHECK (id < 100),
+			CHECK (score >= 0)
+		)';
 
-		$this->translate( 'CREATE TABLE wp_inline_check (id int CHECK (id > 0))' );
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_inline_check\" (\n  \"id\" integer CONSTRAINT \"wp_inline_check_chk_1\" CHECK (id > 0),\n  \"score\" integer NOT NULL CONSTRAINT \"wp_inline_check_chk_2\" CHECK (\"score\" < 10),\n  CONSTRAINT \"c\" CHECK (id < 100),\n  CONSTRAINT \"wp_inline_check_chk_3\" CHECK (score >= 0)\n)",
+			),
+			$this->translate( $sql )
+		);
+
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$metadata   = $translator->extract_schema_metadata( $sql, true );
+
+		$this->assertSame( array( 'id', 'score' ), array_column( $metadata[0]['columns'], 'name' ) );
+		$this->assertSame( array(), $metadata[0]['indexes'] );
+		$this->assertSame( array(), $metadata[0]['foreign_keys'] );
+	}
+
+	/**
+	 * Tests NOT ENFORCED CHECK constraints fail explicitly.
+	 */
+	public function test_translate_rejects_not_enforced_check_constraint(): void {
+		$this->expectException( InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Unsupported NOT ENFORCED CHECK constraint.' );
+
+		$this->translate( 'CREATE TABLE wp_inline_check (id int CHECK (id > 0) NOT ENFORCED)' );
 	}
 
 	/**

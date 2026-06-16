@@ -94,17 +94,23 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$constraints   = array();
 		$indexes       = array();
 		$foreign_key_ordinal = 1;
+		$check_ordinal       = 1;
 
 		foreach ( $element_list->get_child_nodes( 'tableElement' ) as $table_element ) {
 			$column_definition = $table_element->get_first_child_node( 'columnDefinition' );
 			if ( $column_definition ) {
-				$columns[] = $this->translate_column_definition( $column_definition, $table_name, $foreign_key_ordinal );
+				$columns[] = $this->translate_column_definition( $column_definition, $table_name, $foreign_key_ordinal, $check_ordinal );
 				continue;
 			}
 
 			$table_constraint = $table_element->get_first_child_node( 'tableConstraintDef' );
 			if ( ! $table_constraint ) {
 				throw new InvalidArgumentException( 'Unsupported CREATE TABLE element.' );
+			}
+
+			if ( $table_constraint->get_first_child_node( 'checkConstraint' ) ) {
+				$constraints[] = $this->translate_check_constraint_definition( $table_constraint, $table_name, $check_ordinal );
+				continue;
 			}
 
 			$this->validate_mysql_table_constraint_index_options( $table_constraint );
@@ -273,9 +279,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param WP_Parser_Node $column_definition   Column definition node.
 	 * @param string         $table_name          Table name.
 	 * @param int            $foreign_key_ordinal Next inline foreign key ordinal.
+	 * @param int            $check_ordinal       Next inline CHECK ordinal.
 	 * @return string PostgreSQL column definition.
 	 */
-	private function translate_column_definition( WP_Parser_Node $column_definition, string $table_name, int &$foreign_key_ordinal ): string {
+	private function translate_column_definition( WP_Parser_Node $column_definition, string $table_name, int &$foreign_key_ordinal, int &$check_ordinal ): string {
 		$name             = $this->get_identifier_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
 		$field_definition = $column_definition->get_first_child_node( 'fieldDefinition' );
 		if ( ! $field_definition ) {
@@ -316,8 +323,15 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
-			if ( $attribute->get_first_child_node( 'checkConstraint' ) ) {
-				throw new InvalidArgumentException( 'Unsupported inline CHECK constraint.' );
+			$check_constraint = $attribute->get_first_child_node( 'checkConstraint' );
+			if ( $check_constraint ) {
+				$parts[] = $this->translate_check_constraint_definition( $attribute, $table_name, $check_ordinal );
+				continue;
+			}
+
+			if ( $attribute->get_first_child_node( 'constraintEnforcement' ) ) {
+				$this->validate_check_constraint_enforcement( $attribute );
+				continue;
 			}
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
@@ -342,8 +356,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 			++$foreign_key_ordinal;
 		}
 
-		if ( $this->has_inline_check_constraint( $field_definition, $column_definition ) ) {
-			throw new InvalidArgumentException( 'Unsupported inline CHECK constraint.' );
+		$check_constraint = $this->get_inline_check_constraint_node( $column_definition );
+		if ( $check_constraint ) {
+			$parts[] = $this->translate_check_constraint_definition( $check_constraint, $table_name, $check_ordinal );
 		}
 
 		return implode( ' ', $parts );
@@ -361,21 +376,177 @@ class WP_PostgreSQL_Create_Table_Translator {
 	}
 
 	/**
-	 * Check whether a field definition has an inline CHECK constraint.
+	 * Get a MySQL inline CHECK node after a column definition.
 	 *
-	 * @param WP_Parser_Node      $field_definition  Field definition node.
 	 * @param WP_Parser_Node|null $column_definition Column definition node.
-	 * @return bool Whether inline CHECK is present.
+	 * @return WP_Parser_Node|null Inline CHECK node.
 	 */
-	private function has_inline_check_constraint( WP_Parser_Node $field_definition, ?WP_Parser_Node $column_definition = null ): bool {
-		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
-			if ( $attribute->get_first_child_node( 'checkConstraint' ) ) {
-				return true;
-			}
+	private function get_inline_check_constraint_node( ?WP_Parser_Node $column_definition ): ?WP_Parser_Node {
+		$check_or_references = $column_definition ? $column_definition->get_first_child_node( 'checkOrReferences' ) : null;
+		return $check_or_references ? $check_or_references->get_first_child_node( 'checkConstraint' ) : null;
+	}
+
+	/**
+	 * Translate a MySQL CHECK constraint to PostgreSQL.
+	 *
+	 * @param WP_Parser_Node $node          Node containing a checkConstraint child.
+	 * @param string         $table_name    Table name used for implicit constraint names.
+	 * @param int            $check_ordinal Next implicit CHECK ordinal.
+	 * @return string PostgreSQL CHECK constraint SQL.
+	 */
+	private function translate_check_constraint_definition( WP_Parser_Node $node, string $table_name, int &$check_ordinal ): string {
+		$this->validate_check_constraint_enforcement( $node );
+
+		$check_constraint = 'checkConstraint' === $node->rule_name ? $node : $node->get_first_child_node( 'checkConstraint' );
+		if ( ! $check_constraint ) {
+			throw new InvalidArgumentException( 'Expected CHECK constraint node.' );
 		}
 
-		$check_or_references = $column_definition ? $column_definition->get_first_child_node( 'checkOrReferences' ) : null;
-		return $check_or_references && null !== $check_or_references->get_first_child_node( 'checkConstraint' );
+		$constraint_name = $this->get_check_constraint_name( $node, $table_name, $check_ordinal );
+		$expression      = $this->translate_check_constraint_expression( $check_constraint );
+
+		return sprintf(
+			'CONSTRAINT %s CHECK (%s)',
+			$this->quote_identifier( $constraint_name ),
+			$expression
+		);
+	}
+
+	/**
+	 * Get the MySQL-compatible CHECK constraint name.
+	 *
+	 * @param WP_Parser_Node $node          Node containing an optional constraintName child.
+	 * @param string         $table_name    Table name used for implicit constraint names.
+	 * @param int            $check_ordinal Next implicit CHECK ordinal.
+	 * @return string Constraint name.
+	 */
+	private function get_check_constraint_name( WP_Parser_Node $node, string $table_name, int &$check_ordinal ): string {
+		$constraint_name = $node->get_first_child_node( 'constraintName' );
+		if ( $constraint_name ) {
+			return $this->get_identifier_value( $constraint_name->get_first_child_node( 'identifier' ) );
+		}
+
+		return $table_name . '_chk_' . $check_ordinal++;
+	}
+
+	/**
+	 * Validate MySQL CHECK constraint enforcement clauses.
+	 *
+	 * PostgreSQL enforces CHECK constraints immediately. MySQL's explicit
+	 * ENFORCED clause is equivalent here, but NOT ENFORCED cannot be preserved.
+	 *
+	 * @param WP_Parser_Node $node Node to inspect.
+	 */
+	private function validate_check_constraint_enforcement( WP_Parser_Node $node ): void {
+		$enforcement = $node->get_first_child_node( 'constraintEnforcement' );
+		if ( $enforcement && $enforcement->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) {
+			throw new InvalidArgumentException( 'Unsupported NOT ENFORCED CHECK constraint.' );
+		}
+	}
+
+	/**
+	 * Translate a MySQL CHECK expression to PostgreSQL SQL.
+	 *
+	 * @param WP_Parser_Node $check_constraint CHECK constraint node.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function translate_check_constraint_expression( WP_Parser_Node $check_constraint ): string {
+		$expression = $check_constraint->get_first_descendant_node( 'expr' );
+		if ( ! $expression ) {
+			throw new InvalidArgumentException( 'CHECK constraint is missing an expression.' );
+		}
+
+		return $this->translate_check_constraint_tokens( $expression->get_descendant_tokens() );
+	}
+
+	/**
+	 * Translate CHECK expression tokens.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL tokens.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function translate_check_constraint_tokens( array $tokens ): string {
+		$sql            = '';
+		$previous_token = null;
+
+		foreach ( $tokens as $token ) {
+			$fragment = $this->translate_check_constraint_token( $token );
+			if ( '' === $fragment ) {
+				continue;
+			}
+
+			if ( '' !== $sql && $this->check_constraint_tokens_need_space( $previous_token, $token ) ) {
+				$sql .= ' ';
+			}
+
+			$sql           .= $fragment;
+			$previous_token = $token;
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Translate one CHECK expression token.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return string PostgreSQL SQL fragment.
+	 */
+	private function translate_check_constraint_token( WP_MySQL_Token $token ): string {
+		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
+			return $this->quote_identifier( $token->get_value() );
+		}
+
+		return $token->get_bytes();
+	}
+
+	/**
+	 * Decide whether two CHECK expression tokens need a separating space.
+	 *
+	 * @param WP_MySQL_Token|null $previous Previous token, or null.
+	 * @param WP_MySQL_Token      $current  Current token.
+	 * @return bool Whether to add a space.
+	 */
+	private function check_constraint_tokens_need_space( ?WP_MySQL_Token $previous, WP_MySQL_Token $current ): bool {
+		if ( null === $previous ) {
+			return false;
+		}
+
+		if (
+			WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $current->id
+			|| WP_MySQL_Lexer::COMMA_SYMBOL === $current->id
+			|| WP_MySQL_Lexer::DOT_SYMBOL === $current->id
+			|| WP_MySQL_Lexer::DOT_SYMBOL === $previous->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous->id
+		) {
+			return false;
+		}
+
+		if (
+			WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $current->id
+			&& $this->is_check_constraint_identifier_like_token( $previous )
+		) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a CHECK token is identifier-like.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is identifier-like.
+	 */
+	private function is_check_constraint_identifier_like_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::IDENTIFIER,
+				WP_MySQL_Lexer::BACK_TICK_QUOTED_ID,
+			),
+			true
+		);
 	}
 
 	/**
@@ -1046,6 +1217,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 			if ( $include_indexes ) {
 				$table_constraint = $table_element->get_first_child_node( 'tableConstraintDef' );
 				if ( $table_constraint ) {
+					if ( $table_constraint->get_first_child_node( 'checkConstraint' ) ) {
+						continue;
+					}
+
 					$this->validate_mysql_table_constraint_index_options( $table_constraint );
 					$indexes[] = $this->extract_index_metadata( $table_constraint, $index_ordinal, $column_types );
 					++$index_ordinal;
@@ -1163,10 +1338,6 @@ class WP_PostgreSQL_Create_Table_Translator {
 	private function extract_inline_foreign_key_metadata( string $table_name, string $column_name, WP_Parser_Node $field_definition, WP_Parser_Node $column_definition, int $foreign_key_ordinal ): ?array {
 		$references = $this->get_inline_references_node( $column_definition );
 		if ( ! $references ) {
-			if ( $this->has_inline_check_constraint( $field_definition, $column_definition ) ) {
-				throw new InvalidArgumentException( 'Unsupported inline CHECK constraint.' );
-			}
-
 			return null;
 		}
 
