@@ -16070,6 +16070,110 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema UNION SELECTs route each branch through the MySQL-shaped relations.
+	 */
+	public function test_direct_information_schema_union_selects_return_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$rows = $driver->query(
+			"SELECT table_name AS object_name
+			FROM information_schema.tables
+			WHERE table_name = 'wptests_options'
+			UNION ALL
+			SELECT schema_name AS object_name
+			FROM information_schema.schemata
+			WHERE schema_name = 'wptests'"
+		);
+
+		$values = array_map(
+			static function ( $row ): string {
+				return $row->object_name;
+			},
+			$rows
+		);
+		sort( $values );
+
+		$this->assertSame( array( 'wptests', 'wptests_options' ), $values );
+
+		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'UNION ALL SELECT', $sql );
+		$this->assertStringContainsString( 'AS "tables"', $sql );
+		$this->assertStringContainsString( 'AS "schemata"', $sql );
+
+		$distinct = $driver->query(
+			"SELECT table_name AS object_name
+			FROM information_schema.tables
+			WHERE table_name = 'wptests_options'
+			UNION DISTINCT
+			SELECT table_name AS object_name
+			FROM information_schema.tables
+			WHERE table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $distinct );
+		$this->assertSame( 'wptests_options', $distinct[0]->object_name );
+		$this->assertStringContainsString(
+			'UNION SELECT',
+			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UNION SELECT' )
+		);
+
+		try {
+			$driver->query(
+				"SELECT table_name AS object_name
+				FROM information_schema.tables
+				WHERE table_name = 'wptests_options'
+				UNION ALL
+				SELECT schema_name AS object_name
+				FROM information_schema.schemata
+				WHERE schema_name = 'wptests'
+				ORDER BY object_name"
+			);
+			$this->fail( 'Expected unsupported ordered information_schema UNION to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertStringNotContainsString(
+				'UNION ALL SELECT',
+				implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) )
+			);
+		}
+	}
+
+	/**
+	 * Tests USE information_schema routes unqualified UNION SELECT sources.
+	 */
+	public function test_use_statement_information_schema_union_selects_route_supported_relations(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$rows = $driver->query(
+			"SELECT table_name AS object_name
+			FROM tables
+			WHERE table_name = 'wptests_options'
+			UNION ALL
+			SELECT schema_name AS object_name
+			FROM schemata
+			WHERE schema_name = 'wptests'"
+		);
+
+		$values = array_map(
+			static function ( $row ): string {
+				return $row->object_name;
+			},
+			$rows
+		);
+		sort( $values );
+
+		$this->assertSame( array( 'wptests', 'wptests_options' ), $values );
+		$this->assertStringContainsString(
+			'UNION ALL SELECT',
+			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UNION ALL SELECT' )
+		);
+	}
+
+	/**
 	 * Tests direct information_schema derived SELECT sources return MySQL-shaped rows.
 	 */
 	public function test_direct_information_schema_derived_selects_return_mysql_shape(): void {

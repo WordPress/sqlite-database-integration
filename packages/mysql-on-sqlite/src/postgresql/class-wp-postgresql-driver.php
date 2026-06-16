@@ -21936,7 +21936,7 @@ WHERE option_name IN (
 		}
 
 		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) ) ) {
-			return null;
+			return $this->translate_direct_information_schema_union_select_query( $query, $tokens, $statement_end );
 		}
 
 		$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end );
@@ -22091,6 +22091,84 @@ WHERE option_name IN (
 			$statement_end,
 			$replacements
 		);
+	}
+
+	/**
+	 * Translate direct information_schema UNION SELECT statements.
+	 *
+	 * @param string           $query         MySQL query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_direct_information_schema_union_select_query( string $query, array $tokens, int $statement_end ): ?string {
+		$segments  = array();
+		$operators = array();
+		$position  = 0;
+
+		while ( $position < $statement_end ) {
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			$union_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UNION_SYMBOL, $position + 1, $statement_end );
+			$select_end     = $union_position ?? $statement_end;
+			if (
+				$this->contains_top_level_mysql_token(
+					$tokens,
+					$position + 1,
+					$select_end,
+					array(
+						WP_MySQL_Lexer::LIMIT_SYMBOL,
+						WP_MySQL_Lexer::ORDER_SYMBOL,
+					)
+				)
+			) {
+				return null;
+			}
+
+			$select_query = $this->get_mysql_token_range_bytes( $query, $tokens, $position, $select_end );
+			if ( '' === $select_query ) {
+				return null;
+			}
+
+			$translated_select = $this->translate_direct_information_schema_select_query( $select_query );
+			if ( null === $translated_select ) {
+				return null;
+			}
+			$segments[] = $translated_select;
+
+			if ( null === $union_position ) {
+				break;
+			}
+
+			$operator_position = $union_position + 1;
+			if ( ! isset( $tokens[ $operator_position ] ) ) {
+				return null;
+			}
+
+			if ( WP_MySQL_Lexer::ALL_SYMBOL === $tokens[ $operator_position ]->id ) {
+				$operators[] = 'UNION ALL';
+				$position    = $operator_position + 1;
+			} elseif ( WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $operator_position ]->id ) {
+				$operators[] = 'UNION';
+				$position    = $operator_position + 1;
+			} else {
+				$operators[] = 'UNION';
+				$position    = $operator_position;
+			}
+		}
+
+		if ( count( $segments ) < 2 || count( $operators ) + 1 !== count( $segments ) ) {
+			return null;
+		}
+
+		$sql = $segments[0];
+		foreach ( $operators as $index => $operator ) {
+			$sql .= ' ' . $operator . ' ' . $segments[ $index + 1 ];
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -29047,11 +29125,7 @@ FROM (
 		if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id ) {
 			$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 			if ( null !== $statement_end ) {
-				$has_unsupported_direct_shape = $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) );
-				if (
-					! $has_unsupported_direct_shape
-					&& null !== $this->translate_direct_information_schema_select_query( $query )
-				) {
+				if ( null !== $this->translate_direct_information_schema_select_query( $query ) ) {
 					return false;
 				}
 
