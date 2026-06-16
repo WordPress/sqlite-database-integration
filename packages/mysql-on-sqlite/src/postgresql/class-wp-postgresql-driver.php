@@ -14118,9 +14118,11 @@ WHERE option_name IN (
 	 * Translate conservative INSERT ... SELECT ... ON DUPLICATE KEY UPDATE queries.
 	 *
 	 * SELECT-sourced upserts cannot be preflighted row-by-row without executing
-	 * arbitrary SELECT sources twice. Keep AUTO_INCREMENT support constrained to
-	 * single literal-row SELECTs that can be checked like VALUES rows, so insert
-	 * IDs and identity sequence repair stay MySQL-compatible.
+	 * arbitrary SELECT sources twice. Keep AUTO_INCREMENT insert ID and identity
+	 * sequence repair constrained to single literal-row SELECTs that can be
+	 * checked like VALUES rows. Non-literal SELECT sources are allowed for
+	 * AUTO_INCREMENT targets only when the generated column is omitted and the
+	 * conflict target is a deterministic non-AUTO_INCREMENT key.
 	 *
 	 * @param string           $table_name            Target table name.
 	 * @param string[]         $columns               Insert target columns.
@@ -14250,19 +14252,27 @@ WHERE option_name IN (
 				);
 			}
 			if ( null === $literal_value_row ) {
-				return null;
-			}
-
-			$insert_id_value_rows = array( $literal_value_row['values'] );
-			$inserted_value_rows  = $this->get_mysql_upsert_inserted_value_rows(
-				$table_name,
-				$columns,
-				$insert_id_value_rows,
-				array( $literal_value_row['probe_safe_values'] ),
-				$conflict_target['parts']
-			);
-			if ( null === $inserted_value_rows ) {
-				return null;
+				if (
+					! $this->can_mysql_insert_select_upsert_skip_auto_increment_literal_probe(
+						$auto_increment_column,
+						$columns,
+						$conflict_columns
+					)
+				) {
+					return null;
+				}
+			} else {
+				$insert_id_value_rows = array( $literal_value_row['values'] );
+				$inserted_value_rows  = $this->get_mysql_upsert_inserted_value_rows(
+					$table_name,
+					$columns,
+					$insert_id_value_rows,
+					array( $literal_value_row['probe_safe_values'] ),
+					$conflict_target['parts']
+				);
+				if ( null === $inserted_value_rows ) {
+					return null;
+				}
 			}
 		}
 
@@ -14298,6 +14308,31 @@ WHERE option_name IN (
 			'value_rows'           => $inserted_value_rows,
 			'insert_id_value_rows' => $insert_id_value_rows,
 		);
+	}
+
+	/**
+	 * Check whether a non-literal INSERT ... SELECT upsert may skip AUTO_INCREMENT probing.
+	 *
+	 * @param string   $auto_increment_column AUTO_INCREMENT column name.
+	 * @param string[] $columns               Insert target columns.
+	 * @param string[] $conflict_columns      Resolved conflict target columns.
+	 * @return bool Whether the generated column is outside the insert and conflict targets.
+	 */
+	private function can_mysql_insert_select_upsert_skip_auto_increment_literal_probe( string $auto_increment_column, array $columns, array $conflict_columns ): bool {
+		$auto_increment_key = strtolower( $auto_increment_column );
+		foreach ( $columns as $column ) {
+			if ( strtolower( (string) $column ) === $auto_increment_key ) {
+				return false;
+			}
+		}
+
+		foreach ( $conflict_columns as $column ) {
+			if ( strtolower( (string) $column ) === $auto_increment_key ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -32335,11 +32370,13 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			WP_MySQL_Lexer::CURRENT_DATE_SYMBOL      => 'curdate',
 			WP_MySQL_Lexer::CURRENT_TIME_SYMBOL      => 'utc_time',
 			WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL => 'utc_timestamp',
+			WP_MySQL_Lexer::DATABASE_SYMBOL          => 'database',
 			WP_MySQL_Lexer::IF_SYMBOL                => 'if',
 			WP_MySQL_Lexer::LEFT_SYMBOL              => 'left',
 			WP_MySQL_Lexer::MID_SYMBOL               => 'substring',
 			WP_MySQL_Lexer::NOW_SYMBOL               => 'now',
 			WP_MySQL_Lexer::REPLACE_SYMBOL           => 'replace',
+			WP_MySQL_Lexer::SCHEMA_SYMBOL            => 'database',
 			WP_MySQL_Lexer::SUBSTR_SYMBOL            => 'substring',
 			WP_MySQL_Lexer::SUBSTRING_SYMBOL         => 'substring',
 			WP_MySQL_Lexer::UTC_DATE_SYMBOL          => 'utc_date',
@@ -32361,6 +32398,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'character_length',
 			'concat',
 			'curdate',
+			'database',
 			'date',
 			'datediff',
 			'from_base64',
@@ -32386,6 +32424,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'now',
 			'release_lock',
 			'replace',
+			'schema',
 			'substr',
 			'substring',
 			'timestampadd',
@@ -32450,6 +32489,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 			case 'version':
 				return 0 === $count ? $this->connection->quote( '5.5' ) : null;
+
+			case 'database':
+			case 'schema':
+				return 0 === $count ? $this->connection->quote( $this->db_name ) : null;
 
 			case 'md5':
 				return 1 === $count ? sprintf( 'MD5(CAST(%s AS text))', $argument_sql[0] ) : null;

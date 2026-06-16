@@ -3953,6 +3953,67 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests real SELECT-sourced upserts may omit AUTO_INCREMENT for non-AUTO_INCREMENT keys.
+	 */
+	public function test_insert_select_on_duplicate_key_update_omitting_auto_increment_target_uses_non_auto_unique_key(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_unique_upsert', 'id', 'wptests_identity_unique_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_unique_upsert_table_with_mysql_metadata( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_identity_unique_upsert_source (
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_unique_upsert_source (
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_identity_unique_upsert (slug, value) VALUES ('existing', 'old')" );
+		$driver->query( "INSERT INTO wptests_identity_unique_upsert_source (slug, value) VALUES ('existing', 'updated'), ('new', 'created')" );
+
+		$upsert = "INSERT INTO `wptests_identity_unique_upsert` (`slug`, `value`)
+			SELECT `slug`, `value` FROM `wptests_identity_unique_upsert_source` WHERE 1 = 1
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
+		);
+
+		$this->assertIsArray( $translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") SELECT "slug", "value" FROM "wptests_identity_unique_upsert_source" WHERE 1 = 1 ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$translation['sql']
+		);
+		$this->assertNull( $translation['value_rows'] );
+		$this->assertNull( $translation['insert_id_value_rows'] );
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") SELECT "slug", "value" FROM "wptests_identity_unique_upsert_source" WHERE 1 = 1 ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY slug' );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'existing', $rows[0]->slug );
+		$this->assertSame( 'updated', $rows[0]->value );
+		$this->assertSame( '2', $rows[1]->id );
+		$this->assertSame( 'new', $rows[1]->slug );
+		$this->assertSame( 'created', $rows[1]->value );
+	}
+
+	/**
 	 * Tests columnless SELECT-sourced upserts keep AUTO_INCREMENT metadata behavior.
 	 */
 	public function test_columnless_insert_select_on_duplicate_key_update_with_auto_increment_target_uses_metadata_columns(): void {
@@ -4004,6 +4065,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '7', $rows[0]->id );
 		$this->assertSame( 'updated', $rows[0]->value );
+	}
+
+	/**
+	 * Tests columnless real SELECT-sourced upserts still reject AUTO_INCREMENT targets.
+	 */
+	public function test_columnless_insert_select_on_duplicate_key_update_with_auto_increment_target_rejects_real_source_table(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_identity_upsert_source (
+				id INTEGER NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_upsert_source (
+				id bigint(20) unsigned NOT NULL,
+				value longtext NOT NULL
+			)'
+		);
+
+		$upsert = "INSERT INTO `wptests_identity_upsert`
+			SELECT `id`, `value` FROM `wptests_identity_upsert_source` WHERE 1 = 1
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertNull(
+			$this->translate_driver_query_data_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$upsert
+			)
+		);
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
 	}
 
 	/**
@@ -13124,6 +13222,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '3', $count[0]->{'COUNT(*)'} );
 		$this->assertSame( 'COUNT(*)', $driver->get_last_column_meta()[0]['name'] );
 
+		$current_schema_tables = $driver->query(
+			"SELECT table_name FROM information_schema.tables
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $current_schema_tables );
+		$this->assertSame( 'wptests_options', $current_schema_tables[0]->TABLE_NAME );
+
 		$tables = $driver->query(
 			"SELECT table_name AS name, ENGINE AS engine, CAST(data_length / 1024 / 1024 AS UNSIGNED) AS data
 			FROM INFORMATION_SCHEMA.TABLES
@@ -13737,6 +13844,17 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$statistics_by_name
 		);
+
+		$current_schema_statistics = $driver->query(
+			"SELECT INDEX_NAME
+			FROM information_schema.statistics
+			WHERE table_schema = SCHEMA()
+				AND table_name = 'wptests_options'
+				AND index_name = 'option_name'"
+		);
+
+		$this->assertCount( 1, $current_schema_statistics );
+		$this->assertSame( 'option_name', $current_schema_statistics[0]->INDEX_NAME );
 
 		$constraints = $driver->query(
 			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
@@ -15818,6 +15936,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 				value longtext NOT NULL,
 				PRIMARY KEY (id)
+			)'
+		);
+	}
+
+	/**
+	 * Install an identity upsert table with a non-AUTO_INCREMENT unique key.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function install_identity_unique_upsert_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
+		$driver->query(
+			'CREATE TABLE wptests_identity_unique_upsert (
+				id INTEGER PRIMARY KEY,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_unique_upsert (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				slug varchar(191) NOT NULL,
+				value longtext NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug (slug)
 			)'
 		);
 	}
