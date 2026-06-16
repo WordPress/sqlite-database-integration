@@ -18591,9 +18591,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported SHOW EXTENDED INDEX-family statements fail before reaching the backend.
+	 * Tests SHOW EXTENDED INDEX-family statements return the same rows as SHOW INDEX.
 	 */
-	public function test_show_extended_index_family_does_not_reach_backend(): void {
+	public function test_show_extended_index_family_returns_same_catalog_rows_as_show_index(): void {
 		$queries = array(
 			'SHOW EXTENDED INDEX FROM wptests_options',
 			'SHOW EXTENDED INDEXES FROM wptests_options',
@@ -18601,15 +18601,20 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		foreach ( $queries as $query ) {
-			$driver = $this->create_show_index_driver();
+			$index_driver    = $this->create_show_index_driver();
+			$extended_driver = $this->create_show_index_driver();
 
-			try {
-				$driver->query( $query );
-				$this->fail( 'Expected unsupported SHOW EXTENDED INDEX statement to throw.' );
-			} catch ( InvalidArgumentException $e ) {
-				$this->assertSame( 'Unsupported SHOW INDEX statement.', $e->getMessage(), $query );
-				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
-			}
+			$indexes  = $index_driver->query( 'SHOW INDEX FROM wptests_options' );
+			$extended = $extended_driver->query( $query );
+
+			$this->assertEquals( $indexes, $extended, $query );
+			$this->assertSame( $index_driver->get_last_column_count(), $extended_driver->get_last_column_count(), $query );
+			$this->assertSame( $index_driver->get_last_column_meta(), $extended_driver->get_last_column_meta(), $query );
+			$this->assertStringNotContainsString(
+				'SHOW EXTENDED',
+				strtoupper( $extended_driver->get_last_postgresql_queries()[0]['sql'] ),
+				$query
+			);
 		}
 	}
 

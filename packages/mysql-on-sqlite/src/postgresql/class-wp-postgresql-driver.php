@@ -10428,8 +10428,8 @@ $wp_mysql_on_update$',
 	/**
 	 * Parse a supported MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS statement.
 	 *
-	 * SHOW EXTENDED INDEX-family statements are recognized as part of this
-	 * family so unsupported forms fail before raw backend execution.
+	 * SHOW EXTENDED INDEX-family statements use the same backing metadata rows;
+	 * hidden index rows are not modeled separately by this compatibility layer.
 	 *
 	 * @param string $query MySQL query.
 	 * @return array{schema: string, table: string, where: array|null}|null SHOW INDEX options, or null when this is not a SHOW INDEX statement.
@@ -10440,10 +10440,8 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
-		$position              = 1;
-		$has_extended_modifier = false;
+		$position = 1;
 		if ( WP_MySQL_Lexer::EXTENDED_SYMBOL === $tokens[ $position ]->id ) {
-			$has_extended_modifier = true;
 			++$position;
 		}
 
@@ -10456,10 +10454,6 @@ $wp_mysql_on_update$',
 			)
 		) {
 			return null;
-		}
-
-		if ( $has_extended_modifier ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
 		++$position;
