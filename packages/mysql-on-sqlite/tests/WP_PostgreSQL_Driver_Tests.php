@@ -3259,7 +3259,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$unsupported_query_methods = array(
-			'UPDATE wptests_unsupported, wptests_other SET wptests_other.id = wptests_unsupported.id WHERE wptests_other.id = 1' => 'translate_simple_mysql_update_query',
+			'UPDATE wptests_unsupported, wptests_other SET wptests_other.id = wptests_unsupported.id, wptests_unsupported.id = wptests_other.id WHERE wptests_other.id = 1' => 'translate_simple_mysql_update_query',
 		);
 
 		foreach ( $unsupported_query_methods as $query => $method_name ) {
@@ -4800,6 +4800,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined UPDATE can target a non-leftmost table and MySQL join modifiers.
+	 */
+	public function test_joined_update_non_leftmost_target_and_join_modifiers_translate_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_join_source (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_join_target (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_join_source (id, value) VALUES (1, 'one'), (2, 'two'), (3, 'three')" );
+		$driver->query( "INSERT INTO wptests_update_join_target (id, value) VALUES (1, 'old'), (2, 'old'), (3, 'old')" );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'UPDATE wptests_update_join_source AS s
+				JOIN wptests_update_join_target AS t ON t.id = s.id
+				SET t.value = s.value
+				WHERE s.id = 1'
+			)
+		);
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'UPDATE "wptests_update_join_target" AS "t" SET "value" = s.value FROM "wptests_update_join_source" AS "s"', $sql );
+		$this->assertStringContainsString( '(t.id = s.id)', $sql );
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'UPDATE LOW_PRIORITY wptests_update_join_target AS t
+				CROSS JOIN wptests_update_join_source AS s
+				SET t.value = s.value
+				WHERE t.id = s.id AND t.id = 2'
+			)
+		);
+
+		$this->assertSame(
+			1,
+			$driver->query(
+				'UPDATE IGNORE wptests_update_join_target AS t
+				STRAIGHT_JOIN wptests_update_join_source AS s ON s.id = t.id
+				SET t.value = s.value
+				WHERE t.id = 3'
+			)
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_update_join_target ORDER BY id' );
+		$this->assertSame( 'one', $rows[0]->value );
+		$this->assertSame( 'two', $rows[1]->value );
+		$this->assertSame( 'three', $rows[2]->value );
+	}
+
+	/**
 	 * Tests unsupported multi-target UPDATE statements fail before backend execution.
 	 */
 	public function test_multi_target_update_fails_closed_before_backend_execution(): void {
@@ -4819,7 +4879,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		try {
-			$driver->query( 'UPDATE wptests_update_source AS s, wptests_update_target AS t SET t.value = s.value WHERE t.id = s.id' );
+			$driver->query( 'UPDATE wptests_update_source AS s, wptests_update_target AS t SET s.value = t.value, t.value = s.value WHERE t.id = s.id' );
 			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );

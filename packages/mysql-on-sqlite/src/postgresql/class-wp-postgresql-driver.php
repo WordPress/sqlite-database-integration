@@ -17603,18 +17603,20 @@ WHERE option_name IN (
 			return null;
 		}
 
-			$joined_update = $this->translate_mysql_inner_join_update_query( $tokens, $statement_end );
+		$joined_update = $this->translate_mysql_inner_join_update_query( $tokens, $statement_end );
 		if ( null !== $joined_update ) {
 			return $joined_update;
 		}
 
-			$joined_update = $this->translate_mysql_outer_join_update_query( $tokens, $statement_end );
+		$joined_update = $this->translate_mysql_outer_join_update_query( $tokens, $statement_end );
 		if ( null !== $joined_update ) {
 			return $joined_update;
 		}
 
-			$position        = 1;
-			$table_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $statement_end );
+		$position = 1;
+		$this->consume_mysql_update_modifiers( $tokens, $position, $statement_end );
+
+		$table_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $statement_end );
 		if ( null === $table_reference ) {
 			return null;
 		}
@@ -17818,7 +17820,9 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$position         = 1;
+		$position = 1;
+		$this->consume_mysql_update_modifiers( $tokens, $position, $set_position );
+
 		$target_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
 		if (
 			null === $target_reference
@@ -18049,30 +18053,47 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$position         = 1;
-		$target_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
+		$position = 1;
+		$this->consume_mysql_update_modifiers( $tokens, $position, $set_position );
+
+		$first_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
 		if (
-			null === $target_reference
+			null === $first_reference
 			|| $position >= $set_position
 		) {
 			return null;
 		}
 
-		$table_name              = $target_reference['table'];
-		$alias                   = $target_reference['alias'];
-		$target_reference_alias  = null === $alias ? $table_name : $alias;
-		$scope                   = $this->get_mysql_single_table_scope( $table_name, $alias );
+		$first_table             = $first_reference['table'];
+		$first_alias             = $first_reference['alias'];
+		$first_reference_alias   = null === $first_alias ? $first_table : $first_alias;
+		$scope                   = $this->get_mysql_single_table_scope( $first_table, $first_alias );
 		$from_parts              = array();
 		$join_predicates         = array();
-		$current_join_left_alias = $target_reference_alias;
+		$current_join_left_alias = $first_reference_alias;
+		$table_references        = array(
+			array(
+				'alias'     => $first_reference_alias,
+				'alias_key' => strtolower( $first_reference_alias ),
+				'table'     => $first_table,
+				'table_as'  => $first_alias,
+				'derived'   => false,
+				'sql'       => $this->get_postgresql_dml_table_reference_sql( $first_table, $first_alias ),
+			),
+		);
 
 		while ( $position < $set_position ) {
 			if ( WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
 				++$position;
-				$source_alias = null;
-				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts, $source_alias ) ) {
+				$source_alias     = null;
+				$source_reference = null;
+				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts, $source_alias, $source_reference ) ) {
 					return null;
 				}
+				if ( null === $source_reference ) {
+					return null;
+				}
+				$table_references[]     = $source_reference;
 				$current_join_left_alias = $source_alias;
 				continue;
 			}
@@ -18086,7 +18107,8 @@ WHERE option_name IN (
 					$scope,
 					$from_parts,
 					$join_predicates,
-					$current_join_left_alias
+					$current_join_left_alias,
+					$table_references
 				)
 			) {
 				return null;
@@ -18106,6 +18128,31 @@ WHERE option_name IN (
 
 		$set_end = $where_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
+			return null;
+		}
+
+		$target_reference = $this->get_mysql_joined_update_target_reference(
+			$tokens,
+			$set_position + 1,
+			$set_end,
+			$table_references,
+			strtolower( $first_reference_alias )
+		);
+		if ( null === $target_reference ) {
+			return null;
+		}
+
+		$table_name             = $target_reference['table'];
+		$alias                  = $target_reference['table_as'];
+		$target_reference_alias = $target_reference['alias'];
+		$from_parts             = array();
+		foreach ( $table_references as $table_reference ) {
+			if ( $table_reference['alias_key'] === $target_reference['alias_key'] ) {
+				continue;
+			}
+			$from_parts[] = $table_reference['sql'];
+		}
+		if ( empty( $from_parts ) ) {
 			return null;
 		}
 
@@ -18150,6 +18197,163 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Consume MySQL UPDATE modifiers that do not change row targeting.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param int              $end      Final token position, exclusive.
+	 */
+	private function consume_mysql_update_modifiers( array $tokens, int &$position, int $end ): void {
+		while (
+			$position < $end
+			&& isset( $tokens[ $position ] )
+			&& (
+				WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			++$position;
+		}
+	}
+
+	/**
+	 * Resolve the single target table referenced by a joined UPDATE SET clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens                MySQL lexer token stream.
+	 * @param int              $start                 First SET-clause token position.
+	 * @param int              $end                   Final SET-clause token position, exclusive.
+	 * @param array[]          $table_references      Joined table references.
+	 * @param string           $default_target_alias  Default target alias key for unqualified assignments.
+	 * @return array|null Target table reference, or null when unsupported.
+	 */
+	private function get_mysql_joined_update_target_reference( array $tokens, int $start, int $end, array $table_references, string $default_target_alias ): ?array {
+		$target_alias_key = null;
+
+		for ( $position = $start; $position < $end; ) {
+			$target = $this->parse_mysql_joined_update_assignment_target( $tokens, $position, $end, $table_references, $default_target_alias );
+			if ( null === $target ) {
+				return null;
+			}
+
+			if ( null === $target_alias_key ) {
+				$target_alias_key = $target['alias_key'];
+			} elseif ( $target_alias_key !== $target['alias_key'] ) {
+				return null;
+			}
+
+			if ( ! isset( $tokens[ $target['end'] ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $target['end'] ]->id ) {
+				return null;
+			}
+
+			$value_start    = $target['end'] + 1;
+			$assignment_end = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$value_start,
+				$end
+			) ?? $end;
+			if ( $value_start >= $assignment_end ) {
+				return null;
+			}
+
+			$position = $assignment_end;
+			if ( $position === $end ) {
+				break;
+			}
+
+			++$position;
+		}
+
+		if ( null === $target_alias_key ) {
+			return null;
+		}
+
+		foreach ( $table_references as $table_reference ) {
+			if ( $target_alias_key !== $table_reference['alias_key'] ) {
+				continue;
+			}
+
+			return empty( $table_reference['derived'] ) ? $table_reference : null;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse a joined UPDATE assignment target and resolve its table reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens                MySQL lexer token stream.
+	 * @param int              $position              Assignment target start.
+	 * @param int              $end                   Final SET-clause token position, exclusive.
+	 * @param array[]          $table_references      Joined table references.
+	 * @param string           $default_target_alias  Default target alias key for unqualified assignments.
+	 * @return array{alias_key: string, end: int}|null Target data, or null when unsupported.
+	 */
+	private function parse_mysql_joined_update_assignment_target( array $tokens, int $position, int $end, array $table_references, string $default_target_alias ): ?array {
+		$first_identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $first_identifier ) {
+			return null;
+		}
+
+		if ( $position + 2 < $end && WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null ) ) {
+			$column = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] ?? null );
+			if ( null === $column ) {
+				return null;
+			}
+
+			$target_reference = $this->get_mysql_joined_update_reference_for_qualifier( $first_identifier, $table_references );
+			if ( null === $target_reference ) {
+				return null;
+			}
+
+			return array(
+				'alias_key' => $target_reference['alias_key'],
+				'end'       => $position + 3,
+			);
+		}
+
+		return array(
+			'alias_key' => $default_target_alias,
+			'end'       => $position + 1,
+		);
+	}
+
+	/**
+	 * Resolve a joined UPDATE table qualifier to a table reference.
+	 *
+	 * @param string  $qualifier        MySQL table qualifier.
+	 * @param array[] $table_references Joined table references.
+	 * @return array|null Table reference, or null when ambiguous or unknown.
+	 */
+	private function get_mysql_joined_update_reference_for_qualifier( string $qualifier, array $table_references ): ?array {
+		$qualifier_key = strtolower( $qualifier );
+		foreach ( $table_references as $table_reference ) {
+			if ( $qualifier_key === $table_reference['alias_key'] ) {
+				return $table_reference;
+			}
+		}
+
+		$matched_reference = null;
+		foreach ( $table_references as $table_reference ) {
+			if (
+				! empty( $table_reference['derived'] )
+				|| null === $table_reference['table']
+				|| 0 !== strcasecmp( $qualifier, $table_reference['table'] )
+			) {
+				continue;
+			}
+
+			if ( null !== $matched_reference ) {
+				return null;
+			}
+
+			$matched_reference = $table_reference;
+		}
+
+		return $matched_reference;
+	}
+
+	/**
 	 * Append a joined UPDATE source table to the UPDATE ... FROM list.
 	 *
 	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
@@ -18160,7 +18364,7 @@ WHERE option_name IN (
 	 * @param string|null      $appended_alias Joined table alias, mutated on success.
 	 * @return bool Whether a table source was appended.
 	 */
-	private function append_mysql_joined_update_source_table( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, ?string &$appended_alias ): bool {
+	private function append_mysql_joined_update_source_table( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, ?string &$appended_alias, ?array &$appended_reference = null ): bool {
 		$derived_reference = $this->parse_mysql_joined_update_derived_table_source( $tokens, $position, $end );
 		if ( null !== $derived_reference ) {
 			$joined_alias_key = strtolower( $derived_reference['alias'] );
@@ -18176,6 +18380,14 @@ WHERE option_name IN (
 			$scope['unknown']                    = true;
 			$from_parts[]                        = $derived_reference['sql'];
 			$appended_alias                      = $derived_reference['alias'];
+			$appended_reference                  = array(
+				'alias'     => $derived_reference['alias'],
+				'alias_key' => $joined_alias_key,
+				'table'     => null,
+				'table_as'  => null,
+				'derived'   => true,
+				'sql'       => $derived_reference['sql'],
+			);
 
 			return true;
 		}
@@ -18199,11 +18411,20 @@ WHERE option_name IN (
 		$scope['tables'][]                     = $joined_table;
 		$scope['aliases'][ $joined_alias_key ] = $joined_table;
 
-		$from_parts[] = $this->get_postgresql_dml_table_reference_sql(
+		$source_sql = $this->get_postgresql_dml_table_reference_sql(
 			$joined_reference['table'],
 			$joined_reference['alias']
 		);
-		$appended_alias = $joined_alias;
+		$from_parts[]        = $source_sql;
+		$appended_alias      = $joined_alias;
+		$appended_reference  = array(
+			'alias'     => $joined_alias,
+			'alias_key' => $joined_alias_key,
+			'table'     => $joined_reference['table'],
+			'table_as'  => $joined_reference['alias'],
+			'derived'   => false,
+			'sql'       => $source_sql,
+		);
 
 		return true;
 	}
@@ -18268,22 +18489,43 @@ WHERE option_name IN (
 	 * @param string[]         $from_parts      PostgreSQL FROM items, mutated on success.
 	 * @param string[]         $join_predicates PostgreSQL join predicates, mutated on success.
 	 * @param string           $left_alias      Alias for the joined table expression's left side, mutated on success.
+	 * @param array[]          $table_references Joined table references, mutated on success.
 	 * @return bool Whether an inner join source was appended.
 	 */
-	private function append_mysql_joined_update_inner_join( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, array &$join_predicates, string &$left_alias ): bool {
+	private function append_mysql_joined_update_inner_join( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, array &$join_predicates, string &$left_alias, array &$table_references ): bool {
+		$predicate_optional = false;
 		if ( WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			++$position;
+			if ( WP_MySQL_Lexer::JOIN_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+				return false;
+			}
+			++$position;
+		} elseif ( WP_MySQL_Lexer::CROSS_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			++$position;
+			if ( WP_MySQL_Lexer::JOIN_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+				return false;
+			}
+			++$position;
+			$predicate_optional = true;
+		} elseif ( WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			++$position;
+			$predicate_optional = true;
+		} else {
+			if ( WP_MySQL_Lexer::JOIN_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+				return false;
+			}
 			++$position;
 		}
 
-		if ( WP_MySQL_Lexer::JOIN_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+		$joined_alias     = null;
+		$joined_reference = null;
+		if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $end, $scope, $from_parts, $joined_alias, $joined_reference ) ) {
 			return false;
 		}
-		++$position;
-
-		$joined_alias = null;
-		if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $end, $scope, $from_parts, $joined_alias ) ) {
+		if ( null === $joined_reference ) {
 			return false;
 		}
+		$table_references[] = $joined_reference;
 
 		if ( WP_MySQL_Lexer::ON_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
 			$predicate_start = $position + 1;
@@ -18309,6 +18551,10 @@ WHERE option_name IN (
 		}
 
 		if ( WP_MySQL_Lexer::USING_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+			if ( $predicate_optional ) {
+				$left_alias = $joined_alias;
+				return true;
+			}
 			return false;
 		}
 
@@ -18369,19 +18615,25 @@ WHERE option_name IN (
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int              $position Candidate token position.
 	 * @param int              $end      Final token position, exclusive.
-	 * @return bool Whether the separator is JOIN or INNER JOIN.
+	 * @return bool Whether the separator is a supported inner-style join.
 	 */
 	private function is_mysql_supported_inner_join_separator_at( array $tokens, int $position, int $end ): bool {
 		if ( $position >= $end ) {
 			return false;
 		}
 
-		if ( WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+		if (
+			WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			|| WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === ( $tokens[ $position ]->id ?? null )
+		) {
 			return true;
 		}
 
 		return $position + 1 < $end
-			&& WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			&& (
+				WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null )
+				|| WP_MySQL_Lexer::CROSS_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			)
 			&& WP_MySQL_Lexer::JOIN_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null );
 	}
 
