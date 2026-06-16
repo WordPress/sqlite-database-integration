@@ -22007,6 +22007,11 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$using = $this->get_direct_information_schema_join_on_using_replacement( $tokens, $start, $end, $sources, $using_columns );
+		if ( null !== $using ) {
+			return $using;
+		}
+
 		if ( $this->contains_mysql_token(
 			$tokens,
 			$start + 1,
@@ -22126,6 +22131,147 @@ WHERE option_name IN (
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get a PostgreSQL USING replacement for same-name information_schema ON predicates.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         ON token position.
+	 * @param int              $end           Final token position, exclusive.
+	 * @param array[]          $sources       Parsed sources through the right-hand join source.
+	 * @param array            $using_columns Previously merged USING columns.
+	 * @return array{replacement: array{start:int,end:int,sql:string}, using_columns: array}|null Replacement data, or null when unsupported.
+	 */
+	private function get_direct_information_schema_join_on_using_replacement( array $tokens, int $start, int $end, array $sources, array $using_columns ): ?array {
+		if (
+			count( $sources ) < 2
+			|| ! isset( $tokens[ $start ] )
+			|| WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $start ]->id
+		) {
+			return null;
+		}
+
+		$current_source = $sources[ count( $sources ) - 1 ];
+		$current_alias  = strtolower( $current_source['alias'] );
+		$position       = $start + 1;
+		$columns        = array();
+		$seen_columns   = array();
+		$new_using      = array();
+
+		while ( $position < $end ) {
+			$left = $this->parse_direct_information_schema_qualified_column_reference( $tokens, $position, $end, $sources );
+			if ( null === $left || ! isset( $tokens[ $left['end'] ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $left['end'] ]->id ) {
+				return null;
+			}
+
+			$right = $this->parse_direct_information_schema_qualified_column_reference( $tokens, $left['end'] + 1, $end, $sources );
+			if ( null === $right ) {
+				return null;
+			}
+
+			$left_alias  = strtolower( $left['source']['alias'] );
+			$right_alias = strtolower( $right['source']['alias'] );
+			if ( 0 !== strcasecmp( $left['column'], $right['column'] ) ) {
+				return null;
+			}
+
+			if ( $left_alias === $current_alias && $right_alias !== $current_alias ) {
+				$previous_source = $right['source'];
+				$column          = $left['column'];
+			} elseif ( $right_alias === $current_alias && $left_alias !== $current_alias ) {
+				$previous_source = $left['source'];
+				$column          = $right['column'];
+			} else {
+				return null;
+			}
+
+			$column_key = strtolower( $column );
+			if ( isset( $seen_columns[ $column_key ] ) ) {
+				return null;
+			}
+			$seen_columns[ $column_key ] = true;
+
+			$matched_aliases = array(
+				strtolower( $previous_source['alias'] ) => true,
+				$current_alias                         => true,
+			);
+			if ( isset( $using_columns[ $column_key ]['aliases'] ) ) {
+				$matched_aliases = array_merge( $using_columns[ $column_key ]['aliases'], $matched_aliases );
+			}
+
+			$new_using[ $column_key ] = array(
+				'column'  => $column,
+				'aliases' => $matched_aliases,
+			);
+			$columns[]               = $this->connection->quote_identifier( $column );
+			$position                = $right['end'];
+
+			if ( $position === $end ) {
+				return ! empty( $columns )
+					? array(
+						'replacement'   => array(
+							'start' => $start,
+							'end'   => $end,
+							'sql'   => 'USING (' . implode( ', ', $columns ) . ')',
+						),
+						'using_columns' => $new_using,
+					)
+					: null;
+			}
+
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+			++$position;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse a qualified information_schema source column reference.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Reference start position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @param array[]          $sources  Parsed direct information_schema sources.
+	 * @return array{source: array, column: string, end: int}|null Parsed reference, or null.
+	 */
+	private function parse_direct_information_schema_qualified_column_reference( array $tokens, int $position, int $end, array $sources ): ?array {
+		if (
+			$position + 2 >= $end
+			|| ! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] );
+		if ( null === $qualifier ) {
+			return null;
+		}
+
+		$source = $this->get_direct_information_schema_source_for_qualifier(
+			$qualifier,
+			array(
+				'sources' => $sources,
+			)
+		);
+		if ( null === $source ) {
+			return null;
+		}
+
+		$column = $this->get_direct_information_schema_column_name_for_token( $tokens[ $position + 2 ], $source['column_map'] );
+		if ( null === $column ) {
+			return null;
+		}
+
+		return array(
+			'source' => $source,
+			'column' => $column,
+			'end'    => $position + 3,
+		);
 	}
 
 	/**

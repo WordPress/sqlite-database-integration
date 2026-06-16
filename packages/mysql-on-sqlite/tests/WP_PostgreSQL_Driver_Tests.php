@@ -15218,7 +15218,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
 		$this->assertStringContainsString( 'AS "t"', $sql );
 		$this->assertStringContainsString( 'AS "c"', $sql );
-		$this->assertStringContainsString( '"c"."TABLE_SCHEMA" = "t"."TABLE_SCHEMA"', $sql );
+		$this->assertStringContainsString( 'USING ("TABLE_SCHEMA", "TABLE_NAME")', $sql );
 	}
 
 	/**
@@ -15619,6 +15619,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema JOIN ON equality chains can merge shared columns.
+	 */
+	public function test_direct_information_schema_join_on_same_name_columns_routes_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$result = $driver->query(
+			"SELECT table_name, c.column_name
+			FROM information_schema.tables AS t
+			JOIN information_schema.columns AS c
+				ON c.table_schema = t.table_schema
+				AND c.table_name = t.table_name
+			WHERE table_name = 'wptests_options'
+				AND c.column_name = 'option_name'"
+		);
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'wptests_options', $result[0]->TABLE_NAME );
+		$this->assertSame( 'option_name', $result[0]->COLUMN_NAME );
+
+		$sql = $this->get_logged_postgresql_sql_containing(
+			$driver->get_last_postgresql_queries(),
+			'USING ("TABLE_SCHEMA", "TABLE_NAME")'
+		);
+		$this->assertStringContainsString( 'USING ("TABLE_SCHEMA", "TABLE_NAME")', $sql );
+	}
+
+	/**
 	 * Tests unsupported mixed information_schema joins fail before backend execution.
 	 */
 	public function test_direct_information_schema_mixed_join_shape_fails_closed(): void {
@@ -15627,11 +15655,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		foreach (
 			array(
-				'SELECT table_name
-				FROM information_schema.tables AS t
-				JOIN information_schema.columns AS c
-					ON c.table_schema = t.table_schema
-					AND c.table_name = t.table_name',
 				'SELECT table_name
 				FROM information_schema.tables AS t
 				JOIN information_schema.columns AS c USING (engine)',
