@@ -22823,7 +22823,11 @@ WHERE option_name IN (
 
 				$translated_select = $this->translate_direct_information_schema_select_query( $select_query );
 				if ( null === $translated_select ) {
-					return null;
+					if ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
+						return null;
+					}
+
+					$translated_select = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $select_start, $select_end );
 				}
 
 				$replacements[] = array(

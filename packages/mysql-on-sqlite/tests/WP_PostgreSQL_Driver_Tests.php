@@ -15590,6 +15590,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests direct information_schema predicates can use application-table subqueries.
+	 */
+	public function test_direct_information_schema_predicate_accepts_application_table_subquery(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE wptests_options (option_name TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_options (option_name) VALUES ('wptests_options')" );
+
+		$result = $driver->query(
+			'SELECT t.table_name
+			FROM information_schema.tables AS t
+			WHERE t.table_name IN (
+				SELECT option_name FROM wptests_options
+			)'
+		);
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 'wptests_options', $result[0]->TABLE_NAME );
+
+		$sql = $this->get_logged_postgresql_sql_containing(
+			$driver->get_last_postgresql_queries(),
+			'SELECT option_name FROM wptests_options'
+		);
+		$this->assertStringContainsString( 'FROM (SELECT', $sql );
+		$this->assertStringContainsString( 'SELECT option_name FROM wptests_options', $sql );
+	}
+
+	/**
 	 * Tests unsupported mixed information_schema joins fail before backend execution.
 	 */
 	public function test_direct_information_schema_mixed_join_shape_fails_closed(): void {
@@ -15598,11 +15627,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		foreach (
 			array(
-				'SELECT t.table_name
-				FROM information_schema.tables AS t
-				WHERE t.table_name IN (
-					SELECT option_name FROM wptests_options
-				)',
 				'SELECT table_name
 				FROM information_schema.tables AS t
 				JOIN information_schema.columns AS c
