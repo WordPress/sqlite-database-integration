@@ -36684,7 +36684,7 @@ FROM (
 	}
 
 	/**
-	 * Translate MySQL DATE_ADD(expr, INTERVAL value unit) and DATE_SUB(...) calls.
+	 * Translate MySQL DATE_ADD(expr, INTERVAL value unit) and date arithmetic aliases.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -36722,7 +36722,7 @@ FROM (
 	}
 
 	/**
-	 * Check whether a range contains an unsupported MySQL DATE_ADD/DATE_SUB call.
+	 * Check whether a range contains an unsupported MySQL date arithmetic call.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int              $start  First token position.
@@ -36758,7 +36758,7 @@ FROM (
 	}
 
 	/**
-	 * Get token bounds for a supported MySQL DATE_ADD/DATE_SUB expression.
+	 * Get token bounds for a supported MySQL date arithmetic expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -36794,6 +36794,16 @@ FROM (
 		}
 
 		$interval = $this->get_mysql_interval_argument_bounds( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+		if (
+			null === $interval
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::ADDDATE_SYMBOL, WP_MySQL_Lexer::SUBDATE_SYMBOL ), true )
+		) {
+			$interval = array(
+				'value_start' => $arguments[1]['start'],
+				'value_end'   => $arguments[1]['end'],
+				'unit'        => 'day',
+			);
+		}
 		if ( null === $interval ) {
 			return null;
 		}

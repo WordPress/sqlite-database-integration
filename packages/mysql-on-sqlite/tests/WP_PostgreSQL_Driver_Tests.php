@@ -10668,6 +10668,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ADDDATE and SUBDATE support MySQL's numeric day alias form.
+	 */
+	public function test_mysql_adddate_and_subdate_numeric_day_aliases_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT ADDDATE(post_date_gmt, 2) AS newer, SUBDATE(post_date_gmt, 3) AS older'
+		);
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'post_date_gmt', '2', 'day' ) . ' AS newer, ' . $this->get_expected_date_arithmetic_sql( '-', 'post_date_gmt', '3', 'day' ) . ' AS older',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'ADDDATE', $sql );
+		$this->assertStringNotContainsString( 'SUBDATE', $sql );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT ADDDATE(COALESCE(post_date_gmt, post_date), 1 + 1) AS shifted'
+		);
+
+		$this->assertSame(
+			'SELECT ' . $this->get_expected_date_arithmetic_sql( '+', 'COALESCE (post_date_gmt, post_date)', '1 + 1', 'day' ) . ' AS shifted',
+			$sql
+		);
+		$this->assertStringNotContainsString( 'ADDDATE', $sql );
+	}
+
+	/**
 	 * Tests DATE_ADD supports simple MySQL interval units for PostgreSQL.
 	 */
 	public function test_mysql_date_add_supports_simple_mysql_interval_units_for_postgresql(): void {
@@ -11004,6 +11036,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_date_add_with_unsupported_interval_shape_fails_closed(): void {
 		$driver  = $this->create_driver();
 		$queries = array(
+			'SELECT DATE_ADD(post_date_gmt, 1) AS shifted',
+			'SELECT DATE_SUB(post_date_gmt, 1) AS shifted',
 			'SELECT DATE_ADD(post_date_gmt, INTERVAL 1 fortnight) AS shifted',
 			'SELECT DATE_ADD(post_date_gmt, INTERVAL 6/4 HOUR_MINUTE) AS shifted',
 			"SELECT DATE_ADD(post_date_gmt, INTERVAL '1:2:3' MINUTE_SECOND) AS shifted",
