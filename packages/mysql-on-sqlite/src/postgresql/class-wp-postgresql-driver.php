@@ -19468,7 +19468,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$joined_update = $this->translate_mysql_inner_join_update_query( $tokens, $statement_end );
+		$joined_update = $this->translate_mysql_inner_join_update_query( $query, $tokens, $statement_end );
 		if ( null !== $joined_update ) {
 			return $joined_update;
 		}
@@ -19790,9 +19790,10 @@ WHERE option_name IN (
 		 * @param int              $start      First SET-clause token position.
 		 * @param int              $end        Final SET-clause token position, exclusive.
 		 * @param array            $scope      Statement table scope.
+		 * @param array|null       $information_schema_context Optional direct information_schema context.
 		 * @return array{set_sql: string, select_sql: string[], changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
 		 */
-	private function translate_mysql_joined_update_set_clause_for_derived_source( string $table_name, ?string $alias, array $tokens, int $start, int $end, array $scope ): ?array {
+	private function translate_mysql_joined_update_set_clause_for_derived_source( string $table_name, ?string $alias, array $tokens, int $start, int $end, array $scope, ?array $information_schema_context = null ): ?array {
 		$column_metadata    = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$assignments        = array();
 		$select_expressions = array();
@@ -19845,6 +19846,17 @@ WHERE option_name IN (
 			}
 			if ( null === $value_sql && null !== $target_metadata ) {
 				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql && null !== $information_schema_context ) {
+				$value_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$information_schema_context
+				);
+				if ( null === $value_sql ) {
+					return null;
+				}
 			}
 			if ( null === $value_sql ) {
 				$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
@@ -19908,11 +19920,12 @@ WHERE option_name IN (
 	 * Assignments to any non-target table, outer joins, NATURAL/RIGHT joins,
 	 * and ordered/limited joined updates remain unsupported.
 	 *
+	 * @param string           $query         MySQL query.
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $statement_end Final statement token, exclusive.
 	 * @return string|null PostgreSQL query, or null when unsupported.
 	 */
-	private function translate_mysql_inner_join_update_query( array $tokens, int $statement_end ): ?string {
+	private function translate_mysql_inner_join_update_query( string $query, array $tokens, int $statement_end ): ?string {
 		$set_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SET_SYMBOL, 1, $statement_end );
 		if ( null === $set_position ) {
 			return null;
@@ -19921,12 +19934,27 @@ WHERE option_name IN (
 		$position = 1;
 		$this->consume_mysql_update_modifiers( $tokens, $position, $set_position );
 
+		$source_start    = $position;
 		$first_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
 		if (
 			null === $first_reference
 			|| $position >= $set_position
 		) {
 			return null;
+		}
+
+		if (
+			0 === strcasecmp( $this->db_name, 'information_schema' )
+			|| $this->direct_information_schema_source_range_references_information_schema( $tokens, $source_start, $set_position )
+		) {
+			return $this->translate_mysql_information_schema_join_update_query(
+				$query,
+				$tokens,
+				$statement_end,
+				$source_start,
+				$set_position,
+				$first_reference
+			);
 		}
 
 		$first_table             = $first_reference['table'];
@@ -20057,6 +20085,117 @@ WHERE option_name IN (
 			$update_set_clause['set_sql'],
 			implode( ', ', $from_parts ),
 			implode( ') AND (', $predicates )
+		);
+	}
+
+	/**
+	 * Translate a joined UPDATE that reads information_schema sources.
+	 *
+	 * @param string           $query            MySQL query.
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $statement_end    Final statement token, exclusive.
+	 * @param int              $source_start     First table-reference token after UPDATE modifiers.
+	 * @param int              $source_end       SET token position.
+	 * @param array            $target_reference Parsed first, writable target reference.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
+	private function translate_mysql_information_schema_join_update_query( string $query, array $tokens, int $statement_end, int $source_start, int $source_end, array $target_reference ): ?string {
+		$source_translation = $this->get_direct_information_schema_dml_source_translation(
+			$query,
+			$tokens,
+			$source_start,
+			$source_end
+		);
+		if ( null === $source_translation ) {
+			return null;
+		}
+
+		$table_name             = $target_reference['table'];
+		$alias                  = $target_reference['alias'];
+		$target_reference_alias = null === $alias ? $table_name : $alias;
+		$target_alias_key       = strtolower( $target_reference_alias );
+		if (
+			! isset( $source_translation['scope']['aliases'][ $target_alias_key ] )
+			|| 0 !== strcasecmp( $table_name, (string) $source_translation['scope']['aliases'][ $target_alias_key ]['table'] )
+		) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $source_end + 1, $statement_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $source_end + 1, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $source_end + 1, $statement_end );
+		if ( null !== $order_position || null !== $limit_position ) {
+			return null;
+		}
+
+		$set_end = $where_position ?? $statement_end;
+		if ( $source_end + 1 >= $set_end ) {
+			return null;
+		}
+
+		$update_set_clause = $this->translate_mysql_joined_update_set_clause_for_derived_source(
+			$table_name,
+			$target_reference_alias,
+			$tokens,
+			$source_end + 1,
+			$set_end,
+			$source_translation['scope'],
+			$source_translation['context']
+		);
+		if ( null === $update_set_clause ) {
+			return null;
+		}
+
+		$where_sql = '';
+		if ( null !== $where_position ) {
+			if ( $where_position + 1 >= $statement_end ) {
+				return null;
+			}
+
+			$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$statement_end,
+				$source_translation['context']
+			);
+			if ( null === $where ) {
+				return null;
+			}
+
+			$where_sql = ' WHERE ' . $where;
+		}
+
+		$source_alias      = 'mysql_update_values';
+		$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
+		$target_ctid_alias = 'mysql_update_target_ctid';
+		$target_alias_sql  = $this->connection->quote_identifier( $target_reference_alias );
+		$select_values     = array_merge(
+			array(
+				sprintf(
+					'%s.ctid AS %s',
+					$target_alias_sql,
+					$this->connection->quote_identifier( $target_ctid_alias )
+				),
+			),
+			$update_set_clause['select_sql']
+		);
+		$source_sql        = sprintf(
+			'(SELECT %s FROM %s%s) AS %s',
+			implode( ', ', $select_values ),
+			$source_translation['sql'],
+			$where_sql,
+			$source_alias_sql
+		);
+
+		return sprintf(
+			'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
+			$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
+			$update_set_clause['set_sql'],
+			$source_sql,
+			$this->get_postgresql_dml_ctid_reference_sql( $alias ),
+			$source_alias_sql,
+			$this->connection->quote_identifier( $target_ctid_alias ),
+			$update_set_clause['changed_predicate_sql']
 		);
 	}
 

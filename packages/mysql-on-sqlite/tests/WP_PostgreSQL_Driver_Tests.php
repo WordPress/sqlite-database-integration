@@ -5584,6 +5584,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined UPDATE statements can read from information_schema sources.
+	 */
+	public function test_joined_update_can_read_information_schema_sources(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$update = "UPDATE wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			SET o.option_value = it.table_type
+			WHERE it.table_schema = DATABASE()";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$update
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'UPDATE "wptests_options" AS "o" SET "option_value" = "mysql_update_values"."mysql_update_value_0"', $sql );
+		$this->assertStringContainsString( 'SELECT "o".ctid AS "mysql_update_target_ctid", "it"."TABLE_TYPE" AS "mysql_update_value_0"', $sql );
+		$this->assertStringContainsString( 'FROM "wptests_options" AS "o" JOIN (', $sql );
+		$this->assertStringContainsString( ') AS "it" ON "o"."option_name" = "it"."TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" = \'wptests\'', $sql );
+		$this->assertStringContainsString( '"o".ctid = "mysql_update_values"."mysql_update_target_ctid"', $sql );
+		$this->assertStringContainsString( '"o"."option_value" IS DISTINCT FROM ("mysql_update_values"."mysql_update_value_0")', $sql );
+	}
+
+	/**
+	 * Tests information_schema aliases remain read-only in joined UPDATE statements.
+	 */
+	public function test_joined_update_rejects_information_schema_set_targets(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$update = "UPDATE wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			SET it.table_name = o.option_name";
+
+		try {
+			$driver->query( $update );
+			$this->fail( 'Expected unsupported UPDATE statement.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests unsupported joined UPDATE variants fail before backend execution.
 	 */
 	public function test_unsupported_joined_update_shapes_fail_closed_before_backend_execution(): void {
