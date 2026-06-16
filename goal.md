@@ -67,6 +67,15 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Return explicit unsupported-SQL errors for unsupported MySQL DDL instead of swallowing or silently passing through incompatible SQL.
 - [x] Translate/emulate the supported constructs identified in this work except `FULLTEXT` and `SPATIAL`, which remain explicit unsupported cases.
 
+## Runtime And Metadata Parity
+
+- [x] Emulate MySQL session identity runtime functions for PostgreSQL: `CURRENT_USER`, `CURRENT_USER()`, `USER()`, `SESSION_USER()`, and `SYSTEM_USER()`.
+- [x] Emulate zero-argument `CONNECTION_ID()` using the same synthetic session ID exposed by `SHOW PROCESSLIST` and `information_schema.processlist`.
+- [x] Emulate zero-argument `LAST_INSERT_ID()` without exact-query caching, so repeated calls reflect mutable insert state.
+- [x] Fail closed for unsupported MySQL runtime function forms such as `LAST_INSERT_ID(expr)`, `CURRENT_USER(expr)`, `USER(expr)`, `ROW_COUNT()`, and `UUID()`.
+- [ ] Decide whether to emulate mutable `LAST_INSERT_ID(expr)` and `ROW_COUNT()` semantics; they remain explicit unsupported runtime forms for now.
+- [ ] Decide whether to expose additional MySQL `information_schema` privilege/plugin/security tables beyond the currently supported relations and empty routine/view/trigger/parameter shims; unsupported relations continue to fail explicitly.
+
 ## Tests
 
 - [x] Port relevant SQLite SQL mode tests to PostgreSQL.
@@ -82,3 +91,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add CI assertions or workflow checks proving PostgreSQL/e2e jobs are not best-effort and not skipped on default-branch pushes.
 - [x] Add/keep WP-CLI smoke tests for PostgreSQL config loading without using WP-CLI for MySQL-specific install/reset steps.
 - [x] Add PostgreSQL tests for supported `CREATE TABLE ... [AS] SELECT` translations and unsupported variant errors.
+- [x] Add PostgreSQL runtime-function tests for emulated session identity, `CONNECTION_ID()`, `LAST_INSERT_ID()`, and fail-closed unsupported forms.

@@ -49,6 +49,10 @@ class WP_PostgreSQL_Driver {
 		),
 	);
 
+	private const MYSQL_SESSION_USER = 'root@%';
+
+	private const MYSQL_CONNECTION_ID = '1';
+
 	private const MYSQL_SHOW_GRANTS_COLUMN = 'Grants for root@%';
 
 	private const MYSQL_SHOW_GRANTS_VALUE = 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, ' .
@@ -626,6 +630,11 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_mysql_lock_tables_query( $lock_tables_query );
 		}
 
+		$flush_query = $this->get_mysql_flush_query( $query );
+		if ( null !== $flush_query ) {
+			return $this->execute_mysql_admin_noop_query();
+		}
+
 		$truncate_table_query = $this->get_mysql_truncate_table_query( $query );
 		if ( null !== $truncate_table_query ) {
 			return $this->execute_mysql_truncate_table_query( $truncate_table_query );
@@ -859,6 +868,9 @@ class WP_PostgreSQL_Driver {
 
 		$upsert_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
 		if ( null !== $upsert_query ) {
+			if ( ! empty( $upsert_query['upsert_select_materialized'] ) ) {
+				return $this->execute_materialized_mysql_upsert_select_statements( $upsert_query );
+			}
 			if ( isset( $upsert_query['statements'] ) && is_array( $upsert_query['statements'] ) ) {
 				return $this->execute_translated_dml_statements( $upsert_query );
 			}
@@ -1345,7 +1357,35 @@ class WP_PostgreSQL_Driver {
 	 * @return bool Whether the query is cacheable by exact SQL text.
 	 */
 	private function is_mysql_select_translation_cacheable_query( string $query ): bool {
-		return 1 === preg_match( '/\A\s*SELECT\b/i', $query );
+		return 1 === preg_match( '/\A\s*SELECT\b/i', $query )
+			&& ! $this->contains_uncacheable_mysql_runtime_function_query( $query );
+	}
+
+	/**
+	 * Check whether a SELECT contains session-state runtime functions.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether exact SQL text caching should be skipped.
+	 */
+	private function contains_uncacheable_mysql_runtime_function_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		for ( $i = 1; $i < $statement_end; $i++ ) {
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $statement_end );
+			if ( null !== $bounds && 'last_insert_id' === $bounds['function'] ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -2174,6 +2214,172 @@ class WP_PostgreSQL_Driver {
 		$this->repair_dml_identity_sequences_after_success( $dml_query, $affected_rows );
 
 		return (int) $this->last_result;
+	}
+
+	/**
+	 * Execute a materialized INSERT ... SELECT ... ON DUPLICATE KEY UPDATE flow.
+	 *
+	 * @param array $upsert_query Translated INSERT ... SELECT upsert metadata.
+	 * @return int MySQL-compatible affected rows.
+	 */
+	private function execute_materialized_mysql_upsert_select_statements( array $upsert_query ): int {
+		$materialize_statements = isset( $upsert_query['materialize_statements'] ) && is_array( $upsert_query['materialize_statements'] )
+			? $upsert_query['materialize_statements']
+			: array();
+		$mutation_statements    = isset( $upsert_query['mutation_statements'] ) && is_array( $upsert_query['mutation_statements'] )
+			? $upsert_query['mutation_statements']
+			: array();
+		$cleanup_statements     = isset( $upsert_query['cleanup_statements'] ) && is_array( $upsert_query['cleanup_statements'] )
+			? $upsert_query['cleanup_statements']
+			: array();
+
+		foreach ( $materialize_statements as $statement ) {
+			$statement                       = (string) $statement;
+			$stmt                            = $this->connection->query( $statement );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $statement,
+				'params' => array(),
+			);
+			$stmt->closeCursor();
+		}
+
+		try {
+			if ( isset( $upsert_query['duplicate_conflict_rows_sql'] ) && is_string( $upsert_query['duplicate_conflict_rows_sql'] ) ) {
+				$stmt          = $this->connection->query( $upsert_query['duplicate_conflict_rows_sql'] );
+				$has_duplicate = false !== $stmt->fetchColumn();
+				$stmt->closeCursor();
+			} else {
+				$has_duplicate = false;
+			}
+
+			if ( $has_duplicate ) {
+				$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_sequentially( $upsert_query );
+			} else {
+				$affected_rows = 0;
+				foreach ( $mutation_statements as $statement ) {
+					$statement                       = (string) $statement;
+					$stmt                            = $this->connection->query( $statement );
+					$this->last_postgresql_queries[] = array(
+						'sql'    => $statement,
+						'params' => array(),
+					);
+					$affected_rows                  += $stmt->rowCount();
+				}
+			}
+		} finally {
+			foreach ( $cleanup_statements as $statement ) {
+				$statement                       = (string) $statement;
+				$stmt                            = $this->connection->query( $statement );
+				$this->last_postgresql_queries[] = array(
+					'sql'    => $statement,
+					'params' => array(),
+				);
+				$stmt->closeCursor();
+			}
+		}
+
+		$this->clear_last_column_meta();
+		$this->last_result = $affected_rows;
+		$this->set_last_insert_id_after_dml_success( $upsert_query, $affected_rows );
+		$this->repair_dml_identity_sequences_after_success( $upsert_query, $affected_rows );
+
+		return (int) $this->last_result;
+	}
+
+	/**
+	 * Replay a materialized INSERT ... SELECT upsert source one row at a time.
+	 *
+	 * @param array $upsert_query Translated INSERT ... SELECT upsert metadata.
+	 * @return int MySQL-compatible affected rows.
+	 */
+	private function execute_materialized_mysql_upsert_select_rows_sequentially( array $upsert_query ): int {
+		if (
+			! isset( $upsert_query['table_name'], $upsert_query['columns'], $upsert_query['source_table_sql'], $upsert_query['ordinal_source_table_sql'], $upsert_query['conflict_sql'] )
+			|| ! is_string( $upsert_query['table_name'] )
+			|| ! is_array( $upsert_query['columns'] )
+			|| ! is_string( $upsert_query['source_table_sql'] )
+			|| ! is_string( $upsert_query['ordinal_source_table_sql'] )
+			|| ! is_string( $upsert_query['conflict_sql'] )
+		) {
+			throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+		}
+
+		$ordinal_column       = '__wp_pg_upsert_ordinal';
+		$quoted_ordinal      = $this->connection->quote_identifier( $ordinal_column );
+		$source_alias        = $this->connection->quote_identifier( '__wp_pg_upsert_source' );
+		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
+		$quoted_target_table = $this->connection->quote_identifier( $upsert_query['table_name'] );
+		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $upsert_query['columns'] ) );
+
+		$insert_projection_sql = array();
+		foreach ( $upsert_query['columns'] as $column ) {
+			$insert_projection_sql[] = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( (string) $column )
+			);
+		}
+
+		$create_ordinal_table_sql = sprintf(
+			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
+			$upsert_query['ordinal_source_table_sql'],
+			$quoted_ordinal,
+			$source_alias,
+			$upsert_query['source_table_sql'],
+			$source_alias
+		);
+		$stmt                     = $this->connection->query( $create_ordinal_table_sql );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $create_ordinal_table_sql,
+			'params' => array(),
+		);
+		$stmt->closeCursor();
+
+		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $upsert_query['ordinal_source_table_sql'] );
+
+		try {
+			$stmt     = $this->connection->query(
+				sprintf(
+					'SELECT %1$s FROM %2$s ORDER BY %1$s',
+					$quoted_ordinal,
+					$upsert_query['ordinal_source_table_sql']
+				)
+			);
+			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			$stmt->closeCursor();
+
+			$affected_rows = 0;
+			foreach ( $ordinals as $ordinal ) {
+				$ordinal_value = (int) $ordinal;
+				$row_filter    = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
+				$insert_sql    = sprintf(
+					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s %s',
+					$quoted_target_table,
+					$column_sql,
+					implode( ', ', $insert_projection_sql ),
+					$upsert_query['ordinal_source_table_sql'],
+					$rows_alias,
+					$row_filter,
+					$upsert_query['conflict_sql']
+				);
+
+				$stmt                            = $this->connection->query( $insert_sql );
+				$this->last_postgresql_queries[] = array(
+					'sql'    => $insert_sql,
+					'params' => array(),
+				);
+				$affected_rows                  += $stmt->rowCount();
+			}
+
+			return $affected_rows;
+		} finally {
+			$stmt                            = $this->connection->query( $drop_ordinal_table_sql );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $drop_ordinal_table_sql,
+				'params' => array(),
+			);
+			$stmt->closeCursor();
+		}
 	}
 
 	/**
@@ -3630,6 +3836,15 @@ $wp_mysql_on_update$',
 			return;
 		}
 
+		if ( 'set_table_comment' === $metadata['operation'] ) {
+			$this->update_mysql_table_comment_metadata(
+				$table_schema,
+				$table_name,
+				(string) ( $metadata['comment'] ?? '' )
+			);
+			return;
+		}
+
 		if ( 'rename_table' === $metadata['operation'] ) {
 			$this->apply_mysql_rename_table_metadata(
 				array(
@@ -3972,6 +4187,30 @@ $wp_mysql_on_update$',
 			)
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
+	 * Update MySQL-facing table comment metadata.
+	 *
+	 * @param string $table_schema  Table schema.
+	 * @param string $table_name    Table name.
+	 * @param string $table_comment Table comment.
+	 */
+	private function update_mysql_table_comment_metadata( string $table_schema, string $table_name, string $table_comment ): void {
+		$this->connection->query(
+			sprintf(
+				'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+		$this->insert_mysql_table_metadata(
+			$table_schema,
+			$table_name,
+			array(
+				'comment' => $table_comment,
+			)
+		);
 	}
 
 	/**
@@ -6369,20 +6608,31 @@ $wp_mysql_on_update$',
 			);
 		}
 
-		if ( $this->is_supported_mysql_dbdelta_online_ddl_option_alter_action( $tokens, $start, $end ) ) {
-			return array(
-				'statements' => array(),
-				'metadata'   => array(
-					'operation' => 'noop',
+			if ( $this->is_supported_mysql_dbdelta_online_ddl_option_alter_action( $tokens, $start, $end ) ) {
+				return array(
+					'statements' => array(),
+					'metadata'   => array(
+						'operation' => 'noop',
 					'option'    => 'online_ddl_option',
 				),
-			);
-		}
+				);
+			}
 
-		if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
-			return array(
-				'statements' => array(),
-				'metadata'   => array(
+			$table_comment = $this->get_mysql_dbdelta_table_comment_alter_value( $tokens, $start, $end );
+			if ( null !== $table_comment ) {
+				return array(
+					'statements' => array(),
+					'metadata'   => array(
+						'operation' => 'set_table_comment',
+						'comment'   => $table_comment,
+					),
+				);
+			}
+
+			if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
+				return array(
+					'statements' => array(),
+					'metadata'   => array(
 					'operation' => 'noop',
 				),
 			);
@@ -7732,6 +7982,14 @@ $wp_mysql_on_update$',
 			}
 		}
 
+		if ( $this->should_add_identity_for_auto_increment_column_change( 'public', $table_name, $old_column, $column['metadata'] ) ) {
+			$statements[] = sprintf(
+				'ALTER TABLE %s ALTER COLUMN %s ADD GENERATED BY DEFAULT AS IDENTITY',
+				$this->connection->quote_identifier( $table_name ),
+				$this->connection->quote_identifier( $new_column )
+			);
+		}
+
 		return array_merge(
 			$statements,
 			$this->get_mysql_dbdelta_inline_index_statements( $table_name, $column['indexes'] ?? array() )
@@ -7950,9 +8208,48 @@ $wp_mysql_on_update$',
 		$fragment = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
 
 		return 1 === preg_match(
-			'/^(?:ENGINE|ROW_FORMAT|COMMENT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b|^(?:DATA|INDEX)\s+DIRECTORY\b|^TABLESPACE\b|^UNION\s*=/',
+			'/^(?:ENGINE|ROW_FORMAT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b|^(?:DATA|INDEX)\s+DIRECTORY\b|^TABLESPACE\b|^UNION\s*=/',
 			$fragment
 		);
+	}
+
+	/**
+	 * Parse ALTER TABLE COMMENT[=]'...' table options.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First action token.
+	 * @param int              $end    Final action token, exclusive.
+	 * @return string|null Table comment, or null when not a supported comment option.
+	 */
+	private function get_mysql_dbdelta_table_comment_alter_value( array $tokens, int $start, int $end ): ?string {
+		if ( ! isset( $tokens[ $start ] ) || WP_MySQL_Lexer::COMMENT_SYMBOL !== $tokens[ $start ]->id ) {
+			return null;
+		}
+
+		$position = $start + 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( $position + 1 !== $end || ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if (
+			! in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT,
+					WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT,
+					WP_MySQL_Lexer::NCHAR_TEXT,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		return $tokens[ $position ]->get_value();
 	}
 
 	/**
@@ -8106,6 +8403,14 @@ $wp_mysql_on_update$',
 				}
 			}
 
+			if ( $this->should_add_identity_for_auto_increment_column_change( 'public', $table_name, $column_name, $column['metadata'] ) ) {
+				$statements[] = sprintf(
+					'ALTER TABLE %s ALTER COLUMN %s ADD GENERATED BY DEFAULT AS IDENTITY',
+					$this->connection->quote_identifier( $table_name ),
+					$this->connection->quote_identifier( $column_name )
+				);
+			}
+
 			$columns[] = array(
 				'old_column' => $column_name,
 				'column'     => $column['metadata'],
@@ -8146,7 +8451,7 @@ $wp_mysql_on_update$',
 		}
 
 		$existing = $this->get_existing_dbdelta_column_identity_metadata( $table_schema, $table_name, $old_column );
-		if ( null === $existing || ! $this->is_existing_dbdelta_column_identity( $existing ) ) {
+		if ( null === $existing || ! $this->is_existing_dbdelta_column_backend_identity( $existing ) ) {
 			return false;
 		}
 
@@ -8156,6 +8461,37 @@ $wp_mysql_on_update$',
 		}
 
 		return $this->is_postgresql_integer_family_data_type( (string) ( $existing['data_type'] ?? '' ) );
+	}
+
+	/**
+	 * Check whether an AUTO_INCREMENT CHANGE/MODIFY COLUMN should add PostgreSQL identity.
+	 *
+	 * @param string $table_schema Table schema.
+	 * @param string $table_name   Table name.
+	 * @param string $old_column   Existing column name.
+	 * @param array  $column       Replacement MySQL metadata.
+	 * @return bool Whether identity DDL should be added.
+	 */
+	private function should_add_identity_for_auto_increment_column_change(
+		string $table_schema,
+		string $table_name,
+		string $old_column,
+		array $column
+	): bool {
+		if ( 'auto_increment' !== strtolower( (string) ( $column['extra'] ?? '' ) ) ) {
+			return false;
+		}
+
+		if ( ! $this->is_mysql_integer_family_column_type( (string) ( $column['type'] ?? '' ) ) ) {
+			return false;
+		}
+
+		$existing = $this->get_existing_dbdelta_column_identity_metadata( $table_schema, $table_name, $old_column );
+		if ( null === $existing ) {
+			return false;
+		}
+
+		return ! $this->is_existing_dbdelta_column_backend_identity( $existing );
 	}
 
 	/**
@@ -8205,6 +8541,16 @@ $wp_mysql_on_update$',
 			return true;
 		}
 
+		return $this->is_existing_dbdelta_column_backend_identity( $metadata );
+	}
+
+	/**
+	 * Check whether existing backend metadata describes an identity/serial-like column.
+	 *
+	 * @param array $metadata Existing column metadata.
+	 * @return bool Whether the backend column is identity/serial-like.
+	 */
+	private function is_existing_dbdelta_column_backend_identity( array $metadata ): bool {
 		if ( 'YES' === strtoupper( (string) ( $metadata['is_identity'] ?? '' ) ) ) {
 			return true;
 		}
@@ -11932,6 +12278,56 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Parse safe MySQL FLUSH statements that can be compatibility no-ops.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Flush target, or null when this is not FLUSH.
+	 */
+	private function get_mysql_flush_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::FLUSH_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$position = 1;
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::LOCAL_SYMBOL, WP_MySQL_Lexer::NO_WRITE_TO_BINLOG_SYMBOL ), true )
+		) {
+			++$position;
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::TABLE_SYMBOL, WP_MySQL_Lexer::TABLES_SYMBOL ), true )
+			&& $this->is_at_mysql_query_end( $tokens, $position + 1 )
+		) {
+			return 'tables';
+		}
+
+		if (
+			isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::PRIVILEGES_SYMBOL === $tokens[ $position ]->id
+			&& $this->is_at_mysql_query_end( $tokens, $position + 1 )
+		) {
+			return 'privileges';
+		}
+
+		throw new InvalidArgumentException( 'Unsupported FLUSH statement.' );
+	}
+
+	/**
+	 * Execute a supported MySQL admin compatibility no-op.
+	 *
+	 * @return int Number of affected rows.
+	 */
+	private function execute_mysql_admin_noop_query(): int {
+		$this->last_result = 0;
+		$this->clear_last_column_meta();
+		return $this->last_result;
+	}
+
+	/**
 	 * Execute a MySQL table administration statement.
 	 *
 	 * @param array $administration_query Parsed administration query.
@@ -14497,6 +14893,7 @@ ORDER BY table_name';
 	private function get_mysql_session_variables(): array {
 		return array_replace(
 			$this->get_default_mysql_system_variable_values(),
+			$this->get_read_only_mysql_system_variable_values(),
 			array(
 				'character_set_client'     => $this->charset,
 				'character_set_connection' => $this->charset,
@@ -14720,6 +15117,24 @@ ORDER BY table_name';
 	 * @return string|null Normalized value, or null when unsupported.
 	 */
 	private function normalize_mysql_system_variable_assignment_value( string $name, string $value ): ?string {
+		$normalized_value = strtolower( trim( $value, "'\"` \t\n\r\0\x0B" ) );
+		if ( 'default' === $normalized_value ) {
+			if ( 'sql_mode' === $name ) {
+				return 'DEFAULT';
+			}
+
+			if ( $this->is_mysql_charset_session_variable( $name ) ) {
+				return self::DEFAULT_MYSQL_CHARSET;
+			}
+
+			if ( $this->is_mysql_collation_session_variable( $name ) ) {
+				return self::DEFAULT_MYSQL_COLLATION;
+			}
+
+			$defaults = $this->get_default_mysql_system_variable_values();
+			return array_key_exists( $name, $defaults ) ? $defaults[ $name ] : null;
+		}
+
 		if ( $this->is_mysql_boolean_system_variable( $name ) ) {
 			return $this->normalize_mysql_boolean_system_variable_value( $value );
 		}
@@ -14824,8 +15239,11 @@ ORDER BY table_name';
 				'explicit_defaults_for_timestamp',
 				'foreign_key_checks',
 				'keep_files_on_create',
+				'log_bin_trust_function_creators',
 				'old_alter_table',
 				'print_identified_with_as_hex',
+				'pseudo_replica_mode',
+				'pseudo_slave_mode',
 				'require_row_format',
 				'select_into_disk_sync',
 				'session_track_schema',
@@ -14835,10 +15253,13 @@ ORDER BY table_name';
 				'sql_auto_is_null',
 				'sql_big_selects',
 				'sql_buffer_result',
+				'sql_log_bin',
 				'sql_notes',
+				'sql_quote_show_create',
 				'sql_safe_updates',
 				'sql_warnings',
 				'transaction_read_only',
+				'tx_read_only',
 				'unique_checks',
 			),
 			true
@@ -14859,10 +15280,18 @@ ORDER BY table_name';
 			'end_markers_in_json'                     => '0',
 			'explicit_defaults_for_timestamp'         => '1',
 			'foreign_key_checks'                      => '1',
+			'innodb_lock_wait_timeout'                => '50',
+			'interactive_timeout'                     => '28800',
 			'keep_files_on_create'                    => '0',
+			'lock_wait_timeout'                       => '31536000',
+			'log_bin_trust_function_creators'         => '0',
 			'max_allowed_packet'                      => '67108864',
+			'net_read_timeout'                        => '30',
+			'net_write_timeout'                       => '60',
 			'old_alter_table'                         => '0',
 			'print_identified_with_as_hex'            => '0',
+			'pseudo_replica_mode'                     => '0',
+			'pseudo_slave_mode'                       => '0',
 			'require_row_format'                      => '0',
 			'resultset_metadata'                      => 'FULL',
 			'select_into_disk_sync'                   => '0',
@@ -14875,15 +15304,20 @@ ORDER BY table_name';
 			'sql_auto_is_null'                        => '0',
 			'sql_big_selects'                         => '1',
 			'sql_buffer_result'                       => '0',
+			'sql_log_bin'                             => '1',
 			'sql_notes'                               => '1',
+			'sql_quote_show_create'                   => '1',
 			'sql_safe_updates'                        => '0',
 			'sql_warnings'                            => '0',
 			'storage_engine'                          => 'InnoDB',
 			'time_zone'                               => 'SYSTEM',
 			'transaction_isolation'                   => 'REPEATABLE-READ',
 			'transaction_read_only'                   => '0',
+			'tx_isolation'                            => 'REPEATABLE-READ',
+			'tx_read_only'                            => '0',
 			'unique_checks'                           => '1',
 			'use_secondary_engine'                    => 'ON',
+			'wait_timeout'                            => '28800',
 		);
 	}
 
@@ -14894,8 +15328,17 @@ ORDER BY table_name';
 	 */
 	private function get_read_only_mysql_system_variable_values(): array {
 		return array(
-			'version'         => $this->get_mysql_version_string(),
-			'version_comment' => 'MySQL Community Server - GPL',
+			'gtid_purged'            => '',
+			'hostname'               => 'localhost',
+			'large_files_support'    => 'ON',
+			'log_bin'                => '0',
+			'lower_case_table_names' => '0',
+			'port'                   => '3306',
+			'protocol_version'       => '10',
+			'server_id'              => '0',
+			'socket'                 => '',
+			'version'                => $this->get_mysql_version_string(),
+			'version_comment'        => 'MySQL Community Server - GPL',
 		);
 	}
 
@@ -17197,12 +17640,11 @@ WHERE option_name IN (
 	/**
 	 * Translate conservative INSERT ... SELECT ... ON DUPLICATE KEY UPDATE queries.
 	 *
-	 * SELECT-sourced upserts cannot be preflighted row-by-row without executing
-	 * arbitrary SELECT sources twice. Keep AUTO_INCREMENT insert ID and identity
-	 * sequence repair constrained to single literal-row SELECTs that can be
-	 * checked like VALUES rows. Non-literal SELECT sources are allowed for
-	 * AUTO_INCREMENT targets only when the generated column is omitted and the
-	 * conflict target is a deterministic non-AUTO_INCREMENT key.
+	 * Single literal-row SELECTs can use the direct PostgreSQL ON CONFLICT shape.
+	 * Real SELECT sources are materialized once so duplicate incoming conflict
+	 * keys can replay one row at a time with MySQL's sequential upsert semantics.
+	 * AUTO_INCREMENT insert ID tracking remains constrained to literal rows;
+	 * non-literal SELECT sources may repair identity sequences when needed.
 	 *
 	 * @param string           $table_name            Target table name.
 	 * @param string[]         $columns               Insert target columns.
@@ -17320,6 +17762,16 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
+		if ( null === $conflict_indexes ) {
+			return null;
+		}
+		$conflict_sql = sprintf(
+			'ON CONFLICT (%s) DO UPDATE SET %s',
+			implode( ', ', $conflict_target['sql'] ),
+			implode( ', ', $assignments )
+		);
+
 		$inserted_value_rows  = null;
 		$insert_id_value_rows = null;
 		if ( null !== $auto_increment_column ) {
@@ -17373,27 +17825,137 @@ WHERE option_name IN (
 		}
 		$replacements = array_merge( $outer_replacements, $replacements, $closing_replacement );
 
-		return array(
+		$upsert_query = array(
 			'action'               => 'upsert',
 			'sql'                  => sprintf(
-				'%s ON CONFLICT (%s) DO UPDATE SET %s',
+				'%s %s',
 				$this->translate_mysql_token_sequence_with_replacements_to_postgresql(
 					$tokens,
 					0,
 					$on_duplicate,
 					$replacements
 				),
-				implode( ', ', $conflict_target['sql'] ),
-				implode( ', ', $assignments )
+				$conflict_sql
 			),
 			'table_name'           => $table_name,
 			'columns'              => $columns,
 			'conflict_columns'     => $conflict_columns,
+			'conflict_indexes'     => $conflict_indexes,
 			'inserted_new_row'          => null === $inserted_value_rows ? true : count( $inserted_value_rows ) > 0,
 			'value_rows'                => $inserted_value_rows,
 			'insert_id_value_rows'      => $insert_id_value_rows,
 			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
 			'explicit_identity_columns' => $explicit_identity_columns,
+		);
+
+		$literal_select_row = $literal_value_row;
+		if ( null === $literal_select_row ) {
+			$literal_select_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+				$table_name,
+				$columns,
+				$tokens,
+				$select_start,
+				$select_end
+			);
+		}
+		if ( null === $literal_select_row ) {
+			$materialized_flow = $this->get_mysql_insert_select_upsert_materialized_flow(
+				$table_name,
+				$columns,
+				$tokens,
+				$select_start,
+				$select_end,
+				$conflict_indexes,
+				$conflict_sql
+			);
+			if ( null === $materialized_flow ) {
+				return null;
+			}
+
+			$upsert_query = array_merge( $upsert_query, $materialized_flow );
+		}
+
+		return $upsert_query;
+	}
+
+	/**
+	 * Get a materialized execution flow for real SELECT-sourced upserts.
+	 *
+	 * @param string           $table_name       Target table name.
+	 * @param string[]         $columns          Insert target columns.
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $select_start     SELECT token position.
+	 * @param int              $select_end       Final SELECT token position, exclusive.
+	 * @param array[]          $conflict_indexes Conflict target column/index tuples.
+	 * @param string           $conflict_sql     PostgreSQL ON CONFLICT clause.
+	 * @return array|null Materialized flow metadata, or null when unsupported.
+	 */
+	private function get_mysql_insert_select_upsert_materialized_flow( string $table_name, array $columns, array $tokens, int $select_start, int $select_end, array $conflict_indexes, string $conflict_sql ): ?array {
+		$select_sql = $this->get_mysql_replace_select_source_sql(
+			$table_name,
+			$columns,
+			array(),
+			$tokens,
+			$select_start,
+			$select_end
+		);
+		if ( null === $select_sql ) {
+			return null;
+		}
+
+		$temp_table_hash      = substr( md5( 'upsert-select' . "\0" . $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
+		$temp_table_name      = '__wp_pg_upsert_select_' . $temp_table_hash;
+		$ordinal_table_name   = '__wp_pg_upsert_select_ord_' . $temp_table_hash;
+		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
+		$quoted_ordinal_table = $this->connection->quote_identifier( $ordinal_table_name );
+		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
+		$quoted_target_table  = $this->connection->quote_identifier( $table_name );
+
+		$duplicate_conflict_rows_sql = $this->get_mysql_replace_select_duplicate_conflict_rows_sql(
+			$quoted_temp_table,
+			$rows_alias,
+			array( $conflict_indexes )
+		);
+		if ( null === $duplicate_conflict_rows_sql ) {
+			return null;
+		}
+
+		$insert_projection_sql = array();
+		foreach ( $columns as $column ) {
+			$insert_projection_sql[] = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( $column )
+			);
+		}
+
+		$drop_sql   = sprintf( 'DROP TABLE IF EXISTS %s', $quoted_temp_table );
+		$insert_sql = sprintf(
+			'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE 1 = 1 %s',
+			$quoted_target_table,
+			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
+			implode( ', ', $insert_projection_sql ),
+			$quoted_temp_table,
+			$rows_alias,
+			$conflict_sql
+		);
+
+		return array(
+			'upsert_select_materialized' => true,
+			'materialize_statements'     => array(
+				$drop_sql,
+				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
+			),
+			'mutation_statements'        => array(
+				$insert_sql,
+			),
+			'cleanup_statements'         => array(
+				$drop_sql,
+			),
+			'duplicate_conflict_rows_sql' => $duplicate_conflict_rows_sql,
+			'source_table_sql'           => $quoted_temp_table,
+			'ordinal_source_table_sql'   => $quoted_ordinal_table,
+			'conflict_sql'               => $conflict_sql,
 		);
 	}
 
@@ -39519,12 +40081,15 @@ FROM (
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_regexp_operator_to_postgresql( $tokens, $i, $end );
 			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_rand_function_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
-			}
+				if ( null === $translated_fragment ) {
+					$translated_fragment = $this->translate_mysql_rand_function_to_postgresql( $tokens, $i, $end );
+				}
+				if ( null === $translated_fragment ) {
+					$translated_fragment = $this->translate_mysql_session_user_function_to_postgresql( $tokens, $i, $end );
+				}
+				if ( null === $translated_fragment ) {
+					$translated_fragment = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
+				}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $i, $end );
 			}
@@ -40672,6 +41237,70 @@ FROM (
 	}
 
 	/**
+	 * Translate MySQL session user runtime functions to a stable emulated user.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position Function token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_session_user_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$function = $this->get_mysql_session_user_function_name( $tokens[ $position ] ?? null );
+		if ( null === $function ) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $position + 1 ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+		) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+			if ( null === $after_close || $position + 3 !== $after_close ) {
+				return null;
+			}
+
+			return array(
+				'sql'      => $this->connection->quote( self::MYSQL_SESSION_USER ),
+				'token_id' => WP_MySQL_Lexer::SINGLE_QUOTED_TEXT,
+				'position' => $after_close - 1,
+			);
+		}
+
+		if ( 'current_user' !== $function ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => $this->connection->quote( self::MYSQL_SESSION_USER ),
+			'token_id' => WP_MySQL_Lexer::SINGLE_QUOTED_TEXT,
+			'position' => $position,
+		);
+	}
+
+	/**
+	 * Get a normalized MySQL session user function name.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return string|null Function name, or null when unsupported.
+	 */
+	private function get_mysql_session_user_function_name( ?WP_MySQL_Token $token ): ?string {
+		if ( null === $token ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::CURRENT_USER_SYMBOL === $token->id ) {
+			return 'current_user';
+		}
+
+		if ( WP_MySQL_Lexer::USER_SYMBOL !== $token->id ) {
+			return null;
+		}
+
+		$name = strtolower( $token->get_value() );
+		return in_array( $name, array( 'user', 'session_user', 'system_user' ), true ) ? $name : null;
+	}
+
+	/**
 	 * Translate common MySQL runtime functions to PostgreSQL expressions.
 	 *
 	 * This mirrors the broad SQLite UDF layer for simple function shapes used by
@@ -40958,6 +41587,7 @@ FROM (
 		}
 
 		$keyword_functions = array(
+			WP_MySQL_Lexer::CURRENT_USER_SYMBOL      => 'current_user',
 			WP_MySQL_Lexer::CURDATE_SYMBOL           => 'curdate',
 			WP_MySQL_Lexer::CURRENT_DATE_SYMBOL      => 'curdate',
 			WP_MySQL_Lexer::CURRENT_TIME_SYMBOL      => 'utc_time',
@@ -40970,6 +41600,7 @@ FROM (
 			WP_MySQL_Lexer::NOW_SYMBOL               => 'now',
 			WP_MySQL_Lexer::REPLACE_SYMBOL           => 'replace',
 			WP_MySQL_Lexer::REGEXP_SYMBOL            => 'regexp',
+			WP_MySQL_Lexer::ROW_COUNT_SYMBOL         => 'row_count',
 			WP_MySQL_Lexer::SCHEMA_SYMBOL            => 'database',
 			WP_MySQL_Lexer::SUBSTR_SYMBOL            => 'substring',
 			WP_MySQL_Lexer::SUBSTRING_SYMBOL         => 'substring',
@@ -40979,6 +41610,11 @@ FROM (
 		);
 		if ( isset( $keyword_functions[ $token->id ] ) ) {
 			return $keyword_functions[ $token->id ];
+		}
+
+		if ( WP_MySQL_Lexer::USER_SYMBOL === $token->id ) {
+			$name = strtolower( $token->get_value() );
+			return in_array( $name, array( 'user', 'session_user', 'system_user' ), true ) ? $name : null;
 		}
 
 		$name = $this->get_mysql_identifier_token_value( $token );
@@ -40991,7 +41627,9 @@ FROM (
 			'char_length',
 			'character_length',
 			'concat',
+			'connection_id',
 			'curdate',
+			'current_user',
 			'database',
 			'date',
 			'datediff',
@@ -41006,6 +41644,7 @@ FROM (
 			'inet_ntoa',
 			'isnull',
 			'lcase',
+			'last_insert_id',
 			'left',
 			'least',
 			'length',
@@ -41019,9 +41658,12 @@ FROM (
 			'release_lock',
 			'replace',
 			'regexp',
+			'row_count',
 			'schema',
+			'session_user',
 			'substr',
 			'substring',
+			'system_user',
 			'timestampadd',
 			'to_base64',
 			'ucase',
@@ -41030,7 +41672,9 @@ FROM (
 			'utc_date',
 			'utc_time',
 			'utc_timestamp',
+			'user',
 			'version',
+			'uuid',
 		);
 
 		return in_array( $name, $supported, true ) ? $name : null;
@@ -41142,6 +41786,15 @@ FROM (
 					)
 				) . ')';
 
+			case 'connection_id':
+				return 0 === $count ? self::MYSQL_CONNECTION_ID : null;
+
+			case 'current_user':
+			case 'session_user':
+			case 'system_user':
+			case 'user':
+				return 0 === $count ? $this->connection->quote( self::MYSQL_SESSION_USER ) : null;
+
 			case 'curdate':
 			case 'utc_date':
 				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')" : null;
@@ -41176,6 +41829,9 @@ FROM (
 
 			case 'isnull':
 				return 1 === $count ? sprintf( 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END', $argument_sql[0] ) : null;
+
+			case 'last_insert_id':
+				return 0 === $count ? $this->get_postgresql_mysql_last_insert_id_sql() : null;
 
 			case 'ifnull':
 				return 2 === $count ? sprintf( 'COALESCE(%s, %s)', $argument_sql[0], $argument_sql[1] ) : null;
@@ -41287,9 +41943,23 @@ FROM (
 
 			case 'release_lock':
 				return 1 === $count ? '1' : null;
+
+			case 'row_count':
+			case 'uuid':
+				return null;
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL LAST_INSERT_ID().
+	 *
+	 * @return string PostgreSQL SQL literal.
+	 */
+	private function get_postgresql_mysql_last_insert_id_sql(): string {
+		$last_insert_id = $this->get_insert_id();
+		return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
 	}
 
 	/**
@@ -43834,13 +44504,17 @@ FROM (
 				return true;
 			}
 
-			if ( null !== $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'rand' ) ) {
-				return true;
-			}
+				if ( null !== $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'rand' ) ) {
+					return true;
+				}
 
-			if ( null !== $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end ) ) {
-				return true;
-			}
+				if ( null !== $this->translate_mysql_session_user_function_to_postgresql( $tokens, $i, $end ) ) {
+					return true;
+				}
+
+				if ( null !== $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end ) ) {
+					return true;
+				}
 
 			if ( null !== $this->get_mysql_date_arithmetic_function_bounds( $tokens, $i, $end ) ) {
 				return true;

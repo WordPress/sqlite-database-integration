@@ -860,6 +860,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests stored zero dates remain readable and comparable regardless of the current SQL mode.
+	 */
+	public function test_stored_zero_dates_remain_readable_comparable_and_orderable_after_modes_change(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( 'STRICT_TRANS_TABLES' );
+		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
+
+		$this->assertSame(
+			3,
+			$driver->query(
+				"INSERT INTO `wptests_posts` (`ID`, `post_date`, `post_date_gmt`, `post_modified`, `post_modified_gmt`)
+				VALUES
+					(1, '0000-00-00 00:00:00', '0000-00-00 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00'),
+					(2, '2022-06-01 00:00:00', '2022-06-01 00:00:00', '2022-06-01 00:00:00', '2022-06-01 00:00:00'),
+					(3, '2023-01-01 00:00:00', '2023-01-01 00:00:00', '2023-01-01 00:00:00', '2023-01-01 00:00:00')"
+			)
+		);
+
+		$driver->set_sql_mode( 'DEFAULT' );
+
+		$matches = $driver->query( "SELECT ID FROM wptests_posts WHERE post_date = '0000-00-00 00:00:00'" );
+		$this->assertSame( array( '1' ), array_map( static function ( $row ) { return (string) $row->ID; }, $matches ) );
+
+		$older = $driver->query( "SELECT ID FROM wptests_posts WHERE post_date < '2000-01-01 00:00:00' ORDER BY post_date" );
+		$this->assertSame( array( '1' ), array_map( static function ( $row ) { return (string) $row->ID; }, $older ) );
+
+		$ordered = $driver->query( 'SELECT ID FROM wptests_posts ORDER BY post_date ASC' );
+		$this->assertSame( array( '1', '2', '3' ), array_map( static function ( $row ) { return (string) $row->ID; }, $ordered ) );
+	}
+
+	/**
 	 * Tests strict INSERT normalizes accepted temporal/YEAR values and rejects invalid scalar temporal values.
 	 */
 	public function test_strict_insert_normalizes_temporal_and_year_literals_from_mysql_metadata(): void {
@@ -3366,9 +3397,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		foreach ( $queries as $query ) {
-			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-			$this->install_information_schema_fixture( $driver );
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
 			$driver->store_mysql_schema_metadata(
 				'CREATE TABLE wptests_alter_drop_primary (
 					id int NOT NULL,
@@ -5582,6 +5613,77 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests duplicate SELECT source keys replay with MySQL row-by-row upsert semantics.
+	 */
+	public function test_insert_select_on_duplicate_key_update_with_duplicate_source_conflict_keys_replays_rows_sequentially(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_plugin_lookup_duplicate (
+				source TEXT NOT NULL,
+				external_id TEXT NOT NULL,
+				attempts INTEGER NOT NULL,
+				payload TEXT NOT NULL,
+				UNIQUE (source, external_id)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_plugin_lookup_duplicate_source (
+				seq INTEGER NOT NULL,
+				source TEXT NOT NULL,
+				external_id TEXT NOT NULL,
+				attempts INTEGER NOT NULL,
+				payload TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_plugin_lookup_duplicate (
+				source varchar(64) NOT NULL,
+				external_id varchar(64) NOT NULL,
+				attempts int(11) NOT NULL DEFAULT 0,
+				payload longtext NOT NULL,
+				UNIQUE KEY source_external_id (source, external_id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_plugin_lookup_duplicate_source (
+				seq int(11) NOT NULL,
+				source varchar(64) NOT NULL,
+				external_id varchar(64) NOT NULL,
+				attempts int(11) NOT NULL,
+				payload longtext NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_plugin_lookup_duplicate (source, external_id, attempts, payload) VALUES ('feed', 'abc', 10, 'old')" );
+		$driver->query( "INSERT INTO wptests_plugin_lookup_duplicate_source (seq, source, external_id, attempts, payload) VALUES (1, 'feed', 'abc', 1, 'first'), (2, 'feed', 'abc', 2, 'second')" );
+
+		$upsert = "INSERT INTO `wptests_plugin_lookup_duplicate` (`source`, `external_id`, `attempts`, `payload`)
+			SELECT `source`, `external_id`, `attempts`, `payload` FROM `wptests_plugin_lookup_duplicate_source` ORDER BY `seq`
+			ON DUPLICATE KEY UPDATE `attempts` = `attempts` + VALUES(`attempts`),
+			                        `payload` = VALUES(`payload`)";
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 7, $sql );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_upsert_select_[a-f0-9]{12}"$/', $sql[0] );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_upsert_select_[a-f0-9]{12}" AS SELECT /', $sql[1] );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_upsert_select_ord_[a-f0-9]{12}" AS SELECT ROW_NUMBER\(\) OVER \(\) AS "__wp_pg_upsert_ordinal"/', $sql[2] );
+		$this->assertStringContainsString( '"__wp_pg_upsert_rows"."__wp_pg_upsert_ordinal" = 1', $sql[3] );
+		$this->assertStringContainsString( '"__wp_pg_upsert_rows"."__wp_pg_upsert_ordinal" = 2', $sql[4] );
+		$this->assertStringContainsString( 'ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"', $sql[4] );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_upsert_select_ord_[a-f0-9]{12}"$/', $sql[5] );
+		$this->assertSame( $sql[0], $sql[6] );
+
+		$rows = $driver->query( "SELECT attempts, payload FROM wptests_plugin_lookup_duplicate WHERE source = 'feed' AND external_id = 'abc'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '13', $rows[0]->attempts );
+		$this->assertSame( 'second', $rows[0]->payload );
+	}
+
+	/**
 	 * Tests columnless INSERT ... SELECT upserts infer target columns from MySQL metadata.
 	 */
 	public function test_columnless_insert_select_on_duplicate_key_update_uses_metadata_columns(): void {
@@ -5847,10 +5949,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertNull( $translation['insert_id_value_rows'] );
 
 		$this->assertSame( 2, $driver->query( $upsert ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") SELECT "slug", "value" FROM "wptests_identity_unique_upsert_source" WHERE 1 = 1 ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
-			$this->get_last_single_postgresql_sql( $driver )
-		);
+		$materialized_sql = $this->assert_last_upsert_select_materialized_sql( $driver, 'wptests_identity_unique_upsert' );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"', $materialized_sql[2] );
 		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
 
 		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY slug' );
@@ -5967,12 +6067,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 0, $driver->get_insert_id() );
 
 		$queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 2, $queries );
-		$this->assertSame(
-			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT "id", "value" FROM "wptests_identity_upsert_source" WHERE 1 = 1 ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
-			$queries[0]['sql']
-		);
-		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertCount( 5, $queries );
+		$materialized_sql = $this->assert_last_upsert_select_materialized_sql( $driver, 'wptests_identity_upsert' );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"', $materialized_sql[2] );
+		$this->assert_sequence_repair_query( $queries[4], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
 		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
 
 		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert ORDER BY id' );
@@ -8533,6 +8631,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL session runtime functions use the emulated session identity.
+	 */
+	public function test_mysql_session_runtime_functions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query(
+			'SELECT CURRENT_USER AS current_user_bare,
+				CURRENT_USER() AS current_user_call,
+				USER() AS user_value,
+				SESSION_USER() AS session_user_value,
+				SYSTEM_USER() AS system_user_value,
+				CONNECTION_ID() AS connection_id,
+				LAST_INSERT_ID() AS last_insert_id'
+		);
+
+		$this->assertSame( 'root@%', $rows[0]->current_user_bare );
+		$this->assertSame( 'root@%', $rows[0]->current_user_call );
+		$this->assertSame( 'root@%', $rows[0]->user_value );
+		$this->assertSame( 'root@%', $rows[0]->session_user_value );
+		$this->assertSame( 'root@%', $rows[0]->system_user_value );
+		$this->assertSame( '1', $rows[0]->connection_id );
+		$this->assertSame( '0', $rows[0]->last_insert_id );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "'root@%' AS current_user_bare", $sql );
+		$this->assertStringContainsString( "'root@%' AS current_user_call", $sql );
+		$this->assertStringContainsString( "'root@%' AS user_value", $sql );
+		$this->assertStringContainsString( "'root@%' AS session_user_value", $sql );
+		$this->assertStringContainsString( "'root@%' AS system_user_value", $sql );
+		$this->assertStringContainsString( '1 AS connection_id', $sql );
+		$this->assertStringContainsString( '0 AS last_insert_id', $sql );
+	}
+
+	/**
+	 * Tests LAST_INSERT_ID() reflects mutable session state instead of cached SQL.
+	 */
+	public function test_last_insert_id_runtime_function_is_not_cached_between_inserts(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_runtime_insert_id (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_runtime_insert_id (
+				id bigint(20) unsigned NOT NULL auto_increment,
+				value varchar(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$driver->query( "INSERT INTO wptests_runtime_insert_id (value) VALUES ('first')" );
+		$first = $driver->query( 'SELECT LAST_INSERT_ID() AS last_insert_id' );
+
+		$driver->query( "INSERT INTO wptests_runtime_insert_id (value) VALUES ('second')" );
+		$second = $driver->query( 'SELECT LAST_INSERT_ID() AS last_insert_id' );
+
+		$this->assertSame( '1', $first[0]->last_insert_id );
+		$this->assertSame( '2', $second[0]->last_insert_id );
+		$this->assertSame( 'SELECT 2 AS last_insert_id', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
 	 * Tests common MySQL runtime functions from the SQLite compatibility layer are translated.
 	 */
 	public function test_common_mysql_runtime_functions_are_translated_to_postgresql(): void {
@@ -9038,6 +9196,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT CONCAT() AS empty_concat',
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
+			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id',
+			'SELECT CURRENT_USER(1) AS invalid_current_user',
+			'SELECT ROW_COUNT() AS rows_changed',
+			'SELECT UUID() AS uuid_value',
 		);
 
 		foreach ( $queries as $query ) {
@@ -9061,6 +9223,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
 			"SELECT FROM_UNIXTIME(0, '%Y', 'extra') AS invalid_from_unixtime",
+			'SELECT LAST_INSERT_ID(123) AS invalid_last_insert_id',
+			'SELECT CURRENT_USER(1) AS invalid_current_user',
+			'SELECT USER(1) AS invalid_user',
+			'SELECT ROW_COUNT() AS rows_changed',
+			'SELECT UUID() AS uuid_value',
 		);
 
 		foreach ( $queries as $query ) {
@@ -13809,6 +13976,72 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CHANGE COLUMN adds PostgreSQL identity when AUTO_INCREMENT is introduced.
+	 */
+	public function test_change_column_auto_increment_adds_identity_for_plain_integer_column(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', 'wptests_identity_add', 'BASE TABLE')"
+		);
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO information_schema.columns
+				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, collation_name, is_nullable, column_default, is_identity)
+			VALUES
+				('public', 'wptests_identity_add', 'legacy_id', 1, 'integer', NULL, NULL, 'NO', NULL, 'NO')"
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_identity_add (
+				legacy_id int(11) NOT NULL,
+				PRIMARY KEY (legacy_id)
+			)'
+		);
+
+		$driver->query( 'ALTER TABLE wptests_identity_add CHANGE COLUMN legacy_id id bigint(20) unsigned NOT NULL AUTO_INCREMENT' );
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_identity_add" RENAME COLUMN "legacy_id" TO "id"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_identity_add" ALTER COLUMN "id" TYPE bigint',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_identity_add" ALTER COLUMN "id" SET NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_identity_add" ALTER COLUMN "id" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_identity_add" ALTER COLUMN "id" ADD GENERATED BY DEFAULT AS IDENTITY',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_identity_add' );
+		$this->assertSame( 'id', $columns[0]['column_name'] );
+		$this->assertSame( 'bigint(20) unsigned', $columns[0]['column_type'] );
+		$this->assertSame( 'NO', $columns[0]['is_nullable'] );
+		$this->assertSame( 'auto_increment', $columns[0]['extra'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_identity_add' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT', $create_table );
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
+	}
+
+	/**
 	 * Tests MODIFY COLUMN clauses update backend and metadata definitions.
 	 */
 	public function test_modify_column_updates_backend_and_metadata_definitions(): void {
@@ -15988,10 +16221,124 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					UNION=(t1,t2),
 					ENGINE_ATTRIBUTE="{}",
 					SECONDARY_ENGINE_ATTRIBUTE="{}"'
-			)
-		);
+				)
+			);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_options' ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE comment clauses update MySQL-facing metadata.
+	 */
+	public function test_alter_table_comment_clauses_update_introspection_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_alter_comment_metadata (
+				id int(11) NOT NULL COMMENT 'Old id',
+				label varchar(20) DEFAULT NULL COMMENT 'Old label',
+				PRIMARY KEY (id),
+				KEY label_lookup (label) COMMENT 'Old index'
+			) COMMENT='Old table'"
+		);
+
+		$driver->query(
+			"ALTER TABLE wptests_alter_comment_metadata
+				COMMENT = 'New table',
+				CHANGE COLUMN id id int(11) NOT NULL COMMENT 'New id',
+				ADD COLUMN note varchar(100) DEFAULT NULL COMMENT 'Note column',
+				ADD KEY note_lookup (note) COMMENT 'Note lookup'"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_comment_metadata" ALTER COLUMN "id" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_comment_metadata" ALTER COLUMN "id" SET NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_comment_metadata" ALTER COLUMN "id" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_comment_metadata" ADD COLUMN "note" varchar(100) DEFAULT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "wptests_alter_comment_metadata__note_lookup" ON "wptests_alter_comment_metadata" ("note")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$column_comments = $driver->get_connection()->query(
+			sprintf(
+				'SELECT column_name, column_comment
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY ordinal_position',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( 'public', 'wptests_alter_comment_metadata' )
+		)->fetchAll( PDO::FETCH_KEY_PAIR );
+		$this->assertSame( 'New id', $column_comments['id'] );
+		$this->assertSame( 'Note column', $column_comments['note'] );
+
+		$index_comments = $driver->get_connection()->query(
+			sprintf(
+				'SELECT key_name, index_comment
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY index_ordinal, seq_in_index',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( 'public', 'wptests_alter_comment_metadata' )
+		)->fetchAll( PDO::FETCH_KEY_PAIR );
+		$this->assertSame( 'Note lookup', $index_comments['note_lookup'] );
+
+		$table_comment = $driver->get_connection()->query(
+			sprintf(
+				'SELECT table_comment
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?',
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE )
+			),
+			array( 'public', 'wptests_alter_comment_metadata' )
+		)->fetchColumn();
+		$this->assertSame( 'New table', $table_comment );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_alter_comment_metadata' )[0]->{'Create Table'};
+		$this->assertStringContainsString( "  `id` int(11) NOT NULL COMMENT 'New id'", $create_table );
+		$this->assertStringContainsString( "  `note` varchar(100) DEFAULT NULL COMMENT 'Note column'", $create_table );
+		$this->assertStringContainsString( "  KEY `note_lookup` (`note`) COMMENT 'Note lookup'", $create_table );
+		$this->assertStringEndsWith( "COMMENT='New table'", $create_table );
+	}
+
+	/**
+	 * Tests unsupported ALTER TABLE comment option values fail before backend execution.
+	 */
+	public function test_alter_table_comment_option_requires_string_literal(): void {
+		$driver = $this->create_driver();
+		$driver->query( 'CREATE TABLE wptests_alter_bad_comment (id INTEGER)' );
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_alter_bad_comment (
+				id int(11) DEFAULT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE wptests_alter_bad_comment COMMENT = 123' );
+			$this->fail( 'Expected unsupported ALTER TABLE comment option to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported ALTER TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -18901,7 +19248,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SHOW ENGINE InnoDB STATUS'                         => 'Unsupported SHOW statement.',
 			'SHOW PLUGINS'                                      => 'Unsupported SHOW statement.',
 			'CHECKSUM TABLE administration_existing'            => 'Unsupported CHECKSUM TABLE statement.',
-			'FLUSH TABLES'                                      => 'Unsupported FLUSH statement.',
+			'FLUSH TABLES WITH READ LOCK'                       => 'Unsupported FLUSH statement.',
 			'KILL 1'                                            => 'Unsupported KILL statement.',
 			'CACHE INDEX administration_existing IN `default`'   => 'Unsupported CACHE INDEX statement.',
 			'LOAD INDEX INTO CACHE administration_existing'      => 'Unsupported LOAD statement.',
@@ -21661,6 +22008,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests safe FLUSH statements used by admin tooling are MySQL compatibility no-ops.
+	 */
+	public function test_mysql_flush_tables_and_privileges_are_noops_without_backend_execution(): void {
+		$driver = $this->create_driver();
+
+		foreach (
+			array(
+				'FLUSH TABLES',
+				'FLUSH TABLE',
+				'FLUSH LOCAL TABLES',
+				'FLUSH NO_WRITE_TO_BINLOG TABLES',
+				'FLUSH PRIVILEGES',
+				'FLUSH LOCAL PRIVILEGES',
+			) as $query
+		) {
+			$driver->query( 'SELECT 1 AS previous_value' );
+
+			$this->assertSame( 0, $driver->query( $query ), $query );
+			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			$this->assertSame( array(), $driver->get_last_column_meta(), $query );
+			$this->assertSame( 0, $driver->get_last_column_count(), $query );
+		}
+	}
+
+	/**
+	 * Tests unsafe or stateful FLUSH forms still fail before backend execution.
+	 */
+	public function test_unsupported_mysql_flush_statements_fail_closed_without_backend_execution(): void {
+		$queries = array(
+			'FLUSH TABLES WITH READ LOCK',
+			'FLUSH STATUS',
+			'FLUSH BINARY LOGS',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported FLUSH statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported FLUSH statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests the emulated MySQL session SQL mode can be selected.
 	 */
 	public function test_select_session_sql_mode_returns_emulated_driver_state(): void {
@@ -21858,6 +22254,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame( '@@version', $driver->get_last_column_meta()[0]['name'] );
 		$this->assertSame( '@@version_comment', $driver->get_last_column_meta()[1]['name'] );
+	}
+
+	/**
+	 * Tests WP-CLI/dump system-variable probes are selected from emulated state.
+	 */
+	public function test_wp_cli_dump_system_variable_probes_are_emulated_without_backend_queries(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query(
+			'SELECT @@GLOBAL.gtid_purged, @@GLOBAL.log_bin, @@GLOBAL.log_bin_trust_function_creators, @@SESSION.max_allowed_packet, @@lower_case_table_names, @@hostname, @@protocol_version'
+		);
+
+		$this->assertSame( '', $rows[0]->{'@@GLOBAL.gtid_purged'} );
+		$this->assertSame( '0', $rows[0]->{'@@GLOBAL.log_bin'} );
+		$this->assertSame( '0', $rows[0]->{'@@GLOBAL.log_bin_trust_function_creators'} );
+		$this->assertSame( '67108864', $rows[0]->{'@@SESSION.max_allowed_packet'} );
+		$this->assertSame( '0', $rows[0]->{'@@lower_case_table_names'} );
+		$this->assertSame( 'localhost', $rows[0]->{'@@hostname'} );
+		$this->assertSame( '10', $rows[0]->{'@@protocol_version'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$version = $driver->query( "SHOW VARIABLES LIKE 'version'" );
+		$this->assertCount( 1, $version );
+		$this->assertSame( '8.0.38', $version[0]->Value );
+
+		$log_bin = $driver->query( "SHOW VARIABLES LIKE 'log_bin'" );
+		$this->assertCount( 1, $log_bin );
+		$this->assertSame( '0', $log_bin[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests WP-CLI/import SET toggles can be saved, changed, and reset.
+	 */
+	public function test_wp_cli_import_set_toggles_and_defaults_are_emulated_without_backend_queries(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'SET @old_sql_log_bin = @@sql_log_bin' ) );
+		$this->assertSame( 0, $driver->query( 'SET @@sql_log_bin = 0' ) );
+		$rows = $driver->query( 'SELECT @@sql_log_bin' );
+		$this->assertSame( '0', $rows[0]->{'@@sql_log_bin'} );
+
+		$this->assertSame( 0, $driver->query( 'SET @@sql_log_bin = DEFAULT' ) );
+		$rows = $driver->query( 'SELECT @@sql_log_bin' );
+		$this->assertSame( '1', $rows[0]->{'@@sql_log_bin'} );
+
+		$this->assertSame( 0, $driver->query( 'SET @old_wait_timeout = @@wait_timeout' ) );
+		$this->assertSame( 0, $driver->query( 'SET wait_timeout = 100' ) );
+		$rows = $driver->query( 'SELECT @@wait_timeout' );
+		$this->assertSame( '100', $rows[0]->{'@@wait_timeout'} );
+
+		$this->assertSame( 0, $driver->query( 'SET wait_timeout = @old_wait_timeout' ) );
+		$rows = $driver->query( 'SELECT @@wait_timeout' );
+		$this->assertSame( '28800', $rows[0]->{'@@wait_timeout'} );
+
+		$this->assertSame( 0, $driver->query( 'SET sql_quote_show_create = OFF, pseudo_replica_mode = ON' ) );
+		$rows = $driver->query( 'SELECT @@sql_quote_show_create, @@pseudo_replica_mode' );
+		$this->assertSame( '0', $rows[0]->{'@@sql_quote_show_create'} );
+		$this->assertSame( '1', $rows[0]->{'@@pseudo_replica_mode'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**
@@ -22700,6 +23156,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
+	}
+
+	/**
+	 * Assert the last query used the materialized INSERT ... SELECT upsert flow.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
+	 * @param string               $table_name Target table name.
+	 * @return string[] Logged SQL statements.
+	 */
+	private function assert_last_upsert_select_materialized_sql( WP_PostgreSQL_Driver $driver, string $table_name ): array {
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertGreaterThanOrEqual( 4, count( $queries ) );
+
+		$sql = array_column( $queries, 'sql' );
+		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_upsert_select_[a-f0-9]{12}"$/', $sql[0] );
+		$this->assertSame( $sql[0], $sql[3] );
+		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_upsert_select_[a-f0-9]{12}" AS SELECT /', $sql[1] );
+		$this->assertStringStartsWith(
+			sprintf(
+				'INSERT INTO "%s" ',
+				$table_name
+			),
+			$sql[2]
+		);
+		$this->assertStringContainsString( ' FROM "__wp_pg_upsert_select_', $sql[2] );
+		$this->assertStringContainsString( ' WHERE 1 = 1 ON CONFLICT ', $sql[2] );
+
+		return $sql;
 	}
 
 	/**
