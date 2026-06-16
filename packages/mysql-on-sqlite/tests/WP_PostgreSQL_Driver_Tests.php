@@ -5366,9 +5366,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests columnless real SELECT-sourced upserts still reject AUTO_INCREMENT targets.
+	 * Tests columnless real SELECT-sourced upserts repair AUTO_INCREMENT targets.
 	 */
-	public function test_columnless_insert_select_on_duplicate_key_update_with_auto_increment_target_rejects_real_source_table(): void {
+	public function test_columnless_insert_select_on_duplicate_key_update_with_auto_increment_target_repairs_real_source_table(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
 			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
 		);
@@ -5387,19 +5387,56 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				value longtext NOT NULL
 			)'
 		);
+		$driver->get_connection()->query( "INSERT INTO wptests_identity_upsert (id, value) VALUES (7, 'old')" );
+		$driver->query( "INSERT INTO wptests_identity_upsert_source (id, value) VALUES (7, 'updated'), (8, 'created')" );
 
 		$upsert = "INSERT INTO `wptests_identity_upsert`
 			SELECT `id`, `value` FROM `wptests_identity_upsert_source` WHERE 1 = 1
 			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
-		$this->assertNull(
-			$this->translate_driver_query_data_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$upsert
-			)
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
 		);
-		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+
+		$this->assertIsArray( $translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT "id", "value" FROM "wptests_identity_upsert_source" WHERE 1 = 1 ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$translation['sql']
+		);
+		$this->assertNull( $translation['value_rows'] );
+		$this->assertNull( $translation['insert_id_value_rows'] );
+		$this->assertTrue( $translation['insert_id_unknown'] );
+		$this->assertSame( array( 'id' => true ), $translation['explicit_identity_columns'] );
+
+		$this->assertSame( 2, $driver->query( $upsert ) );
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT "id", "value" FROM "wptests_identity_upsert_source" WHERE 1 = 1 ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert ORDER BY id' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '7',
+					'value' => 'updated',
+				),
+				(object) array(
+					'id'    => '8',
+					'value' => 'created',
+				),
+			),
+			$rows
+		);
 	}
 
 	/**

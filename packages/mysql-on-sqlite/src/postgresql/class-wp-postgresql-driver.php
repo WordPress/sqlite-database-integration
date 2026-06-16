@@ -16421,6 +16421,7 @@ WHERE option_name IN (
 		$table_column_lookup   = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
 		$literal_value_row     = null;
+		$explicit_identity_columns = array();
 
 		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
 		if ( null === $conflict_target ) {
@@ -16483,7 +16484,11 @@ WHERE option_name IN (
 						$conflict_columns
 					)
 				) {
-					return null;
+					if ( ! $this->mysql_dml_column_list_contains_column( $columns, $auto_increment_column ) ) {
+						return null;
+					}
+
+					$explicit_identity_columns[ strtolower( $auto_increment_column ) ] = true;
 				}
 			} else {
 				$insert_id_value_rows = array( $literal_value_row['insert_id_values'] );
@@ -16528,10 +16533,29 @@ WHERE option_name IN (
 			'table_name'           => $table_name,
 			'columns'              => $columns,
 			'conflict_columns'     => $conflict_columns,
-			'inserted_new_row'     => null === $inserted_value_rows ? true : count( $inserted_value_rows ) > 0,
-			'value_rows'           => $inserted_value_rows,
-			'insert_id_value_rows' => $insert_id_value_rows,
+			'inserted_new_row'          => null === $inserted_value_rows ? true : count( $inserted_value_rows ) > 0,
+			'value_rows'                => $inserted_value_rows,
+			'insert_id_value_rows'      => $insert_id_value_rows,
+			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
+			'explicit_identity_columns' => $explicit_identity_columns,
 		);
+	}
+
+	/**
+	 * Check whether a DML column list contains a column name.
+	 *
+	 * @param string[] $columns     DML column names.
+	 * @param string   $column_name Column name to find.
+	 * @return bool Whether the column list contains the column.
+	 */
+	private function mysql_dml_column_list_contains_column( array $columns, string $column_name ): bool {
+		foreach ( $columns as $column ) {
+			if ( 0 === strcasecmp( (string) $column, $column_name ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -19077,6 +19101,11 @@ WHERE option_name IN (
 			return;
 		}
 
+		if ( ! empty( $dml_query['insert_id_unknown'] ) ) {
+			$this->last_insert_id = 0;
+			return;
+		}
+
 		$explicit_insert_id = $this->get_explicit_mysql_auto_increment_insert_id(
 			$auto_increment_column,
 			$dml_query['columns'],
@@ -19425,17 +19454,29 @@ WHERE option_name IN (
 			return;
 		}
 
+		$explicit_identity_columns = array();
+		if (
+			isset( $dml_query['explicit_identity_columns'] )
+			&& is_array( $dml_query['explicit_identity_columns'] )
+		) {
+			foreach ( $dml_query['explicit_identity_columns'] as $column => $explicit ) {
+				if ( $explicit ) {
+					$explicit_identity_columns[ strtolower( (string) $column ) ] = true;
+				}
+			}
+		}
+
 		if ( isset( $dml_query['value_rows'] ) && is_array( $dml_query['value_rows'] ) ) {
 			$explicit_identity_columns = $this->get_explicit_dml_identity_column_lookup_from_rows(
 				$dml_query['columns'],
 				$dml_query['value_rows']
-			);
+			) + $explicit_identity_columns;
 		} elseif ( isset( $dml_query['values'] ) && is_array( $dml_query['values'] ) ) {
 			$explicit_identity_columns = $this->get_explicit_dml_identity_column_lookup(
 				$dml_query['columns'],
 				$dml_query['values']
-			);
-		} else {
+			) + $explicit_identity_columns;
+		} elseif ( empty( $explicit_identity_columns ) ) {
 			return;
 		}
 
