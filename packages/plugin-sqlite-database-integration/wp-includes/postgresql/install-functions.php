@@ -21,8 +21,21 @@ if ( ! function_exists( 'postgresql_make_db_current_silent' ) ) {
 		$statements = $translator->translate_schema( $schema );
 
 		foreach ( $statements as $statement ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Generated from parsed WordPress schema DDL.
-			if ( false === $wpdb->query( $statement ) ) {
+			$statement_succeeded = false;
+
+			try {
+				if ( $wpdb->dbh instanceof WP_PostgreSQL_Driver ) {
+					$wpdb->dbh->get_connection()->query( $statement );
+					$statement_succeeded = true;
+				} else {
+					// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Generated from parsed WordPress schema DDL.
+					$statement_succeeded = false !== $wpdb->query( $statement );
+				}
+			} catch ( Throwable $e ) {
+				$wpdb->last_error = $e->getMessage();
+			}
+
+			if ( ! $statement_succeeded ) {
 				$message  = sprintf(
 					'Error occurred while creating PostgreSQL tables or indexes.<br />Query was: %s<br />',
 					var_export( $statement, true )
