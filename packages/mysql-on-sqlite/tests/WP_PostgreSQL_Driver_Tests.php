@@ -456,6 +456,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported INSERT shapes fail before backend execution.
+	 */
+	public function test_unsupported_insert_shapes_fail_closed_before_backend(): void {
+		$queries = array(
+			'INSERT INTO wptests_insert_unsupported PARTITION (p0) (id) VALUES (1)',
+			'INSERT INTO wptests_insert_unsupported (id) VALUES (1) RETURNING id',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported INSERT statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported INSERT statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests non-strict INSERT statements append metadata-derived NOT NULL defaults.
 	 */
 	public function test_non_strict_insert_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
@@ -4795,6 +4817,77 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array_map(
 				static function ( $row ): array {
 					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests AUTO_INCREMENT zero handling applies to INSERT ... SET and REPLACE rows.
+	 */
+	public function test_auto_increment_zero_respects_sql_mode_for_insert_set_and_replace(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_zero_dml (
+				"ID" INTEGER PRIMARY KEY AUTOINCREMENT,
+				post_title TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_zero_dml (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_title varchar(255) NOT NULL DEFAULT "",
+				PRIMARY KEY (ID)
+			)'
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO wptests_zero_dml SET ID = 0, post_title = 'set-generated'" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_zero_dml" ("ID", "post_title") VALUES (NULL, \'set-generated\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$this->assertSame( 1, $driver->query( "REPLACE INTO wptests_zero_dml (`ID`, `post_title`) VALUES ('0', 'replace-generated')" ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_zero_dml" ("ID", "post_title") VALUES (NULL, \'replace-generated\')',
+			)
+		);
+		$this->assertSame( 2, $driver->get_insert_id() );
+
+		$driver->set_sql_mode( 'NO_AUTO_VALUE_ON_ZERO' );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO wptests_zero_dml SET ID = 0, post_title = 'set-literal'" ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_zero_dml" ("ID", "post_title") VALUES (0, \'set-literal\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$this->assertSame( 2, $driver->query( "REPLACE INTO wptests_zero_dml (`ID`, `post_title`) VALUES (0, 'replace-literal')" ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'DELETE FROM "wptests_zero_dml" WHERE ("ID" = 0)',
+				'INSERT INTO "wptests_zero_dml" ("ID", "post_title") VALUES (0, \'replace-literal\')',
+			)
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT `ID` AS id, post_title FROM wptests_zero_dml ORDER BY `ID`' );
+		$this->assertSame(
+			array(
+				array( '0', 'replace-literal' ),
+				array( '1', 'set-generated' ),
+				array( '2', 'replace-generated' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->post_title );
 				},
 				$rows
 			)
@@ -13655,18 +13748,30 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_week_supported_modes_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
-		$select = 'SELECT WEEK(post_date) AS default_week, WEEK(post_date, 0) AS sunday_zero_week, WEEK(post_date, 1) AS monday_zero_week, WEEK(post_date, 2) AS sunday_one_week FROM wptests_posts WHERE WEEK(post_date) = 0 OR WEEK(post_date, 0) = 0 OR WEEK(post_date, 1) = 1 OR WEEK(post_date, 2) = 1';
-		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
-
-		$mode_zero_sql = $this->get_expected_mysql_week_sql( 'post_date', 0 );
-		$mode_one_sql  = $this->get_expected_mysql_week_sql( 'post_date', 1 );
-		$mode_two_sql  = $this->get_expected_mysql_week_sql( 'post_date', 2 );
-
-		$this->assertSame(
-			'SELECT ' . $mode_zero_sql . ' AS default_week, ' . $mode_zero_sql . ' AS sunday_zero_week, ' . $mode_one_sql . ' AS monday_zero_week, ' . $mode_two_sql . ' AS sunday_one_week FROM wptests_posts WHERE ' . $mode_zero_sql . ' = 0 OR ' . $mode_zero_sql . ' = 0 OR ' . $mode_one_sql . ' = 1 OR ' . $mode_two_sql . ' = 1',
-			$sql
+		$cases = array(
+			'WEEK(post_date)'    => 0,
+			'WEEK(post_date, 0)' => 0,
+			'WEEK(post_date, 1)' => 1,
+			'WEEK(post_date, 2)' => 2,
+			'WEEK(post_date, 3)' => 3,
+			'WEEK(post_date, 4)' => 4,
+			'WEEK(post_date, 5)' => 5,
+			'WEEK(post_date, 6)' => 6,
+			'WEEK(post_date, 7)' => 7,
 		);
-		$this->assertStringNotContainsString( 'WEEK(', $sql );
+
+		foreach ( $cases as $week_call => $mode ) {
+			$select = 'SELECT ' . $week_call . ' AS week_num FROM wptests_posts WHERE ' . $week_call . ' = 1';
+			$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
+			$week_sql = $this->get_expected_mysql_week_sql( 'post_date', $mode );
+
+			$this->assertSame(
+				'SELECT ' . $week_sql . ' AS week_num FROM wptests_posts WHERE ' . $week_sql . ' = 1',
+				$sql,
+				$week_call
+			);
+			$this->assertStringNotContainsString( 'WEEK(', $sql, $week_call );
+		}
 	}
 
 	/**
@@ -13675,8 +13780,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_week_unsupported_modes_fail_closed(): void {
 		$driver  = $this->create_driver();
 		$queries = array(
-			'SELECT WEEK(post_date, 3) AS week_num',
-			'SELECT WEEK(post_date, 7) AS week_num',
+			'SELECT WEEK(post_date, 8) AS week_num',
+			'SELECT WEEK(post_date, -1) AS week_num',
 			'SELECT WEEK(post_date, default_week_format) AS week_num',
 			'SELECT WEEK(post_date, 1 + 1) AS week_num',
 			'SELECT WEEK(post_date, 0, 1) AS week_num',
@@ -13702,7 +13807,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 
 		try {
-			$driver->query( 'SELECT WEEK(post_date, 3) AS week_num' );
+			$driver->query( 'SELECT WEEK(post_date, 8) AS week_num' );
 			$this->fail( 'Expected unsupported WEEK() mode to fail closed.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported MySQL WEEK() mode.', $e->getMessage() );
@@ -14487,6 +14592,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'http://example.net', $rows[0]->option_value );
+
+		$dual_tail_upsert = "INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+			VALUES ('siteurl', 'http://example.org', 'yes')
+			ON DUPLICATE KEY UPDATE `option_value` = (SELECT 'http://example.net/dual' FROM DUAL WHERE 1 = 1 ORDER BY 1 LIMIT 1)";
+
+		$this->assertSame( 1, $driver->query( $dual_tail_upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT \'http://example.net/dual\' WHERE 1 = 1 ORDER BY 1 LIMIT 1) AS text)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'http://example.net/dual', $rows[0]->option_value );
 	}
 
 	/**
@@ -14614,6 +14739,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
 				VALUES ('source_counts', 'ignored', 'ignored')
 				ON DUPLICATE KEY UPDATE `option_value` = (SELECT COUNT(missing) FROM `wptests_upsert_source`)",
+			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+				VALUES ('source_counts', 'ignored', 'ignored')
+				ON DUPLICATE KEY UPDATE `option_value` = (SELECT 'bad' FROM DUAL WHERE missing > 0)",
+			"INSERT INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
+				VALUES ('source_counts', 'ignored', 'ignored')
+				ON DUPLICATE KEY UPDATE `option_value` = (SELECT 'bad' FROM DUAL ORDER BY missing LIMIT 1)",
 		);
 
 		foreach ( $queries as $query ) {
@@ -17566,8 +17697,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'ALTER TABLE wptests_plugin_option_spacing ENGINE InnoDB',
 			'ALTER TABLE wptests_plugin_option_spacing ROW_FORMAT DYNAMIC',
 			'ALTER TABLE wptests_plugin_option_spacing DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+			'ALTER TABLE wptests_plugin_option_spacing DEFAULT CHAR SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+			'ALTER TABLE wptests_plugin_option_spacing CHAR SET utf8mb4',
 			'ALTER TABLE wptests_plugin_option_spacing DEFAULT CHARSET utf8mb4',
 			'ALTER TABLE wptests_plugin_option_spacing COLLATE utf8mb4_unicode_ci',
+			'ALTER TABLE wptests_plugin_option_spacing CONVERT TO CHAR SET utf8mb4 COLLATE utf8mb4_unicode_ci',
 			'ALTER TABLE wptests_plugin_option_spacing STATS_PERSISTENT DEFAULT',
 			'ALTER TABLE wptests_plugin_option_spacing ENGINE_ATTRIBUTE "{}"',
 		);
@@ -17585,7 +17719,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				'ALTER TABLE wptests_plugin_option_spacing
 					ENGINE InnoDB,
 					ADD COLUMN note varchar(20),
-					DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+					DEFAULT CHAR SET utf8mb4 COLLATE utf8mb4_unicode_ci'
 			)
 		);
 		$this->assertSame(
@@ -24190,6 +24324,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests emulated MySQL variables support explicit and implicit projection aliases.
+	 */
+	public function test_select_system_variables_support_mysql_projection_aliases_without_backend_queries(): void {
+		$driver = $this->create_driver();
+
+		$driver->set_sql_mode( 'IGNORE_SPACE' );
+
+		$rows = $driver->query( "SELECT @@SESSION.sql_mode AS mode, @@version version_alias, @@version_comment AS 'comment_alias'" );
+
+		$this->assertSame( 'IGNORE_SPACE', $rows[0]->mode );
+		$this->assertSame( '8.0.38', $rows[0]->version_alias );
+		$this->assertSame( 'MySQL Community Server - GPL', $rows[0]->comment_alias );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame(
+			array( 'mode', 'version_alias', 'comment_alias' ),
+			array_map(
+				static function ( $column ) {
+					return $column['name'];
+				},
+				$driver->get_last_column_meta()
+			)
+		);
+	}
+
+	/**
+	 * Tests unsupported MySQL variable SELECT alias forms fail before backend execution.
+	 */
+	public function test_unsupported_mysql_variable_select_aliases_do_not_reach_backend(): void {
+		$driver = $this->create_driver();
+
+		foreach (
+			array(
+				'SELECT @@sql_mode AS',
+				'SELECT @@sql_mode AS 1',
+				'SELECT @@sql_mode 1',
+				'SELECT @@sql_mode AS mode FROM DUAL',
+			) as $query
+		) {
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported MySQL variable SELECT statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL variable SELECT statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests WP-CLI/dump system-variable probes are selected from emulated state.
 	 */
 	public function test_wp_cli_dump_system_variable_probes_are_emulated_without_backend_queries(): void {
@@ -24246,6 +24429,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( 'SELECT @@sql_quote_show_create, @@pseudo_replica_mode' );
 		$this->assertSame( '0', $rows[0]->{'@@sql_quote_show_create'} );
 		$this->assertSame( '1', $rows[0]->{'@@pseudo_replica_mode'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests sql_warnings can be saved, changed, selected, and restored.
+	 */
+	public function test_sql_warnings_save_restore_flow_is_emulated_without_backend_queries(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame( 0, $driver->query( 'SET @old_sql_warnings = @@sql_warnings' ) );
+		$this->assertSame( 0, $driver->query( 'SET sql_warnings = ON' ) );
+
+		$rows = $driver->query( 'SELECT @old_sql_warnings AS saved_warnings, @@sql_warnings warning_state' );
+		$this->assertSame( '0', $rows[0]->saved_warnings );
+		$this->assertSame( '1', $rows[0]->warning_state );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$show = $driver->query( "SHOW VARIABLES WHERE Variable_name = 'sql_warnings'" );
+		$this->assertCount( 1, $show );
+		$this->assertSame( 'sql_warnings', $show[0]->Variable_name );
+		$this->assertSame( '1', $show[0]->Value );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$this->assertSame( 0, $driver->query( 'SET @@sql_warnings = @old_sql_warnings' ) );
+		$rows = $driver->query( 'SELECT @@sql_warnings warning_state' );
+		$this->assertSame( '0', $rows[0]->warning_state );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
@@ -25933,6 +26142,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 			case 2:
 				return $this->get_expected_mysql_sunday_week_mode_two_sql( $timestamp_sql );
+
+			case 3:
+				return $this->get_expected_mysql_iso_week_timestamp_sql( $timestamp_sql );
+
+			case 4:
+				return $this->get_expected_mysql_sunday_week_mode_four_sql( $timestamp_sql );
+
+			case 5:
+				return $this->get_expected_mysql_monday_week_mode_five_sql( $timestamp_sql );
+
+			case 6:
+				return $this->get_expected_mysql_sunday_week_mode_six_sql( $timestamp_sql );
+
+			case 7:
+				return $this->get_expected_mysql_monday_week_mode_seven_sql( $timestamp_sql );
 		}
 
 		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
@@ -26024,6 +26248,101 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 3).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_iso_week_timestamp_sql( string $timestamp_sql ): string {
+		return sprintf( "CAST(TO_CHAR(%s, 'IW') AS integer)", $timestamp_sql );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 4).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_sunday_week_mode_four_sql( string $timestamp_sql ): string {
+		$week_start_sql       = $this->get_expected_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_expected_mysql_first_sunday_four_day_week_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 5).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_monday_week_mode_five_sql( string $timestamp_sql ): string {
+		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_expected_mysql_first_monday_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 6).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_sunday_week_mode_six_sql( string $timestamp_sql ): string {
+		$week_start_sql          = $this->get_expected_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql          = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql    = $this->get_expected_mysql_first_sunday_four_day_week_of_year_sql( $year_start_sql );
+		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
+		$next_year_start_sql     = sprintf( "(%s + INTERVAL '1 year')", $year_start_sql );
+		$previous_first_week_sql = $this->get_expected_mysql_first_sunday_four_day_week_of_year_sql( $previous_year_start_sql );
+		$next_first_week_sql     = $this->get_expected_mysql_first_sunday_four_day_week_of_year_sql( $next_year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s >= %5$s THEN 1 WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$previous_first_week_sql,
+			$next_first_week_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 7).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_monday_week_mode_seven_sql( string $timestamp_sql ): string {
+		$week_start_sql          = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
+		$year_start_sql          = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql    = $this->get_expected_mysql_first_monday_of_year_sql( $year_start_sql );
+		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
+		$previous_first_week_sql = $this->get_expected_mysql_first_monday_of_year_sql( $previous_year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$previous_first_week_sql
+		);
+	}
+
+	/**
 	 * Get expected PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%X').
 	 *
 	 * @param string $timestamp_sql PostgreSQL timestamp expression.
@@ -26065,6 +26384,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	private function get_expected_mysql_first_sunday_of_year_sql( string $year_start_sql ): string {
 		return sprintf(
 			"(%1\$s + (MOD(7 - CAST(EXTRACT(DOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
+			$year_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for the first Sunday-start week with four days in a year.
+	 *
+	 * @param string $year_start_sql PostgreSQL timestamp expression for January 1.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_expected_mysql_first_sunday_four_day_week_of_year_sql( string $year_start_sql ): string {
+		$week_start_sql = $this->get_expected_mysql_sunday_week_start_sql( $year_start_sql );
+
+		return sprintf(
+			"(CASE WHEN EXTRACT(DOW FROM %1\$s) <= 3 THEN %2\$s ELSE %2\$s + INTERVAL '1 week' END)",
+			$year_start_sql,
+			$week_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for the first Monday in a year.
+	 *
+	 * @param string $year_start_sql PostgreSQL timestamp expression for January 1.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_expected_mysql_first_monday_of_year_sql( string $year_start_sql ): string {
+		return sprintf(
+			"(%1\$s + (MOD(8 - CAST(EXTRACT(ISODOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
 			$year_start_sql
 		);
 	}

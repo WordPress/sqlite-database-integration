@@ -986,6 +986,8 @@ class WP_PostgreSQL_Driver {
 			$query                     = $insert_select_query['sql'];
 			$dml_identity_repair_query = $insert_select_query;
 			$translated_for_postgresql = true;
+		} elseif ( ! $translated_for_postgresql && $this->is_unsupported_mysql_insert_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported INSERT statement.' );
 		}
 
 		$multi_target_update_query = $this->translate_mysql_multi_target_update_query( $query );
@@ -8688,10 +8690,10 @@ $wp_mysql_on_update$',
 		$fragment = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
 
 		$optional_assignment_option = '(?:ENGINE|ROW_FORMAT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)(?:\s*=\s*|\s+)\S';
-		$character_set_option       = '(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)(?:\s*=\s*|\s+)\S';
+		$character_set_option       = '(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHAR\s+SET|CHARSET|COLLATE)(?:\s*=\s*|\s+)\S';
 
 		return 1 === preg_match(
-			'/^(?:' . $optional_assignment_option . '|' . $character_set_option . '|CONVERT\s+TO\s+CHARACTER\s+SET\b|(?:DATA|INDEX)\s+DIRECTORY\b|TABLESPACE\b|UNION\s*=)/',
+			'/^(?:' . $optional_assignment_option . '|' . $character_set_option . '|CONVERT\s+TO\s+(?:CHARACTER\s+SET|CHAR\s+SET|CHARSET)\b|(?:DATA|INDEX)\s+DIRECTORY\b|TABLESPACE\b|UNION\s*=)/',
 			$fragment
 		);
 	}
@@ -21653,6 +21655,34 @@ WHERE option_name IN (
 			WP_MySQL_Lexer::SET_SYMBOL,
 			1,
 			$statement_end
+		);
+	}
+
+	/**
+	 * Check whether an INSERT statement contains unsupported clauses.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether this INSERT should fail before backend execution.
+	 */
+	private function is_unsupported_mysql_insert_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		return $this->contains_top_level_mysql_token(
+			$tokens,
+			1,
+			$statement_end,
+			array(
+				WP_MySQL_Lexer::PARTITION_SYMBOL,
+				WP_MySQL_Lexer::RETURNING_SYMBOL,
+			)
 		);
 	}
 
@@ -37559,13 +37589,99 @@ FROM (
 			);
 			$source_end     = $where_position ?? $tail_start;
 			if ( $from_position + 2 === $source_end && WP_MySQL_Lexer::DUAL_SYMBOL === ( $tokens[ $from_position + 1 ]->id ?? null ) ) {
-				if ( null !== $where_position ) {
+				$projection = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $from_position );
+				if ( null === $projection || 1 !== count( $projection ) ) {
 					return null;
 				}
-				$projection_end = $from_position;
-			} else {
-				$reference_position = $from_position + 1;
-				$reference          = $this->parse_mysql_main_database_table_reference( $tokens, $reference_position, $source_end );
+
+				if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $projection[0]['start'], $projection[0]['end'] ) ) {
+					return null;
+				}
+
+				$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+					$tokens,
+					$projection[0]['start'],
+					$projection[0]['end'],
+					$scope
+				);
+
+				$where_sql = '';
+				if ( null !== $where_position ) {
+					$where_end = $order_position ?? $limit_position ?? $select_end;
+					if (
+						$where_position + 1 >= $where_end
+						|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+						|| ! $this->mysql_expression_column_references_resolve_to_scope( $tokens, $where_position + 1, $where_end, $scope )
+					) {
+						return null;
+					}
+
+					$translated_where = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+						$tokens,
+						$where_position + 1,
+						$where_end,
+						$scope
+					);
+					$where_sql        = ' WHERE ' . $translated_where['sql'];
+				}
+
+				$order_sql = '';
+				if ( null !== $order_position ) {
+					$order_end   = $limit_position ?? $select_end;
+					$order_items = $this->split_top_level_mysql_arguments( $tokens, $order_position + 2, $order_end );
+					if ( null === $order_items || empty( $order_items ) ) {
+						return null;
+					}
+					foreach ( $order_items as $order_item ) {
+						$order_item_end = $order_item['end'];
+						if (
+							$order_item['start'] < $order_item_end
+							&& (
+								WP_MySQL_Lexer::ASC_SYMBOL === ( $tokens[ $order_item_end - 1 ]->id ?? null )
+								|| WP_MySQL_Lexer::DESC_SYMBOL === ( $tokens[ $order_item_end - 1 ]->id ?? null )
+							)
+						) {
+							--$order_item_end;
+						}
+						if (
+							$order_item['start'] >= $order_item_end
+							|| ! $this->mysql_expression_column_references_resolve_to_scope( $tokens, $order_item['start'], $order_item_end, $scope )
+						) {
+							return null;
+						}
+					}
+
+					$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
+						$tokens,
+						$order_position,
+						$order_end,
+						$scope
+					);
+					if ( null === $order_sql ) {
+						return null;
+					}
+				}
+
+				$limit_sql = '';
+				if ( null !== $limit_position ) {
+					if ( ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $select_end ) ) {
+						return null;
+					}
+
+					$limit_sql = $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $select_end );
+				}
+
+				return sprintf(
+					'(SELECT %s%s%s%s)',
+					$expression_sql['sql'],
+					$where_sql,
+					$order_sql,
+					$limit_sql
+				);
+			}
+
+			$reference_position = $from_position + 1;
+			$reference          = $this->parse_mysql_main_database_table_reference( $tokens, $reference_position, $source_end );
 				if ( null === $reference || $reference_position !== $source_end ) {
 					return null;
 				}
@@ -37663,9 +37779,9 @@ FROM (
 					$limit_sql
 				);
 			}
-		} else {
-			$projection_end = $select_end;
-		}
+			if ( null === $from_position ) {
+				$projection_end = $select_end;
+			}
 
 		$projection = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $projection_end );
 		if ( null === $projection || 1 !== count( $projection ) ) {
@@ -46014,7 +46130,7 @@ $wp_mysql_json_valid$'
 		}
 
 		$mode = $tokens[ $start ]->get_value();
-		if ( ! in_array( $mode, array( '0', '1', '2' ), true ) ) {
+		if ( ! in_array( $mode, array( '0', '1', '2', '3', '4', '5', '6', '7' ), true ) ) {
 			return null;
 		}
 
@@ -46040,6 +46156,21 @@ $wp_mysql_json_valid$'
 
 			case 2:
 				return $this->get_postgresql_mysql_sunday_week_mode_two_sql( $timestamp_sql );
+
+			case 3:
+				return $this->get_postgresql_mysql_iso_week_timestamp_sql( $timestamp_sql );
+
+			case 4:
+				return $this->get_postgresql_mysql_sunday_week_mode_four_sql( $timestamp_sql );
+
+			case 5:
+				return $this->get_postgresql_mysql_monday_week_mode_five_sql( $timestamp_sql );
+
+			case 6:
+				return $this->get_postgresql_mysql_sunday_week_mode_six_sql( $timestamp_sql );
+
+			case 7:
+				return $this->get_postgresql_mysql_monday_week_mode_seven_sql( $timestamp_sql );
 		}
 
 		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
@@ -46905,6 +47036,120 @@ $wp_mysql_json_valid$'
 	}
 
 	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 3).
+	 *
+	 * Mode 3 is ISO week numbering: Monday-first, range 1-53, and week 1
+	 * has four or more days in the week-year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_iso_week_timestamp_sql( string $timestamp_sql ): string {
+		return sprintf(
+			'CAST(TO_CHAR(%s, %s) AS integer)',
+			$timestamp_sql,
+			$this->connection->quote( 'IW' )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 4).
+	 *
+	 * Mode 4 is Sunday-first, returns 0-53, and week 1 has four or more
+	 * days in the calendar year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_sunday_week_mode_four_sql( string $timestamp_sql ): string {
+		$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 5).
+	 *
+	 * Mode 5 is Monday-first, returns 0-53, and week 1 starts with the
+	 * first Monday in the calendar year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_monday_week_mode_five_sql( string $timestamp_sql ): string {
+		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_postgresql_mysql_first_monday_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 6).
+	 *
+	 * Mode 6 is Sunday-first, returns 1-53, and week 1 has four or more
+	 * days in the week-year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_sunday_week_mode_six_sql( string $timestamp_sql ): string {
+		$week_start_sql          = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql          = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql    = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $year_start_sql );
+		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
+		$next_year_start_sql     = sprintf( "(%s + INTERVAL '1 year')", $year_start_sql );
+		$previous_first_week_sql = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $previous_year_start_sql );
+		$next_first_week_sql     = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $next_year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s >= %5$s THEN 1 WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$previous_first_week_sql,
+			$next_first_week_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 7).
+	 *
+	 * Mode 7 is Monday-first, returns 1-53, and week 1 starts with the
+	 * first Monday in the calendar year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_monday_week_mode_seven_sql( string $timestamp_sql ): string {
+		$week_start_sql          = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
+		$year_start_sql          = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql    = $this->get_postgresql_mysql_first_monday_of_year_sql( $year_start_sql );
+		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
+		$previous_first_week_sql = $this->get_postgresql_mysql_first_monday_of_year_sql( $previous_year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$previous_first_week_sql
+		);
+	}
+
+	/**
 	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%X').
 	 *
 	 * @param string $timestamp_sql PostgreSQL timestamp expression.
@@ -46946,6 +47191,35 @@ $wp_mysql_json_valid$'
 	private function get_postgresql_mysql_first_sunday_of_year_sql( string $year_start_sql ): string {
 		return sprintf(
 			"(%1\$s + (MOD(7 - CAST(EXTRACT(DOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
+			$year_start_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for the first Sunday-start week with four days in a year.
+	 *
+	 * @param string $year_start_sql PostgreSQL timestamp expression for January 1.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( string $year_start_sql ): string {
+		$week_start_sql = $this->get_postgresql_mysql_sunday_week_start_sql( $year_start_sql );
+
+		return sprintf(
+			"(CASE WHEN EXTRACT(DOW FROM %1\$s) <= 3 THEN %2\$s ELSE %2\$s + INTERVAL '1 week' END)",
+			$year_start_sql,
+			$week_start_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for the first Monday in a year.
+	 *
+	 * @param string $year_start_sql PostgreSQL timestamp expression for January 1.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_postgresql_mysql_first_monday_of_year_sql( string $year_start_sql ): string {
+		return sprintf(
+			"(%1\$s + (MOD(8 - CAST(EXTRACT(ISODOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
 			$year_start_sql
 		);
 	}
@@ -48007,8 +48281,25 @@ $wp_mysql_json_valid$'
 				throw new InvalidArgumentException( 'Unsupported MySQL variable SELECT statement.' );
 			}
 
-			$columns[]                   = $variable['display'];
-			$row[ $variable['display'] ] = $variable['value'];
+			$column = $variable['display'];
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+				$alias = $this->get_mysql_projection_alias_token_value( $tokens[ $position + 1 ] ?? null );
+				if ( null === $alias ) {
+					throw new InvalidArgumentException( 'Unsupported MySQL variable SELECT statement.' );
+				}
+
+				$column    = $alias;
+				$position += 2;
+			} else {
+				$implicit_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+				if ( null !== $implicit_alias ) {
+					$column = $implicit_alias;
+					++$position;
+				}
+			}
+
+			$columns[]       = $column;
+			$row[ $column ] = $variable['value'];
 
 			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
 				++$position;
