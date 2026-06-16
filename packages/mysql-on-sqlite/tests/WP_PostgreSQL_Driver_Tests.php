@@ -3953,6 +3953,79 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SELECT-sourced upserts allow constant non-key projections for AUTO_INCREMENT targets.
+	 */
+	public function test_insert_select_on_duplicate_key_update_with_auto_increment_target_allows_constant_value_expression(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`)
+			SELECT 7, 1 + 2 FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT 7, CAST(1 + 2 AS text) ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$update = "INSERT INTO `wptests_identity_upsert` (`id`, `value`)
+			SELECT 7, 5 + 6 FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT 7, CAST(5 + 6 AS text) ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->id );
+		$this->assertSame( '11', $rows[0]->value );
+	}
+
+	/**
+	 * Tests SELECT-sourced upserts still reject expression AUTO_INCREMENT projections.
+	 */
+	public function test_insert_select_on_duplicate_key_update_with_auto_increment_expression_target_returns_null(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
+			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_identity_upsert_table_with_mysql_metadata( $driver );
+
+		$upsert = "INSERT INTO `wptests_identity_upsert` (`id`, `value`)
+			SELECT 3 + 4, 'selected' FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertNull(
+			$this->translate_driver_query_data_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$upsert
+			)
+		);
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
 	 * Tests real SELECT-sourced upserts may omit AUTO_INCREMENT for non-AUTO_INCREMENT keys.
 	 */
 	public function test_insert_select_on_duplicate_key_update_omitting_auto_increment_target_uses_non_auto_unique_key(): void {
@@ -4364,6 +4437,47 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL inner joined UPDATE ... USING statements translate to PostgreSQL predicates.
+	 */
+	public function test_inner_join_update_using_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_using (
+				post_id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_joined_using_meta (
+				post_id INTEGER NOT NULL,
+				meta_key TEXT NOT NULL,
+				meta_value TEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_update_joined_using (post_id, status) VALUES (1, 'draft'), (2, 'draft')" );
+		$driver->query( "INSERT INTO wptests_update_joined_using_meta (post_id, meta_key, meta_value) VALUES (1, '_status', 'publish'), (2, '_other', 'private')" );
+
+		$update = "UPDATE wptests_update_joined_using AS p INNER JOIN wptests_update_joined_using_meta AS pm USING (post_id) SET p.status = pm.meta_value WHERE pm.meta_key = '_status'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 0, $driver->query( $update ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'UPDATE "wptests_update_joined_using" AS "p" SET "status" = pm.meta_value FROM "wptests_update_joined_using_meta" AS "pm" WHERE (p.post_id = pm.post_id) AND (pm.meta_key = \'_status\') AND ("p"."status" IS DISTINCT FROM (pm.meta_value))',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT post_id, status FROM wptests_update_joined_using ORDER BY post_id' );
+		$this->assertSame( 'publish', $rows[0]->status );
+		$this->assertSame( 'draft', $rows[1]->status );
+	}
+
+	/**
 	 * Tests unsupported multi-target UPDATE statements fail before backend execution.
 	 */
 	public function test_multi_target_update_fails_closed_before_backend_execution(): void {
@@ -4384,6 +4498,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		try {
 			$driver->query( 'UPDATE wptests_update_source AS s, wptests_update_target AS t SET t.value = s.value WHERE t.id = s.id' );
+			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests unsupported joined UPDATE variants fail before backend execution.
+	 */
+	public function test_unsupported_joined_update_shapes_fail_closed_before_backend_execution(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_right_source (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_right_target (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'UPDATE wptests_update_right_source AS s RIGHT JOIN wptests_update_right_target AS t ON t.id = s.id SET s.value = t.value' );
 			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
 		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
@@ -10973,6 +11115,48 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL key-maintenance ALTER clauses are supported no-ops.
+	 */
+	public function test_alter_table_key_maintenance_clauses_are_supported_noops(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_keys (
+				id int(11) NOT NULL,
+				status varchar(20) DEFAULT 'draft',
+				PRIMARY KEY (id),
+				KEY status (status)
+			)"
+		);
+
+		$columns_before = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_keys' );
+		$create_before  = $driver->query( 'SHOW CREATE TABLE wptests_plugin_keys' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE wptests_plugin_keys DISABLE KEYS, ENABLE KEYS' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( $columns_before, $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_keys' ) );
+
+		$create_after = $driver->query( 'SHOW CREATE TABLE wptests_plugin_keys' );
+		$this->assertSame( $create_before[0]->{'Create Table'}, $create_after[0]->{'Create Table'} );
+
+		$this->assertSame( 1, $driver->query( 'ALTER TABLE wptests_plugin_keys DISABLE KEYS, ADD COLUMN note varchar(20), ENABLE KEYS' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "wptests_plugin_keys" ADD COLUMN "note" varchar(20)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns_after = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_keys' );
+		$this->assertCount( 3, $columns_after );
+		$this->assertSame( 'note', $columns_after[2]['column_name'] );
+	}
+
+	/**
 	 * Tests ALTER TABLE AUTO_INCREMENT adjusts the SQLite-backed test sequence.
 	 */
 	public function test_alter_table_auto_increment_updates_sqlite_sequence(): void {
@@ -14273,6 +14457,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_show_index_accepts_current_database_qualification_forms(): void {
 		$cases = array(
 			'SHOW INDEX FROM wptests.wptests_options' => array( 'public', 'wptests_options' ),
+			'SHOW KEYS IN wptests_options' => array( 'public', 'wptests_options' ),
 			'SHOW INDEXES FROM wptests_options FROM wptests' => array( 'public', 'wptests_options' ),
 			"SHOW KEYS FROM wptests_options IN `wptests` WHERE Key_name = 'autoload'" => array( 'public', 'wptests_options', 'autoload' ),
 		);
@@ -14297,7 +14482,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_show_index_family_unsupported_syntax_does_not_reach_backend(): void {
 		$queries = array(
-			'SHOW KEYS IN wptests_options',
 			'SHOW KEYS FROM wptests_options WHERE Key_name LIKE autoload',
 			'SHOW KEYS FROM wptests_options LIMIT 1',
 		);

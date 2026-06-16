@@ -5031,6 +5031,15 @@ class WP_PostgreSQL_Driver {
 			return $this->translate_mysql_dbdelta_auto_increment_alter_action( $table_name, $auto_increment_value );
 		}
 
+		if ( $this->is_supported_mysql_dbdelta_keys_alter_action( $tokens, $start, $end ) ) {
+			return array(
+				'statements' => array(),
+				'metadata'   => array(
+					'operation' => 'noop',
+				),
+			);
+		}
+
 		if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
 			return array(
 				'statements' => array(),
@@ -6284,6 +6293,25 @@ class WP_PostgreSQL_Driver {
 			'/^(?:ENGINE|ROW_FORMAT|COMMENT)\s*=|^(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHARSET|COLLATE)\s*=|^CONVERT\s+TO\s+CHARACTER\s+SET\b/',
 			$fragment
 		);
+	}
+
+	/**
+	 * Check whether an ALTER action is a supported MySQL key-maintenance no-op.
+	 *
+	 * MySQL accepts these clauses around bulk data loads. PostgreSQL has no
+	 * equivalent table-level index toggle, so the compatible behavior is to
+	 * accept them explicitly without backend DDL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens Clause token stream.
+	 * @param int              $start  First action token.
+	 * @param int              $end    Final action token, exclusive.
+	 * @return bool Whether this key-maintenance clause can be safely ignored.
+	 */
+	private function is_supported_mysql_dbdelta_keys_alter_action( array $tokens, int $start, int $end ): bool {
+		return $start + 2 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			&& in_array( $tokens[ $start ]->id, array( WP_MySQL_Lexer::DISABLE_SYMBOL, WP_MySQL_Lexer::ENABLE_SYMBOL ), true )
+			&& WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[ $start + 1 ]->id;
 	}
 
 	/**
@@ -9138,7 +9166,13 @@ class WP_PostgreSQL_Driver {
 		}
 
 		++$position;
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id ) {
+		if (
+			! isset( $tokens[ $position ] )
+			|| (
+				WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $position ]->id
+			)
+		) {
 			throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
 		}
 
@@ -14336,7 +14370,11 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get a probe-safe literal row from a supported SELECT-sourced upsert.
+	 * Get a bounded literal row from a supported SELECT-sourced upsert.
+	 *
+	 * Conflict and identity decisions only consume probe-safe columns. Constant
+	 * expressions in other projections may be retained as translated SQL and
+	 * flagged as unsafe for probing.
 	 *
 	 * @param string           $table_name   Target table name.
 	 * @param string[]         $columns      Target column names.
@@ -14366,7 +14404,11 @@ WHERE option_name IN (
 		$values            = array();
 		$probe_safe_values = array();
 		foreach ( $projection_ranges as $index => $range ) {
-			if ( ! $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $range['start'], $range['end'] ) ) {
+			$probe_safe = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $range['start'], $range['end'] );
+			if (
+				! $probe_safe
+				&& ! $this->is_supported_mysql_upsert_literal_select_expression( $tokens, $range['start'], $range['end'] )
+			) {
 				return null;
 			}
 
@@ -14384,15 +14426,20 @@ WHERE option_name IN (
 					null
 				);
 				if ( null !== $coerced_sql ) {
-					if ( ! in_array( strtoupper( trim( $coerced_sql ) ), array( 'DEFAULT', 'NULL' ), true ) ) {
-						return null;
-					}
 					$projection_sql = $coerced_sql;
+				}
+
+				if (
+					! $probe_safe
+					&& $this->is_mysql_auto_increment_column_metadata( $column_metadata )
+					&& ! $this->is_mysql_generated_auto_increment_value_sql( $projection_sql )
+				) {
+					return null;
 				}
 			}
 
 			$values[]            = $projection_sql;
-			$probe_safe_values[] = true;
+			$probe_safe_values[] = $probe_safe;
 		}
 
 		return array(
@@ -14544,6 +14591,38 @@ WHERE option_name IN (
 			),
 			true
 		);
+	}
+
+	/**
+	 * Check whether a SELECT-sourced upsert projection is a bounded constant expression.
+	 *
+	 * These expressions may be translated into the final INSERT ... SELECT, but
+	 * they are not safe for conflict preflight probes.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First value token position, inclusive.
+	 * @param int             $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is a supported constant expression.
+	 */
+	private function is_supported_mysql_upsert_literal_select_expression( array $tokens, int $start, int $end ): bool {
+		if ( $start >= $end ) {
+			return false;
+		}
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if (
+				null !== $this->get_mysql_identifier_token_value( $tokens[ $position ] )
+				|| in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::COMMA_SYMBOL, WP_MySQL_Lexer::DOT_SYMBOL ), true )
+			) {
+				return false;
+			}
+
+			if ( ! $this->is_supported_simple_mysql_expression_token( $tokens[ $position ] ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -17237,18 +17316,18 @@ WHERE option_name IN (
 		);
 	}
 
-		/**
-		 * Translate supported MySQL joined and multi-source UPDATE statements.
-		 *
-		 * PostgreSQL UPDATE ... FROM can represent MySQL single-target UPDATE
-		 * statements whose extra table references only qualify the target rows.
-		 * Assignments to any non-target table, outer joins, USING joins, and
-		 * ordered/limited joined updates remain unsupported.
-		 *
-		 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
-		 * @param int              $statement_end Final statement token, exclusive.
-		 * @return string|null PostgreSQL query, or null when unsupported.
-		 */
+	/**
+	 * Translate supported MySQL joined and multi-source UPDATE statements.
+	 *
+	 * PostgreSQL UPDATE ... FROM can represent MySQL single-target UPDATE
+	 * statements whose extra table references only qualify the target rows.
+	 * Assignments to any non-target table, outer joins, NATURAL/RIGHT joins,
+	 * and ordered/limited joined updates remain unsupported.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token, exclusive.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
 	private function translate_mysql_inner_join_update_query( array $tokens, int $statement_end ): ?string {
 		$set_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SET_SYMBOL, 1, $statement_end );
 		if ( null === $set_position ) {
@@ -17264,19 +17343,22 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$table_name             = $target_reference['table'];
-		$alias                  = $target_reference['alias'];
-		$target_reference_alias = null === $alias ? $table_name : $alias;
-		$scope                  = $this->get_mysql_single_table_scope( $table_name, $alias );
-		$from_parts             = array();
-		$join_predicates        = array();
+		$table_name              = $target_reference['table'];
+		$alias                   = $target_reference['alias'];
+		$target_reference_alias  = null === $alias ? $table_name : $alias;
+		$scope                   = $this->get_mysql_single_table_scope( $table_name, $alias );
+		$from_parts              = array();
+		$join_predicates         = array();
+		$current_join_left_alias = $target_reference_alias;
 
 		while ( $position < $set_position ) {
 			if ( WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
 				++$position;
-				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts ) ) {
+				$source_alias = null;
+				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts, $source_alias ) ) {
 					return null;
 				}
+				$current_join_left_alias = $source_alias;
 				continue;
 			}
 
@@ -17288,7 +17370,8 @@ WHERE option_name IN (
 					$set_position,
 					$scope,
 					$from_parts,
-					$join_predicates
+					$join_predicates,
+					$current_join_left_alias
 				)
 			) {
 				return null;
@@ -17351,24 +17434,26 @@ WHERE option_name IN (
 		);
 	}
 
-		/**
-		 * Append a joined UPDATE source table to the UPDATE ... FROM list.
-		 *
-		 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
-		 * @param int              $position   Current source table position, updated on success.
-		 * @param int              $end        Final UPDATE table-reference-list token, exclusive.
-		 * @param array            $scope      Statement table scope, mutated on success.
-		 * @param string[]         $from_parts PostgreSQL FROM items, mutated on success.
-		 * @return bool Whether a table source was appended.
-		 */
-	private function append_mysql_joined_update_source_table( array $tokens, int &$position, int $end, array &$scope, array &$from_parts ): bool {
+	/**
+	 * Append a joined UPDATE source table to the UPDATE ... FROM list.
+	 *
+	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
+	 * @param int              $position       Current source table position, updated on success.
+	 * @param int              $end            Final UPDATE table-reference-list token, exclusive.
+	 * @param array            $scope          Statement table scope, mutated on success.
+	 * @param string[]         $from_parts     PostgreSQL FROM items, mutated on success.
+	 * @param string|null      $appended_alias Joined table alias, mutated on success.
+	 * @return bool Whether a table source was appended.
+	 */
+	private function append_mysql_joined_update_source_table( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, ?string &$appended_alias ): bool {
 		$joined_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $end );
 		if ( null === $joined_reference ) {
 			return false;
 		}
 
-		$joined_alias = strtolower( null === $joined_reference['alias'] ? $joined_reference['table'] : $joined_reference['alias'] );
-		if ( isset( $scope['aliases'][ $joined_alias ] ) ) {
+		$joined_alias     = null === $joined_reference['alias'] ? $joined_reference['table'] : $joined_reference['alias'];
+		$joined_alias_key = strtolower( $joined_alias );
+		if ( isset( $scope['aliases'][ $joined_alias_key ] ) ) {
 			return false;
 		}
 
@@ -17377,29 +17462,31 @@ WHERE option_name IN (
 			'table'  => $joined_reference['table'],
 		);
 
-		$scope['tables'][]                 = $joined_table;
-		$scope['aliases'][ $joined_alias ] = $joined_table;
+		$scope['tables'][]                     = $joined_table;
+		$scope['aliases'][ $joined_alias_key ] = $joined_table;
 
 		$from_parts[] = $this->get_postgresql_dml_table_reference_sql(
 			$joined_reference['table'],
 			$joined_reference['alias']
 		);
+		$appended_alias = $joined_alias;
 
 		return true;
 	}
 
-		/**
-		 * Append a joined UPDATE inner join source and ON predicate.
-		 *
-		 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
-		 * @param int              $position        Current join separator position, updated on success.
-		 * @param int              $end             Final UPDATE table-reference-list token, exclusive.
-		 * @param array            $scope           Statement table scope, mutated on success.
-		 * @param string[]         $from_parts      PostgreSQL FROM items, mutated on success.
-		 * @param string[]         $join_predicates PostgreSQL join predicates, mutated on success.
-		 * @return bool Whether an inner join source was appended.
-		 */
-	private function append_mysql_joined_update_inner_join( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, array &$join_predicates ): bool {
+	/**
+	 * Append a joined UPDATE inner join source and ON/USING predicate.
+	 *
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $position        Current join separator position, updated on success.
+	 * @param int              $end             Final UPDATE table-reference-list token, exclusive.
+	 * @param array            $scope           Statement table scope, mutated on success.
+	 * @param string[]         $from_parts      PostgreSQL FROM items, mutated on success.
+	 * @param string[]         $join_predicates PostgreSQL join predicates, mutated on success.
+	 * @param string           $left_alias      Alias for the joined table expression's left side, mutated on success.
+	 * @return bool Whether an inner join source was appended.
+	 */
+	private function append_mysql_joined_update_inner_join( array $tokens, int &$position, int $end, array &$scope, array &$from_parts, array &$join_predicates, string &$left_alias ): bool {
 		if ( WP_MySQL_Lexer::INNER_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
 			++$position;
 		}
@@ -17409,31 +17496,59 @@ WHERE option_name IN (
 		}
 		++$position;
 
-		if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $end, $scope, $from_parts ) ) {
+		$joined_alias = null;
+		if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $end, $scope, $from_parts, $joined_alias ) ) {
 			return false;
 		}
 
-		if ( WP_MySQL_Lexer::ON_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+		if ( WP_MySQL_Lexer::ON_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$predicate_start = $position + 1;
+			$predicate_end   = $this->find_mysql_join_separator( $tokens, $predicate_start, $end ) ?? $end;
+			if (
+				$predicate_start >= $predicate_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $predicate_start, $predicate_end )
+			) {
+				return false;
+			}
+
+			$predicate_sql     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$predicate_start,
+				$predicate_end,
+				$scope
+			);
+			$join_predicates[] = $predicate_sql['sql'];
+			$position          = $predicate_end;
+			$left_alias        = $joined_alias;
+
+			return true;
+		}
+
+		if ( WP_MySQL_Lexer::USING_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
 			return false;
 		}
 
-		$predicate_start = $position + 1;
-		$predicate_end   = $this->find_mysql_join_separator( $tokens, $predicate_start, $end ) ?? $end;
-		if (
-			$predicate_start >= $predicate_end
-			|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $predicate_start, $predicate_end )
-		) {
+		$using_position = $position + 1;
+		$using_columns  = $this->parse_mysql_identifier_list( $tokens, $using_position );
+		if ( null === $using_columns ) {
 			return false;
 		}
 
-		$predicate_sql     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
-			$tokens,
-			$predicate_start,
-			$predicate_end,
-			$scope
-		);
-		$join_predicates[] = $predicate_sql['sql'];
-		$position          = $predicate_end;
+		foreach ( $using_columns as $using_column ) {
+			$left_alias_sql    = $this->translate_mysql_identifier_value_to_postgresql( $left_alias );
+			$joined_alias_sql  = $this->translate_mysql_identifier_value_to_postgresql( $joined_alias );
+			$using_column_sql  = $this->translate_mysql_identifier_value_to_postgresql( $using_column );
+			$join_predicates[] = sprintf(
+				'%s.%s = %s.%s',
+				$left_alias_sql,
+				$using_column_sql,
+				$joined_alias_sql,
+				$using_column_sql
+			);
+		}
+
+		$position   = $using_position;
+		$left_alias = $joined_alias;
 
 		return true;
 	}
@@ -17464,14 +17579,14 @@ WHERE option_name IN (
 		);
 	}
 
-		/**
-		 * Check whether a position starts a supported inner join separator.
-		 *
-		 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-		 * @param int              $position Candidate token position.
-		 * @param int              $end      Final token position, exclusive.
-		 * @return bool Whether the separator is JOIN or INNER JOIN.
-		 */
+	/**
+	 * Check whether a position starts a supported inner join separator.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Candidate token position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return bool Whether the separator is JOIN or INNER JOIN.
+	 */
 	private function is_mysql_supported_inner_join_separator_at( array $tokens, int $position, int $end ): bool {
 		if ( $position >= $end ) {
 			return false;
