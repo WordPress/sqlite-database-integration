@@ -14178,7 +14178,11 @@ WHERE option_name IN (
 
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 3, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 3, $statement_end );
-		if ( null !== $order_position || null !== $limit_position ) {
+		if (
+			( null !== $order_position && $order_position < $where_position )
+			|| ( null !== $limit_position && $limit_position < $where_position )
+			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
+		) {
 			return null;
 		}
 
@@ -14212,23 +14216,53 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$where_end = $order_position ?? $limit_position ?? $statement_end;
+		if ( $where_position + 1 >= $where_end ) {
+			return null;
+		}
+
 		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 			$tokens,
 			$where_position + 1,
-			$statement_end,
+			$where_end,
 			$scope
 		);
+
+		$order_sql = '';
+		if ( null !== $order_position ) {
+			$order_end = $limit_position ?? $statement_end;
+			$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
+				$tokens,
+				$order_position,
+				$order_end,
+				$target_ref['table'],
+				$target_alias
+			);
+			if ( null === $order_sql ) {
+				return null;
+			}
+		}
+
+		$limit_sql = '';
+		if ( null !== $limit_position ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+			if ( null === $limit_sql ) {
+				return null;
+			}
+		}
 
 		$target_alias_sql = $this->connection->quote_identifier( $target_alias );
 
 		return sprintf(
-			'DELETE FROM %s AS %s WHERE %s.ctid IN (SELECT %s.ctid FROM %s WHERE %s)',
+			'DELETE FROM %s AS %s WHERE %s.ctid IN (SELECT %s.ctid FROM %s WHERE %s%s%s)',
 			$this->connection->quote_identifier( $target_ref['table'] ),
 			$target_alias_sql,
 			$target_alias_sql,
 			$target_alias_sql,
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 3, $where_position ),
-			$where_sql['sql']
+			$where_sql['sql'],
+			$order_sql,
+			$limit_sql
 		);
 	}
 

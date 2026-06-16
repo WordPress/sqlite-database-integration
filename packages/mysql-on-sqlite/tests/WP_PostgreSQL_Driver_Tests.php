@@ -5654,14 +5654,58 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined DELETE ORDER BY/LIMIT clauses are applied inside the ctid subquery.
+	 */
+	public function test_mysql_join_delete_order_by_limit_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE d FROM wptests_delete_limited d
+			JOIN wptests_related r ON r.id = d.related_id
+			WHERE d.status = 'old'
+			ORDER BY d.id DESC
+			LIMIT 1";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_limited" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM wptests_delete_limited d JOIN wptests_related r ON r.id = d.related_id WHERE d.status = \'old\' ORDER BY d.id DESC LIMIT 1)',
+			$sql
+		);
+	}
+
+	/**
+	 * Tests joined DELETE supports MySQL LIMIT offset,count syntax.
+	 */
+	public function test_mysql_join_delete_limit_offset_count_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE d FROM wptests_delete_limited d
+			JOIN wptests_related r ON r.id = d.related_id
+			WHERE d.status = 'old'
+			ORDER BY d.id ASC
+			LIMIT 2, 3";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_limited" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM wptests_delete_limited d JOIN wptests_related r ON r.id = d.related_id WHERE d.status = \'old\' ORDER BY d.id ASC LIMIT 3 OFFSET 2)',
+			$sql
+		);
+	}
+
+	/**
 	 * Tests unsupported DELETE shapes fail before backend execution.
 	 */
 	public function test_unsupported_delete_shapes_fail_closed_before_backend(): void {
 		$queries = array(
-			"DELETE d FROM wptests_delete d
-				JOIN wptests_related r ON r.id = d.related_id
-				WHERE d.status = 'old'
-				ORDER BY d.id LIMIT 1",
 			"DELETE d, r FROM wptests_delete d
 				JOIN wptests_related r ON r.id = d.related_id
 				WHERE d.status = 'old'
