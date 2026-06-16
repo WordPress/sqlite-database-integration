@@ -861,6 +861,8 @@ class WP_PostgreSQL_Driver {
 			$query                     = $replace_query['sql'];
 			$dml_identity_repair_query = $replace_query;
 			$translated_for_postgresql = true;
+		} elseif ( $this->is_mysql_replace_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported REPLACE statement.' );
 		}
 
 		$insert_query = $this->translate_simple_mysql_insert_query( $query );
@@ -868,6 +870,8 @@ class WP_PostgreSQL_Driver {
 			$query                     = $insert_query['sql'];
 			$dml_identity_repair_query = $insert_query;
 			$translated_for_postgresql = true;
+		} elseif ( ! $translated_for_postgresql && $this->is_unsupported_mysql_insert_set_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported INSERT statement.' );
 		}
 
 		$insert_select_query = $this->translate_simple_mysql_insert_select_query( $query );
@@ -17384,6 +17388,42 @@ WHERE option_name IN (
 			'value_rows'       => $value_rows,
 			'ignore'           => $ignore,
 			'inserted_new_row' => true,
+		);
+	}
+
+	/**
+	 * Check whether a query is a MySQL REPLACE statement.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query starts with REPLACE.
+	 */
+	private function is_mysql_replace_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0] ) && WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[0]->id;
+	}
+
+	/**
+	 * Check whether an unsupported INSERT ... SET query was not translated.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query is an INSERT ... SET shape.
+	 */
+	private function is_unsupported_mysql_insert_set_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return false;
+		}
+
+		return null !== $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::SET_SYMBOL,
+			1,
+			$statement_end
 		);
 	}
 

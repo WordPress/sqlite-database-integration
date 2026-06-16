@@ -285,6 +285,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported INSERT ... SET shapes fail before backend execution.
+	 */
+	public function test_unsupported_insert_set_shapes_fail_closed_before_backend(): void {
+		$queries = array(
+			'INSERT INTO wptests_insert_set SET id = 1, id = 2',
+			'INSERT INTO wptests_insert_set SET wptests_insert_set.id = 1',
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported INSERT statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported INSERT statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests non-strict INSERT statements append metadata-derived NOT NULL defaults.
 	 */
 	public function test_non_strict_insert_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
@@ -1683,6 +1705,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
+	}
+
+	/**
+	 * Tests unsupported REPLACE shapes fail before backend execution.
+	 */
+	public function test_unsupported_replace_shapes_fail_closed_before_backend(): void {
+		$queries = array(
+			"REPLACE LOW_PRIORITY INTO wptests_posts (`post_name`, `post_status`) VALUES ('hello-world', 'publish')",
+			"REPLACE INTO wptests_posts SET post_name = 'hello-world', post_name = 'duplicate'",
+		);
+
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported REPLACE statement.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported REPLACE statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
 	}
 
 	/**
