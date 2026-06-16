@@ -28841,7 +28841,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
 					WP_MySQL_Lexer::SELECT_SYMBOL,
 					WP_MySQL_Lexer::UNION_SYMBOL,
-					WP_MySQL_Lexer::WHERE_SYMBOL,
 				)
 			)
 		) {
@@ -28855,12 +28854,22 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$select_end
 		);
 		if ( null !== $from_position ) {
-			if ( $from_position + 2 === $select_end && WP_MySQL_Lexer::DUAL_SYMBOL === ( $tokens[ $from_position + 1 ]->id ?? null ) ) {
+			$where_position = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+				$from_position + 1,
+				$select_end
+			);
+			$source_end     = $where_position ?? $select_end;
+			if ( $from_position + 2 === $source_end && WP_MySQL_Lexer::DUAL_SYMBOL === ( $tokens[ $from_position + 1 ]->id ?? null ) ) {
+				if ( null !== $where_position ) {
+					return null;
+				}
 				$projection_end = $from_position;
 			} else {
 				$reference_position = $from_position + 1;
-				$reference          = $this->parse_mysql_main_database_table_reference( $tokens, $reference_position, $select_end );
-				if ( null === $reference || $reference_position !== $select_end ) {
+				$reference          = $this->parse_mysql_main_database_table_reference( $tokens, $reference_position, $source_end );
+				if ( null === $reference || $reference_position !== $source_end ) {
 					return null;
 				}
 
@@ -28869,21 +28878,43 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					return null;
 				}
 
-				$projection_sql = $this->get_mysql_upsert_count_subquery_projection_sql(
+				$subquery_scope = $this->get_mysql_single_table_scope( $reference['table'], $reference['alias'] );
+				$projection_sql = $this->get_mysql_upsert_table_scalar_subquery_projection_sql(
 					$tokens,
 					$projection[0]['start'],
 					$projection[0]['end'],
 					$reference['table'],
-					$reference['alias']
+					$reference['alias'],
+					$subquery_scope
 				);
 				if ( null === $projection_sql ) {
 					return null;
 				}
 
+				$where_sql = '';
+				if ( null !== $where_position ) {
+					if (
+						$where_position + 1 >= $select_end
+						|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $select_end )
+						|| ! $this->mysql_expression_column_references_resolve_to_scope( $tokens, $where_position + 1, $select_end, $subquery_scope )
+					) {
+						return null;
+					}
+
+					$translated_where = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+						$tokens,
+						$where_position + 1,
+						$select_end,
+						$subquery_scope
+					);
+					$where_sql        = ' WHERE ' . $translated_where['sql'];
+				}
+
 				return sprintf(
-					'(SELECT %s FROM %s)',
+					'(SELECT %s FROM %s%s)',
 					$projection_sql,
-					$this->get_postgresql_dml_table_reference_sql( $reference['table'], $reference['alias'] )
+					$this->get_postgresql_dml_table_reference_sql( $reference['table'], $reference['alias'] ),
+					$where_sql
 				);
 			}
 		} else {
@@ -28910,6 +28941,35 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'(SELECT %s)',
 			$expression_sql['sql']
 		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a supported table-backed scalar subquery projection.
+	 *
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      First projection token.
+	 * @param int              $end        Final projection token, exclusive.
+	 * @param string           $table_name Subquery source table name.
+	 * @param string|null      $alias      Optional subquery source alias.
+	 * @param array            $scope      Subquery source table scope.
+	 * @return string|null PostgreSQL projection SQL, or null when unsupported.
+	 */
+	private function get_mysql_upsert_table_scalar_subquery_projection_sql( array $tokens, int $start, int $end, string $table_name, ?string $alias, array $scope ): ?string {
+		$count_sql = $this->get_mysql_upsert_count_subquery_projection_sql( $tokens, $start, $end, $table_name, $alias );
+		if ( null !== $count_sql ) {
+			return $count_sql;
+		}
+
+		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
+		if (
+			null === $reference
+			|| $reference['end'] !== $end
+			|| null === $this->get_mysql_column_type_for_reference( $reference, $scope )
+		) {
+			return null;
+		}
+
+		return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $reference['start'], $reference['end'] );
 	}
 
 	/**
@@ -32402,6 +32462,44 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			if ( ! $this->is_supported_simple_mysql_expression_token( $tokens[ $i ] ) ) {
 				return false;
 			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check that identifier references in a simple expression resolve to scope columns.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @param array            $scope  Statement table scope.
+	 * @return bool Whether all column-like references resolve to the supplied scope.
+	 */
+	private function mysql_expression_column_references_resolve_to_scope( array $tokens, int $start, int $end, array $scope ): bool {
+		for ( $position = $start; $position < $end; $position++ ) {
+			if ( $this->is_mysql_qualified_reference_suffix_position( $tokens, $position, $start ) ) {
+				continue;
+			}
+
+			if ( null === $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null ) ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null ) ) {
+				continue;
+			}
+
+			$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+			if ( null === $reference ) {
+				continue;
+			}
+
+			if ( null === $this->get_mysql_column_type_for_reference( $reference, $scope ) ) {
+				return false;
+			}
+
+			$position = $reference['end'] - 1;
 		}
 
 		return true;
