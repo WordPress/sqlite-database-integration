@@ -4180,6 +4180,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests DROP TABLE accepts MySQL RESTRICT/CASCADE suffixes as no-ops.
+	 */
+	public function test_drop_table_accepts_restrict_and_cascade_suffixes_as_noops(): void {
+		foreach ( array( 'RESTRICT', 'CASCADE' ) as $suffix ) {
+			$driver     = $this->create_driver();
+			$table_name = 'wptests_drop_table_' . strtolower( $suffix );
+
+			$driver->query( sprintf( 'CREATE TABLE %s (id int NOT NULL, PRIMARY KEY (id))', $table_name ) );
+			$driver->store_mysql_schema_metadata( sprintf( 'CREATE TABLE %s (id int NOT NULL, PRIMARY KEY (id))', $table_name ) );
+
+			$this->assertNotSame( array(), $this->get_mysql_column_metadata_rows( $driver, $table_name ) );
+			$this->assertSame( 0, $driver->query( sprintf( 'DROP TABLE %s %s', $table_name, $suffix ) ) );
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => sprintf( 'DROP TABLE "%s"', $table_name ),
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries()
+			);
+
+			$this->assertFalse( $this->sqlite_table_exists( $driver, 'main', $table_name ) );
+			$this->assertSame( array(), $this->get_mysql_column_metadata_rows( $driver, $table_name ) );
+		}
+	}
+
+	/**
 	 * Tests unsupported standalone index DDL fails before backend execution.
 	 */
 	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
@@ -16666,6 +16694,60 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports scalar subqueries inside expressions.
+	 */
+	public function test_options_upsert_scalar_subquery_inside_expression_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_upsert_subquery_expr (
+				id INTEGER PRIMARY KEY,
+				counter INTEGER NOT NULL,
+				bonus INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_subquery_expr (
+				id int(11) NOT NULL,
+				counter int(11) NOT NULL DEFAULT 3,
+				bonus int(11) NOT NULL DEFAULT 2,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_upsert_subquery_expr_source (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_subquery_expr_source (
+				id int(11) NOT NULL,
+				label varchar(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_upsert_subquery_expr (id, counter, bonus) VALUES (1, 9, 5)' );
+		$driver->query( "INSERT INTO wptests_upsert_subquery_expr_source (id, label) VALUES (1, 'one'), (2, 'two'), (3, 'three')" );
+
+		$upsert = 'INSERT INTO `wptests_upsert_subquery_expr` (`id`, `counter`, `bonus`)
+			VALUES (1, 4, 8)
+			ON DUPLICATE KEY UPDATE `counter` = (SELECT COUNT(*) FROM `wptests_upsert_subquery_expr_source` WHERE `id` > 1) + VALUES(`counter`) + DEFAULT(`bonus`)';
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_subquery_expr" ("id", "counter", "bonus") VALUES (1, 4, 8) ON CONFLICT ("id") DO UPDATE SET "counter" = (SELECT COUNT(*) FROM "wptests_upsert_subquery_expr_source" WHERE "id" > 1) + excluded."counter" + \'2\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT counter, bonus FROM wptests_upsert_subquery_expr WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '8', $rows[0]->counter );
+		$this->assertSame( '5', $rows[0]->bonus );
+	}
+
+	/**
 	 * Tests unsupported table-backed scalar subquery shapes fail closed.
 	 */
 	public function test_options_upsert_unsupported_table_backed_subquery_assignment_fails_closed(): void {
@@ -22080,13 +22162,47 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW PROCESSLIST supports MySQL-style WHERE and LIMIT clauses.
+	 */
+	public function test_show_processlist_where_and_limit_clauses_filter_current_session_row(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( "SHOW PROCESSLIST WHERE Command = 'Query' AND Time + 1 = 1 LIMIT 1" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'root', $rows[0]->User );
+		$this->assertSame( 'Query', $rows[0]->Command );
+		$this->assertSame( array( 'Id', 'User', 'Host', 'db', 'Command', 'Time', 'State', 'Info' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$matching_info = $driver->query( "SHOW PROCESSLIST WHERE Info LIKE 'SHOW PROCESSLIST WHERE Info%'" );
+		$this->assertCount( 1, $matching_info );
+		$this->assertStringStartsWith( 'SHOW PROCESSLIST WHERE Info', $matching_info[0]->Info );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$case_sensitive_command = $driver->query( "SHOW PROCESSLIST WHERE BINARY Command = 'query'" );
+		$this->assertSame( array(), $case_sensitive_command );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$limited_assoc = $driver->query( 'SHOW PROCESSLIST LIMIT 0, 1', PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $limited_assoc );
+		$this->assertSame( 'root', $limited_assoc[0]['User'] );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$offset_past_current_row = $driver->query( 'SHOW PROCESSLIST LIMIT 1 OFFSET 1' );
+		$this->assertSame( array(), $offset_past_current_row );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
 	 * Tests unsupported SHOW PROCESSLIST clauses fail before backend execution.
 	 */
 	public function test_unsupported_show_processlist_clauses_fail_closed(): void {
 		$queries = array(
-			"SHOW PROCESSLIST WHERE Command = 'Query'",
-			'SHOW PROCESSLIST LIMIT 1',
 			'SHOW GLOBAL PROCESSLIST',
+			"SHOW PROCESSLIST WHERE Unknown = 'Query'",
+			'SHOW PROCESSLIST LIMIT bad',
+			"SHOW PROCESSLIST WHERE Command = 'Query' ORDER BY Id",
 		);
 
 		foreach ( $queries as $query ) {

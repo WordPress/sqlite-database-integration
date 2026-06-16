@@ -10770,6 +10770,17 @@ $wp_mysql_on_update$',
 				break;
 			}
 
+			if (
+				isset( $tokens[ $position ] )
+				&& (
+					WP_MySQL_Lexer::RESTRICT_SYMBOL === $tokens[ $position ]->id
+					|| WP_MySQL_Lexer::CASCADE_SYMBOL === $tokens[ $position ]->id
+				)
+				&& $position + 1 === $statement_end
+			) {
+				break;
+			}
+
 			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
 				throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
 			}
@@ -12840,10 +12851,59 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Parse a MySQL SHOW LIMIT clause.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position LIMIT token position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{offset:int,count:int}|null Parsed LIMIT clause, or null when unsupported.
+	 */
+	private function get_mysql_show_limit_clause( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $position ]->id
+			|| ! $this->is_mysql_show_limit_number_token( $tokens[ $position + 1 ] )
+		) {
+			return null;
+		}
+
+		if ( $position + 2 === $end ) {
+			return array(
+				'offset' => 0,
+				'count'  => (int) $tokens[ $position + 1 ]->get_value(),
+			);
+		}
+
+		if (
+			$position + 4 !== $end
+			|| ! isset( $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
+			|| ! $this->is_mysql_show_limit_number_token( $tokens[ $position + 3 ] )
+		) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position + 2 ]->id ) {
+			return array(
+				'offset' => (int) $tokens[ $position + 1 ]->get_value(),
+				'count'  => (int) $tokens[ $position + 3 ]->get_value(),
+			);
+		}
+
+		if ( WP_MySQL_Lexer::OFFSET_SYMBOL === $tokens[ $position + 2 ]->id ) {
+			return array(
+				'offset' => (int) $tokens[ $position + 3 ]->get_value(),
+				'count'  => (int) $tokens[ $position + 1 ]->get_value(),
+			);
+		}
+
+		return null;
+	}
+
+	/**
 	 * Parse a supported MySQL SHOW PROCESSLIST statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{full: bool}|null SHOW PROCESSLIST options, or null when this is not SHOW PROCESSLIST.
+	 * @return array{full: bool, where_filter?: array|null, limit?: array{offset:int,count:int}|null}|null SHOW PROCESSLIST options, or null when this is not SHOW PROCESSLIST.
 	 */
 	private function get_show_processlist_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -12873,12 +12933,53 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
-		if ( ! $this->is_at_mysql_query_end( $tokens, $position + 1 ) ) {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position + 1 );
+		if ( null === $statement_end ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW PROCESSLIST statement.' );
 		}
 
+		++$position;
+		$where_filter    = null;
+		$limit           = null;
+		$allowed_columns = array(
+			'id'      => 'Id',
+			'user'    => 'User',
+			'host'    => 'Host',
+			'db'      => 'db',
+			'command' => 'Command',
+			'time'    => 'Time',
+			'state'   => 'State',
+			'info'    => 'Info',
+		);
+		$numeric_columns = array( 'Id', 'Time' );
+
+		if ( $position < $statement_end && WP_MySQL_Lexer::WHERE_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $position + 1, $statement_end );
+			$where_end      = null === $limit_position ? $statement_end : $limit_position;
+			$where_filter   = $this->get_mysql_show_where_expression_filter_until(
+				$tokens,
+				$position,
+				$where_end,
+				$allowed_columns,
+				$numeric_columns
+			);
+			if ( null === $where_filter ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW PROCESSLIST statement.' );
+			}
+			$position = $where_end;
+		}
+
+		if ( $position < $statement_end ) {
+			$limit = $this->get_mysql_show_limit_clause( $tokens, $position, $statement_end );
+			if ( null === $limit ) {
+				throw new InvalidArgumentException( 'Unsupported SHOW PROCESSLIST statement.' );
+			}
+		}
+
 		return array(
-			'full' => $is_full,
+			'full'         => $is_full,
+			'where_filter' => $where_filter,
+			'limit'        => $limit,
 		);
 	}
 
@@ -12944,9 +13045,33 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
+		return $this->get_mysql_show_where_expression_filter_until(
+			$tokens,
+			$position,
+			$statement_end,
+			$allowed_columns,
+			$numeric_columns
+		);
+	}
+
+	/**
+	 * Parse a MySQL WHERE expression against materialized SHOW rows up to a fixed end token.
+	 *
+	 * @param WP_MySQL_Token[]     $tokens          MySQL lexer token stream.
+	 * @param int                  $position        WHERE token position.
+	 * @param int                  $end             Final token position, exclusive.
+	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
+	 * @param string[]             $numeric_columns Output columns that may be used in arithmetic expressions.
+	 * @return array{type: string, column: null, pattern: null, predicate: array}|null Parsed expression filter, or null when unsupported.
+	 */
+	private function get_mysql_show_where_expression_filter_until( array $tokens, int $position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id || $position + 1 >= $end ) {
+			return null;
+		}
+
 		$expression_position = $position + 1;
-		$predicate           = $this->parse_mysql_show_where_or_expression( $tokens, $expression_position, $statement_end, $allowed_columns, $numeric_columns );
-		if ( null === $predicate || $expression_position !== $statement_end ) {
+		$predicate           = $this->parse_mysql_show_where_or_expression( $tokens, $expression_position, $end, $allowed_columns, $numeric_columns );
+		if ( null === $predicate || $expression_position !== $end ) {
 			return null;
 		}
 
@@ -13888,6 +14013,7 @@ $wp_mysql_on_update$',
 				WP_MySQL_Lexer::DATABASE_SYMBOL,
 				WP_MySQL_Lexer::DEFAULT_SYMBOL,
 				WP_MySQL_Lexer::ENGINE_SYMBOL,
+				WP_MySQL_Lexer::HOST_SYMBOL,
 				WP_MySQL_Lexer::KEY_SYMBOL,
 				WP_MySQL_Lexer::NAME_SYMBOL,
 				WP_MySQL_Lexer::NULL_SYMBOL,
@@ -13895,7 +14021,9 @@ $wp_mysql_on_update$',
 				WP_MySQL_Lexer::ROWS_SYMBOL,
 				WP_MySQL_Lexer::STATUS_SYMBOL,
 				WP_MySQL_Lexer::TABLE_SYMBOL,
+				WP_MySQL_Lexer::TIME_SYMBOL,
 				WP_MySQL_Lexer::TYPE_SYMBOL,
+				WP_MySQL_Lexer::USER_SYMBOL,
 				WP_MySQL_Lexer::VALUE_SYMBOL,
 				WP_MySQL_Lexer::VISIBLE_SYMBOL,
 			),
@@ -16855,21 +16983,34 @@ ORDER BY table_name';
 			$info = substr( $info, 0, 100 );
 		}
 
-		$this->last_found_rows = 1;
+		$rows = array(
+			array(
+				'Id'      => '1',
+				'User'    => 'root',
+				'Host'    => 'localhost',
+				'db'      => $this->db_name,
+				'Command' => 'Query',
+				'Time'    => '0',
+				'State'   => '',
+				'Info'    => $info,
+			),
+		);
+
+		if ( isset( $show_processlist_query['where_filter'] ) && is_array( $show_processlist_query['where_filter'] ) ) {
+			$rows = $this->filter_mysql_static_show_rows( $rows, $show_processlist_query['where_filter'] );
+		}
+
+		if ( isset( $show_processlist_query['limit'] ) && is_array( $show_processlist_query['limit'] ) ) {
+			$rows = array_slice(
+				$rows,
+				$show_processlist_query['limit']['offset'],
+				$show_processlist_query['limit']['count']
+			);
+		}
+
 		return $this->set_mysql_static_show_result(
 			array( 'Id', 'User', 'Host', 'db', 'Command', 'Time', 'State', 'Info' ),
-			array(
-				array(
-					'Id'      => '1',
-					'User'    => 'root',
-					'Host'    => 'localhost',
-					'db'      => $this->db_name,
-					'Command' => 'Query',
-					'Time'    => '0',
-					'State'   => '',
-					'Info'    => $info,
-				),
-			),
+			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -40550,14 +40691,16 @@ FROM (
 						$value_sql                                   = $last_insert_id_assignment['sql'];
 						$assignment_effects['last_insert_id_column'] = $last_insert_id_assignment['column'];
 					} else {
-						$scalar_subquery_sql  = null;
-						$value_replacements   = $this->get_mysql_upsert_values_expression_replacements(
+						$scalar_subquery_sql = null;
+
+						$value_replacements = $this->get_mysql_upsert_values_expression_replacements(
 							$tokens,
 							$value_start,
 							$assignment_end,
 							$values_column_lookup,
 							$source_aliases
 						);
+
 						$default_replacements = null;
 						if ( null !== $value_replacements ) {
 							$default_replacements = $this->get_mysql_upsert_default_expression_replacements(
@@ -40567,9 +40710,38 @@ FROM (
 								$table_column_lookup
 							);
 						}
-						$expression_replacements = null !== $value_replacements && null !== $default_replacements
-							? array_merge( $value_replacements, $default_replacements )
+
+						$subquery_replacements = null;
+						if ( null !== $value_replacements && null !== $default_replacements ) {
+							$subquery_replacements = $this->get_mysql_upsert_scalar_subquery_expression_replacements(
+								$tokens,
+								$value_start,
+								$assignment_end,
+								$scope
+							);
+						}
+
+						$expression_replacements = null !== $value_replacements && null !== $default_replacements && null !== $subquery_replacements
+							? array_merge( $value_replacements, $default_replacements, $subquery_replacements )
 							: null;
+						if ( null !== $expression_replacements ) {
+							usort(
+								$expression_replacements,
+								static function ( array $a, array $b ): int {
+									return ( $a['start'] ?? 0 ) <=> ( $b['start'] ?? 0 );
+								}
+							);
+						}
+						if (
+							null === $scalar_subquery_sql
+							&& is_array( $subquery_replacements )
+							&& 1 === count( $subquery_replacements )
+							&& $value_start === $subquery_replacements[0]['start']
+							&& $assignment_end === $subquery_replacements[0]['end']
+						) {
+							$scalar_subquery_sql     = $subquery_replacements[0]['sql'];
+							$expression_replacements = array();
+						}
 						if (
 							null === $expression_replacements
 							|| ! $this->is_supported_simple_mysql_upsert_expression_fragment(
@@ -40578,8 +40750,8 @@ FROM (
 								$assignment_end,
 								$expression_replacements
 							)
-							|| $this->contains_unsupported_mysql_convert_function( $tokens, $value_start, $assignment_end )
-							|| $this->contains_unsupported_mysql_common_function( $tokens, $value_start, $assignment_end )
+							|| $this->contains_unsupported_mysql_convert_function_outside_replacements( $tokens, $value_start, $assignment_end, $expression_replacements )
+							|| $this->contains_unsupported_mysql_common_function_outside_replacements( $tokens, $value_start, $assignment_end, $expression_replacements )
 							|| ! $this->mysql_upsert_expression_column_references_resolve_to_scope(
 								$tokens,
 								$value_start,
@@ -41449,6 +41621,100 @@ FROM (
 		}
 
 		return $replacements;
+	}
+
+	/**
+	 * Get replacements for supported scalar subqueries in an upsert expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token.
+	 * @param int              $end    Final expression token, exclusive.
+	 * @param array            $scope  Statement table scope.
+	 * @return array[]|null Replacement ranges, or null when a scalar subquery is unsupported.
+	 */
+	private function get_mysql_upsert_scalar_subquery_expression_replacements( array $tokens, int $start, int $end, array $scope ): ?array {
+		$replacements = array();
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			if (
+				! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+			) {
+				continue;
+			}
+
+			$after_subquery = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+			if ( null === $after_subquery ) {
+				return null;
+			}
+
+			$sql = $this->get_mysql_upsert_scalar_subquery_assignment_sql( $tokens, $position, $after_subquery, $scope );
+			if ( null === $sql ) {
+				return null;
+			}
+
+			$replacements[] = array(
+				'start' => $position,
+				'end'   => $after_subquery,
+				'sql'   => $sql,
+			);
+			$position       = $after_subquery - 1;
+		}
+
+		return $replacements;
+	}
+
+	/**
+	 * Check whether unreplaced expression segments contain unsupported CONVERT() forms.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First expression token.
+	 * @param int              $end          Final expression token, exclusive.
+	 * @param array[]          $replacements Replacement ranges.
+	 * @return bool Whether an unsupported CONVERT() appears outside replacements.
+	 */
+	private function contains_unsupported_mysql_convert_function_outside_replacements( array $tokens, int $start, int $end, array $replacements ): bool {
+		$segment_start = $start;
+		foreach ( $replacements as $replacement ) {
+			if (
+				$segment_start < $replacement['start']
+				&& $this->contains_unsupported_mysql_convert_function( $tokens, $segment_start, $replacement['start'] )
+			) {
+				return true;
+			}
+
+			$segment_start = max( $segment_start, $replacement['end'] );
+		}
+
+		return $segment_start < $end
+			&& $this->contains_unsupported_mysql_convert_function( $tokens, $segment_start, $end );
+	}
+
+	/**
+	 * Check whether unreplaced expression segments contain unsupported common functions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First expression token.
+	 * @param int              $end          Final expression token, exclusive.
+	 * @param array[]          $replacements Replacement ranges.
+	 * @return bool Whether an unsupported common function appears outside replacements.
+	 */
+	private function contains_unsupported_mysql_common_function_outside_replacements( array $tokens, int $start, int $end, array $replacements ): bool {
+		$segment_start = $start;
+		foreach ( $replacements as $replacement ) {
+			if (
+				$segment_start < $replacement['start']
+				&& $this->contains_unsupported_mysql_common_function( $tokens, $segment_start, $replacement['start'] )
+			) {
+				return true;
+			}
+
+			$segment_start = max( $segment_start, $replacement['end'] );
+		}
+
+		return $segment_start < $end
+			&& $this->contains_unsupported_mysql_common_function( $tokens, $segment_start, $end );
 	}
 
 	/**
