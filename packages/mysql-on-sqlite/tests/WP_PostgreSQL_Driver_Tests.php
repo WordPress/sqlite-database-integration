@@ -7782,6 +7782,44 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL binary strings make CHAR_LENGTH() count bytes.
+	 */
+	public function test_binary_length_runtime_functions_count_utf8_bytes_when_executed(): void {
+		$driver  = $this->create_driver_with_postgresql_text_runtime_functions();
+		$literal = $this->quote_mysql_string_literal_for_test( "\xC3\xA9" );
+
+		$result = $driver->query(
+			sprintf(
+				'SELECT
+					LENGTH(%1$s) AS text_byte_length,
+					CHAR_LENGTH(%1$s) AS text_char_length,
+					CHAR_LENGTH(CAST(%1$s AS BINARY)) AS cast_binary_char_length,
+					CHARACTER_LENGTH(BINARY %1$s) AS operator_binary_char_length,
+					LENGTH(CONVERT(%1$s, BINARY)) AS convert_binary_byte_length,
+					CHAR_LENGTH(CONVERT(%1$s, BINARY)) AS convert_binary_char_length',
+				$literal
+			)
+		);
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( '2', $result[0]->text_byte_length );
+		$this->assertSame( '1', $result[0]->text_char_length );
+		$this->assertSame( '2', $result[0]->cast_binary_char_length );
+		$this->assertSame( '2', $result[0]->operator_binary_char_length );
+		$this->assertSame( '2', $result[0]->convert_binary_byte_length );
+		$this->assertSame( '2', $result[0]->convert_binary_char_length );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "CHAR_LENGTH(CAST($literal AS text)) AS text_char_length", $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST($literal AS text), 'UTF8')) END AS cast_binary_char_length", $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST($literal AS text), 'UTF8')) END AS operator_binary_char_length", $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST($literal AS text), 'UTF8')) END AS convert_binary_byte_length", $sql );
+		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST($literal AS text), 'UTF8')) END AS convert_binary_char_length", $sql );
+		$this->assertStringNotContainsString( "CAST($literal AS BINARY)", $sql );
+		$this->assertStringNotContainsString( "CONVERT($literal, BINARY)", $sql );
+	}
+
+	/**
 	 * Tests MySQL LENGTH() counts decoded PostgreSQL-safe text envelope bytes.
 	 */
 	public function test_length_runtime_function_counts_postgresql_text_envelope_bytes_when_executed(): void {

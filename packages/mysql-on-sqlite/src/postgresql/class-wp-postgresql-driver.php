@@ -37406,6 +37406,55 @@ FROM (
 	}
 
 	/**
+	 * Get token bounds for a supported MySQL CONVERT(expr, BINARY) expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position CONVERT token position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_binary_convert_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
+		if ( $bounds['start'] !== $position ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$comma_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::COMMA_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $comma_position
+			|| $comma_position <= $position + 2
+			|| ! $this->is_mysql_binary_cast_type( $tokens, $comma_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $comma_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
 	 * Check whether a CAST type is MySQL BINARY.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -37554,6 +37603,24 @@ FROM (
 			return $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
 		}
 
+		if (
+			in_array( $bounds['function'], array( 'char_length', 'character_length', 'length' ), true )
+			&& 1 === count( $arguments )
+		) {
+			$binary_length_sql = $this->get_postgresql_mysql_binary_argument_byte_length_sql(
+				$tokens,
+				$arguments[0]['start'],
+				$arguments[0]['end']
+			);
+			if ( null !== $binary_length_sql ) {
+				return array(
+					'sql'      => $binary_length_sql,
+					'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+					'position' => $bounds['close'],
+				);
+			}
+		}
+
 		$argument_sql = array();
 		foreach ( $arguments as $argument ) {
 			$argument_sql[] = $this->translate_mysql_token_sequence_to_postgresql(
@@ -37632,6 +37699,58 @@ FROM (
 		);
 
 		return sprintf( "OCTET_LENGTH(DECODE(CAST(%s AS text), 'hex'))", $hex_sql );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for LENGTH/CHAR_LENGTH of a MySQL binary expression.
+	 *
+	 * MySQL CHAR_LENGTH() counts bytes for binary strings. Keep the binary
+	 * marker local to length functions so other expression contexts continue to
+	 * use the existing text-compatible CAST behavior.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First argument token.
+	 * @param int              $end    Final argument token, exclusive.
+	 * @return string|null PostgreSQL byte-length SQL, or null when not binary.
+	 */
+	private function get_postgresql_mysql_binary_argument_byte_length_sql( array $tokens, int $start, int $end ): ?string {
+		$binary_cast = $this->get_mysql_binary_cast_bounds( $tokens, $start, $end );
+		if ( null !== $binary_cast && $binary_cast['close'] + 1 === $end ) {
+			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$binary_cast['expression_start'],
+				$binary_cast['expression_end']
+			);
+
+			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
+		}
+
+		$binary_convert = $this->get_mysql_binary_convert_bounds( $tokens, $start, $end );
+		if ( null !== $binary_convert && $binary_convert['close'] + 1 === $end ) {
+			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$binary_convert['expression_start'],
+				$binary_convert['expression_end']
+			);
+
+			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
+		}
+
+		if (
+			$start + 1 < $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $start ]->id
+		) {
+			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$start + 1,
+				$end
+			);
+
+			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
+		}
+
+		return null;
 	}
 
 	/**
