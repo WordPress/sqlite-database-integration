@@ -6700,9 +6700,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported joined UPDATE variants fail before backend execution.
+	 * Tests RIGHT JOIN UPDATE statements translate through a derived ctid source.
 	 */
-	public function test_unsupported_joined_update_shapes_fail_closed_before_backend_execution(): void {
+	public function test_right_join_update_is_translated_through_derived_ctid_source(): void {
 		$driver = $this->create_driver();
 
 		$driver->query(
@@ -6718,13 +6718,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 
-		try {
-			$driver->query( 'UPDATE wptests_update_right_source AS s RIGHT JOIN wptests_update_right_target AS t ON t.id = s.id SET s.value = t.value' );
-			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+		$update = 'UPDATE wptests_update_right_source AS s
+			RIGHT JOIN wptests_update_right_target AS t ON t.id = s.id
+			SET s.value = t.value';
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$update
+		);
+
+		$this->assertStringStartsWith( 'UPDATE "wptests_update_right_source" AS "s" SET "value" = "mysql_update_values"."mysql_update_value_0"', $sql );
+		$this->assertStringContainsString( 'FROM (SELECT "s".ctid AS "mysql_update_target_ctid", t.value AS "mysql_update_value_0" FROM wptests_update_right_source AS s RIGHT JOIN wptests_update_right_target AS t ON t.id = s.id', $sql );
+		$this->assertStringContainsString( '"s".ctid = "mysql_update_values"."mysql_update_target_ctid"', $sql );
 	}
 
 	/**

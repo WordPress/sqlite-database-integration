@@ -21473,7 +21473,7 @@ WHERE option_name IN (
 	/**
 	 * Translate supported MySQL outer-joined UPDATE statements.
 	 *
-	 * PostgreSQL UPDATE ... FROM does not preserve unmatched LEFT JOIN rows.
+	 * PostgreSQL UPDATE ... FROM does not preserve unmatched outer-join rows.
 	 * Select the target row ctid and computed assignment values through the
 	 * original joined table reference, then update by ctid from that derived
 	 * row set.
@@ -21488,15 +21488,16 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$has_left_join  = $this->contains_top_level_mysql_token( $tokens, 1, $set_position, array( WP_MySQL_Lexer::LEFT_SYMBOL ) );
+		$has_right_join = $this->contains_top_level_mysql_token( $tokens, 1, $set_position, array( WP_MySQL_Lexer::RIGHT_SYMBOL ) );
 		if (
-			! $this->contains_top_level_mysql_token( $tokens, 1, $set_position, array( WP_MySQL_Lexer::LEFT_SYMBOL ) )
+			$has_left_join === $has_right_join
 			|| $this->contains_top_level_mysql_token(
 				$tokens,
 				1,
 				$set_position,
 				array(
 					WP_MySQL_Lexer::NATURAL_SYMBOL,
-					WP_MySQL_Lexer::RIGHT_SYMBOL,
 					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
 					WP_MySQL_Lexer::USING_SYMBOL,
 				)
