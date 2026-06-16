@@ -5963,6 +5963,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'WHERE (t.id = s.id)', $ordered_sql );
 		$this->assertStringNotContainsString( 'ORDER BY', $ordered_sql );
 
+		$limited_update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
+			SET s.value = t.value, t.value = s.value
+			WHERE t.id = s.id
+			ORDER BY t.id DESC, s.value ASC
+			LIMIT 1, 2';
+		$limited_sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_update_query',
+			$limited_update
+		);
+
+		$this->assertNotNull( $limited_sql );
+		$this->assertStringContainsString( 'WITH mysql_update_rows AS MATERIALIZED', $limited_sql );
+		$this->assertStringContainsString( 'WHERE (t.id = s.id) ORDER BY t.id DESC, s.value ASC LIMIT 2 OFFSET 1', $limited_sql );
+
+		$limit_only_update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
+			SET s.value = t.value, t.value = s.value
+			WHERE t.id = s.id
+			LIMIT 2';
+		$limit_only_sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_update_query',
+			$limit_only_update
+		);
+
+		$this->assertNotNull( $limit_only_sql );
+		$this->assertStringContainsString( 'WHERE (t.id = s.id) LIMIT 2', $limit_only_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $limit_only_sql );
+
 		$single_target_update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
 			SET s.value = t.value
 			WHERE t.id = s.id';
@@ -6055,17 +6084,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests joined UPDATE LIMIT shapes fail before backend execution.
+	 * Tests joined UPDATE malformed LIMIT shapes fail before backend execution.
 	 */
-	public function test_joined_update_order_limit_shapes_fail_closed_before_backend_execution(): void {
+	public function test_joined_update_malformed_limit_shapes_fail_closed_before_backend_execution(): void {
 		$driver = $this->create_driver();
 
 		$updates = array(
-			'multi_target_limit'    => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
+			'multi_target_bad_count'  => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
 				SET p.status = pm.meta_value, pm.meta_value = p.status
 				WHERE pm.post_id = p.id
 				ORDER BY p.id ASC
-				LIMIT 1',
+				LIMIT bad',
+			'multi_target_bad_offset' => 'UPDATE wptests_update_joined_order AS p, wptests_update_joined_order_meta AS pm
+				SET p.status = pm.meta_value, pm.meta_value = p.status
+				WHERE pm.post_id = p.id
+				ORDER BY p.id ASC
+				LIMIT 1, bad',
 		);
 
 		foreach ( $updates as $label => $update ) {
@@ -6893,6 +6927,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $ordered_sql );
 		$this->assertStringContainsString( "WHERE p.status = 'stale'", $ordered_sql );
 		$this->assertStringNotContainsString( 'ORDER BY', $ordered_sql );
+
+		$limited_delete = "DELETE p, c
+			FROM wptests_delete_multi_parent AS p
+			JOIN wptests_delete_multi_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'
+			ORDER BY c.reason ASC, p.id DESC
+			LIMIT 1, 2";
+
+		$limited_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$limited_delete
+		);
+
+		$this->assertNotNull( $limited_sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $limited_sql );
+		$this->assertStringContainsString( "WHERE p.status = 'stale' ORDER BY c.reason ASC, p.id DESC LIMIT 2 OFFSET 1", $limited_sql );
+
+		$limit_only_delete = "DELETE p, c
+			FROM wptests_delete_multi_parent AS p
+			JOIN wptests_delete_multi_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'
+			LIMIT 2";
+
+		$limit_only_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$limit_only_delete
+		);
+
+		$this->assertNotNull( $limit_only_sql );
+		$this->assertStringContainsString( "WHERE p.status = 'stale' LIMIT 2", $limit_only_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $limit_only_sql );
 	}
 
 	/**
@@ -7299,7 +7366,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			"DELETE d, r FROM wptests_delete d
 				JOIN wptests_related r ON r.id = d.related_id
 				WHERE d.status = 'old'
-				ORDER BY d.id LIMIT 1",
+				ORDER BY d.id LIMIT bad",
 			"DELETE d FROM other_db.wptests_delete d
 				JOIN wptests_related r ON r.id = d.related_id
 				WHERE d.status = 'old'",

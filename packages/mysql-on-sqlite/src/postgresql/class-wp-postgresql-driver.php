@@ -15279,15 +15279,17 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $table_references_start, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $table_references_start, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $table_references_start, $statement_end );
+		$order_end      = $limit_position ?? $statement_end;
 		if (
-			null !== $limit_position
-			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+			( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
+			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
 		) {
 			return null;
 		}
 
-		$from_end = $where_position ?? $order_position ?? $statement_end;
+		$from_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
 		if ( $table_references_start >= $from_end ) {
 			return null;
 		}
@@ -15350,7 +15352,7 @@ WHERE option_name IN (
 
 		$where_sql = '';
 		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $statement_end;
+			$where_end = $order_position ?? $limit_position ?? $statement_end;
 			if ( $where_position + 1 >= $where_end ) {
 				return null;
 			}
@@ -15378,6 +15380,22 @@ WHERE option_name IN (
 					$scope
 				);
 				$where_sql = ' WHERE ' . $where['sql'];
+			}
+		}
+
+		$order_sql = '';
+		if ( null !== $order_position && null !== $limit_position ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $limit_position, $scope );
+			if ( null === $order_sql ) {
+				return null;
+			}
+		}
+
+		$limit_sql = '';
+		if ( null !== $limit_position ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+			if ( null === $limit_sql ) {
+				return null;
 			}
 		}
 
@@ -15431,10 +15449,12 @@ WHERE option_name IN (
 		}
 
 		return sprintf(
-			'WITH mysql_delete_rows AS MATERIALIZED (SELECT %s FROM %s%s), %s SELECT %s AS affected_rows',
+			'WITH mysql_delete_rows AS MATERIALIZED (SELECT %s FROM %s%s%s%s), %s SELECT %s AS affected_rows',
 			implode( ', ', $select_columns ),
 			$source_sql,
 			$where_sql,
+			$order_sql,
+			$limit_sql,
 			implode( ', ', $delete_ctes ),
 			implode( ' + ', $count_parts )
 		);
@@ -19890,15 +19910,17 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
+		$order_end      = $limit_position ?? $statement_end;
 		if (
-			null !== $limit_position
-			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+			( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
+			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
 		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $order_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -19917,7 +19939,7 @@ WHERE option_name IN (
 
 		$where_sql = '';
 		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $statement_end;
+			$where_end = $order_position ?? $limit_position ?? $statement_end;
 			if (
 				$where_position + 1 >= $where_end
 				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
@@ -19932,6 +19954,22 @@ WHERE option_name IN (
 				$scope
 			);
 			$where_sql = ' WHERE ' . $where['sql'];
+		}
+
+		$order_sql = '';
+		if ( null !== $order_position && null !== $limit_position ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $limit_position, $scope );
+			if ( null === $order_sql ) {
+				return null;
+			}
+		}
+
+		$limit_sql = '';
+		if ( null !== $limit_position ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+			if ( null === $limit_sql ) {
+				return null;
+			}
 		}
 
 		$source_alias      = 'mysql_update_values';
@@ -19949,10 +19987,12 @@ WHERE option_name IN (
 			$update_set_clause['select_sql']
 		);
 		$source_sql        = sprintf(
-			'(SELECT %s FROM %s%s) AS %s',
+			'(SELECT %s FROM %s%s%s%s) AS %s',
 			implode( ', ', $select_values ),
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 1, $set_position ),
 			$where_sql,
+			$order_sql,
+			$limit_sql,
 			$source_alias_sql
 		);
 
@@ -20563,15 +20603,17 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
+		$order_end      = $limit_position ?? $statement_end;
 		if (
-			null !== $limit_position
-			|| ( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+			( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
+			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
 		) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $order_position ?? $statement_end;
+		$set_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -20589,7 +20631,7 @@ WHERE option_name IN (
 
 		$predicates = $join_predicates;
 		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $statement_end;
+			$where_end = $order_position ?? $limit_position ?? $statement_end;
 			if (
 				$where_position + 1 >= $where_end
 				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
@@ -20607,11 +20649,29 @@ WHERE option_name IN (
 		}
 
 		$source_where_sql = empty( $predicates ) ? '' : ' WHERE (' . implode( ') AND (', $predicates ) . ')';
+		$order_sql        = '';
+		if ( null !== $order_position && null !== $limit_position ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $limit_position, $scope );
+			if ( null === $order_sql ) {
+				return null;
+			}
+		}
+
+		$limit_sql = '';
+		if ( null !== $limit_position ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+			if ( null === $limit_sql ) {
+				return null;
+			}
+		}
+
 		$source_sql       = sprintf(
-			'mysql_update_rows AS MATERIALIZED (SELECT %s FROM %s%s)',
+			'mysql_update_rows AS MATERIALIZED (SELECT %s FROM %s%s%s%s)',
 			implode( ', ', $update_set_clause['select_sql'] ),
 			implode( ', ', array_column( $table_references, 'sql' ) ),
-			$source_where_sql
+			$source_where_sql,
+			$order_sql,
+			$limit_sql
 		);
 
 		$update_ctes = array();
