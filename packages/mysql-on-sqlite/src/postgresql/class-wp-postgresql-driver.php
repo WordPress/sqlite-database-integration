@@ -15235,8 +15235,8 @@ WHERE option_name IN (
 			$source_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $table_references_start, $from_end );
 		}
 
-		$target_tables         = array();
-		$target_physical_names = array();
+		$target_tables = array();
+		$target_groups = array();
 		foreach ( $target_aliases as $target_alias ) {
 			$target_key = strtolower( $target_alias );
 			if ( ! isset( $scope['aliases'][ $target_key ] ) ) {
@@ -15252,14 +15252,18 @@ WHERE option_name IN (
 				'DELETE'
 			);
 			$target_physical_name = strtolower( $target_table['schema'] . '.' . $target_table['table'] );
-			if ( isset( $target_physical_names[ $target_physical_name ] ) ) {
-				return null;
+			if ( ! isset( $target_groups[ $target_physical_name ] ) ) {
+				$target_groups[ $target_physical_name ] = array(
+					'alias'        => $target_alias,
+					'table'        => $target_table['table'],
+					'ctid_aliases' => array(),
+				);
 			}
 
-			$target_physical_names[ $target_physical_name ] = true;
-			$target_tables[]                                = array(
-				'alias' => $target_alias,
-				'table' => $target_table['table'],
+			$target_tables[] = array(
+				'alias'         => $target_alias,
+				'table'         => $target_table['table'],
+				'physical_name' => $target_physical_name,
 			);
 		}
 
@@ -15296,11 +15300,8 @@ WHERE option_name IN (
 		}
 
 		$select_columns = array();
-		$delete_ctes    = array();
-		$count_parts    = array();
 		foreach ( $target_tables as $index => $target_table ) {
 			$ctid_alias       = 'mysql_delete_target_' . $index . '_ctid';
-			$delete_cte_name  = 'mysql_delete_target_' . $index;
 			$target_alias_sql = $this->connection->quote_identifier( $target_table['alias'] );
 
 			$select_columns[] = sprintf(
@@ -15308,15 +15309,43 @@ WHERE option_name IN (
 				$target_alias_sql,
 				$this->connection->quote_identifier( $ctid_alias )
 			);
-			$delete_ctes[]    = sprintf(
-				'%s AS (DELETE FROM %s AS %s USING mysql_delete_rows WHERE %s.ctid = mysql_delete_rows.%s RETURNING 1)',
+			$target_groups[ $target_table['physical_name'] ]['ctid_aliases'][] = $ctid_alias;
+		}
+
+		$delete_ctes = array();
+		$count_parts = array();
+		foreach ( array_values( $target_groups ) as $index => $target_group ) {
+			$delete_cte_name  = 'mysql_delete_target_' . $index;
+			$target_alias_sql = $this->connection->quote_identifier( $target_group['alias'] );
+			if ( 1 === count( $target_group['ctid_aliases'] ) ) {
+				$ctid_predicate = sprintf(
+					'%s.ctid = mysql_delete_rows.%s',
+					$target_alias_sql,
+					$this->connection->quote_identifier( $target_group['ctid_aliases'][0] )
+				);
+			} else {
+				$ctid_selects = array();
+				foreach ( $target_group['ctid_aliases'] as $ctid_alias ) {
+					$ctid_selects[] = sprintf(
+						'SELECT %s FROM mysql_delete_rows',
+						$this->connection->quote_identifier( $ctid_alias )
+					);
+				}
+				$ctid_predicate = sprintf(
+					'%s.ctid IN (%s)',
+					$target_alias_sql,
+					implode( ' UNION ', $ctid_selects )
+				);
+			}
+
+			$delete_ctes[] = sprintf(
+				'%s AS (DELETE FROM %s AS %s USING mysql_delete_rows WHERE %s RETURNING 1)',
 				$delete_cte_name,
-				$this->connection->quote_identifier( $target_table['table'] ),
+				$this->connection->quote_identifier( $target_group['table'] ),
 				$target_alias_sql,
-				$target_alias_sql,
-				$this->connection->quote_identifier( $ctid_alias )
+				$ctid_predicate
 			);
-			$count_parts[]    = sprintf( '(SELECT COUNT(*) FROM %s)', $delete_cte_name );
+			$count_parts[] = sprintf( '(SELECT COUNT(*) FROM %s)', $delete_cte_name );
 		}
 
 		return sprintf(

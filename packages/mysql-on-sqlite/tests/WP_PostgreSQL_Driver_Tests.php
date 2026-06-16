@@ -6638,6 +6638,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests same-table multi-target DELETE statements delete each physical table once.
+	 */
+	public function test_mysql_same_table_multi_target_delete_groups_physical_targets(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE FROM a, b
+			USING wptests_delete_same AS a, wptests_delete_same AS b
+			WHERE a.option_name = CONCAT('_transient_', b.option_name)";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "a".ctid AS "mysql_delete_target_0_ctid", "b".ctid AS "mysql_delete_target_1_ctid"', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_delete_same" AS "a" USING mysql_delete_rows', $sql );
+		$this->assertStringContainsString(
+			'WHERE "a".ctid IN (SELECT "mysql_delete_target_0_ctid" FROM mysql_delete_rows UNION SELECT "mysql_delete_target_1_ctid" FROM mysql_delete_rows) RETURNING 1',
+			$sql
+		);
+		$this->assertSame( 1, substr_count( $sql, 'DELETE FROM "wptests_delete_same"' ) );
+		$this->assertStringContainsString( 'SELECT (SELECT COUNT(*) FROM mysql_delete_target_0) AS affected_rows', $sql );
+	}
+
+	/**
 	 * Tests generic multi-target DELETE predicates support common MySQL expressions.
 	 */
 	public function test_mysql_multi_target_delete_supports_complex_predicates(): void {
