@@ -16236,6 +16236,66 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'AS "derived"',
 			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "derived"' )
 		);
+
+		$union = $driver->query(
+			"SELECT d.object_name AS object_name
+			FROM (
+				SELECT table_name AS object_name
+				FROM information_schema.tables
+				WHERE table_name = 'wptests_options'
+				UNION ALL
+				SELECT schema_name AS object_name
+				FROM information_schema.schemata
+				WHERE schema_name = 'wptests'
+			) AS d
+			WHERE d.object_name LIKE 'wptests%'
+			ORDER BY d.object_name"
+		);
+
+		$this->assertSame( array( 'wptests', 'wptests_options' ), array_column( $union, 'object_name' ) );
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UNION ALL SELECT' );
+		$this->assertStringContainsString( 'UNION ALL SELECT', $sql );
+		$this->assertStringContainsString( 'AS "d"', $sql );
+		$this->assertStringContainsString( '"d"."object_name" LIKE \'wptests%\'', $sql );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$unqualified_union = $driver->query(
+			"SELECT object_name
+			FROM (
+				SELECT table_name AS object_name
+				FROM tables
+				WHERE table_name = 'wptests_options'
+				UNION ALL
+				SELECT schema_name AS object_name
+				FROM schemata
+				WHERE schema_name = 'wptests'
+			) AS d
+			WHERE object_name LIKE 'wptests%'
+			ORDER BY object_name"
+		);
+
+		$this->assertSame( array( 'wptests', 'wptests_options' ), array_column( $unqualified_union, 'object_name' ) );
+
+		try {
+			$driver->query(
+				"SELECT d.object_name
+				FROM (
+					SELECT table_name AS object_name, table_schema
+					FROM tables
+					UNION ALL
+					SELECT schema_name AS object_name
+					FROM schemata
+				) AS d"
+			);
+			$this->fail( 'Expected unsupported mismatched derived information_schema UNION to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported information_schema query.', $e->getMessage() );
+			$this->assertStringNotContainsString(
+				'SELECT d.object_name',
+				implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) )
+			);
+		}
 	}
 
 	/**

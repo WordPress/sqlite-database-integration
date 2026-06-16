@@ -22900,12 +22900,11 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$select_context = $this->get_direct_information_schema_select_context( $select_query, $select_tokens, $select_statement_end );
-		if ( null === $select_context ) {
-			return null;
-		}
-
-		$columns = $this->get_direct_information_schema_select_output_columns( $select_tokens, $select_context );
+		$columns = $this->get_direct_information_schema_select_or_union_output_columns(
+			$select_query,
+			$select_tokens,
+			$select_statement_end
+		);
 		if ( null === $columns || array() === $columns ) {
 			return null;
 		}
@@ -22936,6 +22935,111 @@ WHERE option_name IN (
 			'relation_sql' => $translated_select,
 			'columns'      => $columns,
 		);
+	}
+
+	/**
+	 * Get output column names for a supported information_schema SELECT or UNION SELECT.
+	 *
+	 * @param string           $query         MySQL SELECT query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return string[]|null Output column names, or null when unsupported.
+	 */
+	private function get_direct_information_schema_select_or_union_output_columns( string $query, array $tokens, int $statement_end ): ?array {
+		if ( ! $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) ) ) {
+			$context = $this->get_direct_information_schema_select_context( $query, $tokens, $statement_end );
+			return null === $context ? null : $this->get_direct_information_schema_select_output_columns( $tokens, $context );
+		}
+
+		return $this->get_direct_information_schema_union_select_output_columns( $query, $tokens, $statement_end );
+	}
+
+	/**
+	 * Get output column names for a supported information_schema UNION SELECT.
+	 *
+	 * MySQL exposes the first SELECT branch's output names for a UNION result.
+	 * Each branch still has to be a supported direct information_schema SELECT
+	 * with the same number of columns.
+	 *
+	 * @param string           $query         MySQL UNION query.
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return string[]|null Output column names, or null when unsupported.
+	 */
+	private function get_direct_information_schema_union_select_output_columns( string $query, array $tokens, int $statement_end ): ?array {
+		$columns        = null;
+		$position       = 0;
+		$segment_count  = 0;
+
+		while ( $position < $statement_end ) {
+			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position ]->id ) {
+				return null;
+			}
+
+			$union_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UNION_SYMBOL, $position + 1, $statement_end );
+			$select_end     = $union_position ?? $statement_end;
+			if (
+				$this->contains_top_level_mysql_token(
+					$tokens,
+					$position + 1,
+					$select_end,
+					array(
+						WP_MySQL_Lexer::LIMIT_SYMBOL,
+						WP_MySQL_Lexer::ORDER_SYMBOL,
+					)
+				)
+			) {
+				return null;
+			}
+
+			$select_query = $this->get_mysql_token_range_bytes( $query, $tokens, $position, $select_end );
+			if ( '' === $select_query ) {
+				return null;
+			}
+
+			$select_tokens        = $this->get_mysql_tokens( $select_query );
+			$select_statement_end = $this->get_mysql_statement_end_position( $select_tokens, 1 );
+			if ( null === $select_statement_end ) {
+				return null;
+			}
+
+			$context = $this->get_direct_information_schema_select_context( $select_query, $select_tokens, $select_statement_end );
+			if ( null === $context ) {
+				return null;
+			}
+
+			$branch_columns = $this->get_direct_information_schema_select_output_columns( $select_tokens, $context );
+			if ( null === $branch_columns || array() === $branch_columns ) {
+				return null;
+			}
+
+			if ( null === $columns ) {
+				$columns = $branch_columns;
+			} elseif ( count( $columns ) !== count( $branch_columns ) ) {
+				return null;
+			}
+
+			++$segment_count;
+			if ( null === $union_position ) {
+				break;
+			}
+
+			$operator_position = $union_position + 1;
+			if ( ! isset( $tokens[ $operator_position ] ) ) {
+				return null;
+			}
+
+			if (
+				WP_MySQL_Lexer::ALL_SYMBOL === $tokens[ $operator_position ]->id
+				|| WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $operator_position ]->id
+			) {
+				$position = $operator_position + 1;
+			} else {
+				$position = $operator_position;
+			}
+		}
+
+		return 2 <= $segment_count ? $columns : null;
 	}
 
 	/**
