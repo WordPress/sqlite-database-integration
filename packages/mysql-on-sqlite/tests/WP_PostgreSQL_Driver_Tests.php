@@ -5115,31 +5115,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported multi-target UPDATE statements fail before backend execution.
+	 * Tests MySQL multi-target UPDATE statements translate to PostgreSQL writable CTEs.
 	 */
-	public function test_multi_target_update_fails_closed_before_backend_execution(): void {
+	public function test_multi_target_update_is_translated_to_writable_ctes(): void {
 		$driver = $this->create_driver();
 
-		$driver->query(
-			'CREATE TABLE wptests_update_source (
-				id INTEGER PRIMARY KEY,
-				value TEXT NOT NULL
-			)'
-		);
-		$driver->query(
-			'CREATE TABLE wptests_update_target (
-				id INTEGER PRIMARY KEY,
-				value TEXT NOT NULL
-			)'
+		$update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
+			SET s.value = t.value, t.value = s.value
+			WHERE t.id = s.id AND s.id = 1';
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_update_query',
+			$update
 		);
 
-		try {
-			$driver->query( 'UPDATE wptests_update_source AS s, wptests_update_target AS t SET s.value = t.value, t.value = s.value WHERE t.id = s.id' );
-			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_update_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "s".ctid AS "mysql_update_0_ctid", t.value AS "mysql_update_value_0", "t".ctid AS "mysql_update_1_ctid", s.value AS "mysql_update_value_1"', $sql );
+		$this->assertStringContainsString( 'FROM "wptests_update_source" AS "s", "wptests_update_target" AS "t"', $sql );
+		$this->assertStringContainsString( 'WHERE (t.id = s.id AND s.id = 1)', $sql );
+		$this->assertStringContainsString( 'mysql_update_target_0 AS (UPDATE "wptests_update_source" AS "s" SET "value" = mysql_update_rows."mysql_update_value_0" FROM mysql_update_rows WHERE ("s".ctid = mysql_update_rows."mysql_update_0_ctid")', $sql );
+		$this->assertStringContainsString( 'mysql_update_target_1 AS (UPDATE "wptests_update_target" AS "t" SET "value" = mysql_update_rows."mysql_update_value_1" FROM mysql_update_rows WHERE ("t".ctid = mysql_update_rows."mysql_update_1_ctid")', $sql );
+		$this->assertStringContainsString( 'SELECT (SELECT COUNT(*) FROM mysql_update_target_0) + (SELECT COUNT(*) FROM mysql_update_target_1) AS affected_rows', $sql );
+
+		$join_update = 'UPDATE wptests_update_source AS s
+			JOIN wptests_update_target AS t ON t.id = s.id
+			SET s.value = t.value, t.value = s.value
+			WHERE s.id = 1';
+		$join_sql    = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_update_query',
+			$join_update
+		);
+
+		$this->assertNotNull( $join_sql );
+		$this->assertStringContainsString( 'WHERE (t.id = s.id) AND (s.id = 1)', $join_sql );
+
+		$single_target_update = 'UPDATE wptests_update_source AS s, wptests_update_target AS t
+			SET s.value = t.value
+			WHERE t.id = s.id';
+
+		$this->assertNull(
+			$this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_mysql_multi_target_update_query',
+				$single_target_update
+			)
+		);
 	}
 
 	/**

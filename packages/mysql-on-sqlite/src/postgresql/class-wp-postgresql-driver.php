@@ -867,6 +867,11 @@ class WP_PostgreSQL_Driver {
 			$translated_for_postgresql = true;
 		}
 
+		$multi_target_update_query = $this->translate_mysql_multi_target_update_query( $query );
+		if ( null !== $multi_target_update_query ) {
+			return $this->execute_mysql_multi_target_update_query( $multi_target_update_query );
+		}
+
 		$translated_query = $this->translate_simple_mysql_update_query( $query );
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
@@ -1795,6 +1800,26 @@ class WP_PostgreSQL_Driver {
 	 * @return int Total rows deleted from all target tables.
 	 */
 	private function execute_mysql_multi_target_delete_query( string $statement ): int {
+		$stmt                            = $this->connection->query( $statement );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $statement,
+			'params' => array(),
+		);
+
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
+		$this->clear_last_column_meta();
+		$this->last_result = isset( $row['affected_rows'] ) ? (int) $row['affected_rows'] : 0;
+
+		return $this->last_result;
+	}
+
+	/**
+	 * Execute a translated MySQL multi-target UPDATE query.
+	 *
+	 * @param string $statement PostgreSQL writable-CTE statement.
+	 * @return int Total rows updated across all target tables.
+	 */
+	private function execute_mysql_multi_target_update_query( string $statement ): int {
 		$stmt                            = $this->connection->query( $statement );
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $statement,
@@ -18816,6 +18841,330 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Translate supported MySQL multi-target UPDATE statements.
+	 *
+	 * MySQL can update more than one table in a joined UPDATE. PostgreSQL cannot
+	 * express that as one UPDATE ... FROM, so compute the original joined row set
+	 * and assignment values once, then update each physical target by ctid.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null PostgreSQL writable-CTE query, or null when unsupported.
+	 */
+	private function translate_mysql_multi_target_update_query( string $query ): ?string {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::UPDATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
+			return null;
+		}
+
+		$set_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SET_SYMBOL, 1, $statement_end );
+		if ( null === $set_position ) {
+			return null;
+		}
+
+		$position = 1;
+		$this->consume_mysql_update_modifiers( $tokens, $position, $set_position );
+
+		$first_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $set_position );
+		if (
+			null === $first_reference
+			|| $position >= $set_position
+		) {
+			return null;
+		}
+
+		$first_table             = $first_reference['table'];
+		$first_alias             = $first_reference['alias'];
+		$first_reference_alias   = null === $first_alias ? $first_table : $first_alias;
+		$scope                   = $this->get_mysql_single_table_scope( $first_table, $first_alias );
+		$from_parts              = array();
+		$join_predicates         = array();
+		$current_join_left_alias = $first_reference_alias;
+		$table_references        = array(
+			array(
+				'alias'     => $first_reference_alias,
+				'alias_key' => strtolower( $first_reference_alias ),
+				'table'     => $first_table,
+				'table_as'  => $first_alias,
+				'derived'   => false,
+				'sql'       => $this->get_postgresql_dml_table_reference_sql( $first_table, $first_alias ),
+			),
+		);
+
+		while ( $position < $set_position ) {
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+				++$position;
+				$source_alias     = null;
+				$source_reference = null;
+				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts, $source_alias, $source_reference ) ) {
+					return null;
+				}
+				if ( null === $source_reference ) {
+					return null;
+				}
+				$table_references[]     = $source_reference;
+				$current_join_left_alias = $source_alias;
+				continue;
+			}
+
+			if (
+				! $this->is_mysql_supported_inner_join_separator_at( $tokens, $position, $set_position )
+				|| ! $this->append_mysql_joined_update_inner_join(
+					$tokens,
+					$position,
+					$set_position,
+					$scope,
+					$from_parts,
+					$join_predicates,
+					$current_join_left_alias,
+					$table_references
+				)
+			) {
+				return null;
+			}
+		}
+
+		if ( empty( $from_parts ) ) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
+		if ( null !== $order_position || null !== $limit_position ) {
+			return null;
+		}
+
+		$set_end = $where_position ?? $statement_end;
+		if ( $set_position + 1 >= $set_end ) {
+			return null;
+		}
+
+		$update_set_clause = $this->translate_mysql_multi_target_update_set_clause_for_derived_source(
+			$tokens,
+			$set_position + 1,
+			$set_end,
+			$table_references,
+			$scope
+		);
+		if ( null === $update_set_clause || count( $update_set_clause['targets'] ) < 2 ) {
+			return null;
+		}
+
+		$predicates = $join_predicates;
+		if ( null !== $where_position ) {
+			if (
+				$where_position + 1 >= $statement_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
+			) {
+				return null;
+			}
+
+			$where_sql    = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+				$tokens,
+				$where_position + 1,
+				$statement_end,
+				$scope
+			);
+			$predicates[] = $where_sql['sql'];
+		}
+
+		$source_where_sql = empty( $predicates ) ? '' : ' WHERE (' . implode( ') AND (', $predicates ) . ')';
+		$source_sql       = sprintf(
+			'mysql_update_rows AS MATERIALIZED (SELECT %s FROM %s%s)',
+			implode( ', ', $update_set_clause['select_sql'] ),
+			implode( ', ', array_column( $table_references, 'sql' ) ),
+			$source_where_sql
+		);
+
+		$update_ctes = array();
+		$count_parts = array();
+		$index       = 0;
+		foreach ( $update_set_clause['targets'] as $target ) {
+			$cte_name              = 'mysql_update_target_' . $index;
+			$target_table_sql      = $this->get_postgresql_dml_table_reference_sql( $target['table'], $target['table_as'] );
+			$target_ctid_sql       = $this->get_postgresql_dml_ctid_reference_sql( $target['table_as'] );
+			$source_ctid_alias_sql = 'mysql_update_rows.' . $this->connection->quote_identifier( $target['ctid_alias'] );
+			$update_ctes[]         = sprintf(
+				'%s AS (UPDATE %s SET %s FROM mysql_update_rows WHERE (%s = %s) AND (%s) RETURNING 1)',
+				$cte_name,
+				$target_table_sql,
+				implode( ', ', $target['assignments'] ),
+				$target_ctid_sql,
+				$source_ctid_alias_sql,
+				implode( ' OR ', $target['changed_predicates'] )
+			);
+			$count_parts[]         = sprintf( '(SELECT COUNT(*) FROM %s)', $cte_name );
+			++$index;
+		}
+
+		return sprintf(
+			'WITH %s, %s SELECT %s AS affected_rows',
+			$source_sql,
+			implode( ', ', $update_ctes ),
+			implode( ' + ', $count_parts )
+		);
+	}
+
+	/**
+	 * Translate a multi-target joined UPDATE SET clause for a writable-CTE rewrite.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $start            First SET-clause token position.
+	 * @param int              $end              Final SET-clause token position, exclusive.
+	 * @param array[]          $table_references Joined table references.
+	 * @param array            $scope            Statement table scope.
+	 * @return array{select_sql: string[], targets: array<string,array{table: string, table_as: string|null, ctid_alias: string, assignments: string[], changed_predicates: string[]}>}|null PostgreSQL SET data, or null when unsupported.
+	 */
+	private function translate_mysql_multi_target_update_set_clause_for_derived_source( array $tokens, int $start, int $end, array $table_references, array $scope ): ?array {
+		$targets              = array();
+		$target_physical_keys = array();
+		$select_expressions   = array();
+		$value_index          = 0;
+
+		for ( $position = $start; $position < $end; ) {
+			$target = $this->parse_mysql_joined_update_assignment_target( $tokens, $position, $end, $table_references );
+			if ( null === $target ) {
+				return null;
+			}
+
+			$target_reference = null;
+			foreach ( $table_references as $table_reference ) {
+				if ( $target['alias_key'] === $table_reference['alias_key'] ) {
+					$target_reference = $table_reference;
+					break;
+				}
+			}
+
+			if (
+				null === $target_reference
+				|| ! empty( $target_reference['derived'] )
+				|| empty( $target_reference['table'] )
+			) {
+				return null;
+			}
+
+			if ( ! isset( $tokens[ $target['end'] ] ) || WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $target['end'] ]->id ) {
+				return null;
+			}
+
+			$value_start    = $target['end'] + 1;
+			$assignment_end = $this->find_top_level_mysql_token(
+				$tokens,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				$value_start,
+				$end
+			) ?? $end;
+
+			if ( $value_start >= $assignment_end ) {
+				return null;
+			}
+
+			$table_name          = (string) $target_reference['table'];
+			$target_column       = $target['column'];
+			$column_metadata     = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+			$target_metadata     = $column_metadata[ strtolower( $target_column ) ] ?? null;
+			$coerced_default_sql = null;
+
+			if ( null !== $target_metadata ) {
+				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+
+			if (
+				null !== $target_metadata
+				&& ! $this->is_mysql_strict_sql_mode_active()
+				&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
+			) {
+				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
+			}
+
+			$value_sql = $coerced_default_sql;
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql ) {
+				$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$scope
+				);
+				$value_sql      = $expression_sql['sql'];
+				if (
+					$expression_sql['changed']
+					&& null !== $target_metadata
+					&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+				) {
+					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+				}
+			}
+
+			$target_alias_key = $target_reference['alias_key'];
+			if ( ! isset( $targets[ $target_alias_key ] ) ) {
+				$physical_key = strtolower( 'public.' . $table_name );
+				if ( isset( $target_physical_keys[ $physical_key ] ) ) {
+					return null;
+				}
+				$target_physical_keys[ $physical_key ] = true;
+
+				$ctid_alias     = 'mysql_update_' . count( $targets ) . '_ctid';
+				$targets[ $target_alias_key ] = array(
+					'table'              => $table_name,
+					'table_as'           => $target_reference['table_as'],
+					'ctid_alias'         => $ctid_alias,
+					'assignments'        => array(),
+					'changed_predicates' => array(),
+				);
+				$select_expressions[] = sprintf(
+					'%s.ctid AS %s',
+					$this->connection->quote_identifier( $target_reference['alias'] ),
+					$this->connection->quote_identifier( $ctid_alias )
+				);
+			}
+
+			$value_alias     = 'mysql_update_value_' . $value_index;
+			$value_alias_sql = $this->connection->quote_identifier( $value_alias );
+			$source_value_sql = 'mysql_update_rows.' . $value_alias_sql;
+
+			$select_expressions[] = sprintf( '%s AS %s', $value_sql, $value_alias_sql );
+			$targets[ $target_alias_key ]['assignments'][] = sprintf(
+				'%s = %s',
+				$this->connection->quote_identifier( $target_column ),
+				$source_value_sql
+			);
+			$targets[ $target_alias_key ]['changed_predicates'][] = sprintf(
+				'%s IS DISTINCT FROM (%s)',
+				$this->get_postgresql_dml_column_reference_sql( $target_column, $target_reference['table_as'] ),
+				$source_value_sql
+			);
+
+			++$value_index;
+			$position = $assignment_end;
+			if ( $position === $end ) {
+				break;
+			}
+
+			++$position;
+		}
+
+		if ( 0 === count( $targets ) ) {
+			return null;
+		}
+
+		return array(
+			'select_sql' => $select_expressions,
+			'targets'    => $targets,
+		);
+	}
+
+	/**
 	 * Consume MySQL UPDATE modifiers that do not change row targeting.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -18904,7 +19253,7 @@ WHERE option_name IN (
 	 * @param int              $position              Assignment target start.
 	 * @param int              $end                   Final SET-clause token position, exclusive.
 	 * @param array[]          $table_references      Joined table references.
-	 * @return array{alias_key: string, end: int}|null Target data, or null when unsupported.
+	 * @return array{alias_key: string, column: string, end: int}|null Target data, or null when unsupported.
 	 */
 	private function parse_mysql_joined_update_assignment_target( array $tokens, int $position, int $end, array $table_references ): ?array {
 		$first_identifier = $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null );
@@ -18925,6 +19274,7 @@ WHERE option_name IN (
 
 			return array(
 				'alias_key' => $target_reference['alias_key'],
+				'column'    => $column,
 				'end'       => $position + 3,
 			);
 		}
@@ -18939,6 +19289,7 @@ WHERE option_name IN (
 
 		return array(
 			'alias_key' => $target_reference['alias_key'],
+			'column'    => $first_identifier,
 			'end'       => $position + 1,
 		);
 	}
