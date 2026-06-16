@@ -1746,6 +1746,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'BTREE', $indexes[1]['index_type'] );
 		$this->assertSame( '16', $indexes[1]['sub_part'] );
 		$this->assertSame( '', $indexes[1]['nullable'] );
+
+		$show_indexes = $driver->query( "SHOW INDEX FROM wptests_standalone_index WHERE Index_comment = 'Lookup'" );
+
+		$this->assertCount( 1, $show_indexes );
+		$this->assertSame( 'idx_value', $show_indexes[0]->Key_name );
+		$this->assertSame( 'Lookup', $show_indexes[0]->Index_comment );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_standalone_index' )[0]->{'Create Table'};
+		$this->assertStringContainsString( "KEY `idx_value` (`value`(16)) COMMENT 'Lookup'", $create_table );
 	}
 
 	/**
@@ -11592,11 +11601,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '  KEY `status` (`status`)', $create_table );
 		$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
 
-			$queries = $driver->get_last_postgresql_queries();
-			$this->assertCount( 3, $queries );
-			$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
-			$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $queries[1]['sql'] );
-			$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $queries[2]['sql'] );
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 4, $queries );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $queries[0]['sql'] );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $queries[1]['sql'] );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $queries[2]['sql'] );
+		$this->assertStringContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $queries[3]['sql'] );
 		foreach ( $queries as $query ) {
 			$this->assertStringNotContainsString( 'SHOW CREATE TABLE', $query['sql'] );
 		}
@@ -11607,6 +11617,90 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$num = $driver->query( 'SHOW CREATE TABLE wptests_show_create', PDO::FETCH_NUM );
 		$this->assertSame( array( 'wptests_show_create', $create_table ), $num[0] );
+	}
+
+	/**
+	 * Tests MySQL comments round-trip through PostgreSQL-backed introspection.
+	 */
+	public function test_mysql_comment_metadata_round_trips_through_introspection(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			"CREATE TABLE wptests_comment_metadata (
+				id int NOT NULL COMMENT 'Identifier',
+				label varchar(50) DEFAULT NULL COMMENT \"Display label\",
+				KEY label_lookup (label) COMMENT 'Lookup index'
+			) COMMENT='Table note'"
+		);
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', 'wptests_comment_metadata', 'BASE TABLE')"
+		);
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_comment_metadata' )[0]->{'Create Table'};
+
+		$this->assertStringContainsString( "  `id` int NOT NULL COMMENT 'Identifier'", $create_table );
+		$this->assertStringContainsString( "  `label` varchar(50) DEFAULT NULL COMMENT 'Display label'", $create_table );
+		$this->assertStringContainsString( "  KEY `label_lookup` (`label`) COMMENT 'Lookup index'", $create_table );
+		$this->assertStringEndsWith( "COMMENT='Table note'", $create_table );
+
+		$columns         = $driver->query( 'SHOW FULL COLUMNS FROM wptests_comment_metadata' );
+		$column_comments = array();
+		foreach ( $columns as $column ) {
+			$column_comments[ $column->Field ] = $column->Comment;
+		}
+		$this->assertSame( 'Identifier', $column_comments['id'] );
+		$this->assertSame( 'Display label', $column_comments['label'] );
+
+		$filtered_columns = $driver->query( "SHOW FULL COLUMNS FROM wptests_comment_metadata WHERE Comment = 'Display label'" );
+		$this->assertCount( 1, $filtered_columns );
+		$this->assertSame( 'label', $filtered_columns[0]->Field );
+
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_comment_metadata WHERE Index_comment = 'Lookup index'" );
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'label_lookup', $indexes[0]->Key_name );
+		$this->assertSame( 'Lookup index', $indexes[0]->Index_comment );
+
+		$status = $driver->query( "SHOW TABLE STATUS LIKE 'wptests_comment_metadata'" );
+		$this->assertCount( 1, $status );
+		$this->assertSame( 'Table note', $status[0]->Comment );
+
+		$tables = $driver->query(
+			"SELECT TABLE_COMMENT
+			FROM information_schema.tables
+			WHERE table_name = 'wptests_comment_metadata'"
+		);
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'Table note', $tables[0]->TABLE_COMMENT );
+
+		$information_schema_columns = $driver->query(
+			"SELECT COLUMN_NAME, COLUMN_COMMENT
+			FROM information_schema.columns
+			WHERE table_name = 'wptests_comment_metadata'
+			ORDER BY ORDINAL_POSITION"
+		);
+		$this->assertSame(
+			array(
+				array( 'id', 'Identifier' ),
+				array( 'label', 'Display label' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->COLUMN_NAME, $row->COLUMN_COMMENT );
+				},
+				$information_schema_columns
+			)
+		);
+
+		$statistics = $driver->query(
+			"SELECT INDEX_NAME, INDEX_COMMENT
+			FROM information_schema.statistics
+			WHERE table_name = 'wptests_comment_metadata'"
+		);
+		$this->assertSame( array( 'label_lookup', 'Lookup index' ), array( $statistics[0]->INDEX_NAME, $statistics[0]->INDEX_COMMENT ) );
 	}
 
 	/**

@@ -316,6 +316,10 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
+			if ( $this->is_unquoted_mysql_null_token( $token ) ) {
+				return 'DEFAULT NULL';
+			}
+
 			if (
 				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id
 				|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id
@@ -582,6 +586,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 	private function extract_create_table_metadata( WP_Parser_Node $create_table, bool $include_indexes = false ): array {
 		$table_name    = $this->get_table_name( $create_table );
 		$charset       = $this->get_table_charset_and_collation( $create_table );
+		$table_comment = $this->get_table_comment( $create_table );
 		$columns       = array();
 		$column_types  = array();
 		$indexes       = array();
@@ -594,6 +599,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		if ( ! $element_list ) {
 			return array(
 				'table_name' => $table_name,
+				'comment'    => $table_comment,
 				'columns'    => array(),
 			);
 		}
@@ -618,6 +624,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 					'type'      => $column_type,
 					'charset'   => $charset,
 					'collation' => $collation,
+					'comment'   => $field_definition ? $this->get_column_comment( $field_definition ) : '',
 					'ordinal'   => $ordinal,
 				);
 
@@ -645,6 +652,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$metadata = array(
 			'table_name' => $table_name,
+			'comment'    => $table_comment,
 			'columns'    => $columns,
 		);
 
@@ -674,8 +682,66 @@ class WP_PostgreSQL_Create_Table_Translator {
 			'ordinal'    => $index_ordinal,
 			'non_unique' => $is_primary || $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ? '0' : '1',
 			'index_type' => $this->get_mysql_index_type_metadata( $table_constraint, $is_spatial_index ),
+			'comment'    => $this->get_index_comment( $table_constraint ),
 			'columns'    => $key_parts,
 		);
+	}
+
+	/**
+	 * Get table comment metadata from a CREATE TABLE node.
+	 *
+	 * @param WP_Parser_Node $create_table CREATE TABLE node.
+	 * @return string Table comment.
+	 */
+	private function get_table_comment( WP_Parser_Node $create_table ): string {
+		foreach ( $create_table->get_descendant_nodes( 'createTableOption' ) as $option ) {
+			if ( ! $option->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
+				continue;
+			}
+
+			$comment = $option->get_first_child_node( 'textStringLiteral' );
+			return $comment ? $this->get_node_value( $comment ) : '';
+		}
+
+		return '';
+	}
+
+	/**
+	 * Get column comment metadata from a field definition node.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @return string Column comment.
+	 */
+	private function get_column_comment( WP_Parser_Node $field_definition ): string {
+		foreach ( $field_definition->get_descendant_nodes( 'columnAttribute' ) as $attribute ) {
+			if ( ! $attribute->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
+				continue;
+			}
+
+			$comment = $attribute->get_first_child_node( 'textLiteral' );
+			return $comment ? $this->get_node_value( $comment ) : '';
+		}
+
+		return '';
+	}
+
+	/**
+	 * Get index comment metadata from a table constraint node.
+	 *
+	 * @param WP_Parser_Node $table_constraint Table constraint node.
+	 * @return string Index comment.
+	 */
+	private function get_index_comment( WP_Parser_Node $table_constraint ): string {
+		foreach ( $table_constraint->get_descendant_nodes( 'commonIndexOption' ) as $option ) {
+			if ( ! $option->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
+				continue;
+			}
+
+			$comment = $option->get_first_child_node( 'textLiteral' );
+			return $comment ? $this->get_node_value( $comment ) : '';
+		}
+
+		return '';
 	}
 
 	/**
@@ -810,11 +876,28 @@ class WP_PostgreSQL_Create_Table_Translator {
 					continue;
 				}
 
+				if ( $this->is_unquoted_mysql_null_token( $token ) ) {
+					return null;
+				}
+
 				return $token->get_value();
 			}
 		}
 
 		return null;
+	}
+
+	/**
+	 * Check whether a token represents an unquoted MySQL NULL literal.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token is unquoted NULL.
+	 */
+	private function is_unquoted_mysql_null_token( WP_MySQL_Token $token ): bool {
+		return WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $token->id
+			&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $token->id
+			&& WP_MySQL_Lexer::BACK_TICK_QUOTED_ID !== $token->id
+			&& 0 === strcasecmp( $token->get_value(), 'null' );
 	}
 
 	/**

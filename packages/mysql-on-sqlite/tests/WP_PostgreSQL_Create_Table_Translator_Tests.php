@@ -270,12 +270,14 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 			array(
 				array(
 					'table_name' => 'wp_charset_test',
+					'comment'    => '',
 					'columns'    => array(
 						array(
 							'name'      => 'a',
 							'type'      => 'varchar(50)',
 							'charset'   => 'latin1',
 							'collation' => 'latin1_swedish_ci',
+							'comment'   => '',
 							'ordinal'   => 1,
 						),
 						array(
@@ -283,6 +285,7 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 							'type'      => 'text',
 							'charset'   => 'koi8r',
 							'collation' => 'koi8r_general_ci',
+							'comment'   => '',
 							'ordinal'   => 2,
 						),
 						array(
@@ -290,6 +293,7 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 							'type'      => 'binary',
 							'charset'   => null,
 							'collation' => null,
+							'comment'   => '',
 							'ordinal'   => 3,
 						),
 						array(
@@ -297,6 +301,7 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 							'type'      => 'int',
 							'charset'   => null,
 							'collation' => null,
+							'comment'   => '',
 							'ordinal'   => 4,
 						),
 					),
@@ -311,6 +316,25 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 				) DEFAULT CHARSET utf8mb3'
 			)
 		);
+	}
+
+	/**
+	 * Tests MySQL table, column, and index comments are extracted from CREATE TABLE statements.
+	 */
+	public function test_extract_schema_metadata_preserves_mysql_comments(): void {
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$metadata   = $translator->extract_schema_metadata(
+			"CREATE TABLE wp_comment_meta (
+				id int NOT NULL COMMENT 'ID comment',
+				value varchar(50) COMMENT \"Value comment\",
+				KEY value_lookup (value) COMMENT 'Index comment'
+			) COMMENT='Table comment'",
+			true
+		);
+
+		$this->assertSame( 'Table comment', $metadata[0]['comment'] );
+		$this->assertSame( array( 'ID comment', 'Value comment' ), array_column( $metadata[0]['columns'], 'comment' ) );
+		$this->assertSame( 'Index comment', $metadata[0]['indexes'][0]['comment'] );
 	}
 
 	/**

@@ -17,6 +17,7 @@ class WP_PostgreSQL_Driver {
 	const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
 	const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
 	const MYSQL_CHARSET_METADATA_TABLE     = '__wp_postgresql_mysql_charset_metadata';
+	const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
 	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
 	const DEFAULT_MYSQL_COLLATION          = 'utf8mb4_unicode_ci';
 
@@ -2370,6 +2371,18 @@ class WP_PostgreSQL_Driver {
 				'CREATE TABLE IF NOT EXISTS %s (
 					table_schema TEXT NOT NULL,
 					table_name TEXT NOT NULL,
+					table_comment TEXT NOT NULL DEFAULT \'\',
+					PRIMARY KEY (table_schema, table_name)
+				)',
+				$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+			)
+		);
+
+		$this->connection->query(
+			sprintf(
+				'CREATE TABLE IF NOT EXISTS %s (
+					table_schema TEXT NOT NULL,
+					table_name TEXT NOT NULL,
 					column_name TEXT NOT NULL,
 					ordinal_position INTEGER NOT NULL,
 					column_type TEXT NOT NULL,
@@ -2378,6 +2391,7 @@ class WP_PostgreSQL_Driver {
 					is_nullable TEXT NOT NULL,
 					column_default TEXT,
 					extra TEXT NOT NULL,
+					column_comment TEXT NOT NULL DEFAULT \'\',
 					PRIMARY KEY (table_schema, table_name, column_name)
 				)',
 				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
@@ -2386,6 +2400,7 @@ class WP_PostgreSQL_Driver {
 
 		$this->ensure_mysql_column_metadata_column( 'character_set_name', 'TEXT' );
 		$this->ensure_mysql_column_metadata_column( 'collation_name', 'TEXT' );
+		$this->ensure_mysql_column_metadata_column( 'column_comment', 'TEXT NOT NULL DEFAULT \'\'' );
 
 		$this->connection->query(
 			sprintf(
@@ -2400,11 +2415,13 @@ class WP_PostgreSQL_Driver {
 					index_type TEXT NOT NULL,
 					sub_part TEXT,
 					nullable TEXT NOT NULL,
+					index_comment TEXT NOT NULL DEFAULT \'\',
 					PRIMARY KEY (table_schema, table_name, key_name, seq_in_index)
 				)',
 				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 			)
 		);
+		$this->ensure_mysql_index_metadata_column( 'index_comment', 'TEXT NOT NULL DEFAULT \'\'' );
 
 		$this->connection->query(
 			sprintf(
@@ -2530,6 +2547,7 @@ class WP_PostgreSQL_Driver {
 				self::MYSQL_COLUMN_METADATA_TABLE,
 				self::MYSQL_INDEX_METADATA_TABLE,
 				self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+				self::MYSQL_TABLE_METADATA_TABLE,
 			),
 			true
 		);
@@ -2542,14 +2560,35 @@ class WP_PostgreSQL_Driver {
 	 * @param string $column_type Column type SQL.
 	 */
 	private function ensure_mysql_column_metadata_column( string $column_name, string $column_type ): void {
-		if ( $this->mysql_column_metadata_column_exists( $column_name ) ) {
+		$this->ensure_mysql_metadata_column( self::MYSQL_COLUMN_METADATA_TABLE, $column_name, $column_type );
+	}
+
+	/**
+	 * Add a MySQL index metadata field when upgrading an existing side table.
+	 *
+	 * @param string $column_name Column name.
+	 * @param string $column_type Column type SQL.
+	 */
+	private function ensure_mysql_index_metadata_column( string $column_name, string $column_type ): void {
+		$this->ensure_mysql_metadata_column( self::MYSQL_INDEX_METADATA_TABLE, $column_name, $column_type );
+	}
+
+	/**
+	 * Add a metadata field when upgrading an existing side table.
+	 *
+	 * @param string $metadata_table Metadata side-table name.
+	 * @param string $column_name    Column name.
+	 * @param string $column_type    Column type SQL.
+	 */
+	private function ensure_mysql_metadata_column( string $metadata_table, string $column_name, string $column_type ): void {
+		if ( $this->mysql_metadata_column_exists( $metadata_table, $column_name ) ) {
 			return;
 		}
 
 		$this->connection->query(
 			sprintf(
 				'ALTER TABLE %s ADD COLUMN %s %s',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE ),
+				$this->connection->quote_identifier( $metadata_table ),
 				$this->connection->quote_identifier( $column_name ),
 				$column_type
 			)
@@ -2557,18 +2596,19 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Check whether a MySQL column metadata field exists.
+	 * Check whether a metadata side-table field exists.
 	 *
-	 * @param string $column_name Column name.
+	 * @param string $metadata_table Metadata side-table name.
+	 * @param string $column_name    Column name.
 	 * @return bool Whether the column exists.
 	 */
-	private function mysql_column_metadata_column_exists( string $column_name ): bool {
+	private function mysql_metadata_column_exists( string $metadata_table, string $column_name ): bool {
 		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
 		if ( 'sqlite' === $driver_name ) {
 			$stmt = $this->connection->query(
 				sprintf(
 					'PRAGMA table_info(%s)',
-					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+					$this->connection->quote_identifier( $metadata_table )
 				)
 			);
 
@@ -2589,7 +2629,7 @@ class WP_PostgreSQL_Driver {
 					AND table_name = ?
 					AND column_name = ?
 			)',
-			array( self::MYSQL_COLUMN_METADATA_TABLE, $column_name )
+			array( $metadata_table, $column_name )
 		);
 
 		return (bool) $stmt->fetchColumn();
@@ -2638,6 +2678,7 @@ class WP_PostgreSQL_Driver {
 
 			$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $schema_name );
 			$this->clear_mysql_metadata_cache_for_table( $schema_name, $table_name );
+			$this->insert_mysql_table_metadata( $schema_name, $table_name, $metadata );
 
 			$column_nullable = array();
 			foreach ( $metadata['columns'] as $column ) {
@@ -2681,6 +2722,13 @@ class WP_PostgreSQL_Driver {
 
 		foreach ( $table_names as $table_name ) {
 			$params = array( $table_schema, $table_name );
+			$this->connection->query(
+				sprintf(
+					'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+				),
+				$params
+			);
 			$this->connection->query(
 				sprintf(
 					'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
@@ -2924,7 +2972,7 @@ class WP_PostgreSQL_Driver {
 		);
 		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
 
-		foreach ( array( self::MYSQL_COLUMN_METADATA_TABLE, self::MYSQL_INDEX_METADATA_TABLE, self::MYSQL_FOREIGN_KEY_METADATA_TABLE ) as $metadata_table ) {
+		foreach ( array( self::MYSQL_TABLE_METADATA_TABLE, self::MYSQL_COLUMN_METADATA_TABLE, self::MYSQL_INDEX_METADATA_TABLE, self::MYSQL_FOREIGN_KEY_METADATA_TABLE ) as $metadata_table ) {
 			$this->connection->query(
 				sprintf(
 					'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
@@ -3010,6 +3058,30 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Insert or replace table metadata.
+	 *
+	 * @param string $table_schema Table schema.
+	 * @param string $table_name   Table name.
+	 * @param array  $metadata     Table metadata.
+	 */
+	private function insert_mysql_table_metadata( string $table_schema, string $table_name, array $metadata ): void {
+		$this->connection->query(
+			sprintf(
+				'INSERT INTO %s
+					(table_schema, table_name, table_comment)
+				VALUES (?, ?, ?)',
+				$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+			),
+			array(
+				$table_schema,
+				$table_name,
+				$metadata['comment'] ?? '',
+			)
+		);
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+	}
+
+	/**
 	 * Insert or replace column metadata.
 	 *
 	 * @param string $table_schema Table schema.
@@ -3021,8 +3093,8 @@ class WP_PostgreSQL_Driver {
 		$this->connection->query(
 			sprintf(
 				'INSERT INTO %s
-					(table_schema, table_name, column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+					(table_schema, table_name, column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra, column_comment)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
 			),
 			array(
@@ -3036,6 +3108,7 @@ class WP_PostgreSQL_Driver {
 				$column['nullable'] ?? 'YES',
 				$column['default'] ?? null,
 				$column['extra'] ?? '',
+				$column['comment'] ?? '',
 			)
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
@@ -3110,8 +3183,8 @@ class WP_PostgreSQL_Driver {
 			$this->connection->query(
 				sprintf(
 					'INSERT INTO %s
-						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part, nullable)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part, nullable, index_comment)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 				),
 				array(
@@ -3125,6 +3198,7 @@ class WP_PostgreSQL_Driver {
 					$index['index_type'],
 					null === $column['sub_part'] ? null : (string) $column['sub_part'],
 					'NO' === $is_nullable ? '' : 'YES',
+					$index['comment'] ?? '',
 				)
 			);
 		}
@@ -4204,8 +4278,9 @@ class WP_PostgreSQL_Driver {
 			$key_parts['metadata'] = $this->apply_mysql_spatial_index_sub_parts( $key_parts['metadata'] );
 		}
 
-		$position = $key_list_end;
-		if ( ! $this->consume_mysql_supported_create_index_options( $tokens, $position, $statement_end, $index_type ) ) {
+		$position      = $key_list_end;
+		$index_comment = '';
+		if ( ! $this->consume_mysql_supported_create_index_options( $tokens, $position, $statement_end, $index_type, $index_comment ) ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
 		}
 
@@ -4248,6 +4323,7 @@ class WP_PostgreSQL_Driver {
 					'name'       => $metadata_index_name,
 					'non_unique' => $is_unique ? '0' : '1',
 					'index_type' => $index_type,
+					'comment'    => $index_comment,
 					'columns'    => $key_parts['metadata'],
 				),
 			),
@@ -4457,9 +4533,11 @@ class WP_PostgreSQL_Driver {
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $position      Current token position, updated on success.
 	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @param string           $index_type    MySQL index type.
+	 * @param string           $index_comment Index comment, updated on success.
 	 * @return bool Whether all remaining options are supported.
 	 */
-	private function consume_mysql_supported_create_index_options( array $tokens, int &$position, int $statement_end, string $index_type ): bool {
+	private function consume_mysql_supported_create_index_options( array $tokens, int &$position, int $statement_end, string $index_type, string &$index_comment ): bool {
 		$allow_btree_options = ! $this->is_mysql_metadata_only_index_type( $index_type );
 		if ( ! $allow_btree_options ) {
 			return $position === $statement_end;
@@ -4471,7 +4549,8 @@ class WP_PostgreSQL_Driver {
 				&& WP_MySQL_Lexer::COMMENT_SYMBOL === $tokens[ $position ]->id
 				&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
 			) {
-				$position += 2;
+				$index_comment = $tokens[ $position + 1 ]->get_value();
+				$position     += 2;
 				continue;
 			}
 
@@ -9903,7 +9982,7 @@ ORDER BY ordinal_position';
 			case 'Privileges':
 				return "'select,insert,update,references'";
 			case 'Comment':
-				return "''";
+				return 'column_comment';
 		}
 
 		throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
@@ -9962,16 +10041,17 @@ ORDER BY ordinal_position';
 		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $database_name );
 		$sql          = sprintf(
 			'SELECT table_name AS %s%s
-	FROM information_schema.tables
-	WHERE table_schema = ?
-			AND table_type IN (\'BASE TABLE\', \'VIEW\')
-			AND table_name NOT IN (%s, %s, %s, %s)',
+		FROM information_schema.tables
+		WHERE table_schema = ?
+				AND table_type IN (\'BASE TABLE\', \'VIEW\')
+				AND table_name NOT IN (%s, %s, %s, %s, %s)',
 			$table_column,
 			$is_full ? ', CASE WHEN table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
 			$this->connection->quote( self::MYSQL_COLUMN_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_INDEX_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_FOREIGN_KEY_METADATA_TABLE ),
-			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE )
+			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE ),
+			$this->connection->quote( self::MYSQL_TABLE_METADATA_TABLE )
 		);
 		$params       = array( $schema_name );
 
@@ -10054,7 +10134,8 @@ ORDER BY table_name';
 				$table_name,
 				null === $identity_column
 					? null
-					: $this->get_show_table_status_auto_increment_value( $table_name, $identity_column )
+					: $this->get_show_table_status_auto_increment_value( $table_name, $identity_column ),
+				(string) ( $catalog_row['table_comment'] ?? '' )
 			);
 		}
 
@@ -10147,10 +10228,11 @@ ORDER BY table_name';
 			);
 		}
 
-			$indexes          = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
-			$foreign_keys     = $this->get_show_create_table_foreign_key_metadata_rows( $resolved_schema, $table_name );
-			$create_statement = $this->get_mysql_create_table_statement_from_metadata( $table_name, $columns, $indexes, $foreign_keys );
-		$rows                 = array(
+		$indexes          = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
+		$foreign_keys     = $this->get_show_create_table_foreign_key_metadata_rows( $resolved_schema, $table_name );
+		$table_comment    = $this->get_show_create_table_table_comment_metadata( $resolved_schema, $table_name );
+		$create_statement = $this->get_mysql_create_table_statement_from_metadata( $table_name, $columns, $indexes, $foreign_keys, $table_comment );
+		$rows             = array(
 			array(
 				'Table'        => $table_name,
 				'Create Table' => $create_statement,
@@ -10178,7 +10260,7 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_column_metadata_rows( string $schema_name, string $table_name ): array {
 		$sql    = sprintf(
-			'SELECT column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra
+			'SELECT column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra, column_comment
 			FROM %s
 			WHERE table_schema = ? AND table_name = ?
 			ORDER BY ordinal_position',
@@ -10204,7 +10286,7 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_index_metadata_rows( string $schema_name, string $table_name ): array {
 		$sql    = sprintf(
-			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part
+			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, sub_part, index_comment
 			FROM %s
 			WHERE table_schema = ? AND table_name = ?
 			ORDER BY
@@ -10255,15 +10337,43 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Get table comment metadata for SHOW CREATE TABLE.
+	 *
+	 * @param string $schema_name Backend metadata schema.
+	 * @param string $table_name  Table name.
+	 * @return string Table comment.
+	 */
+	private function get_show_create_table_table_comment_metadata( string $schema_name, string $table_name ): string {
+		$sql    = sprintf(
+			'SELECT table_comment
+			FROM %s
+			WHERE table_schema = ? AND table_name = ?
+			LIMIT 1',
+			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+		);
+		$params = array( $schema_name, $table_name );
+		$stmt   = $this->connection->query( $sql, $params );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		$comment = $stmt->fetchColumn();
+		return false === $comment ? '' : (string) $comment;
+	}
+
+	/**
 	 * Build a MySQL CREATE TABLE statement from stored MySQL metadata rows.
 	 *
-	 * @param string  $table_name Table name.
-	 * @param array[] $columns    Column metadata rows.
-	 * @param array[] $indexes    Index metadata rows.
+	 * @param string  $table_name    Table name.
+	 * @param array[] $columns       Column metadata rows.
+	 * @param array[] $indexes       Index metadata rows.
 	 * @param array[] $foreign_keys Foreign key metadata rows.
+	 * @param string  $table_comment Table comment.
 	 * @return string MySQL-compatible CREATE TABLE statement.
 	 */
-	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys ): string {
+	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, string $table_comment = '' ): string {
 		$definitions = array();
 		foreach ( $columns as $column ) {
 			$definitions[] = $this->get_mysql_create_table_column_definition_from_metadata( $column );
@@ -10280,13 +10390,19 @@ ORDER BY table_name';
 		$collation = $this->get_mysql_create_table_collation_from_metadata( $columns );
 		$charset   = $this->get_mysql_charset_from_collation( $collation );
 
-		return sprintf(
+		$sql = sprintf(
 			"CREATE TABLE %s (\n%s\n) ENGINE=InnoDB DEFAULT CHARSET=%s COLLATE=%s",
 			$this->quote_mysql_identifier( $table_name ),
 			implode( ",\n", $definitions ),
 			$charset,
 			$collation
 		);
+
+		if ( '' !== $table_comment ) {
+			$sql .= ' COMMENT=' . $this->quote_mysql_utf8_string_literal( $table_comment );
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -10316,7 +10432,11 @@ ORDER BY table_name';
 			$sql .= ' DEFAULT NULL';
 		}
 
-			return $sql;
+		if ( '' !== (string) ( $column['column_comment'] ?? '' ) ) {
+			$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $column['column_comment'] );
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -10348,19 +10468,25 @@ ORDER BY table_name';
 	private function get_mysql_create_table_index_definition_from_metadata( array $index ): string {
 		$first = $index[0];
 		if ( 'PRIMARY' === strtoupper( (string) $first['key_name'] ) ) {
-			return sprintf(
+			$sql = sprintf(
 				'  PRIMARY KEY (%s)',
+				implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
+			);
+		} else {
+			$sql = sprintf(
+				'  %s%sKEY %s (%s)',
+				'0' === (string) $first['non_unique'] ? 'UNIQUE ' : '',
+				'BTREE' !== strtoupper( (string) $first['index_type'] ) ? strtoupper( (string) $first['index_type'] ) . ' ' : '',
+				$this->quote_mysql_identifier( (string) $first['key_name'] ),
 				implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
 			);
 		}
 
-		return sprintf(
-			'  %s%sKEY %s (%s)',
-			'0' === (string) $first['non_unique'] ? 'UNIQUE ' : '',
-			'BTREE' !== strtoupper( (string) $first['index_type'] ) ? strtoupper( (string) $first['index_type'] ) . ' ' : '',
-			$this->quote_mysql_identifier( (string) $first['key_name'] ),
-			implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
-		);
+		if ( '' !== (string) ( $first['index_comment'] ?? '' ) ) {
+			$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $first['index_comment'] );
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -10504,41 +10630,51 @@ ORDER BY table_name';
 	 * @return array[] Catalog rows.
 	 */
 	private function get_show_table_status_catalog_rows(): array {
-		$sql        = 'SELECT
-				t.table_name,
-				(
-					SELECT c.column_name
-					FROM information_schema.columns c
-					WHERE c.table_schema = t.table_schema
-						AND c.table_name = t.table_name
-						AND (
-							c.is_identity = \'YES\'
-							OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%\'
-						)
-					ORDER BY c.ordinal_position
-					LIMIT 1
-				) AS identity_column
-			FROM information_schema.tables t
-			WHERE t.table_schema = ?
-				AND t.table_type = ?
-				AND t.table_name NOT IN (?, ?, ?, ?)
-				ORDER BY t.table_name';
-			$params = array(
-				'public',
-				'BASE TABLE',
-				self::MYSQL_COLUMN_METADATA_TABLE,
-				self::MYSQL_INDEX_METADATA_TABLE,
-				self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-				self::MYSQL_CHARSET_METADATA_TABLE,
-			);
-			$stmt   = $this->connection->query( $sql, $params );
+		$this->ensure_mysql_schema_metadata_tables();
 
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
+		$sql        = sprintf(
+			'SELECT
+					t.table_name,
+					COALESCE(tm.table_comment, \'\') AS table_comment,
+					(
+						SELECT c.column_name
+						FROM information_schema.columns c
+						WHERE c.table_schema = t.table_schema
+							AND c.table_name = t.table_name
+							AND (
+								c.is_identity = \'YES\'
+								OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
+							)
+						ORDER BY c.ordinal_position
+						LIMIT 1
+					) AS identity_column
+				FROM information_schema.tables t
+				LEFT JOIN %s tm
+					ON tm.table_schema = t.table_schema
+					AND tm.table_name = t.table_name
+				WHERE t.table_schema = ?
+					AND t.table_type = ?
+					AND t.table_name NOT IN (?, ?, ?, ?, ?)
+					ORDER BY t.table_name',
+			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+		);
+		$params = array(
+			'public',
+			'BASE TABLE',
+			self::MYSQL_COLUMN_METADATA_TABLE,
+			self::MYSQL_INDEX_METADATA_TABLE,
+			self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			self::MYSQL_CHARSET_METADATA_TABLE,
+			self::MYSQL_TABLE_METADATA_TABLE,
+		);
+		$stmt = $this->connection->query( $sql, $params );
 
-			return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**
@@ -10546,9 +10682,10 @@ ORDER BY table_name';
 	 *
 	 * @param string      $table_name     Table name.
 	 * @param string|null $auto_increment Next auto-increment value, or null.
+	 * @param string      $comment        Table comment.
 	 * @return array MySQL-shaped row.
 	 */
-	private function get_show_table_status_result_row( string $table_name, ?string $auto_increment ): array {
+	private function get_show_table_status_result_row( string $table_name, ?string $auto_increment, string $comment = '' ): array {
 		return array(
 			'Name'            => $table_name,
 			'Engine'          => 'InnoDB',
@@ -10567,7 +10704,7 @@ ORDER BY table_name';
 			'Collation'       => $this->collation,
 			'Checksum'        => null,
 			'Create_options'  => '',
-			'Comment'         => '',
+			'Comment'         => $comment,
 		);
 	}
 
@@ -12692,14 +12829,14 @@ ORDER BY ordinal_position',
 
 		if ( $is_full ) {
 			$fields = 'field_name AS "Field",
-	column_type AS "Type",
-	collation_name AS "Collation",
-	is_nullable AS "Null",
-	column_key AS "Key",
-	column_default AS "Default",
-	column_extra AS "Extra",
-	\'select,insert,update,references\' AS "Privileges",
-	\'\' AS "Comment"';
+		column_type AS "Type",
+		collation_name AS "Collation",
+		is_nullable AS "Null",
+		column_key AS "Key",
+		column_default AS "Default",
+		column_extra AS "Extra",
+		\'select,insert,update,references\' AS "Privileges",
+		column_comment AS "Comment"';
 		} else {
 			$fields = 'field_name AS "Field",
 	column_type AS "Type",
@@ -12724,8 +12861,9 @@ catalog_columns AS (
 				WHEN cm.column_name IS NOT NULL THEN cm.column_default
 				ELSE c.column_default
 			END AS column_default,
-		COALESCE(cm.extra, %7$s) AS column_extra,
-		c.ordinal_position
+			COALESCE(cm.extra, %7$s) AS column_extra,
+			COALESCE(cm.column_comment, \'\') AS column_comment,
+			c.ordinal_position
 	FROM requested_table rt
 	INNER JOIN information_schema.columns c
 		ON c.table_schema = rt.table_schema
@@ -12742,9 +12880,10 @@ metadata_columns AS (
 		%8$s AS collation_name,
 		cm.is_nullable,
 		%6$s AS column_key,
-		cm.column_default,
-		cm.extra AS column_extra,
-		cm.ordinal_position
+			cm.column_default,
+			cm.extra AS column_extra,
+			cm.column_comment,
+			cm.ordinal_position
 	FROM requested_table rt
 	INNER JOIN %1$s cm
 		ON cm.table_schema = rt.table_schema
@@ -12813,7 +12952,7 @@ metadata_index_rows AS (
 		im.nullable AS "Null",
 		im.index_type AS "Index_type",
 		\'\' AS "Comment",
-		\'\' AS "Index_comment",
+		im.index_comment AS "Index_comment",
 		\'YES\' AS "Visible",
 		NULL AS "Expression",
 		im.index_ordinal AS postgresql_index_oid
@@ -12949,10 +13088,10 @@ FROM (
 		im.sub_part AS "Sub_part",
 		NULL AS "Packed",
 		im.nullable AS "Null",
-		im.index_type AS "Index_type",
-		\'\' AS "Comment",
-		\'\' AS "Index_comment",
-		\'YES\' AS "Visible",
+			im.index_type AS "Index_type",
+			\'\' AS "Comment",
+			im.index_comment AS "Index_comment",
+			\'YES\' AS "Visible",
 		NULL AS "Expression",
 		im.index_ordinal AS postgresql_index_oid
 	FROM %s im
@@ -19339,7 +19478,7 @@ WHERE option_name IN (
 		$placeholders = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
 		$stmt         = $this->connection->query(
 			sprintf(
-				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (?, ?, ?, ?) AND %1$s IN (%5$s)',
+				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (?, ?, ?, ?, ?) AND %1$s IN (%5$s)',
 				$this->connection->quote_identifier( 'table_name' ),
 				$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
 				$this->connection->quote_identifier( 'table_schema' ),
@@ -19355,6 +19494,7 @@ WHERE option_name IN (
 					self::MYSQL_INDEX_METADATA_TABLE,
 					self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 					self::MYSQL_CHARSET_METADATA_TABLE,
+					self::MYSQL_TABLE_METADATA_TABLE,
 				),
 				$table_names
 			)
@@ -19383,7 +19523,7 @@ WHERE option_name IN (
 	 */
 	private function get_information_schema_tables_site_health_relation_sql( array $existing_table_names ): string {
 		return sprintf(
-			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s, %14$s, %15$s, %16$s)',
+			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s, %14$s, %15$s, %16$s, %17$s)',
 			$this->connection->quote_identifier( 'table_name' ),
 			$this->connection->quote( $this->db_name ),
 			$this->connection->quote_identifier( 'TABLE_SCHEMA' ),
@@ -19399,7 +19539,8 @@ WHERE option_name IN (
 			$this->connection->quote( self::MYSQL_COLUMN_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_INDEX_METADATA_TABLE ),
 			$this->connection->quote( self::MYSQL_FOREIGN_KEY_METADATA_TABLE ),
-			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE )
+			$this->connection->quote( self::MYSQL_CHARSET_METADATA_TABLE ),
+			$this->connection->quote( self::MYSQL_TABLE_METADATA_TABLE )
 		);
 	}
 
@@ -21263,6 +21404,7 @@ WHERE option_name IN (
 			self::MYSQL_INDEX_METADATA_TABLE,
 			self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			self::MYSQL_CHARSET_METADATA_TABLE,
+			self::MYSQL_TABLE_METADATA_TABLE,
 		);
 	}
 
@@ -21354,27 +21496,36 @@ WHERE option_name IN (
 	 * @return array[] Rows keyed by uppercase column name.
 	 */
 	private function get_direct_information_schema_table_rows(): array {
-		$sql = 'SELECT
-				t.table_schema,
-				t.table_name,
-				t.table_type,
-				(
-					SELECT c.column_name
-					FROM information_schema.columns c
-					WHERE c.table_schema = t.table_schema
-						AND c.table_name = t.table_name
-						AND (
-							c.is_identity = \'YES\'
-							OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%\'
-						)
-					ORDER BY c.ordinal_position
-					LIMIT 1
-				) AS identity_column
-			FROM information_schema.tables t
-			WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-				AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
-				AND t.table_name NOT IN (' . $this->get_direct_information_schema_hidden_table_list_sql() . ')
-			ORDER BY t.table_schema, t.table_name';
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$sql = sprintf(
+			'SELECT
+					t.table_schema,
+					t.table_name,
+					t.table_type,
+					COALESCE(tm.table_comment, \'\') AS table_comment,
+					(
+						SELECT c.column_name
+						FROM information_schema.columns c
+						WHERE c.table_schema = t.table_schema
+							AND c.table_name = t.table_name
+							AND (
+								c.is_identity = \'YES\'
+								OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
+							)
+						ORDER BY c.ordinal_position
+						LIMIT 1
+					) AS identity_column
+				FROM information_schema.tables t
+				LEFT JOIN %s tm
+					ON tm.table_schema = t.table_schema
+					AND tm.table_name = t.table_name
+				WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+					AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
+					AND t.table_name NOT IN (' . $this->get_direct_information_schema_hidden_table_list_sql() . ')
+				ORDER BY t.table_schema, t.table_name',
+			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+		);
 
 		try {
 			$stmt = $this->connection->query( $sql );
@@ -21420,7 +21571,7 @@ WHERE option_name IN (
 				'TABLE_COLLATION' => $this->collation,
 				'CHECKSUM'        => null,
 				'CREATE_OPTIONS'  => '',
-				'TABLE_COMMENT'   => '',
+				'TABLE_COMMENT'   => (string) ( $row['table_comment'] ?? '' ),
 			);
 		}
 
@@ -21482,13 +21633,13 @@ WHERE option_name IN (
 		c.numeric_scale AS "NUMERIC_SCALE",
 		c.datetime_precision AS "DATETIME_PRECISION",
 		%3$s AS "CHARACTER_SET_NAME",
-		%4$s AS "COLLATION_NAME",
-		%5$s AS "COLUMN_TYPE",
-		%6$s AS "COLUMN_KEY",
-		COALESCE(cm.extra, %7$s) AS "EXTRA",
-		\'select,insert,update,references\' AS "PRIVILEGES",
-		\'\' AS "COLUMN_COMMENT",
-		\'\' AS "GENERATION_EXPRESSION",
+			%4$s AS "COLLATION_NAME",
+			%5$s AS "COLUMN_TYPE",
+			%6$s AS "COLUMN_KEY",
+			COALESCE(cm.extra, %7$s) AS "EXTRA",
+			\'select,insert,update,references\' AS "PRIVILEGES",
+			COALESCE(cm.column_comment, \'\') AS "COLUMN_COMMENT",
+			\'\' AS "GENERATION_EXPRESSION",
 		NULL AS "SRS_ID"
 	FROM information_schema.columns c
 	LEFT JOIN %8$s cm
@@ -21514,13 +21665,13 @@ metadata_columns AS (
 		NULL AS "NUMERIC_SCALE",
 		NULL AS "DATETIME_PRECISION",
 		%12$s AS "CHARACTER_SET_NAME",
-		%13$s AS "COLLATION_NAME",
-		cm.column_type AS "COLUMN_TYPE",
-		%14$s AS "COLUMN_KEY",
-		cm.extra AS "EXTRA",
-		\'select,insert,update,references\' AS "PRIVILEGES",
-		\'\' AS "COLUMN_COMMENT",
-		\'\' AS "GENERATION_EXPRESSION",
+			%13$s AS "COLLATION_NAME",
+			cm.column_type AS "COLUMN_TYPE",
+			%14$s AS "COLUMN_KEY",
+			cm.extra AS "EXTRA",
+			\'select,insert,update,references\' AS "PRIVILEGES",
+			cm.column_comment AS "COLUMN_COMMENT",
+			\'\' AS "GENERATION_EXPRESSION",
 		NULL AS "SRS_ID"
 	FROM %8$s cm
 	WHERE NOT EXISTS (
@@ -21783,7 +21934,7 @@ END',
 	im.nullable AS "NULLABLE",
 	im.index_type AS "INDEX_TYPE",
 	\'\' AS "COMMENT",
-	\'\' AS "INDEX_COMMENT",
+	im.index_comment AS "INDEX_COMMENT",
 	\'YES\' AS "IS_VISIBLE",
 	NULL AS "EXPRESSION"
 FROM %2$s im',
@@ -34433,10 +34584,11 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 						WP_MySQL_Lexer::BACK_TICK_QUOTED_ID,
 						WP_MySQL_Lexer::BIT_SYMBOL,
 						WP_MySQL_Lexer::BOOLEAN_SYMBOL,
-						WP_MySQL_Lexer::BOOL_SYMBOL,
-						WP_MySQL_Lexer::CHARSET_SYMBOL,
-						WP_MySQL_Lexer::COLLATE_SYMBOL,
-						WP_MySQL_Lexer::DEC_SYMBOL,
+							WP_MySQL_Lexer::BOOL_SYMBOL,
+							WP_MySQL_Lexer::CHARSET_SYMBOL,
+							WP_MySQL_Lexer::COLLATE_SYMBOL,
+							WP_MySQL_Lexer::COMMENT_SYMBOL,
+							WP_MySQL_Lexer::DEC_SYMBOL,
 						WP_MySQL_Lexer::ENGINE_SYMBOL,
 						WP_MySQL_Lexer::FIXED_SYMBOL,
 						WP_MySQL_Lexer::FULLTEXT_SYMBOL,
