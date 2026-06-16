@@ -170,12 +170,64 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @return WP_MySQL_Parser Parser instance.
 	 */
 	private function create_parser( string $sql ): WP_MySQL_Parser {
+		$sql    = $this->normalize_parser_unsafe_long_character_aliases( $sql );
 		$lexer  = new WP_MySQL_Lexer( $sql, 80038, $this->sql_modes );
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
 			? $lexer->native_token_stream()
 			: $lexer->remaining_tokens();
 
 		return new WP_MySQL_Parser( $this->get_mysql_grammar(), $tokens );
+	}
+
+	/**
+	 * Normalize LONG CHAR aliases that can make the parser fail to converge.
+	 *
+	 * SQLite treats these as MEDIUMTEXT metadata, same as LONG VARCHAR. Rewrite
+	 * only the tokenized type alias so parsing remains bounded while downstream
+	 * metadata normalization still sees a LONG-prefixed text alias.
+	 *
+	 * @param string $sql MySQL SQL.
+	 * @return string SQL with parser-safe LONG character aliases.
+	 */
+	private function normalize_parser_unsafe_long_character_aliases( string $sql ): string {
+		$lexer  = new WP_MySQL_Lexer( $sql, 80038, $this->sql_modes );
+		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
+			? $lexer->native_token_stream()
+			: $lexer->remaining_tokens();
+
+		$rewritten = '';
+		$cursor    = 0;
+		$changed   = false;
+		for ( $i = 0; isset( $tokens[ $i ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $i ]->id; ++$i ) {
+			if (
+				WP_MySQL_Lexer::LONG_SYMBOL !== $tokens[ $i ]->id
+				|| ! isset( $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::CHAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$start_token = $tokens[ $i ];
+			$end_token   = $tokens[ $i + 1 ];
+			if ( isset( $tokens[ $i + 2 ] ) && WP_MySQL_Lexer::VARYING_SYMBOL === $tokens[ $i + 2 ]->id ) {
+				$end_token = $tokens[ $i + 2 ];
+				$i         = $i + 2;
+			} else {
+				++$i;
+			}
+
+			$start     = $start_token->start;
+			$end       = $end_token->start + $end_token->length;
+			$rewritten .= substr( $sql, $cursor, $start - $cursor ) . 'LONG VARCHAR';
+			$cursor    = $end;
+			$changed   = true;
+		}
+
+		if ( ! $changed ) {
+			return $sql;
+		}
+
+		return $rewritten . substr( $sql, $cursor );
 	}
 
 	/**
@@ -1494,6 +1546,11 @@ class WP_PostgreSQL_Create_Table_Translator {
 			return 'serial';
 		}
 
+		$long_alias = $this->get_normalized_mysql_long_data_type( $data_type );
+		if ( null !== $long_alias ) {
+			return $long_alias;
+		}
+
 		$character_alias = $this->get_normalized_mysql_character_data_type( $data_type );
 		if ( null !== $character_alias ) {
 			return $character_alias;
@@ -1505,6 +1562,32 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return strtolower( $type_token->get_value() );
+	}
+
+	/**
+	 * Normalize MySQL LONG-prefixed data type aliases.
+	 *
+	 * @param WP_Parser_Node $data_type Data type node.
+	 * @return string|null Normalized data type, or null for non-LONG aliases.
+	 */
+	private function get_normalized_mysql_long_data_type( WP_Parser_Node $data_type ): ?string {
+		$tokens = $data_type->get_descendant_tokens();
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::LONG_SYMBOL !== $tokens[0]->id
+		) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::VARBINARY_SYMBOL === $tokens[1]->id ) {
+			return 'mediumblob';
+		}
+
+		if ( in_array( $tokens[1]->id, array( WP_MySQL_Lexer::CHAR_SYMBOL, WP_MySQL_Lexer::VARCHAR_SYMBOL, WP_MySQL_Lexer::VARCHARACTER_SYMBOL ), true ) ) {
+			return 'mediumtext';
+		}
+
+		return null;
 	}
 
 	/**

@@ -498,6 +498,43 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL LONG-prefixed aliases translate while preserving MySQL metadata.
+	 */
+	public function test_mysql_long_type_aliases_are_supported(): void {
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$sql        = 'CREATE TABLE wp_long_alias_test (
+			c1 LONG VARCHAR,
+			c2 LONG CHAR,
+			c3 LONG CHAR VARYING,
+			c4 LONG CHARACTER,
+			c5 LONG CHARACTER VARYING,
+			c6 LONG VARBINARY
+		) DEFAULT CHARACTER SET utf8mb4';
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_long_alias_test\" (\n  \"c1\" text,\n  \"c2\" text,\n  \"c3\" text,\n  \"c4\" text,\n  \"c5\" text,\n  \"c6\" bytea\n)",
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql, true );
+
+		$this->assertSame(
+			array( 'mediumtext', 'mediumtext', 'mediumtext', 'mediumtext', 'mediumtext', 'mediumblob' ),
+			array_column( $metadata[0]['columns'], 'type' )
+		);
+		$this->assertSame(
+			array( 'utf8mb4', 'utf8mb4', 'utf8mb4', 'utf8mb4', 'utf8mb4', null ),
+			array_column( $metadata[0]['columns'], 'charset' )
+		);
+		$this->assertSame(
+			array( 'utf8mb4_unicode_ci', 'utf8mb4_unicode_ci', 'utf8mb4_unicode_ci', 'utf8mb4_unicode_ci', 'utf8mb4_unicode_ci', null ),
+			array_column( $metadata[0]['columns'], 'collation' )
+		);
+	}
+
+	/**
 	 * Tests MySQL SERIAL translates to identity DDL and preserves MySQL metadata.
 	 */
 	public function test_serial_type_is_supported(): void {

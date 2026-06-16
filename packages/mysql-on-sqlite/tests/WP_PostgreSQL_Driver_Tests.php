@@ -10617,6 +10617,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE routes LONG-prefixed MySQL aliases through the DDL translator.
+	 */
+	public function test_create_table_long_aliases_use_sqlite_compatible_metadata(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_long_alias_create (
+					notes LONG VARCHAR,
+					raw_data LONG VARBINARY
+				)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_long_alias_create\" (\n  \"notes\" text,\n  \"raw_data\" bytea\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_long_alias_create' );
+		$this->assertSame( array( 'mediumtext', 'mediumblob' ), array_column( $columns, 'column_type' ) );
+		$this->assertSame( 'utf8mb4', $columns[0]['character_set_name'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $columns[0]['collation_name'] );
+		$this->assertNull( $columns[1]['character_set_name'] );
+		$this->assertNull( $columns[1]['collation_name'] );
+	}
+
+	/**
 	 * Tests ALTER TABLE ADD accepts MySQL data type aliases.
 	 */
 	public function test_alter_table_add_accepts_mysql_data_type_aliases(): void {
@@ -10638,7 +10672,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				ADD amount DEC(10,2),
 				ADD fixed_value FIXED(8,3),
 				ADD real_value REAL,
-				ADD payload JSON DEFAULT NULL'
+				ADD payload JSON DEFAULT NULL,
+				ADD notes LONG VARCHAR,
+				ADD raw_data LONG VARBINARY'
 		);
 
 		$this->assertSame(
@@ -10671,17 +10707,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "payload" text DEFAULT NULL',
 					'params' => array(),
 				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "notes" text',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "raw_data" bytea',
+					'params' => array(),
+				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
 
 		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alias_alter' );
 		$this->assertSame(
-			array( 'int(11)', 'bit(10)', 'bool', 'boolean', 'dec(10,2)', 'fixed(8,3)', 'real', 'json' ),
+			array( 'int(11)', 'bit(10)', 'bool', 'boolean', 'dec(10,2)', 'fixed(8,3)', 'real', 'json', 'mediumtext', 'mediumblob' ),
 			array_column( $columns, 'column_type' )
 		);
 		$this->assertNull( $columns[7]['character_set_name'] );
 		$this->assertNull( $columns[7]['collation_name'] );
+		$this->assertSame( 'utf8mb4', $columns[8]['character_set_name'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $columns[8]['collation_name'] );
+		$this->assertNull( $columns[9]['character_set_name'] );
+		$this->assertNull( $columns[9]['collation_name'] );
 	}
 
 	/**
