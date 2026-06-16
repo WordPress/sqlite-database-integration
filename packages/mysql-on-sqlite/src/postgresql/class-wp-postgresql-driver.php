@@ -861,6 +861,8 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $translated_query ) {
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
+		} elseif ( $this->is_unsupported_mysql_multi_table_update_query( $query ) ) {
+			throw new InvalidArgumentException( 'Unsupported UPDATE statement.' );
 		}
 
 		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
@@ -3518,27 +3520,70 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Delete metadata for indexes that reference one column.
+	 * Delete metadata key parts for one dropped column and renumber surviving parts.
 	 *
-	 * PostgreSQL drops dependent indexes/constraints when a column is dropped.
-	 * Mirror that in the MySQL-facing side metadata.
+	 * MySQL removes a dropped column from every index that contains it. Indexes
+	 * remain visible when at least one key part survives.
 	 *
 	 * @param string $table_schema Table schema.
 	 * @param string $table_name   Table name.
 	 * @param string $column_name  Dropped column name.
 	 */
 	private function delete_mysql_index_metadata_for_column( string $table_schema, string $table_name, string $column_name ): void {
-		$stmt = $this->connection->query(
+		$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
+
+		$this->connection->query(
 			sprintf(
-				'SELECT DISTINCT key_name FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
+				$index_metadata_table
 			),
 			array( $table_schema, $table_name, $column_name )
 		);
 
-		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
-			$this->delete_mysql_index_metadata( $table_schema, $table_name, (string) $index_name );
-		}
+		$this->connection->query(
+			sprintf(
+				'WITH renumbered AS (
+					SELECT
+						table_schema,
+						table_name,
+						key_name,
+						seq_in_index AS old_seq_in_index,
+						row_number() OVER (PARTITION BY key_name ORDER BY seq_in_index) AS new_seq_in_index
+					FROM %1$s
+					WHERE table_schema = ?
+						AND table_name = ?
+				)
+				UPDATE %1$s AS im
+				SET seq_in_index = -(
+					SELECT new_seq_in_index
+					FROM renumbered
+					WHERE renumbered.table_schema = im.table_schema
+						AND renumbered.table_name = im.table_name
+						AND renumbered.key_name = im.key_name
+						AND renumbered.old_seq_in_index = im.seq_in_index
+				)
+				WHERE im.table_schema = ?
+					AND im.table_name = ?
+					AND EXISTS (
+						SELECT 1
+						FROM renumbered
+						WHERE renumbered.table_schema = im.table_schema
+							AND renumbered.table_name = im.table_name
+							AND renumbered.key_name = im.key_name
+							AND renumbered.old_seq_in_index = im.seq_in_index
+					)',
+				$index_metadata_table
+			),
+			array( $table_schema, $table_name, $table_schema, $table_name )
+		);
+
+		$this->connection->query(
+			sprintf(
+				'UPDATE %s SET seq_in_index = -seq_in_index WHERE table_schema = ? AND table_name = ? AND seq_in_index < 0',
+				$index_metadata_table
+			),
+			array( $table_schema, $table_name )
+		);
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
@@ -10230,8 +10275,9 @@ ORDER BY table_name';
 
 		$indexes          = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
 		$foreign_keys     = $this->get_show_create_table_foreign_key_metadata_rows( $resolved_schema, $table_name );
+		$checks           = $this->get_show_create_table_check_constraint_metadata_rows( $resolved_schema, $table_name );
 		$table_comment    = $this->get_show_create_table_table_comment_metadata( $resolved_schema, $table_name );
-		$create_statement = $this->get_mysql_create_table_statement_from_metadata( $table_name, $columns, $indexes, $foreign_keys, $table_comment );
+		$create_statement = $this->get_mysql_create_table_statement_from_metadata( $table_name, $columns, $indexes, $foreign_keys, $checks, $table_comment );
 		$rows             = array(
 			array(
 				'Table'        => $table_name,
@@ -10337,6 +10383,41 @@ ORDER BY table_name';
 	}
 
 	/**
+	 * Get CHECK constraint metadata rows for SHOW CREATE TABLE.
+	 *
+	 * @param string $schema_name Backend metadata schema.
+	 * @param string $table_name  Table name.
+	 * @return array[] CHECK constraint metadata rows.
+	 */
+	private function get_show_create_table_check_constraint_metadata_rows( string $schema_name, string $table_name ): array {
+		$sql    = 'SELECT
+				tc.constraint_name,
+				cc.check_clause
+			FROM information_schema.table_constraints tc
+			INNER JOIN information_schema.check_constraints cc
+				ON cc.constraint_schema = tc.constraint_schema
+				AND cc.constraint_name = tc.constraint_name
+			WHERE tc.table_schema = ?
+				AND tc.table_name = ?
+				AND tc.constraint_type = ?
+			ORDER BY tc.constraint_name';
+		$params = array( $schema_name, $table_name, 'CHECK' );
+
+		try {
+			$stmt = $this->connection->query( $sql, $params );
+		} catch ( PDOException $e ) {
+			return array();
+		}
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
 	 * Get table comment metadata for SHOW CREATE TABLE.
 	 *
 	 * @param string $schema_name Backend metadata schema.
@@ -10369,11 +10450,12 @@ ORDER BY table_name';
 	 * @param string  $table_name    Table name.
 	 * @param array[] $columns       Column metadata rows.
 	 * @param array[] $indexes       Index metadata rows.
-	 * @param array[] $foreign_keys Foreign key metadata rows.
+	 * @param array[] $foreign_keys  Foreign key metadata rows.
+	 * @param array[] $checks        CHECK constraint metadata rows.
 	 * @param string  $table_comment Table comment.
 	 * @return string MySQL-compatible CREATE TABLE statement.
 	 */
-	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, string $table_comment = '' ): string {
+	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, array $checks, string $table_comment = '' ): string {
 		$definitions = array();
 		foreach ( $columns as $column ) {
 			$definitions[] = $this->get_mysql_create_table_column_definition_from_metadata( $column );
@@ -10385,6 +10467,10 @@ ORDER BY table_name';
 
 		foreach ( $this->group_show_create_table_foreign_key_metadata_rows( $foreign_keys ) as $foreign_key ) {
 			$definitions[] = $this->get_mysql_create_table_foreign_key_definition_from_metadata( $foreign_key );
+		}
+
+		foreach ( $checks as $check ) {
+			$definitions[] = $this->get_mysql_create_table_check_constraint_definition_from_metadata( $check );
 		}
 
 		$collation = $this->get_mysql_create_table_collation_from_metadata( $columns );
@@ -10403,6 +10489,20 @@ ORDER BY table_name';
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Build one MySQL CHECK constraint definition from stored metadata.
+	 *
+	 * @param array $check CHECK constraint metadata row.
+	 * @return string CHECK constraint definition SQL.
+	 */
+	private function get_mysql_create_table_check_constraint_definition_from_metadata( array $check ): string {
+		return sprintf(
+			'  CONSTRAINT %s CHECK (%s)',
+			$this->quote_mysql_identifier( (string) $check['constraint_name'] ),
+			(string) $check['check_clause']
+		);
 	}
 
 	/**
@@ -16810,18 +16910,62 @@ WHERE option_name IN (
 			return $sql;
 	}
 
-		/**
-		 * Translate supported MySQL outer-joined UPDATE statements.
-		 *
-		 * PostgreSQL UPDATE ... FROM does not preserve unmatched LEFT JOIN rows.
-		 * Select the target row ctid and computed assignment values through the
-		 * original joined table reference, then update by ctid from that derived
-		 * row set.
-		 *
-		 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
-		 * @param int              $statement_end Final statement token, exclusive.
-		 * @return string|null PostgreSQL query, or null when unsupported.
-		 */
+	/**
+	 * Check whether a MySQL multi-table UPDATE was not translated.
+	 *
+	 * @param string $query MySQL query.
+	 * @return bool Whether the query is an unsupported multi-table UPDATE.
+	 */
+	private function is_unsupported_mysql_multi_table_update_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::UPDATE_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
+			return false;
+		}
+
+		$set_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::SET_SYMBOL,
+			1,
+			$statement_end
+		);
+		if ( null === $set_position ) {
+			return false;
+		}
+
+		return $this->contains_top_level_mysql_token(
+			$tokens,
+			1,
+			$set_position,
+			array(
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				WP_MySQL_Lexer::CROSS_SYMBOL,
+				WP_MySQL_Lexer::INNER_SYMBOL,
+				WP_MySQL_Lexer::JOIN_SYMBOL,
+				WP_MySQL_Lexer::LEFT_SYMBOL,
+				WP_MySQL_Lexer::NATURAL_SYMBOL,
+				WP_MySQL_Lexer::RIGHT_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			)
+		);
+	}
+
+	/**
+	 * Translate supported MySQL outer-joined UPDATE statements.
+	 *
+	 * PostgreSQL UPDATE ... FROM does not preserve unmatched LEFT JOIN rows.
+	 * Select the target row ctid and computed assignment values through the
+	 * original joined table reference, then update by ctid from that derived
+	 * row set.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $statement_end Final statement token, exclusive.
+	 * @return string|null PostgreSQL query, or null when unsupported.
+	 */
 	private function translate_mysql_outer_join_update_query( array $tokens, int $statement_end ): ?string {
 		$set_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::SET_SYMBOL, 1, $statement_end );
 		if ( null === $set_position ) {

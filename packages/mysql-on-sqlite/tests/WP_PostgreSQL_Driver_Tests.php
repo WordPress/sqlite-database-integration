@@ -4266,6 +4266,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests unsupported multi-target UPDATE statements fail before backend execution.
+	 */
+	public function test_multi_target_update_fails_closed_before_backend_execution(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_update_source (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_update_target (
+				id INTEGER PRIMARY KEY,
+				value TEXT NOT NULL
+			)'
+		);
+
+		try {
+			$driver->query( 'UPDATE wptests_update_source AS s, wptests_update_target AS t SET t.value = s.value WHERE t.id = s.id' );
+			$this->fail( 'Expected unsupported UPDATE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported UPDATE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests MySQL comma/join UPDATE statements translate through PostgreSQL UPDATE FROM.
 	 */
 	public function test_comma_join_update_is_translated_to_postgresql(): void {
@@ -10410,6 +10438,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ALTER TABLE DROP COLUMN preserves surviving composite secondary index parts.
+	 */
+	public function test_alter_table_drop_column_preserves_composite_secondary_index_metadata(): void {
+		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_plugin_drop_composite (
+				id int(11) NOT NULL,
+				first_key varchar(20) NOT NULL,
+				obsolete varchar(20) DEFAULT NULL,
+				last_key varchar(20) NOT NULL,
+				PRIMARY KEY (id),
+				KEY combo_idx (first_key, obsolete, last_key),
+				KEY obsolete_idx (obsolete)
+			)"
+		);
+
+		$driver->query( 'ALTER TABLE wptests_plugin_drop_composite DROP COLUMN obsolete' );
+
+		$indexes         = $this->get_mysql_index_metadata_rows( $driver, 'wptests_plugin_drop_composite' );
+		$composite_index = array_values(
+			array_filter(
+				$indexes,
+				static function ( $row ): bool {
+					return 'combo_idx' === $row['key_name'];
+				}
+			)
+		);
+
+		$this->assertSame( array( 'PRIMARY', 'combo_idx' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
+		$this->assertSame( array( 'first_key', 'last_key' ), array_column( $composite_index, 'column_name' ) );
+		$this->assertSame( array( '1', '2' ), array_map( 'strval', array_column( $composite_index, 'seq_in_index' ) ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plugin_drop_composite' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '  KEY `combo_idx` (`first_key`, `last_key`)', $create_table );
+		$this->assertStringNotContainsString( '`obsolete`', $create_table );
+		$this->assertStringNotContainsString( 'obsolete_idx', $create_table );
+
+		$show_index = $driver->query( "SHOW INDEX FROM wptests_plugin_drop_composite WHERE Key_name = 'combo_idx'" );
+		$this->assertCount( 2, $show_index );
+		$this->assertSame( 'first_key', $show_index[0]->Column_name );
+		$this->assertSame( '1', $show_index[0]->Seq_in_index );
+		$this->assertSame( 'last_key', $show_index[1]->Column_name );
+		$this->assertSame( '2', $show_index[1]->Seq_in_index );
+	}
+
+	/**
 	 * Tests ALTER TABLE RENAME COLUMN updates backend and MySQL metadata.
 	 */
 	public function test_alter_table_rename_column_updates_backend_and_metadata(): void {
@@ -11617,6 +11693,33 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$num = $driver->query( 'SHOW CREATE TABLE wptests_show_create', PDO::FETCH_NUM );
 		$this->assertSame( array( 'wptests_show_create', $create_table ), $num[0] );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE includes CHECK constraints from PostgreSQL catalogs.
+	 */
+	public function test_show_create_table_includes_check_constraints(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE wptests_posts (
+				ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				post_status varchar(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			)"
+		);
+
+		$tables       = $driver->query( 'SHOW CREATE TABLE wptests_posts' );
+		$create_table = $tables[0]->{'Create Table'};
+
+		$this->assertStringContainsString(
+			'  CONSTRAINT `wptests_posts_status_chk` CHECK (post_status IS NOT NULL)',
+			$create_table
+		);
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 5, $queries );
+		$this->assertStringContainsString( 'information_schema.check_constraints', $queries[3]['sql'] );
 	}
 
 	/**
