@@ -10580,6 +10580,43 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE stores MySQL JSON metadata while using text storage.
+	 */
+	public function test_create_table_json_uses_text_storage_with_mysql_metadata(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_json_create (
+					id int NOT NULL,
+					payload JSON DEFAULT NULL
+				)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "CREATE TABLE \"wptests_json_create\" (\n  \"id\" integer NOT NULL,\n  \"payload\" text DEFAULT NULL\n)",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_json_create' );
+		$this->assertSame( 'json', $columns[1]['column_type'] );
+		$this->assertNull( $columns[1]['character_set_name'] );
+		$this->assertNull( $columns[1]['collation_name'] );
+
+		$this->install_information_schema_fixture( $driver );
+		$describe = $driver->query( 'DESC wptests_json_create' );
+		$this->assertSame( 'payload', $describe[1]->Field );
+		$this->assertSame( 'json', $describe[1]->Type );
+	}
+
+	/**
 	 * Tests ALTER TABLE ADD accepts MySQL data type aliases.
 	 */
 	public function test_alter_table_add_accepts_mysql_data_type_aliases(): void {
@@ -10600,7 +10637,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				ADD toggled BOOLEAN,
 				ADD amount DEC(10,2),
 				ADD fixed_value FIXED(8,3),
-				ADD real_value REAL'
+				ADD real_value REAL,
+				ADD payload JSON DEFAULT NULL'
 		);
 
 		$this->assertSame(
@@ -10629,15 +10667,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "real_value" double precision',
 					'params' => array(),
 				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "payload" text DEFAULT NULL',
+					'params' => array(),
+				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
 
 		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alias_alter' );
 		$this->assertSame(
-			array( 'int(11)', 'bit(10)', 'bool', 'boolean', 'dec(10,2)', 'fixed(8,3)', 'real' ),
+			array( 'int(11)', 'bit(10)', 'bool', 'boolean', 'dec(10,2)', 'fixed(8,3)', 'real', 'json' ),
 			array_column( $columns, 'column_type' )
 		);
+		$this->assertNull( $columns[7]['character_set_name'] );
+		$this->assertNull( $columns[7]['collation_name'] );
 	}
 
 	/**

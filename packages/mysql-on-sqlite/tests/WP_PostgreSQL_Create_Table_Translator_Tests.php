@@ -550,6 +550,32 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL JSON translates to text storage while preserving MySQL metadata.
+	 */
+	public function test_json_type_is_supported(): void {
+		$translator = new WP_PostgreSQL_Create_Table_Translator();
+		$sql        = 'CREATE TABLE wp_json_test (
+			id int NOT NULL,
+			payload JSON DEFAULT NULL
+		) DEFAULT CHARACTER SET utf8mb4';
+
+		$this->assertSame(
+			array(
+				"CREATE TABLE \"wp_json_test\" (\n  \"id\" integer NOT NULL,\n  \"payload\" text DEFAULT NULL\n)",
+			),
+			$translator->translate_schema( $sql )
+		);
+
+		$metadata = $translator->extract_schema_metadata( $sql, true );
+
+		$this->assertSame( 'json', $metadata[0]['columns'][1]['type'] );
+		$this->assertNull( $metadata[0]['columns'][1]['charset'] );
+		$this->assertNull( $metadata[0]['columns'][1]['collation'] );
+		$this->assertSame( 'YES', $metadata[0]['columns'][1]['nullable'] );
+		$this->assertNull( $metadata[0]['columns'][1]['default'] );
+	}
+
+	/**
 	 * Tests unsupported CREATE TABLE ... SELECT statements are rejected.
 	 */
 	public function test_translate_rejects_create_table_as_select(): void {

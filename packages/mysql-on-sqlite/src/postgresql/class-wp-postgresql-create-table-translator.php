@@ -581,7 +581,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 			$postgresql_type = $length ? sprintf( '%s(%d)', $type, $length ) : $type;
 		} elseif (
-			in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
+			in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'json', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
 			|| $this->is_mysql_spatial_column_type( $type )
 		) {
 			$postgresql_type = 'text';
