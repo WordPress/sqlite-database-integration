@@ -250,6 +250,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests singular VALUE row-list INSERT syntax is translated like VALUES.
+	 */
+	public function test_value_keyword_insert_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_value_keyword_insert (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+
+		$insert = "INSERT INTO wptests_value_keyword_insert (`id`, `value`) VALUE (1, 'one')";
+
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_value_keyword_insert" ("id", "value") VALUES (1, \'one\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_value_keyword_insert' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'one', $rows[0]->value );
+	}
+
+	/**
 	 * Tests columnless INSERT VALUES statements infer target columns from MySQL metadata.
 	 */
 	public function test_columnless_insert_values_uses_mysql_metadata_columns(): void {
@@ -1276,6 +1298,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $rows );
 		$this->assertSame( 'Walter Replace Sobchak', $rows[0]->display_name );
+	}
+
+	/**
+	 * Tests singular VALUE row-list REPLACE syntax is translated like VALUES.
+	 */
+	public function test_value_keyword_replace_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_replace_value_keyword ("ID" INTEGER PRIMARY KEY, display_name TEXT NOT NULL)' );
+		$driver->query( 'INSERT INTO wptests_replace_value_keyword ("ID", display_name) VALUES (2, \'old\')' );
+
+		$replace = "REPLACE INTO `wptests_replace_value_keyword` (`ID`, `display_name`) VALUE (2, 'new')";
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_replace_value_keyword" ("ID", "display_name") VALUES (2, \'new\') ON CONFLICT ("ID") DO UPDATE SET "ID" = excluded."ID", "display_name" = excluded."display_name"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query( 'SELECT display_name FROM wptests_replace_value_keyword WHERE `ID` = 2' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'new', $rows[0]->display_name );
 	}
 
 	/**
@@ -4742,6 +4786,34 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests singular VALUE row-list upsert syntax is translated like VALUES.
+	 */
+	public function test_value_keyword_upsert_is_translated_to_postgresql_on_conflict(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_integer_values_table_with_mysql_metadata( $driver );
+		$driver->query( 'INSERT INTO wptests_strict_ints (id, int_value) VALUES (1, 4)' );
+
+		$upsert = 'INSERT INTO `wptests_strict_ints` (`id`, `int_value`)
+			VALUE (1, 3)
+			ON DUPLICATE KEY UPDATE `int_value` = VALUES(`int_value`)';
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = excluded."int_value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT int_value FROM wptests_strict_ints WHERE id = 1' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '3', $rows[0]->int_value );
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE supports VALUES() for omitted table columns.
 	 */
 	public function test_upsert_update_assignments_support_values_for_omitted_columns(): void {
@@ -6783,6 +6855,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests simple DELETE modifiers are accepted as compatibility no-ops.
+	 */
+	public function test_simple_delete_modifiers_are_accepted_as_compatibility_noops(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_delete_modifiers (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_delete_modifiers (id, value) VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four')" );
+
+		$queries = array(
+			'DELETE LOW_PRIORITY FROM wptests_delete_modifiers WHERE id = 1' => 'DELETE FROM "wptests_delete_modifiers" WHERE id = 1',
+			'DELETE QUICK FROM wptests_delete_modifiers WHERE id = 2'        => 'DELETE FROM "wptests_delete_modifiers" WHERE id = 2',
+			'DELETE IGNORE FROM wptests_delete_modifiers WHERE id = 3'       => 'DELETE FROM "wptests_delete_modifiers" WHERE id = 3',
+			'DELETE LOW_PRIORITY QUICK IGNORE FROM wptests_delete_modifiers WHERE id = 4' => 'DELETE FROM "wptests_delete_modifiers" WHERE id = 4',
+		);
+
+		foreach ( $queries as $query => $expected_sql ) {
+			$this->assertSame( 1, $driver->query( $query ), $query );
+			$this->assertSame( $expected_sql, $this->get_last_single_postgresql_sql( $driver ), $query );
+		}
+
+		$rows = $driver->query( 'SELECT id FROM wptests_delete_modifiers' );
+		$this->assertSame( array(), $rows );
+	}
+
+	/**
 	 * Tests simple single-table DELETE aliases are translated to PostgreSQL aliases.
 	 */
 	public function test_simple_delete_with_alias_is_translated_to_postgresql(): void {
@@ -8188,6 +8285,27 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame(
 			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS utf8_byte_length, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS binary_byte_length",
+			$sql
+		);
+	}
+
+	/**
+	 * Tests CHAR_LENGTH() counts bytes for binary-producing runtime functions.
+	 */
+	public function test_char_length_binary_runtime_functions_count_bytes_for_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT
+				CHAR_LENGTH(UNHEX('c3a9')) AS unhex_char_bytes,
+				CHARACTER_LENGTH(UNHEX('ff')) AS unhex_raw_bytes,
+				CHAR_LENGTH(FROM_BASE64('w6k=')) AS base64_char_bytes"
+		);
+
+		$this->assertSame(
+			"SELECT OCTET_LENGTH(DECODE(CAST('c3a9' AS text), 'hex')) AS unhex_char_bytes, OCTET_LENGTH(DECODE(CAST('ff' AS text), 'hex')) AS unhex_raw_bytes, OCTET_LENGTH(DECODE(CAST('w6k=' AS text), 'base64')) AS base64_char_bytes",
 			$sql
 		);
 	}
@@ -17464,6 +17582,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'ANALYZE LOCAL TABLE administration_existing'                           => 'analyze',
 			'ANALYZE NO_WRITE_TO_BINLOG TABLE administration_existing'              => 'analyze',
 			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id WITH 10 BUCKETS' => 'analyze',
+			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id USING DATA \'{\"buckets\": []}\'' => 'analyze',
+			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id WITH 10 BUCKETS USING DATA \'{\"buckets\": []}\'' => 'analyze',
 			'ANALYZE TABLE administration_existing DROP HISTOGRAM ON `id`'          => 'analyze',
 			'CHECK TABLE administration_existing FOR UPGRADE'                       => 'check',
 			'CHECK TABLE administration_existing QUICK FAST MEDIUM EXTENDED CHANGED' => 'check',
@@ -17502,6 +17622,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'CHECK TABLE administration_existing UNKNOWN_OPTION',
 			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id WITH ten BUCKETS',
+			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id USING DATA',
+			'ANALYZE TABLE administration_existing UPDATE HISTOGRAM ON id WITH 10 BUCKETS USING \'{}\'',
 		);
 
 		foreach ( $queries as $query ) {

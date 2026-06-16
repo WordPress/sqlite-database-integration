@@ -10887,10 +10887,13 @@ $wp_mysql_on_update$',
 					&& $this->is_mysql_unsigned_integer_token( $tokens[ $position + 1 ] )
 					&& WP_MySQL_Lexer::BUCKETS_SYMBOL === $tokens[ $position + 2 ]->id
 				) {
-					return $position + 3;
+					$position += 3;
+					if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+						return $position;
+					}
 				}
 
-				return null;
+				return $this->consume_mysql_table_administration_using_data_clause( $tokens, $position );
 			}
 
 			if (
@@ -10930,6 +10933,30 @@ $wp_mysql_on_update$',
 		}
 
 		return $position;
+	}
+
+	/**
+	 * Consume an ANALYZE TABLE UPDATE HISTOGRAM USING DATA clause.
+	 *
+	 * PostgreSQL does not consume MySQL histogram JSON, but accepting the clause
+	 * keeps MySQL-compatible maintenance statements as no-ops like SQLite.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position.
+	 * @return int|null Position after the clause, or null when unsupported.
+	 */
+	private function consume_mysql_table_administration_using_data_clause( array $tokens, int $position ): ?int {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			|| WP_MySQL_Lexer::USING_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::DATA_SYMBOL !== $tokens[ $position + 1 ]->id
+			|| ! $this->is_mysql_string_literal_token( $tokens[ $position + 2 ] )
+		) {
+			return null;
+		}
+
+		$position += 3;
+		return $this->is_at_mysql_query_end( $tokens, $position ) ? $position : null;
 	}
 
 	/**
@@ -15944,19 +15971,24 @@ WHERE option_name IN (
 	private function translate_simple_mysql_delete_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
-			! isset( $tokens[0], $tokens[1] )
+			! isset( $tokens[0] )
 			|| WP_MySQL_Lexer::DELETE_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[1]->id
 		) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
+		$position = 1;
+		$this->consume_mysql_delete_modifiers( $tokens, $position );
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
 		if ( null === $statement_end || ! $this->is_at_mysql_query_end( $tokens, $statement_end ) ) {
 			return null;
 		}
 
-		$position        = 2;
 		$table_reference = $this->parse_mysql_main_database_table_reference( $tokens, $position, $statement_end );
 		if ( null === $table_reference ) {
 			return null;
@@ -16140,7 +16172,7 @@ WHERE option_name IN (
 			if ( null === $columns ) {
 				return null;
 			}
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $position ]->id ) {
+		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
 			$columns                     = array();
 			$infer_columns_from_metadata = true;
 		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
@@ -16188,7 +16220,7 @@ WHERE option_name IN (
 		}
 
 		if ( null === $value_rows ) {
-			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+			if ( ! $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
 				return null;
 			}
 
@@ -17306,7 +17338,7 @@ WHERE option_name IN (
 			if ( null === $columns ) {
 				return null;
 			}
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $position ]->id ) {
+		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
 			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
 			$columns         = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
 			if ( null === $columns ) {
@@ -17360,7 +17392,7 @@ WHERE option_name IN (
 		}
 
 		if ( null === $value_rows ) {
-			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+			if ( ! $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
 				return null;
 			}
 
@@ -18349,7 +18381,7 @@ WHERE option_name IN (
 			if ( null === $columns ) {
 				return null;
 			}
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $position ]->id ) {
+		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
 			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
 			$columns         = $this->get_mysql_dml_column_names_from_metadata( $column_metadata );
 			if ( null === $columns ) {
@@ -18360,7 +18392,7 @@ WHERE option_name IN (
 		}
 
 		if ( null === $value_rows ) {
-			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $position ]->id ) {
+			if ( ! $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
 				return null;
 			}
 
@@ -18442,6 +18474,27 @@ WHERE option_name IN (
 	private function is_mysql_replace_query( string $query ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
 		return isset( $tokens[0] ) && WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[0]->id;
+	}
+
+	/**
+	 * Check whether a token is a MySQL VALUES/VALUE row-list keyword.
+	 *
+	 * MySQL accepts singular VALUE as a synonym for VALUES before row lists. Keep
+	 * this separate from VALUES(column) upsert-expression handling.
+	 *
+	 * @param WP_MySQL_Token|null $token MySQL token.
+	 * @return bool Whether the token starts a VALUES row list.
+	 */
+	private function is_mysql_values_row_list_keyword_token( ?WP_MySQL_Token $token ): bool {
+		return null !== $token
+			&& in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::VALUES_SYMBOL,
+					WP_MySQL_Lexer::VALUE_SYMBOL,
+				),
+				true
+			);
 	}
 
 	/**
@@ -21080,6 +21133,29 @@ WHERE option_name IN (
 			&& (
 				WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[ $position ]->id
 				|| WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			++$position;
+		}
+	}
+
+	/**
+	 * Consume MySQL DELETE modifiers that do not change row targeting.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 */
+	private function consume_mysql_delete_modifiers( array $tokens, int &$position ): void {
+		while (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::QUICK_SYMBOL,
+					WP_MySQL_Lexer::IGNORE_SYMBOL,
+				),
+				true
 			)
 		) {
 			++$position;
@@ -38558,6 +38634,16 @@ FROM (
 	 * @return string|null PostgreSQL byte-length SQL, or null when not binary.
 	 */
 	private function get_postgresql_mysql_binary_argument_byte_length_sql( array $tokens, int $start, int $end ): ?string {
+		$unhex_length_sql = $this->get_postgresql_mysql_unhex_length_sql( $tokens, $start, $end );
+		if ( null !== $unhex_length_sql ) {
+			return $unhex_length_sql;
+		}
+
+		$from_base64_length_sql = $this->get_postgresql_mysql_from_base64_length_sql( $tokens, $start, $end );
+		if ( null !== $from_base64_length_sql ) {
+			return $from_base64_length_sql;
+		}
+
 		$binary_cast = $this->get_mysql_binary_cast_bounds( $tokens, $start, $end );
 		if ( null !== $binary_cast && $binary_cast['close'] + 1 === $end ) {
 			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
@@ -38595,6 +38681,34 @@ FROM (
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL LENGTH/CHAR_LENGTH(FROM_BASE64(...)).
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First argument token.
+	 * @param int              $end    Final argument token, exclusive.
+	 * @return string|null PostgreSQL byte-length SQL, or null when unsupported.
+	 */
+	private function get_postgresql_mysql_from_base64_length_sql( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->get_mysql_function_call_bounds( $tokens, $start, $end, 'from_base64' );
+		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$base64_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+
+		return sprintf( "OCTET_LENGTH(DECODE(CAST(%s AS text), 'base64'))", $base64_sql );
 	}
 
 	/**
