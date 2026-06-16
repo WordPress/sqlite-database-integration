@@ -4588,6 +4588,59 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE supports VALUES() for omitted table columns.
+	 */
+	public function test_upsert_update_assignments_support_values_for_omitted_columns(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_omitted_values_upsert (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL,
+				note TEXT,
+				counter INTEGER NOT NULL,
+				bonus INTEGER NOT NULL DEFAULT 0
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_omitted_values_upsert (
+				id bigint(20) unsigned NOT NULL,
+				label varchar(191) NOT NULL,
+				note longtext DEFAULT NULL,
+				counter int(11) NOT NULL,
+				bonus int(11) NOT NULL DEFAULT 0,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_omitted_values_upsert (id, label, note, counter, bonus) VALUES (1, 'old', 'old-note', 5, 7)" );
+
+		$upsert = "INSERT INTO `wptests_omitted_values_upsert` (`id`, `label`, `counter`)
+			VALUES (1, 'new', 1)
+			ON DUPLICATE KEY UPDATE `label` = VALUES(`label`),
+			                        `note` = VALUES(`note`),
+			                        `counter` = `counter` + VALUES(`bonus`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_omitted_values_upsert" ("id", "label", "counter") VALUES (1, \'new\', 1) ON CONFLICT ("id") DO UPDATE SET "label" = excluded."label", "note" = excluded."note", "counter" = "counter" + excluded."bonus"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT label, note, counter, bonus FROM wptests_omitted_values_upsert WHERE id = 1' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'new', $rows[0]->label );
+		$this->assertNull( $rows[0]->note );
+		$this->assertSame( '5', $rows[0]->counter );
+		$this->assertSame( '7', $rows[0]->bonus );
+	}
+
+	/**
 	 * Tests ON DUPLICATE KEY UPDATE supports MySQL VALUES-row alias expressions.
 	 */
 	public function test_upsert_update_assignments_support_values_row_alias_expressions(): void {

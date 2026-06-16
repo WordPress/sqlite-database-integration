@@ -16048,7 +16048,7 @@ WHERE option_name IN (
 
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
-			$column_lookup[ strtolower( $column ) ] = true;
+			$column_lookup[ strtolower( $column ) ] = $column;
 		}
 
 		$table_column_lookup = $this->get_mysql_dml_column_metadata_lookup( $table_name );
@@ -16239,7 +16239,7 @@ WHERE option_name IN (
 
 		$column_lookup = array();
 		foreach ( $columns as $column ) {
-			$column_lookup[ strtolower( $column ) ] = true;
+			$column_lookup[ strtolower( $column ) ] = $column;
 		}
 
 		$assignment_position = $on_duplicate + 4;
@@ -31751,8 +31751,9 @@ FROM (
 	 * @return string[]|null PostgreSQL SET assignments, or null when unsupported.
 	 */
 	private function parse_upsert_update_assignments( string $table_name, array $tokens, int &$position, int $end, array $column_lookup, array $table_column_lookup, array $source_aliases = array() ): ?array {
-		$assignments = array();
-		$scope       = $this->get_mysql_single_table_scope( $table_name );
+		$assignments          = array();
+		$scope                = $this->get_mysql_single_table_scope( $table_name );
+		$values_column_lookup = $this->get_mysql_upsert_values_column_lookup( $column_lookup, $table_column_lookup );
 
 		while ( $position < $end ) {
 			$target = $this->parse_mysql_upsert_assignment_target( $table_name, $tokens, $position, $end );
@@ -31783,7 +31784,7 @@ FROM (
 			}
 
 			$target_metadata = $table_column_lookup[ strtolower( $target_column ) ];
-			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $column_lookup, $source_aliases );
+			$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $values_column_lookup, $source_aliases );
 			if ( $this->is_mysql_default_keyword_expression( $tokens, $value_start, $assignment_end ) ) {
 				$value_sql = $this->get_mysql_dml_default_assignment_sql_for_column( $target_metadata );
 			} elseif ( null !== $source_column ) {
@@ -31797,7 +31798,7 @@ FROM (
 					$tokens,
 					$value_start,
 					$assignment_end,
-					$column_lookup,
+					$values_column_lookup,
 					$source_aliases
 				);
 				if (
@@ -32204,12 +32205,47 @@ FROM (
 	}
 
 	/**
+	 * Get the columns accepted by MySQL VALUES(column) in an upsert assignment.
+	 *
+	 * MySQL permits VALUES(column) for omitted table columns; PostgreSQL's
+	 * excluded row has those defaulted/null values as well. VALUES-row aliases
+	 * remain constrained separately to the explicit INSERT column list.
+	 *
+	 * @param array $column_lookup       Insert-column lookup by lowercase name.
+	 * @param array $table_column_lookup Table-column metadata lookup by lowercase name.
+	 * @return array<string,string> Lookup of lowercase column name to canonical column name.
+	 */
+	private function get_mysql_upsert_values_column_lookup( array $column_lookup, array $table_column_lookup ): array {
+		$values_column_lookup = array();
+		foreach ( $column_lookup as $column_key => $column_name ) {
+			$values_column_lookup[ strtolower( (string) $column_key ) ] = is_string( $column_name )
+				? $column_name
+				: (string) $column_key;
+		}
+
+		foreach ( $table_column_lookup as $column_key => $column_metadata ) {
+			if ( isset( $values_column_lookup[ strtolower( (string) $column_key ) ] ) ) {
+				continue;
+			}
+
+			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				continue;
+			}
+
+			$values_column_lookup[ strtolower( $column_name ) ] = $column_name;
+		}
+
+		return $values_column_lookup;
+	}
+
+	/**
 	 * Get the source column from a supported VALUES(column) upsert assignment expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $start         First expression token.
 	 * @param int              $end           Final expression token, exclusive.
-	 * @param array            $column_lookup Insert-column lookup by lowercase name.
+	 * @param array            $column_lookup VALUES-column lookup by lowercase name.
 	 * @param array            $source_aliases Optional VALUES-row alias lookup.
 	 * @return string|null Source column name, or null when the expression is not VALUES(column).
 	 */
@@ -32222,11 +32258,12 @@ FROM (
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $start + 3 ]->id
 		) {
 			$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $start + 2 ] );
-			if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
+			$source_key    = null === $source_column ? null : strtolower( $source_column );
+			if ( null === $source_key || ! isset( $column_lookup[ $source_key ] ) ) {
 				return null;
 			}
 
-			return $source_column;
+			return is_string( $column_lookup[ $source_key ] ) ? $column_lookup[ $source_key ] : $source_column;
 		}
 
 		return $this->get_mysql_upsert_alias_assignment_source_column( $tokens, $start, $end, $source_aliases );
@@ -32238,7 +32275,7 @@ FROM (
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $start         First expression token.
 	 * @param int              $end           Final expression token, exclusive.
-	 * @param array            $column_lookup Insert-column lookup by lowercase name.
+	 * @param array            $column_lookup VALUES-column lookup by lowercase name.
 	 * @param array            $source_aliases Optional VALUES-row alias lookup.
 	 * @return array[]|null Replacement ranges, or null when VALUES() is malformed/unsupported.
 	 */
@@ -32257,9 +32294,11 @@ FROM (
 				}
 
 				$source_column = $this->get_mysql_dml_identifier_token_value( $tokens[ $position + 2 ] );
-				if ( null === $source_column || ! isset( $column_lookup[ strtolower( $source_column ) ] ) ) {
+				$source_key    = null === $source_column ? null : strtolower( $source_column );
+				if ( null === $source_key || ! isset( $column_lookup[ $source_key ] ) ) {
 					return null;
 				}
+				$source_column = is_string( $column_lookup[ $source_key ] ) ? $column_lookup[ $source_key ] : $source_column;
 
 				$replacements[] = array(
 					'start' => $position,
