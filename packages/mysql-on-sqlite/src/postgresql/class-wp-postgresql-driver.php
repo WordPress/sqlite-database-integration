@@ -868,10 +868,13 @@ class WP_PostgreSQL_Driver {
 		$replace_return_value = null;
 		$replace_query        = $this->translate_simple_mysql_replace_query( $query );
 		if ( null !== $replace_query ) {
-			if ( null !== $replace_query['conflict_column'] ) {
+			if ( null !== $replace_query['conflict_column'] && empty( $replace_query['replace_select_materialized'] ) ) {
 				$replace_return_value = $this->get_mysql_replace_return_value( $replace_query );
 			}
 			if ( isset( $replace_query['statements'] ) && is_array( $replace_query['statements'] ) ) {
+				if ( ! empty( $replace_query['replace_select_materialized'] ) ) {
+					return $this->execute_materialized_mysql_replace_select_statements( $replace_query );
+				}
 				return $this->execute_translated_dml_statements( $replace_query, $replace_return_value );
 			}
 			$query                     = $replace_query['sql'];
@@ -2060,6 +2063,84 @@ class WP_PostgreSQL_Driver {
 		$this->last_result = $return_value ?? $affected_rows;
 		$this->set_last_insert_id_after_dml_success( $dml_query, $affected_rows );
 		$this->repair_dml_identity_sequences_after_success( $dml_query, $affected_rows );
+
+		return (int) $this->last_result;
+	}
+
+	/**
+	 * Execute a materialized REPLACE ... SELECT delete-then-insert flow.
+	 *
+	 * @param array $replace_query Translated REPLACE ... SELECT metadata.
+	 * @return int MySQL-compatible affected rows.
+	 */
+	private function execute_materialized_mysql_replace_select_statements( array $replace_query ): int {
+		$materialize_statements = isset( $replace_query['materialize_statements'] ) && is_array( $replace_query['materialize_statements'] )
+			? $replace_query['materialize_statements']
+			: array();
+		$mutation_statements    = isset( $replace_query['mutation_statements'] ) && is_array( $replace_query['mutation_statements'] )
+			? $replace_query['mutation_statements']
+			: array();
+		$cleanup_statements     = isset( $replace_query['cleanup_statements'] ) && is_array( $replace_query['cleanup_statements'] )
+			? $replace_query['cleanup_statements']
+			: array();
+
+		foreach ( $materialize_statements as $statement ) {
+			$statement                       = (string) $statement;
+			$stmt                            = $this->connection->query( $statement );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $statement,
+				'params' => array(),
+			);
+			$stmt->closeCursor();
+		}
+
+		try {
+			if ( isset( $replace_query['duplicate_conflict_rows_sql'] ) && is_string( $replace_query['duplicate_conflict_rows_sql'] ) ) {
+				$stmt          = $this->connection->query( $replace_query['duplicate_conflict_rows_sql'] );
+				$has_duplicate = false !== $stmt->fetchColumn();
+				$stmt->closeCursor();
+				if ( $has_duplicate ) {
+					throw new InvalidArgumentException( 'Unsupported REPLACE SELECT statement.' );
+				}
+			}
+
+			$return_value = null;
+			if ( isset( $replace_query['replace_select_affected_rows_sql'] ) && is_string( $replace_query['replace_select_affected_rows_sql'] ) ) {
+				$stmt = $this->connection->query( $replace_query['replace_select_affected_rows_sql'] );
+				$row  = $stmt->fetch( PDO::FETCH_ASSOC );
+				$stmt->closeCursor();
+				if ( is_array( $row ) && isset( $row['affected_rows'] ) ) {
+					$return_value                      = (int) $row['affected_rows'];
+					$replace_query['inserted_new_row'] = isset( $row['inserted_rows'] ) && (int) $row['inserted_rows'] > 0;
+				}
+			}
+
+			$affected_rows = 0;
+			foreach ( $mutation_statements as $statement ) {
+				$statement                       = (string) $statement;
+				$stmt                            = $this->connection->query( $statement );
+				$this->last_postgresql_queries[] = array(
+					'sql'    => $statement,
+					'params' => array(),
+				);
+				$affected_rows                  += $stmt->rowCount();
+			}
+		} finally {
+			foreach ( $cleanup_statements as $statement ) {
+				$statement                       = (string) $statement;
+				$stmt                            = $this->connection->query( $statement );
+				$this->last_postgresql_queries[] = array(
+					'sql'    => $statement,
+					'params' => array(),
+				);
+				$stmt->closeCursor();
+			}
+		}
+
+		$this->clear_last_column_meta();
+		$this->last_result = $return_value ?? $affected_rows;
+		$this->set_last_insert_id_after_dml_success( $replace_query, $affected_rows );
+		$this->repair_dml_identity_sequences_after_success( $replace_query, $affected_rows );
 
 		return (int) $this->last_result;
 	}
@@ -10173,9 +10254,24 @@ $wp_mysql_on_update$',
 		while (
 			isset( $tokens[ $position ] )
 			&& $position < $end
-			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::MULT_OPERATOR, WP_MySQL_Lexer::DIV_OPERATOR, WP_MySQL_Lexer::DIV_SYMBOL ), true )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::MULT_OPERATOR,
+					WP_MySQL_Lexer::DIV_OPERATOR,
+					WP_MySQL_Lexer::DIV_SYMBOL,
+					WP_MySQL_Lexer::MOD_OPERATOR,
+					WP_MySQL_Lexer::MOD_SYMBOL,
+				),
+				true
+			)
 		) {
-			$operator = WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $position ]->id ? '*' : '/';
+			$operator = '/';
+			if ( WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $position ]->id ) {
+				$operator = '*';
+			} elseif ( WP_MySQL_Lexer::MOD_OPERATOR === $tokens[ $position ]->id || WP_MySQL_Lexer::MOD_SYMBOL === $tokens[ $position ]->id ) {
+				$operator = '%';
+			}
 			++$position;
 			$right = $this->parse_mysql_show_where_primary_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 			if (
@@ -10358,6 +10454,14 @@ $wp_mysql_on_update$',
 			( 'substring' === $function_name && ! in_array( $argument_count, array( 2, 3 ), true ) )
 			|| ( in_array( $function_name, array( 'left', 'right' ), true ) && 2 !== $argument_count )
 			|| ( in_array( $function_name, array( 'lower', 'upper', 'length', 'char_length' ), true ) && 1 !== $argument_count )
+			|| (
+				'mod' === $function_name
+				&& (
+					2 !== $argument_count
+					|| ! $this->is_mysql_show_where_numeric_value_expression( $arguments[0], $numeric_columns )
+					|| ! $this->is_mysql_show_where_numeric_value_expression( $arguments[1], $numeric_columns )
+				)
+			)
 		) {
 			return null;
 		}
@@ -10383,6 +10487,7 @@ $wp_mysql_on_update$',
 
 		$keyword_functions = array(
 			WP_MySQL_Lexer::LEFT_SYMBOL      => 'left',
+			WP_MySQL_Lexer::MOD_SYMBOL       => 'mod',
 			WP_MySQL_Lexer::RIGHT_SYMBOL     => 'right',
 			WP_MySQL_Lexer::SUBSTR_SYMBOL    => 'substring',
 			WP_MySQL_Lexer::SUBSTRING_SYMBOL => 'substring',
@@ -10415,6 +10520,10 @@ $wp_mysql_on_update$',
 
 		if ( 'char_length' === $name || 'character_length' === $name ) {
 			return 'char_length';
+		}
+
+		if ( 'mod' === $name ) {
+			return 'mod';
 		}
 
 		return in_array( $name, array( 'left', 'right' ), true ) ? $name : null;
@@ -13677,6 +13786,10 @@ ORDER BY table_name';
 			return 0.0 === $right_number ? null : $left_number / $right_number;
 		}
 
+		if ( '%' === $operator ) {
+			return 0.0 === $right_number ? null : fmod( $left_number, $right_number );
+		}
+
 		return null;
 	}
 
@@ -13758,6 +13871,9 @@ ORDER BY table_name';
 			case 'length':
 			case 'char_length':
 				return strlen( (string) $arguments[0] );
+
+			case 'mod':
+				return $this->evaluate_mysql_show_where_arithmetic_value( $arguments[0], '%', $arguments[1] );
 		}
 
 		return null;
@@ -17764,7 +17880,38 @@ WHERE option_name IN (
 			$value_rows,
 			$probe_safe_rows
 		);
+		$delete_conflict_index_groups = $this->get_mysql_replace_delete_conflict_index_groups(
+			$table_name,
+			$columns,
+			$value_rows,
+			$probe_safe_rows
+		);
 		if ( null === $conflict_target ) {
+			if ( ! empty( $delete_conflict_index_groups ) ) {
+				$delete_insert_statements = $this->get_mysql_replace_delete_then_insert_statements(
+					$table_name,
+					$columns,
+					$value_rows,
+					$probe_safe_rows,
+					$delete_conflict_index_groups,
+					$this->has_duplicate_mysql_replace_conflict_value_rows_in_groups( $value_rows, $probe_safe_rows, $delete_conflict_index_groups )
+				);
+				if ( null !== $delete_insert_statements ) {
+					return array(
+						'action'                   => 'replace',
+						'sql'                      => $sql,
+						'statements'               => $delete_insert_statements,
+						'table_name'               => $table_name,
+						'columns'                  => $columns,
+						'value_rows'               => $value_rows,
+						'conflict_column'          => null,
+						'conflict_probe_safe_rows' => $probe_safe_rows,
+						'delete_then_insert'       => true,
+						'inserted_new_row'         => true,
+					);
+				}
+			}
+
 			return array(
 				'action'           => 'replace',
 				'sql'              => $sql,
@@ -17780,6 +17927,9 @@ WHERE option_name IN (
 		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
 		if ( null === $conflict_indexes ) {
 			return null;
+		}
+		if ( empty( $delete_conflict_index_groups ) ) {
+			$delete_conflict_index_groups = array( $conflict_indexes );
 		}
 
 		$assignments = array();
@@ -17810,13 +17960,13 @@ WHERE option_name IN (
 			'inserted_new_row'         => true,
 		);
 
-		$has_duplicate_conflict_rows = $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes );
+		$has_duplicate_conflict_rows = $this->has_duplicate_mysql_replace_conflict_value_rows_in_groups( $value_rows, $probe_safe_rows, $delete_conflict_index_groups );
 		$delete_insert_statements    = $this->get_mysql_replace_delete_then_insert_statements(
 			$table_name,
 			$columns,
 			$value_rows,
 			$probe_safe_rows,
-			$conflict_indexes,
+			$delete_conflict_index_groups,
 			$has_duplicate_conflict_rows
 		);
 		if ( null !== $delete_insert_statements ) {
@@ -17852,11 +18002,11 @@ WHERE option_name IN (
 	 * @param string[] $columns              Inserted column names.
 	 * @param array[]  $value_rows           Translated VALUES rows.
 	 * @param array[]  $probe_safe_rows      Per-value conflict-probe safety flags.
-	 * @param array    $conflict_indexes     Conflict target column/index tuples.
+	 * @param array[]  $conflict_index_groups Conflict target column/index tuple groups.
 	 * @param bool     $sequential_statements Whether every row must run as its own DELETE/INSERT pair.
 	 * @return string[]|null PostgreSQL statements, or null when delete-then-insert is unsafe.
 	 */
-	private function get_mysql_replace_delete_then_insert_statements( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_indexes, bool $sequential_statements ): ?array {
+	private function get_mysql_replace_delete_then_insert_statements( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_index_groups, bool $sequential_statements ): ?array {
 		$quoted_table = $this->connection->quote_identifier( $table_name );
 		$column_sql   = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
 
@@ -17865,7 +18015,7 @@ WHERE option_name IN (
 			$predicate = $this->get_mysql_replace_delete_predicate_for_row(
 				$values,
 				$probe_safe_rows[ $row_index ] ?? array(),
-				$conflict_indexes
+				$conflict_index_groups
 			);
 			if ( false === $predicate ) {
 				return null;
@@ -17938,12 +18088,56 @@ WHERE option_name IN (
 	/**
 	 * Build a DELETE predicate for one deterministic REPLACE row.
 	 *
+	 * @param array   $values                Translated VALUES row.
+	 * @param array   $probe_safety          Per-value conflict-probe safety flags.
+	 * @param array[] $conflict_index_groups Conflict target column/index tuple groups.
+	 * @return string|false|null Predicate SQL, false when unsafe, or null when the row cannot conflict.
+	 */
+	private function get_mysql_replace_delete_predicate_for_row( array $values, array $probe_safety, array $conflict_index_groups ) {
+		$predicates = array();
+		foreach ( $conflict_index_groups as $conflict_indexes ) {
+			$predicate = $this->get_mysql_replace_delete_predicate_for_row_conflict_indexes(
+				$values,
+				$probe_safety,
+				$conflict_indexes
+			);
+			if ( false === $predicate ) {
+				return false;
+			}
+
+			if ( null !== $predicate ) {
+				$predicates[] = $predicate;
+			}
+		}
+
+		if ( empty( $predicates ) ) {
+			return null;
+		}
+
+		if ( 1 === count( $predicates ) ) {
+			return $predicates[0];
+		}
+
+		return implode(
+			' OR ',
+			array_map(
+				static function ( string $predicate ): string {
+					return '(' . $predicate . ')';
+				},
+				$predicates
+			)
+		);
+	}
+
+	/**
+	 * Build a DELETE predicate for one deterministic REPLACE row and one conflict key.
+	 *
 	 * @param array $values           Translated VALUES row.
 	 * @param array $probe_safety     Per-value conflict-probe safety flags.
 	 * @param array $conflict_indexes Conflict target column/index tuples.
 	 * @return string|false|null Predicate SQL, false when unsafe, or null when the row cannot conflict.
 	 */
-	private function get_mysql_replace_delete_predicate_for_row( array $values, array $probe_safety, array $conflict_indexes ) {
+	private function get_mysql_replace_delete_predicate_for_row_conflict_indexes( array $values, array $probe_safety, array $conflict_indexes ) {
 		$where = array();
 		foreach ( $conflict_indexes as $conflict_index ) {
 			if (
@@ -17980,6 +18174,104 @@ WHERE option_name IN (
 		}
 
 		return empty( $where ) ? null : implode( ' AND ', $where );
+	}
+
+	/**
+	 * Get metadata-backed unique-key groups usable for deterministic REPLACE deletes.
+	 *
+	 * @param string  $table_name      Table name.
+	 * @param array   $columns         Inserted column names.
+	 * @param array[] $value_rows      Translated VALUES rows.
+	 * @param array[] $probe_safe_rows Per-value conflict-probe safety flags.
+	 * @return array[] Conflict index groups.
+	 */
+	private function get_mysql_replace_delete_conflict_index_groups( string $table_name, array $columns, array $value_rows, array $probe_safe_rows ): array {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT key_name, column_name, index_type, sub_part
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? AND non_unique = \'0\'
+				ORDER BY
+					CASE WHEN UPPER(key_name) = \'PRIMARY\' THEN 0 ELSE 1 END,
+					index_ordinal,
+					seq_in_index',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		$indexes = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$key_name = (string) ( $row['key_name'] ?? '' );
+			if ( '' === $key_name ) {
+				continue;
+			}
+
+			if ( ! isset( $indexes[ $key_name ] ) ) {
+				$indexes[ $key_name ] = array(
+					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
+					'parts'      => array(),
+				);
+			}
+
+			$column_name = (string) ( $row['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				continue;
+			}
+
+			$indexes[ $key_name ]['parts'][] = array(
+				'column'   => $column_name,
+				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
+			);
+		}
+
+		$conflict_index_groups = array();
+		foreach ( $indexes as $index ) {
+			if ( empty( $index['parts'] ) || in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
+				continue;
+			}
+
+			$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $index['parts'] );
+			if ( null === $conflict_indexes ) {
+				continue;
+			}
+
+			if ( ! $this->mysql_replace_conflict_indexes_are_probe_safe_for_rows( $conflict_indexes, $value_rows, $probe_safe_rows ) ) {
+				continue;
+			}
+
+			$conflict_index_groups[] = $conflict_indexes;
+		}
+
+		return $conflict_index_groups;
+	}
+
+	/**
+	 * Check whether every incoming row can safely probe one conflict key.
+	 *
+	 * @param array   $conflict_indexes Conflict target column/index tuples.
+	 * @param array[] $value_rows       Translated VALUES rows.
+	 * @param array[] $probe_safe_rows  Per-value conflict-probe safety flags.
+	 * @return bool Whether the conflict key is safe for all rows.
+	 */
+	private function mysql_replace_conflict_indexes_are_probe_safe_for_rows( array $conflict_indexes, array $value_rows, array $probe_safe_rows ): bool {
+		foreach ( $value_rows as $row_index => $values ) {
+			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				if (
+					! array_key_exists( $conflict_index['index'], $values )
+					|| ! isset( $probe_safety[ $conflict_index['index'] ] )
+					|| ! $probe_safety[ $conflict_index['index'] ]
+				) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -18161,22 +18453,7 @@ WHERE option_name IN (
 		$affected_rows_count_sql = null;
 		if ( null !== $conflict_target ) {
 			$conflict_column = $conflict_target['columns'][0] ?? null;
-			$assignments = array();
-			foreach ( $columns as $column ) {
-				$assignments[] = sprintf(
-					'%s = excluded.%s',
-					$this->connection->quote_identifier( $column ),
-					$this->connection->quote_identifier( $column )
-				);
-			}
-
-			$sql .= sprintf(
-				' ON CONFLICT (%s) DO UPDATE SET %s',
-				implode( ', ', $conflict_target['sql'] ),
-				implode( ', ', $assignments )
-			);
-
-			$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
+			$replace_select_flow = $this->get_mysql_replace_select_delete_then_insert_flow(
 				$table_name,
 				$columns,
 				$select_columns,
@@ -18186,9 +18463,15 @@ WHERE option_name IN (
 				$select_start,
 				$select_end
 			);
+			if ( null === $replace_select_flow ) {
+				return null;
+			}
+
+			$sql                     = $replace_select_flow['sql'];
+			$affected_rows_count_sql = $replace_select_flow['replace_select_affected_rows_sql'];
 		}
 
-		return array(
+		$replace_query = array(
 			'action'                           => 'replace',
 			'sql'                              => $sql,
 			'table_name'                       => $table_name,
@@ -18199,10 +18482,16 @@ WHERE option_name IN (
 			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
 			'inserted_new_row'                 => true,
 		);
+
+		if ( null !== $conflict_target ) {
+			$replace_query = array_merge( $replace_query, $replace_select_flow );
+		}
+
+		return $replace_query;
 	}
 
 	/**
-	 * Get a preflight affected-row count query for REPLACE ... SELECT.
+	 * Build a materialized delete-then-insert flow for REPLACE ... SELECT.
 	 *
 	 * @param string           $table_name      Target table name.
 	 * @param string[]         $columns         Target column names.
@@ -18212,14 +18501,201 @@ WHERE option_name IN (
 	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
 	 * @param int              $select_start    SELECT token position.
 	 * @param int              $select_end      Final SELECT token position, exclusive.
-	 * @return string|null PostgreSQL count SQL, or null when unsupported.
+	 * @return array|null Materialized flow metadata, or null when unsupported.
 	 */
-	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, array $select_columns, array $default_columns, array $conflict_target, array $tokens, int $select_start, int $select_end ): ?string {
+	private function get_mysql_replace_select_delete_then_insert_flow( string $table_name, array $columns, array $select_columns, array $default_columns, array $conflict_target, array $tokens, int $select_start, int $select_end ): ?array {
 		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
 		if ( null === $conflict_indexes ) {
 			return null;
 		}
+		$conflict_index_groups = $this->get_mysql_replace_select_delete_conflict_index_groups( $table_name, $columns );
+		if ( empty( $conflict_index_groups ) ) {
+			$conflict_index_groups = array( $conflict_indexes );
+		}
 
+		$select_sql = $this->get_mysql_replace_select_source_sql(
+			$table_name,
+			$select_columns,
+			$default_columns,
+			$tokens,
+			$select_start,
+			$select_end
+		);
+		if ( null === $select_sql ) {
+			return null;
+		}
+
+		$temp_table_name      = '__wp_pg_replace_select_' . substr( md5( $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
+		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
+		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
+		$target_alias         = $this->connection->quote_identifier( '__wp_pg_replace_target' );
+		$quoted_target_table  = $this->connection->quote_identifier( $table_name );
+		$delete_predicate_sql = $this->get_mysql_replace_select_delete_predicate_sql(
+			$target_alias,
+			$rows_alias,
+			$conflict_index_groups
+		);
+		if ( null === $delete_predicate_sql ) {
+			return null;
+		}
+
+		$insert_projection_sql = array();
+		foreach ( $columns as $column ) {
+			$insert_projection_sql[] = sprintf(
+				'%s.%s',
+				$rows_alias,
+				$this->connection->quote_identifier( $column )
+			);
+		}
+
+		$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
+			$table_name,
+			$columns,
+			$select_columns,
+			$default_columns,
+			$conflict_target,
+			$tokens,
+			$select_start,
+			$select_end,
+			$quoted_temp_table,
+			$conflict_index_groups
+		);
+		if ( null === $affected_rows_count_sql ) {
+			return null;
+		}
+
+		$duplicate_conflict_rows_sql = $this->get_mysql_replace_select_duplicate_conflict_rows_sql(
+			$quoted_temp_table,
+			$rows_alias,
+			$conflict_index_groups
+		);
+		if ( null === $duplicate_conflict_rows_sql ) {
+			return null;
+		}
+
+		$delete_sql = sprintf(
+			'DELETE FROM %s AS %s WHERE EXISTS (SELECT 1 FROM %s AS %s WHERE %s)',
+			$quoted_target_table,
+			$target_alias,
+			$quoted_temp_table,
+			$rows_alias,
+			$delete_predicate_sql
+		);
+		$insert_sql = sprintf(
+			'INSERT INTO %s (%s) SELECT %s FROM %s AS %s',
+			$quoted_target_table,
+			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
+			implode( ', ', $insert_projection_sql ),
+			$quoted_temp_table,
+			$rows_alias
+		);
+		$drop_sql   = sprintf( 'DROP TABLE IF EXISTS %s', $quoted_temp_table );
+
+		return array(
+			'sql'                              => $insert_sql,
+			'statements'                       => array(
+				$drop_sql,
+				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
+				$delete_sql,
+				$insert_sql,
+				$drop_sql,
+			),
+			'materialize_statements'           => array(
+				$drop_sql,
+				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
+			),
+			'mutation_statements'              => array(
+				$delete_sql,
+				$insert_sql,
+			),
+			'cleanup_statements'               => array(
+				$drop_sql,
+			),
+			'replace_select_materialized'      => true,
+			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
+			'duplicate_conflict_rows_sql'      => $duplicate_conflict_rows_sql,
+			'conflict_indexes'                 => $conflict_indexes,
+			'conflict_index_groups'            => $conflict_index_groups,
+		);
+	}
+
+	/**
+	 * Get metadata-backed unique-key groups usable for materialized REPLACE ... SELECT deletes.
+	 *
+	 * @param string   $table_name Table name.
+	 * @param string[] $columns    Inserted column names.
+	 * @return array[] Conflict index groups.
+	 */
+	private function get_mysql_replace_select_delete_conflict_index_groups( string $table_name, array $columns ): array {
+		$this->ensure_mysql_schema_metadata_tables();
+
+		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT key_name, column_name, index_type, sub_part
+				FROM %s
+				WHERE table_schema = ? AND table_name = ? AND non_unique = \'0\'
+				ORDER BY
+					CASE WHEN UPPER(key_name) = \'PRIMARY\' THEN 0 ELSE 1 END,
+					index_ordinal,
+					seq_in_index',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+
+		$indexes = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$key_name = (string) ( $row['key_name'] ?? '' );
+			if ( '' === $key_name ) {
+				continue;
+			}
+
+			if ( ! isset( $indexes[ $key_name ] ) ) {
+				$indexes[ $key_name ] = array(
+					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
+					'parts'      => array(),
+				);
+			}
+
+			$column_name = (string) ( $row['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				continue;
+			}
+
+			$indexes[ $key_name ]['parts'][] = array(
+				'column'   => $column_name,
+				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
+			);
+		}
+
+		$conflict_index_groups = array();
+		foreach ( $indexes as $index ) {
+			if ( empty( $index['parts'] ) || in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
+				continue;
+			}
+
+			$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $index['parts'] );
+			if ( null !== $conflict_indexes ) {
+				$conflict_index_groups[] = $conflict_indexes;
+			}
+		}
+
+		return $conflict_index_groups;
+	}
+
+	/**
+	 * Get a projected source SELECT for REPLACE ... SELECT materialization.
+	 *
+	 * @param string           $table_name      Target table name.
+	 * @param string[]         $select_columns  Original SELECT target column names.
+	 * @param array[]          $default_columns Metadata-derived default projections.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $select_start    SELECT token position.
+	 * @param int              $select_end      Final SELECT token position, exclusive.
+	 * @return string|null PostgreSQL SELECT SQL, or null when unsupported.
+	 */
+	private function get_mysql_replace_select_source_sql( string $table_name, array $select_columns, array $default_columns, array $tokens, int $select_start, int $select_end ): ?string {
 		if ( $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, $select_start, $select_end ) ) {
 			return null;
 		}
@@ -18300,11 +18776,74 @@ WHERE option_name IN (
 			);
 		}
 
+		return $select_sql;
+	}
+
+	/**
+	 * Get a preflight affected-row count query for REPLACE ... SELECT.
+	 *
+	 * @param string           $table_name      Target table name.
+	 * @param string[]         $columns         Target column names.
+	 * @param string[]         $select_columns  Original SELECT target column names.
+	 * @param array[]          $default_columns Metadata-derived default projections.
+	 * @param array            $conflict_target Conflict target.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $select_start    SELECT token position.
+	 * @param int              $select_end      Final SELECT token position, exclusive.
+	 * @param string|null      $source_table_sql Optional materialized source table SQL.
+	 * @param array[]|null     $conflict_index_groups Optional conflict index groups.
+	 * @return string|null PostgreSQL count SQL, or null when unsupported.
+	 */
+	private function get_mysql_replace_select_affected_rows_count_sql( string $table_name, array $columns, array $select_columns, array $default_columns, array $conflict_target, array $tokens, int $select_start, int $select_end, ?string $source_table_sql = null, ?array $conflict_index_groups = null ): ?string {
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
+		if ( null === $conflict_indexes ) {
+			return null;
+		}
+		if ( null === $conflict_index_groups ) {
+			$conflict_index_groups = array( $conflict_indexes );
+		}
+
+		$select_sql = null;
+		if ( null === $source_table_sql ) {
+			$select_sql = $this->get_mysql_replace_select_source_sql(
+				$table_name,
+				$select_columns,
+				$default_columns,
+				$tokens,
+				$select_start,
+				$select_end
+			);
+			if ( null === $select_sql ) {
+				return null;
+			}
+		}
+
 		$rows_alias      = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
+		if ( null !== $source_table_sql ) {
+			$target_alias         = $this->connection->quote_identifier( '__wp_pg_replace_target' );
+			$delete_predicate_sql = $this->get_mysql_replace_select_delete_predicate_sql(
+				$target_alias,
+				$rows_alias,
+				$conflict_index_groups
+			);
+			if ( null === $delete_predicate_sql ) {
+				return null;
+			}
+
+			return sprintf(
+				'SELECT ((SELECT COUNT(*) FROM %1$s) + (SELECT COUNT(*) FROM %2$s AS %3$s WHERE EXISTS (SELECT 1 FROM %1$s AS %4$s WHERE %5$s))) AS affected_rows, (SELECT COUNT(*) FROM %1$s) AS inserted_rows',
+				$source_table_sql,
+				$this->connection->quote_identifier( $table_name ),
+				$target_alias,
+				$rows_alias,
+				$delete_predicate_sql
+			);
+		}
+
 		$conflict_exists = $this->get_mysql_replace_select_conflict_exists_sql(
 			$table_name,
 			$rows_alias,
-			$conflict_indexes
+			$conflict_index_groups
 		);
 		if ( null === $conflict_exists ) {
 			return null;
@@ -18313,7 +18852,7 @@ WHERE option_name IN (
 		return sprintf(
 			'SELECT COALESCE(SUM(CASE WHEN %1$s THEN 2 ELSE 1 END), 0) AS affected_rows, COALESCE(SUM(CASE WHEN %1$s THEN 0 ELSE 1 END), 0) AS inserted_rows FROM (%2$s) AS %3$s',
 			$conflict_exists,
-			$select_sql,
+			null === $source_table_sql ? $select_sql : 'SELECT * FROM ' . $source_table_sql,
 			$rows_alias
 		);
 	}
@@ -18353,46 +18892,165 @@ WHERE option_name IN (
 	 *
 	 * @param string $table_name       Target table name.
 	 * @param string $rows_alias       Quoted derived-table alias for incoming rows.
-	 * @param array  $conflict_indexes Conflict target column/index tuples.
+	 * @param array  $conflict_index_groups Conflict target column/index tuple groups.
 	 * @return string|null EXISTS predicate SQL, or null when unsupported.
 	 */
-	private function get_mysql_replace_select_conflict_exists_sql( string $table_name, string $rows_alias, array $conflict_indexes ): ?string {
-		$where = array();
-		foreach ( $conflict_indexes as $conflict_index ) {
-			$column = (string) ( $conflict_index['column'] ?? '' );
-			if ( '' === $column ) {
-				return null;
-			}
+	private function get_mysql_replace_select_conflict_exists_sql( string $table_name, string $rows_alias, array $conflict_index_groups ): ?string {
+		$group_predicates = array();
+		foreach ( $conflict_index_groups as $conflict_indexes ) {
+			$where = array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				$column = (string) ( $conflict_index['column'] ?? '' );
+				if ( '' === $column ) {
+					return null;
+				}
 
-			$incoming_value = sprintf(
-				'%s.%s',
-				$rows_alias,
-				$this->connection->quote_identifier( $column )
-			);
-			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
 				$incoming_value = sprintf(
-					'SUBSTR(CAST(%s AS text), 1, %d)',
-					$incoming_value,
-					(int) $conflict_index['sub_part']
+					'%s.%s',
+					$rows_alias,
+					$this->connection->quote_identifier( $column )
+				);
+				if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+					$incoming_value = sprintf(
+						'SUBSTR(CAST(%s AS text), 1, %d)',
+						$incoming_value,
+						(int) $conflict_index['sub_part']
+					);
+				}
+
+				$where[] = sprintf(
+					'%s = %s',
+					$this->get_mysql_index_key_part_sql( $column, $conflict_index['sub_part'] ?? null ),
+					$incoming_value
 				);
 			}
 
-			$where[] = sprintf(
-				'%s = %s',
-				$this->get_mysql_index_key_part_sql( $column, $conflict_index['sub_part'] ?? null ),
-				$incoming_value
-			);
+			if ( empty( $where ) ) {
+				return null;
+			}
+
+			$group_predicates[] = '(' . implode( ' AND ', $where ) . ')';
 		}
 
-		if ( empty( $where ) ) {
+		if ( empty( $group_predicates ) ) {
 			return null;
 		}
 
 		return sprintf(
 			'EXISTS (SELECT 1 FROM %s WHERE %s)',
 			$this->connection->quote_identifier( $table_name ),
-			implode( ' AND ', $where )
+			implode( ' OR ', $group_predicates )
 		);
+	}
+
+	/**
+	 * Get a materialized REPLACE ... SELECT target/source conflict predicate.
+	 *
+	 * @param string $target_alias     Quoted target table alias.
+	 * @param string $rows_alias       Quoted materialized rows alias.
+	 * @param array  $conflict_index_groups Conflict target column/index tuple groups.
+	 * @return string|null Predicate SQL, or null when unsupported.
+	 */
+	private function get_mysql_replace_select_delete_predicate_sql( string $target_alias, string $rows_alias, array $conflict_index_groups ): ?string {
+		$group_predicates = array();
+		foreach ( $conflict_index_groups as $conflict_indexes ) {
+			$where = array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				$column = (string) ( $conflict_index['column'] ?? '' );
+				if ( '' === $column ) {
+					return null;
+				}
+
+				$target_value = sprintf(
+					'%s.%s',
+					$target_alias,
+					$this->connection->quote_identifier( $column )
+				);
+				$incoming_value = sprintf(
+					'%s.%s',
+					$rows_alias,
+					$this->connection->quote_identifier( $column )
+				);
+				if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+					$target_value = sprintf(
+						'SUBSTR(CAST(%s AS text), 1, %d)',
+						$target_value,
+						(int) $conflict_index['sub_part']
+					);
+					$incoming_value = sprintf(
+						'SUBSTR(CAST(%s AS text), 1, %d)',
+						$incoming_value,
+						(int) $conflict_index['sub_part']
+					);
+				}
+
+				$where[] = sprintf(
+					'%s = %s',
+					$target_value,
+					$incoming_value
+				);
+			}
+
+			if ( empty( $where ) ) {
+				return null;
+			}
+
+			$group_predicates[] = '(' . implode( ' AND ', $where ) . ')';
+		}
+
+		return empty( $group_predicates ) ? null : implode( ' OR ', $group_predicates );
+	}
+
+	/**
+	 * Get a duplicate incoming conflict-key probe for materialized REPLACE ... SELECT.
+	 *
+	 * @param string $source_table_sql Quoted materialized source table SQL.
+	 * @param string $rows_alias       Quoted materialized rows alias.
+	 * @param array  $conflict_index_groups Conflict target column/index tuple groups.
+	 * @return string|null Probe SQL, or null when unsupported.
+	 */
+	private function get_mysql_replace_select_duplicate_conflict_rows_sql( string $source_table_sql, string $rows_alias, array $conflict_index_groups ): ?string {
+		$probes = array();
+		foreach ( $conflict_index_groups as $conflict_indexes ) {
+			$key_sql      = array();
+			$not_null_sql = array();
+			foreach ( $conflict_indexes as $conflict_index ) {
+				$column = (string) ( $conflict_index['column'] ?? '' );
+				if ( '' === $column ) {
+					return null;
+				}
+
+				$incoming_column = sprintf(
+					'%s.%s',
+					$rows_alias,
+					$this->connection->quote_identifier( $column )
+				);
+				$not_null_sql[]  = $incoming_column . ' IS NOT NULL';
+				if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+					$key_sql[] = sprintf(
+						'SUBSTR(CAST(%s AS text), 1, %d)',
+						$incoming_column,
+						(int) $conflict_index['sub_part']
+					);
+				} else {
+					$key_sql[] = $incoming_column;
+				}
+			}
+
+			if ( empty( $key_sql ) ) {
+				return null;
+			}
+
+			$probes[] = sprintf(
+				'SELECT 1 FROM %s AS %s WHERE %s GROUP BY %s HAVING COUNT(*) > 1',
+				$source_table_sql,
+				$rows_alias,
+				implode( ' AND ', $not_null_sql ),
+				implode( ', ', $key_sql )
+			);
+		}
+
+		return empty( $probes ) ? null : implode( ' UNION ALL ', $probes ) . ' LIMIT 1';
 	}
 
 	/**
@@ -18406,6 +19064,10 @@ WHERE option_name IN (
 			! isset( $replace_query['table_name'], $replace_query['conflict_column'] )
 			|| null === $replace_query['conflict_column']
 		) {
+			return null;
+		}
+
+		if ( ! empty( $replace_query['delete_then_insert'] ) ) {
 			return null;
 		}
 
@@ -18672,6 +19334,24 @@ WHERE option_name IN (
 			}
 
 			$seen_values[ $seen_key ] = true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a REPLACE batch duplicates any deterministic conflict key.
+	 *
+	 * @param array[] $value_rows             Translated VALUES rows.
+	 * @param array[] $probe_safe_rows        Per-value probe safety.
+	 * @param array[] $conflict_index_groups  Conflict target column/index tuple groups.
+	 * @return bool Whether PostgreSQL needs per-row statements.
+	 */
+	private function has_duplicate_mysql_replace_conflict_value_rows_in_groups( array $value_rows, array $probe_safe_rows, array $conflict_index_groups ): bool {
+		foreach ( $conflict_index_groups as $conflict_indexes ) {
+			if ( $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
+				return true;
+			}
 		}
 
 		return false;
@@ -25362,15 +26042,28 @@ WHERE option_name IN (
 				continue;
 			}
 
+			$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end']
+			);
+			if ( null === $current_database_function_replacements ) {
+				return null;
+			}
+
 			$column_replacements = $this->get_direct_information_schema_column_replacements(
 				$tokens,
 				$expression_bounds['start'],
 				$expression_bounds['end'],
 				$context,
-				array()
+				$current_database_function_replacements
 			);
 			if ( null === $column_replacements ) {
 				return null;
+			}
+
+			foreach ( $current_database_function_replacements as $replacement ) {
+				$replacements[] = $replacement;
 			}
 
 			foreach ( $column_replacements as $replacement ) {
@@ -26949,7 +27642,10 @@ WHERE option_name IN (
 		$main_table_count              = 0;
 
 		foreach ( $sources as $source ) {
-			if ( isset( $source['view'] ) && $this->is_direct_information_schema_join_relation( $source['view'] ) ) {
+			if (
+				isset( $source['relation_sql'] )
+				|| ( isset( $source['view'] ) && $this->is_direct_information_schema_join_relation( $source['view'] ) )
+			) {
 				$has_information_schema_source = true;
 				continue;
 			}
@@ -39779,7 +40475,11 @@ FROM (
 			$arguments[0]['end']
 		);
 
-		return sprintf( "OCTET_LENGTH(DECODE(CAST(%s AS text), 'base64'))", $base64_sql );
+		return sprintf(
+			'CASE WHEN %1$s THEN NULL ELSE OCTET_LENGTH(DECODE(CAST(%2$s AS text), \'base64\')) END',
+			$this->get_postgresql_mysql_base64_invalid_condition_sql( $base64_sql ),
+			$base64_sql
+		);
 	}
 
 	/**
@@ -39904,6 +40604,37 @@ FROM (
 	}
 
 	/**
+	 * Get PostgreSQL SQL for MySQL FROM_BASE64().
+	 *
+	 * PostgreSQL DECODE(..., 'base64') raises for malformed input. MySQL and
+	 * the SQLite UDF return NULL, so guard before decoding.
+	 *
+	 * @param string $argument_sql PostgreSQL argument SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_from_base64_sql( string $argument_sql ): string {
+		return sprintf(
+			'CASE WHEN %1$s THEN NULL ELSE CONVERT_FROM(DECODE(CAST(%2$s AS text), \'base64\'), \'UTF8\') END',
+			$this->get_postgresql_mysql_base64_invalid_condition_sql( $argument_sql ),
+			$argument_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL testing whether a MySQL FROM_BASE64() input is invalid.
+	 *
+	 * @param string $argument_sql PostgreSQL argument SQL.
+	 * @return string PostgreSQL condition SQL.
+	 */
+	private function get_postgresql_mysql_base64_invalid_condition_sql( string $argument_sql ): string {
+		$argument_text_sql = sprintf( 'CAST(%s AS text)', $argument_sql );
+		return sprintf(
+			"%1\$s IS NULL OR %1\$s !~ '^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$'",
+			$argument_text_sql
+		);
+	}
+
+	/**
 	 * Render PostgreSQL SQL for a supported common MySQL runtime function.
 	 *
 	 * @param string   $function_name Lowercase MySQL function name.
@@ -40008,7 +40739,7 @@ FROM (
 				return 1 === $count ? sprintf( "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')", $argument_sql[0] ) : null;
 
 			case 'from_base64':
-				return 1 === $count ? sprintf( "CONVERT_FROM(DECODE(CAST(%s AS text), 'base64'), 'UTF8')", $argument_sql[0] ) : null;
+				return 1 === $count ? $this->get_postgresql_mysql_from_base64_sql( $argument_sql[0] ) : null;
 
 			case 'to_base64':
 				return 1 === $count ? sprintf( "ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'base64')", $argument_sql[0] ) : null;
