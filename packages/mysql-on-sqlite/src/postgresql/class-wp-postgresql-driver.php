@@ -715,13 +715,24 @@ class WP_PostgreSQL_Driver {
 
 		$create_table_select_query = $this->translate_mysql_create_table_select_query( $query );
 		if ( null !== $create_table_select_query ) {
-			$result = $this->execute_postgresql_statements( array( $create_table_select_query['sql'] ) );
-			$this->store_mysql_create_table_select_metadata(
-				$create_table_select_query['temporary']
-					? $this->get_temporary_schema_for_metadata_table( $create_table_select_query['table'] )
-					: $create_table_select_query['schema'],
-				$create_table_select_query['table']
-			);
+			$result          = $this->execute_postgresql_statements( $create_table_select_query['statements'] );
+			$metadata_schema = $create_table_select_query['temporary']
+				? $this->get_temporary_schema_for_metadata_table( $create_table_select_query['table'] )
+				: $create_table_select_query['schema'];
+			if ( null !== $create_table_select_query['metadata_query'] ) {
+				$this->store_mysql_schema_metadata_for_schema(
+					$create_table_select_query['metadata_query'],
+					$create_table_select_query['temporary']
+						? array( $this, 'get_temporary_schema_for_metadata_table' )
+						: $metadata_schema
+				);
+			} else {
+				$this->store_mysql_create_table_select_metadata(
+					$metadata_schema,
+					$create_table_select_query['table'],
+					$create_table_select_query['table_comment']
+				);
+			}
 			return $result;
 		}
 
@@ -5294,7 +5305,7 @@ $wp_mysql_on_update$',
 	 * Translate supported MySQL CREATE TABLE ... [AS] SELECT statements to PostgreSQL.
 	 *
 	 * @param string $query MySQL CREATE TABLE ... SELECT query.
-	 * @return array{sql: string, schema: string, table: string, temporary: bool}|null Translation, or null when this is not CTAS.
+	 * @return array{statements: string[], schema: string, table: string, temporary: bool, metadata_query: string|null, table_comment: string}|null Translation, or null when this is not CTAS.
 	 */
 	private function translate_mysql_create_table_select_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -5335,10 +5346,28 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
-		if ( ! $this->consume_mysql_create_table_select_options( $tokens, $position, $statement_end ) ) {
+		$definition_start = null;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$parenthesized_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if ( null === $parenthesized_end ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+			}
+
+			$is_parenthesized_select = $parenthesized_end === $statement_end
+				&& isset( $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id;
+			if ( ! $is_parenthesized_select ) {
+				$definition_start = $position;
+				$position         = $parenthesized_end;
+			}
+		}
+
+		$table_comment = '';
+		if ( ! $this->consume_mysql_create_table_select_options( $tokens, $position, $statement_end, $table_comment ) ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
 		}
 
+		$metadata_end = $position;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
 		}
@@ -5391,17 +5420,54 @@ $wp_mysql_on_update$',
 			? $this->connection->quote_identifier( $table_reference['table'] )
 			: $this->get_postgresql_schema_identifier( $schema_name, $table_reference['table'] );
 
+		if ( null !== $definition_start ) {
+			$metadata_query = trim( $this->get_mysql_token_range_bytes( $query, $tokens, 0, $metadata_end ) );
+			if ( '' === $metadata_query ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+			}
+
+			$translator      = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
+			$metadata_tables = $translator->extract_schema_metadata( $metadata_query, true );
+			if ( 1 !== count( $metadata_tables ) || empty( $metadata_tables[0]['columns'] ) ) {
+				throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+			}
+
+			$column_identifiers = array();
+			foreach ( $metadata_tables[0]['columns'] as $column ) {
+				$column_identifiers[] = $this->connection->quote_identifier( (string) $column['name'] );
+			}
+
+			$statements   = $translator->translate_schema( $metadata_query );
+			$statements[] = sprintf(
+				'INSERT INTO %s (%s) %s',
+				$table_identifier,
+				implode( ', ', $column_identifiers ),
+				$select_translation['sql']
+			);
+
+			return array(
+				'statements'      => $statements,
+				'schema'          => $schema_name,
+				'table'           => $table_reference['table'],
+				'temporary'       => $is_temporary,
+				'metadata_query'  => $metadata_query,
+				'table_comment'   => $table_comment,
+			);
+		}
+
 		return array(
-			'sql'       => sprintf(
+			'statements'      => array( sprintf(
 				'CREATE %sTABLE %s%s AS %s',
 				$is_temporary ? 'TEMPORARY ' : '',
 				$if_not_exists ? 'IF NOT EXISTS ' : '',
 				$table_identifier,
 				$select_translation['sql']
-			),
-			'schema'    => $schema_name,
-			'table'     => $table_reference['table'],
-			'temporary' => $is_temporary,
+			) ),
+			'schema'          => $schema_name,
+			'table'           => $table_reference['table'],
+			'temporary'       => $is_temporary,
+			'metadata_query'  => null,
+			'table_comment'   => $table_comment,
 		);
 	}
 
@@ -5413,7 +5479,7 @@ $wp_mysql_on_update$',
 	 * @param int              $statement_end Final statement token position, exclusive.
 	 * @return bool Whether all option-like tokens consumed successfully.
 	 */
-	private function consume_mysql_create_table_select_options( array $tokens, int &$position, int $statement_end ): bool {
+	private function consume_mysql_create_table_select_options( array $tokens, int &$position, int $statement_end, string &$table_comment = '' ): bool {
 		while ( $position < $statement_end && isset( $tokens[ $position ] ) ) {
 			if ( $this->is_mysql_create_table_select_boundary_token( $tokens[ $position ] ) ) {
 				return true;
@@ -5426,7 +5492,8 @@ $wp_mysql_on_update$',
 
 			$before = $position;
 			if (
-				$this->consume_mysql_create_table_select_charset_option( $tokens, $position, $statement_end )
+				$this->consume_mysql_create_table_select_comment_option( $tokens, $position, $statement_end, $table_comment )
+				|| $this->consume_mysql_create_table_select_charset_option( $tokens, $position, $statement_end )
 				|| $this->consume_mysql_create_table_select_assignment_option( $tokens, $position, $statement_end )
 				|| $this->consume_mysql_create_table_select_directory_option( $tokens, $position, $statement_end )
 				|| $this->consume_mysql_create_table_select_tablespace_option( $tokens, $position, $statement_end )
@@ -5458,6 +5525,34 @@ $wp_mysql_on_update$',
 			),
 			true
 		);
+	}
+
+	/**
+	 * Consume a supported CREATE TABLE ... SELECT COMMENT option.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @param string           $table_comment Parsed table comment.
+	 * @return bool Whether an option was consumed.
+	 */
+	private function consume_mysql_create_table_select_comment_option( array $tokens, int &$position, int $statement_end, string &$table_comment ): bool {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMENT_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || $position >= $statement_end || ! $this->is_mysql_quoted_text_token( $tokens[ $position ] ) ) {
+			return false;
+		}
+
+		$table_comment = $tokens[ $position ]->get_value();
+		++$position;
+		return true;
 	}
 
 	/**
@@ -5693,6 +5788,7 @@ $wp_mysql_on_update$',
 					WP_MySQL_Lexer::CHARSET_SYMBOL,
 					WP_MySQL_Lexer::CHAR_SYMBOL,
 					WP_MySQL_Lexer::COLLATE_SYMBOL,
+					WP_MySQL_Lexer::COMMENT_SYMBOL,
 					WP_MySQL_Lexer::DATA_SYMBOL,
 					WP_MySQL_Lexer::INDEX_SYMBOL,
 					WP_MySQL_Lexer::TABLESPACE_SYMBOL,
@@ -5744,9 +5840,19 @@ $wp_mysql_on_update$',
 	 * @param string $table_schema Backend schema name.
 	 * @param string $table_name   Table name.
 	 */
-	private function store_mysql_create_table_select_metadata( string $table_schema, string $table_name ): void {
+	private function store_mysql_create_table_select_metadata( string $table_schema, string $table_name, string $table_comment = '' ): void {
 		$this->ensure_mysql_schema_metadata_tables();
 		$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $table_schema );
+
+		if ( '' !== $table_comment ) {
+			$this->insert_mysql_table_metadata(
+				$table_schema,
+				$table_name,
+				array(
+					'comment' => $table_comment,
+				)
+			);
+		}
 
 		foreach ( $this->get_mysql_create_table_select_column_metadata( $table_schema, $table_name ) as $column ) {
 			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );

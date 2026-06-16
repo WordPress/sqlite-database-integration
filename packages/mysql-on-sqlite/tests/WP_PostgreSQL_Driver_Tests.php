@@ -23618,6 +23618,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					COLLATE=utf8mb4_unicode_ci
 					ROW_FORMAT=DYNAMIC
 					STATS_PERSISTENT=DEFAULT
+					COMMENT="option copy"
 					AS SELECT `id`, `name` FROM `ctas_options_source` WHERE `id` = 2'
 			)
 		);
@@ -23632,6 +23633,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$columns = $driver->query( 'SHOW COLUMNS FROM ctas_with_options' );
 		$this->assertSame( array( 'id', 'name' ), array_column( $columns, 'Field' ) );
 		$this->assertSame( array( 'int', 'text' ), array_column( $columns, 'Type' ) );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE ctas_with_options' )[0]->{'Create Table'};
+		$this->assertStringEndsWith( "COMMENT='option copy'", $create_table );
 
 		$this->assertGreaterThanOrEqual(
 			0,
@@ -23649,6 +23653,53 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$temp_rows = $driver->query( 'SELECT * FROM ctas_temp_with_options' );
 		$this->assertEquals( array( (object) array( 'id' => '7' ) ), $temp_rows );
+	}
+
+	/**
+	 * Tests CREATE TABLE ... SELECT with explicit definitions creates then inserts.
+	 */
+	public function test_create_table_select_with_definitions_translates_and_stores_metadata(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query( 'CREATE TABLE ctas_defined_source (`id` INTEGER, `name` TEXT, `score` INTEGER)' );
+		$driver->query( "INSERT INTO ctas_defined_source (`id`, `name`, `score`) VALUES (1, 'one', 1), (2, 'two', 2)" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE ctas_with_definitions (
+					`id` bigint(20) unsigned NOT NULL,
+					`name` varchar(20) NOT NULL COMMENT 'Copied name',
+					PRIMARY KEY (`id`)
+				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='copy'
+				AS SELECT `id`, `name` FROM `ctas_defined_source` WHERE `score` > 1"
+			)
+		);
+
+		$queries = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 2, $queries );
+		$this->assertStringContainsString( 'CREATE TABLE "ctas_with_definitions"', $queries[0] );
+		$this->assertStringContainsString( 'PRIMARY KEY ("id")', $queries[0] );
+		$this->assertSame(
+			'INSERT INTO "ctas_with_definitions" ("id", "name") SELECT "id", "name" FROM "ctas_defined_source" WHERE "score" > 1',
+			$queries[1]
+		);
+
+		$rows = $driver->query( 'SELECT id, name FROM ctas_with_definitions' );
+		$this->assertEquals( array( (object) array( 'id' => '2', 'name' => 'two' ) ), $rows );
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM ctas_with_definitions' );
+		$this->assertSame( array( 'id', 'name' ), array_column( $columns, 'Field' ) );
+		$this->assertSame( array( 'bigint(20) unsigned', 'varchar(20)' ), array_column( $columns, 'Type' ) );
+		$this->assertSame( array( 'NO', 'NO' ), array_column( $columns, 'Null' ) );
+		$this->assertSame( 'PRI', $columns[0]->Key );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE ctas_with_definitions' )[0]->{'Create Table'};
+		$this->assertStringContainsString( '`id` bigint(20) unsigned NOT NULL', $create_table );
+		$this->assertStringContainsString( "`name` varchar(20) NOT NULL COMMENT 'Copied name'", $create_table );
+		$this->assertStringContainsString( 'PRIMARY KEY (`id`)', $create_table );
+		$this->assertStringEndsWith( "COMMENT='copy'", $create_table );
 	}
 
 	/**
@@ -23915,8 +23966,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$queries = array(
-			'column definitions plus select' => 'CREATE TABLE ctas_with_definitions (`id` INTEGER) AS SELECT 1 AS `id`',
-			'table comment before select'    => "CREATE TABLE ctas_with_comment COMMENT='copy' AS SELECT 1 AS id",
+			'partition before select' => 'CREATE TABLE ctas_partitioned PARTITION BY HASH(id) PARTITIONS 2 AS SELECT 1 AS id',
 		);
 
 		foreach ( $queries as $label => $query ) {
