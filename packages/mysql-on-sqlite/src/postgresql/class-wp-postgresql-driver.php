@@ -540,6 +540,7 @@ class WP_PostgreSQL_Driver {
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 		$this->last_row_count = $this->get_mysql_row_count_from_last_result();
 		$this->reset_query_state();
+		$this->last_result = -1;
 		$this->last_mysql_query = $query;
 
 		$runtime_setting_result = $this->execute_mysql_runtime_setting_query( $query );

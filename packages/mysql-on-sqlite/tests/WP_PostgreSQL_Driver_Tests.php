@@ -8991,6 +8991,41 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ROW_COUNT() reflects failed statement state.
+	 */
+	public function test_row_count_runtime_function_tracks_failed_statement_state(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_runtime_row_count_failure (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_runtime_row_count_failure (id, value) VALUES (1, 'first'), (2, 'second')" );
+
+		$after_insert = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+		$this->assertSame( '2', $after_insert[0]->row_count );
+
+		try {
+			$driver->query( 'INSERT INTO wptests_runtime_row_count_failure (id, value) VALUES (3, NULL)' );
+			$this->fail( 'Expected backend insert failure.' );
+		} catch ( PDOException $e ) {
+			$this->assertStringContainsString( 'NOT NULL', strtoupper( $e->getMessage() ) );
+		}
+
+		$after_backend_failure = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+		$this->assertSame( '-1', $after_backend_failure[0]->row_count );
+		$this->assertSame( 'SELECT -1 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+
+		try {
+			$driver->query( 'SELECT ROW_COUNT(123) AS invalid_row_count' );
+			$this->fail( 'Expected unsupported ROW_COUNT() form to fail closed.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage() );
+		}
+
+		$after_unsupported_failure = $driver->query( 'SELECT ROW_COUNT() AS row_count' );
+		$this->assertSame( '-1', $after_unsupported_failure[0]->row_count );
+		$this->assertSame( 'SELECT -1 AS row_count', $this->get_last_single_postgresql_sql( $driver ) );
+	}
+
+	/**
 	 * Tests common MySQL runtime functions from the SQLite compatibility layer are translated.
 	 */
 	public function test_common_mysql_runtime_functions_are_translated_to_postgresql(): void {
