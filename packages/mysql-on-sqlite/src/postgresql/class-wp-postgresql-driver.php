@@ -15211,9 +15211,28 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$scope = $this->get_mysql_select_scope( $tokens, $table_references_start, $from_end );
-		if ( null === $scope || ! empty( $scope['unknown'] ) ) {
-			return null;
+		$information_schema_source_translation = null;
+		if (
+			0 === strcasecmp( $this->db_name, 'information_schema' )
+			|| $this->direct_information_schema_source_range_references_information_schema( $tokens, $table_references_start, $from_end )
+		) {
+			$information_schema_source_translation = $this->get_direct_information_schema_dml_source_translation(
+				$query,
+				$tokens,
+				$table_references_start,
+				$from_end
+			);
+			if ( null === $information_schema_source_translation ) {
+				return null;
+			}
+			$scope      = $information_schema_source_translation['scope'];
+			$source_sql = $information_schema_source_translation['sql'];
+		} else {
+			$scope = $this->get_mysql_select_scope( $tokens, $table_references_start, $from_end );
+			if ( null === $scope || ! empty( $scope['unknown'] ) ) {
+				return null;
+			}
+			$source_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $table_references_start, $from_end );
 		}
 
 		$target_tables         = array();
@@ -15246,20 +15265,34 @@ WHERE option_name IN (
 
 		$where_sql = '';
 		if ( null !== $where_position ) {
-			if (
-				$where_position + 1 >= $statement_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end )
-			) {
+			if ( $where_position + 1 >= $statement_end ) {
 				return null;
 			}
 
-			$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
-				$tokens,
-				$where_position + 1,
-				$statement_end,
-				$scope
-			);
-			$where_sql = ' WHERE ' . $where['sql'];
+			if ( null !== $information_schema_source_translation ) {
+				$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+					$tokens,
+					$where_position + 1,
+					$statement_end,
+					$information_schema_source_translation['context']
+				);
+				if ( null === $where ) {
+					return null;
+				}
+				$where_sql = ' WHERE ' . $where;
+			} else {
+				if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $statement_end ) ) {
+					return null;
+				}
+
+				$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+					$tokens,
+					$where_position + 1,
+					$statement_end,
+					$scope
+				);
+				$where_sql = ' WHERE ' . $where['sql'];
+			}
 		}
 
 		$select_columns = array();
@@ -15289,11 +15322,181 @@ WHERE option_name IN (
 		return sprintf(
 			'WITH mysql_delete_rows AS MATERIALIZED (SELECT %s FROM %s%s), %s SELECT %s AS affected_rows',
 			implode( ', ', $select_columns ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $table_references_start, $from_end ),
+			$source_sql,
 			$where_sql,
 			implode( ', ', $delete_ctes ),
 			implode( ' + ', $count_parts )
 		);
+	}
+
+	/**
+	 * Translate a DML source range that reads information_schema relations.
+	 *
+	 * @param string           $query Original MySQL query.
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $source_start First source token.
+	 * @param int              $source_end Final source token, exclusive.
+	 * @return array{scope: array, sql: string, context: array}|null Source translation, or null.
+	 */
+	private function get_direct_information_schema_dml_source_translation( string $query, array $tokens, int $source_start, int $source_end ): ?array {
+		$parsed_sources = $this->parse_direct_information_schema_select_sources( $query, $tokens, $source_start, $source_end );
+		if ( null === $parsed_sources ) {
+			return null;
+		}
+
+		$context = array(
+			'sources'                     => $parsed_sources['sources'],
+			'join_predicate_ranges'       => $parsed_sources['join_predicate_ranges'],
+			'join_predicate_replacements' => $parsed_sources['join_predicate_replacements'],
+			'using_columns'               => $parsed_sources['using_columns'],
+		);
+
+		$scope = array(
+			'tables'  => array(),
+			'aliases' => array(),
+			'unknown' => false,
+		);
+		foreach ( $context['sources'] as $source ) {
+			if ( ! isset( $source['table'] ) ) {
+				continue;
+			}
+
+			$table = array(
+				'schema' => $this->resolve_mysql_table_schema_for_introspection( 'public', $source['table'] ),
+				'table'  => $source['table'],
+			);
+			$alias = strtolower( $source['alias'] );
+			if ( isset( $scope['aliases'][ $alias ] ) ) {
+				return null;
+			}
+
+			$scope['tables'][]          = $table;
+			$scope['aliases'][ $alias ] = $table;
+		}
+
+		if ( empty( $scope['tables'] ) ) {
+			return null;
+		}
+
+		$replacements = $this->get_direct_information_schema_dml_source_replacements( $tokens, $context );
+		if ( null === $replacements ) {
+			return null;
+		}
+
+		return array(
+			'scope'   => $scope,
+			'sql'     => $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $source_start, $source_end, $replacements ),
+			'context' => $context,
+		);
+	}
+
+	/**
+	 * Get source and JOIN-predicate replacements for an information_schema DML source.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param array            $context Direct information_schema context.
+	 * @return array[]|null Replacement ranges, or null when unsupported.
+	 */
+	private function get_direct_information_schema_dml_source_replacements( array $tokens, array $context ): ?array {
+		$replacements = array();
+		foreach ( $context['join_predicate_replacements'] as $replacement ) {
+			$replacements[] = $replacement;
+		}
+
+		foreach ( $context['join_predicate_ranges'] as $range ) {
+			$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
+				$tokens,
+				$range['start'],
+				$range['end']
+			);
+			if ( null === $current_database_function_replacements ) {
+				return null;
+			}
+
+			$column_replacements = $this->get_direct_information_schema_column_replacements(
+				$tokens,
+				$range['start'],
+				$range['end'],
+				$context,
+				$current_database_function_replacements
+			);
+			if ( null === $column_replacements ) {
+				return null;
+			}
+
+			foreach ( array_merge( $current_database_function_replacements, $column_replacements ) as $replacement ) {
+				$replacements[] = $replacement;
+			}
+		}
+
+		$source_replacements = $this->get_direct_information_schema_source_replacements( $context );
+		if ( null === $source_replacements ) {
+			return null;
+		}
+
+		foreach ( $source_replacements as $replacement ) {
+			$replacements[] = $replacement;
+		}
+
+		usort(
+			$replacements,
+			static function ( array $left, array $right ): int {
+				return $left['start'] <=> $right['start'];
+			}
+		);
+
+		return $replacements;
+	}
+
+	/**
+	 * Translate a DML predicate that may reference information_schema sources.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start First predicate token.
+	 * @param int              $end Final predicate token, exclusive.
+	 * @param array            $context Direct information_schema context.
+	 * @return string|null PostgreSQL predicate SQL, or null when unsupported.
+	 */
+	private function translate_direct_information_schema_dml_predicate_to_postgresql( array $tokens, int $start, int $end, array $context ): ?string {
+		if (
+			$this->contains_mysql_token(
+				$tokens,
+				$start,
+				$end,
+				array(
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements( $tokens, $start, $end );
+		if ( null === $current_database_function_replacements ) {
+			return null;
+		}
+
+		$column_replacements = $this->get_direct_information_schema_column_replacements(
+			$tokens,
+			$start,
+			$end,
+			$context,
+			$current_database_function_replacements
+		);
+		if ( null === $column_replacements ) {
+			return null;
+		}
+
+		$replacements = array_merge( $current_database_function_replacements, $column_replacements );
+		usort(
+			$replacements,
+			static function ( array $left, array $right ): int {
+				return $left['start'] <=> $right['start'];
+			}
+		);
+
+		return $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $start, $end, $replacements );
 	}
 
 	/**

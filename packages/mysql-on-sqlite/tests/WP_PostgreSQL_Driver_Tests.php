@@ -6496,6 +6496,53 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined DELETE statements can read from information_schema sources.
+	 */
+	public function test_mysql_delete_joined_to_information_schema_is_translated(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$delete = "DELETE o
+			FROM wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name
+			WHERE it.table_schema = DATABASE()";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'WITH mysql_delete_rows AS MATERIALIZED', $sql );
+		$this->assertStringContainsString( 'SELECT "o".ctid AS "mysql_delete_target_0_ctid"', $sql );
+		$this->assertStringContainsString( 'FROM "wptests_options" AS "o" JOIN (', $sql );
+		$this->assertStringContainsString( ') AS "it" ON "o"."option_name" = "it"."TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'WHERE "it"."TABLE_SCHEMA" = \'wptests\'', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "wptests_options" AS "o"', $sql );
+	}
+
+	/**
+	 * Tests information_schema aliases remain read-only in joined DELETE statements.
+	 */
+	public function test_mysql_delete_joined_to_information_schema_rejects_catalog_target(): void {
+		$driver = $this->create_driver();
+		$this->install_direct_information_schema_options_metadata( $driver );
+
+		$delete = "DELETE it
+			FROM wptests_options AS o
+			JOIN information_schema.tables AS it ON o.option_name = it.table_name";
+
+		try {
+			$driver->query( $delete );
+			$this->fail( 'Expected unsupported DELETE statement.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported DELETE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests bare uppercase ID in simple DELETE WHERE clauses is quoted.
 	 */
 	public function test_simple_delete_with_bare_uppercase_id_where_is_translated_to_postgresql(): void {
