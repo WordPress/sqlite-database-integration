@@ -14206,9 +14206,18 @@ WHERE option_name IN (
 		if ( null === $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::JOIN_SYMBOL, $target_ref['position'], $where_position ) ) {
 			return null;
 		}
-		if ( $this->contains_top_level_mysql_token( $tokens, $where_position + 1, $statement_end, array( WP_MySQL_Lexer::REGEXP_SYMBOL ) ) ) {
+
+		$scope = $this->get_mysql_select_scope( $tokens, 3, $where_position );
+		if ( null === $scope || ! empty( $scope['unknown'] ) ) {
 			return null;
 		}
+
+		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			$where_position + 1,
+			$statement_end,
+			$scope
+		);
 
 		$target_alias_sql = $this->connection->quote_identifier( $target_alias );
 
@@ -14219,7 +14228,7 @@ WHERE option_name IN (
 			$target_alias_sql,
 			$target_alias_sql,
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 3, $where_position ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $statement_end )
+			$where_sql['sql']
 		);
 	}
 

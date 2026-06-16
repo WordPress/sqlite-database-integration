@@ -5632,6 +5632,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests joined DELETE REGEXP predicates are translated to PostgreSQL regex operators.
+	 */
+	public function test_mysql_join_delete_regexp_predicate_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$delete = "DELETE d FROM wptests_delete_regexp d
+			JOIN wptests_delete_regexp_related r ON r.id = d.related_id
+			WHERE d.name REGEXP '^x' AND r.status = 'old'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_single_target_join_delete_query',
+			$delete
+		);
+
+		$this->assertSame(
+			'DELETE FROM "wptests_delete_regexp" AS "d" WHERE "d".ctid IN (SELECT "d".ctid FROM wptests_delete_regexp d JOIN wptests_delete_regexp_related r ON r.id = d.related_id WHERE d.name ~* \'^x\' AND r.status = \'old\')',
+			$sql
+		);
+	}
+
+	/**
 	 * Tests unsupported DELETE shapes fail before backend execution.
 	 */
 	public function test_unsupported_delete_shapes_fail_closed_before_backend(): void {
@@ -5640,9 +5662,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				JOIN wptests_related r ON r.id = d.related_id
 				WHERE d.status = 'old'
 				ORDER BY d.id LIMIT 1",
-			"DELETE d FROM wptests_delete d
-				JOIN wptests_related r ON r.id = d.related_id
-				WHERE d.name REGEXP '^x'",
 			"DELETE d, r FROM wptests_delete d
 				JOIN wptests_related r ON r.id = d.related_id
 				WHERE d.status = 'old'
