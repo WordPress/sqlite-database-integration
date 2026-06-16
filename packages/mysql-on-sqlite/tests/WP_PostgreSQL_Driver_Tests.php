@@ -2567,6 +2567,64 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE TABLE index direction metadata is exposed through MySQL introspection.
+	 */
+	public function test_create_table_index_directions_update_mysql_introspection_metadata(): void {
+		$driver = $this->create_driver();
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE wptests_create_directional_index (
+					id int NOT NULL,
+					score int NOT NULL,
+					name varchar(255) NOT NULL,
+					created_at datetime NOT NULL,
+					body text,
+					PRIMARY KEY (id),
+					KEY score_name (score ASC, name(16) DESC, created_at DESC),
+					FULLTEXT KEY body_fulltext (body)
+				)'
+			)
+		);
+
+		$statistics = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME, COLLATION, SUB_PART
+			FROM information_schema.statistics
+			WHERE table_name = 'wptests_create_directional_index'
+			ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+		);
+
+		$statistics_by_part = array();
+		foreach ( $statistics as $row ) {
+			$statistics_by_part[ $row->INDEX_NAME . ':' . $row->COLUMN_NAME ] = array( $row->COLLATION, $row->SUB_PART );
+		}
+		ksort( $statistics_by_part );
+
+		$this->assertSame(
+			array(
+				'PRIMARY:id'             => array( 'A', null ),
+				'body_fulltext:body'     => array( null, null ),
+				'score_name:created_at' => array( 'D', null ),
+				'score_name:name'        => array( 'D', '16' ),
+				'score_name:score'       => array( 'A', null ),
+			),
+			$statistics_by_part
+		);
+
+		$show_index = $driver->query( "SHOW INDEX FROM wptests_create_directional_index WHERE Key_name = 'score_name'" );
+		$this->assertSame( array( 'A', 'D', 'D' ), array_column( $show_index, 'Collation' ) );
+		$this->assertSame( array( null, '16', null ), array_column( $show_index, 'Sub_part' ) );
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_create_directional_index' )[0]->{'Create Table'};
+		$this->assertStringContainsString(
+			'  KEY `score_name` (`score`, `name`(16) DESC, `created_at` DESC)',
+			$show_create
+		);
+		$this->assertStringContainsString( '  FULLTEXT KEY `body_fulltext` (`body`)', $show_create );
+	}
+
+	/**
 	 * Tests CREATE TABLE zero-date defaults stay text-backed while SHOW CREATE preserves MySQL metadata.
 	 */
 	public function test_create_table_zero_date_defaults_are_text_and_show_create_preserves_mysql_shape(): void {
