@@ -42773,6 +42773,10 @@ FROM (
 				continue;
 			}
 
+			if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $position, $end ) ) {
+				continue;
+			}
+
 			if ( null === $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null ) ) {
 				continue;
 			}
@@ -42808,6 +42812,10 @@ FROM (
 	private function mysql_expression_qualified_references_resolve_to_scope( array $tokens, int $start, int $end, array $scope ): bool {
 		for ( $position = $start; $position < $end; $position++ ) {
 			if ( $this->is_mysql_qualified_reference_suffix_position( $tokens, $position, $start ) ) {
+				continue;
+			}
+
+			if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $position, $end ) ) {
 				continue;
 			}
 
@@ -45104,7 +45112,7 @@ FROM (
 	}
 
 	/**
-	 * Translate MySQL timestamp functions that allow no parentheses.
+	 * Translate MySQL temporal functions that allow no parentheses.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -45112,21 +45120,37 @@ FROM (
 	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
 	 */
 	private function translate_mysql_nonparenthesized_timestamp_function_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::NOW_SYMBOL !== $tokens[ $position ]->id ) {
+		if ( ! isset( $tokens[ $position ] ) ) {
 			return null;
 		}
 
 		if (
 			isset( $tokens[ $position + 1 ] )
 			&& $position + 1 < $end
-			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+			&& in_array( $tokens[ $position + 1 ]->id, array( WP_MySQL_Lexer::OPEN_PAR_SYMBOL, WP_MySQL_Lexer::DOT_SYMBOL ), true )
 		) {
 			return null;
 		}
 
 		$function_name = strtolower( $tokens[ $position ]->get_value() );
-		if ( ! in_array( $function_name, array( 'current_timestamp', 'localtime', 'localtimestamp' ), true ) ) {
+		if (
+			! in_array( $function_name, array( 'current_date', 'current_time', 'current_timestamp', 'localtime', 'localtimestamp' ), true )
+			|| (
+				in_array( $function_name, array( 'current_timestamp', 'localtime', 'localtimestamp' ), true )
+				&& WP_MySQL_Lexer::NOW_SYMBOL !== $tokens[ $position ]->id
+			)
+			|| (
+				in_array( $function_name, array( 'current_date', 'current_time' ), true )
+				&& WP_MySQL_Lexer::IDENTIFIER !== $tokens[ $position ]->id
+			)
+		) {
 			return null;
+		}
+
+		if ( 'current_date' === $function_name ) {
+			$function_name = 'curdate';
+		} elseif ( 'current_time' === $function_name ) {
+			$function_name = 'utc_time';
 		}
 
 		$sql = $this->get_postgresql_mysql_common_function_sql( $function_name, array() );

@@ -6052,6 +6052,37 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$current_timestamp_keyword_translation['sql']
 		);
 
+		$driver->query(
+			'CREATE TABLE wptests_upsert_temporal_keywords (
+				id INTEGER PRIMARY KEY,
+				date_value TEXT NOT NULL,
+				time_value TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_upsert_temporal_keywords (
+				id bigint(20) unsigned NOT NULL,
+				date_value date NOT NULL,
+				time_value time NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$temporal_keyword_upsert = "INSERT INTO `wptests_upsert_temporal_keywords` (`id`, `date_value`, `time_value`)
+			VALUES (1, '2001-01-01', '01:02:03')
+			ON DUPLICATE KEY UPDATE `date_value` = CURRENT_DATE, `time_value` = CURRENT_TIME";
+
+		$temporal_keyword_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$temporal_keyword_upsert
+		);
+		$this->assertNotNull( $temporal_keyword_translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_temporal_keywords" ("id", "date_value", "time_value") VALUES (1, \'2001-01-01\', \'01:02:03\') ON CONFLICT ("id") DO UPDATE SET "date_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD\'), "time_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'HH24:MI:SS\')',
+			$temporal_keyword_translation['sql']
+		);
+
 		$this->assertNull(
 			$this->translate_driver_query_data_with_private_method(
 				$driver,
@@ -10034,6 +10065,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver,
 			'translate_mysql_compatible_query',
 			"SELECT CURDATE() AS current_date_value,
+				CURRENT_DATE AS current_date_keyword_value,
+				CURRENT_TIME AS current_time_keyword_value,
 				UTC_DATE() AS utc_date_value,
 				UTC_TIME() AS utc_time_value,
 				NOW() AS now_value,
@@ -10051,6 +10084,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertNotNull( $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS current_date_value", $sql );
+		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS current_date_keyword_value", $sql );
+		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS') AS current_time_keyword_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS utc_date_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS') AS utc_time_value", $sql );
 		$this->assertStringContainsString( "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS now_value", $sql );
