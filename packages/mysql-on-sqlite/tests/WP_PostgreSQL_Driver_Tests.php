@@ -8411,6 +8411,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				FROM_UNIXTIME(0, '%H.%i') AS formatted_hour_minute,
 				FROM_UNIXTIME(0, '%H.%i%s') AS formatted_hour_minute_second,
 				FROM_UNIXTIME(0, '0.%i%s') AS formatted_minute_second_fraction,
+				FROM_UNIXTIME(1609632000, '%U %u %V %v %X %x') AS formatted_week_modes,
 				FROM_UNIXTIME(NULL, 'literal') AS null_literal,
 				DATE_FORMAT(NULL, '%%') AS null_percent"
 		);
@@ -8423,6 +8424,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "'SS') END AS formatted_hour_minute_second", $sql );
 		$this->assertStringContainsString( "'0.' || TO_CHAR", $sql );
 		$this->assertStringContainsString( "'SS') END AS formatted_minute_second_fraction", $sql );
+		$week_timestamp_sql = $this->get_expected_zero_date_safe_timestamp_sql( "TO_TIMESTAMP(CAST(1609632000 AS double precision)) AT TIME ZONE 'UTC'" );
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_zero_padded_week_sql( $this->get_expected_mysql_sunday_week_mode_zero_sql( $week_timestamp_sql ) ),
+			$sql
+		);
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_zero_padded_week_sql( $this->get_expected_mysql_week_mode_one_timestamp_sql( $week_timestamp_sql ) ),
+			$sql
+		);
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_zero_padded_week_sql( $this->get_expected_mysql_sunday_week_mode_two_sql( $week_timestamp_sql ) ),
+			$sql
+		);
+		$this->assertStringContainsString( "TO_CHAR(" . $week_timestamp_sql . ", 'IW')", $sql );
+		$this->assertStringContainsString( $this->get_expected_mysql_sunday_week_mode_two_year_sql( $week_timestamp_sql ), $sql );
+		$this->assertStringContainsString( "TO_CHAR(" . $week_timestamp_sql . ", 'IYYY')", $sql );
 		$this->assertStringNotContainsString( "CAST(TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'HH24.MI') AS double precision)", $sql );
 		$this->assertStringNotContainsString( "CAST(TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'HH24.MISS') AS double precision)", $sql );
 		$this->assertStringNotContainsString( "CAST('0.' || TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'MISS') AS double precision)", $sql );
@@ -8463,6 +8480,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "WHEN 'Y' THEN TO_CHAR", $sql );
 		$this->assertStringContainsString( "WHEN 'D' THEN CAST(CAST(EXTRACT(DAY FROM", $sql );
 		$this->assertStringContainsString( "WHEN 'w' THEN CAST(CAST(EXTRACT(DOW FROM", $sql );
+		$this->assertStringContainsString( "WHEN 'U' THEN LPAD(CAST(CASE WHEN", $sql );
+		$this->assertStringContainsString( "WHEN 'u' THEN LPAD(CAST(CASE WHEN", $sql );
+		$this->assertStringContainsString( "WHEN 'V' THEN LPAD(CAST(CASE WHEN", $sql );
+		$this->assertStringContainsString( "WHEN 'v' THEN TO_CHAR", $sql );
+		$this->assertStringContainsString( "WHEN 'X' THEN CASE WHEN", $sql );
+		$this->assertStringContainsString( "WHEN 'x' THEN TO_CHAR", $sql );
 		$this->assertStringContainsString( "ELSE '%' || SUBSTRING", $sql );
 		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 
@@ -11982,9 +12005,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests DATE_FORMAT week specifiers follow the SQLite backend's ISO-week mapping.
+	 * Tests DATE_FORMAT week specifiers follow MySQL week modes.
 	 */
-	public function test_mysql_date_format_week_specifiers_match_sqlite_backend_mapping(): void {
+	public function test_mysql_date_format_week_specifiers_follow_mysql_week_modes(): void {
 		$driver = $this->create_driver();
 
 		$sql = $this->translate_driver_query_with_private_method(
@@ -11995,10 +12018,22 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertNotNull( $sql );
 		$timestamp_sql = $this->get_expected_zero_date_safe_timestamp_sql( "'2021-01-03'" );
-		$this->assertSame( 4, substr_count( $sql, 'TO_CHAR(' . $timestamp_sql . ", 'IW')" ) );
-		$this->assertStringContainsString( 'TO_CHAR(' . $timestamp_sql . ", 'YYYY')", $sql );
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_zero_padded_week_sql( $this->get_expected_mysql_sunday_week_mode_zero_sql( $timestamp_sql ) ),
+			$sql
+		);
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_zero_padded_week_sql( $this->get_expected_mysql_week_mode_one_timestamp_sql( $timestamp_sql ) ),
+			$sql
+		);
+		$this->assertStringContainsString(
+			$this->get_expected_mysql_zero_padded_week_sql( $this->get_expected_mysql_sunday_week_mode_two_sql( $timestamp_sql ) ),
+			$sql
+		);
+		$this->assertSame( 1, substr_count( $sql, 'TO_CHAR(' . $timestamp_sql . ", 'IW')" ) );
+		$this->assertStringContainsString( $this->get_expected_mysql_sunday_week_mode_two_year_sql( $timestamp_sql ), $sql );
 		$this->assertStringContainsString( 'TO_CHAR(' . $timestamp_sql . ", 'IYYY')", $sql );
-		$this->assertStringNotContainsString( "'WW'", $sql );
+		$this->assertStringNotContainsString( "TO_CHAR(" . $timestamp_sql . ", 'YYYY') || ' ' || TO_CHAR(" . $timestamp_sql . ", 'IW')", $sql );
 		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 	}
 
@@ -21765,7 +21800,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_expected_mysql_week_mode_one_sql( string $expression_sql ): string {
-		$timestamp_sql        = $this->get_expected_zero_date_safe_timestamp_sql( $expression_sql );
+		return $this->get_expected_mysql_week_mode_one_timestamp_sql(
+			$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql )
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(timestamp, 1).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_mysql_week_mode_one_timestamp_sql( string $timestamp_sql ): string {
 		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = sprintf(
@@ -21778,6 +21824,103 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$timestamp_sql,
 			$week_start_sql,
 			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for a zero-padded MySQL week expression.
+	 *
+	 * @param string $week_sql PostgreSQL integer week expression.
+	 * @return string PostgreSQL text expression.
+	 */
+	private function get_expected_mysql_zero_padded_week_sql( string $week_sql ): string {
+		return sprintf( "LPAD(CAST(%s AS text), 2, '0')", $week_sql );
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 0).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_sunday_week_mode_zero_sql( string $timestamp_sql ): string {
+		$week_start_sql       = $this->get_expected_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_expected_mysql_first_sunday_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL WEEK(expr, 2).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_expected_mysql_sunday_week_mode_two_sql( string $timestamp_sql ): string {
+		$week_start_sql          = $this->get_expected_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql          = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql    = $this->get_expected_mysql_first_sunday_of_year_sql( $year_start_sql );
+		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
+		$previous_first_week_sql = $this->get_expected_mysql_first_sunday_of_year_sql( $previous_year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$previous_first_week_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%X').
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL text expression.
+	 */
+	private function get_expected_mysql_sunday_week_mode_two_year_sql( string $timestamp_sql ): string {
+		$week_start_sql       = $this->get_expected_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_expected_mysql_first_sunday_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s < %3\$s THEN TO_CHAR(%4\$s - INTERVAL '1 year', 'YYYY') ELSE TO_CHAR(%4\$s, 'YYYY') END",
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$year_start_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for the Sunday-start week containing a timestamp.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_expected_mysql_sunday_week_start_sql( string $timestamp_sql ): string {
+		return sprintf(
+			"(DATE_TRUNC('day', %1\$s) - (CAST(EXTRACT(DOW FROM %1\$s) AS integer) * INTERVAL '1 day'))",
+			$timestamp_sql
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for the first Sunday in a year.
+	 *
+	 * @param string $year_start_sql PostgreSQL timestamp expression for January 1.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_expected_mysql_first_sunday_of_year_sql( string $year_start_sql ): string {
+		return sprintf(
+			"(%1\$s + (MOD(7 - CAST(EXTRACT(DOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
+			$year_start_sql
 		);
 	}
 

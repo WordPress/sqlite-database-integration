@@ -40051,7 +40051,18 @@ FROM (
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_postgresql_mysql_week_mode_one_sql( string $expression_sql ): string {
-		$timestamp_sql        = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		return $this->get_postgresql_mysql_week_mode_one_timestamp_sql(
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(timestamp, 1).
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_week_mode_one_timestamp_sql( string $timestamp_sql ): string {
 		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = sprintf(
@@ -40421,6 +40432,13 @@ FROM (
 			$this->connection->quote( 'w' ),
 			$timestamp_sql
 		);
+		foreach ( array( 'U', 'u', 'V', 'v', 'X', 'x' ) as $week_specifier ) {
+			$cases[] = sprintf(
+				'WHEN %s THEN %s',
+				$this->connection->quote( $week_specifier ),
+				$this->get_postgresql_mysql_date_format_week_specifier_sql( $week_specifier, $timestamp_sql )
+			);
+		}
 
 		return sprintf(
 			'CASE %1$s %2$s ELSE %3$s || %1$s END',
@@ -40450,6 +40468,11 @@ FROM (
 
 		if ( 'w' === $specifier ) {
 			return sprintf( 'CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)', $timestamp_sql );
+		}
+
+		$week_sql = $this->get_postgresql_mysql_date_format_week_specifier_sql( $specifier, $timestamp_sql );
+		if ( null !== $week_sql ) {
+			return $week_sql;
 		}
 
 		if ( isset( $to_char_formats[ $specifier ] ) ) {
@@ -40490,15 +40513,157 @@ FROM (
 			'S' => 'SS',
 			's' => 'SS',
 			'T' => 'HH24:MI:SS',
-			'U' => 'IW',
-			'u' => 'IW',
-			'V' => 'IW',
-			'v' => 'IW',
 			'W' => 'FMDay',
-			'X' => 'YYYY',
-			'x' => 'IYYY',
 			'Y' => 'YYYY',
 			'y' => 'YY',
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DATE_FORMAT() week/year specifiers.
+	 *
+	 * @param string $specifier    MySQL DATE_FORMAT specifier without the leading percent.
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string|null PostgreSQL SQL fragment, or null when the specifier is not a week specifier.
+	 */
+	private function get_postgresql_mysql_date_format_week_specifier_sql( string $specifier, string $timestamp_sql ): ?string {
+		switch ( $specifier ) {
+			case 'U':
+				return $this->get_postgresql_mysql_zero_padded_week_sql(
+					$this->get_postgresql_mysql_sunday_week_mode_zero_sql( $timestamp_sql )
+				);
+
+			case 'u':
+				return $this->get_postgresql_mysql_zero_padded_week_sql(
+					$this->get_postgresql_mysql_week_mode_one_timestamp_sql( $timestamp_sql )
+				);
+
+			case 'V':
+				return $this->get_postgresql_mysql_zero_padded_week_sql(
+					$this->get_postgresql_mysql_sunday_week_mode_two_sql( $timestamp_sql )
+				);
+
+			case 'v':
+				return sprintf(
+					'TO_CHAR(%s, %s)',
+					$timestamp_sql,
+					$this->connection->quote( 'IW' )
+				);
+
+			case 'X':
+				return $this->get_postgresql_mysql_sunday_week_mode_two_year_sql( $timestamp_sql );
+
+			case 'x':
+				return sprintf(
+					'TO_CHAR(%s, %s)',
+					$timestamp_sql,
+					$this->connection->quote( 'IYYY' )
+				);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for zero-padded MySQL week numbers.
+	 *
+	 * @param string $week_sql PostgreSQL integer week expression.
+	 * @return string PostgreSQL text expression.
+	 */
+	private function get_postgresql_mysql_zero_padded_week_sql( string $week_sql ): string {
+		return sprintf( "LPAD(CAST(%s AS text), 2, '0')", $week_sql );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 0).
+	 *
+	 * Mode 0 is Sunday-first, returns 0-53, and week 1 starts at the first
+	 * Sunday in the calendar year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_sunday_week_mode_zero_sql( string $timestamp_sql ): string {
+		$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL WEEK(expr, 2).
+	 *
+	 * Mode 2 is Sunday-first, returns 1-53, and uses the previous week-year
+	 * for dates before the first Sunday in the calendar year.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_sunday_week_mode_two_sql( string $timestamp_sql ): string {
+		$week_start_sql          = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql          = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql    = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
+		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
+		$previous_first_week_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $previous_year_start_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$previous_first_week_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%X').
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL text expression.
+	 */
+	private function get_postgresql_mysql_sunday_week_mode_two_year_sql( string $timestamp_sql ): string {
+		$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
+		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
+
+		return sprintf(
+			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s < %3\$s THEN TO_CHAR(%4\$s - INTERVAL '1 year', 'YYYY') ELSE TO_CHAR(%4\$s, 'YYYY') END",
+			$timestamp_sql,
+			$week_start_sql,
+			$first_week_start_sql,
+			$year_start_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for the Sunday-start week containing a timestamp.
+	 *
+	 * @param string $timestamp_sql PostgreSQL timestamp expression.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_postgresql_mysql_sunday_week_start_sql( string $timestamp_sql ): string {
+		return sprintf(
+			"(DATE_TRUNC('day', %1\$s) - (CAST(EXTRACT(DOW FROM %1\$s) AS integer) * INTERVAL '1 day'))",
+			$timestamp_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for the first Sunday in a year.
+	 *
+	 * @param string $year_start_sql PostgreSQL timestamp expression for January 1.
+	 * @return string PostgreSQL timestamp expression.
+	 */
+	private function get_postgresql_mysql_first_sunday_of_year_sql( string $year_start_sql ): string {
+		return sprintf(
+			"(%1\$s + (MOD(7 - CAST(EXTRACT(DOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
+			$year_start_sql
 		);
 	}
 
