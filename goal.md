@@ -84,8 +84,9 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Enforce `group_concat_max_len` for supported `GROUP_CONCAT(expr [ORDER BY ...] [SEPARATOR ...])` translations and fail closed for unsupported `GROUP_CONCAT` shapes.
 - [x] Synthesize direct `information_schema.TABLES.AUTO_INCREMENT` values with schema-aware lookup instead of assuming only `public`.
 - [x] Expose direct `information_schema.plugins` as an empty queryable relation with MySQL-compatible columns.
+- [x] Expose direct privilege/security `information_schema` relations (`user_privileges`, `schema_privileges`, `table_privileges`, `column_privileges`, `applicable_roles`, `administrable_role_authorizations`, and `enabled_roles`) as empty queryable relations with MySQL-compatible columns.
 - [ ] Decide whether to emulate exact `ROW_COUNT()` behavior after failed statements; unsupported or undefined forms remain explicit.
-- [ ] Decide whether to expose additional MySQL `information_schema` privilege/security tables beyond plugins and the currently supported relations and empty routine/view/trigger/parameter shims; unsupported relations continue to fail explicitly.
+- [ ] Decide whether to expose further MySQL `information_schema` role grant tables beyond the currently supported relations and empty routine/view/trigger/parameter/privilege/security shims; unsupported relations continue to fail explicitly.
 
 ## Tests
 
@@ -105,3 +106,4 @@ Keep MySQL queries working the same way across the PostgreSQL and SQLite backend
 - [x] Add PostgreSQL runtime-function tests for emulated session identity, `CONNECTION_ID()`, `LAST_INSERT_ID()`, and fail-closed unsupported forms.
 - [x] Add PostgreSQL tests for `ROW_COUNT()` mutable state, `group_concat_max_len`, parenthesized `ALTER TABLE ... ADD (...)` placement, direct `information_schema.TABLES.AUTO_INCREMENT`, and `LAST_INSERT_ID(id)` upsert side effects.
 - [x] Add PostgreSQL tests for standalone `LAST_INSERT_ID(expr)` assignment behavior, `GROUP_CONCAT` truncation and fail-closed forms, `information_schema.plugins`, optional-equals `ALTER TABLE` options, and upsert expression column validation.
+- [x] Add PostgreSQL tests for empty privilege/security `information_schema` relation reads, metadata columns, `USE information_schema` routing, and joins.

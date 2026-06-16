@@ -29114,6 +29114,13 @@ WHERE option_name IN (
 				'session_status',
 				'global_status',
 				'plugins',
+				'user_privileges',
+				'schema_privileges',
+				'table_privileges',
+				'column_privileges',
+				'applicable_roles',
+				'administrable_role_authorizations',
+				'enabled_roles',
 				'processlist',
 				'views',
 				'triggers',
@@ -29368,6 +29375,66 @@ WHERE option_name IN (
 					'LOAD_OPTION',
 				);
 
+			case 'user_privileges':
+				return array(
+					'GRANTEE',
+					'TABLE_CATALOG',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
+			case 'schema_privileges':
+				return array(
+					'GRANTEE',
+					'TABLE_CATALOG',
+					'TABLE_SCHEMA',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
+			case 'table_privileges':
+				return array(
+					'GRANTEE',
+					'TABLE_CATALOG',
+					'TABLE_SCHEMA',
+					'TABLE_NAME',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
+			case 'column_privileges':
+				return array(
+					'GRANTEE',
+					'TABLE_CATALOG',
+					'TABLE_SCHEMA',
+					'TABLE_NAME',
+					'COLUMN_NAME',
+					'PRIVILEGE_TYPE',
+					'IS_GRANTABLE',
+				);
+
+			case 'applicable_roles':
+			case 'administrable_role_authorizations':
+				return array(
+					'USER',
+					'HOST',
+					'GRANTEE',
+					'GRANTEE_HOST',
+					'ROLE_NAME',
+					'ROLE_HOST',
+					'IS_GRANTABLE',
+					'IS_DEFAULT',
+					'IS_MANDATORY',
+				);
+
+			case 'enabled_roles':
+				return array(
+					'ROLE_NAME',
+					'ROLE_HOST',
+					'IS_DEFAULT',
+					'IS_MANDATORY',
+				);
+
 			case 'views':
 				return array(
 					'TABLE_CATALOG',
@@ -29604,6 +29671,13 @@ WHERE option_name IN (
 			case 'processlist':
 				return $this->get_direct_information_schema_processlist_relation_sql();
 			case 'plugins':
+			case 'user_privileges':
+			case 'schema_privileges':
+			case 'table_privileges':
+			case 'column_privileges':
+			case 'applicable_roles':
+			case 'administrable_role_authorizations':
+			case 'enabled_roles':
 				return $this->get_direct_information_schema_empty_relation_sql( $view );
 			case 'views':
 			case 'triggers':

@@ -19328,30 +19328,47 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests unsupported privilege/security information_schema relations still fail closed.
+	 * Tests privilege/security information_schema relations are empty and queryable.
 	 */
-	public function test_direct_information_schema_privilege_security_relations_remain_unsupported(): void {
+	public function test_direct_information_schema_privilege_security_relations_are_empty_and_queryable(): void {
 		$relations = array(
-			'user_privileges',
-			'schema_privileges',
-			'table_privileges',
-			'column_privileges',
-			'applicable_roles',
-			'administrable_role_authorizations',
-			'enabled_roles',
+			'user_privileges'                    => array( 'GRANTEE', 'TABLE_CATALOG', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			'schema_privileges'                  => array( 'GRANTEE', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			'table_privileges'                   => array( 'GRANTEE', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			'column_privileges'                  => array( 'GRANTEE', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'COLUMN_NAME', 'PRIVILEGE_TYPE', 'IS_GRANTABLE' ),
+			'applicable_roles'                   => array( 'USER', 'HOST', 'GRANTEE', 'GRANTEE_HOST', 'ROLE_NAME', 'ROLE_HOST', 'IS_GRANTABLE', 'IS_DEFAULT', 'IS_MANDATORY' ),
+			'administrable_role_authorizations' => array( 'USER', 'HOST', 'GRANTEE', 'GRANTEE_HOST', 'ROLE_NAME', 'ROLE_HOST', 'IS_GRANTABLE', 'IS_DEFAULT', 'IS_MANDATORY' ),
+			'enabled_roles'                      => array( 'ROLE_NAME', 'ROLE_HOST', 'IS_DEFAULT', 'IS_MANDATORY' ),
 		);
 
-		foreach ( $relations as $relation ) {
+		foreach ( $relations as $relation => $columns ) {
 			$driver = $this->create_driver();
+			$rows   = $driver->query( "SELECT * FROM information_schema.$relation" );
 
-			try {
-				$driver->query( "SELECT * FROM information_schema.$relation" );
-				$this->fail( 'Expected unsupported information_schema relation to throw.' );
-			} catch ( InvalidArgumentException $e ) {
-				$this->assertSame( 'Unsupported information_schema query.', $e->getMessage(), $relation );
-				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $relation );
-			}
+			$this->assertSame( array(), $rows, $relation );
+			$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ), $relation );
 		}
+
+		$driver = $this->create_driver();
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$roles = $driver->query( "SELECT ROLE_NAME FROM enabled_roles WHERE IS_DEFAULT = 'YES'" );
+		$this->assertSame( array(), $roles );
+		$this->assertSame( array( 'ROLE_NAME' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$columns = $driver->query( "SHOW COLUMNS FROM enabled_roles LIKE 'IS_%'" );
+		$this->assertSame( array( 'IS_DEFAULT', 'IS_MANDATORY' ), array_column( $columns, 'Field' ) );
+
+		$joined = $driver->query(
+			'SELECT p.GRANTEE, t.TABLE_NAME
+			FROM information_schema.table_privileges AS p
+			JOIN information_schema.tables AS t
+				ON p.TABLE_SCHEMA = t.TABLE_SCHEMA
+				AND p.TABLE_NAME = t.TABLE_NAME'
+		);
+
+		$this->assertSame( array(), $joined );
+		$this->assertSame( array( 'GRANTEE', 'TABLE_NAME' ), array_column( $driver->get_last_column_meta(), 'name' ) );
 	}
 
 	/**
