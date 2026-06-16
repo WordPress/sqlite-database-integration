@@ -813,14 +813,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		try {
 			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) VALUES (1, CONCAT('0000-00-00', ' 00:00:00'))" );
 			$this->fail( 'Expected expression-produced zero date to be rejected in strict SQL mode.' );
-		} catch ( PDOException $e ) {
+		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( array(), $driver->query( 'SELECT ID FROM wptests_posts WHERE ID = 1' ) );
 		}
 
 		try {
 			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) SELECT 2, CONCAT('0000-00-00', ' 00:00:00')" );
 			$this->fail( 'Expected INSERT ... SELECT expression-produced zero date to be rejected in strict SQL mode.' );
-		} catch ( PDOException $e ) {
+		} catch ( InvalidArgumentException $e ) {
 			$this->assertSame( array(), $driver->query( 'SELECT ID FROM wptests_posts WHERE ID = 2' ) );
 		}
 
@@ -833,7 +833,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		try {
 			$driver->query( "UPDATE `wptests_posts` SET `post_modified` = CONCAT('2020-00', '-15 14:15:27') WHERE `ID` = 3" );
 			$this->fail( 'Expected expression-produced zero-in-date to be rejected in strict SQL mode.' );
-		} catch ( PDOException $e ) {
+		} catch ( InvalidArgumentException $e ) {
 			$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 3' );
 			$this->assertCount( 1, $rows );
 			$this->assertSame( '2020-01-01 00:00:00', $rows[0]->post_modified );
@@ -6761,7 +6761,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $now_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)',
 			$now_translation['sql']
 		);
 
@@ -6776,7 +6776,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $current_timestamp_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)',
 			$current_timestamp_translation['sql']
 		);
 
@@ -6791,7 +6791,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $current_timestamp_keyword_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)',
 			$current_timestamp_keyword_translation['sql']
 		);
 
@@ -6822,7 +6822,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $temporal_keyword_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_temporal_keywords" ("id", "date_value", "time_value") VALUES (1, \'2001-01-01\', \'01:02:03\') ON CONFLICT ("id") DO UPDATE SET "date_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD\'), "time_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'HH24:MI:SS\')',
+			'INSERT INTO "wptests_upsert_temporal_keywords" ("id", "date_value", "time_value") VALUES (1, \'2001-01-01\', \'01:02:03\') ON CONFLICT ("id") DO UPDATE SET "date_value" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD\') AS text), \'date\', 1, 1), "time_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'HH24:MI:SS\')',
 			$temporal_keyword_translation['sql']
 		);
 
@@ -6837,7 +6837,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $fractional_timestamp_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26)',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26) AS text), \'datetime\', 1, 1)',
 			$fractional_timestamp_translation['sql']
 		);
 	}
@@ -11848,7 +11848,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "ELSE CONVERT_FROM(DECODE(CAST('d3A=' AS text), 'base64'), 'UTF8') END AS base64_decoded", $sql );
 		$this->assertStringContainsString( "SPLIT_PART(CAST('127.0.0.1' AS text), '.', 1)", $sql );
 		$this->assertStringContainsString( '((CAST(2130706433 AS bigint) >> 24) & 255)::text', $sql );
-		$this->assertStringContainsString( "TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS epoch_datetime", $sql );
+		$this->assertStringContainsString( "THEN TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') ELSE", $sql );
 		$this->assertStringContainsString( "TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC'", $sql );
 		$this->assertStringContainsString( "'YYYY'", $sql );
 		$this->assertStringContainsString( 'CAST(FLOOR(EXTRACT(EPOCH FROM CAST(CASE WHEN CAST(\'1970-01-02 00:00:00\' AS text)', $sql );
@@ -12387,40 +12387,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "'US'", $sql );
 		$this->assertStringContainsString( "CASE WHEN CAST(TO_TIMESTAMP(CAST(NULL AS double precision)) AT TIME ZONE 'UTC' AS text) IS NULL OR", $sql );
 		$this->assertStringContainsString( "THEN NULL ELSE '' END AS null_empty_from_unixtime", $sql );
-		$this->assertStringContainsString( 'CASE WHEN CAST(NULL AS text) IS NULL THEN NULL WHEN', $sql );
+		$this->assertStringContainsString( "CASE WHEN CAST(NULL AS text) IS NULL OR CAST(NULL AS text) = '' THEN NULL WHEN", $sql );
 		$this->assertStringContainsString( "THEN '' ELSE '' END AS null_empty_format", $sql );
 		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
-			$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
-		}
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
 
-		/**
-		 * Tests FROM_UNIXTIME() honors session time_zone and preserves fractional seconds.
-		 */
-		public function test_from_unixtime_runtime_function_honors_time_zone_and_fractional_seconds(): void {
-			$driver = $this->create_driver();
-			$driver->query( "SET SESSION time_zone = '+02:30'" );
+	/**
+	 * Tests FROM_UNIXTIME() honors session time_zone and preserves fractional seconds.
+	 */
+	public function test_from_unixtime_runtime_function_honors_time_zone_and_fractional_seconds(): void {
+		$driver = $this->create_driver();
+		$driver->query( "SET SESSION time_zone = '+02:30'" );
 
-			$sql = $this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_mysql_compatible_query',
-				"SELECT
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT
 					FROM_UNIXTIME(0) AS whole_epoch,
 					FROM_UNIXTIME(0.123456) AS fractional_epoch,
 					FROM_UNIXTIME(0, '%q %%') AS unknown_specifier"
-			);
+		);
 
-			$this->assertNotNull( $sql );
-			$this->assertStringContainsString( "(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC' + INTERVAL '150 minutes')", $sql );
-			$this->assertStringContainsString( "TO_CHAR((TO_TIMESTAMP(CAST(0.123456 AS double precision)) AT TIME ZONE 'UTC' + INTERVAL '150 minutes'), 'YYYY-MM-DD HH24:MI:SS.US')", $sql );
-			$this->assertStringContainsString( "'q ' || '%'", $sql );
-			$this->assertStringNotContainsString( "'%q '", $sql );
-			$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
-		}
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC' + INTERVAL '150 minutes')", $sql );
+		$this->assertStringContainsString( "TO_CHAR((TO_TIMESTAMP(CAST(0.123456 AS double precision)) AT TIME ZONE 'UTC' + INTERVAL '150 minutes'), 'YYYY-MM-DD HH24:MI:SS.US')", $sql );
+		$this->assertStringContainsString( "'q ' || '%'", $sql );
+		$this->assertStringNotContainsString( "'%q '", $sql );
+		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+	}
 
-		/**
-		 * Tests DATE_FORMAT() supports runtime format expressions like SQLite's UDF.
-		 */
-		public function test_mysql_date_format_runtime_format_expressions_are_translated_to_postgresql(): void {
+	/**
+	 * Tests DATE_FORMAT() supports runtime format expressions like SQLite's UDF.
+	 */
+	public function test_mysql_date_format_runtime_format_expressions_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
 		$sql = $this->translate_driver_query_with_private_method(
@@ -12443,13 +12443,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "WHEN 'w' THEN CAST(CAST(EXTRACT(DOW FROM", $sql );
 		$this->assertStringContainsString( "WHEN 'U' THEN LPAD(CAST(CASE WHEN", $sql );
 		$this->assertStringContainsString( "WHEN 'u' THEN LPAD(CAST(CASE WHEN", $sql );
-			$this->assertStringContainsString( "WHEN 'V' THEN LPAD(CAST(CASE WHEN", $sql );
-			$this->assertStringContainsString( "WHEN 'v' THEN TO_CHAR", $sql );
-			$this->assertStringContainsString( "WHEN 'X' THEN CASE WHEN", $sql );
-			$this->assertStringContainsString( "WHEN 'x' THEN TO_CHAR", $sql );
-			$this->assertStringContainsString( 'ELSE SUBSTRING', $sql );
-			$this->assertStringNotContainsString( "ELSE '%' || SUBSTRING", $sql );
-			$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+		$this->assertStringContainsString( "WHEN 'V' THEN LPAD(CAST(CASE WHEN", $sql );
+		$this->assertStringContainsString( "WHEN 'v' THEN TO_CHAR", $sql );
+		$this->assertStringContainsString( "WHEN 'X' THEN CASE WHEN", $sql );
+		$this->assertStringContainsString( "WHEN 'x' THEN TO_CHAR", $sql );
+		$this->assertStringContainsString( 'ELSE SUBSTRING', $sql );
+		$this->assertStringNotContainsString( "ELSE '%' || SUBSTRING", $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -12486,11 +12486,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "WHEN 's' THEN CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN SUBSTRING($expression_sql FROM 18 FOR 2) ELSE '00' END", $sql );
 		$this->assertStringContainsString( "WHEN 'f' THEN CASE WHEN $expression_sql ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]+' THEN LEFT(RPAD(SUBSTRING($expression_sql FROM '[.]([0-9]+)'), 6, '0'), 6) ELSE '000000' END", $sql );
 		$this->assertStringContainsString( "WHEN 'W' THEN NULL", $sql );
-			$this->assertStringContainsString( 'ELSE SUBSTRING(CAST(format_mask AS text) FROM "__wp_pg_mysql_date_format"."position" + 1 FOR 1) END', $sql );
-			$this->assertStringNotContainsString( "ELSE '%' || SUBSTRING", $sql );
-			$this->assertStringNotContainsString( "CAST('2006-06-00 13:04:05.123' AS timestamp)", $sql );
-			$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
-		}
+		$this->assertStringContainsString( 'ELSE SUBSTRING(CAST(format_mask AS text) FROM "__wp_pg_mysql_date_format"."position" + 1 FOR 1) END', $sql );
+		$this->assertStringNotContainsString( "ELSE '%' || SUBSTRING", $sql );
+		$this->assertStringNotContainsString( "CAST('2006-06-00 13:04:05.123' AS timestamp)", $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
 
 	/**
 	 * Tests formatted FROM_UNIXTIME() supports runtime format expressions.
@@ -27378,7 +27378,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( $indexes_before, $this->get_mysql_index_metadata_rows( $driver, 'ctas_if_existing' ) );
 
 		$rows = $driver->query( 'SELECT id, name FROM ctas_if_existing' );
-		$this->assertEquals( array( (object) array( 'id' => '1', 'name' => 'kept' ) ), $rows );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => '1',
+					'name' => 'kept',
+				),
+			),
+			$rows
+		);
 	}
 
 	/**
@@ -27670,9 +27678,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		try {
 			$driver->query( "INSERT INTO like_copy (id, slug, score) VALUES (3, 'negative', -1)" );
 			$this->fail( 'Expected copied CHECK constraint to be enforced.' );
-			} catch ( PDOException $e ) {
-				$this->assertNotSame( '', $e->getMessage() );
-			}
+		} catch ( PDOException $e ) {
+			$this->assertNotSame( '', $e->getMessage() );
+		}
 	}
 
 	/**
@@ -28617,7 +28625,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( "SELECT 'a' || 'b' AS value" );
 		$this->assertSame( 'ab', $rows[0]->value );
 
-		$this->assertSame( 0, $driver->query( 'SET SESSION sql_mode = "TRADITIONAL"' ) );
+		$this->assertSame( 0, $driver->query( "SET SESSION sql_mode = 'TRADITIONAL'" ) );
 		$this->assertSame(
 			'STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION',
 			$driver->get_sql_mode()
@@ -29207,7 +29215,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->assertSame( 'group_concat_max_len', $rows[0]->Variable_name );
 			$this->assertSame( '1024', $rows[0]->Value );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
-		}
+	}
 
 	/**
 	 * Tests SHOW VARIABLES WHERE supports generic predicate expressions.
@@ -29262,7 +29270,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_show_variables_where_clause_does_not_reach_backend(): void {
 			$driver = $this->create_driver();
 
-			foreach (
+		foreach (
 				array(
 					"SHOW VARIABLES WHERE Unknown = 'utf8mb4'",
 				) as $query

@@ -2538,7 +2538,7 @@ class WP_PostgreSQL_Driver {
 			return $upsert_query;
 		}
 
-		$metadata_lookup        = $this->get_mysql_dml_column_metadata_lookup( $upsert_query['table_name'] );
+		$metadata_lookup       = $this->get_mysql_dml_column_metadata_lookup( $upsert_query['table_name'] );
 		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $metadata_lookup );
 		if ( null === $auto_increment_column || ! $this->mysql_dml_column_list_contains_column( $upsert_query['columns'], $auto_increment_column ) ) {
 			return $upsert_query;
@@ -2610,7 +2610,7 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$stmt = $this->connection->query(
+		$stmt   = $this->connection->query(
 			sprintf(
 				'SELECT %1$s.%2$s FROM (SELECT ROW_NUMBER() OVER () AS %3$s, %4$s.* FROM %5$s AS %4$s) AS %6$s, %7$s AS %1$s WHERE %8$s ORDER BY %6$s.%3$s',
 				$target_alias,
@@ -6717,51 +6717,51 @@ $wp_mysql_on_update$',
 		) {
 			$if_not_exists = true;
 			$position     += 3;
-			}
+		}
 
 			$target_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
-			if ( null === $target_reference ) {
-				return null;
-			}
+		if ( null === $target_reference ) {
+			return null;
+		}
 
 			$parenthesized_like_end = null;
-			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-				$parenthesized_like_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-				if (
-					null === $parenthesized_like_end
-					|| $parenthesized_like_end !== $statement_end
-					|| ! isset( $tokens[ $position + 1 ] )
-					|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $position + 1 ]->id
-				) {
-					return null;
-				}
-
-				++$position;
-			} elseif ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $position ]->id ) {
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$parenthesized_like_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if (
+				null === $parenthesized_like_end
+				|| $parenthesized_like_end !== $statement_end
+				|| ! isset( $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $position + 1 ]->id
+			) {
 				return null;
 			}
 
 			++$position;
+		} elseif ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+			++$position;
 			$source_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
 			$expected_end     = null === $parenthesized_like_end ? $statement_end : $parenthesized_like_end - 1;
-			if ( null === $source_reference || $position !== $expected_end ) {
-				throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
-			}
+		if ( null === $source_reference || $position !== $expected_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
 
-			$target_schema  = $this->get_mysql_create_table_select_backend_schema( $target_reference, $is_temporary );
-			if (
+			$target_schema = $this->get_mysql_create_table_select_backend_schema( $target_reference, $is_temporary );
+		if (
 				$if_not_exists
 				&& $this->mysql_create_table_target_exists( $target_schema, $target_reference['table'], $is_temporary )
 			) {
-				return array(
-					'statements'     => array(),
-					'metadata_query' => '',
-					'schema'         => $target_schema,
-					'table'          => $target_reference['table'],
-					'temporary'      => $is_temporary,
-					'noop'           => true,
-					);
-				}
+			return array(
+				'statements'     => array(),
+				'metadata_query' => '',
+				'schema'         => $target_schema,
+				'table'          => $target_reference['table'],
+				'temporary'      => $is_temporary,
+				'noop'           => true,
+			);
+		}
 
 			$metadata_query = $this->get_mysql_create_table_like_metadata_query(
 				$target_reference['table'],
@@ -6779,7 +6779,7 @@ $wp_mysql_on_update$',
 				'temporary'      => $is_temporary,
 				'noop'           => false,
 			);
-		}
+	}
 
 	/**
 	 * Build a MySQL CREATE TABLE definition for a CREATE TABLE ... LIKE target.
@@ -20861,22 +20861,22 @@ WHERE option_name IN (
 		}
 
 			$last_insert_id_on_duplicate_key_update = null;
-			if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
-				$last_insert_id_row = $this->get_mysql_upsert_last_insert_id_row_for_value_rows(
-					$table_name,
-					(string) $assignment_effects['last_insert_id_column'],
-					$value_rows,
-					$probe_safe_rows,
-					$conflict_indexes,
-					count( $inserted_value_rows ) > 0
-				);
-				if ( null === $last_insert_id_row ) {
-					return null;
-				}
-				if ( $last_insert_id_row['found'] ) {
-					$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
-				}
+		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
+			$last_insert_id_row = $this->get_mysql_upsert_last_insert_id_row_for_value_rows(
+				$table_name,
+				(string) $assignment_effects['last_insert_id_column'],
+				$value_rows,
+				$probe_safe_rows,
+				$conflict_indexes,
+				count( $inserted_value_rows ) > 0
+			);
+			if ( null === $last_insert_id_row ) {
+				return null;
 			}
+			if ( $last_insert_id_row['found'] ) {
+				$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
+			}
+		}
 
 		$sql_value_rows = array();
 		foreach ( $value_rows as $values ) {
@@ -21154,34 +21154,34 @@ WHERE option_name IN (
 
 			$last_insert_id_on_duplicate_key_update        = null;
 			$last_insert_id_column_on_duplicate_key_update = null;
-			if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
-				if ( null === $literal_value_row ) {
-					$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
-						$table_name,
-						$columns,
-						$tokens,
-						$select_start,
-						$select_end
-					);
+		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
+			if ( null === $literal_value_row ) {
+				$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+					$table_name,
+					$columns,
+					$tokens,
+					$select_start,
+					$select_end
+				);
+			}
+			if ( null === $literal_value_row ) {
+				$last_insert_id_column_on_duplicate_key_update = (string) $assignment_effects['last_insert_id_column'];
+			} else {
+				$last_insert_id_row = $this->get_mysql_upsert_conflicting_row_column_value(
+					$table_name,
+					(string) $assignment_effects['last_insert_id_column'],
+					$literal_value_row['values'],
+					$literal_value_row['probe_safe_values'],
+					$conflict_indexes
+				);
+				if ( null === $last_insert_id_row ) {
+					return null;
 				}
-				if ( null === $literal_value_row ) {
-					$last_insert_id_column_on_duplicate_key_update = (string) $assignment_effects['last_insert_id_column'];
-				} else {
-					$last_insert_id_row = $this->get_mysql_upsert_conflicting_row_column_value(
-						$table_name,
-						(string) $assignment_effects['last_insert_id_column'],
-						$literal_value_row['values'],
-						$literal_value_row['probe_safe_values'],
-						$conflict_indexes
-					);
-					if ( null === $last_insert_id_row ) {
-						return null;
-					}
-					if ( $last_insert_id_row['found'] ) {
-						$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
-					}
+				if ( $last_insert_id_row['found'] ) {
+					$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
 				}
 			}
+		}
 		$conflict_sql = sprintf(
 			'ON CONFLICT (%s) DO UPDATE SET %s',
 			implode( ', ', $conflict_target['sql'] ),
@@ -21263,12 +21263,12 @@ WHERE option_name IN (
 			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
 			'explicit_identity_columns' => $explicit_identity_columns,
 		);
-			if ( null !== $last_insert_id_on_duplicate_key_update ) {
-				$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
-			}
-			if ( null !== $last_insert_id_column_on_duplicate_key_update ) {
-				$upsert_query['last_insert_id_column_on_duplicate_key_update'] = $last_insert_id_column_on_duplicate_key_update;
-			}
+		if ( null !== $last_insert_id_on_duplicate_key_update ) {
+			$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
+		}
+		if ( null !== $last_insert_id_column_on_duplicate_key_update ) {
+			$upsert_query['last_insert_id_column_on_duplicate_key_update'] = $last_insert_id_column_on_duplicate_key_update;
+		}
 
 		$literal_select_row = $literal_value_row;
 		if ( null === $literal_select_row ) {
@@ -21377,11 +21377,11 @@ WHERE option_name IN (
 				$drop_sql,
 			),
 			'duplicate_conflict_rows_sql' => $duplicate_conflict_rows_sql,
-				'source_table_sql'            => $quoted_temp_table,
-				'ordinal_source_table_sql'    => $quoted_ordinal_table,
-				'conflict_sql'                => $conflict_sql,
-				'conflict_parts'              => $conflict_parts,
-			);
+			'source_table_sql'            => $quoted_temp_table,
+			'ordinal_source_table_sql'    => $quoted_ordinal_table,
+			'conflict_sql'                => $conflict_sql,
+			'conflict_parts'              => $conflict_parts,
+		);
 	}
 
 	/**
@@ -25261,17 +25261,17 @@ WHERE option_name IN (
 		}
 
 			$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $column_metadata, $tokens, $start, $end );
-			if ( null !== $value_sql ) {
-				return $value_sql;
-			}
+		if ( null !== $value_sql ) {
+			return $value_sql;
+		}
 
 			$value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column( $column_metadata, $tokens, $start, $end, $projection_sql );
-			if ( null !== $value_sql ) {
-				return $value_sql;
-			}
+		if ( null !== $value_sql ) {
+			return $value_sql;
+		}
 
 			$target_type = (string) ( $column_metadata['column_type'] ?? '' );
-			if ( $this->is_mysql_integer_family_column_type( $target_type ) ) {
+		if ( $this->is_mysql_integer_family_column_type( $target_type ) ) {
 			if ( null !== $scope ) {
 				$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
 				if ( null !== $reference && $reference['end'] === $end && $this->is_mysql_integer_column_reference( $reference, $scope ) ) {
@@ -26667,11 +26667,11 @@ WHERE option_name IN (
 			}
 
 				$value_sql = $coerced_default_sql;
-				if ( null === $value_sql && null !== $target_metadata ) {
-					$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-				}
-				if ( null === $value_sql && null !== $target_metadata ) {
-					$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
+			}
+			if ( null === $value_sql && null !== $target_metadata ) {
+				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
 			}
 			if ( null === $value_sql && null !== $information_schema_context ) {
 				$value_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
@@ -26693,26 +26693,26 @@ WHERE option_name IN (
 					$scope
 				);
 				$value_sql      = $expression_sql['sql'];
-					if (
+				if (
 						$expression_sql['changed']
 						&& null !== $target_metadata
 						&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
 					) {
-						$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
-					}
+					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
 				}
-				if ( null !== $target_metadata ) {
-					$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
-						$target_metadata,
-						$tokens,
-						$value_start,
-						$assignment_end,
-						$value_sql
-					);
-					if ( null !== $guarded_value_sql ) {
-						$value_sql = $guarded_value_sql;
-					}
+			}
+			if ( null !== $target_metadata ) {
+				$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
+					$target_metadata,
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$value_sql
+				);
+				if ( null !== $guarded_value_sql ) {
+					$value_sql = $guarded_value_sql;
 				}
+			}
 
 			$value_alias     = 'mysql_update_value_' . $value_index;
 			$value_alias_sql = $this->connection->quote_identifier( $value_alias );
@@ -27071,38 +27071,38 @@ WHERE option_name IN (
 		}
 
 			$where_sql = '';
-			if ( null !== $where_position ) {
-				$where_end = $order_position ?? $statement_end;
-				if ( $where_position + 1 >= $where_end ) {
-					return null;
-				}
-
-				$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
-					$query,
-					$tokens,
-					$where_position + 1,
-					$where_end,
-					$source_translation['context']
-				);
-				if ( null === $where ) {
-					return null;
-				}
-
-				$where_sql = ' WHERE ' . $where;
+		if ( null !== $where_position ) {
+			$where_end = $order_position ?? $statement_end;
+			if ( $where_position + 1 >= $where_end ) {
+				return null;
 			}
+
+			$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+				$query,
+				$tokens,
+				$where_position + 1,
+				$where_end,
+				$source_translation['context']
+			);
+			if ( null === $where ) {
+				return null;
+			}
+
+			$where_sql = ' WHERE ' . $where;
+		}
 
 			$order_sql = '';
-			if ( null !== $order_position ) {
-				$order_sql = $this->translate_direct_information_schema_dml_order_by_clause_to_postgresql(
-					$tokens,
-					$order_position,
-					$statement_end,
-					$source_translation['context']
-				);
-				if ( null === $order_sql ) {
-					return null;
-				}
+		if ( null !== $order_position ) {
+			$order_sql = $this->translate_direct_information_schema_dml_order_by_clause_to_postgresql(
+				$tokens,
+				$order_position,
+				$statement_end,
+				$source_translation['context']
+			);
+			if ( null === $order_sql ) {
+				return null;
 			}
+		}
 
 			$source_alias      = 'mysql_update_values';
 			$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
@@ -27548,6 +27548,18 @@ WHERE option_name IN (
 					&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
 				) {
 					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+				}
+			}
+			if ( null !== $target_metadata ) {
+				$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
+					$target_metadata,
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$value_sql
+				);
+				if ( null !== $guarded_value_sql ) {
+					$value_sql = $guarded_value_sql;
 				}
 			}
 
@@ -28459,6 +28471,18 @@ WHERE option_name IN (
 					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
 				}
 			}
+			if ( null !== $target_metadata ) {
+				$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
+					$target_metadata,
+					$tokens,
+					$value_start,
+					$assignment_end,
+					$value_sql
+				);
+				if ( null !== $guarded_value_sql ) {
+					$value_sql = $guarded_value_sql;
+				}
+			}
 
 			$quoted_target_column = $this->connection->quote_identifier( $target_column );
 			$assignments[]        = sprintf(
@@ -29006,20 +29030,20 @@ WHERE option_name IN (
 					(int) $value_ranges[ $index ]['start'],
 					(int) $value_ranges[ $index ]['end']
 				);
-				if ( null === $value_sql && isset( $values[ $index ] ) ) {
-					$value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
-						$column_metadata[ $column_key ],
-						$tokens,
-						(int) $value_ranges[ $index ]['start'],
-						(int) $value_ranges[ $index ]['end'],
-						(string) $values[ $index ]
-					);
-				}
-				if ( null !== $value_sql ) {
-					$values[ $index ] = $value_sql;
-				}
+			if ( null === $value_sql && isset( $values[ $index ] ) ) {
+				$value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
+					$column_metadata[ $column_key ],
+					$tokens,
+					(int) $value_ranges[ $index ]['start'],
+					(int) $value_ranges[ $index ]['end'],
+					(string) $values[ $index ]
+				);
+			}
+			if ( null !== $value_sql ) {
+				$values[ $index ] = $value_sql;
 			}
 		}
+	}
 
 		/**
 		 * Get runtime validation SQL for a strict-mode temporal DML expression.
@@ -29031,32 +29055,32 @@ WHERE option_name IN (
 		 * @param string           $value_sql       Translated PostgreSQL value SQL.
 		 * @return string|null Guarded PostgreSQL value SQL, or null when no guard is needed.
 		 */
-		private function get_strict_mysql_dml_temporal_expression_sql_for_column( array $column_metadata, array $tokens, int $start, int $end, string $value_sql ): ?string {
-			if ( ! $this->is_mysql_strict_sql_mode_active() ) {
-				return null;
-			}
-
-			$base_type = $this->get_base_mysql_dml_column_type( (string) ( $column_metadata['column_type'] ?? '' ) );
-			if ( ! in_array( $base_type, array( 'date', 'datetime', 'timestamp' ), true ) ) {
-				return null;
-			}
-
-			if (
-				null !== $this->get_mysql_dml_literal_value( $tokens, $start, $end )
-				|| $this->is_mysql_default_value_token_sequence( $tokens, $start, $end )
-			) {
-				return null;
-			}
-
-			return sprintf(
-				'%s(CAST(%s AS text), %s, %d, %d)',
-				$this->get_postgresql_mysql_validate_temporal_function_name(),
-				$value_sql,
-				$this->connection->quote( $base_type ),
-				$this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ) ? 1 : 0,
-				$this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0
-			);
+	private function get_strict_mysql_dml_temporal_expression_sql_for_column( array $column_metadata, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if ( ! $this->is_mysql_strict_sql_mode_active() ) {
+			return null;
 		}
+
+		$base_type = $this->get_base_mysql_dml_column_type( (string) ( $column_metadata['column_type'] ?? '' ) );
+		if ( ! in_array( $base_type, array( 'date', 'datetime', 'timestamp' ), true ) ) {
+			return null;
+		}
+
+		if (
+			null !== $this->get_mysql_dml_literal_value( $tokens, $start, $end )
+			|| $this->is_mysql_default_value_token_sequence( $tokens, $start, $end )
+		) {
+			return null;
+		}
+
+		return sprintf(
+			'%s(CAST(%s AS text), %s, %d, %d)',
+			$this->get_postgresql_mysql_validate_temporal_function_name(),
+			$value_sql,
+			$this->connection->quote( $base_type ),
+			$this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ) ? 1 : 0,
+			$this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0
+		);
+	}
 
 		/**
 		 * Check whether a value token range is the MySQL DEFAULT value keyword.
@@ -29066,11 +29090,11 @@ WHERE option_name IN (
 		 * @param int              $end    Final value token position, exclusive.
 		 * @return bool Whether the range is DEFAULT.
 		 */
-		private function is_mysql_default_value_token_sequence( array $tokens, int $start, int $end ): bool {
-			return $start + 1 === $end
-				&& isset( $tokens[ $start ] )
-				&& WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $start ]->id;
-		}
+	private function is_mysql_default_value_token_sequence( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $start ]->id;
+	}
 
 	/**
 	 * Get strict-mode SQL for MySQL-compatible integer literals.
@@ -34044,13 +34068,13 @@ WHERE option_name IN (
 				return $this->get_direct_information_schema_character_sets_relation_sql();
 			case 'collations':
 				return $this->get_direct_information_schema_collations_relation_sql();
-				case 'engines':
-					return $this->get_direct_information_schema_engines_relation_sql();
-				case 'session_variables':
-				case 'global_variables':
-					return $this->get_direct_information_schema_variables_relation_sql(
-						'global_variables' === strtolower( $view ) ? 'global' : 'session'
-					);
+			case 'engines':
+				return $this->get_direct_information_schema_engines_relation_sql();
+			case 'session_variables':
+			case 'global_variables':
+				return $this->get_direct_information_schema_variables_relation_sql(
+					'global_variables' === strtolower( $view ) ? 'global' : 'session'
+				);
 			case 'session_status':
 			case 'global_status':
 				return $this->get_direct_information_schema_status_relation_sql();
@@ -41499,6 +41523,16 @@ FROM (
 							) {
 								$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
 							}
+						}
+						$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
+							$target_metadata,
+							$tokens,
+							$value_start,
+							$assignment_end,
+							$value_sql
+						);
+						if ( null !== $guarded_value_sql ) {
+							$value_sql = $guarded_value_sql;
 						}
 					}
 				}
@@ -50324,26 +50358,26 @@ FROM (
 			case 'substr':
 				return $this->get_postgresql_mysql_substring_sql( $argument_sql );
 
-				case 'from_unixtime':
-					if ( 1 === $count ) {
-						return $this->get_postgresql_mysql_from_unixtime_sql( $argument_sql[0] );
-					}
-					if ( 2 === $count ) {
-						$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $argument_sql[0] );
-						$format = $this->get_mysql_sql_string_literal_value( $argument_sql[1] );
-						if ( null !== $format ) {
-							return $this->get_postgresql_mysql_date_format_string_sql(
-								$format,
-								$timestamp_sql
-							);
-						}
-
-						return $this->get_postgresql_mysql_dynamic_date_format_sql(
-							$argument_sql[1],
+			case 'from_unixtime':
+				if ( 1 === $count ) {
+					return $this->get_postgresql_mysql_from_unixtime_sql( $argument_sql[0] );
+				}
+				if ( 2 === $count ) {
+					$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $argument_sql[0] );
+					$format        = $this->get_mysql_sql_string_literal_value( $argument_sql[1] );
+					if ( null !== $format ) {
+						return $this->get_postgresql_mysql_date_format_string_sql(
+							$format,
 							$timestamp_sql
 						);
 					}
-					return null;
+
+					return $this->get_postgresql_mysql_dynamic_date_format_sql(
+						$argument_sql[1],
+						$timestamp_sql
+					);
+				}
+				return null;
 
 			case 'monthnum':
 				return 1 === $count ? $this->get_postgresql_zero_date_safe_extract_sql( 'MONTH', $argument_sql[0] ) : null;
@@ -50379,13 +50413,13 @@ FROM (
 	 * @param string $argument_sql PostgreSQL argument SQL.
 	 * @return string PostgreSQL expression SQL.
 	 */
-		private function get_postgresql_mysql_json_valid_sql( string $argument_sql ): string {
-			return sprintf(
-				'%s(CAST(%s AS text))',
-				$this->get_postgresql_mysql_json_valid_function_name(),
-				$argument_sql
-			);
-		}
+	private function get_postgresql_mysql_json_valid_sql( string $argument_sql ): string {
+		return sprintf(
+			'%s(CAST(%s AS text))',
+			$this->get_postgresql_mysql_json_valid_function_name(),
+			$argument_sql
+		);
+	}
 
 		/**
 		 * Get PostgreSQL SQL for one-argument MySQL FROM_UNIXTIME().
@@ -50393,16 +50427,16 @@ FROM (
 		 * @param string $unix_timestamp_sql PostgreSQL Unix timestamp expression SQL.
 		 * @return string PostgreSQL expression SQL.
 		 */
-		private function get_postgresql_mysql_from_unixtime_sql( string $unix_timestamp_sql ): string {
-			$unix_double_sql = sprintf( 'CAST(%s AS double precision)', $unix_timestamp_sql );
-			$timestamp_sql   = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $unix_timestamp_sql );
+	private function get_postgresql_mysql_from_unixtime_sql( string $unix_timestamp_sql ): string {
+		$unix_double_sql = sprintf( 'CAST(%s AS double precision)', $unix_timestamp_sql );
+		$timestamp_sql   = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $unix_timestamp_sql );
 
-			return sprintf(
-				"CASE WHEN %1\$s IS NULL THEN NULL WHEN %1\$s = FLOOR(%1\$s) THEN TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS') ELSE TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS.US') END",
-				$unix_double_sql,
-				$timestamp_sql
-			);
-		}
+		return sprintf(
+			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %1\$s = FLOOR(%1\$s) THEN TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS') ELSE TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS.US') END",
+			$unix_double_sql,
+			$timestamp_sql
+		);
+	}
 
 		/**
 		 * Get PostgreSQL timestamp SQL for MySQL FROM_UNIXTIME() in the session time zone.
@@ -50410,21 +50444,21 @@ FROM (
 		 * @param string $unix_timestamp_sql PostgreSQL Unix timestamp expression SQL.
 		 * @return string PostgreSQL timestamp SQL.
 		 */
-		private function get_postgresql_mysql_from_unixtime_timestamp_sql( string $unix_timestamp_sql ): string {
-			$timestamp_sql = sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $unix_timestamp_sql );
-			$time_zone     = $this->get_mysql_system_variable_value( 'time_zone' );
-			$offset        = $this->get_mysql_time_zone_offset_minutes( null === $time_zone ? 'SYSTEM' : $time_zone );
+	private function get_postgresql_mysql_from_unixtime_timestamp_sql( string $unix_timestamp_sql ): string {
+		$timestamp_sql = sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $unix_timestamp_sql );
+		$time_zone     = $this->get_mysql_system_variable_value( 'time_zone' );
+		$offset        = $this->get_mysql_time_zone_offset_minutes( null === $time_zone ? 'SYSTEM' : $time_zone );
 
-			if ( null === $offset || 0 === $offset ) {
-				return $timestamp_sql;
-			}
-
-			return sprintf(
-				'(%s + INTERVAL %s)',
-				$timestamp_sql,
-				$this->connection->quote( $offset . ' minutes' )
-			);
+		if ( null === $offset || 0 === $offset ) {
+			return $timestamp_sql;
 		}
+
+		return sprintf(
+			'(%s + INTERVAL %s)',
+			$timestamp_sql,
+			$this->connection->quote( $offset . ' minutes' )
+		);
+	}
 
 		/**
 		 * Get a numeric minute offset from a MySQL time_zone value.
@@ -50432,19 +50466,19 @@ FROM (
 		 * @param string $time_zone MySQL time_zone value.
 		 * @return int|null Offset minutes, or null for UTC/SYSTEM/unsupported named zones.
 		 */
-		private function get_mysql_time_zone_offset_minutes( string $time_zone ): ?int {
-			$time_zone = trim( $time_zone, "'\"` \t\n\r\0\x0B" );
-			if ( '' === $time_zone || 0 === strcasecmp( $time_zone, 'SYSTEM' ) || 0 === strcasecmp( $time_zone, 'UTC' ) ) {
-				return 0;
-			}
-
-			if ( 1 !== preg_match( '/\A([+-])([0-9]{2}):([0-9]{2})\z/', $time_zone, $matches ) ) {
-				return null;
-			}
-
-			$offset = ( (int) $matches[2] * 60 ) + (int) $matches[3];
-			return '-' === $matches[1] ? -$offset : $offset;
+	private function get_mysql_time_zone_offset_minutes( string $time_zone ): ?int {
+		$time_zone = trim( $time_zone, "'\"` \t\n\r\0\x0B" );
+		if ( '' === $time_zone || 0 === strcasecmp( $time_zone, 'SYSTEM' ) || 0 === strcasecmp( $time_zone, 'UTC' ) ) {
+			return 0;
 		}
+
+		if ( 1 !== preg_match( '/\A([+-])([0-9]{2}):([0-9]{2})\z/', $time_zone, $matches ) ) {
+			return null;
+		}
+
+		$offset = ( (int) $matches[2] * 60 ) + (int) $matches[3];
+		return '-' === $matches[1] ? -$offset : $offset;
+	}
 
 	/**
 	 * Get the backend helper function name used for MySQL JSON_VALID().
@@ -52640,10 +52674,10 @@ $wp_mysql_validate_temporal$'
 
 				++$i;
 				$fragment = $this->get_postgresql_mysql_date_format_specifier_sql( $format[ $i ], $timestamp_sql );
-				if ( null === $fragment ) {
-					$literal .= $format[ $i ];
-					continue;
-				}
+			if ( null === $fragment ) {
+				$literal .= $format[ $i ];
+				continue;
+			}
 
 			$fragments[] = $fragment;
 		}
@@ -52707,14 +52741,14 @@ $wp_mysql_validate_temporal$'
 
 			++$i;
 				$fragment = $this->get_postgresql_mysql_zero_date_format_specifier_sql( $format[ $i ], $expression_text_sql );
-				if ( null === $fragment ) {
-					if ( $this->is_postgresql_mysql_known_date_format_specifier( $format[ $i ] ) ) {
-						return 'NULL';
-					}
-
-					$literal .= $format[ $i ];
-					continue;
+			if ( null === $fragment ) {
+				if ( $this->is_postgresql_mysql_known_date_format_specifier( $format[ $i ] ) ) {
+					return 'NULL';
 				}
+
+				$literal .= $format[ $i ];
+				continue;
+			}
 
 			$fragments[] = $fragment;
 		}
@@ -52994,7 +53028,7 @@ $wp_mysql_validate_temporal$'
 				$specifier_sql,
 				implode( ' ', $cases )
 			);
-		}
+	}
 
 	/**
 	 * Get PostgreSQL CASE SQL for a runtime MySQL DATE_FORMAT() specifier.
@@ -53042,7 +53076,7 @@ $wp_mysql_validate_temporal$'
 				$specifier_sql,
 				implode( ' ', $cases )
 			);
-		}
+	}
 
 	/**
 	 * Get PostgreSQL SQL for one MySQL DATE_FORMAT() specifier.
@@ -54770,12 +54804,13 @@ $wp_mysql_validate_temporal$'
 		}
 
 		$display = null;
-		$name    = $this->parse_mysql_system_variable_reference( $tokens, $position, $display );
+		$scope   = null;
+		$name    = $this->parse_mysql_system_variable_reference( $tokens, $position, $display, $scope );
 		if ( null === $name || null === $display ) {
 			return null;
 		}
 
-		$value = $this->get_mysql_system_variable_value( $name );
+		$value = $this->get_mysql_system_variable_value( $name, $scope );
 		if ( null === $value ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL system variable.' );
 		}
