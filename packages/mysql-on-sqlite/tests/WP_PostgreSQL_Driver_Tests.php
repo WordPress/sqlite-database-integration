@@ -5548,7 +5548,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 1, $driver->query( $upsert ) );
 		$this->assertSame( 7, $driver->get_insert_id() );
 		$this->assertSame(
-			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") VALUES (\'existing\', \'updated\') ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"',
+			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") VALUES (\'existing\', \'updated\') ON CONFLICT ("slug") DO UPDATE SET "id" = "wptests_identity_unique_upsert"."id", "value" = excluded."value"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -5566,7 +5566,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 1, $driver->query( $select_upsert ) );
 		$this->assertSame( 7, $driver->get_insert_id() );
 		$this->assertSame(
-			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") SELECT \'existing\', \'selected\' ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"',
+			'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") SELECT \'existing\', \'selected\' ON CONFLICT ("slug") DO UPDATE SET "id" = "wptests_identity_unique_upsert"."id", "value" = excluded."value"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -5588,6 +5588,69 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests LAST_INSERT_ID(id) duplicate updates preserve target-row references in expressions.
+	 */
+	public function test_upsert_last_insert_id_values_and_row_count_readback_after_duplicate_update(): void {
+		$driver = $this->create_driver_with_stale_connection_insert_id();
+
+		$driver->query(
+			'CREATE TABLE wp_acid_upsert (
+				id INTEGER PRIMARY KEY,
+				slug TEXT NOT NULL UNIQUE,
+				hits INTEGER NOT NULL DEFAULT 0,
+				updated_at TEXT NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wp_acid_upsert (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				slug varchar(191) NOT NULL,
+				hits int(11) NOT NULL DEFAULT 0,
+				updated_at datetime NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug (slug)
+			)'
+		);
+		$driver->get_connection()->query( "INSERT INTO wp_acid_upsert (id, slug, hits, updated_at) VALUES (7, 'same', 1, '0000-00-00 00:00:00')" );
+
+		$upsert = "INSERT INTO wp_acid_upsert (slug, hits, updated_at) VALUES ('same', 2, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), hits = hits + VALUES(hits), updated_at = VALUES(updated_at)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$this->assertSame(
+			'INSERT INTO "wp_acid_upsert" ("slug", "hits", "updated_at") VALUES (\'same\', 2, \'2001-01-01 00:00:00\') ON CONFLICT ("slug") DO UPDATE SET "id" = "wp_acid_upsert"."id", "hits" = "wp_acid_upsert"."hits" + excluded."hits", "updated_at" = excluded."updated_at"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query(
+			"SELECT LAST_INSERT_ID() AS last_id, ROW_COUNT() AS row_count_value, hits, updated_at
+			FROM wp_acid_upsert
+			WHERE slug = 'same'"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->last_id );
+		$this->assertSame( '1', $rows[0]->row_count_value );
+		$this->assertSame( '3', $rows[0]->hits );
+		$this->assertSame( '2001-01-01 00:00:00', $rows[0]->updated_at );
+
+		$now_upsert  = "INSERT INTO wp_acid_upsert (slug, hits, updated_at) VALUES ('same', 2, NOW())
+			ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), hits = hits + VALUES(hits), updated_at = VALUES(updated_at)";
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$now_upsert
+		);
+
+		$this->assertNotNull( $translation );
+		$this->assertSame(
+			'INSERT INTO "wp_acid_upsert" ("slug", "hits", "updated_at") VALUES (\'same\', 2, __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)) ON CONFLICT ("slug") DO UPDATE SET "id" = "wp_acid_upsert"."id", "hits" = "wp_acid_upsert"."hits" + excluded."hits", "updated_at" = excluded."updated_at"',
+			$translation['sql']
+		);
+	}
+
+	/**
 	 * Tests multi-row LAST_INSERT_ID(id) upsert updates report the final deterministic existing id.
 	 */
 	public function test_multi_row_upsert_last_insert_id_assignment_exposes_existing_auto_increment_value(): void {
@@ -5606,7 +5669,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assert_last_postgresql_sql_statements(
 			$driver,
 			array(
-				'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") VALUES (\'one\', \'updated-one\'), (\'two\', \'updated-two\') ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"',
+				'INSERT INTO "wptests_identity_unique_upsert" ("slug", "value") VALUES (\'one\', \'updated-one\'), (\'two\', \'updated-two\') ON CONFLICT ("slug") DO UPDATE SET "id" = "wptests_identity_unique_upsert"."id", "value" = excluded."value"',
 			)
 		);
 
@@ -5658,7 +5721,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 8, $driver->get_insert_id() );
 
 		$materialized_sql = $this->assert_last_upsert_select_materialized_sql( $driver, 'wptests_identity_unique_upsert' );
-		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "id" = "id", "value" = excluded."value"', $materialized_sql[2] );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE SET "id" = "wptests_identity_unique_upsert"."id", "value" = excluded."value"', $materialized_sql[2] );
 
 		$rows = $driver->query( 'SELECT id, slug, value FROM wptests_identity_unique_upsert ORDER BY id' );
 		$this->assertSame(
@@ -6653,7 +6716,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 2) ON CONFLICT ("id") DO UPDATE SET "int_value" = "int_value" + 1',
+					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 2) ON CONFLICT ("id") DO UPDATE SET "int_value" = "wptests_strict_ints"."int_value" + 1',
 					'params' => array(),
 				),
 			),
@@ -6816,8 +6879,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$sql = $this->get_last_single_postgresql_sql( $driver );
 		$this->assertStringNotContainsString( 'IF(', $sql );
-		$this->assertStringContainsString( 'CASE WHEN (excluded."option_value" = \'\') THEN "option_value" ELSE excluded."option_value" END', $sql );
-		$this->assertStringContainsString( 'CASE WHEN (excluded."autoload" = \'ignored\') THEN "autoload" ELSE excluded."autoload" END', $sql );
+		$this->assertStringContainsString( 'CASE WHEN (excluded."option_value" = \'\') THEN "wptests_options"."option_value" ELSE excluded."option_value" END', $sql );
+		$this->assertStringContainsString( 'CASE WHEN (excluded."autoload" = \'ignored\') THEN "wptests_options"."autoload" ELSE excluded."autoload" END', $sql );
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'runtime_values'" );
 
@@ -6842,7 +6905,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = "int_value" + excluded."int_value"',
+					'sql'    => 'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = "wptests_strict_ints"."int_value" + excluded."int_value"',
 					'params' => array(),
 				),
 			),
@@ -6869,7 +6932,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
 		$this->assertSame(
-			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = COALESCE("int_value", 0) + excluded."int_value"',
+			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = COALESCE("wptests_strict_ints"."int_value", 0) + excluded."int_value"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -6898,8 +6961,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assert_last_postgresql_sql_statements(
 			$driver,
 			array(
-				'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = CASE WHEN "int_value" > excluded."int_value" THEN "int_value" ELSE excluded."int_value" END',
-				'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 9) ON CONFLICT ("id") DO UPDATE SET "int_value" = CASE WHEN "int_value" > excluded."int_value" THEN "int_value" ELSE excluded."int_value" END',
+				'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = CASE WHEN "wptests_strict_ints"."int_value" > excluded."int_value" THEN "wptests_strict_ints"."int_value" ELSE excluded."int_value" END',
+				'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 9) ON CONFLICT ("id") DO UPDATE SET "int_value" = CASE WHEN "wptests_strict_ints"."int_value" > excluded."int_value" THEN "wptests_strict_ints"."int_value" ELSE excluded."int_value" END',
 			)
 		);
 
@@ -7035,7 +7098,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wptests_omitted_values_upsert" ("id", "label", "counter") VALUES (1, \'new\', 1) ON CONFLICT ("id") DO UPDATE SET "label" = excluded."label", "note" = excluded."note", "counter" = "counter" + excluded."bonus"',
+					'sql'    => 'INSERT INTO "wptests_omitted_values_upsert" ("id", "label", "counter") VALUES (1, \'new\', 1) ON CONFLICT ("id") DO UPDATE SET "label" = excluded."label", "note" = excluded."note", "counter" = "wptests_omitted_values_upsert"."counter" + excluded."bonus"',
 					'params' => array(),
 				),
 			),
@@ -7122,7 +7185,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
 		$this->assertSame(
-			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = "int_value" + excluded."int_value"',
+			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 3) ON CONFLICT ("id") DO UPDATE SET "int_value" = "wptests_strict_ints"."int_value" + excluded."int_value"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -7161,7 +7224,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
 		$this->assertSame(
-			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 99) ON CONFLICT ("id") DO UPDATE SET "int_value" = "int_value"',
+			'INSERT INTO "wptests_strict_ints" ("id", "int_value") VALUES (1, 99) ON CONFLICT ("id") DO UPDATE SET "int_value" = "wptests_strict_ints"."int_value"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -7322,7 +7385,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'INSERT INTO "wptests_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 1, \'first\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"',
+					'sql'    => 'INSERT INTO "wptests_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 1, \'first\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "wptests_plugin_lookup"."attempts" + excluded."attempts", "payload" = excluded."payload"',
 					'params' => array(),
 				),
 			),
@@ -7402,8 +7465,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertRegExp( '/^CREATE TEMPORARY TABLE "__wp_pg_upsert_select_ord_[a-f0-9]{12}" AS SELECT ROW_NUMBER\(\) OVER \(\) AS "__wp_pg_upsert_ordinal"/', $sql[2] );
 		$this->assertStringContainsString( '"__wp_pg_upsert_rows"."__wp_pg_upsert_ordinal" = 1', $sql[3] );
 		$this->assertStringContainsString( '"__wp_pg_upsert_rows"."__wp_pg_upsert_ordinal" = 2', $sql[4] );
-		$this->assertStringContainsString( 'ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"', $sql[3] );
-		$this->assertStringContainsString( 'ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"', $sql[4] );
+		$this->assertStringContainsString( 'ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "wptests_plugin_lookup_duplicate"."attempts" + excluded."attempts", "payload" = excluded."payload"', $sql[3] );
+		$this->assertStringContainsString( 'ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "wptests_plugin_lookup_duplicate"."attempts" + excluded."attempts", "payload" = excluded."payload"', $sql[4] );
 		$this->assertRegExp( '/^DROP TABLE IF EXISTS "__wp_pg_upsert_select_ord_[a-f0-9]{12}"$/', $sql[5] );
 		$this->assertSame( $sql[0], $sql[6] );
 
@@ -7446,7 +7509,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $insert ) );
 		$this->assertSame(
-			'INSERT INTO "wptests_columnless_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 1, \'first\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"',
+			'INSERT INTO "wptests_columnless_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 1, \'first\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "wptests_columnless_plugin_lookup"."attempts" + excluded."attempts", "payload" = excluded."payload"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -7457,7 +7520,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $update ) );
 		$this->assertSame(
-			'INSERT INTO "wptests_columnless_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 3, \'second\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "attempts" + excluded."attempts", "payload" = excluded."payload"',
+			'INSERT INTO "wptests_columnless_plugin_lookup" ("source", "external_id", "attempts", "payload") SELECT \'feed\', \'abc\', 3, \'second\' ON CONFLICT ("source", "external_id") DO UPDATE SET "attempts" = "wptests_columnless_plugin_lookup"."attempts" + excluded."attempts", "payload" = excluded."payload"',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 

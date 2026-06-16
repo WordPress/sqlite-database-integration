@@ -41386,8 +41386,21 @@ FROM (
 							);
 						}
 
-						$expression_replacements = null !== $value_replacements && null !== $default_replacements && null !== $subquery_replacements
-							? array_merge( $value_replacements, $default_replacements, $subquery_replacements )
+						$target_column_replacements = null;
+						if ( null !== $value_replacements && null !== $default_replacements && null !== $subquery_replacements ) {
+							$target_column_replacements = $this->get_mysql_upsert_target_column_expression_replacements(
+								$table_name,
+								$tokens,
+								$value_start,
+								$assignment_end,
+								$scope,
+								$table_column_lookup,
+								array_merge( $value_replacements, $default_replacements, $subquery_replacements )
+							);
+						}
+
+						$expression_replacements = null !== $value_replacements && null !== $default_replacements && null !== $subquery_replacements && null !== $target_column_replacements
+							? array_merge( $value_replacements, $default_replacements, $subquery_replacements, $target_column_replacements )
 							: null;
 						if ( null !== $expression_replacements ) {
 							usort(
@@ -41567,7 +41580,10 @@ FROM (
 
 		return array(
 			'column' => (string) ( $table_column_lookup[ $column_key ]['column_name'] ?? $reference['column'] ),
-			'sql'    => $this->connection->quote_identifier( $reference['column'] ),
+			'sql'    => $this->get_postgresql_dml_column_reference_sql(
+				(string) ( $table_column_lookup[ $column_key ]['column_name'] ?? $reference['column'] ),
+				$table_name
+			),
 		);
 	}
 
@@ -42325,6 +42341,80 @@ FROM (
 				'sql'   => $sql,
 			);
 			$position       = $after_subquery - 1;
+		}
+
+		return $replacements;
+	}
+
+	/**
+	 * Get replacements for target-row column references in an upsert expression.
+	 *
+	 * PostgreSQL exposes both the target row and excluded row inside
+	 * ON CONFLICT DO UPDATE. Qualify validated target-row references so names
+	 * shared by excluded cannot become ambiguous.
+	 *
+	 * @param string           $table_name          Target table name.
+	 * @param WP_MySQL_Token[] $tokens              MySQL lexer token stream.
+	 * @param int              $start               First expression token.
+	 * @param int              $end                 Final expression token, exclusive.
+	 * @param array            $scope               Statement table scope.
+	 * @param array            $table_column_lookup Table-column metadata lookup by lowercase name.
+	 * @param array[]          $protected_ranges    Ranges already handled by larger replacements.
+	 * @return array[]|null Replacement ranges, or null when a column-like reference is unsupported.
+	 */
+	private function get_mysql_upsert_target_column_expression_replacements( string $table_name, array $tokens, int $start, int $end, array $scope, array $table_column_lookup, array $protected_ranges ): ?array {
+		$replacements = array();
+
+		for ( $position = $start; $position < $end; $position++ ) {
+			$protected_end = $this->get_covering_mysql_replacement_range_end( $position, $protected_ranges );
+			if ( null !== $protected_end ) {
+				$position = $protected_end - 1;
+				continue;
+			}
+
+			if ( $this->is_mysql_qualified_reference_suffix_position( $tokens, $position, $start ) ) {
+				continue;
+			}
+
+			if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $position, $end ) ) {
+				continue;
+			}
+
+			if ( null === $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null ) ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null ) ) {
+				continue;
+			}
+
+			$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
+			if ( null === $reference ) {
+				continue;
+			}
+
+			if (
+				null !== $reference['qualifier']
+				&& ! $this->is_mysql_dml_table_qualifier( $reference['qualifier'], $table_name, null )
+			) {
+				return null;
+			}
+
+			$column_key = strtolower( $reference['column'] );
+			if (
+				null === $this->get_mysql_column_type_for_reference( $reference, $scope )
+				|| ! isset( $table_column_lookup[ $column_key ] )
+			) {
+				return null;
+			}
+
+			$column_name    = (string) ( $table_column_lookup[ $column_key ]['column_name'] ?? $reference['column'] );
+			$replacements[] = array(
+				'start' => $reference['start'],
+				'end'   => $reference['end'],
+				'sql'   => $this->get_postgresql_dml_column_reference_sql( $column_name, $table_name ),
+			);
+			$position       = $reference['end'] - 1;
 		}
 
 		return $replacements;
