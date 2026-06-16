@@ -4480,9 +4480,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests SELECT-sourced upserts still reject expression AUTO_INCREMENT projections.
+	 * Tests SELECT-sourced upserts support constant AUTO_INCREMENT expressions.
 	 */
-	public function test_insert_select_on_duplicate_key_update_with_auto_increment_expression_target_returns_null(): void {
+	public function test_insert_select_on_duplicate_key_update_with_auto_increment_expression_target(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
 			$this->get_dml_identity_metadata_fixture( 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' )
 		);
@@ -4493,14 +4493,55 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			SELECT 3 + 4, 'selected' FROM DUAL
 			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
-		$this->assertNull(
-			$this->translate_driver_query_data_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$upsert
-			)
+		$translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$upsert
 		);
-		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+
+		$this->assertIsArray( $translation );
+		$id_expression_sql = $this->get_expected_mysql_integer_cast_sql( '3 + 4' );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT ' . $id_expression_sql . ' , \'selected\' ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$translation['sql']
+		);
+		$this->assertSame( array( array( '7', "'selected'" ) ), $translation['value_rows'] );
+		$this->assertSame( array( array( '7', "'selected'" ) ), $translation['insert_id_value_rows'] );
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertSame(
+			'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT ' . $id_expression_sql . ' , \'selected\' ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+			$queries[0]['sql']
+		);
+		$this->assert_sequence_repair_query( $queries[1], 'wptests_identity_upsert', 'id', 'wptests_identity_upsert_id_seq' );
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$update = "INSERT INTO `wptests_identity_upsert` (`id`, `value`)
+			SELECT (3 * 2) + 1, 'updated' FROM DUAL
+			ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$updated_id_expression_sql = $this->get_expected_mysql_integer_cast_sql( '(3 * 2) + 1' );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'INSERT INTO "wptests_identity_upsert" ("id", "value") SELECT ' . $updated_id_expression_sql . ' , \'updated\' ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertSame( 1, $connection->get_sequence_sync_query_count() );
+
+		$rows = $driver->query( 'SELECT id, value FROM wptests_identity_upsert' );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->id );
+		$this->assertSame( 'updated', $rows[0]->value );
 	}
 
 	/**

@@ -15403,7 +15403,7 @@ WHERE option_name IN (
 					return null;
 				}
 			} else {
-				$insert_id_value_rows = array( $literal_value_row['values'] );
+				$insert_id_value_rows = array( $literal_value_row['insert_id_values'] );
 				$inserted_value_rows  = $this->get_mysql_upsert_inserted_value_rows(
 					$table_name,
 					$columns,
@@ -15488,7 +15488,7 @@ WHERE option_name IN (
 	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
 	 * @param int              $select_start SELECT token position.
 	 * @param int              $select_end   Final SELECT token position, exclusive.
-	 * @return array{values: string[], probe_safe_values: bool[]}|null Literal row data, or null when unsupported.
+	 * @return array{values: string[], insert_id_values: string[], probe_safe_values: bool[]}|null Literal row data, or null when unsupported.
 	 */
 	private function get_mysql_insert_select_upsert_literal_value_row( string $table_name, array $columns, array $tokens, int $select_start, int $select_end ): ?array {
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $select_start + 1, $select_end );
@@ -15509,18 +15509,25 @@ WHERE option_name IN (
 
 		$target_metadata   = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$values            = array();
+		$insert_id_values  = array();
 		$probe_safe_values = array();
 		foreach ( $projection_ranges as $index => $range ) {
-			$probe_safe = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $range['start'], $range['end'] );
-			if (
-				! $probe_safe
-				&& ! $this->is_supported_mysql_upsert_literal_select_expression( $tokens, $range['start'], $range['end'] )
-			) {
-				return null;
+			$probe_safe                  = $this->is_supported_mysql_upsert_conflict_probe_token_sequence( $tokens, $range['start'], $range['end'] );
+			$constant_expression         = false;
+			$constant_integer_expression = null;
+			if ( ! $probe_safe ) {
+				$constant_expression = $this->is_supported_mysql_upsert_literal_select_expression( $tokens, $range['start'], $range['end'] );
+				if ( ! $constant_expression ) {
+					return null;
+				}
+
+				$constant_integer_expression = $this->get_mysql_constant_integer_expression_value( $tokens, $range['start'], $range['end'] );
+				$probe_safe                  = true;
 			}
 
 			$column_key      = strtolower( (string) $columns[ $index ] );
 			$projection_sql  = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $range['start'], $range['end'] );
+			$insert_id_sql   = $projection_sql;
 			$column_metadata = $target_metadata[ $column_key ] ?? null;
 			if ( null !== $column_metadata ) {
 				$coerced_sql = $this->get_mysql_insert_select_projection_sql_for_target_column(
@@ -15537,20 +15544,27 @@ WHERE option_name IN (
 				}
 
 				if (
-					! $probe_safe
-					&& $this->is_mysql_auto_increment_column_metadata( $column_metadata )
+					$this->is_mysql_auto_increment_column_metadata( $column_metadata )
 					&& ! $this->is_mysql_generated_auto_increment_value_sql( $projection_sql )
 				) {
-					return null;
+					if ( null === $constant_integer_expression && $constant_expression ) {
+						return null;
+					}
+
+					if ( null !== $constant_integer_expression ) {
+						$insert_id_sql = $constant_integer_expression;
+					}
 				}
 			}
 
 			$values[]            = $projection_sql;
+			$insert_id_values[]  = $insert_id_sql;
 			$probe_safe_values[] = $probe_safe;
 		}
 
 		return array(
 			'values'            => $values,
+			'insert_id_values'  => $insert_id_values,
 			'probe_safe_values' => $probe_safe_values,
 		);
 	}
@@ -17825,6 +17839,173 @@ WHERE option_name IN (
 		}
 
 		return is_numeric( $value_sql ) ? (int) $value_sql : $value_sql;
+	}
+
+	/**
+	 * Evaluate a bounded MySQL integer constant expression.
+	 *
+	 * This is only used for MySQL insert-id bookkeeping after the expression has
+	 * already passed the no-identifiers upsert literal-expression guard.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token position, inclusive.
+	 * @param int              $end    Final expression token position, exclusive.
+	 * @return string|null Non-negative integer string, or null when unsupported.
+	 */
+	private function get_mysql_constant_integer_expression_value( array $tokens, int $start, int $end ): ?string {
+		$position = $start;
+		$value    = $this->parse_mysql_constant_integer_expression( $tokens, $position, $end );
+		if ( null === $value || $position !== $end || $value < 0 ) {
+			return null;
+		}
+
+		return (string) $value;
+	}
+
+	/**
+	 * Parse a constant integer expression with + and - operators.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param int              $end      Final expression token position, exclusive.
+	 * @return int|null Parsed integer, or null when unsupported.
+	 */
+	private function parse_mysql_constant_integer_expression( array $tokens, int &$position, int $end ): ?int {
+		$value = $this->parse_mysql_constant_integer_term( $tokens, $position, $end );
+		if ( null === $value ) {
+			return null;
+		}
+
+		while ( $position < $end && isset( $tokens[ $position ] ) ) {
+			$operator = $tokens[ $position ]->id;
+			if ( ! in_array( $operator, array( WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::MINUS_OPERATOR ), true ) ) {
+				break;
+			}
+
+			++$position;
+			$right = $this->parse_mysql_constant_integer_term( $tokens, $position, $end );
+			if ( null === $right ) {
+				return null;
+			}
+
+			$value = WP_MySQL_Lexer::PLUS_OPERATOR === $operator ? $value + $right : $value - $right;
+			if ( ! is_int( $value ) ) {
+				return null;
+			}
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Parse a constant integer term with multiplication.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param int              $end      Final expression token position, exclusive.
+	 * @return int|null Parsed integer, or null when unsupported.
+	 */
+	private function parse_mysql_constant_integer_term( array $tokens, int &$position, int $end ): ?int {
+		$value = $this->parse_mysql_constant_integer_factor( $tokens, $position, $end );
+		if ( null === $value ) {
+			return null;
+		}
+
+		while (
+			$position < $end
+			&& isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $position ]->id
+		) {
+			++$position;
+			$right = $this->parse_mysql_constant_integer_factor( $tokens, $position, $end );
+			if ( null === $right ) {
+				return null;
+			}
+
+			$value *= $right;
+			if ( ! is_int( $value ) ) {
+				return null;
+			}
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Parse a constant integer factor.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Current token position, updated on success.
+	 * @param int              $end      Final expression token position, exclusive.
+	 * @return int|null Parsed integer, or null when unsupported.
+	 */
+	private function parse_mysql_constant_integer_factor( array $tokens, int &$position, int $end ): ?int {
+		if ( $position >= $end || ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		$sign = 1;
+		while (
+			$position < $end
+			&& isset( $tokens[ $position ] )
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::MINUS_OPERATOR ), true )
+		) {
+			if ( WP_MySQL_Lexer::MINUS_OPERATOR === $tokens[ $position ]->id ) {
+				$sign *= -1;
+			}
+			++$position;
+		}
+
+		if ( $position >= $end || ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			$value = $this->parse_mysql_constant_integer_expression( $tokens, $position, $end );
+			if (
+				null === $value
+				|| $position >= $end
+				|| ! isset( $tokens[ $position ] )
+				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $position ]->id
+			) {
+				return null;
+			}
+			++$position;
+			return $sign * $value;
+		}
+
+		if (
+			! in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::INT_NUMBER,
+					WP_MySQL_Lexer::LONG_NUMBER,
+					WP_MySQL_Lexer::ULONGLONG_NUMBER,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		$value = ltrim( $tokens[ $position ]->get_bytes(), '+' );
+		++$position;
+		if ( '' === $value || ! ctype_digit( $value ) ) {
+			return null;
+		}
+
+		$value = ltrim( $value, '0' );
+		if ( '' === $value ) {
+			return 0;
+		}
+
+		$max = (string) PHP_INT_MAX;
+		if ( strlen( $value ) > strlen( $max ) || ( strlen( $value ) === strlen( $max ) && strcmp( $value, $max ) > 0 ) ) {
+			return null;
+		}
+
+		return $sign * (int) $value;
 	}
 
 	/**
@@ -33963,6 +34144,7 @@ FROM (
 				WP_MySQL_Lexer::LIKE_SYMBOL,
 				WP_MySQL_Lexer::LONG_NUMBER,
 				WP_MySQL_Lexer::MINUS_OPERATOR,
+				WP_MySQL_Lexer::MULT_OPERATOR,
 				WP_MySQL_Lexer::NOT_SYMBOL,
 				WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
 				WP_MySQL_Lexer::NULL_SYMBOL,
