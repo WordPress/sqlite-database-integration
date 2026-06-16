@@ -2583,11 +2583,7 @@ class WP_PostgreSQL_Driver {
 		if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $tokens[0]->id ) {
 			$position = 1;
 			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WORK_SYMBOL === $tokens[ $position ]->id ) {
-				if ( isset( $tokens[ $position + 1 ] ) && WP_MySQL_Lexer::TO_SYMBOL === $tokens[ $position + 1 ]->id ) {
-					throw new InvalidArgumentException( 'Unsupported SAVEPOINT statement.' );
-				}
-
-				return null;
+				++$position;
 			}
 
 			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $tokens[ $position ]->id ) {

@@ -19309,6 +19309,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( array(), $driver->get_last_column_meta() );
 		$this->assertSame( 'ROLLBACK TO SAVEPOINT "s1"', $this->get_last_single_postgresql_sql( $driver ) );
 
+		$this->assertSame( 0, $driver->query( 'SAVEPOINT s2' ) );
+		$driver->query( 'INSERT INTO savepoint_public VALUES (2)' );
+		$this->assertSame( 0, $driver->query( 'ROLLBACK WORK TO s2' ) );
+		$this->assertSame( 'ROLLBACK TO SAVEPOINT "s2"', $this->get_last_single_postgresql_sql( $driver ) );
+		$this->assertSame( 0, $driver->query( 'RELEASE SAVEPOINT s2' ) );
+
+		$this->assertSame( 0, $driver->query( 'SAVEPOINT s3' ) );
+		$driver->query( 'INSERT INTO savepoint_public VALUES (3)' );
+		$this->assertSame( 0, $driver->query( 'ROLLBACK WORK TO SAVEPOINT s3' ) );
+		$this->assertSame( 'ROLLBACK TO SAVEPOINT "s3"', $this->get_last_single_postgresql_sql( $driver ) );
+		$this->assertSame( 0, $driver->query( 'RELEASE SAVEPOINT s3' ) );
+
 		$this->assertSame( 0, $driver->query( 'RELEASE SAVEPOINT s1' ) );
 		$this->assertSame( 0, $driver->get_last_column_count() );
 		$this->assertSame( array(), $driver->get_last_column_meta() );
@@ -19325,8 +19337,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_mysql_savepoint_statements_fail_closed_without_backend_execution(): void {
 		$cases = array(
 			'RELEASE s',
-			'ROLLBACK WORK TO SAVEPOINT s',
-			'ROLLBACK WORK TO s',
+			'ROLLBACK SAVEPOINT s',
 		);
 
 		foreach ( $cases as $query ) {
