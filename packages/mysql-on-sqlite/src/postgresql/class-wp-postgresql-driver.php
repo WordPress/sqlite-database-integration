@@ -5335,6 +5335,10 @@ $wp_mysql_on_update$',
 			return null;
 		}
 
+		if ( ! $this->consume_mysql_create_table_select_options( $tokens, $position, $statement_end ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
 			++$position;
 		}
@@ -5399,6 +5403,303 @@ $wp_mysql_on_update$',
 			'table'     => $table_reference['table'],
 			'temporary' => $is_temporary,
 		);
+	}
+
+	/**
+	 * Consume MySQL table options that are no-ops for CREATE TABLE ... SELECT.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether all option-like tokens consumed successfully.
+	 */
+	private function consume_mysql_create_table_select_options( array $tokens, int &$position, int $statement_end ): bool {
+		while ( $position < $statement_end && isset( $tokens[ $position ] ) ) {
+			if ( $this->is_mysql_create_table_select_boundary_token( $tokens[ $position ] ) ) {
+				return true;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				++$position;
+				continue;
+			}
+
+			$before = $position;
+			if (
+				$this->consume_mysql_create_table_select_charset_option( $tokens, $position, $statement_end )
+				|| $this->consume_mysql_create_table_select_assignment_option( $tokens, $position, $statement_end )
+				|| $this->consume_mysql_create_table_select_directory_option( $tokens, $position, $statement_end )
+				|| $this->consume_mysql_create_table_select_tablespace_option( $tokens, $position, $statement_end )
+				|| $this->consume_mysql_create_table_select_union_option( $tokens, $position, $statement_end )
+			) {
+				continue;
+			}
+
+			return $position === $before;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a token starts the SELECT half of CREATE TABLE ... SELECT.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token should stop table-option parsing.
+	 */
+	private function is_mysql_create_table_select_boundary_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::AS_SYMBOL,
+				WP_MySQL_Lexer::LIKE_SYMBOL,
+				WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
+				WP_MySQL_Lexer::SELECT_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Consume a supported CREATE TABLE ... SELECT charset/collation option.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether an option was consumed.
+	 */
+	private function consume_mysql_create_table_select_charset_option( array $tokens, int &$position, int $statement_end ): bool {
+		$next_position = $position;
+		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $next_position ]->id ) {
+			++$next_position;
+		}
+
+		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[ $next_position ]->id ) {
+			++$next_position;
+		} elseif ( $this->is_mysql_create_table_charset_set_marker( $tokens, $next_position ) ) {
+			$next_position += 2;
+		} elseif ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $next_position ]->id ) {
+			++$next_position;
+		} else {
+			return false;
+		}
+
+		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $next_position ]->id ) {
+			++$next_position;
+		}
+
+		if ( ! isset( $tokens[ $next_position ] ) || $next_position >= $statement_end || ! $this->is_mysql_charset_token( $tokens[ $next_position ] ) ) {
+			$position = $next_position;
+			return false;
+		}
+
+		$position = $next_position + 1;
+		return true;
+	}
+
+	/**
+	 * Consume a supported CREATE TABLE ... SELECT storage option with one value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether an option was consumed.
+	 */
+	private function consume_mysql_create_table_select_assignment_option( array $tokens, int &$position, int $statement_end ): bool {
+		if ( ! isset( $tokens[ $position ] ) || ! $this->is_mysql_create_table_select_assignment_option_token( $tokens[ $position ] ) ) {
+			return false;
+		}
+
+		++$position;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		return $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end );
+	}
+
+	/**
+	 * Check whether a token is a supported assignment-style CTAS table option.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token starts a supported option.
+	 */
+	private function is_mysql_create_table_select_assignment_option_token( WP_MySQL_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::AUTOEXTEND_SIZE_SYMBOL,
+				WP_MySQL_Lexer::AVG_ROW_LENGTH_SYMBOL,
+				WP_MySQL_Lexer::CHECKSUM_SYMBOL,
+				WP_MySQL_Lexer::COMPRESSION_SYMBOL,
+				WP_MySQL_Lexer::CONNECTION_SYMBOL,
+				WP_MySQL_Lexer::DELAY_KEY_WRITE_SYMBOL,
+				WP_MySQL_Lexer::ENCRYPTION_SYMBOL,
+				WP_MySQL_Lexer::ENGINE_SYMBOL,
+				WP_MySQL_Lexer::ENGINE_ATTRIBUTE_SYMBOL,
+				WP_MySQL_Lexer::INSERT_METHOD_SYMBOL,
+				WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL,
+				WP_MySQL_Lexer::MAX_ROWS_SYMBOL,
+				WP_MySQL_Lexer::MIN_ROWS_SYMBOL,
+				WP_MySQL_Lexer::PACK_KEYS_SYMBOL,
+				WP_MySQL_Lexer::PASSWORD_SYMBOL,
+				WP_MySQL_Lexer::ROW_FORMAT_SYMBOL,
+				WP_MySQL_Lexer::SECONDARY_ENGINE_SYMBOL,
+				WP_MySQL_Lexer::SECONDARY_ENGINE_ATTRIBUTE_SYMBOL,
+				WP_MySQL_Lexer::STATS_AUTO_RECALC_SYMBOL,
+				WP_MySQL_Lexer::STATS_PERSISTENT_SYMBOL,
+				WP_MySQL_Lexer::STATS_SAMPLE_PAGES_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Consume a supported CREATE TABLE ... SELECT DATA/INDEX DIRECTORY option.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether an option was consumed.
+	 */
+	private function consume_mysql_create_table_select_directory_option( array $tokens, int &$position, int $statement_end ): bool {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::DATA_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true )
+			|| WP_MySQL_Lexer::DIRECTORY_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return false;
+		}
+
+		$position += 2;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		return $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end );
+	}
+
+	/**
+	 * Consume a supported CREATE TABLE ... SELECT TABLESPACE option.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether an option was consumed.
+	 */
+	private function consume_mysql_create_table_select_tablespace_option( array $tokens, int &$position, int $statement_end ): bool {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLESPACE_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		if ( ! $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end ) ) {
+			return false;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::STORAGE_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			return $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Consume a supported CREATE TABLE ... SELECT UNION table option.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether an option was consumed.
+	 */
+	private function consume_mysql_create_table_select_union_option( array $tokens, int &$position, int $statement_end ): bool {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::UNION_SYMBOL !== $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		++$position;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		$after_union = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+		if ( null === $after_union ) {
+			return false;
+		}
+
+		$position = $after_union;
+		return true;
+	}
+
+	/**
+	 * Consume a single CREATE TABLE ... SELECT table-option value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, updated on success.
+	 * @param int              $statement_end Final statement token position, exclusive.
+	 * @return bool Whether a value was consumed.
+	 */
+	private function consume_mysql_create_table_select_option_value( array $tokens, int &$position, int $statement_end ): bool {
+		if ( ! isset( $tokens[ $position ] ) || $position >= $statement_end ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$after_value = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+			if ( null === $after_value ) {
+				return false;
+			}
+
+			$position = $after_value;
+			return true;
+		}
+
+		if (
+			in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::AS_SYMBOL,
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::EOF,
+					WP_MySQL_Lexer::EQUAL_OPERATOR,
+					WP_MySQL_Lexer::LIKE_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+				),
+				true
+			)
+			|| $this->is_mysql_create_table_select_option_start_token( $tokens[ $position ] )
+		) {
+			return false;
+		}
+
+		++$position;
+		return true;
+	}
+
+	/**
+	 * Check whether a token starts a supported CTAS no-op table option.
+	 *
+	 * @param WP_MySQL_Token $token MySQL token.
+	 * @return bool Whether the token starts a supported option.
+	 */
+	private function is_mysql_create_table_select_option_start_token( WP_MySQL_Token $token ): bool {
+		return $this->is_mysql_create_table_select_assignment_option_token( $token )
+			|| in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::CHARACTER_SYMBOL,
+					WP_MySQL_Lexer::CHARSET_SYMBOL,
+					WP_MySQL_Lexer::CHAR_SYMBOL,
+					WP_MySQL_Lexer::COLLATE_SYMBOL,
+					WP_MySQL_Lexer::DATA_SYMBOL,
+					WP_MySQL_Lexer::INDEX_SYMBOL,
+					WP_MySQL_Lexer::TABLESPACE_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				),
+				true
+			);
 	}
 
 	/**
@@ -14275,7 +14576,7 @@ ORDER BY table_name';
 			'Index_length'    => '0',
 			'Data_free'       => '0',
 			'Auto_increment'  => $auto_increment,
-			'Create_time'     => null,
+			'Create_time'     => gmdate( 'Y-m-d H:i:s' ),
 			'Update_time'     => null,
 			'Check_time'      => null,
 			'Collation'       => $this->collation,
@@ -17358,8 +17659,8 @@ WHERE option_name IN (
 	 * PostgreSQL cannot delete from multiple target tables directly. First
 	 * materialize each target row ctid from the MySQL table-reference list, then
 	 * delete each target through writable CTEs and return the summed affected row
-	 * count. ORDER BY without LIMIT is validated and omitted because it does not
-	 * change the affected row set.
+	 * count. ORDER BY clauses are translated in the materialized source so
+	 * unsupported expressions fail closed before execution.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when unsupported.
@@ -17508,8 +17809,8 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position && null !== $limit_position ) {
-			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $limit_position, $scope );
+		if ( null !== $order_position ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $order_end, $scope );
 			if ( null === $order_sql ) {
 				return null;
 			}
@@ -17886,21 +18187,14 @@ WHERE option_name IN (
 		$order_sql = '';
 		if ( null !== $order_position ) {
 			$order_end = $limit_position ?? $statement_end;
-			if ( null === $limit_position ) {
-				if ( ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) ) {
-					return null;
-				}
-			} else {
-				$order_sql = $this->translate_simple_dml_order_by_clause_to_postgresql(
-					$tokens,
-					$order_position,
-					$order_end,
-					$target_ref['table'],
-					$target_alias
-				);
-				if ( null === $order_sql ) {
-					return null;
-				}
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
+				$tokens,
+				$order_position,
+				$order_end,
+				$scope
+			);
+			if ( null === $order_sql ) {
+				return null;
 			}
 		}
 
@@ -23394,8 +23688,8 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position && null !== $limit_position ) {
-			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $limit_position, $scope );
+		if ( null !== $order_position ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $order_end, $scope );
 			if ( null === $order_sql ) {
 				return null;
 			}
@@ -23582,9 +23876,9 @@ WHERE option_name IN (
 	 * PostgreSQL UPDATE ... FROM can represent MySQL single-target UPDATE
 	 * statements whose extra table references only qualify the target rows.
 	 * Assignments to any non-target table and NATURAL/RIGHT joins remain
-	 * unsupported. Bounded single-target joined updates select target ctids
-	 * through a derived source before updating; ORDER BY without LIMIT is
-	 * validated and omitted because it does not change the affected row set.
+	 * unsupported. Bounded or ordered single-target joined updates select target
+	 * ctids through a derived source before updating so MySQL ORDER BY clauses
+	 * are translated and invalid expressions fail closed.
 	 *
 	 * @param string           $query         MySQL query.
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
@@ -23681,11 +23975,12 @@ WHERE option_name IN (
 		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
 		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
 		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
+		$order_end      = $limit_position ?? $statement_end;
 		if (
 			( null !== $order_position && null !== $where_position && $order_position < $where_position )
 			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
 			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $statement_end ) )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
 		) {
 			return null;
 		}
@@ -23738,7 +24033,7 @@ WHERE option_name IN (
 			$predicates[] = $where_sql['sql'];
 		}
 
-		if ( null !== $limit_position ) {
+		if ( null !== $order_position || null !== $limit_position ) {
 			$update_set_clause = $this->translate_mysql_joined_update_set_clause_for_derived_source(
 				$table_name,
 				$target_reference_alias,
@@ -23756,7 +24051,7 @@ WHERE option_name IN (
 				$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
 					$tokens,
 					$order_position,
-					$limit_position,
+					$order_end,
 					$scope
 				);
 				if ( null === $order_sql ) {
@@ -23764,9 +24059,12 @@ WHERE option_name IN (
 				}
 			}
 
-			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
-			if ( null === $limit_sql ) {
-				return null;
+			$limit_sql = '';
+			if ( null !== $limit_position ) {
+				$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+				if ( null === $limit_sql ) {
+					return null;
+				}
 			}
 
 			$source_alias      = 'mysql_update_values';
@@ -23951,6 +24249,8 @@ WHERE option_name IN (
 	 * MySQL can update more than one table in a joined UPDATE. PostgreSQL cannot
 	 * express that as one UPDATE ... FROM, so compute the original joined row set
 	 * and assignment values once, then update each physical target by ctid.
+	 * ORDER BY clauses are translated in that source so unsupported expressions
+	 * cannot be silently discarded.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL writable-CTE query, or null when unsupported.
@@ -24087,8 +24387,8 @@ WHERE option_name IN (
 
 		$source_where_sql = empty( $predicates ) ? '' : ' WHERE (' . implode( ') AND (', $predicates ) . ')';
 		$order_sql        = '';
-		if ( null !== $order_position && null !== $limit_position ) {
-			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $limit_position, $scope );
+		if ( null !== $order_position ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $order_end, $scope );
 			if ( null === $order_sql ) {
 				return null;
 			}
@@ -36320,6 +36620,14 @@ FROM (
 			if (
 				null !== $table_reference
 				&& $this->is_at_mysql_query_end( $tokens, $position )
+				&& $this->is_explicit_main_database_table_reference( $table_reference )
+			) {
+				return false;
+			}
+
+			if (
+				null !== $table_reference
+				&& $this->is_at_mysql_query_end( $tokens, $position )
 				&& (
 					null === $table_reference['schema']
 					|| 0 === strcasecmp( $table_reference['schema'], 'information_schema' )
@@ -37243,6 +37551,12 @@ FROM (
 						&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
 					) {
 						$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+					} elseif (
+						null !== $value_sql
+						&& ! $this->is_mysql_strict_sql_mode_active()
+						&& $this->is_mysql_integer_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+					) {
+						$value_sql = $this->get_postgresql_mysql_integer_cast_sql( $value_sql );
 					}
 					if ( null === $value_sql ) {
 						$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
