@@ -10574,6 +10574,16 @@ END;
 		$this->assertSame( '2', $result[0]->rows_count );
 	}
 
+	public function testSqlancerReplaceRoundsNumericStringsForIntegerColumns(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 BIGINT(154) UNIQUE KEY)' );
+		$this->assertQuery( 'REPLACE LOW_PRIORITY INTO t0(c0) VALUES("0.690236950119983")' );
+
+		$result = $this->assertQuery( 'SELECT c0 FROM t0' );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->c0 );
+	}
+
 	public function testSqlancerDeleteIgnoreDropsIgnoredRows(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL)' );
 		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
@@ -11327,15 +11337,14 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
 		$this->assertQuery( "INSERT INTO t VALUES ('2')" );
 		$this->assertQuery( "INSERT INTO t VALUES ('3.0')" );
+		$this->assertQuery( "INSERT INTO t VALUES ('4.5')" );
 
 		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
 		if ( $is_legacy_sqlite ) {
-			$this->assertQuery( "INSERT INTO t VALUES ('4.5')" );
 			$this->assertQuery( 'INSERT INTO t VALUES (0x05)' );
 			$this->assertQuery( "INSERT INTO t VALUES (x'06')" );
 		} else {
 			// TODO: These are supported in MySQL:
-			$this->assertQueryError( "INSERT INTO t VALUES ('4.5')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
 			$this->assertQueryError( 'INSERT INTO t VALUES (0x05)', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
 			$this->assertQueryError( "INSERT INTO t VALUES (x'06')", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
 		}
@@ -11348,6 +11357,7 @@ END;
 		$this->assertSame( '1', $result[4]->value );
 		$this->assertSame( '2', $result[5]->value );
 		$this->assertSame( '3', $result[6]->value );
+		$this->assertSame( '5', $result[7]->value );
 		$this->assertQuery( 'DROP TABLE t' );
 
 		// FLOAT

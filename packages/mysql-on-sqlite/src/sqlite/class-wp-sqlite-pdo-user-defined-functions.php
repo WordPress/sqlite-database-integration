@@ -114,6 +114,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 
 		// Internal helper functions.
 		'_mysql_cast_integer'          => '_mysql_cast_integer',
+		'_mysql_save_integer'          => '_mysql_save_integer',
 		'_mysql_count_distinct_tuple'  => '_mysql_count_distinct_tuple',
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
@@ -158,6 +159,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'datediff'                     => true,
 		'locate'                       => true,
 		'_mysql_cast_integer'          => true,
+		'_mysql_save_integer'          => true,
 		'_mysql_count_distinct_tuple'  => true,
 		'_helper_like_to_glob_pattern' => true,
 	);
@@ -313,6 +315,37 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 
 		return (int) $value;
+	}
+
+	/**
+	 * Emulate integer conversion used when MySQL saves values to integer columns.
+	 *
+	 * MySQL rounds numeric strings for integer-column storage, unlike
+	 * CAST(... AS SIGNED), which truncates them. Non-numeric strings are returned
+	 * unchanged so SQLite STRICT tables can reject them.
+	 *
+	 * @param int|float|string|null $value Value to cast.
+	 *
+	 * @return int|string|null Integer cast value, original string, or null.
+	 */
+	public function _mysql_save_integer( $value ) {
+		if ( null === $value ) {
+			return null;
+		}
+
+		if ( is_int( $value ) ) {
+			return $value;
+		}
+
+		if ( is_float( $value ) ) {
+			return (int) round( $value, 0, PHP_ROUND_HALF_UP );
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			return (int) round( (float) $value, 0, PHP_ROUND_HALF_UP );
+		}
+
+		return $value;
 	}
 
 	/**

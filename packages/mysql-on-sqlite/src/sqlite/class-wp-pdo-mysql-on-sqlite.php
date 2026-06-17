@@ -6356,7 +6356,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						return sprintf( 'CAST(ROUND(%s) AS INTEGER)', $translated_value );
 					}
 					return sprintf(
-						"CASE WHEN TYPEOF(%s) IN ('integer', 'real') THEN CAST(ROUND(%s) AS INTEGER) ELSE %s END",
+						"CASE WHEN TYPEOF(%s) = 'blob' THEN %s ELSE _mysql_save_integer(%s) END",
 						$translated_value,
 						$translated_value,
 						$translated_value

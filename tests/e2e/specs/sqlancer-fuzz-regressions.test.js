@@ -56,6 +56,12 @@ if ( '2' !== (string) $row['rows_count'] ) {
 	throw new RuntimeException( 'Expected INSERT DELAYED IGNORE to insert a second row.' );
 }
 
+$integer_string_table = $wpdb->prefix . 'sqlancer_integer_string_t0';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $integer_string_table" );
+sdi_sqlancer_query( "CREATE TABLE $integer_string_table(c0 BIGINT(154) UNIQUE KEY)" );
+sdi_sqlancer_query( "REPLACE LOW_PRIORITY INTO $integer_string_table(c0) VALUES(\\"0.690236950119983\\")" );
+$integer_string_row = $wpdb->get_row( "SELECT c0 FROM $integer_string_table", ARRAY_A );
+
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $table" );
 sdi_sqlancer_query( "CREATE TABLE $table(c0 DECIMAL)" );
 sdi_sqlancer_query( "INSERT INTO $table(c0) VALUES(1), (2)" );
@@ -132,6 +138,7 @@ echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
+echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
 `,
 			],
 			{
@@ -152,6 +159,25 @@ echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_upd
 				numeric_sum: '2',
 			}
 		);
+
+		const integerStringJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_INTEGER_STRING_JSON:' )
+			);
+
+		expect( integerStringJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				integerStringJsonLine.replace(
+					'SQLANCER_INTEGER_STRING_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			c0: '1',
+		} );
 
 		const bitCountJsonLine = output
 			.trim()
