@@ -1,6 +1,6 @@
 <?php
 /**
- * Append a SQLancer replay failure to the shared findings queue.
+ * Format a SQLancer replay failure as a GitHub issue comment.
  *
  * @package wp-sqlite-integration
  */
@@ -22,12 +22,12 @@ foreach ( array_slice( $argv, 1 ) as $arg ) {
 
 $required = array(
 	'output',
-	'findings',
+	'comment',
+	'marker',
 	'oracle',
 	'seed',
 	'num-queries',
 	'max-generated-databases',
-	'artifacts',
 	'commit',
 	'run-url',
 );
@@ -71,51 +71,57 @@ if ( null === $failure_line ) {
 	exit( 2 );
 }
 
-$marker = sprintf(
-	'<!-- sqlancer-finding oracle=%s seed=%s line=%s -->',
-	$args['oracle'],
-	$args['seed'],
-	$failure_line
+$failure_hash = substr(
+	hash(
+		'sha256',
+		implode(
+			"\n",
+			array_merge(
+				array(
+					$failure_sql,
+					$exception,
+				),
+				$sqlite_lines
+			)
+		)
+	),
+	0,
+	20
 );
-
-$findings_path = $args['findings'];
-$findings_dir  = dirname( $findings_path );
-if ( ! is_dir( $findings_dir ) ) {
-	mkdir( $findings_dir, 0777, true );
-}
-
-$contents = is_readable( $findings_path ) ? file_get_contents( $findings_path ) : '';
-if ( false !== strpos( $contents, $marker ) ) {
-	echo "Finding already recorded: $marker\n";
-	exit( 0 );
-}
-
-if ( '' === $contents ) {
-	$contents = "# SQLancer SQLite Findings\n\n";
-}
+$marker       = sprintf( '<!-- sqlancer-finding hash=%s -->', $failure_hash );
 
 $entry = sprintf(
-	"\n## %s - %s seed %s line %s\n\n%s\n\n- Run: %s\n- Commit: `%s`\n- Settings: `SQLANCER_MYSQL_ORACLE=%s RANDOM_SEED=%s NUM_QUERIES=%s MAX_GENERATED_DATABASES=%s`\n- Artifacts directory: `%s`\n\n```sql\n%s\n```\n\n```text\n%s\n```\n",
-	gmdate( 'Y-m-d H:i:s \U\T\C' ),
+	"%s\n### %s seed %s line %s\n\n- Found: %s\n- Run: %s\n- Commit: `%s`\n- Settings: `SQLANCER_MYSQL_ORACLE=%s RANDOM_SEED=%s NUM_QUERIES=%s MAX_GENERATED_DATABASES=%s`\n\n```sql\n%s\n```\n\n```text\n%s\n```\n",
+	$marker,
 	$args['oracle'],
 	$args['seed'],
 	$failure_line,
-	$marker,
+	gmdate( 'Y-m-d H:i:s \U\T\C' ),
 	$args['run-url'],
 	$args['commit'],
 	$args['oracle'],
 	$args['seed'],
 	$args['num-queries'],
 	$args['max-generated-databases'],
-	$args['artifacts'],
 	$failure_sql,
 	$exception
 );
 
 if ( ! empty( $sqlite_lines ) ) {
-	$entry .= "\n```sql\n" . implode( "\n", $sqlite_lines ) . "\n```\n";
+	$entry .= "\nTranslated SQLite replay SQL:\n\n```sql\n" . implode( "\n", $sqlite_lines ) . "\n```\n";
 }
 
-file_put_contents( $findings_path, rtrim( $contents ) . "\n" . $entry );
+$comment_dir = dirname( $args['comment'] );
+if ( ! is_dir( $comment_dir ) ) {
+	mkdir( $comment_dir, 0777, true );
+}
 
-echo "Recorded SQLancer finding: $marker\n";
+$marker_dir = dirname( $args['marker'] );
+if ( ! is_dir( $marker_dir ) ) {
+	mkdir( $marker_dir, 0777, true );
+}
+
+file_put_contents( $args['comment'], $entry );
+file_put_contents( $args['marker'], $marker . "\n" );
+
+echo "Formatted SQLancer finding: $marker\n";

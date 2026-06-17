@@ -35,7 +35,7 @@ on:
         required: false
         default: '1'
       append_findings:
-        description: 'Append replay failures to tests/fuzz/sqlancer-findings.md on an automation PR.'
+        description: 'Append replay failures to the SQLancer findings issue.'
         required: false
         default: true
         type: boolean
@@ -52,12 +52,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
-      contents: write # Required to push the findings branch.
-      pull-requests: write # Required to open/update the findings PR.
+      contents: read
+      issues: write # Required to create/update the findings issue.
 
     env:
-      FINDINGS_BRANCH: automation/sqlancer-sqlite-fuzz-findings
-      FINDINGS_FILE: tests/fuzz/sqlancer-findings.md
+      FINDINGS_ISSUE_TITLE: SQLancer SQLite replay findings
+      FINDINGS_LIMIT: 1000
       INPUT_ORACLE: ${{ github.event_name == 'workflow_dispatch' && inputs.oracle || 'auto' }}
       INPUT_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '' }}
       INPUT_NUM_QUERIES: ${{ github.event_name == 'workflow_dispatch' && inputs.num_queries || '' }}
@@ -124,14 +124,14 @@ jobs:
             MAX_GENERATED_DATABASES=1
           fi
 
-          ARTIFACTS_DIR="$RUNNER_TEMP/sqlancer-artifacts-$ORACLE-$SEED"
+          RUNNER_OUTPUT_DIR="$RUNNER_TEMP/sqlancer-output-$ORACLE-$SEED"
 
           {
             echo "oracle=$ORACLE"
             echo "seed=$SEED"
             echo "num_queries=$NUM_QUERIES"
             echo "max_generated_databases=$MAX_GENERATED_DATABASES"
-            echo "artifacts_dir=$ARTIFACTS_DIR"
+            echo "runner_output_dir=$RUNNER_OUTPUT_DIR"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -139,7 +139,8 @@ jobs:
             echo "RANDOM_SEED=$SEED"
             echo "NUM_QUERIES=$NUM_QUERIES"
             echo "MAX_GENERATED_DATABASES=$MAX_GENERATED_DATABASES"
-            echo "ARTIFACTS_DIR=$ARTIFACTS_DIR"
+            echo "ARTIFACTS_DIR=$RUNNER_OUTPUT_DIR"
+            echo "RUNNER_OUTPUT_DIR=$RUNNER_OUTPUT_DIR"
           } >> "$GITHUB_ENV"
 
       - name: Run SQLancer replay
@@ -147,10 +148,10 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          mkdir -p "$ARTIFACTS_DIR"
-          ./bin/run-sqlancer-sqlite-fuzz.sh > "$ARTIFACTS_DIR/runner-output.txt" 2>&1
+          mkdir -p "$RUNNER_OUTPUT_DIR"
+          ./bin/run-sqlancer-sqlite-fuzz.sh > "$RUNNER_OUTPUT_DIR/runner-output.txt" 2>&1
           STATUS=$?
-          cat "$ARTIFACTS_DIR/runner-output.txt"
+          cat "$RUNNER_OUTPUT_DIR/runner-output.txt"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
           exit "$STATUS"
 
@@ -158,21 +159,13 @@ jobs:
         id: replay_failure
         if: steps.fuzz.outputs.status != '0'
         run: |
-          if grep -q '^FAIL line [0-9][0-9]*:' "$ARTIFACTS_DIR/runner-output.txt"; then
+          if grep -q '^FAIL line [0-9][0-9]*:' "$RUNNER_OUTPUT_DIR/runner-output.txt"; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload SQLancer artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sqlancer-${{ steps.settings.outputs.oracle }}-${{ steps.settings.outputs.seed }}
-          path: ${{ steps.settings.outputs.artifacts_dir }}
-          if-no-files-found: ignore
-
-      - name: Append replay failure to findings branch
+      - name: Append replay failure to findings issue
         if: steps.replay_failure.outputs.found == 'true' && env.INPUT_APPEND_FINDINGS == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -180,55 +173,69 @@ jobs:
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if git ls-remote --exit-code --heads origin "$FINDINGS_BRANCH" >/dev/null 2>&1; then
-            git fetch origin "$FINDINGS_BRANCH"
-            git checkout "origin/$FINDINGS_BRANCH" -- "$FINDINGS_FILE" || true
-          fi
+          COMMENT_FILE="$RUNNER_TEMP/sqlancer-finding-comment.md"
+          MARKER_FILE="$RUNNER_TEMP/sqlancer-finding-marker.txt"
 
           php tests/fuzz/append-sqlancer-finding.php \
-            --output="$ARTIFACTS_DIR/runner-output.txt" \
-            --findings="$FINDINGS_FILE" \
+            --output="$RUNNER_OUTPUT_DIR/runner-output.txt" \
+            --comment="$COMMENT_FILE" \
+            --marker="$MARKER_FILE" \
             --oracle="$SQLANCER_MYSQL_ORACLE" \
             --seed="$RANDOM_SEED" \
             --num-queries="$NUM_QUERIES" \
             --max-generated-databases="$MAX_GENERATED_DATABASES" \
-            --artifacts="$ARTIFACTS_DIR" \
             --commit="$GITHUB_SHA" \
             --run-url="$RUN_URL"
 
-          if git diff --quiet -- "$FINDINGS_FILE"; then
-            echo "No new finding to commit."
+          MARKER="$(cat "$MARKER_FILE")"
+
+          ISSUE_NUMBER="$(
+            gh issue list \
+              --state open \
+              --search "$FINDINGS_ISSUE_TITLE in:title" \
+              --json number,title \
+              --jq ".[] | select(.title == \"$FINDINGS_ISSUE_TITLE\") | .number" \
+              | head -n 1
+          )"
+
+          if [ -z "$ISSUE_NUMBER" ]; then
+            ISSUE_BODY="$RUNNER_TEMP/sqlancer-findings-issue.md"
+            cat > "$ISSUE_BODY" <<'EOF'
+          This issue is maintained by the SQLancer SQLite fuzz workflow.
+
+          Each finding is stored as one issue comment with a hidden `sqlancer-finding` marker. The workflow skips duplicate markers and stops appending after 1000 finding comments. Reduce entries into `tests/e2e/specs/sqlancer-fuzz-regressions.test.js` before fixing them.
+          EOF
+            ISSUE_URL="$(gh issue create --title "$FINDINGS_ISSUE_TITLE" --body-file "$ISSUE_BODY")"
+            ISSUE_NUMBER="${ISSUE_URL##*/}"
+          fi
+
+          EXISTING_MARKERS="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+              --jq '.[].body' \
+              | grep -F '<!-- sqlancer-finding hash=' \
+              || true
+          )"
+
+          if printf '%s\n' "$EXISTING_MARKERS" | grep -Fqx "$MARKER"; then
+            echo "SQLancer finding already exists in issue #$ISSUE_NUMBER: $MARKER"
             exit 0
           fi
 
-          git checkout -B "$FINDINGS_BRANCH"
-          git add "$FINDINGS_FILE"
-          git commit -m "Record SQLancer SQLite fuzz finding"
-          git push --set-upstream origin "$FINDINGS_BRANCH"
-
-          PR_BODY=$'This PR is maintained by the scheduled SQLancer SQLite fuzz workflow.\n\nIt appends newly found MySQL-accepted SQLite replay failures to `tests/fuzz/sqlancer-findings.md`. Each entry still needs a human reduction and a follow-up fix that moves the reduced case into the SQLancer regression tests.'
-
-          if gh pr view "$FINDINGS_BRANCH" --json number >/dev/null 2>&1; then
-            gh pr edit "$FINDINGS_BRANCH" \
-              --title "Record SQLancer SQLite fuzz findings" \
-              --body "$PR_BODY"
-          else
-            gh pr create \
-              --head "$FINDINGS_BRANCH" \
-              --base "${{ github.event.repository.default_branch }}" \
-              --title "Record SQLancer SQLite fuzz findings" \
-              --body "$PR_BODY"
+          FINDING_COUNT="$(printf '%s\n' "$EXISTING_MARKERS" | grep -c '<!-- sqlancer-finding hash=' || true)"
+          if [ "$FINDING_COUNT" -ge "$FINDINGS_LIMIT" ]; then
+            echo "SQLancer findings issue #$ISSUE_NUMBER already has $FINDING_COUNT entries; not appending."
+            exit 0
           fi
+
+          gh issue comment "$ISSUE_NUMBER" --body-file "$COMMENT_FILE"
+          echo "Appended SQLancer finding to issue #$ISSUE_NUMBER: $MARKER"
 
       - name: Fail when fuzzing finds or hits an error
         if: steps.fuzz.outputs.status != '0'
         run: |
           if [ "${{ steps.replay_failure.outputs.found }}" = 'true' ]; then
-            echo "SQLancer found a SQLite replay failure. See uploaded artifacts and the findings PR."
+            echo "SQLancer found a SQLite replay failure. See the run log and findings issue."
           else
-            echo "SQLancer failed before producing a SQLite replay failure. See uploaded artifacts."
+            echo "SQLancer failed before producing a SQLite replay failure. See the run log."
           fi
           exit "${{ steps.fuzz.outputs.status }}"
