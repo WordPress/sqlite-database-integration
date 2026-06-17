@@ -15,13 +15,25 @@ class SQLite_Adapter implements Adapter {
 	/** @var WP_SQLite_Driver */
 	private $sqlite_driver;
 
-	public function __construct( $sqlite_database_path ) {
+	/** @var string */
+	private $database_name;
+
+	/** @var array<string, true> */
+	private $database_aliases = array();
+
+	public function __construct( $sqlite_database_path, string $database_name = 'sqlite_database', array $database_aliases = array() ) {
 		define( 'FQDB', $sqlite_database_path );
 		define( 'FQDBDIR', dirname( FQDB ) . '/' );
 
+		$this->database_name = $database_name;
+
+		foreach ( $database_aliases as $database_alias ) {
+			$this->database_aliases[ strtolower( $database_alias ) ] = true;
+		}
+
 		$this->sqlite_driver = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'path' => $sqlite_database_path ) ),
-			'sqlite_database'
+			$database_name
 		);
 	}
 
@@ -32,6 +44,7 @@ class SQLite_Adapter implements Adapter {
 		$rows           = array();
 
 		try {
+			$query          = $this->replace_database_alias_in_use_query( $query );
 			$return_value   = $this->sqlite_driver->query( $query );
 			$last_insert_id = $this->sqlite_driver->get_insert_id() ?? null;
 			if ( is_numeric( $return_value ) ) {
@@ -50,6 +63,29 @@ class SQLite_Adapter implements Adapter {
 			}
 			return MySQL_Result::from_error( 'HY000', 1105, $e->getMessage() ?? 'Unknown error' );
 		}
+	}
+
+	private function replace_database_alias_in_use_query( string $query ): string {
+		if ( empty( $this->database_aliases ) ) {
+			return $query;
+		}
+
+		if ( ! preg_match( '/^USE\s+(`([^`]+)`|"([^"]+)"|\\\'([^\\\']+)\\\'|([^\\s;]+))\s*;?\s*$/i', $query, $matches ) ) {
+			return $query;
+		}
+
+		$database_name = '';
+		for ( $i = 2; $i <= 5; $i++ ) {
+			if ( isset( $matches[ $i ] ) && '' !== $matches[ $i ] ) {
+				$database_name = $matches[ $i ];
+				break;
+			}
+		}
+		if ( ! isset( $this->database_aliases[ strtolower( $database_name ) ] ) ) {
+			return $query;
+		}
+
+		return 'USE `' . str_replace( '`', '``', $this->database_name ) . '`';
 	}
 
 	public function computeColumnInfo() {

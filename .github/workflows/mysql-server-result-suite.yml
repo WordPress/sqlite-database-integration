@@ -1,0 +1,206 @@
+name: MySQL Server Result Suite
+
+on:
+  push:
+    branches:
+      - trunk
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
+jobs:
+  test:
+    name: MySQL server result suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          extensions: sockets, pdo_sqlite
+          tools: phpunit-polyfills
+
+      - name: Install Composer dependencies (mysql-proxy)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-proxy
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install MySQL command-line client
+        run: |
+          set -euo pipefail
+
+          sudo timeout 300s apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive timeout 300s \
+            apt-get install -y --no-install-recommends mariadb-client
+
+      - name: Download MySQL server test suite
+        run: |
+          set -euo pipefail
+
+          mysql_version='8.0.46'
+          archive="mysql-test-${mysql_version}-linux-glibc2.28-x86_64.tar.xz"
+          archive_url="https://cdn.mysql.com/Downloads/MySQL-8.0/${archive}"
+          download_path="$RUNNER_TEMP/$archive"
+          install_dir="$RUNNER_TEMP/mysql-server-test-suite"
+
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 1200 \
+            --output "$download_path" \
+            "$archive_url"
+
+          mkdir -p "$install_dir"
+          tar -xJf "$download_path" -C "$install_dir" --strip-components=1
+
+          mysql_test_dir="$(find "$install_dir" -type f -name mysql-test-run.pl -printf '%h\n' | head -n 1)"
+          mysqltest_bin="$(find "$install_dir" -type f -name mysqltest -perm /111 -print | head -n 1)"
+
+          if [ -z "$mysql_test_dir" ] || [ ! -f "$mysql_test_dir/mysql-test-run.pl" ]; then
+            echo "mysql-test-run.pl was not found in $archive." >&2
+            find "$install_dir" -maxdepth 3 -type f | sort | sed -n '1,120p' >&2
+            exit 1
+          fi
+
+          if [ -z "$mysqltest_bin" ]; then
+            echo "mysqltest was not found in $archive." >&2
+            find "$install_dir" -maxdepth 4 -type f -name 'mysql*' | sort >&2
+            exit 1
+          fi
+
+          echo "MYSQL_TEST_DIR=$mysql_test_dir" >> "$GITHUB_ENV"
+          echo "MYSQLTEST_BIN=$mysqltest_bin" >> "$GITHUB_ENV"
+
+          client_bindir="$RUNNER_TEMP/mysql-client-bindir"
+          mkdir -p "$client_bindir"
+          ln -sf "$mysqltest_bin" "$client_bindir/mysqltest"
+          for client in mysql mysqladmin mysqldump mysqlshow mysqlslap perror; do
+            client_path="$(command -v "$client" || true)"
+            if [ -n "$client_path" ]; then
+              ln -sf "$client_path" "$client_bindir/$client"
+            fi
+          done
+
+          echo "MYSQL_CLIENT_BINDIR=$client_bindir" >> "$GITHUB_ENV"
+
+          "$mysqltest_bin" --version
+
+      - name: Run MySQL server result suite against SQLite proxy
+        run: |
+          set -euo pipefail
+
+          port=13306
+          db_path="$RUNNER_TEMP/mysql-server-result-suite.sqlite"
+          proxy_log="$RUNNER_TEMP/mysql-proxy.log"
+          vardir="$RUNNER_TEMP/mysql-test-var"
+
+          php "$GITHUB_WORKSPACE/packages/mysql-proxy/bin/wp-mysql-proxy.php" \
+            --port "$port" \
+            --database "$db_path" \
+            --database-name test \
+            --database-alias mysql \
+            --log-level warning \
+            > "$proxy_log" 2>&1 &
+          proxy_pid="$!"
+
+          cleanup() {
+            kill "$proxy_pid" 2>/dev/null || true
+            wait "$proxy_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 100); do
+            if php -r "\$socket = @fsockopen( '127.0.0.1', $port ); if ( \$socket ) { fclose( \$socket ); exit( 0 ); } exit( 1 );"; then
+              break
+            fi
+            if ! kill -0 "$proxy_pid" 2>/dev/null; then
+              echo "MySQL proxy exited before accepting connections." >&2
+              cat "$proxy_log" >&2 || true
+              exit 1
+            fi
+            if [ "$attempt" -eq 100 ]; then
+              echo "Timed out waiting for MySQL proxy on port $port." >&2
+              cat "$proxy_log" >&2 || true
+              exit 1
+            fi
+            sleep 0.1
+          done
+
+          mkdir -p "$vardir"
+
+          mysql_preflight_stdout="$RUNNER_TEMP/mysql-preflight.out"
+          mysql_preflight_stderr="$RUNNER_TEMP/mysql-preflight.err"
+          set +e
+          "$MYSQL_CLIENT_BINDIR/mysql" \
+            --no-defaults \
+            --host=127.0.0.1 \
+            --port="$port" \
+            --user=root \
+            --password=root \
+            --database=mysql \
+            --connect-timeout=10 \
+            --silent \
+            --execute="SHOW GLOBAL VARIABLES" \
+            > "$mysql_preflight_stdout" 2> "$mysql_preflight_stderr"
+          mysql_preflight_status="$?"
+          set -e
+
+          if [ "$mysql_preflight_status" -ne 0 ]; then
+            echo "MySQL client preflight failed with exit code $mysql_preflight_status." >&2
+            echo "### mysql stdout" >&2
+            cat "$mysql_preflight_stdout" >&2 || true
+            echo "### mysql stderr" >&2
+            cat "$mysql_preflight_stderr" >&2 || true
+            echo "### proxy log" >&2
+            cat "$proxy_log" >&2 || true
+            exit "$mysql_preflight_status"
+          fi
+
+          set +e
+          (
+            cd "$MYSQL_TEST_DIR"
+            MYSQL_TEST="$MYSQLTEST_BIN" perl ./mysql-test-run.pl \
+              --extern host=127.0.0.1 \
+              --extern port="$port" \
+              --extern user=root \
+              --extern password=root \
+              --extern database=test \
+              --force \
+              --timer \
+              --parallel=1 \
+              --client-bindir="$MYSQL_CLIENT_BINDIR" \
+              --vardir="$vardir"
+          )
+          status="$?"
+          set -e
+
+          {
+            echo "## MySQL Server Result Suite"
+            echo
+            echo "- Test source: MySQL server test-suite archive."
+            echo "- Runner: \`$MYSQLTEST_BIN\`."
+            echo "- Target: PHP MySQL proxy backed by the SQLite driver, exposing database \`test\`."
+            echo "- Exit status: \`$status\`."
+            echo
+            echo "### Proxy log tail"
+            echo
+            echo '```text'
+            tail -100 "$proxy_log" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$status"
