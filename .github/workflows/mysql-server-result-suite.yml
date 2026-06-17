@@ -68,10 +68,14 @@ jobs:
           tar -xJf "$download_path" -C "$install_dir" --strip-components=1
 
           mkdir -p "$install_dir/share"
-          if [ -d /usr/share/mysql ]; then
-            ln -sfn /usr/share/mysql "$install_dir/share/mysql"
-          else
-            mkdir -p "$install_dir/share/mysql"
+          for mysql_share_dir in /usr/share/mysql /usr/share/mariadb; do
+            if [ -d "$mysql_share_dir/charsets" ]; then
+              ln -sfn "$mysql_share_dir" "$install_dir/share/mysql"
+              break
+            fi
+          done
+          if [ ! -e "$install_dir/share/mysql" ]; then
+            mkdir -p "$install_dir/share/mysql/charsets"
           fi
 
           mysql_test_dir="$(find "$install_dir" -type f -name mysql-test-run.pl -printf '%h\n' | head -n 1)"
