@@ -90,7 +90,9 @@ fi
 cp "$LOG_FILE" "$ARTIFACTS_DIR/"
 LOG_FILE="$ARTIFACTS_DIR/$(basename "$LOG_FILE")"
 MYSQL_FAILURES_FILE="$ARTIFACTS_DIR/mysql-rejected-lines.txt"
+MYSQL_ACCEPTED_FILE="$ARTIFACTS_DIR/mysql-accepted-prefix.sql"
 : > "$MYSQL_FAILURES_FILE"
+: > "$MYSQL_ACCEPTED_FILE"
 
 LINE_NUMBER=0
 while IFS= read -r LINE || [ -n "$LINE" ]; do
@@ -109,6 +111,7 @@ while IFS= read -r LINE || [ -n "$LINE" ]; do
 
 	if [[ "$SQL" =~ ^[Uu][Ss][Ee][[:space:]]+([^[:space:];]+) ]]; then
 		CURRENT_DB="${BASH_REMATCH[1]}"
+		printf '%s\n' "$SQL" >> "$MYSQL_ACCEPTED_FILE"
 		continue
 	fi
 
@@ -123,6 +126,14 @@ while IFS= read -r LINE || [ -n "$LINE" ]; do
 	if ! docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PASSWORD" --batch --raw "${MYSQL_ARGS[@]}" < "$TMP_SQL" >/dev/null 2>&1; then
 		printf '%s\n' "$LINE_NUMBER" >> "$MYSQL_FAILURES_FILE"
 		SKIP_ARGS+=( "--skip-line=$LINE_NUMBER" )
+		# Non-transactional MySQL engines can keep partial changes after errors.
+		# Rebuild from the accepted prefix so later filtering does not depend on skipped side effects.
+		if ! docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_PASSWORD" --batch --raw < "$MYSQL_ACCEPTED_FILE" >/dev/null 2>&1; then
+			echo "Failed to restore MySQL state from accepted SQLancer prefix after line $LINE_NUMBER." >&2
+			exit 1
+		fi
+	else
+		printf '%s\n' "$SQL" >> "$MYSQL_ACCEPTED_FILE"
 	fi
 	rm -f "$TMP_SQL"
 done < "$LOG_FILE"
