@@ -4363,7 +4363,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 				$disambiguated_order_list[] = sprintf(
 					'%s%s',
-					$disambiguated_item ?? $this->translate( $order_expr ),
+					$disambiguated_item ?? $this->translate_ordering_expression( $order_expr ),
 					null !== $order_direction ? ( ' ' . $this->translate( $order_direction ) ) : ''
 				);
 			}
@@ -4422,7 +4422,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$disambiguated_item = $this->disambiguate_item( $disambiguation_map, $group_by_expr );
 
 					$disambiguated_group_by_list[] = $disambiguated_item
-						?? $this->translate_group_by_expression( $group_by_expr );
+						?? $this->translate_ordering_expression( $group_by_expr );
 				}
 				$group_by_clause = 'GROUP BY ' . implode( ', ', $disambiguated_group_by_list );
 			}
@@ -5977,16 +5977,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Translate a GROUP BY expression.
+	 * Translate an ORDER BY or GROUP BY expression.
 	 *
-	 * SQLite treats integer constants in GROUP BY as select-list ordinals. MySQL
-	 * accepts negative integer constants as expressions, so force those through
-	 * SQLite's expression path.
+	 * SQLite treats integer constants in ORDER BY and GROUP BY as select-list
+	 * ordinals. MySQL accepts negative integer constants as expressions, so
+	 * force those through SQLite's expression path.
 	 *
 	 * @param  WP_Parser_Node $expr The expression AST node.
-	 * @return string              The translated GROUP BY expression.
+	 * @return string              The translated ORDER BY or GROUP BY expression.
 	 */
-	private function translate_group_by_expression( WP_Parser_Node $expr ): string {
+	private function translate_ordering_expression( WP_Parser_Node $expr ): string {
 		$translated = $this->translate( $expr );
 		if ( preg_match( '/^-\\s*\\d+$/', $translated ) ) {
 			return '0 + ' . $translated;

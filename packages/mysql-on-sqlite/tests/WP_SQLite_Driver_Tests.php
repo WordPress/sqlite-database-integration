@@ -10674,6 +10674,15 @@ END;
 		$this->assertSame( array(), $result );
 	}
 
+	public function testSqlancerOrderByNegativeIntegerLiteralIsExpression(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(NULL)' );
+
+		$result = $this->assertQuery( 'SELECT (+ ( EXISTS (SELECT 1))) AS ref0 FROM t0 WHERE (+ (BIT_COUNT(1371172065))) GROUP BY (+ ( EXISTS (SELECT 1))) ORDER BY -1173568737 LIMIT 4374681039449100574' );
+
+		$this->assertSame( '1', $result[0]->ref0 );
+	}
+
 	public function testSqlancerCountDistinctMultipleExpressionsUsesTupleIdentity(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 INT, c1 TEXT)' );
 		$this->assertQuery( "INSERT INTO t0(c0, c1) VALUES(1, 'a'), (1, 'a'), (1, 'b'), (NULL, 'b'), (2, NULL)" );
