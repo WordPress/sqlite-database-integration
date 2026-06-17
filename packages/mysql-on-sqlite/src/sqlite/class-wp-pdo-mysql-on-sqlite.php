@@ -4689,7 +4689,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// items with the ones that were disambiguated using the SELECT list.
 			$parts = array();
 			foreach ( $node->get_children() as $child ) {
-				if ( $child instanceof WP_Parser_Node && 'groupByClause' === $child->rule_name ) {
+				if ( $this->is_ignored_select_option_token( $child ) ) {
+					continue;
+				} elseif ( $child instanceof WP_Parser_Node && 'groupByClause' === $child->rule_name ) {
 					$parts[] = $group_by_clause;
 				} elseif ( $child instanceof WP_Parser_Node && 'havingClause' === $child->rule_name ) {
 					// SQLite doesn't allow using the "HAVING" clause without "GROUP BY".
@@ -4707,7 +4709,49 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 			return implode( ' ', $parts );
 		}
-		return $this->translate_sequence( $node->get_children() );
+
+		$parts = array();
+		foreach ( $node->get_children() as $child ) {
+			if ( $this->is_ignored_select_option_token( $child ) ) {
+				continue;
+			}
+
+			$part = $this->translate( $child );
+			if ( null !== $part ) {
+				$parts[] = $part;
+			}
+		}
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Check whether a token is a MySQL-only SELECT option that SQLite should ignore.
+	 *
+	 * @param mixed $child The AST child node or token.
+	 * @return bool Whether the token should be dropped from a SELECT option list.
+	 */
+	private function is_ignored_select_option_token( $child ): bool {
+		if ( $child instanceof WP_Parser_Node && 'selectOption' === $child->rule_name ) {
+			$child = $child->get_first_descendant_token();
+		}
+
+		if ( ! $child instanceof WP_MySQL_Token ) {
+			return false;
+		}
+
+		return in_array(
+			$child->id,
+			array(
+				WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+				WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL,
+				WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL,
+				WP_MySQL_Lexer::SQL_CACHE_SYMBOL,
+				WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL,
+				WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			),
+			true
+		);
 	}
 
 	/**

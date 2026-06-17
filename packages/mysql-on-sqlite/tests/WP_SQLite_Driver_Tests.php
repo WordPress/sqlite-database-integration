@@ -10892,6 +10892,28 @@ END;
 		$this->assertSame( '2', $result[0]->rows_count );
 	}
 
+	public function testSqlancerSelectOptimizerHintsAreDropped(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 TINYTEXT NULL)' );
+		$this->assertQuery( "INSERT INTO t0(c0) VALUES('b'), ('a'), (NULL)" );
+
+		$result = $this->assertQuery( 'SELECT DISTINCT SQL_SMALL_RESULT t0.c0 AS ref0 FROM t0 WHERE ((CAST(t0.c0 AS SIGNED)) >= ((496989597) IN (NULL))) IS NULL ORDER BY t0.c0' );
+
+		$this->assertCount( 3, $result );
+		$this->assertNull( $result[0]->ref0 );
+		$this->assertSame( 'a', $result[1]->ref0 );
+		$this->assertSame( 'b', $result[2]->ref0 );
+
+		$result = $this->assertQuery( 'SELECT DISTINCT SQL_BIG_RESULT STRAIGHT_JOIN SQL_NO_CACHE t0.c0 AS ref0 FROM t0 WHERE t0.c0 IS NOT NULL ORDER BY t0.c0' );
+
+		$this->assertCount( 2, $result );
+		$this->assertSame( 'a', $result[0]->ref0 );
+		$this->assertSame( 'b', $result[1]->ref0 );
+
+		$result = $this->assertQuery( 'SELECT HIGH_PRIORITY SQL_BUFFER_RESULT SQL_CACHE COUNT(*) AS rows_count FROM t0' );
+
+		$this->assertSame( '3', $result[0]->rows_count );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (

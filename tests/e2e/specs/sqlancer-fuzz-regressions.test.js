@@ -208,6 +208,13 @@ sdi_sqlancer_query( "INSERT INTO $if_truthiness_table(c0) VALUES(1), (2)" );
 sdi_sqlancer_query( "CREATE UNIQUE INDEX i_sqlancer_if_truthiness ON $if_truthiness_table((IF((- (732094579)), CAST(NULL AS SIGNED), $if_truthiness_table.c0))) ALGORITHM COPY" );
 $if_truthiness_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, IF((- (732094579)), CAST(NULL AS SIGNED), 9) AS negative_truthy, IF(0, 1, 2) AS zero_falsy, IF(NULL, 1, 2) AS null_falsy, IF('1abc', 1, 2) AS leading_numeric_truthy, IF('abc', 1, 2) AS non_numeric_falsy FROM $if_truthiness_table", ARRAY_A );
 
+$select_modifier_table = $wpdb->prefix . 'sqlancer_select_modifiers';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $select_modifier_table" );
+sdi_sqlancer_query( "CREATE TABLE $select_modifier_table(c0 TINYTEXT NULL)" );
+sdi_sqlancer_query( "INSERT INTO $select_modifier_table(c0) VALUES('b'), ('a'), (NULL)" );
+$select_modifier_rows = $wpdb->get_results( "SELECT DISTINCT SQL_SMALL_RESULT SQL_BIG_RESULT SQL_NO_CACHE STRAIGHT_JOIN c0 AS ref0 FROM $select_modifier_table ORDER BY c0", ARRAY_A );
+$select_modifier_count_row = $wpdb->get_row( "SELECT HIGH_PRIORITY SQL_BUFFER_RESULT SQL_CACHE COUNT(*) AS rows_count FROM $select_modifier_table", ARRAY_A );
+
 echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
@@ -224,6 +231,8 @@ echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row
 echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_IF_TRUTHINESS_JSON:' . wp_json_encode( $if_truthiness_row ) . PHP_EOL;
+echo 'SQLANCER_SELECT_MODIFIER_JSON:' . wp_json_encode( $select_modifier_rows ) . PHP_EOL;
+echo 'SQLANCER_SELECT_MODIFIER_COUNT_JSON:' . wp_json_encode( $select_modifier_count_row ) . PHP_EOL;
 echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_JSON:' . wp_json_encode( $decimal_scale_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:' . wp_json_encode( $decimal_scale_after_update_row ) . PHP_EOL;
@@ -725,6 +734,52 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 			null_falsy: '2',
 			leading_numeric_truthy: '1',
 			non_numeric_falsy: '2',
+		} );
+
+		const selectModifierJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_SELECT_MODIFIER_JSON:' )
+			);
+
+		expect( selectModifierJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				selectModifierJsonLine.replace(
+					'SQLANCER_SELECT_MODIFIER_JSON:',
+					''
+				)
+			)
+		).toEqual( [
+			{
+				ref0: null,
+			},
+			{
+				ref0: 'a',
+			},
+			{
+				ref0: 'b',
+			},
+		] );
+
+		const selectModifierCountJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_SELECT_MODIFIER_COUNT_JSON:' )
+			);
+
+		expect( selectModifierCountJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				selectModifierCountJsonLine.replace(
+					'SQLANCER_SELECT_MODIFIER_COUNT_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			rows_count: '3',
 		} );
 		} );
 	} );
