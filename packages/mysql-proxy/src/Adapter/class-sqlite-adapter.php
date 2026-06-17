@@ -44,9 +44,10 @@ class SQLite_Adapter implements Adapter {
 		$rows           = array();
 
 		try {
-			$query          = $this->replace_database_alias_in_use_query( $query );
-			$return_value   = $this->sqlite_driver->query( $query );
-			$last_insert_id = $this->sqlite_driver->get_insert_id() ?? null;
+			$show_variables_like = $this->get_show_variables_like_pattern( $query );
+			$query               = $this->replace_database_alias_in_use_query( $query );
+			$return_value        = $this->sqlite_driver->query( $query );
+			$last_insert_id      = $this->sqlite_driver->get_insert_id() ?? null;
 			if ( is_numeric( $return_value ) ) {
 				$affected_rows = (int) $return_value;
 			} elseif ( is_array( $return_value ) ) {
@@ -54,6 +55,9 @@ class SQLite_Adapter implements Adapter {
 			}
 			if ( $this->sqlite_driver->get_last_column_count() > 0 ) {
 				$columns = $this->computeColumnInfo();
+			}
+			if ( false !== $show_variables_like && empty( $rows ) ) {
+				return $this->get_show_variables_result( $show_variables_like );
 			}
 			return MySQL_Result::from_data( $affected_rows, $last_insert_id, $columns, $rows ?? array() );
 		} catch ( Throwable $e ) {
@@ -86,6 +90,155 @@ class SQLite_Adapter implements Adapter {
 		}
 
 		return 'USE `' . str_replace( '`', '``', $this->database_name ) . '`';
+	}
+
+	/**
+	 * Extract a LIKE pattern from SHOW VARIABLES queries.
+	 *
+	 * @param  string $query The query to inspect.
+	 * @return string|null|false LIKE pattern, null for all variables, or false for non-matching queries.
+	 */
+	private function get_show_variables_like_pattern( string $query ) {
+		if ( ! preg_match( '/^\s*SHOW\s+(?:(?:GLOBAL|SESSION|LOCAL)\s+)?VARIABLES(?:\s+LIKE\s+((?:\'(?:\'\'|[^\'])*\'|"(?:""|[^"])*"|[^\s;]+)))?\s*;?\s*$/i', $query, $matches ) ) {
+			return false;
+		}
+
+		if ( empty( $matches[1] ) ) {
+			return null;
+		}
+
+		$pattern = $matches[1];
+		$quote   = $pattern[0];
+		if ( ( "'" === $quote || '"' === $quote ) && substr( $pattern, -1 ) === $quote ) {
+			$pattern = substr( $pattern, 1, -1 );
+			$pattern = str_replace( $quote . $quote, $quote, $pattern );
+		}
+
+		return $pattern;
+	}
+
+	/**
+	 * Build a fallback SHOW VARIABLES result for clients that need server metadata.
+	 *
+	 * @param  string|null $like_pattern Optional SHOW VARIABLES LIKE pattern.
+	 * @return MySQL_Result
+	 */
+	private function get_show_variables_result( $like_pattern ): MySQL_Result {
+		$rows = array();
+
+		foreach ( $this->get_proxy_server_variables() as $name => $value ) {
+			if ( null !== $like_pattern && ! $this->mysql_like_matches( $name, $like_pattern ) ) {
+				continue;
+			}
+
+			$rows[] = (object) array(
+				'Variable_name' => $name,
+				'Value'         => $value,
+			);
+		}
+
+		return MySQL_Result::from_data( 0, 0, $this->get_show_variables_columns(), $rows );
+	}
+
+	/**
+	 * Return the minimal server variables needed by MySQL clients and MTR startup probes.
+	 *
+	 * @return array<string, string>
+	 */
+	private function get_proxy_server_variables(): array {
+		$variables = array(
+			'autocommit'                 => 'ON',
+			'basedir'                    => '',
+			'binlog_format'              => 'ROW',
+			'character_set_client'       => 'utf8mb4',
+			'character_set_connection'   => 'utf8mb4',
+			'character_set_results'      => 'utf8mb4',
+			'character_set_server'       => 'utf8mb4',
+			'collation_connection'       => 'utf8mb4_0900_ai_ci',
+			'collation_server'           => 'utf8mb4_0900_ai_ci',
+			'datadir'                    => '',
+			'default_storage_engine'     => 'InnoDB',
+			'default_tmp_storage_engine' => 'InnoDB',
+			'gtid_mode'                  => 'OFF',
+			'have_ssl'                   => 'NO',
+			'have_symlink'               => 'YES',
+			'hostname'                   => 'localhost',
+			'innodb_page_size'           => '16384',
+			'log_bin'                    => 'OFF',
+			'lower_case_file_system'     => 'OFF',
+			'lower_case_table_names'     => '0',
+			'max_allowed_packet'         => '67108864',
+			'max_connections'            => '151',
+			'performance_schema'         => 'OFF',
+			'port'                       => '0',
+			'protocol_version'           => '10',
+			'read_only'                  => 'OFF',
+			'secure_file_priv'           => '',
+			'server_id'                  => '1',
+			'skip_name_resolve'          => 'OFF',
+			'skip_networking'            => 'OFF',
+			'sql_mode'                   => '',
+			'storage_engine'             => 'InnoDB',
+			'super_read_only'            => 'OFF',
+			'system_time_zone'           => 'UTC',
+			'time_zone'                  => 'SYSTEM',
+			'tmpdir'                     => sys_get_temp_dir(),
+			'version'                    => '8.0.46',
+			'version_comment'            => 'WordPress SQLite Database Integration MySQL proxy',
+			'version_compile_machine'    => 'x86_64',
+			'version_compile_os'         => PHP_OS_FAMILY,
+		);
+
+		ksort( $variables );
+		return $variables;
+	}
+
+	/**
+	 * Return SHOW VARIABLES column definitions.
+	 *
+	 * @return array<int, array<string, int|string>>
+	 */
+	private function get_show_variables_columns(): array {
+		return array(
+			array(
+				'name'     => 'Variable_name',
+				'length'   => 64,
+				'type'     => MySQL_Protocol::FIELD_TYPE_VAR_STRING,
+				'flags'    => 0,
+				'decimals' => 0,
+			),
+			array(
+				'name'     => 'Value',
+				'length'   => 1024,
+				'type'     => MySQL_Protocol::FIELD_TYPE_VAR_STRING,
+				'flags'    => 0,
+				'decimals' => 0,
+			),
+		);
+	}
+
+	/**
+	 * Match MySQL SHOW VARIABLES LIKE patterns.
+	 *
+	 * @param  string $value   Value to compare.
+	 * @param  string $pattern MySQL LIKE pattern.
+	 * @return bool
+	 */
+	private function mysql_like_matches( string $value, string $pattern ): bool {
+		$regex  = '';
+		$length = strlen( $pattern );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$char = $pattern[ $i ];
+			if ( '%' === $char ) {
+				$regex .= '.*';
+			} elseif ( '_' === $char ) {
+				$regex .= '.';
+			} else {
+				$regex .= preg_quote( $char, '/' );
+			}
+		}
+
+		return 1 === preg_match( '/^' . $regex . '$/i', $value );
 	}
 
 	public function computeColumnInfo() {
