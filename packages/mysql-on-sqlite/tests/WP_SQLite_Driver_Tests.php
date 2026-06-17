@@ -6787,6 +6787,30 @@ QUERY
 		$this->assertCount( 0, $result );
 	}
 
+	public function testDropRedundantPrimaryColumnUniqueIndex(): void {
+		$this->assertQuery( "CREATE TABLE t (c0 DECIMAL ZEROFILL PRIMARY KEY UNIQUE KEY COMMENT 'asdf' NOT NULL COLUMN_FORMAT FIXED STORAGE DISK)" );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+		$this->assertEquals( 'c0', $result[0]->Column_name );
+
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'sqlite_autoindex_t_1', $result[0]['name'] );
+
+		$this->assertQuery( 'DROP INDEX c0 ON t ALGORITHM=DEFAULT LOCK=DEFAULT' );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'PRIMARY', $result[0]->Key_name );
+		$this->assertEquals( 'c0', $result[0]->Column_name );
+
+		$result = $this->engine->execute_sqlite_query( "PRAGMA index_list('t')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'sqlite_autoindex_t_1', $result[0]['name'] );
+	}
+
 	public function testComplexInformationSchemaQueries(): void {
 		$create_table_query = <<<END
 CREATE TABLE `wp_users` (

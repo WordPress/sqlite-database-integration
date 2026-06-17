@@ -107,6 +107,12 @@ sdi_sqlancer_query( "CREATE TABLE $literal_index_table(c1 MEDIUMINT UNIQUE KEY C
 sdi_sqlancer_query( "CREATE UNIQUE INDEX i_sqlancer_literal ON $literal_index_table(('+4')) VISIBLE" );
 $literal_index_row = $wpdb->get_row( "SHOW INDEX FROM $literal_index_table WHERE Key_name = 'i_sqlancer_literal'", ARRAY_A );
 
+$redundant_index_table = $wpdb->prefix . 'sqlancer_redundant_index';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $redundant_index_table" );
+sdi_sqlancer_query( "CREATE TABLE $redundant_index_table(c0 DECIMAL ZEROFILL PRIMARY KEY UNIQUE KEY COMMENT 'asdf' NOT NULL COLUMN_FORMAT FIXED STORAGE DISK)" );
+sdi_sqlancer_query( "DROP INDEX c0 ON $redundant_index_table ALGORITHM=DEFAULT LOCK=DEFAULT" );
+$redundant_index_rows = $wpdb->get_results( "SHOW INDEX FROM $redundant_index_table", ARRAY_A );
+
 $count_distinct_table = $wpdb->prefix . 'sqlancer_count_distinct';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $count_distinct_table" );
 sdi_sqlancer_query( "CREATE TABLE $count_distinct_table(c0 INT, c1 TEXT)" );
@@ -147,6 +153,7 @@ echo 'SQLANCER_ORDER_NEGATIVE_JSON:' . wp_json_encode( $order_negative_row ) . P
 echo 'SQLANCER_ORDERING_EXPRESSION_JSON:' . wp_json_encode( $ordering_expression_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
 echo 'SQLANCER_LITERAL_INDEX_JSON:' . wp_json_encode( $literal_index_row ) . PHP_EOL;
+echo 'SQLANCER_REDUNDANT_INDEX_JSON:' . wp_json_encode( $redundant_index_rows ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row ) . PHP_EOL;
@@ -336,6 +343,28 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 				Expression: "'+4'",
 			} )
 		);
+
+		const redundantIndexJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_REDUNDANT_INDEX_JSON:' )
+			);
+
+		expect( redundantIndexJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				redundantIndexJsonLine.replace(
+					'SQLANCER_REDUNDANT_INDEX_JSON:',
+					''
+				)
+			)
+		).toEqual( [
+			expect.objectContaining( {
+				Key_name: 'PRIMARY',
+				Column_name: 'c0',
+			} ),
+		] );
 
 		const countDistinctJsonLine = output
 			.trim()

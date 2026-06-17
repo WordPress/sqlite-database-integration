@@ -2847,7 +2847,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		$sqlite_index_name = $this->resolve_sqlite_index_name( $table_name, $index_name );
+		$index_exists      = $this->sqlite_index_exists( $table_name, $sqlite_index_name );
+		$drop_is_noop      = ! $index_exists && $this->is_redundant_primary_key_column_index_drop( $table_name, $index_name );
+
 		$this->information_schema_builder->record_drop_index( $node );
+		if ( $drop_is_noop ) {
+			return;
+		}
+
 		$this->execute_sqlite_query(
 			sprintf(
 				'DROP INDEX %s',
@@ -2898,6 +2905,60 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		return $expected_sqlite_index_name;
+	}
+
+	/**
+	 * Check whether a physical SQLite index exists on a table.
+	 *
+	 * @param  string $table_name        The MySQL table name.
+	 * @param  string $sqlite_index_name The SQLite index name.
+	 * @return bool                      Whether the index exists.
+	 */
+	private function sqlite_index_exists( string $table_name, string $sqlite_index_name ): bool {
+		$indexes = $this->execute_sqlite_query(
+			sprintf(
+				'PRAGMA index_list(%s)',
+				$this->quote_sqlite_identifier( $table_name )
+			)
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		return in_array( $sqlite_index_name, array_column( $indexes, 'name' ), true );
+	}
+
+	/**
+	 * Check whether a missing index drop targets a redundant primary column index.
+	 *
+	 * MySQL accepts "DROP INDEX column_name" for a column declared with both
+	 * PRIMARY KEY and UNIQUE KEY. SQLite only creates the primary-key autoindex,
+	 * so there is no separate physical index to drop.
+	 *
+	 * @param  string $table_name The MySQL table name.
+	 * @param  string $index_name The MySQL index name.
+	 * @return bool               Whether the drop is a MySQL-compatible no-op.
+	 */
+	private function is_redundant_primary_key_column_index_drop( string $table_name, string $index_name ): bool {
+		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$statistics_table   = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
+		$row                = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT
+					COUNT(*) AS primary_parts,
+					SUM(column_name = ? AND seq_in_index = 1) AS matching_parts
+				FROM %s
+				WHERE table_schema = ?
+				AND table_name = ?
+				AND index_name = ?',
+				$this->quote_sqlite_identifier( $statistics_table )
+			),
+			array(
+				$index_name,
+				$this->get_saved_db_name(),
+				$table_name,
+				'PRIMARY',
+			)
+		)->fetch( PDO::FETCH_ASSOC );
+
+		return 1 === (int) $row['primary_parts'] && 1 === (int) $row['matching_parts'];
 	}
 
 	/**
