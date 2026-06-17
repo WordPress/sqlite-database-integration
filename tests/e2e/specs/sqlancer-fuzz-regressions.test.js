@@ -6,6 +6,9 @@ import { test, expect } from '@wordpress/e2e-test-utils-playwright';
 test.describe( 'SQLancer fuzz regressions', () => {
 	test( 'replays reduced INSERT and DELETE modifier failures', async () => {
 		const { execFileSync } = await import( 'node:child_process' );
+		const repoRoot =
+			process.env.GITHUB_WORKSPACE ||
+			process.cwd().replace( /\/tests\/e2e$/, '' );
 		const output = execFileSync(
 			'npm',
 			[
@@ -81,7 +84,7 @@ $signed_smallint_table = $wpdb->prefix . 'sqlancer_signed_smallint_sum';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $signed_smallint_table" );
 sdi_sqlancer_query( "CREATE TABLE $signed_smallint_table(c0 SMALLINT(107) COLUMN_FORMAT DYNAMIC PRIMARY KEY UNIQUE KEY)" );
 sdi_sqlancer_query( "INSERT IGNORE INTO $signed_smallint_table(c0) VALUES(1375461291), (-627010191), (32190009), (0.7902617242915789), ('-1e500'), ('2jc7hoh\r'), (2052592843)" );
-$signed_smallint_row = $wpdb->get_row( "SELECT GROUP_CONCAT(c0 ORDER BY c0) AS saved_values, SUM(c0) AS sum_value, SUM(DISTINCT c0) AS sum_distinct_value, COUNT(*) AS row_count FROM $signed_smallint_table", ARRAY_A );
+$signed_smallint_row = $wpdb->get_row( "SELECT GROUP_CONCAT(c0) AS saved_values, SUM(c0) AS sum_value, SUM(DISTINCT c0) AS sum_distinct_value, COUNT(*) AS row_count FROM (SELECT c0 FROM $signed_smallint_table ORDER BY c0) ordered_values", ARRAY_A );
 
 $memory_default_table = $wpdb->prefix . 'sqlancer_memory_implicit_default';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $memory_default_table" );
@@ -142,7 +145,7 @@ sdi_sqlancer_query( "INSERT DELAYED INTO $prefix_index_table(c0) VALUES(0.690489
 sdi_sqlancer_query( "REPLACE INTO $prefix_index_table(c0) VALUES(0.7092344227870846)" );
 sdi_sqlancer_query( "DROP INDEX i_sqlancer_prefix_2 ON $prefix_index_table ALGORITHM=DEFAULT" );
 sdi_sqlancer_query( "INSERT LOW_PRIORITY INTO $prefix_index_table(c0) VALUES(0.6904897792105997)" );
-$prefix_index_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, GROUP_CONCAT(SUBSTR(c0, 1, 3) ORDER BY c0) AS saved_prefixes FROM $prefix_index_table", ARRAY_A );
+$prefix_index_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, GROUP_CONCAT(saved_prefix) AS saved_prefixes FROM (SELECT SUBSTR(c0, 1, 3) AS saved_prefix FROM $prefix_index_table ORDER BY c0) ordered_prefixes", ARRAY_A );
 
 $literal_index_table = $wpdb->prefix . 'sqlancer_literal_index';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $literal_index_table" );
@@ -232,7 +235,7 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 `,
 			],
 			{
-				cwd: process.cwd(),
+				cwd: repoRoot,
 				encoding: 'utf8',
 			}
 			);
