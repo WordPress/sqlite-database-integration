@@ -11,6 +11,7 @@ MYSQL_TMPFS_SIZE="${MYSQL_TMPFS_SIZE:-1024m}"
 RANDOM_SEED="${RANDOM_SEED:-20260617}"
 NUM_QUERIES="${NUM_QUERIES:-200}"
 MAX_GENERATED_DATABASES="${MAX_GENERATED_DATABASES:-1}"
+SQLANCER_MYSQL_ORACLE="${SQLANCER_MYSQL_ORACLE:-FUZZER}"
 DATABASE_PREFIX="${DATABASE_PREFIX:-sdi_fuzz}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-/tmp/sdi-sqlancer-artifacts/$(date -u +%Y%m%d-%H%M%S)}"
 
@@ -81,7 +82,7 @@ docker run --rm \
 	--password "$MYSQL_PASSWORD" \
 	--host "$MYSQL_CONTAINER" \
 	--port 3306 \
-	mysql --oracle FUZZER
+	mysql --oracle "$SQLANCER_MYSQL_ORACLE"
 
 LOG_FILE="$(find "$SQLANCER_DIR/logs/mysql" -maxdepth 1 -type f -name '*-cur.log' | sort | head -n 1)"
 if [ -z "$LOG_FILE" ]; then
