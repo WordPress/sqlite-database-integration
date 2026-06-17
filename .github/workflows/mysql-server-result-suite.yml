@@ -67,6 +67,13 @@ jobs:
           mkdir -p "$install_dir"
           tar -xJf "$download_path" -C "$install_dir" --strip-components=1
 
+          mkdir -p "$install_dir/share"
+          if [ -d /usr/share/mysql ]; then
+            ln -sfn /usr/share/mysql "$install_dir/share/mysql"
+          else
+            mkdir -p "$install_dir/share/mysql"
+          fi
+
           mysql_test_dir="$(find "$install_dir" -type f -name mysql-test-run.pl -printf '%h\n' | head -n 1)"
           mysqltest_bin="$(find "$install_dir" -type f -name mysqltest -perm /111 -print | head -n 1)"
 
