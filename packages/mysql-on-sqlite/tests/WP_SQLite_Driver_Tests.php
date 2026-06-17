@@ -10629,6 +10629,25 @@ END;
 		$this->assertSame( '-271461335', (string) (int) $result[0]->c0 );
 	}
 
+	public function testSqlancerZerofillInsertIgnoreClipsNegativeValuesBeforeUniqueUpdate(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 DOUBLE ZEROFILL UNIQUE, c1 FLOAT, c2 DECIMAL UNIQUE KEY)' );
+		$this->assertQuery( 'INSERT IGNORE INTO t0(c1, c0) VALUES(-255822003, "-1773731655"), (0.3800962993552307, NULL), (NULL, "¹"), (802484078, "&g瞟Xx8-U"), (1992718239, "")' );
+		$this->assertQuery( 'INSERT LOW_PRIORITY IGNORE INTO t0(c1, c0) VALUES(NULL, 13195222)' );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count, SUM(c0 = 0) AS zero_rows, SUM(c0 < 0) AS negative_rows, SUM(c0 = 13195222) AS positive_rows FROM t0' );
+
+		$this->assertSame( '3', $result[0]->rows_count );
+		$this->assertSame( '1', $result[0]->zero_rows );
+		$this->assertSame( '0', $result[0]->negative_rows );
+		$this->assertSame( '1', $result[0]->positive_rows );
+
+		$this->assertQuery( 'UPDATE t0 SET c2=0.3350118396679408, c1=8.02484078E8 WHERE t0.c0' );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS updated_rows, MAX(c2) AS c2 FROM t0 WHERE c2 IS NOT NULL' );
+
+		$this->assertSame( '1', $result[0]->updated_rows );
+		$this->assertSame( '0', (string) (int) $result[0]->c2 );
+	}
+
 	public function testSqlancerDeleteIgnoreDropsIgnoredRows(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL)' );
 		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );

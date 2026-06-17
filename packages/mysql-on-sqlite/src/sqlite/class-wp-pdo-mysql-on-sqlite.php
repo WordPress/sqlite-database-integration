@@ -5594,7 +5594,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$tables_table  = $this->information_schema_builder->get_table_name( $is_temporary, 'tables' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, numeric_scale, extra
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, numeric_scale, column_type, extra
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
@@ -5778,7 +5778,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$column['DATA_TYPE'],
 					$identifier,
 					$ignore_errors || $use_non_transactional_multi_row_defaults,
-					null === $column['NUMERIC_SCALE'] ? null : (int) $column['NUMERIC_SCALE']
+					null === $column['NUMERIC_SCALE'] ? null : (int) $column['NUMERIC_SCALE'],
+					$column['COLUMN_TYPE']
 				);
 				$is_auto_increment = str_contains( $column['EXTRA'], 'auto_increment' );
 
@@ -5984,7 +5985,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, numeric_scale, column_default
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, numeric_scale, column_default, column_type
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
@@ -6027,6 +6028,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			$data_type     = $column_info['DATA_TYPE'];
 			$numeric_scale = null === $column_info['NUMERIC_SCALE'] ? null : (int) $column_info['NUMERIC_SCALE'];
+			$column_type   = $column_info['COLUMN_TYPE'];
 			$is_nullable   = 'YES' === $column_info['IS_NULLABLE'];
 			$default       = $column_info['COLUMN_DEFAULT'];
 
@@ -6039,7 +6041,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			// Apply type casting.
-			$value = $this->cast_value_for_saving( $data_type, $value, false, $numeric_scale );
+			$value = $this->cast_value_for_saving( $data_type, $value, false, $numeric_scale, $column_type );
 
 			/*
 			 * In MySQL non-STRICT mode, when a column is declared as NOT NULL,
@@ -6384,7 +6386,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		string $mysql_data_type,
 		string $translated_value,
 		bool $ignore_errors = false,
-		?int $numeric_scale = null
+		?int $numeric_scale = null,
+		?string $column_type = null
 	): string {
 		// TODO: This is also a good place to implement checks for maximum column
 		//       lengths with truncating or bailing out depending on the SQL mode.
@@ -6539,7 +6542,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 				if ( $is_integer_type ) {
 					if ( ! $is_strict_mode || $ignore_errors ) {
-						return sprintf( 'CAST(ROUND(%s) AS INTEGER)', $translated_value );
+						return $this->clamp_unsigned_save_value(
+							sprintf( 'CAST(ROUND(%s) AS INTEGER)', $translated_value ),
+							$mysql_data_type,
+							$column_type
+						);
 					}
 					return sprintf(
 						"CASE WHEN TYPEOF(%s) = 'blob' THEN %s ELSE _mysql_save_integer(%s) END",
@@ -6552,7 +6559,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				if ( 'decimal' === $mysql_data_type ) {
 					$numeric_scale = $numeric_scale ?? 0;
 					if ( ! $is_strict_mode || $ignore_errors ) {
-						return sprintf( 'CAST(ROUND(%s, %d) AS %s)', $translated_value, $numeric_scale, $sqlite_data_type );
+						return $this->clamp_unsigned_save_value(
+							sprintf( 'CAST(ROUND(%s, %d) AS %s)', $translated_value, $numeric_scale, $sqlite_data_type ),
+							$mysql_data_type,
+							$column_type
+						);
 					}
 					return sprintf(
 						"CASE WHEN TYPEOF(%s) = 'blob' THEN %s ELSE _mysql_save_decimal(%s, %d) END",
@@ -6564,10 +6575,66 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 
 				if ( ! $is_strict_mode || $ignore_errors || 'TEXT' === $sqlite_data_type || 'BLOB' === $sqlite_data_type ) {
-					return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+					$value = sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
+					if ( ! $is_strict_mode || $ignore_errors ) {
+						$value = $this->clamp_unsigned_save_value( $value, $mysql_data_type, $column_type );
+					}
+					return $value;
 				}
 				return $translated_value;
 		}
+	}
+
+	/**
+	 * Clamp negative values saved to unsigned numeric columns in tolerant writes.
+	 *
+	 * In MySQL, ZEROFILL implies UNSIGNED. In non-strict or IGNORE writes,
+	 * negative numeric values saved to unsigned columns are clipped to zero with
+	 * a warning. SQLite has no unsigned storage type, so emulate that at save
+	 * time for numeric columns.
+	 *
+	 * @param string      $value           SQL expression for the already-cast value.
+	 * @param string      $mysql_data_type MySQL data type.
+	 * @param string|null $column_type     Full MySQL column type.
+	 * @return string SQL expression with unsigned clipping when needed.
+	 */
+	private function clamp_unsigned_save_value( string $value, string $mysql_data_type, ?string $column_type ): string {
+		if ( null === $column_type ) {
+			return $value;
+		}
+
+		$column_type = strtolower( $column_type );
+		if ( ! str_contains( $column_type, 'unsigned' ) && ! str_contains( $column_type, 'zerofill' ) ) {
+			return $value;
+		}
+
+		if (
+			! in_array(
+				$mysql_data_type,
+				array(
+					'bit',
+					'bool',
+					'boolean',
+					'tinyint',
+					'smallint',
+					'mediumint',
+					'int',
+					'integer',
+					'bigint',
+					'decimal',
+					'float',
+					'double',
+				),
+				true
+			)
+		) {
+			return $value;
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s < 0 THEN 0 ELSE %1$s END',
+			$value
+		);
 	}
 
 	/**

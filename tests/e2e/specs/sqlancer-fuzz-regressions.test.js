@@ -74,6 +74,15 @@ $decimal_scale_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, c0 FROM $de
 sdi_sqlancer_query( "UPDATE $decimal_scale_table SET c0=-271461335" );
 $decimal_scale_after_update_row = $wpdb->get_row( "SELECT c0 FROM $decimal_scale_table", ARRAY_A );
 
+$unsigned_zerofill_table = $wpdb->prefix . 'sqlancer_unsigned_zerofill_t0';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $unsigned_zerofill_table" );
+sdi_sqlancer_query( "CREATE TABLE $unsigned_zerofill_table(c0 DOUBLE ZEROFILL UNIQUE, c1 FLOAT, c2 DECIMAL UNIQUE KEY)" );
+sdi_sqlancer_query( "INSERT IGNORE INTO $unsigned_zerofill_table(c1, c0) VALUES(-255822003, \\"-1773731655\\"), (0.3800962993552307, NULL), (NULL, \\"¹\\"), (802484078, \\"&g瞟Xx8-U\\"), (1992718239, \\"\\")" );
+sdi_sqlancer_query( "INSERT LOW_PRIORITY IGNORE INTO $unsigned_zerofill_table(c1, c0) VALUES(NULL, 13195222)" );
+$unsigned_zerofill_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, SUM(c0 = 0) AS zero_rows, SUM(c0 < 0) AS negative_rows, SUM(c0 = 13195222) AS positive_rows FROM $unsigned_zerofill_table", ARRAY_A );
+sdi_sqlancer_query( "UPDATE $unsigned_zerofill_table SET c2=0.3350118396679408, c1=8.02484078E8 WHERE $unsigned_zerofill_table.c0" );
+$unsigned_zerofill_after_update_row = $wpdb->get_row( "SELECT COUNT(*) AS updated_rows, MAX(c2) AS c2 FROM $unsigned_zerofill_table WHERE c2 IS NOT NULL", ARRAY_A );
+
 $memory_default_table = $wpdb->prefix . 'sqlancer_memory_implicit_default';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $memory_default_table" );
 sdi_sqlancer_query( "CREATE TABLE $memory_default_table(c0 BIGINT ZEROFILL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC PRIMARY KEY) ENGINE = MEMORY, AUTO_INCREMENT = 4115509118782610296" );
@@ -174,6 +183,8 @@ echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_upd
 echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_JSON:' . wp_json_encode( $decimal_scale_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:' . wp_json_encode( $decimal_scale_after_update_row ) . PHP_EOL;
+echo 'SQLANCER_UNSIGNED_ZEROFILL_JSON:' . wp_json_encode( $unsigned_zerofill_row ) . PHP_EOL;
+echo 'SQLANCER_UNSIGNED_ZEROFILL_AFTER_UPDATE_JSON:' . wp_json_encode( $unsigned_zerofill_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . PHP_EOL;
 `,
 			],
@@ -254,6 +265,50 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 			)
 		).toEqual( {
 			c0: '-271461335',
+		} );
+
+		const unsignedZerofillJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_UNSIGNED_ZEROFILL_JSON:' )
+			);
+
+		expect( unsignedZerofillJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				unsignedZerofillJsonLine.replace(
+					'SQLANCER_UNSIGNED_ZEROFILL_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			rows_count: '3',
+			zero_rows: '1',
+			negative_rows: '0',
+			positive_rows: '1',
+		} );
+
+		const unsignedZerofillAfterUpdateJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith(
+					'SQLANCER_UNSIGNED_ZEROFILL_AFTER_UPDATE_JSON:'
+				)
+			);
+
+		expect( unsignedZerofillAfterUpdateJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				unsignedZerofillAfterUpdateJsonLine.replace(
+					'SQLANCER_UNSIGNED_ZEROFILL_AFTER_UPDATE_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			updated_rows: '1',
+			c2: '0',
 		} );
 
 		const memoryDefaultJsonLine = output
