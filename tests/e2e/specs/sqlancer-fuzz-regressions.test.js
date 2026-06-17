@@ -201,6 +201,13 @@ $cast_row = $wpdb->get_row( "SELECT CAST(0.8338761836534807 AS SIGNED) AS rounde
 sdi_sqlancer_query( "UPDATE $cast_table SET c0=\\"\\" WHERE ( EXISTS (SELECT 1 WHERE FALSE)) IN (CAST(IFNULL($cast_table.c0, 0.8338761836534807) AS SIGNED))" );
 $cast_after_update_row = $wpdb->get_row( "SELECT c0 FROM $cast_table", ARRAY_A );
 
+$if_truthiness_table = $wpdb->prefix . 'sqlancer_if_truthiness';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $if_truthiness_table" );
+sdi_sqlancer_query( "CREATE TABLE $if_truthiness_table(c0 DECIMAL PRIMARY KEY NOT NULL)" );
+sdi_sqlancer_query( "INSERT INTO $if_truthiness_table(c0) VALUES(1), (2)" );
+sdi_sqlancer_query( "CREATE UNIQUE INDEX i_sqlancer_if_truthiness ON $if_truthiness_table((IF((- (732094579)), CAST(NULL AS SIGNED), $if_truthiness_table.c0))) ALGORITHM COPY" );
+$if_truthiness_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, IF((- (732094579)), CAST(NULL AS SIGNED), 9) AS negative_truthy, IF(0, 1, 2) AS zero_falsy, IF(NULL, 1, 2) AS null_falsy, IF('1abc', 1, 2) AS leading_numeric_truthy, IF('abc', 1, 2) AS non_numeric_falsy FROM $if_truthiness_table", ARRAY_A );
+
 echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
@@ -216,6 +223,7 @@ echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
+echo 'SQLANCER_IF_TRUTHINESS_JSON:' . wp_json_encode( $if_truthiness_row ) . PHP_EOL;
 echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_JSON:' . wp_json_encode( $decimal_scale_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:' . wp_json_encode( $decimal_scale_after_update_row ) . PHP_EOL;
@@ -693,6 +701,30 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 			)
 		).toEqual( {
 			c0: null,
+		} );
+
+		const ifTruthinessJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_IF_TRUTHINESS_JSON:' )
+			);
+
+		expect( ifTruthinessJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				ifTruthinessJsonLine.replace(
+					'SQLANCER_IF_TRUTHINESS_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			rows_count: '2',
+			negative_truthy: null,
+			zero_falsy: '2',
+			null_falsy: '2',
+			leading_numeric_truthy: '1',
+			non_numeric_falsy: '2',
 		} );
 		} );
 	} );

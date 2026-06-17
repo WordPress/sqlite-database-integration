@@ -782,7 +782,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return mixed
 	 */
 	public function _if( $expression, $truthy, $falsy ) {
-		return ( true === $expression ) ? $truthy : $falsy;
+		if ( null === $expression ) {
+			return $falsy;
+		}
+
+		return ( 0.0 !== (float) $expression ) ? $truthy : $falsy;
 	}
 
 	/**

@@ -10874,6 +10874,24 @@ END;
 		$this->assertNull( $result[0]->c0 );
 	}
 
+	public function testSqlancerIfUsesMysqlNumericTruthinessInFunctionalIndexes(): void {
+		$result = $this->assertQuery( "SELECT IF((- (732094579)), CAST(NULL AS SIGNED), 9) AS negative_truthy, IF(0, 1, 2) AS zero_falsy, IF(NULL, 1, 2) AS null_falsy, IF('1abc', 1, 2) AS leading_numeric_truthy, IF('abc', 1, 2) AS non_numeric_falsy" );
+
+		$this->assertNull( $result[0]->negative_truthy );
+		$this->assertSame( '2', $result[0]->zero_falsy );
+		$this->assertSame( '2', $result[0]->null_falsy );
+		$this->assertSame( '1', $result[0]->leading_numeric_truthy );
+		$this->assertSame( '2', $result[0]->non_numeric_falsy );
+
+		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL PRIMARY KEY NOT NULL)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
+		$this->assertQuery( 'CREATE UNIQUE INDEX i0 USING BTREE ON t0((IF((- (732094579)), CAST(NULL AS SIGNED), t0.c0))) ALGORITHM COPY' );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count FROM t0' );
+
+		$this->assertSame( '2', $result[0]->rows_count );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (
