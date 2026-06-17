@@ -10641,6 +10641,29 @@ END;
 		$this->assertSame( '652769770', (string) (int) $result[0]->max_value );
 	}
 
+	public function testSqlancerMemoryPrimaryKeyMultiRowReplaceUsesImplicitDefaultForNullValues(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( "CREATE TABLE t0(c0 BIGINT ZEROFILL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC PRIMARY KEY) ENGINE = MEMORY, AUTO_INCREMENT = 4115509118782610296" );
+		$this->assertQuery( 'REPLACE INTO t0(c0) VALUES(0.5986269975342084), (4.1155091187826104E18), (NULL)' );
+
+		$result = $this->assertQuery( 'SELECT c0 FROM t0 ORDER BY c0' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'c0' => '0',
+				),
+				(object) array(
+					'c0' => '1',
+				),
+				(object) array(
+					'c0' => '4115509118782610432',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testSqlancerZerofillInsertIgnoreClipsNegativeValuesBeforeUniqueUpdate(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 DOUBLE ZEROFILL UNIQUE, c1 FLOAT, c2 DECIMAL UNIQUE KEY)' );
 		$this->assertQuery( 'INSERT IGNORE INTO t0(c1, c0) VALUES(-255822003, "-1773731655"), (0.3800962993552307, NULL), (NULL, "¹"), (802484078, "&g瞟Xx8-U"), (1992718239, "")' );

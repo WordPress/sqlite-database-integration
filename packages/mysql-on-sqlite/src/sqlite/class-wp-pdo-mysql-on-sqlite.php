@@ -5755,8 +5755,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		)->fetchColumn();
 
 		$use_non_transactional_multi_row_defaults = (
-			$is_strict_mode
-			&& ! $ignore_errors
+			! $ignore_errors
 			&& false !== $table_engine
 			&& $this->is_non_transactional_table_engine( $table_engine )
 			&& $this->is_multi_row_insert_values( $node )
@@ -5951,11 +5950,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 
 				/*
-				 * In strict mode, MySQL still keeps preceding rows for multi-row
-				 * writes to non-transactional tables. If a later row saves an
-				 * invalid value to a NOT NULL column, MySQL stores the column's
-				 * implicit default and emits a warning rather than rolling back
-				 * the statement.
+				 * MySQL keeps preceding rows for multi-row writes to
+				 * non-transactional tables. If a later row saves an invalid
+				 * value to a NOT NULL column, MySQL stores the column's implicit
+				 * default and emits a warning rather than rolling back the
+				 * statement.
 				 */
 				if (
 					$use_non_transactional_multi_row_defaults
