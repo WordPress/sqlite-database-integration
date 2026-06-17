@@ -2691,6 +2691,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			throw $this->new_access_denied_to_information_schema_exception();
 		}
 
+		$table_is_temporary     = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$sqlite_column_type_map = $this->get_sqlite_column_type_map( $table_is_temporary, $table_name );
+
 		$this->information_schema_builder->record_create_index( $node );
 
 		$index_name = $this->unquote_sqlite_identifier(
@@ -2710,8 +2713,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			if ( 'keyPart' === $key_part_node->rule_name ) {
-				$key_part  = $this->translate( $key_part_node->get_first_child_node( 'identifier' ) );
-				$direction = $key_part_node->get_first_child_node( 'direction' );
+				$column_name = $this->unquote_sqlite_identifier(
+					$this->translate( $key_part_node->get_first_child_node( 'identifier' ) )
+				);
+				$sub_part    = $this->get_index_key_part_length( $key_part_node );
+				$key_part    = $this->get_sqlite_index_column_fragment(
+					$column_name,
+					$sub_part,
+					$sqlite_column_type_map[ $column_name ] ?? null
+				);
+				$direction   = $key_part_node->get_first_child_node( 'direction' );
 				if ( null !== $direction ) {
 					$key_part .= ' ' . $this->translate( $direction );
 				}
@@ -2731,6 +2742,81 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				implode( ', ', $key_parts )
 			)
 		);
+	}
+
+	/**
+	 * Get SQLite column type metadata for a table.
+	 *
+	 * @param  bool   $table_is_temporary Whether the table is temporary.
+	 * @param  string $table_name         The table name.
+	 * @return array<string, string>      Column name to SQLite data type map.
+	 */
+	private function get_sqlite_column_type_map( bool $table_is_temporary, string $table_name ): array {
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+		$columns       = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT column_name, data_type FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
+			array( WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$column_type_map = array();
+		foreach ( $columns as $column ) {
+			if ( isset( self::DATA_TYPE_STRING_MAP[ $column['DATA_TYPE'] ] ) ) {
+				$column_type_map[ $column['COLUMN_NAME'] ] = self::DATA_TYPE_STRING_MAP[ $column['DATA_TYPE'] ];
+			}
+		}
+		return $column_type_map;
+	}
+
+	/**
+	 * Translate a column key part for a SQLite CREATE INDEX statement.
+	 *
+	 * @param  string   $column_name      The column name.
+	 * @param  int|null $sub_part         The MySQL index prefix length.
+	 * @param  string|null $sqlite_data_type The SQLite data type of the indexed column.
+	 * @return string                     The SQLite index column fragment.
+	 */
+	private function get_sqlite_index_column_fragment(
+		string $column_name,
+		?int $sub_part,
+		?string $sqlite_data_type
+	): string {
+		$fragment = $this->quote_sqlite_identifier( $column_name );
+
+		if ( null === $sub_part ) {
+			return $fragment;
+		}
+
+		$fragment = sprintf( 'SUBSTR(%s, 1, %d)', $fragment, $sub_part );
+
+		if ( 'TEXT' === $sqlite_data_type ) {
+			$fragment .= ' COLLATE NOCASE';
+		}
+		return $fragment;
+	}
+
+	/**
+	 * Get a MySQL index key part prefix length.
+	 *
+	 * @param  WP_Parser_Node $key_part The "keyPart" AST node.
+	 * @return int|null                 The prefix length, or null for full column indexes.
+	 */
+	private function get_index_key_part_length( WP_Parser_Node $key_part ): ?int {
+		$field_length = $key_part->get_first_descendant_node( 'fieldLength' );
+		if ( null === $field_length ) {
+			return null;
+		}
+
+		foreach ( $field_length->get_descendant_tokens() as $token ) {
+			$value = $token->get_value();
+			if ( preg_match( '/^[0-9]+$/', $value ) ) {
+				return (int) $value;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -6812,6 +6898,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			array( $database, $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
+		$column_info_map = array();
+		foreach ( $column_info as $column ) {
+			$column_info_map[ $column['COLUMN_NAME'] ] = $column;
+		}
+
 		// 3. Get index info, grouped by index name.
 		$statistics_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'statistics' );
 		$constraint_info  = $this->execute_sqlite_query(
@@ -6986,14 +7077,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$info = $constraint[1];
 
 			$column_list = array_map(
-				function ( $column ) use ( $table_name ) {
+				function ( $column ) use ( $table_name, $column_info_map, $info ) {
 					if ( null === $column['COLUMN_NAME'] ) {
 						$fragment = $this->translate_stored_index_expression(
 							$column['EXPRESSION'],
 							$table_name
 						);
 					} else {
-						$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+						$column_info      = $column_info_map[ $column['COLUMN_NAME'] ] ?? null;
+						$sqlite_data_type = null === $column_info
+							? null
+							: ( self::DATA_TYPE_STRING_MAP[ $column_info['DATA_TYPE'] ] ?? null );
+						$sub_part         = 'PRIMARY' === $info['INDEX_NAME'] || null === $column['SUB_PART']
+							? null
+							: (int) $column['SUB_PART'];
+						$fragment         = $this->get_sqlite_index_column_fragment(
+							$column['COLUMN_NAME'],
+							$sub_part,
+							$sqlite_data_type
+						);
 					}
 
 					if ( 'D' === $column['COLLATION'] ) {

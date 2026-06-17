@@ -10786,6 +10786,21 @@ END;
 		$this->assertStringNotContainsString( 't2 . c0', $result[0]->Expression );
 	}
 
+	public function testSqlancerUniqueTextPrefixIndexesUsePrefixValues(): void {
+		$this->assertQuery( "CREATE TABLE t0(c0 MEDIUMTEXT COMMENT 'asdf')" );
+		$this->assertQuery( 'CREATE UNIQUE INDEX i0 ON t0(c0(3) ASC) VISIBLE ALGORITHM= COPY' );
+		$this->assertQuery( 'CREATE UNIQUE INDEX i1 ON t0(c0(2) DESC) ALGORITHM= COPY' );
+		$this->assertQuery( 'INSERT DELAYED INTO t0(c0) VALUES(0.6904897792105997)' );
+		$this->assertQuery( 'REPLACE INTO t0(c0) VALUES(0.7092344227870846)' );
+		$this->assertQuery( 'DROP INDEX i1 ON t0 ALGORITHM=DEFAULT' );
+		$this->assertQuery( 'INSERT LOW_PRIORITY INTO t0(c0) VALUES(0.6904897792105997)' );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count, GROUP_CONCAT(SUBSTR(c0, 1, 3) ORDER BY c0) AS saved_prefixes FROM t0' );
+
+		$this->assertSame( '2', $result[0]->rows_count );
+		$this->assertSame( '0.6,0.7', $result[0]->saved_prefixes );
+	}
+
 	public function testSqlancerGroupByNegativeIntegerLiteralIsExpression(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
 		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
